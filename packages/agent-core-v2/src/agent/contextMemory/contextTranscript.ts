@@ -174,6 +174,7 @@ function toMutableEntry(message: ContextMessage, time: number | undefined): Muta
           ...base,
           role: 'system',
           ...(message.tools === undefined ? {} : { tools: message.tools }),
+          unloadTools: message.unloadTools,
         },
         time,
       };

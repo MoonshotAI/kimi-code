@@ -74,6 +74,7 @@ export interface SystemMessage {
   readonly role: 'system';
   content: ContentPart[];
   readonly tools?: ToolDescription[];
+  readonly unloadTools?: string[];
 }
 
 export interface UserMessage {
@@ -317,7 +318,7 @@ export function toCoreMessage(message: Message): CoreMessage {
   const content = message.content.map(toCorePart);
   switch (message.role) {
     case 'system':
-      return { role: 'system', content, tools: message.tools };
+      return { role: 'system', content, tools: message.tools, unloadTools: message.unloadTools };
     case 'user':
       return { role: 'user', content };
     case 'assistant':
@@ -370,6 +371,7 @@ export function fromCoreMessage(message: CoreMessage): Message {
         role: 'system',
         content,
         ...(message.tools === undefined ? {} : { tools: message.tools }),
+        unloadTools: message.unloadTools,
       };
     case 'user':
       return { role: 'user', content };

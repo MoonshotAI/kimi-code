@@ -200,6 +200,7 @@ export interface SystemMessage {
   readonly role: 'system';
   content: ContentPart[];
   readonly tools?: ToolDescription[];
+  readonly unloadTools?: string[];
   attributes?: SystemMessageAttributes;
 }
 

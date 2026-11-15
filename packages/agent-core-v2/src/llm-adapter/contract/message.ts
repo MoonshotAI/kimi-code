@@ -44,12 +44,13 @@ export interface Message {
   readonly toolCallId?: string;
   readonly partial?: boolean;
   readonly tools?: readonly Tool[];
+  readonly unloadTools?: readonly string[];
 }
 
 export function isToolDeclarationOnlyMessage(message: Message): boolean {
   return (
-    message.tools !== undefined &&
-    message.tools.length > 0 &&
+    ((message.tools !== undefined && message.tools.length > 0) ||
+      (message.unloadTools !== undefined && message.unloadTools.length > 0)) &&
     message.content.length === 0 &&
     message.toolCalls.length === 0
   );
@@ -89,6 +90,7 @@ export function toLlmMessage(message: Message): LlmMessage {
         role: 'system',
         content: message.content,
         tools: message.tools === undefined ? undefined : [...message.tools],
+        unloadTools: message.unloadTools === undefined ? undefined : [...message.unloadTools],
       };
     case 'user':
       return { role: 'user', content: message.content };
@@ -107,6 +109,7 @@ export function fromLlmMessage(message: LlmMessage): Message {
         content: message.content,
         toolCalls: [],
         tools: message.tools,
+        unloadTools: message.unloadTools,
       };
     case 'user':
       return { role: 'user', content: message.content, toolCalls: [] };

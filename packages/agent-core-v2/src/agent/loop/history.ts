@@ -35,6 +35,7 @@ function historyEntryFromContextWithOptions(
         role: 'system',
         content: entry.content,
         ...(entry.tools === undefined ? {} : { tools: entry.tools }),
+        unloadTools: entry.unloadTools,
         ...(attributes === undefined ? {} : { attributes }),
       };
     }

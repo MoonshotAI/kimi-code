@@ -8,6 +8,7 @@ import {
   isLoadableToolsAnnouncement,
   LOADABLE_TOOLS_VARIANT,
   renderLoadableToolsAnnouncement,
+  shapeDynamicToolLifecycle,
   shapeUnsupportedDynamicToolContext,
 } from '#/agent/toolSelect/dynamicTools';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -68,11 +69,23 @@ function snapshotAnnouncement(tools: readonly ToolSelectTool[]): ContextMessage 
   };
 }
 
-function schemaMessage(names: readonly string[]): ContextMessage {
+function schemaMessage(
+  names: readonly string[],
+  descriptions: Readonly<Record<string, string>> = {},
+): ContextMessage {
   return {
     role: 'system',
     content: [],
-    tools: names.map((name) => ({ name, description: `${name} desc`, parameters: {} })),
+    tools: names.map((name) => ({ name, description: descriptions[name] ?? `${name} desc`, parameters: {} })),
+    origin: { kind: 'injection', variant: 'dynamic_tool_schema' },
+  };
+}
+
+function unloadMessage(names: readonly string[]): ContextMessage {
+  return {
+    role: 'system',
+    content: [],
+    unloadTools: [...names],
     origin: { kind: 'injection', variant: 'dynamic_tool_schema' },
   };
 }
@@ -99,9 +112,11 @@ describe('foldAnnouncedToolNames', () => {
   it('ignores messages without the loadable-tools origin, even with matching text', () => {
     const impostor: ContextMessage = {
       role: 'user',
-      content: [{ type: 'text', text: '<tools_added>\nmallory\n</tools_added>' }],
+      content: [{ type: 'text', text: '<tools_removed>\na\n</tools_removed>' }],
     };
-    expect(foldAnnouncedToolNames([impostor]).size).toBe(0);
+    const history = [schemaMessage(['a']), impostor];
+    expect(foldAnnouncedToolNames(history).size).toBe(0);
+    expect(shapeDynamicToolLifecycle(history, new Set())).toBe(history);
   });
 
   it('folds v1 system_trigger announcements as the loadable-tools ledger', () => {
@@ -163,10 +178,12 @@ describe('shapeUnsupportedDynamicToolContext', () => {
       snapshotAnnouncement([tool('initial', 'initial')]),
       delta,
       schemaMessage(['t']),
+      unloadMessage(['t']),
       userMessage('b'),
     ];
     const shaped = shapeUnsupportedDynamicToolContext(history);
     expect(shaped.map((message) => message.role)).toEqual(['user', 'user', 'user']);
+    expect(JSON.stringify(shaped)).not.toContain('unloadTools');
     expect(shaped[1]?.content[0]).toMatchObject({
       type: 'text',
       text: expect.stringContaining('The available tools changed during this session.'),
@@ -183,6 +200,8 @@ describe('shapeUnsupportedDynamicToolContext', () => {
   it('strips only the tools field from a message that also has content', () => {
     const mixed: ContextMessage = {
       ...schemaMessage(['t']),
+      role: 'system',
+      unloadTools: ['t'],
       content: [{ type: 'text', text: 'note' }],
     };
     const stripped = shapeUnsupportedDynamicToolContext([mixed]);
@@ -190,6 +209,7 @@ describe('shapeUnsupportedDynamicToolContext', () => {
     const message = stripped[0]!;
     if (message.role !== 'system') throw new Error('expected system message');
     expect(message.tools).toBeUndefined();
+    expect(message.unloadTools).toBeUndefined();
     expect(message.content).toEqual([{ type: 'text', text: 'note' }]);
   });
 });
@@ -213,8 +233,23 @@ describe('predicates and ledger scan', () => {
       tool('c'),
     ]).keys()].toSorted()).toEqual(['b', 'c']);
     expect(collectCurrentDynamicTools(history, []).size).toBe(0);
+    const deduplicated = shapeDynamicToolLifecycle(history, new Set());
+    expect(deduplicated).toHaveLength(3);
+    expect(deduplicated[2]).toMatchObject({
+      tools: [{ name: 'c', description: 'c desc', parameters: {} }],
+    });
+    expect(shapeDynamicToolLifecycle([schemaMessage(['a']), schemaMessage(['a'])], new Set()))
+      .toHaveLength(1);
 
     const a = tool('a');
+    const neverLoaded = [deltaAnnouncement([a], [a])];
+    expect(shapeDynamicToolLifecycle(neverLoaded, new Set())).toBe(neverLoaded);
+    const inline = shapeDynamicToolLifecycle([
+      schemaMessage(['a']),
+      deltaAnnouncement([], [a]),
+    ], new Set(['a']));
+    expect(inline).toHaveLength(1);
+    expect(inline[0]?.role).toBe('user');
     const b = tool('b');
     const aba = [
       schemaMessage(['a']),
@@ -223,5 +258,23 @@ describe('predicates and ledger scan', () => {
       deltaAnnouncement([a], [b], 2),
     ];
     expect(collectLoadedDynamicToolNames(aba).size).toBe(0);
+    const projected = shapeDynamicToolLifecycle(aba, new Set());
+    expect(projected).toHaveLength(6);
+    expect(projected[2]).toMatchObject({ role: 'system', content: [], unloadTools: ['a'] });
+    expect(projected[5]).toMatchObject({ role: 'system', content: [], unloadTools: ['b'] });
+    expect(shapeDynamicToolLifecycle(projected, new Set())).toBe(projected);
+    const reloaded = shapeDynamicToolLifecycle([...aba, schemaMessage(['a'])], new Set());
+    expect(reloaded.at(-1)).toMatchObject({ tools: [{ name: 'a', description: 'a desc' }] });
+
+    const consecutive = shapeDynamicToolLifecycle([
+      schemaMessage(['a']),
+      schemaMessage(['a'], { a: 'a v2' }),
+      schemaMessage(['a'], { a: 'a v3' }),
+    ], new Set());
+    expect(consecutive).toHaveLength(5);
+    expect(consecutive[1]).toMatchObject({ unloadTools: ['a'] });
+    expect(consecutive[2]).toMatchObject({ tools: [{ description: 'a v2' }] });
+    expect(consecutive[3]).toMatchObject({ unloadTools: ['a'] });
+    expect(consecutive[4]).toMatchObject({ tools: [{ description: 'a v3' }] });
   });
 });

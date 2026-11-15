@@ -11,8 +11,14 @@ export const LOADABLE_TOOLS_VARIANT = 'loadable-tools';
 
 export function isDynamicToolSchemaMessage(
   message: ContextMessage,
-): message is Extract<ContextMessage, { readonly role: 'system' }> {
+): message is ContextMessage & { readonly role: 'system'; readonly tools: ToolDescription[] } {
   return message.role === 'system' && message.tools !== undefined && message.tools.length > 0;
+}
+
+export function isDynamicToolUnloadMessage(
+  message: ContextMessage,
+): message is ContextMessage & { readonly role: 'system'; readonly unloadTools: string[] } {
+  return message.role === 'system' && message.unloadTools !== undefined && message.unloadTools.length > 0;
 }
 
 export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
@@ -42,6 +48,15 @@ function announcementDisclosure(
     : undefined;
 }
 
+function announcedRemovedToolNames(message: ContextMessage): readonly string[] {
+  const disclosure = announcementDisclosure(message);
+  if (disclosure?.kind === 'delta') return disclosure.removed.map((tool) => tool.name);
+  return matchToolNameBlocks(
+    message.content.map((part) => part.type === 'text' ? part.text : '').join(''),
+    TOOLS_REMOVED_BLOCK,
+  );
+}
+
 export function shapeUnsupportedDynamicToolContext(
   history: readonly ContextMessage[],
 ): readonly ContextMessage[] {
@@ -54,7 +69,11 @@ export function shapeUnsupportedDynamicToolContext(
   }
   if (
     hiddenCallIds.size === 0 &&
-    !history.some((message) => isDynamicToolSchemaMessage(message) || isLoadableToolsAnnouncement(message))
+    !history.some((message) =>
+      isDynamicToolSchemaMessage(message) ||
+      isDynamicToolUnloadMessage(message) ||
+      isLoadableToolsAnnouncement(message)
+    )
   ) {
     return history;
   }
@@ -74,17 +93,19 @@ export function shapeUnsupportedDynamicToolContext(
         { type: 'text', text: wrapSystemReminder(renderRuntimeToolChangeReminder(added, removed)) },
       ];
       if (message.role === 'system') {
-        const { tools: _tools, ...rest } = message;
+        const { tools: _tools, unloadTools: _unloadTools, ...rest } = message;
         void _tools;
+        void _unloadTools;
         out.push({ ...rest, content });
       } else {
         out.push({ ...message, content });
       }
       continue;
     }
-    if (isDynamicToolSchemaMessage(message)) {
-      const { tools: _tools, ...rest } = message;
+    if (isDynamicToolSchemaMessage(message) || isDynamicToolUnloadMessage(message)) {
+      const { tools: _tools, unloadTools: _unloadTools, ...rest } = message;
       void _tools;
+      void _unloadTools;
       if (rest.content.length > 0) out.push(rest);
       continue;
     }
@@ -111,15 +132,11 @@ export function collectLoadedDynamicTools(
 ): ReadonlyMap<string, ToolDescription> {
   const loaded = new Map<string, ToolDescription>();
   for (const message of history) {
+    if (isDynamicToolUnloadMessage(message)) {
+      for (const name of message.unloadTools ?? []) loaded.delete(name);
+    }
     if (isLoadableToolsAnnouncement(message)) {
-      const disclosure = announcementDisclosure(message);
-      const removed = disclosure?.kind === 'delta'
-        ? disclosure.removed.map((tool) => tool.name)
-        : matchToolNameBlocks(
-            message.content.map((part) => part.type === 'text' ? part.text : '').join(''),
-            TOOLS_REMOVED_BLOCK,
-          );
-      for (const name of removed) loaded.delete(name);
+      for (const name of announcedRemovedToolNames(message)) loaded.delete(name);
     }
     if (!isDynamicToolSchemaMessage(message)) continue;
     for (const tool of message.tools ?? []) loaded.set(tool.name, tool);
@@ -150,30 +167,96 @@ export function collectPendingSchemaUpdateNames(
   history: readonly ContextMessage[],
   current: readonly ToolInfo[],
 ): Set<string> {
-  const first = new Map<string, ToolDescription>();
   const latest = new Map<string, ToolDescription>();
   for (const message of history) {
     if (!isDynamicToolSchemaMessage(message)) continue;
-    for (const tool of message.tools ?? []) {
-      if (!first.has(tool.name)) first.set(tool.name, tool);
-      latest.set(tool.name, tool);
-    }
+    for (const tool of message.tools ?? []) latest.set(tool.name, tool);
   }
   const currentByName = new Map(current.map((tool) => [tool.name, tool]));
   const pending = new Set<string>();
-  for (const [name, firstTool] of first) {
-    const latestTool = latest.get(name);
+  for (const [name, latestTool] of latest) {
     const currentTool = currentByName.get(name);
-    if (latestTool === undefined || currentTool === undefined) continue;
+    if (currentTool === undefined) continue;
     const currentSchema = { ...currentTool, parameters: currentTool.parameters ?? {} };
-    if (
-      toolSelectSchemaSignature(latestTool) === toolSelectSchemaSignature(currentSchema) &&
-      toolSelectSchemaSignature(firstTool) !== toolSelectSchemaSignature(currentSchema)
-    ) {
+    if (toolSelectSchemaSignature(latestTool) !== toolSelectSchemaSignature(currentSchema)) {
       pending.add(name);
     }
   }
   return pending;
+}
+
+export function shapeDynamicToolLifecycle(
+  history: readonly ContextMessage[],
+  inlineNames: ReadonlySet<string>,
+): readonly ContextMessage[] {
+  const loaded = new Map<string, string>();
+  const out: ContextMessage[] = [];
+  let changed = false;
+  for (const [index, message] of history.entries()) {
+    if (isDynamicToolUnloadMessage(message)) {
+      for (const name of message.unloadTools ?? []) loaded.delete(name);
+      out.push(message);
+      continue;
+    }
+    if (isLoadableToolsAnnouncement(message)) {
+      out.push(message);
+      const following = history[index + 1];
+      const covered = new Set(
+        following !== undefined && isDynamicToolUnloadMessage(following) ? following.unloadTools : [],
+      );
+      const removed = announcedRemovedToolNames(message)
+        .filter((name) => loaded.delete(name) && !covered.has(name))
+        .toSorted((a, b) => a.localeCompare(b));
+      if (removed.length > 0) {
+        out.push({ role: 'system', content: [], unloadTools: removed });
+        changed = true;
+      }
+      continue;
+    }
+    if (!isDynamicToolSchemaMessage(message)) {
+      out.push(message);
+      continue;
+    }
+    const unload = new Set<string>();
+    const kept: ToolDescription[] = [];
+    let changedMessage = false;
+    for (const tool of message.tools ?? []) {
+      if (inlineNames.has(tool.name)) {
+        changedMessage = true;
+        continue;
+      }
+      const signature = toolSelectSchemaSignature(tool);
+      const previous = loaded.get(tool.name);
+      if (previous === signature) {
+        changedMessage = true;
+        continue;
+      }
+      if (previous !== undefined) unload.add(tool.name);
+      loaded.set(tool.name, signature);
+      kept.push(tool);
+    }
+    if (unload.size > 0) {
+      out.push({
+        role: 'system',
+        content: [],
+        unloadTools: [...unload].toSorted((a, b) => a.localeCompare(b)),
+      });
+      changed = true;
+    }
+    if (!changedMessage && kept.length === message.tools?.length) {
+      out.push(message);
+      continue;
+    }
+    changed = true;
+    if (kept.length > 0) {
+      out.push({ ...message, tools: kept });
+      continue;
+    }
+    const { tools: _tools, ...rest } = message;
+    void _tools;
+    if (rest.content.length > 0) out.push(rest);
+  }
+  return changed ? out : history;
 }
 
 export function collectLoadedDynamicToolNames(

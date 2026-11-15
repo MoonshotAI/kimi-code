@@ -88,10 +88,12 @@ describe('reduceContextTranscript', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('u1')),
       ...assistantStep('s1', 'a1'),
+      appendMessage({ role: 'system', content: [], unloadTools: ['mcp__srv__alpha'] }),
     ]);
-    expect(texts(result)).toEqual(['u1', 'a1']);
-    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant']);
-    expect(result.foldedLength).toBe(2);
+    expect(texts(result)).toEqual(['u1', 'a1', '']);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'system']);
+    expect(result.entries[2]).toMatchObject({ unloadTools: ['mcp__srv__alpha'] });
+    expect(result.foldedLength).toBe(3);
   });
 
   it('compaction keeps the prefix and appends a user-role summary marker', () => {

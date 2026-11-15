@@ -900,8 +900,16 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       expect(encoded.params.tools).toContainEqual({ type: 'function', function: schema });
       expect(encoded.params.messages.some((message) => 'tools' in message &&
         (message.tools as Array<{ function: { name: string } }>).some((tool) => tool.function.name === name))).toBe(false);
-      const results = await execute(current, toolCall('current-call', name));
-      expect(results[0]?.result.output).toBe('echo ok');
+      for (const dynamic of [true, false]) {
+        capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: dynamic });
+        const results = await execute(current, toolCall(`current-call-${dynamic}`, name));
+        expect(results[0]?.result).toMatchObject({
+          isError: true,
+          output: `Tool "${name}" has a schema update, but applying schema updates is not supported in this session. Start a new session to use the updated schema.`,
+        });
+      }
+      capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: true });
+      expect(updated.calls).toBe(0);
       expect(JSON.stringify(current.ix.get(IAgentStateService).get(toolSelectKey))).toBe(persisted);
       const original = current.ix.get(IAgentStateService).get(toolSelectKey).initial?.find((tool) => tool.name === name);
       expect(original?.description).toBe(old.description);
@@ -919,14 +927,13 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(next?.content).toContain(`<tools_removed>\n${USER_INLINE}\n</tools_removed>`);
   });
 
-  it('keeps the first schema and converts changed duplicates to reminders', async () => {
+  it('projects unload/load for deferred schema updates and allows execution after reselect', async () => {
     const h = createExecutorHarness();
     const original = new StubMcpTool(MCP_ALPHA);
     const registration = registerMcp(h, original);
-    await h.sut.prepareForRequest();
+    await announce(h);
     const originalSchemaMessage = schemaMessage(MCP_ALPHA);
-    h.contextMemory.messages.push(originalSchemaMessage);
-    h.contextMemory.messages.push({
+    h.contextMemory.messages.push(originalSchemaMessage, {
       role: 'system',
       content: [{ type: 'text', text: 'keep body' }],
       tools: [{ name: MCP_ALPHA, description: original.description, parameters: original.parameters }],
@@ -935,9 +942,32 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     registration.dispose();
     const updated = new StubMcpTool(MCP_ALPHA, 'ok', REQUIRED_PAYLOAD_PARAMETERS);
     const updatedRegistration = registerMcp(h, updated);
-    await h.sut.prepareForRequest();
-    h.contextMemory.landAnnouncement(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
-    expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(3);
+    const updateAnnouncement = await announce(h, 2);
+    expect(updateAnnouncement).toContain(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
+    expect(updateAnnouncement).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+
+    const pending = await resolveWith(h, {
+      messages: h.contextMemory.history(),
+      tools: [],
+      capabilities,
+      dynamic: true,
+    });
+    expect(pending.content.messages).toHaveLength(5);
+    expect(pending.content.messages[1]).toBe(originalSchemaMessage);
+    expect(pending.content.messages[4]).toMatchObject({
+      role: 'system',
+      content: [],
+      unloadTools: [MCP_ALPHA],
+    });
+    expect(pending.content.messages.flatMap((message) => toolsOf(message) ?? [])).toHaveLength(1);
+    const rejected = await execute(h, toolCall('call-pending', MCP_ALPHA));
+    expect(rejected[0]?.result).toMatchObject({
+      isError: true,
+      output: `Tool "${MCP_ALPHA}" has a schema update. Call select_tools with "${MCP_ALPHA}" to load the updated schema before calling it again.`,
+    });
+    expect(updated.calls).toBe(0);
+
+    expect(h.sut.load([MCP_ALPHA])).toMatchObject({ toLoad: [MCP_ALPHA], alreadyAvailable: [] });
     h.contextMemory.messages.push({
       role: 'system',
       content: [],
@@ -950,42 +980,27 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       capabilities,
       dynamic: true,
     });
-    expect(resolved.profile?.tools).toEqual([]);
-    expect(resolved.content.messages).toHaveLength(4);
-    expect(resolved.content.messages[0]).toBe(originalSchemaMessage);
+    expect(resolved.content.messages).toHaveLength(6);
+    expect(resolved.content.messages[1]).toBe(originalSchemaMessage);
     expect(resolved.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
-      .toEqual([original.parameters]);
+      .toEqual([original.parameters, updated.parameters]);
     expect(resolved.content.messages).toContainEqual({
       role: 'system',
       content: [{ type: 'text', text: 'keep body' }],
       origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
     });
-    expect(resolved.content.messages).toContainEqual({
-      role: 'system',
-      content: [{
-        type: 'text',
-        text: `<system-reminder>\nTool "${MCP_ALPHA}" has a schema update, but applying schema updates is not supported in this session. Start a new session to use the updated schema.\n</system-reminder>`,
-      }],
-      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
-    });
-    expect(h.contextMemory.history()).toHaveLength(4);
-
-    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
-    const nonDynamic = await execute(h, toolCall('call-non-dynamic', MCP_ALPHA, { payload: 'value' }));
-    expect(nonDynamic).toHaveLength(1);
-    expect(nonDynamic[0]?.result.isError).not.toBe(true);
-    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: true });
-
-    const rejected = await execute(h, toolCall('call-updated', MCP_ALPHA));
-    expect(rejected).toHaveLength(1);
-    expect(rejected[0]?.result).toMatchObject({
-      isError: true,
-      output: `Tool "${MCP_ALPHA}" has a schema update, but applying schema updates is not supported in this session. Start a new session to use the updated schema.`,
-    });
+    expect(h.contextMemory.history().some((message) =>
+      message.role === 'system' && (message.unloadTools?.length ?? 0) > 0
+    )).toBe(false);
+    expect(h.sut.load([MCP_ALPHA])).toMatchObject({ toLoad: [], alreadyAvailable: [MCP_ALPHA] });
+    const accepted = await execute(h, toolCall('call-updated', MCP_ALPHA, { payload: 'value' }));
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]?.result.isError).not.toBe(true);
+    expect(updated.calls).toBe(1);
 
     updatedRegistration.dispose();
     registerMcp(h, original);
-    await h.sut.prepareForRequest();
+    await announce(h, 3);
     h.contextMemory.messages.push(schemaMessage(MCP_ALPHA));
     const reverted = await resolveWith(h, {
       messages: h.contextMemory.history(),
@@ -993,13 +1008,15 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       capabilities,
       dynamic: true,
     });
-    expect(reverted.content.messages[0]).toBe(originalSchemaMessage);
+    expect(reverted.content.messages[1]).toBe(originalSchemaMessage);
     expect(reverted.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
-      .toEqual([original.parameters]);
-    expect(JSON.stringify(reverted.content.messages)).not.toContain('has a schema update');
-    const accepted = await execute(h, toolCall('call-reverted', MCP_ALPHA));
-    expect(accepted).toHaveLength(1);
-    expect(accepted[0]?.result.isError).not.toBe(true);
+      .toEqual([original.parameters, updated.parameters, original.parameters]);
+    expect(reverted.content.messages.flatMap((message) =>
+      message.role === 'system' ? message.unloadTools ?? [] : []
+    )).toEqual([MCP_ALPHA, MCP_ALPHA]);
+    const revertedCall = await execute(h, toolCall('call-reverted', MCP_ALPHA));
+    expect(revertedCall).toHaveLength(1);
+    expect(revertedCall[0]?.result.isError).not.toBe(true);
   });
 
   it.each(['inline', 'deferred', 'empty'] as const)('uses actual explicit %s tools when shaping historical definitions', async (mode) => {

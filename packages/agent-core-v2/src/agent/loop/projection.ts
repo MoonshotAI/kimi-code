@@ -153,7 +153,7 @@ function pairBlocks(
 
     const content = projectedContent(message, toolNames, onAnomaly);
     const toolCalls = message.role === 'assistant' ? message.toolCalls : [];
-    if (toolCalls.length === 0 && !hasDeclaredTools(message)) {
+    if (toolCalls.length === 0 && !carriesToolLifecycle(message)) {
       if (content.length === 0) continue;
       if (content.every(isVacuousContentPart)) {
         onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.role });
@@ -374,8 +374,9 @@ function isBlankText(part: ContentPart): boolean {
     part.text.trim().length === 0;
 }
 
-function hasDeclaredTools(message: ContextMessage): boolean {
-  return message.role === 'system' && message.tools !== undefined && message.tools.length > 0;
+function carriesToolLifecycle(message: ContextMessage): boolean {
+  return message.role === 'system' &&
+    ((message.tools?.length ?? 0) > 0 || (message.unloadTools?.length ?? 0) > 0);
 }
 
 function toWireMessage(message: ContextMessage, content: ContentPart[]): Message {
@@ -385,6 +386,7 @@ function toWireMessage(message: ContextMessage, content: ContentPart[]): Message
         role: 'system',
         content,
         tools: message.tools,
+        unloadTools: message.unloadTools,
         ...(message.attributes === undefined ? {} : { attributes: message.attributes }),
       };
     case 'user':

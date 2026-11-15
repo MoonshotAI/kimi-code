@@ -24,6 +24,11 @@ export const kimiOpenAIEncodeFixtures = [{
         tools: [{ name: '$builtin', description: '', parameters: { type: 'object' } }],
       },
       {
+        role: 'system',
+        content: [],
+        unloadTools: ['$builtin'],
+      },
+      {
         role: 'assistant',
         content: [{ type: 'text', text: ' ' }],
         toolCalls: [{
@@ -50,6 +55,10 @@ export const kimiOpenAIEncodeFixtures = [{
         {
           role: 'system',
           tools: [{ type: 'builtin_function', function: { name: '$builtin' } }],
+        },
+        {
+          role: 'system',
+          unload_tools: ['$builtin'],
         },
         {
           role: 'assistant',
