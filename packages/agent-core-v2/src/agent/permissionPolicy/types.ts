@@ -56,6 +56,10 @@ export type PermissionPolicyResult =
         result: ApprovalResponse,
       ) => PermissionPolicyResolution | undefined;
       readonly resolveError?: (error: unknown) => PermissionPolicyResolution | undefined;
+      readonly resolveNonInteractive?: () => Exclude<
+        PermissionPolicyResolution,
+        { readonly kind: 'ask' }
+      >;
     };
 
 export interface PermissionPolicy {

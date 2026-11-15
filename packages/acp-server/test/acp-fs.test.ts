@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { RequestError } from '@agentclientprotocol/sdk';
+import { isHostFsNotDirectory, isHostFsNotFound } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { AcpHostFileSystem } from '../src/acp-fs/acpFsService';
@@ -148,5 +149,48 @@ describe('AcpHostFileSystem', () => {
     await fs.appendText(path, 'new');
 
     expect(await readFile(path, 'utf8')).toBe('old:new');
+  });
+
+  it('reports a client write failure under a missing local parent as not found', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'acp-fs-'));
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async () => {
+        throw new Error('client cannot create parents');
+      },
+    });
+
+    const rejection = await fs.writeText(join(tempDir, 'missing', 'new.txt'), 'x').catch((error: unknown) => error);
+
+    expect(isHostFsNotFound(rejection)).toBe(true);
+  });
+
+  it('reports a client write failure under a file parent as not a directory', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'acp-fs-'));
+    await writeFile(join(tempDir, 'file'), '');
+    const failure = new Error('client write failed');
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async () => {
+        throw failure;
+      },
+    });
+
+    const rejection = await fs.writeText(join(tempDir, 'file', 'new.txt'), 'x').catch((error: unknown) => error);
+
+    expect(isHostFsNotDirectory(rejection)).toBe(true);
+  });
+
+  it('keeps the client write failure when the local parent exists', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'acp-fs-'));
+    const failure = new Error('client write failed');
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async () => {
+        throw failure;
+      },
+    });
+
+    await expect(fs.writeText(join(tempDir, 'new.txt'), 'x')).rejects.toBe(failure);
   });
 });

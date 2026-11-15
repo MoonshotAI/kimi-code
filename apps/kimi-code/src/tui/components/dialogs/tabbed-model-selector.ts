@@ -52,6 +52,7 @@ export interface TabbedModelSelectorOptions {
   /** Forwarded to each inner selector; set to false to hide the Thinking
    * footer and disable ←/→ effort switching. */
   readonly thinkingControl?: boolean;
+  readonly effortDescriptions?: Readonly<Record<string, string>>;
   readonly onSelect: (selection: ModelSelection) => void;
   /** Forwarded to each inner selector; when set, Alt+S applies the choice to
    * the current session only without persisting it as the default. */
@@ -190,6 +191,7 @@ function makeSelector(
     providerSwitchHint: true,
     warning: opts.warning,
     thinkingControl: opts.thinkingControl,
+    effortDescriptions: opts.effortDescriptions,
     onSelect: opts.onSelect,
     onSessionOnlySelect: opts.onSessionOnlySelect,
     onCancel: opts.onCancel,

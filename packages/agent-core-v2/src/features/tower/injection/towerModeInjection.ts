@@ -1,6 +1,6 @@
 import { Service } from '#/_base/di/service';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentTowerService, TOWER_FLAG_ID } from '#/features/tower/tower';
@@ -17,7 +17,7 @@ export class TowerModeInjection extends Service {
   constructor(
     injector: IAgentReminderService,
     @IAgentTowerService private readonly tower: IAgentTowerService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @IFlagService private readonly flags: IFlagService,
   ) {
     super();
@@ -35,7 +35,7 @@ export class TowerModeInjection extends Service {
           if (injectedPositions.length === 0 || lastDisclosure === TOWER_MODE_EXIT_DISCLOSURE) {
             return TOWER_MODE_FULL_REMINDER;
           }
-          const variant = towerModeReminderVariant(injectedAt, this.context.get());
+          const variant = towerModeReminderVariant(injectedAt, this.context.history());
           if (variant === 'full') return TOWER_MODE_FULL_REMINDER;
           if (variant === 'sparse') return TOWER_MODE_SPARSE_REMINDER;
           return undefined;
@@ -60,7 +60,13 @@ function towerModeReminderVariant(
       assistantTurnsSince += 1;
       continue;
     }
-    if (message.role === 'user' && assistantTurnsSince >= 1) return 'full';
+    if (
+      message.role === 'user' &&
+      message.origin?.kind !== 'injection' &&
+      assistantTurnsSince >= 1
+    ) {
+      return 'full';
+    }
   }
   if (assistantTurnsSince >= TOWER_MODE_FULL_REFRESH_TURNS) return 'full';
   if (assistantTurnsSince >= TOWER_MODE_DEDUP_MIN_TURNS) return 'sparse';

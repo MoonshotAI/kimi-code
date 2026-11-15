@@ -10,6 +10,10 @@ import {
   readPluginUpdateNoticeState,
   writePluginUpdateNoticeState,
 } from '#/utils/plugin-update-notice-state';
+import {
+  installedPluginForMarketplaceEntry,
+  marketplaceEntryIdForInstalledPlugin,
+} from '../utils/capability-marketplace';
 import { isOfficialPluginInstall } from '../utils/plugin-source-label';
 
 /**
@@ -27,6 +31,8 @@ export interface PluginUpdateNotifierDeps {
   readonly notify: (message: string) => void;
   /** Overridable for tests; defaults to the shared marketplace loader. */
   readonly loadMarketplace?: () => Promise<PluginMarketplace>;
+  readonly reloadPlugins?: () => Promise<unknown>;
+  readonly refreshPluginCommands?: () => Promise<unknown>;
   /** Overridable for tests; defaults to the updates dir under the data dir. */
   readonly stateFile?: string;
 }
@@ -167,13 +173,17 @@ export class PluginUpdateNotifier {
       // notice — a custom catalog (KIMI_CODE_PLUGIN_MARKETPLACE_URL) may
       // advertise anything under any id.
       if (marketplace.source !== kimiCodePluginMarketplaceUrl()) return;
-      const entry = marketplace.plugins.find((plugin) => plugin.id === pluginId);
+      const entryId = marketplaceEntryIdForInstalledPlugin(pluginId, true);
+      const entry = marketplace.plugins.find((plugin) => plugin.id === entryId);
       if (entry === undefined) return;
-      const installed = (await session.listPlugins()).find((plugin) => plugin.id === pluginId);
-      if (installed === undefined) return;
-      // Only official installs are tracked against the Official Marketplace —
-      // a local/GitHub fork that happens to share a catalog id is not it.
-      if (!isOfficialPluginInstall(installed)) return;
+      const installed = installedPluginForMarketplaceEntry(
+        entry.id,
+        await session.listPlugins(),
+        undefined,
+        true,
+      );
+      if (installed === undefined || installed.origin === 'custom') return;
+      if (installed.origin === 'unknown' && !isOfficialPluginInstall(installed)) return;
       const status = computeUpdateStatus(entry.version, installed.version, true);
       if (status.kind !== 'update') return;
       const state = await readPluginUpdateNoticeState(this.deps.stateFile);
@@ -203,6 +213,13 @@ export class PluginUpdateNotifier {
   private loadMarketplace(): Promise<PluginMarketplace> {
     const load = this.deps.loadMarketplace;
     if (load !== undefined) return load();
-    return loadPluginMarketplace({ workDir: this.deps.workDir });
+    return loadPluginMarketplace({
+      workDir: this.deps.workDir,
+      reconcileAvailability: async (changed) => {
+        if (!changed) return;
+        await this.deps.reloadPlugins?.();
+        await this.deps.refreshPluginCommands?.();
+      },
+    });
   }
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
 
 import type { SteerInputItem } from '#/tui/types';
+import { steerEventParts, steerMatchTexts, takeDeliveredSteerBatches } from '#/tui/utils/steer-delivery';
 import { combineSteerInput } from '#/tui/utils/steer-input';
 
 describe('combineSteerInput', () => {
@@ -74,5 +75,69 @@ describe('combineSteerInput', () => {
 
   it('joins text-only items with the historical separator', () => {
     expect(combineSteerInput([{ text: 'one' }, { text: 'two' }])).toBe('one\n\ntwo');
+  });
+});
+
+describe('takeDeliveredSteerBatches', () => {
+  it('clears only the batch whose text the event carries', () => {
+    const first = { text: 'keep this input', entries: ['keep this input'] };
+    const second = { text: 'later', entries: ['later'] };
+    const result = takeDeliveredSteerBatches([first, second], 'keep this input');
+    expect(result.delivered).toEqual([first]);
+    expect(result.pending).toEqual([second]);
+  });
+
+  it('does not treat a shorter steer as part of a different message', () => {
+    const short = { text: 'hi', entries: ['hi'] };
+    const result = takeDeliveredSteerBatches([short], 'this');
+    expect(result.delivered).toEqual([]);
+    expect(result.pending).toEqual([short]);
+  });
+
+  it('clears each joined segment of one merged event', () => {
+    const first = { text: 'one', entries: ['one'] };
+    const second = { text: 'two', entries: ['two'] };
+    const result = takeDeliveredSteerBatches([first, second], 'one\n\ntwo');
+    expect(result.delivered).toEqual([first, second]);
+    expect(result.pending).toEqual([]);
+  });
+
+  it('matches split text parts as one payload and as separate submissions', () => {
+    expect(steerMatchTexts(['hello ', 'world'])).toEqual(['hello world', 'hello ', 'world']);
+    const combined = { text: 'hello world', entries: ['hello world'] };
+    const first = { text: 'hello ', entries: ['hello '] };
+    const second = { text: 'world', entries: ['world'] };
+    expect(takeDeliveredSteerBatches([combined], 'hello world').delivered).toEqual([combined]);
+    let pending: Array<{ readonly text: string; readonly entries: readonly string[] }> = [first, second];
+    const delivered = [];
+    for (const text of ['hello ', 'world']) {
+      const step = takeDeliveredSteerBatches(pending, text);
+      delivered.push(...step.delivered);
+      pending = step.pending;
+    }
+    expect(delivered).toEqual([first, second]);
+    expect(pending).toEqual([]);
+  });
+
+  it('drops skill and hook text that carries a source marker', () => {
+    expect(steerEventParts([
+      { type: 'text', text: 'skill instructions', meta: { source: 'skill activation' } },
+      { type: 'text', text: 'check src/app.ts' },
+      { type: 'text', text: 'hook note', meta: { source: 'user prompt submit hook' } },
+      { type: 'image_url' },
+    ])).toEqual({ texts: ['check src/app.ts'], hasMedia: true });
+  });
+
+  it('clears a steer when skill activation text is prepended', () => {
+    const batch = { text: 'check src/app.ts', entries: ['check src/app.ts'] };
+    const eventText = [
+      'User activated the skill "review". Follow the loaded skill instructions.',
+      '<skill-loaded name="review">',
+      'Review the change.',
+      '</skill-loaded>',
+    ].join('\n') + 'check src/app.ts';
+    const result = takeDeliveredSteerBatches([batch], eventText);
+    expect(result.delivered).toEqual([batch]);
+    expect(result.pending).toEqual([]);
   });
 });

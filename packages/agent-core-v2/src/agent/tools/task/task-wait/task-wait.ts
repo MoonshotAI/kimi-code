@@ -2,9 +2,8 @@ import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
-import { DEFAULT_BACKGROUND_TIMEOUT_S } from '#/agent/tools/os/bash/bash';
 
-export const WAIT_FOR_MAX_TIMEOUT_S = DEFAULT_BACKGROUND_TIMEOUT_S;
+export const WAIT_FOR_MAX_TIMEOUT_S = 90;
 
 export const WaitForInputSchema = z.object({
   timeout: z
@@ -13,7 +12,7 @@ export const WaitForInputSchema = z.object({
     .positive()
     .max(WAIT_FOR_MAX_TIMEOUT_S)
     .describe(
-      `Maximum time to wait, in seconds (1-${String(WAIT_FOR_MAX_TIMEOUT_S)}). A timeout is not an error: the tool returns the tasks that are still running, and you can call it again to keep waiting.`,
+      `Maximum time to wait, in seconds (1-${String(WAIT_FOR_MAX_TIMEOUT_S)}). Pick it from how long you expect the task to take, not the maximum. A timeout is not an error: the tool returns the tasks that are still running.`,
     ),
   task_id: z
     .string()

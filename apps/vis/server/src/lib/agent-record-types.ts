@@ -15,14 +15,18 @@ export type {
   PromptOrigin,
   CronTask,
 } from '@moonshot-ai/agent-core-v2';
+export type { ContentPart as CoreContentPart } from '@moonshot-ai/core/llm/message';
+export { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 export { WIRE_PROTOCOL_VERSION } from '@moonshot-ai/agent-core-v2/wire/migration/migration';
 export type {
   AgentTaskInfo as BackgroundTaskInfo,
   AgentTaskStatus as BackgroundTaskStatus,
 } from '@moonshot-ai/agent-core-v2';
-export type { SubagentTaskInfo as AgentBackgroundTaskInfo } from '@moonshot-ai/agent-core-v2';
-export type { ProcessTaskInfo as ProcessBackgroundTaskInfo } from '@moonshot-ai/agent-core-v2/agent/tools/os/bash/process-task';
-export type { QuestionTaskInfo as QuestionBackgroundTaskInfo } from '@moonshot-ai/agent-core-v2/agent/tools/ask-user-question/question-background-task';
+export type {
+  ProcessTaskInfo as ProcessBackgroundTaskInfo,
+  QuestionTaskInfo as QuestionBackgroundTaskInfo,
+  SubagentTaskInfo as AgentBackgroundTaskInfo,
+} from '@moonshot-ai/agent-core-v2/agent/task/types';
 
 import type {
   AgentTaskInfo as BackgroundTaskInfo,
@@ -33,18 +37,21 @@ import type {
   ExportSessionManifest,
   FileHistoryCheckpointed,
   FileHistoryTracked,
+  Forked,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
   GoalClear,
   GoalCreate,
-  GoalForked,
   GoalUpdate,
   InteractionRequestEvent,
   InteractionResolvedEvent,
+  InterruptionCancellationRequested,
   InterruptionReminderRecorded,
   LlmRequest,
   LlmToolsSnapshot,
+  McpServerFailed,
+  McpServerFailureResolved,
   McpToolsDiscovered,
   PlanModeCancel,
   PlanModeEnter,
@@ -52,16 +59,21 @@ import type {
   PlanRevision,
   PluginSessionStartEvent,
   PromptAborted,
-  PromptAccepted,
   PromptCompleted,
   PromptSteered,
+  SubagentCancelled,
+  SubagentCompleted,
+  SubagentFailed,
+  SubagentSpawned,
+  SubagentStarted,
   TaskStarted,
   TaskTerminated,
-  TaskWaitDelivered,
   TokenCountingMeasured,
   TokenCountingRebased,
   TokenCountingTruncated,
   TokenCountingTurnRecorded,
+  ToolSelectInitialized,
+  ToolSelectToolsChanged,
   ToolsRegisterUserTool,
   ToolsUnregisterUserTool,
 } from '@moonshot-ai/agent-core-v2';
@@ -82,12 +94,18 @@ import type {
   ToolsResetActiveTools,
   ToolsSetActiveTools,
 } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
+import type { ChangeNotifierSnapshotEvent } from '@moonshot-ai/agent-core-v2/agent/changeNotifier/changeNotifierOps';
 import type { PermissionSetMode } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionModeOps';
 import type { PermissionRecordApprovalResult } from '@moonshot-ai/agent-core-v2/agent/permissionRules/permissionRulesOps';
-import type { RuntimeSetBinding } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBindingOps';
+import type { EnvironmentSetBinding } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
 import type { SwarmModeEnter, SwarmModeExit } from '@moonshot-ai/agent-core-v2/features/swarm/swarmOps';
 import type { TowerModeEnter, TowerModeExit } from '@moonshot-ai/agent-core-v2/features/tower/towerOps';
 import type { ToolsUpdateStore } from '@moonshot-ai/agent-core-v2/features/todo/todoOps';
+
+interface TaskWaitDelivered {
+  readonly agentId: string;
+  readonly keys: string[];
+}
 
 /** A wire record with v2's literal `type` discriminant restored. v2 declares
  *  records as Event2 class + payload interface mergings whose `type` field is
@@ -129,6 +147,16 @@ export interface StaleGuardClearedRecord {
   readonly time?: number;
 }
 
+/** v2-dropped durable record: removed with the loop-side prompt admission
+ *  facility, but old wires still contain it. */
+export interface PromptAcceptedRecord {
+  readonly type: 'prompt.accepted';
+  readonly agentId: string;
+  readonly promptId: string;
+  readonly content?: unknown;
+  readonly time?: number;
+}
+
 /** The wire file header record. Declared locally (rather than via v2's
  *  `WireMetadataRecord`) so the union member keeps concrete field types —
  *  the upstream interface carries an index signature that would widen
@@ -149,6 +177,7 @@ export interface WireMetadataHeader {
  */
 export type AgentRecord =
   | WireMetadataHeader
+  | WireRecordOf<'changeNotifier.snapshot', ChangeNotifierSnapshotEvent>
   | WireRecordOf<'config.update', ConfigUpdate>
   | WireRecordOf<'context.append_loop_event', ContextAppendLoopEvent>
   | WireRecordOf<'context.append_message', ContextAppendMessage>
@@ -160,7 +189,7 @@ export type AgentRecord =
   | WireRecordOf<'cron.delete', CronDeletePayload>
   | WireRecordOf<'file_history.checkpoint', FileHistoryCheckpointed>
   | WireRecordOf<'file_history.tracked', FileHistoryTracked>
-  | WireRecordOf<'forked', GoalForked>
+  | WireRecordOf<'forked', Forked>
   | WireRecordOf<'full_compaction.begin', FullCompactionBegin>
   | WireRecordOf<'full_compaction.cancel', FullCompactionCancel>
   | WireRecordOf<'full_compaction.complete', FullCompactionComplete>
@@ -170,9 +199,14 @@ export type AgentRecord =
   | WireRecordOf<'interaction.request', InteractionRequestEvent>
   | WireRecordOf<'interaction.resolved', InteractionResolvedEvent>
   | WireRecordOf<'interruptionReminder.recorded', InterruptionReminderRecorded>
+  | WireRecordOf<'interruptionReminder.requested', InterruptionCancellationRequested>
   | WireRecordOf<'llm.request', LlmRequest>
   | WireRecordOf<'llm.tools_snapshot', LlmToolsSnapshot>
+  | WireRecordOf<'mcp.server_failed', McpServerFailed>
+  | WireRecordOf<'mcp.server_failure_resolved', McpServerFailureResolved>
   | WireRecordOf<'mcp.tools_discovered', McpToolsDiscovered>
+  | WireRecordOf<'tool_select.initialized', ToolSelectInitialized>
+  | WireRecordOf<'tool_select.tools_changed', ToolSelectToolsChanged>
   | WireRecordOf<'permission.record_approval_result', PermissionRecordApprovalResult>
   | WireRecordOf<'permission.set_mode', PermissionSetMode>
   | WireRecordOf<'plan_mode.cancel', PlanModeCancel>
@@ -182,10 +216,15 @@ export type AgentRecord =
   | WireRecordOf<'plugin.session_start', PluginSessionStartEvent>
   | WireRecordOf<'profile.bind', ProfileBind>
   | WireRecordOf<'prompt.aborted', PromptAborted>
-  | WireRecordOf<'prompt.accepted', PromptAccepted>
+  | PromptAcceptedRecord
   | WireRecordOf<'prompt.completed', PromptCompleted>
   | WireRecordOf<'prompt.steered', PromptSteered>
-  | WireRecordOf<'runtime.set_binding', RuntimeSetBinding>
+  | WireRecordOf<'environment.set_binding', EnvironmentSetBinding>
+  | WireRecordOf<'subagent.cancelled', SubagentCancelled>
+  | WireRecordOf<'subagent.completed', SubagentCompleted>
+  | WireRecordOf<'subagent.failed', SubagentFailed>
+  | WireRecordOf<'subagent.spawned', SubagentSpawned>
+  | WireRecordOf<'subagent.started', SubagentStarted>
   | WireRecordOf<'swarm_mode.enter', SwarmModeEnter>
   | WireRecordOf<'swarm_mode.exit', SwarmModeExit>
   | WireRecordOf<'task.started', TaskStarted>

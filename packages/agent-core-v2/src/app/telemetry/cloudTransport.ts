@@ -1,11 +1,5 @@
 import { randomBytes } from 'node:crypto';
 
-import {
-  KIMI_REGION_PROFILES,
-  kimiRegionProfile,
-  resolveKimiRegion,
-} from '@moonshot-ai/kimi-code-oauth';
-
 import { isAbortError } from '#/_base/utils/abort';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -37,8 +31,7 @@ export interface CloudTransportOptions {
   readonly storage: IFileSystemStorageService;
   readonly deviceId: string;
   readonly endpoint?: string;
-  readonly homeDir?: string;
-  readonly readMarker?: boolean;
+  readonly resolveEndpoint?: () => string | undefined;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;
   readonly retryBackoffsMs?: readonly number[];
@@ -47,7 +40,6 @@ export interface CloudTransportOptions {
   readonly now?: () => number;
 }
 
-export const TELEMETRY_ENDPOINT = KIMI_REGION_PROFILES['mainland-cn'].telemetryEndpoint;
 export const SERVER_EVENT_PREFIX = 'kfc_';
 export const USER_ID_PREFIX = 'kfc_device_id_';
 export const DISK_EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -61,16 +53,11 @@ const JSONL_SUFFIX = '.jsonl';
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-function defaultTelemetryEndpoint(homeDir?: string, readMarker = true): string {
-  return kimiRegionProfile(
-    resolveKimiRegion({ readMarker, homeDir }),
-  ).telemetryEndpoint;
-}
-
 export class CloudTransport {
   private readonly storage: IFileSystemStorageService;
   private readonly deviceId: string;
-  private readonly endpoint: string;
+  private readonly endpoint: string | undefined;
+  private readonly resolveEndpoint: () => string | undefined;
   private readonly getAccessToken: (() => string | null | Promise<string | null>) | null;
   private readonly fetchImpl: typeof fetch;
   private readonly retryBackoffsMs: readonly number[];
@@ -81,12 +68,8 @@ export class CloudTransport {
   constructor(options: CloudTransportOptions) {
     this.storage = options.storage;
     this.deviceId = options.deviceId;
-    this.endpoint =
-      options.endpoint ??
-      defaultTelemetryEndpoint(
-        options.homeDir,
-        options.readMarker ?? process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
-      );
+    this.endpoint = options.endpoint;
+    this.resolveEndpoint = options.resolveEndpoint ?? (() => undefined);
     this.getAccessToken = options.getAccessToken ?? null;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.retryBackoffsMs = options.retryBackoffsMs ?? RETRY_BACKOFFS_MS;
@@ -95,8 +78,14 @@ export class CloudTransport {
     this.now = options.now ?? Date.now;
   }
 
+  private currentEndpoint(): string | undefined {
+    return this.endpoint ?? this.resolveEndpoint();
+  }
+
   async send(events: readonly EnrichedCloudEvent[], signal?: AbortSignal): Promise<void> {
     if (events.length === 0) return;
+    const endpoint = this.currentEndpoint();
+    if (endpoint === undefined) return;
     let savedToDisk = false;
     const saveEventsToDisk = async (): Promise<void> => {
       if (savedToDisk) return;
@@ -118,7 +107,7 @@ export class CloudTransport {
     try {
       for (let attempt = 0; attempt <= this.retryBackoffsMs.length; attempt++) {
         try {
-          await this.sendHttp(payload, signal);
+          await this.sendHttp(payload, signal, endpoint);
           return;
         } catch (error) {
           if (isSignalAborted(signal) || isAbortError(error)) {
@@ -151,6 +140,7 @@ export class CloudTransport {
   }
 
   async retryDiskEvents(): Promise<void> {
+    const endpoint = this.currentEndpoint();
     const keys = await this.storage.list(TELEMETRY_SCOPE, FAILED_PREFIX);
     const now = this.now();
     for (const key of keys) {
@@ -162,9 +152,19 @@ export class CloudTransport {
       }
 
       let events: EnrichedCloudEvent[];
-      let payload: CloudPayload;
       try {
         events = await this.readJsonl(key);
+      } catch (error) {
+        if (error instanceof SyntaxError || error instanceof TypeError) {
+          await this.storage.delete(TELEMETRY_SCOPE, key).catch(() => undefined);
+        }
+        continue;
+      }
+
+      if (endpoint === undefined) continue;
+
+      let payload: CloudPayload;
+      try {
         payload = buildPayload(events, this.deviceId);
       } catch (error) {
         if (error instanceof SyntaxError || error instanceof TypeError) {
@@ -174,7 +174,7 @@ export class CloudTransport {
       }
 
       try {
-        await this.sendHttp(payload);
+        await this.sendHttp(payload, undefined, endpoint);
         await this.storage.delete(TELEMETRY_SCOPE, key);
       } catch (error) {
         if (error instanceof TransientCloudError) continue;
@@ -195,7 +195,11 @@ export class CloudTransport {
     return events;
   }
 
-  private async sendHttp(payload: CloudPayload, signal?: AbortSignal): Promise<void> {
+  private async sendHttp(
+    payload: CloudPayload,
+    signal: AbortSignal | undefined,
+    endpoint: string,
+  ): Promise<void> {
     const token = this.getAccessToken === null ? null : await this.getAccessToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -204,10 +208,10 @@ export class CloudTransport {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await this.post(payload, headers, signal);
+    const response = await this.post(payload, headers, signal, endpoint);
     if (response.status === 401 && headers['Authorization'] !== undefined) {
       delete headers['Authorization'];
-      const retry = await this.post(payload, headers, signal);
+      const retry = await this.post(payload, headers, signal, endpoint);
       handleStatus(retry.status);
       return;
     }
@@ -217,12 +221,13 @@ export class CloudTransport {
   private async post(
     payload: CloudPayload,
     headers: Record<string, string>,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    endpoint: string,
   ): Promise<Response> {
     try {
       return await fetchWithTimeout(
         this.fetchImpl,
-        this.endpoint,
+        endpoint,
         {
           method: 'POST',
           headers: { ...headers },

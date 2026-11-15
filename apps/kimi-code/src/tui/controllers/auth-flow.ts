@@ -1,21 +1,20 @@
 import {
-  removeProviderFromConfig,
-  type KimiConfig,
   type KimiHarness,
-  type OAuthRef,
+  type RefreshProviderModelsOptions,
+  type RefreshProviderModelsResponse,
   type Session,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { createKimiCodeUserAgent } from '#/cli/version';
-
-import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
 import {
-  refreshAllProviderModels,
-  type RefreshProviderHost,
-  type RefreshProviderScope,
-  type RefreshResult,
-} from '../utils/refresh-providers';
+  confirmThenPerformModelSwitch,
+  matchedModelSwitchRule,
+} from '../commands/config';
+import type { SlashCommandHost } from '../commands/dispatch';
+import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
+import { refreshEffortSwitchConfig } from '#/utils/effort-switch-config';
+import { refreshModelSwitchConfirmConfig } from '#/utils/model-switch-confirm-config';
+import { lazyModelSelection } from '../utils/model-switch';
 import { thinkingEffortFromConfig } from '../utils/thinking-config';
 import type { AppState, KimiTUIOptions } from '../types';
 
@@ -27,8 +26,9 @@ export interface AuthFlowHost {
   setAppState(patch: Partial<AppState>): void;
   setStartupReady(): void;
   resetSessionRuntime(): void;
+  setAuthRequired(required: boolean): void;
   appendStartupNotice(extra: string): void;
-  hydrateLazyConfigDefaults(): Promise<void>;
+  hydrateLazyConfigDefaults(includeModel?: boolean): Promise<void>;
 }
 
 export class AuthFlowController {
@@ -53,6 +53,7 @@ export class AuthFlowController {
       contextUsage: 0,
       sessionTitle: null,
     });
+    this.host.setAuthRequired(true);
     this.host.appendStartupNotice(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
     this.host.setStartupReady();
   }
@@ -76,6 +77,7 @@ export class AuthFlowController {
       if (effort !== undefined) {
         await session.setThinking(effort);
       }
+      host.setAuthRequired(false);
       return modelChanged;
     }
 
@@ -89,21 +91,32 @@ export class AuthFlowController {
       patch.lazySessionThinking = effort as ThinkingEffort;
     }
     host.setAppState(patch);
+    host.setAuthRequired(false);
     return false;
   }
 
   /**
    * Re-read config and reactivate the persisted model after login or a
-   * config-refreshing command. Returns whatever the activation reports (see
-   * {@link activateModelAfterLogin}); `false` when no activation ran.
+   * config-refreshing command. `effortOverride` is the caller's picked effort
+   * and wins over the config-derived one when the confirmation gate mounts.
+   * Returns whatever the activation reports (see {@link
+   * activateModelAfterLogin}), 'gated' when a cloud rule handed the switch to
+   * the confirmation dialog instead, and `false` when no activation ran.
    */
-  async refreshConfigAfterLogin(): Promise<boolean> {
+  async refreshConfigAfterLogin(effortOverride?: ThinkingEffort): Promise<boolean | 'gated'> {
     const { host } = this;
     const config = await host.harness.getConfig({ reload: true });
     const availableModels = config.models ?? {};
     const availableProviders = config.providers ?? {};
     const defaultModel = host.options.startup.model ?? config.defaultModel;
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
+    try {
+      const accessToken = await host.harness.auth.getCachedAccessToken();
+      await Promise.all([
+        refreshModelSwitchConfirmConfig({ accessToken }),
+        refreshEffortSwitchConfig({ accessToken }),
+      ]);
+    } catch {}
 
     if (defaultModel === undefined || selected === undefined) {
       if (host.session === undefined) {
@@ -115,10 +128,29 @@ export class AuthFlowController {
       return false;
     }
 
-    const activated = await this.activateModelAfterLogin(
-      defaultModel,
-      thinkingEffortFromConfig(config.thinking),
-    );
+    const configuredEffort = thinkingEffortFromConfig(config.thinking);
+    const slashHost = this.host as unknown as SlashCommandHost;
+    host.setAppState({ availableModels, availableProviders });
+    if (matchedModelSwitchRule(slashHost, defaultModel) !== undefined) {
+      // A matching cloud rule gates the activation exactly like a picker
+      // switch: the dialog's actions own the session switch ('session' scope —
+      // the persisted default is already in config), so this refresh must not
+      // force the model patch over the user's choice. The catalog refresh must
+      // land BEFORE the match above, or an alias introduced by this login is
+      // invisible to the matcher and the gate never fires.
+      if (host.session === undefined) await host.hydrateLazyConfigDefaults(false);
+      const targetDefaultEffort =
+        host.session === undefined ? lazyModelSelection(config, defaultModel).thinkingEffort : undefined;
+      confirmThenPerformModelSwitch(
+        slashHost,
+        defaultModel,
+        effortOverride ?? configuredEffort ?? targetDefaultEffort ?? slashHost.state.appState.thinkingEffort,
+        'session',
+      );
+      return 'gated';
+    }
+
+    const activated = await this.activateModelAfterLogin(defaultModel, configuredEffort);
     if (host.session === undefined) {
       // Session-less v2: also hydrate permission/plan defaults from the
       // refreshed config, same as startup.
@@ -163,77 +195,22 @@ export class AuthFlowController {
    * config.  Runs best-effort: individual provider failures are collected
    * and returned instead of thrown.
    */
-  async refreshProviderModels(): Promise<RefreshResult> {
-    return this.refreshProviderModelsWithScope('all');
+  async refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse> {
+    const result = await this.host.harness.refreshProviderModels(options);
+    // The engine persists provider-only config changes (type, baseUrl, …)
+    // while reporting the provider as unchanged, so reload even when no model
+    // changed.
+    await this.refreshAvailableModels();
+    return result;
   }
 
-  async refreshOAuthProviderModels(): Promise<RefreshResult> {
-    return this.refreshProviderModelsWithScope('oauth');
-  }
-
-  private async refreshProviderModelsWithScope(scope: RefreshProviderScope): Promise<RefreshResult> {
-    const result = await refreshAllProviderModels(this.buildRefreshHost(), { scope });
+  async refreshOAuthProviderModels(): Promise<RefreshProviderModelsResponse> {
+    const result = await this.host.harness.refreshProviderModels({ scope: 'oauth' });
     if (result.changed.length > 0) {
       await this.refreshAvailableModels();
     }
     return result;
-  }
-
-  /**
-   * Build the refresh orchestrator's persistence host. When the harness can
-   * persist several config sections as ONE atomic write (the v2 engine's
-   * `replaceSections`), the orchestrator's two-phase contract (removeProvider
-   * then setConfig) is absorbed the same way the v2 engine's own refresh path
-   * does it: the removal is staged in memory only, and the following
-   * setConfig persists the complete records in a single write — so a process
-   * exit mid-refresh can never leave config.toml in a "provider removed, not
-   * yet restored" state. The v1 harness keeps the legacy host (two
-   * whole-document writes, each atomic on its own).
-   */
-  private buildRefreshHost(): RefreshProviderHost {
-    const { host } = this;
-    const resolveOAuthToken = async (providerName: string, oauthRef?: OAuthRef): Promise<string> => {
-      const tokenProvider = host.harness.auth.resolveOAuthTokenProvider(providerName, oauthRef);
-      return tokenProvider.getAccessToken();
-    };
-    const userAgent = createKimiCodeUserAgent();
-    if (!host.harness.supportsAtomicSectionReplace()) {
-      return {
-        getConfig: () => host.harness.getConfig({ reload: true }),
-        removeProvider: (id) => host.harness.removeProvider(id),
-        setConfig: (patch) => host.harness.setConfig(patch),
-        resolveOAuthToken,
-        userAgent,
-      };
-    }
-    let staged: KimiConfig | undefined;
-    const requireStaged = (): KimiConfig => {
-      if (staged === undefined) {
-        throw new Error('refresh host: getConfig must be called before writes');
-      }
-      return staged;
-    };
-    return {
-      getConfig: async () => {
-        staged = await host.harness.getConfig({ reload: true });
-        return staged;
-      },
-      removeProvider: (id) => {
-        staged = removeProviderFromConfig(requireStaged(), id);
-        return Promise.resolve(staged);
-      },
-      setConfig: async (patch) => {
-        // The orchestrator always passes complete records (built from a full
-        // clone), so the Partial-shaped patch is a full KimiConfig overlay.
-        staged = { ...requireStaged(), ...patch } as KimiConfig;
-        // Object.entries keeps keys whose value is `undefined`, so a cleared
-        // section (e.g. a dangling defaultModel) is expressed as a removal in
-        // the atomic write; sections absent from the patch stay untouched.
-        await host.harness.replaceConfigSections(Object.fromEntries(Object.entries(patch)));
-        return staged;
-      },
-      resolveOAuthToken,
-      userAgent,
-    };
   }
 }

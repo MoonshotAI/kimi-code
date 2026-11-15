@@ -16,7 +16,7 @@ import { goalStatusChip } from './goal';
 import { parseGlobOutput, parseGrepOutput, searchNoticeOnly } from './grep-output';
 import { readMediaChip } from './media';
 import { nonEmptyLines } from './outcome';
-import { strArg, stripSpillPointer } from './types';
+import { isSpilledToolOutput, strArg, stripSpillPointer } from './types';
 import { waitForChip } from './wait-for';
 
 export type ChipProvider = (toolCall: ToolCallBlockData, result: ToolResultBlockData) => string;
@@ -165,4 +165,9 @@ const REGISTRY: Record<string, ChipProvider> = {
 
 export function pickChip(toolName: string): ChipProvider | undefined {
   return REGISTRY[toolName];
+}
+
+export function chipText(toolCall: ToolCallBlockData, result: ToolResultBlockData): string {
+  if (isSpilledToolOutput(result.output)) return '';
+  return pickChip(toolCall.name)?.(toolCall, result) ?? '';
 }

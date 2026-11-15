@@ -30,9 +30,6 @@ export type SessionMetadata = z.infer<typeof sessionMetadataSchema>;
 
 export const sessionAgentConfigSchema = z.object({
   model: z.string(),
-  system_prompt: z.string().optional(),
-  tools: z.array(z.string()).optional(),
-  mcp_servers: z.array(z.string()).optional(),
   thinking: promptThinkingSchema.optional(),
   permission_mode: promptPermissionModeSchema.optional(),
   plan_mode: z.boolean().optional(),
@@ -67,23 +64,8 @@ export const updateSessionProfileRequestSchema = z.object({
   title: z.string().min(1).optional(),
   metadata: sessionMetadataSchema.partial().optional(),
   agent_config: sessionAgentConfigPartialSchema.optional(),
-  permission_rules: z.array(permissionRuleSchema).optional(),
 });
 export type UpdateSessionProfileRequest = z.infer<typeof updateSessionProfileRequestSchema>;
-
-export const sessionStatusResponseSchema = z.object({
-  busy: z.boolean(),
-  model: z.string().optional(),
-  thinking_level: z.string(),
-  permission: z.string(),
-  plan_mode: z.boolean(),
-  swarm_mode: z.boolean(),
-  tower_mode: z.boolean().optional(),
-  context_tokens: z.number().int().nonnegative(),
-  max_context_tokens: z.number().int().nonnegative().optional(),
-  context_usage: z.number().min(0).max(1).optional(),
-});
-export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;
 
 export interface SessionUsage {
   input_tokens: number;

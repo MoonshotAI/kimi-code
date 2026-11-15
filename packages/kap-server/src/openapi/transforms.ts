@@ -37,13 +37,10 @@ import {
   fsRevealResponseSchema,
 } from '../protocol/rest-fs';
 import {
-  questionDismissResultSchema,
-  questionResolveRequestSchema,
-  questionResolveResultSchema,
-} from '../protocol/rest-question';
-import {
   archiveSessionResponseSchema,
+  takeoverSessionResponseSchema,
   deleteSessionResponseSchema,
+  getSessionResponseSchema,
 } from '../protocol/rest-session';
 
 const binarySchema = {
@@ -99,13 +96,6 @@ const fsActionResponseSchema = {
   ],
 } as const;
 
-const questionResponseSchema = {
-  oneOf: [
-    openApiDocumentEnvelopeJsonSchema(questionResolveResultSchema),
-    openApiDocumentEnvelopeJsonSchema(questionDismissResultSchema),
-  ],
-} as const;
-
 export function transformOpenApiDocument(
   document: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -118,7 +108,7 @@ export function transformOpenApiDocument(
   patchSessionAction(paths);
   patchFsAction(paths);
   patchFsDownload(paths);
-  patchQuestionResolveOrDismiss(paths);
+  patchWorkspaceFsContent(paths);
 
   return document;
 }
@@ -193,6 +183,14 @@ function patchSessionAction(paths: Record<string, unknown>): void {
   projectSessionAction(paths, pathItem, 'delete', 'runSessionDeleteAction', {
     description: 'Session delete response',
     content: jsonContent(openApiDocumentEnvelopeJsonSchema(deleteSessionResponseSchema)),
+  });
+  projectSessionAction(paths, pathItem, 'reload', 'runSessionReloadAction', {
+    description: 'Session reload response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(getSessionResponseSchema)),
+  });
+  projectSessionAction(paths, pathItem, 'takeover', 'runSessionTakeoverAction', {
+    description: 'Session lock takeover response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(takeoverSessionResponseSchema)),
   });
   delete paths[internalPath];
 }
@@ -271,24 +269,22 @@ function patchFsDownload(paths: Record<string, unknown>): void {
       etag: headerString(),
     },
   });
+  setRawDownloadErrorResponses(operation);
 }
 
-function patchQuestionResolveOrDismiss(paths: Record<string, unknown>): void {
-  const operation = getOperation(paths, '/api/v1/sessions/{session_id}/questions/{tail}', 'post');
+function patchWorkspaceFsContent(paths: Record<string, unknown>): void {
+  const operation = getOperation(paths, '/api/v1/fs:content', 'get');
   if (operation === undefined) return;
+  setRawDownloadErrorResponses(operation);
+}
 
-  operation['description'] = appendDescription(
-    operation['description'],
-    'Resolve uses the question response body; `:dismiss` sends an empty body.',
-  );
-  operation['requestBody'] = {
-    required: false,
-    content: jsonContent(openApiDocumentJsonSchema(questionResolveRequestSchema)),
-  };
-  setResponse(operation, '200', {
-    description: 'Question resolved or dismissed',
-    content: jsonContent(questionResponseSchema),
-  });
+function setRawDownloadErrorResponses(operation: Record<string, unknown>): void {
+  for (const status of ['400', '403', '404', '409', '413', '500']) {
+    setResponse(operation, status, {
+      description: 'File download failed',
+      content: jsonContent(errorEnvelopeSchema),
+    });
+  }
 }
 
 function getOperation(

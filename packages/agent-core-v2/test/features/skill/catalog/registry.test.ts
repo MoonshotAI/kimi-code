@@ -92,6 +92,26 @@ describe('InMemorySkillCatalog skill listing', () => {
     expect(rendered).not.toContain('builtin version');
   });
 
+  it('keeps same-name variants available for explicit path selection', () => {
+    const primary = {
+      ...makeSkill('foo', 'project', 'primary', '/tmp/primary/foo/SKILL.md'),
+      workspaceDir: '/tmp/primary',
+    };
+    const secondary = {
+      ...makeSkill('foo', 'project', 'secondary', '/tmp/secondary/foo/SKILL.md'),
+      workspaceDir: '/tmp/secondary',
+    };
+    const registry = makeRegistry([primary]);
+    registry.registerVariants([primary, secondary], { replace: true });
+
+    expect(registry.getSkill('foo')?.description).toBe('primary');
+    expect(registry.getSkill('foo', secondary.path)?.description).toBe('secondary');
+    expect(registry.getSkill('foo', '/tmp/missing/SKILL.md')).toBeUndefined();
+    expect(registry.listSkills().map((skill) => skill.description)).toEqual(['primary', 'secondary']);
+    expect(registry.listDefaultSkills().map((skill) => skill.description)).toEqual(['primary']);
+    expect(registry.getModelSkillListing()).toContain('Workspace: /tmp/secondary');
+  });
+
   it('registerBuiltinSkill stamps non-builtin skills as builtin', () => {
     const registry = new InMemorySkillCatalog();
     registry.registerBuiltinSkill(makeSkill('theme', 'user'));
@@ -105,7 +125,7 @@ describe('InMemorySkillCatalog skill listing', () => {
 });
 
 describe('InMemorySkillCatalog model skill listing', () => {
-  it('lists only model-invocable inline skills', () => {
+  it('lists only model-invocable inline skills without file-loading paths', () => {
     const registry = makeRegistry([
       makeSkill('review', 'user', 'Review code', undefined, {
         type: 'prompt',
@@ -123,10 +143,23 @@ describe('InMemorySkillCatalog model skill listing', () => {
     expect(rendered).toContain('DISREGARD any earlier skill listings');
     expect(rendered).toContain('- review: Review code');
     expect(rendered).toContain('  When to use: When reviewing changes.');
-    expect(rendered).toContain('  Path: /tmp/user/review/SKILL.md');
+    expect(rendered).not.toContain('Path:');
+    expect(rendered).not.toContain('/tmp/user/review/SKILL.md');
     expect(rendered).not.toContain('private');
     expect(rendered).not.toContain('flow-only');
     expect(rendered).not.toContain('sub-step');
+  });
+
+  it('lists skill roots after the skills', () => {
+    const registry = makeRegistry([makeSkill('review', 'user')]);
+    registry.addRoots(['/tmp/project/.agents/skills', '/tmp/user/skills']);
+
+    const rendered = registry.getModelSkillListing();
+    const rootsIdx = rendered.indexOf('### Skill roots');
+
+    expect(rootsIdx).toBeGreaterThan(rendered.indexOf('- review: desc'));
+    expect(rendered.slice(rootsIdx)).toContain('- `/tmp/project/.agents/skills`');
+    expect(rendered.slice(rootsIdx)).toContain('- `/tmp/user/skills`');
   });
 
   it('returns an empty string when no skills are model-invocable', () => {
@@ -136,6 +169,7 @@ describe('InMemorySkillCatalog model skill listing', () => {
       }),
       makeSkill('flow-only', 'user', 'Flow', undefined, { type: 'flow' }),
     ]);
+    registry.addRoots(['/tmp/user/skills']);
 
     expect(registry.getModelSkillListing()).toBe('');
   });
@@ -340,7 +374,73 @@ describe('InMemorySkillCatalog plugin lookup', () => {
     });
   });
 
-  it('replaces both global and plugin indexes when requested', () => {
+  it('keeps same-named skills from different plugins visible under qualified names only', () => {
+    const registry = makeRegistry([
+      makeSkill('lark-doc', 'extra', 'from plugin a', undefined, {}, { id: 'plugin-a' }),
+      makeSkill('lark-doc', 'extra', 'from plugin b', undefined, {}, { id: 'plugin-b' }),
+    ]);
+
+    expect(registry.getSkill('lark-doc')).toBeUndefined();
+    expect(registry.getSkill('plugin-a:lark-doc')).toMatchObject({
+      description: 'from plugin a',
+    });
+    expect(registry.getSkill('plugin-b:lark-doc')).toMatchObject({
+      description: 'from plugin b',
+    });
+
+    const rendered = registry.getModelSkillListing();
+    expect(rendered).toContain('- plugin-a:lark-doc: from plugin a');
+    expect(rendered).toContain('- plugin-b:lark-doc: from plugin b');
+  });
+
+  it('does not let plugin skills shadow bare names from other sources', () => {
+    const registry = makeRegistry([
+      makeSkill('review', 'extra', 'from plugin', undefined, {}, { id: 'superpowers' }),
+      makeSkill('review', 'project', 'from project'),
+    ]);
+
+    expect(registry.getSkill('review')).toMatchObject({
+      description: 'from project',
+      source: 'project',
+    });
+    expect(registry.getSkill('superpowers:review')).toMatchObject({ description: 'from plugin' });
+  });
+
+  it('keeps plugin context on the qualified entry so instructions injection still works', () => {
+    const registry = makeRegistry([
+      makeSkill('brainstorm', 'extra', 'from plugin', undefined, {}, {
+        id: 'superpowers',
+        instructions: 'Use AskUserQuestion.',
+      }),
+    ]);
+
+    const skill = registry.getSkill('superpowers:brainstorm');
+    if (skill === undefined) throw new Error('qualified plugin skill missing');
+    expect(skill).toMatchObject({
+      name: 'superpowers:brainstorm',
+      plugin: { id: 'superpowers' },
+    });
+    expect(registry.renderSkillPrompt(skill, '')).toContain(
+      '<plugin-instructions plugin="superpowers">',
+    );
+    expect(registry.getPluginSkill('superpowers', 'brainstorm')?.name).toBe('brainstorm');
+  });
+
+  it('stays idempotent when a merged catalog re-registers listed skills', () => {
+    const base = makeRegistry([
+      makeSkill('lark-doc', 'extra', 'from plugin', undefined, {}, { id: 'lark' }),
+    ]);
+
+    const merged = new InMemorySkillCatalog();
+    for (const skill of base.listSkills()) merged.register(skill, { replace: true });
+
+    expect(merged.getSkill('lark:lark-doc')).toMatchObject({ description: 'from plugin' });
+    expect(merged.getSkill('lark:lark:lark-doc')).toBeUndefined();
+    expect(merged.getPluginSkill('lark', 'lark-doc')?.name).toBe('lark-doc');
+    expect(merged.listSkills().filter((skill) => skill.name === 'lark:lark-doc')).toHaveLength(1);
+  });
+
+  it('replaces both the qualified-name and plugin indexes when requested', () => {
     const registry = new InMemorySkillCatalog();
     registry.register(
       makeSkill('review', 'extra', 'first', undefined, {}, {
@@ -354,7 +454,8 @@ describe('InMemorySkillCatalog plugin lookup', () => {
       { replace: true },
     );
 
-    expect(registry.getSkill('review')).toMatchObject({ description: 'second' });
+    expect(registry.getSkill('review')).toBeUndefined();
+    expect(registry.getSkill('superpowers:review')).toMatchObject({ description: 'second' });
     expect(registry.getPluginSkill('superpowers', 'review')).toMatchObject({
       description: 'second',
     });

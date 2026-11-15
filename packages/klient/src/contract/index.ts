@@ -15,9 +15,8 @@ import {
   agentMcpContract,
   agentPermissionModeContract,
   agentPlanContract,
-  agentRuntimeBindingContract,
+  agentEnvironmentBindingContract,
   agentProfileContract,
-  agentPromptContract,
   agentShellCommandContract,
   agentSkillContract,
   agentTaskContract,
@@ -28,6 +27,7 @@ import { authContract, authSummaryContract } from './global/auth.js';
 import { capabilitiesContract } from './global/capabilities.js';
 import { catalogContract } from './global/catalog.js';
 import { providerDiscoveryContract } from './global/providerDiscovery.js';
+import { registryImportContract } from './global/registryImport.js';
 import { configContract } from './global/config.js';
 import { envContract } from './global/env.js';
 import { filesContract } from './global/files.js';
@@ -45,6 +45,7 @@ import { sessionInteractionContract } from './session/interaction.js';
 import { sessionManagerContract } from './session/lifecycle.js';
 import { sessionMetadataContract } from './session/metadata.js';
 import { sessionQuestionContract } from './session/question.js';
+import { sessionPromptPredictionContract } from './session/promptPrediction.js';
 import { sessionSkillCatalogContract } from './session/skills.js';
 import { sessionTitleContract } from './session/title.js';
 
@@ -57,6 +58,7 @@ export const globalContract: KlientContract = {
   modelService: modelsContract,
   modelResolver: catalogContract,
   providerDiscovery: providerDiscoveryContract,
+  modelsDevImport: registryImportContract,
   oauthService: authContract,
   authSummaryService: authSummaryContract,
   flagService: flagsContract,
@@ -72,16 +74,16 @@ export const globalContract: KlientContract = {
   sessionInteractionService: sessionInteractionContract,
   sessionApprovalService: sessionApprovalContract,
   sessionQuestionService: sessionQuestionContract,
+  sessionPromptPredictionService: sessionPromptPredictionContract,
   sessionSkillCatalog: sessionSkillCatalogContract,
   sessionTitleService: sessionTitleContract,
   sessionActivityView: sessionActivityViewContract,
   // agent scope
-  agentPromptService: agentPromptContract,
   agentSkillService: agentSkillContract,
   agentLoopService: agentLoopContract,
   agentPermissionModeService: agentPermissionModeContract,
   agentCommandService: agentCommandContract,
-  agentRuntimeBindingService: agentRuntimeBindingContract,
+  agentEnvironmentBindingService: agentEnvironmentBindingContract,
   agentContextMemoryService: agentContextMemoryContract,
   agentTokenCountingService: agentTokenCountingContract,
   agentShellCommandService: agentShellCommandContract,

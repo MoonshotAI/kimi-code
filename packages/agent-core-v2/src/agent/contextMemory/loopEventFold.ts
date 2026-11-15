@@ -1,16 +1,21 @@
-import { isDraft, original } from 'immer';
+import { freeze, isDraft, original } from 'immer';
 
-import type { FinishReason } from '#human/llm/finish-reason';
-import { createToolMessage } from '#/llm-adapter/contract/message';
-import type { ContentPart, ToolCall } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import { createToolMessage, type ContentPart, type ToolCall } from '@moonshot-ai/core/llm/message';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import type { ContextMessage } from './types';
+import type { ContextMessage, ContextMessageTiming } from './types';
 import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
+
+export interface AssistantSealMeta {
+  readonly usage?: TokenUsage;
+  readonly llmTiming?: ContextMessageTiming;
+  readonly providerMessageId?: string;
+}
 
 export type LoopRecordedEvent =
   | {
@@ -41,6 +46,9 @@ export type LoopRecordedEvent =
       readonly type: 'content.part';
       readonly stepUuid: string;
       readonly part: ContentPart;
+      readonly block?: number;
+      readonly startedAt?: number;
+      readonly durationMs?: number;
       readonly uuid?: string;
       readonly turnId?: string;
       readonly step?: number;
@@ -49,6 +57,7 @@ export type LoopRecordedEvent =
       readonly type: 'tool.call';
       readonly stepUuid: string;
       readonly toolCallId: string;
+      readonly rawId?: string;
       readonly name: string;
       readonly args?: unknown;
       readonly extras?: Record<string, unknown>;
@@ -64,6 +73,7 @@ export type LoopRecordedEvent =
         readonly output: string | readonly ContentPart[];
         readonly isError?: boolean;
         readonly note?: string;
+        readonly durationMs?: number;
       };
       readonly parentUuid?: string;
     };
@@ -73,7 +83,7 @@ export interface LoopEventFoldSink {
   appendOpenContent(part: ContentPart): void;
   appendOpenToolCall(call: ToolCall, display?: ToolInputDisplay): void;
   dropOpenAssistant(): void;
-  sealOpenAssistant(): void;
+  sealOpenAssistant(meta?: AssistantSealMeta): void;
   pushToolMessage(message: ContextMessage, time: number | undefined): void;
   pushMessage(message: ContextMessage, time: number | undefined): void;
 }
@@ -92,7 +102,7 @@ export function createLoopEventFold(sink: LoopEventFoldSink): LoopEventFold {
 interface InitialFoldState {
   readonly openHasToolCalls: boolean;
   readonly openVacuous: boolean;
-  readonly pendingToolCallIds: readonly string[];
+  readonly pendingToolCalls: readonly { readonly id: string; readonly name: string }[];
 }
 
 function createLoopEventFoldWithState(
@@ -102,7 +112,9 @@ function createLoopEventFoldWithState(
   let openStepUuid: string | null | undefined = initial === undefined ? undefined : null;
   let openHasToolCalls = initial?.openHasToolCalls ?? false;
   let openVacuous = initial?.openVacuous ?? true;
-  const pending = new Set(initial?.pendingToolCallIds);
+  const pending = new Map<string, string>(
+    initial?.pendingToolCalls.map((call) => [call.id, call.name]),
+  );
   let deferred: { message: ContextMessage; time: number | undefined }[] = [];
 
   const flushDeferred = (): void => {
@@ -112,19 +124,22 @@ function createLoopEventFoldWithState(
   };
   const closePending = (time: number | undefined): void => {
     if (pending.size === 0) return;
-    for (const toolCallId of pending) {
-      sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
+    for (const toolCallId of pending.keys()) {
+      const hasRecordedResult = deferred.some(
+        (entry) => entry.message.role === 'tool' && entry.message.toolCallId === toolCallId,
+      );
+      if (!hasRecordedResult) sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
     }
     pending.clear();
     flushDeferred();
   };
-  const settleOpen = (time: number | undefined): void => {
+  const settleOpen = (time: number | undefined, meta?: AssistantSealMeta): void => {
     if (openStepUuid === undefined) return;
     closePending(time);
     if (!openHasToolCalls && openVacuous) {
       sink.dropOpenAssistant();
     } else {
-      sink.sealOpenAssistant();
+      sink.sealOpenAssistant(meta);
     }
     openStepUuid = undefined;
   };
@@ -156,8 +171,7 @@ function createLoopEventFoldWithState(
           return;
         }
         case 'step.end': {
-          if (event.finishReason === 'interrupted' || event.finishReason === 'error') return;
-          settleOpen(time);
+          settleOpen(time, stepEndSealMeta(event));
           flushDeferred();
           return;
         }
@@ -174,10 +188,11 @@ function createLoopEventFoldWithState(
             id: event.toolCallId,
             name: event.name,
             arguments: event.args === undefined ? null : JSON.stringify(event.args),
-            ...(event.extras !== undefined ? { extras: event.extras } : {}),
+            extras: event.extras,
+            rawId: event.rawId,
           };
           sink.appendOpenToolCall(call, event.display);
-          pending.add(event.toolCallId);
+          pending.set(event.toolCallId, event.name);
           openHasToolCalls = true;
           return;
         }
@@ -193,6 +208,7 @@ function createLoopEventFoldWithState(
               ),
               isError: event.result.isError,
               note: event.result.note,
+              durationMs: event.result.durationMs,
             },
             time,
           );
@@ -215,13 +231,14 @@ function createLoopEventFoldWithState(
   };
 }
 
-interface ImmutableFoldSink extends LoopEventFoldSink {
+interface FoldSink extends LoopEventFoldSink {
   current(): readonly ContextMessage[];
+  setMutable(mutable: boolean): void;
 }
 
 interface BoundFold {
   readonly fold: LoopEventFold;
-  readonly sink: ImmutableFoldSink;
+  readonly sink: FoldSink;
 }
 
 const boundFoldMap = new WeakMap<object, BoundFold>();
@@ -229,8 +246,10 @@ const boundFoldMap = new WeakMap<object, BoundFold>();
 export function foldAppendMessage(
   state: readonly ContextMessage[],
   message: ContextMessage,
+  mutable = false,
 ): readonly ContextMessage[] {
-  const bound = boundOf(state);
+  const bound = boundOf(state, mutable);
+  bound.sink.setMutable(mutable);
   bound.fold.appendMessage(message, undefined);
   return bind(bound, bound.sink.current());
 }
@@ -238,23 +257,31 @@ export function foldAppendMessage(
 export function foldLoopEvent(
   state: readonly ContextMessage[],
   event: LoopRecordedEvent,
+  mutable = false,
 ): readonly ContextMessage[] {
-  const bound = boundOf(state);
+  const bound = boundOf(state, mutable);
+  bound.sink.setMutable(mutable);
   bound.fold.loopEvent(event, undefined);
   return bind(bound, bound.sink.current());
 }
 
+export function foldSettle(state: readonly ContextMessage[]): readonly ContextMessage[] {
+  const bound = boundOf(state, false);
+  bound.fold.settle(undefined);
+  return bind(bound, bound.sink.current());
+}
+
 export function resetFold(state: readonly ContextMessage[]): readonly ContextMessage[] {
-  const sink = createImmutableFoldSink(state);
+  const sink = createFoldSink(state, false);
   boundFoldMap.set(state, { fold: createLoopEventFold(sink), sink });
   return state;
 }
 
-function boundOf(state: readonly ContextMessage[]): BoundFold {
+function boundOf(state: readonly ContextMessage[], mutable: boolean): BoundFold {
   const key = keyOf(state);
   let bound = boundFoldMap.get(key);
   if (bound === undefined || bound.sink.current() !== key) {
-    const sink = createImmutableFoldSink(key);
+    const sink = createFoldSink(key, mutable);
     bound = { fold: createLoopEventFoldWithState(sink, recoverFoldState(key)), sink };
     boundFoldMap.set(key, bound);
   }
@@ -271,48 +298,87 @@ function keyOf(state: readonly ContextMessage[]): readonly ContextMessage[] {
   return (isDraft(state) ? original(state as any) : state) as readonly ContextMessage[];
 }
 
-function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableFoldSink {
-  let current = initial;
+function createFoldSink(initial: readonly ContextMessage[], initialMutable: boolean): FoldSink {
+  let current: readonly ContextMessage[] = initial;
+  let mutable = false;
+  const setMutable = (next: boolean): void => {
+    mutable = next;
+    if (mutable && Object.isFrozen(current)) current = [...current];
+  };
+  setMutable(initialMutable);
   let openIndex = findOpenAssistantIndex(initial);
   const updateOpen = (update: (message: ContextMessage) => ContextMessage): void => {
     if (openIndex === -1) return;
+    if (mutable) {
+      (current as ContextMessage[])[openIndex] = update(current[openIndex]!);
+      return;
+    }
     const next = current.slice();
-    next[openIndex] = update(next[openIndex]!);
-    current = next;
+    next[openIndex] = freeze(update(next[openIndex]!), true);
+    current = Object.freeze(next);
   };
   return {
     current: () => current,
+    setMutable,
     openAssistant: () => {
-      current = [...current, { role: 'assistant', content: [], toolCalls: [], partial: true }];
+      if (mutable) {
+        (current as ContextMessage[]).push({ role: 'assistant', content: [], toolCalls: [], partial: true });
+      } else {
+        current = Object.freeze([
+          ...current,
+          freeze<ContextMessage>({ role: 'assistant', content: [], toolCalls: [], partial: true }, true),
+        ]);
+      }
       openIndex = current.length - 1;
     },
     appendOpenContent: (part) => {
       updateOpen((message) => ({ ...message, content: [...message.content, part] }));
     },
     appendOpenToolCall: (call, display) => {
-      updateOpen((message) => ({
-        ...message,
-        toolCalls: [...message.toolCalls, call],
-        toolCallDisplays:
-          display === undefined
-            ? message.toolCallDisplays
-            : { ...message.toolCallDisplays, [call.id]: display },
-      }));
+      updateOpen((message) => {
+        if (message.role !== 'assistant') return message;
+        return {
+          ...message,
+          toolCalls: [...message.toolCalls, call],
+          toolCallDisplays:
+            display === undefined
+              ? message.toolCallDisplays
+              : { ...message.toolCallDisplays, [call.id]: display },
+        };
+      });
     },
     dropOpenAssistant: () => {
       if (openIndex === -1) return;
-      current = [...current.slice(0, openIndex), ...current.slice(openIndex + 1)];
+      if (mutable) {
+        (current as ContextMessage[]).splice(openIndex, 1);
+      } else {
+        current = Object.freeze([...current.slice(0, openIndex), ...current.slice(openIndex + 1)]);
+      }
       openIndex = -1;
     },
-    sealOpenAssistant: () => {
-      updateOpen((message) => ({ ...message, partial: undefined }));
+    sealOpenAssistant: (meta) => {
+      updateOpen((message) => ({
+        ...message,
+        usage: meta?.usage,
+        llmTiming: meta?.llmTiming,
+        providerMessageId: meta?.providerMessageId,
+        partial: undefined,
+      }));
       openIndex = -1;
     },
     pushToolMessage: (message) => {
-      current = [...current, message];
+      if (mutable) {
+        (current as ContextMessage[]).push(message);
+      } else {
+        current = Object.freeze([...current, freeze(message, true)]);
+      }
     },
     pushMessage: (message) => {
-      current = [...current, message];
+      if (mutable) {
+        (current as ContextMessage[]).push(message);
+      } else {
+        current = Object.freeze([...current, freeze(message, true)]);
+      }
     },
   };
 }
@@ -328,6 +394,7 @@ function recoverFoldState(state: readonly ContextMessage[]): InitialFoldState | 
   const openIndex = findOpenAssistantIndex(state);
   if (openIndex === -1) return undefined;
   const open = state[openIndex]!;
+  if (open.role !== 'assistant') return undefined;
   const resolvedToolCallIds = new Set<string>();
   for (let i = openIndex + 1; i < state.length; i++) {
     const message = state[i]!;
@@ -338,9 +405,9 @@ function recoverFoldState(state: readonly ContextMessage[]): InitialFoldState | 
   return {
     openHasToolCalls: open.toolCalls.length > 0,
     openVacuous: open.content.every(isVacuousContentPart),
-    pendingToolCallIds: open.toolCalls
-      .map((call) => call.id)
-      .filter((toolCallId) => !resolvedToolCallIds.has(toolCallId)),
+    pendingToolCalls: open.toolCalls
+      .filter((call) => !resolvedToolCallIds.has(call.id))
+      .map((call) => ({ id: call.id, name: call.name })),
   };
 }
 
@@ -348,5 +415,21 @@ function interruptedToolMessage(toolCallId: string): ContextMessage {
   return {
     ...createToolMessage(toolCallId, TOOL_INTERRUPTED_ON_RESUME_OUTPUT),
     isError: true,
+  };
+}
+
+function stepEndSealMeta(
+  event: Extract<LoopRecordedEvent, { type: 'step.end' }>,
+): AssistantSealMeta | undefined {
+  const timing: ContextMessageTiming = {
+    llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,
+    llmStreamDurationMs: event.llmStreamDurationMs,
+  };
+  const hasTiming = Object.values(timing).some((value) => value !== undefined);
+  if (event.usage === undefined && !hasTiming && event.messageId === undefined) return undefined;
+  return {
+    usage: event.usage,
+    llmTiming: hasTiming ? timing : undefined,
+    providerMessageId: event.messageId,
   };
 }

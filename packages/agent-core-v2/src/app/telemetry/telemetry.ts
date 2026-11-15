@@ -29,6 +29,7 @@ export interface ITelemetryAppender {
 export interface ITelemetryService {
   readonly _serviceBrand: undefined;
 
+  track(event: string, properties?: TelemetryProperties): void;
   track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
     event: K,
     properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
@@ -53,6 +54,7 @@ const EMPTY_CONTEXT: Readonly<TelemetryContextPatch> = Object.freeze({});
 
 export const noopTelemetryService: ITelemetryService = {
   _serviceBrand: undefined,
+  track: () => {},
   track2: () => {},
   withContext: () => noopTelemetryService,
   setContext: () => {},

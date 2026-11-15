@@ -11,6 +11,10 @@ export const TowerInboxToolInputSchema = z
       .positive()
       .optional()
       .describe('Max messages to return (default 20), newest first'),
+    include_read: z
+      .boolean()
+      .optional()
+      .describe('Include previously acknowledged messages for history lookup; only returned messages are acknowledged'),
   })
   .strict();
 

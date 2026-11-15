@@ -1,13 +1,14 @@
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/core/llm/origin';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
 } from '#/agent/prompt/promptMetadataText';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 
 import {
   IAgentTitlePromptSource,
@@ -20,8 +21,8 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentPromptService private readonly prompt: IAgentPromptService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
   ) {}
 
   async firstUserPrompts(limit: number): Promise<readonly string[]> {
@@ -83,10 +84,21 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   }
 
   private combinedMessages(): ContextMessage[] {
-    const queue = this.prompt.list();
-    const all = [...this.context.get()];
-    if (queue.active !== undefined) all.push(queue.active.message);
-    for (const item of queue.pending) all.push(item.message);
+    const snapshot = this.loop.snapshot();
+    const all = [...this.context.history()];
+    const activeHandle =
+      snapshot.activePromptId === undefined
+        ? undefined
+        : this.loop.promptHandle(snapshot.activePromptId);
+    if (activeHandle !== undefined) all.push(activeHandle.message);
+    for (const item of snapshot.queue) {
+      if (item.attributes?.origin?.kind !== 'user') continue;
+      all.push({
+        role: 'user',
+        content: [...item.content],
+        origin: item.attributes?.origin as PromptOrigin | undefined,
+      });
+    }
     return all;
   }
 }
@@ -98,9 +110,13 @@ function isNaturalLanguagePrompt(message: ContextMessage): boolean {
 }
 
 function promptMetadataTextFromUserMessage(message: ContextMessage): string | undefined {
-  const bundled = message.origin?.kind === 'user' ? (message.origin.skillActivations?.length ?? 0) : 0;
+  const bundled =
+    message.origin?.kind === 'user' ? (message.origin.skillActivations ?? []) : [];
   return promptMetadataTextFromContentParts(
-    bundled === 0 ? message.content : message.content.slice(bundled),
+    annotateBundledSkillParts(message.content, bundled).filter(
+      (part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part),
+    ),
+    message.origin?.kind === 'user' ? message.origin.clientMetadata : undefined,
   );
 }
 

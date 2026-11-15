@@ -1,4 +1,4 @@
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -45,7 +45,6 @@ describe('token estimates for media content parts', () => {
     const estimate = estimateTokensForMessage({
       role: 'user',
       content: [{ type: 'text', text: 'see screenshot' }, imagePart],
-      toolCalls: [],
     });
 
     expect(estimate).toBeGreaterThan(100);

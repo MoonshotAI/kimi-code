@@ -23,12 +23,17 @@ import {
   listSessionIds,
   listWorkspaceIds,
   mapBounded,
+  readSessionScanCache,
   readSessionSummary,
+  statSessionStateFile,
   summaryEquals,
+  writeSessionScanCache,
+  type SessionScanCacheEntry,
 } from './sessionIndexSource';
 
-const WRITE_CHUNK = 500;
+const WRITE_CHUNK = 4096;
 const SCAN_CONCURRENCY = 16;
+const STAT_CONCURRENCY = 64;
 const SHARED_SCAN_REUSE_MS = 30_000;
 
 export interface SessionIndexProjectorDeps {
@@ -37,6 +42,7 @@ export interface SessionIndexProjectorDeps {
   readonly queryStore: IQueryStore;
   readonly log: ILogService;
   readonly sessionsScope: string;
+  readonly primaryByWorkspace: () => Promise<Readonly<Record<string, string>>>;
 }
 
 export interface ProjectionResult {
@@ -54,6 +60,8 @@ export interface AuthoritativeScan {
   readonly summaries: SessionSummary[];
   readonly counts: Map<string, { active: number; archived: number }>;
   readonly sourceSessionCount: number;
+  readonly workspaceSignals?: Record<string, number>;
+  readonly primaryByWorkspace: Readonly<Record<string, string>>;
 }
 
 interface ScanSlot {
@@ -120,7 +128,7 @@ export class SessionIndexProjector {
       field: `custom.${PARENT_SESSION_ID_KEY}`,
     });
 
-    const { summaries, counts, sourceSessionCount } = await scan;
+    const { summaries, counts, sourceSessionCount, workspaceSignals, primaryByWorkspace } = await scan;
     await this.batchChunks(
       summaries.map((summary) => ({
         kind: 'put' as const,
@@ -137,6 +145,8 @@ export class SessionIndexProjector {
         seq: generation,
         sourceSessionCount,
         schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
+        workspaceSignals,
+        workspacePrimaries: primaryByWorkspace,
       },
       epoch,
     );
@@ -170,8 +180,14 @@ export class SessionIndexProjector {
     const changed = dirtyMarkSessionIds(marks);
 
     const workspaceIds = await listWorkspaceIds(storage, sessionsScope);
+    const primaryByWorkspace = await this.deps.primaryByWorkspace();
     const authoritative = new Map<string, string>();
+    const workspaceSignals: Record<string, number> = {};
+    let signalsComplete = true;
     for (const workspaceId of workspaceIds) {
+      const signal = await storage.mtime(sessionsScope, workspaceId);
+      if (signal === undefined) signalsComplete = false;
+      else workspaceSignals[workspaceId] = signal;
       for (const sessionId of await listSessionIds(storage, sessionsScope, workspaceId)) {
         authoritative.set(sessionId, workspaceId);
       }
@@ -195,7 +211,13 @@ export class SessionIndexProjector {
       const summary =
         workspaceId === undefined
           ? undefined
-          : await readSessionSummary(docs, sessionsScope, workspaceId, sessionId);
+          : await readSessionSummary(
+              docs,
+              sessionsScope,
+              workspaceId,
+              sessionId,
+              primaryByWorkspace[workspaceId],
+            );
       if (summary === undefined) {
         if (olds.get(sessionId) !== undefined) {
           removals.push({ kind: 'delete', collection, key: sessionId });
@@ -264,6 +286,8 @@ export class SessionIndexProjector {
           seq: generation,
           sourceSessionCount: authoritative.size,
           schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
+          workspaceSignals: signalsComplete ? workspaceSignals : undefined,
+          workspacePrimaries: primaryByWorkspace,
         },
         epoch,
       );
@@ -282,16 +306,58 @@ export class SessionIndexProjector {
 
   private async scanAuthoritative(): Promise<AuthoritativeScan> {
     const { storage, docs, sessionsScope } = this.deps;
+    const primaryByWorkspace = await this.deps.primaryByWorkspace();
+    const cache = await readSessionScanCache(storage, sessionsScope);
+    const nextCache = new Map<string, SessionScanCacheEntry>();
     const summaries: SessionSummary[] = [];
     const counts = new Map<string, { active: number; archived: number }>();
+    const workspaceSignals: Record<string, number> = {};
+    let signalsComplete = true;
     let sourceSessionCount = 0;
     for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
+      const signal = await storage.mtime(sessionsScope, workspaceId);
+      if (signal === undefined) signalsComplete = false;
+      else workspaceSignals[workspaceId] = signal;
       const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
       sourceSessionCount += sessionIds.length;
-      const found = await mapBounded(sessionIds, SCAN_CONCURRENCY, async (sessionId) =>
-        readSessionSummary(docs, sessionsScope, workspaceId, sessionId),
-      );
+      const checks = await mapBounded(sessionIds, STAT_CONCURRENCY, async (sessionId) => {
+        const cached = cache.get(sessionId);
+        const stat = await statSessionStateFile(storage, sessionsScope, workspaceId, sessionId);
+        if (stat === undefined) return undefined;
+        const hit =
+          cached !== undefined &&
+          cached.ws === workspaceId &&
+          cached.meta === stat.meta &&
+          cached.mtimeMs === stat.mtimeMs &&
+          cached.size === stat.size &&
+          cached.primaryDir === primaryByWorkspace[workspaceId];
+        return { sessionId, stat, cached: hit ? cached : undefined };
+      });
       const entry = counts.get(workspaceId) ?? { active: 0, archived: 0 };
+      const found = await mapBounded(checks, SCAN_CONCURRENCY, async (check) => {
+        if (check === undefined) return undefined;
+        if (check.cached !== undefined) {
+          nextCache.set(check.sessionId, check.cached);
+          return check.cached.summary;
+        }
+        const summary = await readSessionSummary(
+          docs,
+          sessionsScope,
+          workspaceId,
+          check.sessionId,
+          primaryByWorkspace[workspaceId],
+        );
+        if (summary === undefined) return undefined;
+        nextCache.set(check.sessionId, {
+          ws: workspaceId,
+          meta: check.stat.meta,
+          mtimeMs: check.stat.mtimeMs,
+          size: check.stat.size,
+          primaryDir: primaryByWorkspace[workspaceId],
+          summary,
+        });
+        return summary;
+      });
       for (const summary of found) {
         summaries.push(summary);
         if (summary.archived) entry.archived += 1;
@@ -299,7 +365,18 @@ export class SessionIndexProjector {
       }
       counts.set(workspaceId, entry);
     }
-    return { summaries, counts, sourceSessionCount };
+    try {
+      await writeSessionScanCache(storage, sessionsScope, nextCache);
+    } catch (error) {
+      this.deps.log.warn('session index scan cache write failed', { error: String(error) });
+    }
+    return {
+      summaries,
+      counts,
+      sourceSessionCount,
+      workspaceSignals: signalsComplete ? workspaceSignals : undefined,
+      primaryByWorkspace,
+    };
   }
 
   private async writeCounters(

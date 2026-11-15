@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { promptForForcedUpgradeChoice, remainingSkipSeconds } from '#/cli/update/forced-prompt';
 
 import {
   createInstallPromptChoices,
@@ -11,7 +13,10 @@ import {
 
 describe('install prompt helpers', () => {
   it('defaults the selection to "Install update now"', () => {
-    const choices = createInstallPromptChoices({ version: '0.0.2-beta.1' });
+    const choices = createInstallPromptChoices({
+      kind: 'upgrade',
+      target: { channel: 'stable', version: '0.0.2-beta.1' },
+    });
 
     expect(getDefaultInstallPromptSelection(choices)).toBe(0);
     expect(choices[0]).toEqual({
@@ -24,6 +29,19 @@ describe('install prompt helpers', () => {
     });
   });
 
+  it('offers a bidirectional channel switch without calling it a downgrade', () => {
+    const choices = createInstallPromptChoices({
+      kind: 'switch-channel',
+      sourceChannel: 'stable',
+      target: { channel: 'canary', version: '2.3.3-canary.20261028012345-0123456' },
+    });
+
+    expect(choices).toEqual([
+      { value: 'install', label: 'Switch to canary now (2.3.3-canary.20261028012345-0123456)' },
+      { value: 'skip', label: 'Stay on stable' },
+    ]);
+  });
+
   it('moves selection with arrow directions and clamps at the edges', () => {
     expect(moveInstallPromptSelection(1, 'up', 2)).toBe(0);
     expect(moveInstallPromptSelection(0, 'up', 2)).toBe(0);
@@ -33,7 +51,7 @@ describe('install prompt helpers', () => {
 });
 
 describe('promptForInstallChoice', () => {
-  it('renders changelog hyperlink in the prompt output', async () => {
+  it('renders the changelog, source channel, target channel, and versions', async () => {
     const CHANGELOG_URL = 'https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html';
 
     const input = Object.assign(new EventEmitter(), {
@@ -52,21 +70,85 @@ describe('promptForInstallChoice', () => {
     } as NodeJS.WriteStream;
 
     const promptPromise = promptForInstallChoice({
-      currentVersion: '0.4.0',
-      target: { version: '0.5.0' },
-      installCommand: 'npm install -g @moonshot-ai/kimi-code@0.5.0',
+      currentVersion: '2.3.3',
+      plan: {
+        kind: 'switch-channel',
+        sourceChannel: 'stable',
+        target: { channel: 'canary', version: '2.3.3-canary.20261028012345-0123456' },
+      },
+      installCommand: 'npm install -g @moonshot-ai/kimi-code@2.3.3-canary.20261028012345-0123456',
       installSource: 'npm-global',
       input,
       output,
     });
 
-    // Emit keypress to trigger initial render then exit
     input.emit('keypress', '', { name: 'escape' });
-
     await promptPromise;
 
     const rendered = outputChunks.join('');
     expect(rendered).toContain(CHANGELOG_URL);
     expect(rendered).toContain('View changelog');
+    expect(rendered).toContain('stable -> canary');
+    expect(rendered).toContain('2.3.3');
+    expect(rendered).toContain('2.3.3-canary.20261028012345-0123456');
+  });
+});
+
+
+describe('promptForForcedUpgradeChoice', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('enables skip only after the countdown', async () => {
+    vi.useFakeTimers();
+    let now = 0;
+    const input = Object.assign(new EventEmitter(), {
+      isRaw: false,
+      setRawMode: () => {},
+      resume: () => {},
+    }) as unknown as NodeJS.ReadStream;
+    const output = { write: () => true } as unknown as NodeJS.WriteStream;
+    const promise = promptForForcedUpgradeChoice({
+      currentVersion: '0.5.0',
+      minimumVersion: '0.6.0',
+      targetVersion: '0.6.0',
+      canInstall: true,
+      skipAvailableAt: 10_000,
+      input,
+      output,
+      now: () => now,
+    });
+    let settled = false;
+    void promise.then(() => { settled = true; });
+
+    input.emit('keypress', '', { name: 'down' });
+    input.emit('keypress', '', { name: 'enter' });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(remainingSkipSeconds(now, 10_000)).toBe(10);
+
+    now = 10_000;
+    await vi.advanceTimersByTimeAsync(250);
+    input.emit('keypress', '', { name: 'enter' });
+    await expect(promise).resolves.toBe('skip');
+  });
+
+  it('does not treat Escape as an immediate skip', async () => {
+    const input = Object.assign(new EventEmitter(), {
+      isRaw: false,
+      setRawMode: () => {},
+      resume: () => {},
+    }) as unknown as NodeJS.ReadStream;
+    const output = { write: () => true } as unknown as NodeJS.WriteStream;
+    const promise = promptForForcedUpgradeChoice({
+      currentVersion: '0.5.0',
+      minimumVersion: '0.6.0',
+      canInstall: true,
+      skipAvailableAt: 0,
+      input,
+      output,
+    });
+    input.emit('keypress', '', { name: 'escape' });
+    input.emit('keypress', '', { name: 'c', ctrl: true });
+    await expect(promise).resolves.toBe('exit');
   });
 });

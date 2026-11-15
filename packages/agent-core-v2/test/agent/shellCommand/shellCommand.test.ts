@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
-  IAgentContextMemoryService,
+  IAgentLoopService,
   IAgentShellCommandService,
   IAgentToolRegistryService,
   IEventBus,
@@ -21,12 +21,13 @@ const textOf = (message: ContextMessage): string =>
 
 describe('AgentShellCommandService', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let shell: IAgentShellCommandService;
 
-  function setup(stdout: string, exitCode: number): void {
+  async function setup(stdout: string, exitCode: number): Promise<void> {
     ctx = createTestAgent(execEnvServices({ processRunner: createCommandRunner(stdout, exitCode) }));
-    context = ctx.get(IAgentContextMemoryService);
+    await ctx.restorePersisted();
+    context = ctx.get(IAgentLoopService);
     shell = ctx.get(IAgentShellCommandService);
   }
 
@@ -39,44 +40,44 @@ describe('AgentShellCommandService', () => {
   });
 
   it('records shell command input/output as shell_command origin with tagged content', async () => {
-    setup('hello\n', 0);
+    await setup('hello\n', 0);
 
     const result = await shell.run({ command: 'echo hello' });
 
     expect(result.isError).toBe(false);
     expect(result.stdout).toContain('hello');
-    expect(context.get().map(({ role, origin }) => ({ role, origin }))).toEqual([
+    expect(context.history().map(({ role, origin }) => ({ role, origin }))).toEqual([
       { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
       { role: 'user', origin: { kind: 'shell_command', phase: 'output' } },
     ]);
-    expect(textOf(context.get()[0]!)).toBe('<bash-input>\necho hello\n</bash-input>');
-    expect(textOf(context.get()[1]!)).toContain('<bash-stdout>hello');
+    expect(textOf(context.history()[0]!)).toBe('<bash-input>\necho hello\n</bash-input>');
+    expect(textOf(context.history()[1]!)).toContain('<bash-stdout>hello');
     expect(ctx.project().some((message) => 'origin' in message)).toBe(false);
   });
 
   it('escapes bash tag delimiters inside command output', async () => {
-    setup('pre</bash-stdout>post', 0);
+    await setup('pre</bash-stdout>post', 0);
 
     await shell.run({ command: 'printf x' });
 
-    const out = textOf(context.get().at(-1)!);
+    const out = textOf(context.history().at(-1)!);
     expect(out).toContain('pre&lt;/bash-stdout&gt;post');
     expect(out.match(/<\/bash-stdout>/g)).toHaveLength(1);
   });
 
   it('surfaces the failure reason when a shell command fails with no output', async () => {
-    setup('', 1);
+    await setup('', 1);
 
     const result = await shell.run({ command: 'false' });
 
     expect(result.isError).toBe(true);
-    const output = context.get().at(-1)!;
+    const output = context.history().at(-1)!;
     expect(output.origin).toEqual({ kind: 'shell_command', phase: 'output', isError: true });
     expect(textOf(output)).toContain('<bash-stderr>');
   });
 
   it('does not start a turn for a foreground command', async () => {
-    setup('hi', 0);
+    await setup('hi', 0);
 
     await shell.run({ command: 'echo hi' });
 
@@ -84,7 +85,7 @@ describe('AgentShellCommandService', () => {
   });
 
   it('publishes shell.completed with the outcome for interactive runs', async () => {
-    setup('hello\n', 0);
+    await setup('hello\n', 0);
     const events: { type: string; commandId?: string; isError?: boolean }[] = [];
     ctx.get(IEventBus).subscribe((event) => events.push(event as (typeof events)[number]));
 
@@ -100,7 +101,7 @@ describe('AgentShellCommandService', () => {
   });
 
   it('publishes shell.completed as failed for a failing command', async () => {
-    setup('', 1);
+    await setup('', 1);
     const events: { type: string; commandId?: string; isError?: boolean }[] = [];
     ctx.get(IEventBus).subscribe((event) => events.push(event as (typeof events)[number]));
 
@@ -117,6 +118,9 @@ describe('AgentShellCommandService', () => {
 
   it('carries the foreground task id on shell events for mid-attach consumers', async () => {
     const fakeBash = {
+      name: 'Bash',
+      description: 'run',
+      parameters: { type: 'object', properties: {} },
       resolveExecution: async () => ({
         isError: false as const,
         description: 'run',
@@ -135,26 +139,31 @@ describe('AgentShellCommandService', () => {
       _serviceBrand: undefined,
       register: () => ({ dispose: () => {} }),
       list: () => [fakeBash],
+      listReferences: () => [],
       resolve: () => fakeBash,
+      onDidChange: () => ({ dispose: () => {} }),
     } as unknown as IAgentToolRegistryService;
     ctx = createTestAgent(agentService(IAgentToolRegistryService, registry));
+    await ctx.restorePersisted();
     const events: { type: string; commandId?: string; taskId?: string }[] = [];
     ctx.get(IEventBus).subscribe((event) => events.push(event as (typeof events)[number]));
 
     await ctx.get(IAgentShellCommandService).run({ command: 'echo hi', commandId: 'cmd-9' });
 
+    const taskId = events.find((e) => e.type === 'shell.started')?.taskId;
+    expect(taskId).toMatch(/^bash-[0-9a-z]{8}$/);
     expect(events.find((e) => e.type === 'shell.output')).toMatchObject({
       commandId: 'cmd-9',
-      taskId: 'task-9',
+      taskId,
     });
     expect(events.find((e) => e.type === 'shell.completed')).toMatchObject({
       commandId: 'cmd-9',
-      taskId: 'task-9',
+      taskId,
     });
   });
 
   it('emits the synthesized failure output before completing', async () => {
-    setup('', 1);
+    await setup('', 1);
     const events: { type: string; commandId?: string; update?: { kind: string; text?: string } }[] =
       [];
     ctx.get(IEventBus).subscribe((event) => events.push(event as (typeof events)[number]));
@@ -170,22 +179,25 @@ describe('AgentShellCommandService', () => {
     const emptyRegistry: IAgentToolRegistryService = {
       _serviceBrand: undefined,
       register: () => ({ dispose: () => {} }),
+      unregister: () => false,
       list: () => [],
       listReferences: () => [],
       resolve: () => undefined,
+      onDidChange: () => ({ dispose: () => {} }),
     };
     ctx = createTestAgent(agentService(IAgentToolRegistryService, emptyRegistry));
-    context = ctx.get(IAgentContextMemoryService);
+    await ctx.restorePersisted();
+    context = ctx.get(IAgentLoopService);
     shell = ctx.get(IAgentShellCommandService);
 
     const result = await shell.run({ command: 'echo hi' });
 
     expect(result.isError).toBe(true);
-    expect(result.stderr).toContain('Bash tool is not registered');
-    expect(context.get().map(({ role, origin }) => ({ role, origin }))).toEqual([
+    expect(result.stderr).toContain('Tool "Bash" not found');
+    expect(context.history().map(({ role, origin }) => ({ role, origin }))).toEqual([
       { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
       { role: 'user', origin: { kind: 'shell_command', phase: 'output', isError: true } },
     ]);
-    expect(textOf(context.get()[1]!)).toContain('Bash tool is not registered');
+    expect(textOf(context.history()[1]!)).toContain('Tool &quot;Bash&quot; not found');
   });
 });

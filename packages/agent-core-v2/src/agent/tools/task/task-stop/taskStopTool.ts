@@ -3,8 +3,11 @@ import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { type ToolExecution } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentTaskHistoryService } from '#/agent/task/taskService';
+import { agentTaskInfo } from '#/agent/task/handler';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
+import { formatTaskWallTime } from '#/agent/task/wallTime';
 import { ITaskStopTool, TaskStopInputSchema, type TaskStopInput } from './task-stop';
 import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
 
@@ -14,7 +17,10 @@ export class TaskStopTool implements ITaskStopTool {
   readonly description = TASK_STOP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskStopInputSchema);
 
-  constructor(@IAgentTaskService private readonly tasks: IAgentTaskService) {}
+  constructor(
+    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
+    @IAgentTaskHistoryService private readonly history: IAgentTaskHistoryService,
+  ) {}
 
   resolveExecution(args: TaskStopInput): ToolExecution {
     return {
@@ -22,20 +28,21 @@ export class TaskStopTool implements ITaskStopTool {
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.task_id),
       execute: async () => {
-        const info = this.tasks.getTask(args.task_id);
+        const handler = this.toolExecutor.handler(args.task_id);
+        const info = handler?.snapshot().fields.task === undefined ? this.history.getTask(args.task_id) : agentTaskInfo(handler);
         if (!info) {
           return { isError: true, output: `Task not found: ${args.task_id}` };
         }
 
         const trimmedReason = args.reason?.trim();
-        const reason =
-          trimmedReason === undefined || trimmedReason.length === 0
-            ? 'Stopped by TaskStop'
-            : trimmedReason;
+        const reason = trimmedReason === undefined || trimmedReason.length === 0
+          ? 'Stopped by TaskStop'
+          : trimmedReason;
 
         if (TERMINAL_STATUSES.has(info.status)) {
           return {
             output:
+              `Wall time: ${formatTaskWallTime(info)}\n` +
               `task_id: ${info.taskId}\n` +
               `status: ${info.status}\n` +
               `reason: ${terminalStopReason(info.stopReason)}`,
@@ -43,17 +50,18 @@ export class TaskStopTool implements ITaskStopTool {
           };
         }
 
-        await this.tasks.suppressTerminalNotification(args.task_id);
-        const result = await this.tasks.stop(args.task_id, reason);
-        if (!result) {
+        if (handler === undefined) {
           return { isError: true, output: `Failed to stop task: ${args.task_id}` };
         }
-
+        await handler.stop(reason);
+        const result = agentTaskInfo(handler);
         return {
-          output:
-            `task_id: ${result.taskId}\n` +
-            `status: ${result.status}\n` +
+          output: [
+            `Wall time: ${formatTaskWallTime(result)}`,
+            `task_id: ${result.taskId}`,
+            `status: ${result.status}`,
             `reason: ${result.stopReason ?? reason}`,
+          ].join('\n'),
           isError: false,
         };
       },

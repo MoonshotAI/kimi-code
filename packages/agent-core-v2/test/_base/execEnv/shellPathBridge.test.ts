@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createShellPathBridge,
+  REMOTE_SHELL_PATH_BRIDGE,
   type ShellPathBridgeDeps,
   type ShellPathBridgeEnv,
 } from '#/_base/execEnv/shellPathBridge';
@@ -218,6 +219,18 @@ describe('fromShellPath cygpath resolution', () => {
     expect(bridge.fromShellPath('/tmp/x')).toBe('/tmp/x');
     expect(bridge.fromShellPath('/home/u')).toBe('/home/u');
     expect(execFileSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('remote shell path bridge', () => {
+  it.each(['/', '/tmp/x', '/usr/bin/node', '/home/user/file', '/dev/null', '/proc/self/status', '/sys/kernel', '//server/share/file.txt'])('rejects unresolved %s', (input) => {
+    expect(() => REMOTE_SHELL_PATH_BRIDGE.fromShellPath(input)).toThrow('cannot be resolved on the target');
+  });
+
+  it('keeps native and lexical drive paths', () => {
+    expect(REMOTE_SHELL_PATH_BRIDGE.fromShellPath('/c/work/file.txt')).toBe('C:/work/file.txt');
+    expect(REMOTE_SHELL_PATH_BRIDGE.fromShellPath('C:\\work\\file.txt')).toBe('C:\\work\\file.txt');
+    expect(REMOTE_SHELL_PATH_BRIDGE.toShellPath('C:\\work\\file.txt')).toBe('/c/work/file.txt');
   });
 });
 

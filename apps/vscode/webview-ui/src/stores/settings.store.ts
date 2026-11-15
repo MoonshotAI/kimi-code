@@ -174,6 +174,7 @@ interface SettingsState {
   isLoggedIn: boolean;
 
   setCurrentModel: (model: string) => void;
+  setModels: (models: ModelConfig[]) => void;
   setThinkingEffort: (effort: string) => void;
   updateModel: (modelId: string) => void;
   toggleThinking: () => void;
@@ -206,6 +207,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   isLoggedIn: false,
 
   setCurrentModel: (currentModel) => set({ currentModel }),
+
+  setModels: (models) => set({ models }),
 
   setThinkingEffort: (thinkingEffort) => set({ thinkingEffort }),
 

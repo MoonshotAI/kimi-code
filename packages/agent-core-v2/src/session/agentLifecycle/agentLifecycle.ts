@@ -3,11 +3,14 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import type { BindAgentInput } from '#/agent/profile/profile';
+import type { BindAgentInput, ProfileBindingSnapshot } from '#/agent/profile/profile';
+import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
+import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 
 export interface AgentScopeCreatedEvent {
   readonly context: AgentContext;
   readonly handle: IAgentScopeHandle;
+  readonly meta?: AgentMeta;
 }
 
 export const MAIN_AGENT_ID = 'main';
@@ -15,7 +18,10 @@ export const MAIN_AGENT_ID = 'main';
 export interface CreateAgentOptions {
   readonly agentId?: string;
   readonly binding?: BindAgentInput;
-  readonly runtimeId?: string;
+  readonly initialProfile?: ProfileBindingSnapshot;
+  readonly initialTools?: readonly Tool[];
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
   readonly forkedFrom?: string;
   readonly labels?: Readonly<Record<string, string>>;
 }

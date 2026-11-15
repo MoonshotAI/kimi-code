@@ -20,7 +20,7 @@ import {
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
 import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
@@ -174,7 +174,7 @@ describe('AgentPermissionGate', () => {
     resolvePermissionResolution.mockResolvedValue(blocked);
     make();
     const later = vi.fn();
-    executorEvents.executor.onBeforeExecuteTool(later);
+    executorEvents.executor.registerHook({ permitting: later });
 
     const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
 

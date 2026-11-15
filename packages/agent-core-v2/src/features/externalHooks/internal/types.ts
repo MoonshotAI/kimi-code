@@ -1,4 +1,4 @@
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 
 export const HOOK_EVENT_TYPES = [
   'PreToolUse',
@@ -42,7 +42,9 @@ export interface HookResult {
   readonly stderr?: string;
   readonly exitCode?: number;
   readonly timedOut?: boolean;
+  readonly errored?: boolean;
   readonly structuredOutput?: boolean;
+  readonly error?: string;
 }
 
 export interface HookBlockDecision {

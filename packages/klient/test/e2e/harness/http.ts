@@ -13,15 +13,13 @@ import type {
   ProviderCatalogItem,
   SetDefaultModelResponse,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
-import type { ApprovalResponse } from '@moonshot-ai/kap-server/protocol/approval';
 import type { Envelope } from '@moonshot-ai/kap-server/protocol/envelope';
+import type { ConversationTurnsPage } from '@moonshot-ai/kap-server/protocol/conversation';
 import type { Message } from '@moonshot-ai/kap-server/protocol/message';
-import type { QuestionResponse } from '@moonshot-ai/kap-server/protocol/question';
 import type {
-  ApprovalResolveResult,
-  ListPendingApprovalsResponse,
-} from '@moonshot-ai/kap-server/protocol/rest-approval';
+  InteractionRespondRequest,
+  InteractionRespondResult,
+} from '@moonshot-ai/kap-server/protocol/interaction';
 import type {
   ListModelsResponse,
   ListProvidersResponse,
@@ -34,10 +32,6 @@ import type {
   PromptSubmitResult,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
 import type {
-  ListPendingQuestionsResponse,
-  QuestionResolveResult,
-} from '@moonshot-ai/kap-server/protocol/rest-question';
-import type {
   CompactSessionRequest,
   CompactSessionResponse,
   ForkSessionRequest,
@@ -45,11 +39,6 @@ import type {
   UndoSessionRequest,
   UndoSessionResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-session';
-import type {
-  CloseTerminalResponse,
-  CreateTerminalRequest,
-  ListTerminalsResponse,
-} from '@moonshot-ai/kap-server/protocol/rest-terminal';
 import type {
   Session,
   SessionChildCreate,
@@ -257,7 +246,7 @@ export class HttpClient {
   }
   undoSession(
     sid: string,
-    body: UndoSessionRequest = { count: 1 },
+    body: UndoSessionRequest,
   ): Promise<UndoSessionResponse> {
     return this.request(
       'POST',
@@ -283,42 +272,6 @@ export class HttpClient {
       'POST',
       `/sessions/${encodeURIComponent(sid)}/children`,
       body,
-    );
-  }
-
-  // ── Terminals ──────────────────────────────────────────────────────────
-  listTerminals(sid: string): Promise<ListTerminalsResponse> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/terminals`,
-      undefined,
-    );
-  }
-  createTerminal(
-    sid: string,
-    body: CreateTerminalRequest = {},
-  ): Promise<Terminal> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/terminals`,
-      body,
-    );
-  }
-  getTerminal(sid: string, terminalId: string): Promise<Terminal> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/terminals/${encodeURIComponent(terminalId)}`,
-      undefined,
-    );
-  }
-  closeTerminal(
-    sid: string,
-    terminalId: string,
-  ): Promise<CloseTerminalResponse> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/terminals/${encodeURIComponent(terminalId)}:close`,
-      {},
     );
   }
 
@@ -378,6 +331,9 @@ export class HttpClient {
   ): Promise<{ items: Message[]; has_more: boolean }> {
     return this.request('GET', `/sessions/${encodeURIComponent(sid)}/messages${qs(query)}`, undefined);
   }
+  listTurns(sid: string): Promise<ConversationTurnsPage> {
+    return this.request('GET', `/sessions/${encodeURIComponent(sid)}/agents/main/turns`, undefined);
+  }
 
   // ── Prompts ─────────────────────────────────────────────────────────────
   listPrompts(sid: string): Promise<PromptListResponse> {
@@ -412,50 +368,15 @@ export class HttpClient {
   }
 
   // ── Approvals / Questions (reverse-RPC resolves) ────────────────────────
-  resolveApproval(
+  respondInteraction(
     sid: string,
-    aid: string,
-    body: ApprovalResponse,
-  ): Promise<ApprovalResolveResult> {
+    interactionId: string,
+    body: InteractionRespondRequest,
+  ): Promise<InteractionRespondResult> {
     return this.request(
       'POST',
-      `/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(aid)}`,
+      `/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(interactionId)}`,
       body,
-    );
-  }
-  listPendingApprovals(sid: string): Promise<ListPendingApprovalsResponse> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/approvals?status=pending`,
-      undefined,
-    );
-  }
-  resolveQuestion(
-    sid: string,
-    qid: string,
-    body: QuestionResponse,
-  ): Promise<QuestionResolveResult> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/questions/${encodeURIComponent(qid)}`,
-      body,
-    );
-  }
-  listPendingQuestions(sid: string): Promise<ListPendingQuestionsResponse> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/questions?status=pending`,
-      undefined,
-    );
-  }
-  dismissQuestion(
-    sid: string,
-    qid: string,
-  ): Promise<{ dismissed: true; dismissed_at: string }> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/questions/${encodeURIComponent(qid)}:dismiss`,
-      {},
     );
   }
 }

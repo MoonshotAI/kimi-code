@@ -1,6 +1,8 @@
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { ContentPart } from '#human/llm/message';
+import { isSkillActivationPart } from '@moonshot-ai/core/llm/origin';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { isUserPromptSubmitHookPart } from './hookParts';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 import type { ContextMessage, PromptOrigin } from './types';
 
@@ -54,6 +56,7 @@ export interface ContextCompactionShape {
   readonly tokensAfter: number;
   readonly keptUserMessageCount: number;
   readonly keptHeadUserMessageCount?: number;
+  readonly appendedInjectionCount: number;
   readonly droppedCount?: number;
   readonly messages: readonly ContextMessage[];
 }
@@ -76,6 +79,7 @@ export function buildContextCompactionShape(
       tokensBefore: input.tokensBefore,
       tokensAfter: input.tokensAfter ?? estimate.messages(messages),
       keptUserMessageCount: 0,
+      appendedInjectionCount: 0,
       droppedCount: input.droppedCount,
       messages,
     };
@@ -96,11 +100,14 @@ export function buildContextCompactionShape(
     : [...selection.head, elisionMessage, ...selection.tail];
   const contextSummary = input.contextSummary ?? input.summary;
   const continuationMessage = createCompactionContinuationMessage();
+  const appendedInjections = history
+    .slice(input.compactedCount)
+    .filter((message) => message.origin?.kind === 'injection');
   const tokensAfter =
     input.tokensAfter ??
     (input.requestOverheadTokens ?? 0) +
       (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
-      estimate.messages([...keptMessages, continuationMessage]);
+      estimate.messages([...keptMessages, continuationMessage, ...appendedInjections]);
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
@@ -114,11 +121,13 @@ export function buildContextCompactionShape(
     tokensAfter,
     keptUserMessageCount,
     keptHeadUserMessageCount,
+    appendedInjectionCount: appendedInjections.length,
     droppedCount: input.droppedCount,
     messages: [
       ...keptMessages,
       createCompactionSummaryMessage(contextSummary),
       continuationMessage,
+      ...appendedInjections,
     ],
   };
 }
@@ -132,7 +141,6 @@ export function createCompactionSummaryMessage(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin: { kind: 'compaction_summary' },
   };
 }
@@ -141,7 +149,6 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
   return {
     role: 'user',
     content: [{ type: 'text', text: buildCompactionElisionText(omittedTokens) }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
   };
 }
@@ -156,7 +163,6 @@ export function createCompactionContinuationMessage(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: buildCompactionContinuationText() }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_CONTINUATION_VARIANT },
   };
 }
@@ -334,8 +340,10 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
   let start = text.length;
   for (let i = text.length - 1; i >= 0; i--) {
     let isAscii = false;
+    // oxlint-disable-next-line unicorn/prefer-code-point
     const code = text.charCodeAt(i);
     if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
+      // oxlint-disable-next-line unicorn/prefer-code-point
       const high = text.charCodeAt(i - 1);
       if (high >= 0xd800 && high <= 0xdbff) {
         i--;
@@ -357,8 +365,12 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
 function replaceMessageText<T extends MessageLike>(message: T, text: string): T {
   return {
     ...message,
-    content: [{ type: 'text', text }],
-    toolCalls: [],
+    content: [
+      ...message.content.filter(
+        (part) => isUserPromptSubmitHookPart(part) || isSkillActivationPart(part),
+      ),
+      { type: 'text', text },
+    ],
   } as unknown as T;
 }
 

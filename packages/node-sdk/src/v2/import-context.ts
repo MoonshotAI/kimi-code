@@ -69,7 +69,6 @@ export function buildImportContextMessage(content: string, source: string): Cont
           `${content}\n</imported_context>`,
       },
     ],
-    toolCalls: [],
     origin: { kind: 'user' },
   };
 }

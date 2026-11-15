@@ -34,16 +34,25 @@ export {
   type TestAgentServiceRegistration,
   type WireRecordPersistence,
 } from './agent';
-export { createScriptedGenerate, requesterFromGenerateFn, type LegacyGenerateFn, type LegacyGenerateResult } from './scripted-generate';
+export {
+  createScriptedGenerate,
+  createMockProvider,
+  createMockProviderRequester,
+  providerHttpError,
+  type MockProviderHandler,
+  type MockProviderResponse,
+} from './scripted-generate';
 export {
   DEFAULT_TEST_SYSTEM_PROMPT,
   eventSnapshot,
+  findGenerateCallPrefixBreak,
   generateInputSnapshot,
   generateInputsSnapshot,
   normalizeGenerateInput,
   type EventSnapshot,
   type EventSnapshotEntry,
   type GenerateCall,
+  type GenerateCallPrefixBreak,
   type GenerateInputSnapshot,
   type GenerateInputsSnapshot,
   type RpcSnapshotEntry,

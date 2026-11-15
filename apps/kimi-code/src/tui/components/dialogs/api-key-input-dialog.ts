@@ -16,29 +16,31 @@ export type ApiKeyInputResult =
 
 const FOOTER = 'Enter to submit  ·  Esc to cancel';
 
-function maskInputLine(raw: string): string {
+function maskInputLine(raw: string, fakeCursorIndex: number): string {
   const prefix = '> ';
   if (!raw.startsWith(prefix)) return raw;
 
-  // Strip trailing padding spaces so they stay as spaces.
-  let end = raw.length;
-  while (end > prefix.length && raw[end - 1] === ' ') {
-    end--;
-  }
-  const padding = raw.slice(end);
-  const content = raw.slice(prefix.length, end);
+  const content = raw.slice(prefix.length);
 
   // Protect ANSI escape sequences (reverse-video cursor, IME marker, etc.)
   // while masking every other visible character.
-  const parts = content.split(/(\u001B(?:\[[0-9;]*m|_pi:c\u0007))/);
-  const maskedContent = parts
+  const parts = content.split(/(\u001B(?:\[[0-9;]*m|_pi:[^\u0007]+\u0007))/);
+  const lastTextIndex = parts.findLastIndex((part) => part.length > 0 && !part.startsWith('\u001B'));
+  if (lastTextIndex >= 0) parts[lastTextIndex] = parts[lastTextIndex]!.replace(/\s+$/u, '');
+  let maskedContent = parts
     .map((part, index) => {
       if (index % 2 === 1) return part; // ANSI sequence
       return part.replaceAll(/./g, '•');
     })
     .join('');
 
-  return prefix + maskedContent + padding;
+  const fakeCursorMarker = '\u001B_pi:fc\u0007';
+  const markerIndex = content.indexOf(fakeCursorMarker);
+  const cursorIndex = markerIndex >= 0 ? markerIndex + fakeCursorMarker.length : fakeCursorIndex;
+  if (maskedContent[cursorIndex] === '•') {
+    maskedContent = maskedContent.slice(0, cursorIndex) + ' ' + maskedContent.slice(cursorIndex + 1);
+  }
+  return prefix + maskedContent;
 }
 
 export class ApiKeyInputDialogComponent extends Container implements Focusable {
@@ -57,7 +59,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     platformName: string,
     subtitleLines: readonly string[],
     onDone: (result: ApiKeyInputResult) => void,
-    options?: { title?: string; mask?: boolean; emptyHint?: string },
+    private readonly options?: { title?: string; mask?: boolean; emptyHint?: string; trimValue?: boolean },
   ) {
     super();
     this.onDone = onDone;
@@ -111,7 +113,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     const footerLine = truncateToWidth(footerStyled, innerWidth, '…');
     const rawInputLine = this.input.render(innerWidth)[0] ?? '> ';
     const inputLine =
-      this.mask && this.input.getValue() !== '' ? maskInputLine(rawInputLine) : rawInputLine;
+      this.mask && this.input.getValue() !== '' ? maskInputLine(rawInputLine, this.input.getValue().length) : rawInputLine;
 
     const contentLines: string[] = [
       titleLine,
@@ -154,7 +156,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
       return;
     }
     this.done = true;
-    this.onDone({ kind: 'ok', value: trimmed });
+    this.onDone({ kind: 'ok', value: this.options?.trimValue === false ? value : trimmed });
   }
 
   private cancel(): void {

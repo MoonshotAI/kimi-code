@@ -37,7 +37,9 @@ export type {
   ImportResult,
   LogLine,
   LogsResponse,
+  CoreContentPart,
 } from '../../server/src/lib/agent-record-types';
+export { mediaUrlOf } from '../../server/src/lib/agent-record-types';
 
 export type {
   ProjectedMessage,

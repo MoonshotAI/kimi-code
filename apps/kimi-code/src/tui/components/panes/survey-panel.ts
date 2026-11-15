@@ -1,3 +1,4 @@
+import type { RatingResponse } from '@moonshot-ai/kimi-code-product/session-rating';
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@moonshot-ai/pi-tui';
 
@@ -9,13 +10,12 @@ import {
 } from '../../constant/survey';
 
 import { currentTheme } from '../../theme';
-import type { SurveyResponse } from '../../utils/survey-policy';
 
 export type SurveyPanelPhase = 'open' | 'pending' | 'thanks';
 
 export interface SurveyPanelView {
   phase: SurveyPanelPhase;
-  response?: Exclude<SurveyResponse, 'dismissed'>;
+  response?: RatingResponse;
   hoverIndex?: number;
 }
 
@@ -23,7 +23,7 @@ const DOT = '●';
 const DOT_PREFIX_WIDTH = 2;
 const OPTION_INDENT = '  ';
 
-const RESPONSE_LABELS: Record<Exclude<SurveyResponse, 'dismissed'>, string> = {
+const RESPONSE_LABELS: Record<RatingResponse, string> = {
   bad: 'Bad',
   fine: 'Fine',
   good: 'Good',

@@ -4,7 +4,7 @@ import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const DEFAULT_MAX_CHARS = 100_000;
-export const DEFAULT_MAX_CHARS_LIMIT = 500_000;
+export const DEFAULT_MAX_CHARS_LIMIT = 100_000;
 
 export const TRANSCODE_MAX_BYTES: number = 10 * 1024 * 1024;
 

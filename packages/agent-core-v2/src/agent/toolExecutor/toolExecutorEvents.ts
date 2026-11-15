@@ -10,7 +10,7 @@ import type {
   ShellStartedPayload,
 } from '#/agent/shellCommand/shellCommandService';
 import { AgentEvent2 } from '#/app/event/event2';
-import type { ToolUpdate } from '#/tool/toolContract';
+import type { ToolExecutionStatus } from '#/tool/executor';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export interface ToolCallStartedPayload {
@@ -29,18 +29,22 @@ export class ToolCallStarted extends AgentEvent2<ToolCallStartedPayload> {
 }
 export interface ToolCallStarted extends ToolCallStartedPayload {}
 
-export interface ToolProgressPayload {
+export interface ToolUpdatedPayload {
   readonly agentId: string;
   readonly turnId: number;
   readonly toolCallId: string;
-  readonly update: ToolUpdate;
+  readonly taskId: string;
+  readonly status: ToolExecutionStatus;
+  readonly detached: boolean;
+  readonly fields: Readonly<Record<string, unknown>>;
+  readonly output?: { readonly offset: number; readonly text: string };
 }
 
-export class ToolProgress extends AgentEvent2<ToolProgressPayload> {
-  static override readonly type = 'tool.progress';
+export class ToolUpdated extends AgentEvent2<ToolUpdatedPayload> {
+  static override readonly type = 'tool.updated';
   static override readonly observable = true;
 }
-export interface ToolProgress extends ToolProgressPayload {}
+export interface ToolUpdated extends ToolUpdatedPayload {}
 
 export interface ToolResultEventPayload {
   readonly agentId: string;
@@ -65,8 +69,8 @@ export interface ToolCallStartedEvent extends Omit<ToolCallStartedPayload, 'agen
   readonly type: 'tool.call.started';
 }
 
-export interface ToolProgressEvent extends Omit<ToolProgressPayload, 'agentId'> {
-  readonly type: 'tool.progress';
+export interface ToolUpdatedEvent extends Omit<ToolUpdatedPayload, 'agentId'> {
+  readonly type: 'tool.updated';
 }
 
 export interface ShellOutputEvent extends Omit<ShellOutputPayload, 'agentId'> {

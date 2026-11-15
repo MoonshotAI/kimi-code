@@ -76,7 +76,7 @@ describeLive('session resume + activity (live server required)', () => {
       const promptResult = await probe.submitAndWait(
         seeded.id,
         { content: [{ type: 'text', text: 'Reply with "OK".' }] },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('seed prompt completed', {
         prompt_id: promptResult.prompt_id,
@@ -132,43 +132,38 @@ describeLive('session resume + activity (live server required)', () => {
       await client.subscribe(session.id);
       log('subscribe accepted', { session_id: session.id });
 
-      // Fire-and-forget submit so we can poll while the prompt is mid-flight.
-      const submit = await client.submitPrompt(session.id, {
-        content: [{ type: 'text', text: 'Reply with "OK".' }],
-      });
-      log('submit response', submit);
-
-      // Race the server: poll busy quickly until we observe active work or
-      // `prompt.completed` lands. Either outcome ends the loop; we
-      // assert on the captured `seenBusy` flag afterward.
+      // Poll busy while the prompt is mid-flight; `runUntilIdle` resolves
+      // once `event.session.work_changed` reports the session idle again.
       let seenBusy = false;
-      const ackPromise = client.waitForFrame(
-        (f) => {
-          if (f.type !== 'prompt.completed') return false;
-          const payload = (f.payload ?? {}) as { promptId?: string; prompt_id?: string };
-          return (payload.promptId ?? payload.prompt_id) === submit.prompt_id;
+      const busySamples: Array<{ at_ms: number; busy: boolean; current_prompt_id?: string }> = [];
+      const startedAt = Date.now();
+      const { result: submit, finalFrame: idleFrame } = await client.runUntilIdle(
+        session.id,
+        async () => {
+          const submitted = await client.submitPrompt(session.id, {
+            content: [{ type: 'text', text: 'Reply with "OK".' }],
+          });
+          const deadline = Date.now() + 5_000;
+          while (Date.now() < deadline && !seenBusy) {
+            const snap = await client.http.getSession(session.id);
+            busySamples.push({
+              at_ms: Date.now() - startedAt,
+              busy: snap.busy,
+              current_prompt_id: snap.current_prompt_id,
+            });
+            if (snap.busy) {
+              seenBusy = true;
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          return submitted;
         },
         { timeoutMs: PROMPT_TIMEOUT_MS },
       );
-      const deadline = Date.now() + 5_000;
-      const busySamples: Array<{ at_ms: number; busy: boolean; current_prompt_id?: string }> = [];
-      const startedAt = Date.now();
-      while (Date.now() < deadline && !seenBusy) {
-        const snap = await client.http.getSession(session.id);
-        busySamples.push({
-          at_ms: Date.now() - startedAt,
-          busy: snap.busy,
-          current_prompt_id: snap.current_prompt_id,
-        });
-        if (snap.busy) {
-          seenBusy = true;
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      const completedFrame = await ackPromise;
+      log('submit response', submit);
       log('busy poll samples', busySamples);
-      log('prompt completed frame', frameForLog(completedFrame));
+      log('session idle frame', frameForLog(idleFrame));
       const after = await client.http.getSession(session.id);
       log('final session snapshot', after);
 
@@ -179,10 +174,9 @@ describeLive('session resume + activity (live server required)', () => {
   );
 });
 
-function frameForLog(frame: { type: string; seq?: number; session_id?: string; payload?: unknown }): Record<string, unknown> {
+function frameForLog(frame: { type: string; session_id?: string; payload?: unknown }): Record<string, unknown> {
   return {
     type: frame.type,
-    seq: frame.seq,
     session_id: frame.session_id,
     payload: frame.payload,
   };
@@ -193,7 +187,6 @@ function sessionSummaryForLog(session: {
   title: string;
   busy: boolean;
   message_count: number;
-  last_seq: number;
   metadata: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
@@ -201,7 +194,6 @@ function sessionSummaryForLog(session: {
     title: session.title,
     busy: session.busy,
     message_count: session.message_count,
-    last_seq: session.last_seq,
     cwd: session.metadata['cwd'],
   };
 }

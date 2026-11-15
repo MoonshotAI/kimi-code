@@ -1,11 +1,12 @@
 import { Service } from '#/_base/di/service';
-import { defineState } from '#/state/state';
-import type { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentPlanService } from '#/features/plan/plan';
 import type { PlanFilePath } from '#/features/plan/plan';
-import { IAgentStateService } from '#/agent/state/agentState';
+import type { IAgentReminderService } from '#/features/reminder/reminderService';
+import { defineState } from '#/state/state';
+
 import PLAN_MODE_EXIT_REMINDER from './plan-mode-exit-reminder.md?raw';
 import PLAN_MODE_FULL_REMINDER from './plan-mode-full-reminder.md?raw';
 import PLAN_MODE_INLINE_FULL_REMINDER from './plan-mode-inline-full-reminder.md?raw';
@@ -24,7 +25,7 @@ export class PlanModeInjection extends Service {
   constructor(
     injector: IAgentReminderService,
     @IAgentPlanService private readonly plan: IAgentPlanService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
@@ -46,7 +47,7 @@ export class PlanModeInjection extends Service {
           }
           return fullReminder(planFilePath);
         }
-        const variant = planModeReminderVariant(injectedAt, this.context.get());
+        const variant = planModeReminderVariant(injectedAt, this.context.history());
         if (variant === 'full') return fullReminder(planFilePath);
         if (variant === 'sparse') return sparseReminder(planFilePath);
         return undefined;
@@ -70,7 +71,7 @@ function planModeReminderVariant(
       assistantTurnsSince += 1;
       continue;
     }
-    if (message.role === 'user') {
+    if (message.role === 'user' && message.origin?.kind !== 'injection') {
       return 'full';
     }
   }

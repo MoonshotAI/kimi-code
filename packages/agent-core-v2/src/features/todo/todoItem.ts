@@ -25,6 +25,23 @@ function isTodoStatus(value: unknown): value is TodoStatus {
   return value === 'pending' || value === 'in_progress' || value === 'done';
 }
 
+export interface TodoProgress {
+  readonly total: number;
+  readonly done: number;
+  readonly open: number;
+  readonly inProgress: readonly TodoItem[];
+}
+
+export function todoProgress(todos: readonly TodoItem[]): TodoProgress {
+  const done = todos.filter((todo) => todo.status === 'done').length;
+  return {
+    total: todos.length,
+    done,
+    open: todos.length - done,
+    inProgress: todos.filter((todo) => todo.status === 'in_progress'),
+  };
+}
+
 export function renderTodoList(todos: readonly TodoItem[], title = 'Current todo list:'): string {
   if (todos.length === 0) {
     return 'Todo list is empty.';

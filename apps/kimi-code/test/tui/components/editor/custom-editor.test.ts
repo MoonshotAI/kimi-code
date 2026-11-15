@@ -1,13 +1,19 @@
-import type {
-  AutocompleteItem,
-  AutocompleteProvider,
-  AutocompleteSuggestions,
-  TUI,
+import {
+  CURSOR_MARKER,
+  FAKE_CURSOR_END,
+  FAKE_CURSOR_START,
+  type AutocompleteItem,
+  type AutocompleteProvider,
+  type AutocompleteSuggestions,
+  type TUI,
+  visibleWidth,
 } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import chalk from 'chalk';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
+import { currentTheme } from '#/tui/theme';
 
 function makeEditor(): CustomEditor {
   const tui = {
@@ -311,7 +317,12 @@ describe('CustomEditor @ mention completion refresh', () => {
 });
 
 describe('CustomEditor Tab key handling', () => {
-  it('does not open autocomplete when Tab is pressed with the dropdown closed', async () => {
+  it('keeps native completion closed and accepts a full prediction beyond its narrow preview', async () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    onTestFinished(() => {
+      chalk.level = previousLevel;
+    });
     const editor = makeEditor();
     const provider = providerReturning([{ value: '@src/file.ts', label: 'file.ts' }]);
     editor.setAutocompleteProvider(provider);
@@ -322,6 +333,17 @@ describe('CustomEditor Tab key handling', () => {
 
     expect(provider.getSuggestions).not.toHaveBeenCalled();
     expect(editor.isShowingAutocomplete()).toBe(false);
+
+    const prediction = '请继续修复这个很长的 English prompt prediction，不要截断原文\n第二行也要保留';
+    editor.setPromptPrediction(prediction);
+    const rendered = editor.render(24);
+    const muted = currentTheme.fg('textMuted', 'x').split('x')[0]!;
+    expect(rendered.every((line) => visibleWidth(line) <= 24)).toBe(true);
+    expect(rendered.join('\n')).toContain('…');
+    expect(rendered.join('\n')).toContain(muted);
+    expect(editor.acceptPromptPrediction()).toBe(true);
+    expect(editor.getText()).toBe(prediction);
+    expect(editor.getPromptPrediction()).toBeUndefined();
   });
 });
 
@@ -656,16 +678,6 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     expect(onUndo).toHaveBeenCalledOnce();
   });
 
-  it('invokes onToggleTodoExpand on Ctrl+T', () => {
-    const editor = makeEditor();
-    const onToggleTodoExpand = vi.fn().mockReturnValue(true);
-    editor.onToggleTodoExpand = onToggleTodoExpand;
-
-    editor.handleInput('\u0014');
-
-    expect(onToggleTodoExpand).toHaveBeenCalledOnce();
-  });
-
   it.each(['\u000E', '\u001B[110;5u'] as const)(
     'toggles Updates focus on %j without changing the draft',
     (key) => {
@@ -681,38 +693,37 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     },
   );
 
-  it.each([
-    ['\u001B[D', 'left'],
-    ['\u001B[C', 'right'],
-    ['\u001B[A', 'up'],
-    ['\u001B[B', 'down'],
-    ['\u001B', 'escape'],
-  ] as const)('routes %j to the focused Updates panel as %s', (key, panelKey) => {
+  it('fades the whole box, keeping token hues, when keyboard or terminal focus is lost', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    onTestFinished(() => {
+      chalk.level = previousLevel;
+    });
+    const primary = currentTheme.fg('primary', 'x').split('x')[0]!;
+    const faint = '\u001B[2m';
     const editor = makeEditor();
-    const onNotifyPanelKey = vi.fn().mockReturnValue(true);
-    editor.onNotifyPanelKey = onNotifyPanelKey;
-    editor.setText('draft');
-    editor.handleInput(key);
-    expect(onNotifyPanelKey).toHaveBeenCalledWith(panelKey);
-    expect(editor.getText()).toBe('draft');
-  });
+    editor.setText('/help me');
 
-  it.each(['\u001B[D', '\u001B[A', '\u001B'] as const)(
-    'leaves %j to autocomplete even when the Updates panel is focused',
-    (key) => {
-      const editor = makeEditor();
-      const onNotifyPanelKey = vi.fn();
-      editor.onNotifyPanelKey = onNotifyPanelKey;
-      const internals = editor as unknown as { cancelAutocompleteActivity: () => void };
-      const cancelAutocomplete = vi.spyOn(internals, 'cancelAutocompleteActivity');
-      cancelAutocomplete.mockImplementation(() => {});
-      vi.spyOn(editor, 'hasAutocompleteActivity').mockReturnValue(true);
-      editor.setText('/rev');
-      editor.handleInput(key);
-      expect(onNotifyPanelKey).not.toHaveBeenCalled();
-      if (key === '\u001B') expect(cancelAutocomplete).toHaveBeenCalledOnce();
-    },
-  );
+    editor.focused = true;
+    const focused = editor.render(40);
+    expect(focused.join('\n')).not.toContain(faint);
+    expect(focused[1]).toContain(FAKE_CURSOR_START);
+    expect(focused[1]).toContain(FAKE_CURSOR_END);
+
+    editor.focused = false;
+    const unfocused = editor.render(40);
+    expect(unfocused.every((line) => line.startsWith(faint))).toBe(true);
+    expect(unfocused[1]).toContain(`${primary}\u001B[1m/help\u001B[22m${faint}`);
+    expect(unfocused[1]).not.toContain('\u001B[7m');
+    expect(unfocused[1]).not.toContain(FAKE_CURSOR_START);
+    expect(unfocused[1]).not.toContain(FAKE_CURSOR_END);
+
+    editor.focused = true;
+    editor.terminalFocused = false;
+    const terminalUnfocused = editor.render(40);
+    expect(editor.focused).toBe(true);
+    expect(terminalUnfocused.map((line) => line.replace(CURSOR_MARKER, ''))).toEqual(unfocused);
+  });
 
   it('keeps the original editor bindings when Updates paging is unavailable', () => {
     const editor = makeEditor();
@@ -875,5 +886,123 @@ describe('CustomEditor bash mode file completion', () => {
     // request force:true path completion.
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((call) => call.force === true)).toBe(true);
+  });
+});
+
+describe('CustomEditor alternate submit keys', () => {
+  const CTRL_ENTER = '\u001B[13;5u';
+  const CTRL_Q = '\u0011';
+  const SUPER_ENTER = '\u001B[13;9u';
+
+  function submitting(editor: CustomEditor): Array<readonly [string, string]> {
+    const submits: Array<readonly [string, string]> = [];
+    editor.onSubmit = (text) => {
+      submits.push([text, editor.submitKey]);
+    };
+    return submits;
+  }
+
+  it.each([
+    ['\r', 'enter'],
+    [CTRL_ENTER, 'mod-enter'],
+    ['\u001B[27;5;13~', 'mod-enter'],
+    [SUPER_ENTER, 'mod-enter'],
+    ['\u001B[27;9;13~', 'mod-enter'],
+    [CTRL_Q, 'ctrl-q'],
+    ['\u001B[113;5u', 'ctrl-q'],
+    ['\u001B[81;69u', 'ctrl-q'],
+  ])('submits %j tagged as %s', (data, key) => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+    editor.setText('look here');
+
+    editor.handleInput(data);
+
+    expect(submits).toEqual([['look here', key]]);
+    expect(editor.getText()).toBe('');
+    expect(editor.submitKey).toBe('enter');
+  });
+
+  it('tags the next plain Enter as enter after an alternate submit', () => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+
+    editor.setText('first');
+    editor.handleInput(CTRL_Q);
+    editor.setText('second');
+    editor.handleInput('\r');
+
+    expect(submits).toEqual([['first', 'ctrl-q'], ['second', 'enter']]);
+  });
+
+  it.each(['\n', '\u001B\r'])('keeps %j inserting a newline', (data) => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+    editor.setText('line');
+
+    editor.handleInput(data);
+
+    expect(submits).toEqual([]);
+    expect(editor.getText()).toBe('line\n');
+  });
+
+  it.each([CTRL_ENTER, SUPER_ENTER, CTRL_Q])('turns %j after a trailing backslash into a newline', (data) => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+    editor.setText('line\\');
+
+    editor.handleInput(data);
+
+    expect(submits).toEqual([]);
+    expect(editor.getText()).toBe('line\n');
+  });
+
+  it.each([CTRL_ENTER, SUPER_ENTER, CTRL_Q])('inserts a newline for %j inside a paste burst', (data) => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+
+    for (const char of 'pasted text') editor.handleInput(char);
+    editor.handleInput(data);
+
+    expect(submits).toEqual([]);
+    expect(editor.getText()).toBe('pasted text\n');
+  });
+
+  it('accepts an open slash menu the same way Enter does', async () => {
+    const run = async (data: string) => {
+      const editor = makeEditor();
+      const submits = submitting(editor);
+      editor.setAutocompleteProvider(providerReturning([{ value: 'help', label: 'help' }]));
+      editor.handleInput('/');
+      await flushAutocomplete();
+      expect(editor.isShowingAutocomplete()).toBe(true);
+      editor.handleInput(data);
+      return { text: editor.getText(), submits: submits.map(([text]) => text) };
+    };
+
+    expect(await run(CTRL_ENTER)).toEqual(await run('\r'));
+  });
+
+  it('holds Ctrl-Q behind an in-flight image paste and submits it afterwards', async () => {
+    const editor = makeEditor();
+    const submits = submitting(editor);
+    let resolvePaste!: (handled: boolean) => void;
+    editor.onPasteImage = () =>
+      new Promise<boolean>((resolve) => {
+        resolvePaste = (handled) => {
+          editor.insertTextAtCursor?.('[image #1 (1×1)] ');
+          resolve(handled);
+        };
+      });
+
+    editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+    editor.handleInput('hello');
+    editor.handleInput(CTRL_Q);
+    expect(submits).toEqual([]);
+
+    resolvePaste(true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(submits).toEqual([['[image #1 (1×1)] hello', 'ctrl-q']]);
   });
 });

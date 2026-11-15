@@ -75,12 +75,16 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元：可以添
 }
 ```
 
+Marketplace 条目还可以通过 `clients`（`desktop`、`cli` 或两者）和 `platforms`（`macos`、`windows`、`linux` 或 `cloud`）限制可用范围。`clients` 选择产品宿主，`platforms` 选择 server 操作系统，两个条件必须同时满足。未声明 `clients` 时，条目对两种宿主均可用。Web 和 Remote Control 跟随所连接 server 的宿主，不使用浏览器所在设备的操作系统判断。
+
+安装记录仍共享在 `$KIMI_CODE_HOME` 下。某个宿主不可见的条目也不会出现在该宿主的已安装列表和运行能力中。最近一次成功获取的可用性配置缓存在 `$KIMI_CODE_HOME/plugins/availability.json`；目录配置变化后，成功刷新即可隐藏或恢复已有安装，无需重新安装，也不会删除插件文件。
+
 ## 官方插件
 
 官方插件是 Kimi 官方维护的 plugin 和内置产品能力，目前有以下三种：
 
 - **[Kimi Datasource](#kimi-datasource)**：用自然语言查询金融行情、财经资讯、宏观经济、企业工商、学术文献、法律法规和国际组织官方数据
-- **[Kimi WebBridge](#kimi-webbridge)**：让 AI 直接操控你自己的浏览器，完成各类网页操作
+- **[Kimi Browser Extension](#kimi-browser-extension)**：让 AI 直接操控你自己的浏览器，完成各类网页操作
 - **[Kimi Computer Use](#kimi-computer-use)**：让 AI 操作你的桌面应用（macOS 和 Windows）
 
 ### 安装与升级
@@ -92,7 +96,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元：可以添
 3. 安装完成后运行 `/reload` 或 `/new` 激活
 
 ::: info 说明
-Kimi WebBridge 分两步安装：完成上述步骤后，还需要[安装浏览器扩展](#install-the-browser-extension)才能使用。
+Kimi Browser Extension 分两步安装：完成上述步骤后，还需要[安装浏览器扩展](#install-the-browser-extension)才能使用。
 :::
 
 官方插件不会自动更新，使用旧版时会提示更新。升级到新版本只需重复上述安装步骤。
@@ -108,7 +112,7 @@ Kimi Datasource 是 Kimi Code 官方数据插件。用自然语言直接查询�
 #### 使用方式
 
 1. 直接用自然语言描述需求，Kimi Code 会自动调用数据能力
-2. 通过 `/skill:kimi-datasource` 明确触发数据查询 Skill
+2. 通过 `/skill:kimi-datasource:kimi-datasource` 明确触发数据查询 Skill
 
 #### 能做什么
 
@@ -164,15 +168,17 @@ Kimi Datasource 是 Kimi Code 官方数据插件。用自然语言直接查询�
 - 技术指标（MACD、KDJ 等）及实时行情仅在交易时段内可用
 - AI 输出内容仅供参考，不构成任何投资或商业决策建议
 
-### Kimi WebBridge <Badge type="tip" text="v1.11.3" />
+<a id="kimi-webbridge"></a>
 
-Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 Cookie 打开网页、阅读内容、点击按钮、填写表单、截图保存，把重复的网页操作交给它完成。产品介绍见 [Kimi WebBridge 官网](https://www.kimi.com/zh-cn/features/webbridge)。
+### Kimi Browser Extension <Badge type="tip" text="v2.0.11" />
+
+Kimi Browser Extension 让 AI 直接操控你的浏览器，带着你的登录状态和 Cookie 打开网页、阅读内容、点击按钮、填写表单、截图保存，把重复的网页操作交给它完成。产品介绍见 [Kimi Browser Extension 官网](https://www.kimi.com/products/kimi-browser-extension)。
 
 <a id="install-the-browser-extension"></a>
 
 #### 安装浏览器扩展
 
-通过 `/plugins` 安装后，还需要在浏览器中安装 Kimi WebBridge 扩展才能使用。有两种安装方式：
+通过 `/plugins` 安装后，还需要在浏览器中安装 Kimi Browser Extension 扩展才能使用。有两种安装方式：
 
 **方式一：应用商店安装（推荐）**
 
@@ -191,9 +197,9 @@ Kimi WebBridge 让 AI 直接操控你的浏览器，带着你的登录状态和 
 
    ![加载未打包的扩展程序](../../media/webbridge-load-unpacked.jpeg)
 
-4. 安装完成后，浏览器工具栏会出现 Kimi WebBridge 图标，即表示安装成功
+4. 安装完成后，浏览器工具栏会出现 Kimi Browser Extension 图标，即表示安装成功
 
-   ![工具栏出现 Kimi WebBridge 图标](../../media/webbridge-install-success.jpeg)
+   ![工具栏出现 Kimi Browser Extension 图标](../../media/webbridge-install-success.jpeg)
 
 #### 能做什么
 
@@ -272,9 +278,9 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 
 | 字段 | 说明 |
 | --- | --- |
-| `name` | 必填，作为 plugin id，必须匹配 `[a-z0-9][a-z0-9_-]{0,63}` |
+| `name` | 必填，作为 plugin id，必须匹配 `[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*(@[A-Za-z0-9_-]+)?` |
 | `version`、`description`、`keywords`、`author`、`homepage`、`license` | 展示元数据 |
-| `interface` | 在 `/plugins` 中展示的字段：`displayName`、`shortDescription`、`longDescription`、`developerName`、`websiteURL` |
+| `interface` | 在 `/plugins` 中展示的字段：`displayName`、`shortDescription`、`longDescription`、`developerName`、`websiteURL`；另见下方的能力展示覆盖 |
 | `skills` | 一个或多个 `./` 路径，必须位于 plugin 根目录内。省略时根目录的 `SKILL.md` 被当作单个 Skill root |
 | `agents` | 一个或多个 `./` 路径，必须位于 plugin 根目录内，指向含有 [Agent 文件](./agents.md#自定义-agent) 的目录。省略时若根目录存在 `agents/` 目录则自动采用 |
 | `sessionStart.skill` | 在新会话或恢复会话开始时，把指定 plugin Skill 加载到 main agent |
@@ -284,6 +290,12 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 | `mcpServers` | MCP server 声明，默认启用，可从 `/plugins` 中禁用 |
 | `hooks` | 在 plugin 启用期间于生命周期事件上运行的 hook 规则，见 [插件中的 Hooks](#插件中的-hooks) |
 | `commands` | 一个或多个 `./` 路径，指向目录或 `.md` 文件，把其中的 Markdown 文件注册为斜杠命令，见 [插件斜杠命令](#插件斜杠命令) |
+
+`interface.mcpOverrides` 以 `mcpServers` 中的服务键为键，可为对应 MCP 服务提供展示用的 `displayName`、`description` 和 `iconUrl`。这些字段不改变 MCP 服务名称或运行配置。
+
+`interface.skillOverrides` 以技能目录名为键，可为对应技能提供展示用的 `displayName` 和 `description`。它们只影响插件信息展示，不改变技能的调用名称或 `SKILL.md` 内容。
+
+`interface.defaultLocale` 声明 `interface` 默认文案的语言。`interface.locales` 可指向插件根目录内的翻译目录（例如 `./locales/`），其中的 `<语言>.json` 文件（例如 `en-US.json`）可提供上述展示字段及两类 overrides。读取插件详情或预览时可指定 `locale`，匹配的翻译用于能力展示，未提供的字段回退到默认 `interface`。
 
 `tools`、`apps`、`inject`、`configFile` 等不支持的运行时字段会显示为 diagnostics 并被忽略。
 
@@ -397,7 +409,9 @@ my-plugin/
       SKILL.md
 ```
 
-`sessionStart.skill` 在会话启动时把一个 plugin Skill 加载到 main agent，适合放置初始化说明、工作流规则，或把其他工具中的术语映射到 Kimi Code CLI。它只注入文本，不执行代码。
+`sessionStart.skill` 在会话启动时把一个 plugin Skill 加载到 main agent，适合放置初始化说明、工作流规则，或把其他工具中的术语映射到 Kimi Code CLI。它只注入文本，不执行代码。字段值是插件内 Skill frontmatter 中声明的名字，不带 `<plugin-id>:` 前缀。
+
+Plugin Skill 以全限定名 `<plugin-id>:<skill-name>` 列出和调用（例如 `/skill:my-plugin:using-my-plugin`），与[插件斜杠命令](#插件斜杠命令)的命名方式一致：不同插件的同名 Skill 互不冲突，裸名不会解析到 plugin Skill。当插件命令与插件 Skill 同名时，`/plugin-id:name` 执行命令；调用 Skill 需使用显式形态 `/skill:plugin-id:name`。
 
 无论 Skill 通过哪种方式加载（`sessionStart.skill`、`/skill:<name>` 或模型自动调用），`skillInstructions` 都会随该 plugin 的 Skill 一起出现。
 

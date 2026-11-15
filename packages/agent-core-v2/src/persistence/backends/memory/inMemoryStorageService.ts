@@ -102,6 +102,10 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     return this.scopes.get(scope)?.get(key)?.byteLength;
   }
 
+  sizeSync(scope: string, key: string): number | undefined {
+    return this.scopes.get(scope)?.get(key)?.byteLength;
+  }
+
   async mtime(scope: string, key: string): Promise<number | undefined> {
     return this.mtimes.get(this.keyFor(scope, key));
   }

@@ -12,13 +12,18 @@ import type { ConfigChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/c
 import type { ModelsChangedEvent } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import type { ProvidersChangedEvent } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 import type { ReloadSummary } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { IOAuthService } from '@moonshot-ai/agent-core-v2/app/auth/auth';
+import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 
 import { stringDeltaSchema } from '../helpers.js';
 import type { EventRegistration } from '../types.js';
 
 /** Payload of `event.session.archived` on the global bus. */
 export interface SessionArchivedPayload {
+  readonly sessionId: string;
+}
+
+/** Payload of `event.session.restored` on the global bus. */
+export interface SessionRestoredPayload {
   readonly sessionId: string;
 }
 
@@ -34,9 +39,9 @@ export interface SessionMetaUpdatedPayload {
   };
 }
 
-/** Payload of `event.model_catalog.changed` — same shape as an OAuth refresh result. */
+/** Payload of `event.model_catalog.changed` — same shape as a provider-discovery refresh result. */
 export type CatalogChangedPayload = Awaited<
-  ReturnType<IOAuthService['refreshOAuthProviderModels']>
+  ReturnType<IProviderDiscoveryService['refreshProviderModels']>
 >;
 
 /** Public event name → payload type. Keys must stay in sync with `globalEvents`. */
@@ -47,6 +52,7 @@ export interface KlientEventPayloads {
   'kosong.models.changed': ModelsChangedEvent;
   'plugins.reloaded': ReloadSummary;
   'session.archived': SessionArchivedPayload;
+  'session.restored': SessionRestoredPayload;
   'session.metaUpdated': SessionMetaUpdatedPayload;
   'kosong.changed': CatalogChangedPayload;
 }
@@ -88,6 +94,13 @@ export const catalogChangedSchema = z.object({
   ),
   unchanged: z.array(z.string()),
   failed: z.array(z.object({ provider: z.string(), reason: z.string() })),
+  retired_default: z
+    .object({
+      from: z.string(),
+      to: z.string(),
+      from_display_name: z.string(),
+    })
+    .optional(),
 });
 
 /** Public event name → source binding + payload schema. */
@@ -125,6 +138,11 @@ export const globalEvents = {
   'session.archived': {
     kind: 'bus',
     type: 'event.session.archived',
+    schema: z.object({ sessionId: z.string() }),
+  },
+  'session.restored': {
+    kind: 'bus',
+    type: 'event.session.restored',
     schema: z.object({ sessionId: z.string() }),
   },
   'session.metaUpdated': {

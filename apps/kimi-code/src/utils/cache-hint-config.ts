@@ -1,11 +1,7 @@
+import type { ClientConfigFetchOptions } from '@moonshot-ai/kimi-code-product/client-configs/node';
 import { z } from 'zod';
 
-import {
-  getClientConfig,
-  peekClientConfig,
-  resetClientConfigCache,
-  type ClientConfigFetchOptions,
-} from '#/utils/client-configs';
+import { clientConfigs } from '#/utils/client-configs';
 
 /** The cache-hint rules are one named config on the client-configs endpoint. */
 const CONFIG_NAME = 'estimated_cache_duration';
@@ -31,7 +27,7 @@ export type CacheHintConfigFetchOptions = ClientConfigFetchOptions;
 export async function getCacheHintConfig(
   options: CacheHintConfigFetchOptions = {},
 ): Promise<CacheHintConfig | undefined> {
-  return getClientConfig(CONFIG_NAME, cacheHintConfigSchema, options);
+  return clientConfigs.get(CONFIG_NAME, cacheHintConfigSchema, options);
 }
 
 /** Fire-and-forget refresh, e.g. on new-session creation. Never throws. */
@@ -43,10 +39,10 @@ export function refreshCacheHintConfigInBackground(
 
 /** Synchronous peek at the fresh cache; undefined when missing or stale. */
 export function peekCacheHintConfig(now?: number): CacheHintConfig | undefined {
-  return peekClientConfig(CONFIG_NAME, cacheHintConfigSchema, now);
+  return clientConfigs.peek(CONFIG_NAME, cacheHintConfigSchema, now);
 }
 
 /** Test hook: drop the in-process cache. */
 export function resetCacheHintConfigCache(): void {
-  resetClientConfigCache(CONFIG_NAME);
+  clientConfigs.reset(CONFIG_NAME);
 }

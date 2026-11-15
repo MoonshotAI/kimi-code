@@ -1,61 +1,42 @@
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { UNKNOWN_CAPABILITY, toLlmCapability, type ModelCapability } from '../contract/capability';
-import type { ModelThinkingMetadata } from '#human/llm/thinking';
-import type { ProviderMediaContribution } from '#human/llm/media/upload';
-import type { LlmModel } from '#human/llm/model';
-import type { ProtocolBase } from '#human/llm/protocol/base';
-import type { ProviderConnection } from '#human/llm/protocol/connection';
-import type { AnyProtocolTrait } from '#human/llm/provider/definition';
-import type { LlmErrorClassifier } from '#human/llm/requester/requester';
-import { anthropicBase, anthropicBetaBase } from '#human/llm/requester/bases/anthropic/requester';
 import {
-  createGoogleGenAIBase,
-  googleGenAIBase,
-} from '#human/llm/requester/bases/google-genai/requester';
-import type { OpenAITrait } from '#human/llm/requester/bases/openai/trait';
-import { openAIBase } from '#human/llm/requester/bases/openai/requester';
-import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
-import { KimiFiles } from '#human/llm-kimi/files';
-import { KIMI_DEFAULT_BASE_URL } from '#human/llm-kimi/trait';
+  anthropicRequester,
+  googleGenAIRequester,
+  googleVertexRequester,
+  openAIRequester,
+  openAIResponsesRequester,
+} from '@moonshot-ai/core/llm/builtin/provider/index';
+import type { OpenAIOptions } from '@moonshot-ai/core/llm/builtin/protocol/openai/index';
+import { modelKey, type LlmEndpoint, type ModelCapability } from '@moonshot-ai/core/llm/request';
+import {
+  contentsOf,
+  createRequester,
+  type InitializedLlmRequester,
+  type InitializedLlmRequestPart,
+  type LlmRequester as CoreLlmRequester,
+} from '@moonshot-ai/core/llm/requester';
+import { createLlmHeadersTimeoutFetch } from '@moonshot-ai/core/llm/transport/headers-timeout';
+import {
+  createLlmRequesterExecution,
+  type LlmRequesterExecution,
+} from '@moonshot-ai/core/llm/policy/policy';
 
 import type { Model } from '../model/catalog';
-import type { ResolvedLlmModel } from '../model/model-requester-impl';
-import {
-  anthropicConnection,
-  geminiConnection,
-  getProviderDefinition,
-  openAIConnection,
-  vertexConnection,
-} from '../provider/provider-definition';
+import { getProviderDefinition } from '../provider/provider-definition';
 
 import { IProtocolAdapterRegistry, type Protocol } from './protocol';
 import { getProtocolBase, listProtocolBases, type ProtocolBaseId } from './protocol-base';
 
-const vertexGenAIBase = createGoogleGenAIBase({ vertexai: true });
-
-const kimiMedia: ProviderMediaContribution = {
-  uploadVideo: (video, { model, signal }) =>
-    new KimiFiles({
-      apiKey: model.apiKey,
-      baseUrl: model.baseUrl ?? KIMI_DEFAULT_BASE_URL,
-      defaultHeaders: model.defaultHeaders === undefined ? undefined : { ...model.defaultHeaders },
-    }).uploadVideo(video, { signal }),
-};
-
 interface AdapterRoute {
-  readonly base: ProtocolBase<AnyProtocolTrait>;
-  readonly trait?: AnyProtocolTrait;
-  readonly connection?: ProviderConnection;
-  readonly convertError?: LlmErrorClassifier;
+  readonly requester: CoreLlmRequester<'protocol'>;
+  readonly options?: unknown;
   readonly providerId: string;
-  readonly media?: ProviderMediaContribution;
 }
 
-function openAIReasoningTraitFor(model: Model): OpenAITrait | undefined {
-  const reasoningKey = model.providerOptions?.reasoningKey ?? model.reasoningKey;
-  return reasoningKey === undefined ? undefined : { reasoningKey };
+function openAIReasoningKeyFor(model: Model): string | undefined {
+  return model.providerOptions?.reasoningKey ?? model.reasoningKey;
 }
 
 function routeFor(model: Model): AdapterRoute {
@@ -63,69 +44,37 @@ function routeFor(model: Model): AdapterRoute {
     model.providerType === undefined
       ? undefined
       : getProviderDefinition(model.providerType, model.protocol);
-  const routeMedia = definition?.modelSource === 'oauth-catalog' ? kimiMedia : undefined;
-  const custom =
-    definition !== undefined &&
-    (definition.trait !== undefined ||
-      definition.connection !== undefined ||
-      definition.convertError !== undefined)
-      ? definition
-      : undefined;
   switch (model.protocol) {
     case 'openai':
-      return custom !== undefined
-        ? {
-            base: openAIBase,
-            trait: custom.trait,
-            connection: custom.connection,
-            convertError: custom.convertError,
-            providerId: 'openai',
-            media: routeMedia,
-          }
-        : {
-            base: openAIBase,
-            trait: openAIReasoningTraitFor(model),
-            connection: openAIConnection,
-            providerId: 'openai',
-          };
+      return {
+        requester: definition?.requester ?? openAIRequester,
+        options: {
+          reasoningKey:
+            definition?.requester === undefined ? openAIReasoningKeyFor(model) : undefined,
+          toolMessageConversion: definition?.requester === undefined ? undefined : 'keep_parts',
+        },
+        providerId: 'openai',
+      };
     case 'openai_responses':
-      return custom !== undefined
-        ? {
-            base: openAIResponsesBase,
-            trait: custom.trait,
-            connection: custom.connection,
-            convertError: custom.convertError,
-            providerId: 'openai-responses',
-            media: routeMedia,
-          }
-        : {
-            base: openAIResponsesBase,
-            connection: openAIConnection,
-            providerId: 'openai-responses',
-          };
-    case 'anthropic': {
-      const base = model.providerOptions?.betaApi === true ? anthropicBetaBase : anthropicBase;
-      return custom !== undefined
-        ? {
-            base,
-            trait: custom.trait,
-            connection: custom.connection,
-            convertError: custom.convertError,
-            providerId: 'anthropic',
-            media: routeMedia,
-          }
-        : { base, connection: anthropicConnection, providerId: 'anthropic' };
-    }
+      return {
+        requester: definition?.requester ?? openAIResponsesRequester,
+        providerId: 'openai-responses',
+      };
+    case 'anthropic':
+      return {
+        requester: definition?.requester ?? anthropicRequester,
+        options: { betaApi: model.providerOptions?.betaApi === true },
+        providerId: 'anthropic',
+      };
     case 'google-genai':
       return model.providerOptions?.vertexai === true
         ? {
-            base: vertexGenAIBase,
-            connection: vertexConnection,
+            requester: googleVertexRequester,
+            options: { vertexai: true },
             providerId: 'google_genai',
           }
         : {
-            base: googleGenAIBase,
-            connection: geminiConnection,
+            requester: googleGenAIRequester,
             providerId: 'google_genai',
           };
   }
@@ -133,6 +82,8 @@ function routeFor(model: Model): AdapterRoute {
 
 export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
   declare readonly _serviceBrand: undefined;
+
+  private readonly detectedReasoningKeys = new Map<string, string>();
 
   supportedProtocols(): readonly Protocol[] {
     return listProtocolBases().map((base) => base.id);
@@ -142,7 +93,11 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
     const baseId: ProtocolBaseId = definition?.baseProtocol ?? protocol;
-    return { baseId, trait: definition?.trait };
+    return {
+      baseId,
+      thinkingDriven: definition?.thinkingDriven,
+      strictThinkingValidation: definition?.strictThinkingValidation,
+    };
   }
 
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId {
@@ -151,56 +106,76 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     return definition?.baseProtocol ?? protocol;
   }
 
-  resolveCapability(protocol: Protocol, modelName: string, providerType?: string): ModelCapability {
+  resolveCapability(
+    protocol: Protocol,
+    modelName: string,
+    providerType?: string,
+  ): ModelCapability | undefined {
     const identity = this.resolveAdapterIdentity(protocol, providerType);
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
-    const hooked = definition?.capability?.(modelName);
-    if (hooked !== undefined) {
-      return toV2Capability(hooked);
-    }
-    const baseCapability = getProtocolBase(identity.baseId)?.base.capability?.(modelName);
-    if (baseCapability !== undefined) {
-      return toV2Capability(baseCapability);
-    }
-    return UNKNOWN_CAPABILITY;
+    return (
+      definition?.capability?.(modelName) ??
+      getProtocolBase(identity.baseId)?.capability?.(modelName)
+    );
   }
 
-  resolve(model: Model): ResolvedLlmModel {
+  request(
+    model: Model,
+    part?: InitializedLlmRequestPart,
+    execution: LlmRequesterExecution = createLlmRequesterExecution(),
+  ): InitializedLlmRequester {
     const route = routeFor(model);
-    const requester = route.base.createRequester({
-      connection: route.connection,
-      trait: route.trait,
-      convertError: route.convertError,
-    });
-    const llmModel: LlmModel & ModelThinkingMetadata = {
-      provider: route.providerId,
-      model: model.name,
-      capability: toLlmCapability(model.capabilities),
-      maxContextSize: model.maxContextSize > 0 ? model.maxContextSize : undefined,
-      maxInputSize: model.maxInputSize,
-      baseUrl: model.baseUrl,
-      defaultHeaders: Object.keys(model.headers).length > 0 ? { ...model.headers } : undefined,
-      supportEfforts: model.supportEfforts,
-      defaultEffort: model.defaultEffort,
-      offEffort: model.providerOptions?.offEffort,
-      alwaysThinking: model.alwaysThinking,
-      adaptiveThinking: model.providerOptions?.adaptiveThinking,
+    const base = contentsOf(route.requester);
+    const protocol = base.protocol;
+    if (protocol?.base === undefined) throw new TypeError('requester protocol is not initialized');
+    const protocolBase = protocol.base;
+    let options = route.options;
+    if (model.protocol === 'openai') {
+      const resolved = options as OpenAIOptions | undefined;
+      if (resolved?.reasoningKey === undefined) {
+        const key = modelKey(model.spec, model.endpoint);
+        options = {
+          ...resolved,
+          detectedReasoningKey: () => this.detectedReasoningKeys.get(key),
+          onReasoningKey: (reasoningKey: string) => {
+            if (!this.detectedReasoningKeys.has(key)) {
+              this.detectedReasoningKeys.set(key, reasoningKey);
+            }
+          },
+        };
+      }
+    }
+    const endpoint: LlmEndpoint = {
+      ...base.endpoint,
+      ...model.endpoint,
+      fetch:
+        protocolBase.usesEndpointFetch === false
+          ? undefined
+          : (input, init) => createLlmHeadersTimeoutFetch()(input, init),
     };
-    return { requester, protocol: model.protocol, model: llmModel, media: route.media };
+    const initialized = createRequester(execution).with(route.requester).with({
+      protocol: {
+        options,
+        stream: true,
+        recoveryKey: JSON.stringify([
+          model.protocol,
+          model.providerType,
+          route.providerId,
+          model.providerOptions?.betaApi === true,
+          model.providerOptions?.vertexai === true,
+        ]),
+      },
+      endpoint,
+      model: {
+        spec: { ...model.spec, provider: route.providerId },
+      },
+    });
+    const resolved = initialized.with(part ?? {});
+    const spec = contentsOf(resolved).model?.spec;
+    if (spec === undefined) throw new TypeError('requester model is not initialized');
+    return resolved.with({ model: { spec: { ...spec, provider: route.providerId } } });
   }
-}
-
-function toV2Capability(capability: import('#human/llm/capability').ModelCapability): ModelCapability {
-  return {
-    image_in: capability.image_in,
-    video_in: capability.video_in,
-    audio_in: capability.audio_in,
-    thinking: capability.thinking,
-    tool_use: capability.tool_use,
-    max_context_tokens: 0,
-    dynamically_loaded_tools: capability.dynamically_loaded_tools,
-  };
 }
 
 registerScopedService(

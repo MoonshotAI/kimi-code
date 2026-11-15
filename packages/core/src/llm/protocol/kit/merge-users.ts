@@ -1,0 +1,54 @@
+/**
+ * Pattern that merges consecutive user messages without folding a tool-result-only message into a
+ * preceding regular one.
+ */
+import type { Pattern } from '../pattern';
+
+export interface MergeUsersPolicy<T> {
+  readonly isUser: (message: T) => boolean;
+  readonly isToolResultOnly: (message: T) => boolean;
+  readonly merge: (last: T, next: T) => T;
+}
+
+/**
+ * Converts a run of consecutive user messages into one message merged by `policy`, stopping before
+ * a tool-result-only message when the accumulated message is not tool-result-only.
+ *
+ * @example
+ * // With content-concatenating `policy.merge`:
+ * // Input:
+ * [
+ *   { role: 'user', content: [{ type: 'text', text: 'A' }] }, // ←
+ *   { role: 'user', content: [{ type: 'text', text: 'B' }] }, // ←
+ * ]
+ * // Output:
+ * [
+ *   {
+ *     role: 'user',
+ *     content: [ // ←
+ *       { type: 'text', text: 'A' },
+ *       { type: 'text', text: 'B' },
+ *     ],
+ *   },
+ * ]
+ */
+export function mergeConsecutiveUsers<T>(policy: MergeUsersPolicy<T>): Pattern<T> {
+  return {
+    name: 'mergeConsecutiveUsers',
+    rewrite(items, index) {
+      const first = items[index];
+      if (first === undefined || !policy.isUser(first)) return null;
+      let acc: T = first;
+      let end = index + 1;
+      while (end < items.length) {
+        const next = items[end] as T;
+        if (!policy.isUser(next)) break;
+        if (!policy.isToolResultOnly(acc) && policy.isToolResultOnly(next)) break;
+        acc = policy.merge(acc, next);
+        end += 1;
+      }
+      if (end === index + 1) return null;
+      return { consumed: end - index, replacement: [acc] };
+    },
+  };
+}

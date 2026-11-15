@@ -45,6 +45,34 @@ describe('providers TOML transforms', () => {
       oauth: { storage: 'file', key: 'k', oauth_host: 'example.com' },
     });
   });
+
+  it('round-trips api_key_env between TOML and camelCase', () => {
+    const from = providersFromToml({
+      acme: { type: 'openai', api_key_env: 'ACME_API_KEY' },
+    }) as Record<string, Record<string, unknown>>;
+    expect(from['acme']).toEqual({ type: 'openai', apiKeyEnv: 'ACME_API_KEY' });
+
+    const parsed = ProvidersSectionSchema.parse(from);
+    expect(parsed['acme']?.apiKeyEnv).toBe('ACME_API_KEY');
+
+    const back = providersToToml(from, undefined) as Record<string, Record<string, unknown>>;
+    expect(back['acme']).toEqual({ type: 'openai', api_key_env: 'ACME_API_KEY' });
+  });
+
+  it('drops a stale api_key_env and oauth when the provider is replaced with an inline api_key', () => {
+    const raw = {
+      acme: {
+        type: 'openai',
+        api_key_env: 'ACME_API_KEY',
+        oauth: { storage: 'file', key: 'oauth/acme' },
+      },
+    };
+    const next = providersToToml(
+      { acme: { type: 'openai', apiKey: 'sk-new' } },
+      raw,
+    ) as Record<string, Record<string, unknown>>;
+    expect(next['acme']).toEqual({ type: 'openai', api_key: 'sk-new' });
+  });
 });
 
 describe('ProviderService', () => {

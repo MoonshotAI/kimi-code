@@ -8,8 +8,7 @@ import { loadMcpServersDetailed } from '#/app/mcpConfig/configLoader';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { readWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
+import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 import {
   IMcpRegistryService,
@@ -25,7 +24,7 @@ export class McpRegistryService implements IMcpRegistryService {
     @IPluginService private readonly plugins: IPluginService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IWorkspaceTrustStore private readonly trust: IWorkspaceTrustStore,
   ) {}
 
   async list(query: McpRegistryQuery = {}): Promise<readonly McpRegistryEntry[]> {
@@ -45,7 +44,8 @@ export class McpRegistryService implements IMcpRegistryService {
       }
     } else {
       const cwd = canonicalWorkspaceRoot(query.cwd);
-      if (!(await readWorkspaceTrust(this.docs, cwd))) {
+      const trusted = await this.trust.forRoot(cwd).refresh();
+      if (!trusted) {
         const userEntries = await this.store.list();
         for (const server of userEntries) {
           const { name, ...config } = server;

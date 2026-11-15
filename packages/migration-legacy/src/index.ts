@@ -9,6 +9,12 @@ export {
 export { defaultPlansSourceDir } from './steps/plans.js';
 export { runMigration, type RunMigrationInput } from './run-migration.js';
 export {
+  importedSessionDir,
+  writeImportedSession,
+  type ImportedSessionInput,
+  type ImportedSessionMessage,
+} from './imported-session.js';
+export {
   resolveMigrationScope,
   type MigrationPromptResult,
   type AnyChoice,

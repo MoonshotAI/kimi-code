@@ -1,0 +1,87 @@
+/**
+ * Context-window token accounting: the last usage reported by the provider plus a character-based
+ * estimate for the messages after it, and for the system prompt and tools when no usage exists yet.
+ */
+import type { Message, ToolDescription } from '#/llm/message';
+import { emptyUsage, grandTotal, type TokenUsage } from '#/llm/usage';
+
+const MEDIA_TOKEN_ESTIMATE = 2000;
+
+export interface ContextUsagePrefix {
+  systemPrompt?: string;
+  tools?: readonly ToolDescription[];
+}
+
+export function calculateContextTokens(usage: TokenUsage): number | undefined {
+  return grandTotal(usage);
+}
+
+export function estimateTextTokens(text: string): number {
+  let asciiCount = 0;
+  let nonAsciiCount = 0;
+  for (const char of text) {
+    if ((char.codePointAt(0) as number) <= 127) {
+      asciiCount++;
+    } else {
+      nonAsciiCount++;
+    }
+  }
+  return Math.ceil(asciiCount / 4) + nonAsciiCount;
+}
+
+export function estimateMessageTokens(message: Message): number {
+  let total = estimateTextTokens(message.role);
+  for (const part of message.content) {
+    switch (part.type) {
+      case 'text':
+        total += estimateTextTokens(part.text);
+        break;
+      case 'think':
+        total += estimateTextTokens(part.think);
+        break;
+      case 'image_url':
+      case 'audio_url':
+      case 'video_url':
+        total += MEDIA_TOKEN_ESTIMATE;
+        break;
+    }
+  }
+  if (message.role === 'assistant') {
+    for (const call of message.toolCalls) {
+      total += estimateTextTokens(call.name);
+      total += estimateTextTokens(call.arguments ?? '');
+    }
+  }
+  return total;
+}
+
+export function estimateUsedContextTokens(
+  history: readonly Message[],
+  prefix?: ContextUsagePrefix,
+): number {
+  let lastUsageIndex = -1;
+  let usageTokens = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i] as Message;
+    if (message.role !== 'assistant') continue;
+    const tokens = calculateContextTokens(message.attributes?.usage ?? emptyUsage());
+    if (tokens !== undefined && tokens > 0) {
+      lastUsageIndex = i;
+      usageTokens = tokens;
+      break;
+    }
+  }
+  let tokens = usageTokens;
+  for (let i = lastUsageIndex + 1; i < history.length; i++) {
+    tokens += estimateMessageTokens(history[i] as Message);
+  }
+  if (lastUsageIndex === -1 && prefix !== undefined) {
+    if (prefix.systemPrompt !== undefined) {
+      tokens += estimateTextTokens(prefix.systemPrompt);
+    }
+    if (prefix.tools !== undefined && prefix.tools.length > 0) {
+      tokens += estimateTextTokens(JSON.stringify(prefix.tools));
+    }
+  }
+  return tokens;
+}

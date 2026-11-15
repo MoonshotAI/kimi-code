@@ -1,6 +1,6 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
-import { TOWER_STATUS_PROMPT, TOWER_TEARDOWN_PROMPT } from '../constant/kimi-tui';
+import { TOWER_TEARDOWN_PROMPT } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
@@ -17,7 +17,16 @@ export async function handleTowerCommand(host: SlashCommandHost, args: string): 
     return;
   }
   if (sub === '' || sub === 'status') {
-    host.sendNormalUserInput(TOWER_STATUS_PROMPT);
+    const session = await requireSessionEnsured(host);
+    if (session === undefined) return;
+    try {
+      // The SDK returns the engine-rendered summary; its first line is the
+      // state headline, which the notice lifts into the title.
+      const [title, ...rest] = (await session.getTowerStatus()).split('\n');
+      host.showNotice(title ?? 'Tower status', rest.length > 0 ? rest.join('\n') : undefined);
+    } catch (error) {
+      host.showError(`Failed to read tower status: ${formatErrorMessage(error)}`);
+    }
     return;
   }
   if (sub === 'teardown') {
@@ -84,7 +93,7 @@ async function setTowerMode(
 
 async function requireSessionEnsured(host: SlashCommandHost): Promise<Session | undefined> {
   if (host.session !== undefined) return host.session;
-  // v2 session-less: lazy-create the session, then toggle — the same path
+  // v2 session-less: lazy-create the session on first use — the same path
   // the first prompt takes.
   return host.ensureSession();
 }

@@ -1,12 +1,13 @@
 import {
   AGENT_WIRE_RECORD_KEY,
   IAgentBlobService,
-  IAgentContextMemoryService,
+  IAgentLoopService,
   IAgentScopeContext,
   IAppendLogStore,
   ISessionIndex,
   IWireService,
   createContextTranscriptReducer,
+  fromPersistentWireRecord,
   resumeSessionById,
   type ContextMessage,
   type ContextTranscript,
@@ -60,7 +61,7 @@ export async function listMessages(
   query: MessageListQuery,
 ): Promise<PageResponse<Message>> {
   const all = await loadMessages(core, sessionId);
-  const desc = [...all].reverse();
+  const desc = [...all].toReversed();
 
   let pivotIndex = -1;
   if (query.before_id !== undefined) {
@@ -121,7 +122,7 @@ export async function loadMessageHistory(
   sessionCreatedAtMs: number,
 ): Promise<Message[]> {
   const transcript = await readTranscript(core, agent);
-  const contextMessages = agent.accessor.get(IAgentContextMemoryService).get();
+  const contextMessages = agent.accessor.get(IAgentLoopService).history();
   const merged = mergeLiveTail(transcript, contextMessages);
   const entries = await rehydrate(agent, merged.messages);
 
@@ -160,7 +161,7 @@ async function readTranscript(core: Scope, agent: IAgentScopeHandle): Promise<Co
   for await (const record of core.accessor
     .get(IAppendLogStore)
     .read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
-    reducer.add(record);
+    reducer.add(fromPersistentWireRecord(record));
   }
   return reducer.result();
 }

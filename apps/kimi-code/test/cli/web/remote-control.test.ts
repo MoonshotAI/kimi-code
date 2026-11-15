@@ -59,6 +59,9 @@ describe('Remote Control output', () => {
   it('formats relay and device lifecycle states', () => {
     expect(formatRemoteControlStatus('relay_connected').toLowerCase()).toContain('connected');
     expect(formatRemoteControlStatus('relay_disconnected')).toContain('disconnected');
+    expect(formatRemoteControlStatus('relay_terminated')).toContain('offline');
+    expect(formatRemoteControlStatus('relay_terminated')).toContain('exiting');
+    expect(formatRemoteControlStatus('relay_terminated')).not.toContain('reconnecting');
     expect(formatRemoteControlStatus('device_connected').toLowerCase()).toContain('connected');
     expect(formatRemoteControlStatus('device_disconnected')).toContain('disconnected');
   });

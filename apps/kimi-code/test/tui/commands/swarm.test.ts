@@ -5,6 +5,8 @@ import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { currentTheme } from '#/tui/theme';
 import { PERMISSION_MODE_DESCRIPTIONS } from '#/tui/utils/permission-mode';
 
+const USAGE_NOTICE =
+  "High usage: Swarm is built for large parallel jobs and can use many times the tokens of a normal task. Start small, and run /swarm off when you're done.";
 const ENTER = '\r';
 const ESCAPE = '\u001B';
 const DOWN = '\u001B[B';
@@ -85,6 +87,7 @@ describe('handleSwarmCommand', () => {
     expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'task');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
+    expect(host.showStatus).toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
@@ -97,6 +100,7 @@ describe('handleSwarmCommand', () => {
     expect(session.setSwarmMode).not.toHaveBeenCalled();
     expect(host.state.swarmModeEntry).toBeUndefined();
     expectSwarmMarker(host, 'Swarm activated');
+    expect(host.showStatus).toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
   });
 
@@ -109,7 +113,8 @@ describe('handleSwarmCommand', () => {
     expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
     expect(host.state.swarmModeEntry).toBe('manual');
     expectSwarmMarker(host, 'Swarm activated');
-    expect(host.showStatus).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledOnce();
+    expect(host.showStatus).toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -124,7 +129,9 @@ describe('handleSwarmCommand', () => {
     expect(session.setPermission).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(host).render(80).join('\n'));
-    expect(text).toContain('Always Ask mode can block swarm work');
+    expect(text.replaceAll(/\s+/g, ' ')).toContain(
+      'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions, and can block swarm work while agents are running.',
+    );
     mountedPicker(host).handleInput(ENTER);
 
     await vi.waitFor(() => {
@@ -136,6 +143,7 @@ describe('handleSwarmCommand', () => {
     expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
     expect(host.state.swarmModeEntry).toBe('manual');
     expectSwarmMarker(host, 'Swarm activated');
+    expect(host.showStatus).toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -149,7 +157,8 @@ describe('handleSwarmCommand', () => {
     expect(host.state.swarmModeEntry).toBe('manual');
     expectSwarmMarker(host, 'Swarm activated');
     expect(host.showError).not.toHaveBeenCalled();
-    expect(host.showStatus).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledOnce();
+    expect(host.showStatus).toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -162,6 +171,7 @@ describe('handleSwarmCommand', () => {
     expect(host.setAppState).not.toHaveBeenCalledWith({ swarmMode: true });
     expect(markerAddChild(host)).not.toHaveBeenCalled();
     expect(host.showStatus).toHaveBeenCalledWith('Swarm mode is already on.');
+    expect(host.showStatus).not.toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -215,7 +225,9 @@ describe('handleSwarmCommand', () => {
     expect(session.setPermission).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(host).render(80).join('\n'));
-    expect(text).toContain('Always Ask mode can block swarm work');
+    expect(text.replaceAll(/\s+/g, ' ')).toContain(
+      'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions, and can block swarm work while agents are running.',
+    );
     expect(text).toContain('Switch to Ask When Needed and start');
     expect(text).not.toContain('Do not start');
   });
@@ -238,6 +250,7 @@ describe('handleSwarmCommand', () => {
     expect(host.showStatus).toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.auto, 'warning');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
+    expect(host.showStatus).toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
   });
 
   it('can start a Manual-mode swarm task without changing permission', async () => {
@@ -259,6 +272,7 @@ describe('handleSwarmCommand', () => {
     expect(host.showStatus).not.toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.auto, 'warning');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
+    expect(host.showStatus).toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
   });
 
   it('can start a Manual-mode swarm task after switching to YOLO', async () => {
@@ -281,6 +295,7 @@ describe('handleSwarmCommand', () => {
     expect(host.showStatus).toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.yolo, 'warning');
     expect(host.state.swarmModeEntry).toBe('task');
     expectSwarmMarker(host, 'Swarm activated');
+    expect(host.showStatus).toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
   });
 
   it('returns the command to the input box when a Manual-mode swarm start is cancelled', async () => {
@@ -294,6 +309,7 @@ describe('handleSwarmCommand', () => {
     expect(session.setPermission).not.toHaveBeenCalled();
     expect(session.setSwarmMode).not.toHaveBeenCalled();
     expect(markerAddChild(host)).not.toHaveBeenCalled();
+    expect(host.showStatus).not.toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -311,6 +327,7 @@ describe('handleSwarmCommand', () => {
     });
     expect(session.setSwarmMode).not.toHaveBeenCalled();
     expect(markerAddChild(host)).not.toHaveBeenCalled();
+    expect(host.showStatus).not.toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -329,6 +346,7 @@ describe('handleSwarmCommand', () => {
     expect(session.setPermission).toHaveBeenCalledWith('auto');
     expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'task');
     expect(markerAddChild(host)).not.toHaveBeenCalled();
+    expect(host.showStatus).not.toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -342,6 +360,7 @@ describe('handleSwarmCommand', () => {
       expect.stringContaining('Failed to enable swarm mode'),
     );
     expect(markerAddChild(host)).not.toHaveBeenCalled();
+    expect(host.showStatus).not.toHaveBeenCalledWith(USAGE_NOTICE, 'warning');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 });

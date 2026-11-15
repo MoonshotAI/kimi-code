@@ -7,6 +7,16 @@ import { projectContext } from '../../src/lib/context-projector';
 import { readAgentWire } from '../../src/lib/wire-reader';
 import { join } from 'node:path';
 
+function turnPrompt(text: string, promptId = text) {
+  return {
+    type: 'turn.prompt' as const,
+    input: [{ type: 'text' as const, text }],
+    origin: { kind: 'user' as const },
+    promptId,
+    trigger: 'normal' as const,
+  };
+}
+
 describe('context-projector', () => {
   let cleanup: (() => Promise<void>) | null = null;
   afterEach(async () => { if (cleanup) await cleanup(); cleanup = null; });
@@ -15,7 +25,20 @@ describe('context-projector', () => {
     const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
     const wire = await readAgentWire(join(sessionDir, 'agents', 'main', 'wire.jsonl'));
-    const proj = projectContext(wire.records);
+    const proj = projectContext([
+      ...wire.records,
+      {
+        lineNo: wire.records.length + 1,
+        data: {
+          type: 'usage.record',
+          agentId: 'main',
+          model: 'kimi-k2',
+          usage: { inputOther: 7, output: 2, inputCacheRead: 1, inputCacheCreation: 3 },
+          usageScope: 'prediction',
+        },
+        raw: {},
+      },
+    ]);
 
     expect(proj.messages).toHaveLength(2);
     expect(proj.messages[0]!.message.role).toBe('user');
@@ -27,8 +50,11 @@ describe('context-projector', () => {
     expect(proj.usage.byScope.turn).toEqual({
       inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0,
     });
+    expect(proj.usage.byScope.prediction).toEqual({
+      inputOther: 7, output: 2, inputCacheRead: 1, inputCacheCreation: 3,
+    });
     expect(proj.usage.byModel['kimi-k2']).toEqual({
-      inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0,
+      inputOther: 17, output: 7, inputCacheRead: 1, inputCacheCreation: 3,
     });
 
     expect(proj.config.systemPrompt).toBe('You are Kimi.');
@@ -67,6 +93,21 @@ describe('context-projector', () => {
             type: 'content.part' as const,
             uuid: 'c1', turnId: 't1', step: 0, stepUuid: 's1',
             part: { type: 'text' as const, text: 'Let me check' },
+          },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 4.5,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: {
+            type: 'content.part' as const,
+            uuid: 'c2', turnId: 't1', step: 0, stepUuid: 's1',
+            part: {
+              type: 'image_url' as const,
+              imageUrl: { url: 'data:image/png;base64,AAA' },
+            },
           },
         },
         raw: {},
@@ -111,9 +152,13 @@ describe('context-projector', () => {
 
     expect(proj.messages[0]!.message.role).toBe('user');
 
-    expect(proj.messages[1]!.message.role).toBe('assistant');
-    expect(proj.messages[1]!.message.content).toEqual([{ type: 'text', text: 'Let me check' }]);
-    expect(proj.messages[1]!.message.toolCalls).toEqual([
+    const assistant = proj.messages[1]!.message;
+    if (assistant.role !== 'assistant') throw new Error('expected assistant message');
+    expect(assistant.content).toEqual([
+      { type: 'text', text: 'Let me check' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+    ]);
+    expect(assistant.toolCalls).toEqual([
       { type: 'function', id: 'call_1', name: 'LS', arguments: '{"path":"/"}' },
     ]);
     // The assistant message was opened by step.begin (line 3), so its
@@ -122,9 +167,10 @@ describe('context-projector', () => {
     expect(proj.messages[1]!.lineNo).toBe(3);
     expect(proj.messages[1]!.toolStepUuids).toEqual(['s1']);
 
-    expect(proj.messages[2]!.message.role).toBe('tool');
-    expect(proj.messages[2]!.message.toolCallId).toBe('call_1');
-    expect(proj.messages[2]!.message.content).toEqual([
+    const tool = proj.messages[2]!.message;
+    if (tool.role !== 'tool') throw new Error('expected tool message');
+    expect(tool.toolCallId).toBe('call_1');
+    expect(tool.content).toEqual([
       { type: 'text', text: 'file1.txt\nfile2.txt' },
     ]);
   });
@@ -141,7 +187,7 @@ describe('context-projector', () => {
   });
 
   it.each(['interrupted', 'error'] as const)(
-    'keeps a %s step open until the next attempt settles it',
+    'seals a %s step immediately and keeps it beside the next attempt',
     (finishReason) => {
       const entries: Array<{ lineNo: number; data: Record<string, unknown>; raw: object }> = [
         { lineNo: 1, data: { type: 'context.append_loop_event' as const,
@@ -155,7 +201,7 @@ describe('context-projector', () => {
 
       const interrupted = projectContext(entries as any);
       expect(interrupted.messages).toHaveLength(1);
-      expect(interrupted.messages[0]!.message.partial).toBe(true);
+      expect(interrupted.messages[0]!.message.partial).toBeUndefined();
 
       entries.push(
         { lineNo: 4, data: { type: 'context.append_loop_event' as const,
@@ -304,7 +350,7 @@ describe('context-projector', () => {
 
   it('tool.result: error string output is prefixed with the error sentinel', () => {
     const msg = projectToolResult({ output: 'boom: file not found', isError: true });
-    expect(msg.role).toBe('tool');
+    if (msg.role !== 'tool') throw new Error('expected tool message');
     expect(msg.toolCallId).toBe('call_1');
     expect(msg.isError).toBe(true);
     expect(msg.content).toEqual([
@@ -596,6 +642,7 @@ describe('context-projector', () => {
     // array-slice would have retained the wrong prompts.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
+      { lineNo: 2, data: turnPrompt('u2'), raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 3, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
       { lineNo: 4, data: { type: 'context.append_message' as const, message: userMsg('u3') }, raw: {} },
@@ -638,6 +685,7 @@ describe('context-projector', () => {
     // against the naive array-index pass.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: toolMsg('c0', bigText) }, raw: {} },
+      { lineNo: 2, data: turnPrompt('u1'), raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 3, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
       { lineNo: 4, data: { type: 'context.append_message' as const, message: toolMsg('c1', bigText) }, raw: {} },
@@ -659,6 +707,7 @@ describe('context-projector', () => {
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a1' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: turnPrompt('u2'), raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 4, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
     ];
@@ -690,6 +739,7 @@ describe('context-projector', () => {
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a1' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: turnPrompt('u2'), raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 4, data: { type: 'context.append_message' as const, message: injectionMsg('inj') }, raw: {} },
       { lineNo: 5, data: { type: 'context.append_message' as const,
@@ -718,6 +768,7 @@ describe('context-projector', () => {
           content: [{ type: 'text' as const, text: 'owned reminder' }], toolCalls: [],
           origin: { kind: 'injection' as const, variant: 'prompt-context', ownerPromptId: 'p2' },
         } }, raw: {} },
+      { lineNo: 2.5, data: turnPrompt('u2', 'p2'), raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: {
           id: 'p2', role: 'user' as const,
           content: [{ type: 'text' as const, text: 'u2' }], toolCalls: [],
@@ -843,6 +894,7 @@ describe('context-projector', () => {
     // by the stale large cutoff.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: toolMsg('c0', bigText) }, raw: {} },
+      { lineNo: 2, data: turnPrompt('u1'), raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: toolMsg('c2', bigText) }, raw: {} },
       { lineNo: 4, data: { type: 'micro_compaction.apply' as const, cutoff: 3 }, raw: {} },
@@ -895,8 +947,10 @@ describe('context-projector', () => {
     // the history-count clamp.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
+      { lineNo: 2, data: turnPrompt('u2'), raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 3, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
+      { lineNo: 4, data: turnPrompt('u3'), raw: {} },
       { lineNo: 4, data: { type: 'context.append_message' as const, message: userMsg('u3') }, raw: {} },
       { lineNo: 5, data: { type: 'micro_compaction.apply' as const, cutoff: 5 }, raw: {} },
       { lineNo: 6, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
@@ -1053,6 +1107,7 @@ describe('context-projector', () => {
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a1' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: turnPrompt('u2'), raw: {} },
       { lineNo: 3, data: { type: 'context.append_message' as const, message: userMsg('u2') }, raw: {} },
       { lineNo: 4, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
     ];
@@ -1224,7 +1279,7 @@ describe('context-projector', () => {
       { lineNo: 5, data: { type: 'task.started' as const, agentId: 'main', info: { taskId: 'bash-abc12345', description: 'x', status: 'running' as const, startedAt: 1, endedAt: null } }, raw: {} },
       { lineNo: 6, data: { type: 'cron.add' as const, agentId: 'main', task: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAV', cron: '* * * * *', prompt: 'p', createdAt: 1 } }, raw: {} },
       { lineNo: 7, data: { type: 'plan.revision' as const, agentId: 'main', id: 'plan1', version: 2, key: 'k', sha256: 's', bytes: 10 }, raw: {} },
-      { lineNo: 8, data: { type: 'runtime.set_binding' as const, agentId: 'main', workspaceId: 'w', runtimeId: 'r' }, raw: {} },
+      { lineNo: 8, data: { type: 'environment.set_binding' as const, agentId: 'main', workspaceId: 'w', environmentId: 'r' }, raw: {} },
       { lineNo: 9, data: { type: 'staleGuard.recorded' as const, path: '/x', mtimeMs: 1 }, raw: {} },
       { lineNo: 10, data: { type: 'interruptionReminder.recorded' as const, agentId: 'main', turnId: 1 }, raw: {} },
     ];

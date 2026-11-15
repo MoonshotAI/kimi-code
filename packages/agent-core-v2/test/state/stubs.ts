@@ -8,7 +8,7 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 
-export function registerStateServices(reg: ServiceRegistration): void {
+export function registerStateServices(reg: ServiceRegistration) {
   const app = new AppStateService();
   const workspace = new WorkspaceStateService(app);
   const session = new SessionStateService();
@@ -17,4 +17,5 @@ export function registerStateServices(reg: ServiceRegistration): void {
   reg.defineInstance(IWorkspaceStateService, workspace);
   reg.defineInstance(ISessionStateService, session);
   reg.defineInstance(IAgentStateService, agent);
+  return { app, workspace, session, agent };
 }

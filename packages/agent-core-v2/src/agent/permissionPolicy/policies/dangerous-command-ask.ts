@@ -141,6 +141,7 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
     if (verdict.kind === 'dangerous') {
       return { kind: 'ask', reason: { dangerous_command: verdict.command } };
     }
+    if (this.modeService.mode === 'yolo') return undefined;
     return { kind: 'ask', reason: { unanalyzable_command: true } };
   }
 }

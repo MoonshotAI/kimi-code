@@ -91,6 +91,10 @@ export class TelemetryService
   private context: MutableContext = {};
   private enabled = true;
 
+  track(event: string, properties?: TelemetryProperties): void {
+    this.dispatch(event, this.ambient(), properties);
+  }
+
   track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
     event: K,
     properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
@@ -164,8 +168,8 @@ export class TelemetryService
     for (const appender of this.appenders) {
       try {
         appender.track(record);
-      } catch (err) {
-        onUnexpectedError(err);
+      } catch (error) {
+        onUnexpectedError(error);
       }
     }
   }
@@ -190,6 +194,10 @@ class BoundTelemetryService
       return inherited;
     }
     return { ...inherited, ...this.fragment };
+  }
+
+  track(event: string, properties?: TelemetryProperties): void {
+    this.root.dispatch(event, this.ambient(), properties);
   }
 
   track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
@@ -255,6 +263,10 @@ class TelemetrySnapshotView implements ITelemetryService {
     context: TelemetryProperties,
   ) {
     this.context = { ...context };
+  }
+
+  track(event: string, properties?: TelemetryProperties): void {
+    this.root.dispatch(event, this.context, properties);
   }
 
   track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(

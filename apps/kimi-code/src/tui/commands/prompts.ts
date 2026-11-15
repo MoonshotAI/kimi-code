@@ -31,7 +31,9 @@ export function promptPlatformSelection(host: SlashCommandHost): Promise<string 
         resolve(undefined);
       },
     });
-    host.mountEditorReplacement(selector);
+    host.mountEditorReplacement(selector, undefined, () => {
+      resolve(undefined);
+    });
   });
 }
 
@@ -92,11 +94,15 @@ const FEEDBACK_ATTACHMENT_OPTIONS: readonly ChoiceOption[] = [
 
 export function promptFeedbackAttachment(
   host: SlashCommandHost,
+  excludeCodebase = false,
 ): Promise<FeedbackAttachmentLevel | undefined> {
+  const options = excludeCodebase
+    ? FEEDBACK_ATTACHMENT_OPTIONS.filter((option) => option.value !== 'logs+codebase')
+    : FEEDBACK_ATTACHMENT_OPTIONS;
   return new Promise((resolve) => {
     const picker = new ChoicePickerComponent({
       title: 'Share diagnostic info to help us investigate?',
-      options: FEEDBACK_ATTACHMENT_OPTIONS,
+      options,
       onSelect: (value) => {
         host.restoreEditor();
         resolve(value as FeedbackAttachmentLevel);
@@ -115,7 +121,8 @@ export function promptApiKey(
   platformName: string,
   subtitleLines: readonly string[] = ['Your key will be saved to ~/.kimi-code/config.toml'],
 ): Promise<string | undefined> {
-  return new Promise((resolve) => {
+  const releaseAuthBlock = host.beginAuthBlock();
+  return new Promise<string | undefined>((resolve) => {
     const dialog = new ApiKeyInputDialogComponent(
       platformName,
       subtitleLines,
@@ -124,8 +131,32 @@ export function promptApiKey(
         resolve(result.kind === 'ok' ? result.value : undefined);
       },
     );
-    host.mountEditorReplacement(dialog);
-  });
+    host.mountEditorReplacement(dialog, undefined, () => {
+      resolve(undefined);
+    });
+  }).finally(releaseAuthBlock);
+}
+
+export function promptSshPassword(host: SlashCommandHost, environmentId: string): Promise<string | undefined> {
+  const releaseAuthBlock = host.beginAuthBlock();
+  return new Promise<string | undefined>((resolve) => {
+    const dialog = new ApiKeyInputDialogComponent(
+      environmentId,
+      ['The password is used only in this process and is never saved.'],
+      (result: ApiKeyInputResult) => {
+        host.restoreEditor();
+        resolve(result.kind === 'ok' ? result.value : undefined);
+      },
+      {
+        title: `Enter SSH password for ${environmentId}`,
+        emptyHint: 'SSH password cannot be empty.',
+        trimValue: false,
+      },
+    );
+    host.mountEditorReplacement(dialog, undefined, () => {
+      resolve(undefined);
+    });
+  }).finally(releaseAuthBlock);
 }
 
 /**

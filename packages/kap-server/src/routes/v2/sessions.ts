@@ -2,20 +2,26 @@
 import { createHash } from 'node:crypto';
 
 import {
+  EnvironmentError,
+  IEnvironmentService,
   ISessionIndex,
   ISessionIndexMirror,
   IWorkspaceAliases,
-  IWorkspaceService,
+  environmentBindingId,
+  LOCAL_ENVIRONMENT_ID,
   setSessionArchivedBatch,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
+import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import { z } from 'zod';
 
 import { defineRoute } from '../../middleware/defineRoute';
 import { errEnvelope, okEnvelope } from '../../protocol/envelope';
 import { ErrorCode } from '../../protocol/error-codes';
+import { loadWorkspaceVisibility } from '../../services/workspaceVisibility';
+import { withTimeout } from '../../transport/errors';
 import { resolveSessionFacts, type SessionFacts } from '../sessions';
 
 interface V2SessionsRouteHost {
@@ -383,6 +389,8 @@ function decodePageToken(raw: string, fingerprint: string): readonly [number, st
 
 const GIT_DOMAIN_TTL_MS = 60_000;
 
+const REMOTE_GIT_DOMAIN_TIMEOUT_MS = 3_000;
+
 const GIT_DOMAIN_UNAVAILABLE: V2GitDomain = { branch: null, pull_request: null };
 
 function mapPullRequest(pr: FsPullRequest | null): V2GitDomain['pull_request'] {
@@ -390,42 +398,94 @@ function mapPullRequest(pr: FsPullRequest | null): V2GitDomain['pull_request'] {
   return { number: pr.number, state: pr.state === 'draft' ? 'open' : pr.state, url: pr.url };
 }
 
+interface GitTarget {
+  readonly key: string;
+  readonly environmentId: string;
+  readonly cwd: string;
+}
+
+function gitTarget(summary: SessionSummary, workspaceCwd: string | null): GitTarget | undefined {
+  const environmentId = summary.environmentId ?? LOCAL_ENVIRONMENT_ID;
+  const cwd = environmentId === LOCAL_ENVIRONMENT_ID ? (workspaceCwd ?? undefined) : summary.environmentCwd;
+  if (cwd === undefined) return undefined;
+  return { key: environmentBindingId(environmentId, cwd), environmentId, cwd };
+}
+
 class GitDomainResolver {
   private readonly cache = new Map<string, { value: V2GitDomain; fetchedAt: number }>();
+  private readonly inflight = new Map<string, Promise<V2GitDomain | undefined>>();
 
   constructor(private readonly core: Scope) {}
 
-  async resolveAll(cwds: ReadonlySet<string>): Promise<ReadonlyMap<string, V2GitDomain>> {
+  async resolveAll(
+    summaries: readonly SessionSummary[],
+    cwdOf: (summary: SessionSummary) => string | null,
+  ): Promise<ReadonlyMap<string, V2GitDomain>> {
+    const targets = summaries.flatMap((summary) => {
+      const target = gitTarget(summary, cwdOf(summary));
+      return target === undefined ? [] : [{ sessionId: summary.id, target }];
+    });
     const now = Date.now();
-    const resolved = new Map<string, V2GitDomain>();
-    const misses: string[] = [];
-    for (const cwd of cwds) {
-      const hit = this.cache.get(cwd);
+    const resolvedByKey = new Map<string, V2GitDomain>();
+    const misses = new Map<string, GitTarget>();
+    for (const { target } of targets) {
+      const hit = this.cache.get(target.key);
       if (hit !== undefined && now - hit.fetchedAt < GIT_DOMAIN_TTL_MS) {
-        resolved.set(cwd, hit.value);
+        resolvedByKey.set(target.key, hit.value);
       } else {
-        misses.push(cwd);
+        misses.set(target.key, target);
       }
     }
     await Promise.all(
-      misses.map(async (cwd) => {
-        const value = await this.fetch(cwd);
-        this.cache.set(cwd, { value, fetchedAt: now });
-        resolved.set(cwd, value);
+      [...misses].map(async ([key, target]) => {
+        const value = await this.load(key, target);
+        if (value !== undefined) resolvedByKey.set(key, value);
       }),
     );
-    return resolved;
+    return new Map(
+      targets.map(({ sessionId, target }) => [
+        sessionId,
+        resolvedByKey.get(target.key) ?? GIT_DOMAIN_UNAVAILABLE,
+      ]),
+    );
   }
 
-  private async fetch(cwd: string): Promise<V2GitDomain> {
+  private async load(key: string, target: GitTarget): Promise<V2GitDomain | undefined> {
+    let pending = this.inflight.get(key);
+    if (pending === undefined) {
+      const fetchedAt = Date.now();
+      pending = this.fetch(target)
+        .then((value) => {
+          if (value !== undefined) this.cache.set(key, { value, fetchedAt });
+          return value;
+        })
+        .finally(() => this.inflight.delete(key));
+      this.inflight.set(key, pending);
+    }
+    if (target.environmentId === LOCAL_ENVIRONMENT_ID) return pending;
+    return withTimeout(pending, REMOTE_GIT_DOMAIN_TIMEOUT_MS).catch(() => undefined);
+  }
+
+  private async fetch(target: GitTarget): Promise<V2GitDomain | undefined> {
     try {
-      const status = await this.core.accessor.get(IGitService).status(cwd);
+      let status: Awaited<ReturnType<IGitService['status']>>;
+      if (target.environmentId === LOCAL_ENVIRONMENT_ID) {
+        status = await this.core.accessor.get(IGitService).status(target.cwd);
+      } else {
+        const environments = this.core.accessor.get(IEnvironmentService);
+        const lease = environments.acquire({ environmentId: target.environmentId }, ['fs']);
+        try {
+          status = await new GitService(environments, lease.environment.fs!, target.environmentId).status(target.cwd);
+        } finally {
+          lease.dispose();
+        }
+      }
       return {
         branch: status.branch.length === 0 ? null : status.branch,
         pull_request: mapPullRequest(status.pullRequest),
       };
-    } catch {
-      return GIT_DOMAIN_UNAVAILABLE;
+    } catch (error) {
+      return error instanceof EnvironmentError ? undefined : GIT_DOMAIN_UNAVAILABLE;
     }
   }
 }
@@ -517,6 +577,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         workspaceIds = [...new Set(sets.flat())];
       }
 
+      const { roots, visibleWorkspaceIds } = await loadWorkspaceVisibility(core);
       const page = await core.accessor.get(ISessionIndex).listRecent({
         workspaceIds,
         includeArchived: query.archived !== 'false',
@@ -533,6 +594,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       };
 
       const filtered = page.items.filter((summary) => {
+        if (!visibleWorkspaceIds.has(summary.workspaceId)) return false;
         if (query.archived === 'true' && !summary.archived) return false;
         if (
           query.hasPrompt !== undefined &&
@@ -559,28 +621,16 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       const sorted = filtered.toSorted(comparator);
       const keyOf = sortKeyOf(query.sort);
       const ascending = query.sort === 'meta.updated_at_asc';
-
-      const loadCwdOf = async (): Promise<(summary: SessionSummary) => string | null> => {
-        const roots = new Map(
-          (await core.accessor.get(IWorkspaceService).list()).map(
-            (workspace) => [workspace.id, workspace.root] as const,
-          ),
-        );
-        return (summary) => summary.cwd ?? roots.get(summary.workspaceId) ?? null;
-      };
+      const cwdOf = (summary: SessionSummary): string | null =>
+        summary.cwd ?? roots.get(summary.workspaceId) ?? null;
 
       const buildItems = async (
         summaries: readonly SessionSummary[],
         cwdOf: (summary: SessionSummary) => string | null,
       ): Promise<V2SessionWire[]> => {
-        let gitByCwd: ReadonlyMap<string, V2GitDomain> | undefined;
+        let gitBySession: ReadonlyMap<string, V2GitDomain> | undefined;
         if (query.includeGit) {
-          const cwds = new Set<string>();
-          for (const summary of summaries) {
-            const cwd = cwdOf(summary);
-            if (cwd !== null) cwds.add(cwd);
-          }
-          gitByCwd = await gitResolver.resolveAll(cwds);
+          gitBySession = await gitResolver.resolveAll(summaries, cwdOf);
         }
         return summaries.map((summary) => {
           const cwd = cwdOf(summary);
@@ -600,10 +650,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
               status: mapActivityStatus(facts, summary.lastTurnReason),
               model: facts.model ?? null,
             },
-            git:
-              gitByCwd === undefined
-                ? undefined
-                : ((cwd !== null ? gitByCwd.get(cwd) : undefined) ?? GIT_DOMAIN_UNAVAILABLE),
+            git: gitBySession === undefined ? undefined : (gitBySession.get(summary.id) ?? GIT_DOMAIN_UNAVAILABLE),
           };
         });
       };
@@ -673,7 +720,6 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
             ? encodePageToken(fingerprint, keyOf(lastGroup.rep), lastGroup.workspaceId)
             : null;
 
-        const cwdOf = await loadCwdOf();
         const groups = await Promise.all(
           windowGroups.map(async (group) => {
             const served = group.items.slice(0, query.groupPageSize);
@@ -733,7 +779,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         return;
       }
 
-      const items = await buildItems(window, await loadCwdOf());
+      const items = await buildItems(window, cwdOf);
 
       reply.send(
         okEnvelope(

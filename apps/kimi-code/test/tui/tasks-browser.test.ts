@@ -42,6 +42,7 @@ function fakeTerminal(rows: number, columns = 120): Terminal {
     clearScreen: () => {},
     setTitle: () => {},
     setProgress: () => {},
+    setProgramStatus: () => {},
   };
 }
 
@@ -470,6 +471,12 @@ describe('TasksBrowserApp — input handling', () => {
     const onCancel = vi.fn();
     makeApp({ onCancel }).handleInput('q');
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('Ctrl+T is not a tasks-browser shortcut', () => {
+    const onCancel = vi.fn();
+    makeApp({ onCancel }).handleInput('\u0014');
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it('Tab invokes onToggleFilter', () => {

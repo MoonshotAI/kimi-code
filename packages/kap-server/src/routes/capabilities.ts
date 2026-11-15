@@ -6,6 +6,7 @@ import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   capabilityIdParamSchema,
+  capabilityInstallOptionsSchema,
   capabilityStatusSchema,
   listCapabilitiesResponseSchema,
 } from '../protocol/rest-capability';
@@ -91,6 +92,7 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
       method: 'POST',
       path: '/capabilities/{tail}',
       params: capabilityTailParamsSchema,
+      body: capabilityInstallOptionsSchema.optional(),
       success: { data: capabilityStatusSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
@@ -116,7 +118,7 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
       try {
         const capability = await core.accessor
           .get(ICapabilityService)
-          .installCapability(parsed.id);
+          .installCapability(parsed.id, req.body ?? {});
         reply.send(okEnvelope(capability, req.id));
       } catch (error) {
         reply.send(mapCapabilityError(error, req.id));
@@ -139,12 +141,11 @@ const CAPABILITY_ERROR_MAP: Readonly<Record<string, ErrorCode>> = {
 function mapCapabilityError(error: unknown, requestId: string) {
   const mapped = isError2(error) ? CAPABILITY_ERROR_MAP[error.code] : undefined;
   if (mapped !== undefined && isError2(error)) {
-    return errEnvelope(mapped, error.message, requestId, error.stack);
+    return errEnvelope(mapped, error.message, requestId);
   }
   return errEnvelope(
     ErrorCode.INTERNAL_ERROR,
     error instanceof Error ? error.message : String(error),
     requestId,
-    error instanceof Error ? error.stack : undefined,
   );
 }

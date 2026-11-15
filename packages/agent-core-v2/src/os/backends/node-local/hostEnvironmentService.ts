@@ -1,6 +1,3 @@
-import { LifecycleScope } from '#/app/scopes';
-
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import {
   probeHostEnvironmentFromNode,
@@ -91,11 +88,3 @@ export class HostEnvironmentService implements IHostEnvironment {
     return this.require('homeDir') as string;
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IHostEnvironment,
-  HostEnvironmentService,
-  ScopeActivation.OnScopeCreated,
-  'hostEnvironment',
-);

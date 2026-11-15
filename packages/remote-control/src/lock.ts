@@ -42,6 +42,8 @@ export function remoteControlLockPath(homeDir: string): string {
   return join(homeDir, 'server', 'rc.json');
 }
 
+export const REMOTE_CONTROL_LOGOUT_GATE_ORIGIN = 'logout in progress';
+
 export interface RemoteControlLock {
   release(): Promise<void>;
 }
@@ -95,6 +97,17 @@ export async function inspectRemoteControlLock(
     return undefined;
   }
   return info;
+}
+
+export async function releaseRemoteControlLockHeldBy(
+  homeDir: string,
+  pid: number,
+): Promise<boolean> {
+  const lockPath = remoteControlLockPath(homeDir);
+  const info = await readRemoteControlLock(lockPath);
+  if (info === undefined || info.pid !== pid) return false;
+  await removeFile(lockPath);
+  return true;
 }
 
 async function releaseRemoteControlLock(lockPath: string, nonce: string): Promise<void> {

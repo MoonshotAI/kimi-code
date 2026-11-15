@@ -7,7 +7,7 @@ import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerExportCommand } from '#/cli/sub/export';
-import { createKimiCodeHostIdentity } from '#/cli/version';
+import { createKimiCodeHostIdentity } from '#/cli/host-identity';
 import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 const GLOBAL_LOG = 'logs/global/kimi-code.log';

@@ -11,6 +11,8 @@ import {
   drainSessionIndexMirror,
   ISessionIndex,
   ISessionIndexMirror,
+  ISessionManager,
+  IWorkspaceService,
 } from '@moonshot-ai/agent-core-v2';
 
 import { createKimiHarness, SDKRpcClientV2 } from '#/index';
@@ -147,6 +149,58 @@ describe('KimiHarness.listSessions', () => {
       expect(sessions.map((item) => item.id)).toEqual([session.id]);
     } finally {
       await harness.close();
+    }
+  });
+
+  it('finds implicit sessions registered with a non-normalized root spelling', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const legacyWorkDir = `${workDir}/.`;
+      const workspace = await client.engineAccessor
+        .get(IWorkspaceService)
+        .createOrTouch(legacyWorkDir);
+      await client.engineAccessor.get(ISessionManager).create({
+        workspaceId: workspace.id,
+        workDir: legacyWorkDir,
+        sessionId: 'ses_non_normalized_root',
+      });
+
+      const sessions = await client.listSessions({ workDir });
+      expect(sessions.map((item) => item.id)).toEqual(['ses_non_normalized_root']);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('directory view includes sessions of workspaces holding the dir as primary or member', async () => {
+    const homeDir = await makeTempDir();
+    const dirA = await makeTempDir();
+    const dirB = await makeTempDir();
+    const dirC = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const registry = client.engineAccessor.get(IWorkspaceService);
+      const projectM = await registry.create({ root: dirA, additionalDirs: [dirB], name: 'M' });
+      const projectN = await registry.create({ root: dirC, additionalDirs: [dirA], name: 'N' });
+      const sessionManager = client.engineAccessor.get(ISessionManager);
+      await sessionManager.create({ workspaceId: projectM.id, workDir: dirA, sessionId: 'ses_m' });
+      await sessionManager.create({ workspaceId: projectN.id, workDir: dirC, sessionId: 'ses_n' });
+      await client.createSession({ id: 'ses_hash_a', workDir: dirA });
+
+      const inA = await client.listSessions({ workDir: dirA });
+      expect(inA.map((item) => item.id).toSorted()).toEqual(['ses_hash_a', 'ses_m', 'ses_n'].toSorted());
+
+      const inB = await client.listSessions({ workDir: dirB });
+      expect(inB.map((item) => item.id)).toEqual(['ses_m']);
+
+      const inC = await client.listSessions({ workDir: dirC });
+      expect(inC.map((item) => item.id)).toEqual(['ses_n']);
+    } finally {
+      await client.close();
     }
   });
 });

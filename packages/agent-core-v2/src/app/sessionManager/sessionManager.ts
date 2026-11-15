@@ -34,6 +34,11 @@ export interface ISessionManager {
   readonly onWillDeleteSession?: Event<{ readonly sessionId: string } & IWaitUntil>;
   readonly onDidArchiveSession?: Event<SessionArchivedEvent>;
   readonly onDidForkSession?: Event<SessionForkedEvent>;
+  resolveCreationEnvironment(options: CreateManagedSessionOptions): Promise<{
+    readonly workspaceId: string;
+    readonly environmentId?: string;
+    readonly environmentCwd?: string;
+  }>;
   create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle>;
   resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   get(sessionId: string): ISessionScopeHandle | undefined;
@@ -45,6 +50,7 @@ export interface ISessionManager {
   ): Promise<T>;
   list(): readonly ISessionScopeHandle[];
   close(sessionId: string): Promise<void>;
+  closeIfIdle(sessionId: string, idleTimeoutMs: number): Promise<boolean>;
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   delete(sessionId: string): Promise<void>;

@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginUpdateNotifier } from '#/tui/controllers/plugin-update-notifier';
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import { TurnTimeline } from '#/tui/utils/turn-timeline';
 import { getBuiltInPalette } from '#/tui/theme';
 
 const DATASOURCE_TOOL = 'mcp__plugin-kimi-datasource_data__call_data_source_tool';
 
 function makeHost() {
   const streamingUI = {
+    timeline: new TurnTimeline(),
     setTurnId: vi.fn(),
     flushNow: vi.fn(),
     resetToolUi: vi.fn(),
@@ -18,7 +20,6 @@ function makeHost() {
     getTurnContext: vi.fn(() => ({ turnId: 1, step: 0 })),
     registerToolCall: vi.fn(),
     completeToolResult: vi.fn(),
-    setTodoList: vi.fn(),
   };
   const host = {
     state: {
@@ -32,7 +33,6 @@ function makeHost() {
       queuedMessageDispatchPending: false,
       theme: { palette: getBuiltInPalette('dark') },
       toolOutputExpanded: false,
-      todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
       ui: { requestRender: vi.fn() },
     },
@@ -50,7 +50,6 @@ function makeHost() {
     updateActivityPane: vi.fn(),
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
-    noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
@@ -61,7 +60,11 @@ function makeHost() {
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
     tasksBrowserController: {},
-    surveyController: { notifyToolCallStarted: vi.fn() },
+    surveyController: {
+      notifyToolCallStarted: vi.fn(),
+      notifyToolCallEnded: vi.fn(),
+      notifySubagentSpawned: vi.fn(),
+    },
   };
   return { host: host as never, streamingUI };
 }

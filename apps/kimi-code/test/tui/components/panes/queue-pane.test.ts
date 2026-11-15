@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { QueuePaneComponent } from '#/tui/components/panes/queue-pane';
+import { QueuePaneComponent, type QueuePaneOptions } from '#/tui/components/panes/queue-pane';
+
+function inlinePane(options: QueuePaneOptions): QueuePaneComponent {
+  const pane = new QueuePaneComponent();
+  pane.setOptions(options);
+  return pane;
+}
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -8,7 +14,7 @@ function stripAnsi(text: string): string {
 
 describe('QueuePaneComponent', () => {
   it('renders queued messages with the steer hint', () => {
-    const component = new QueuePaneComponent({
+    const component = inlinePane({
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
@@ -25,8 +31,42 @@ describe('QueuePaneComponent', () => {
     expect(output).toContain('ctrl-s to steer immediately');
   });
 
+  it('renders a model switch as a compaction command rather than a prompt', () => {
+    const component = inlinePane({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      availableModels: {
+        'model-b': {
+          provider: 'custom',
+          model: 'upstream-b',
+          displayName: 'Model B',
+          maxContextSize: 100,
+        },
+      },
+      messages: [
+        {
+          text: '/model model-b',
+          mode: 'model-switch',
+          alias: 'model-b',
+          thinking: 'low',
+          persist: 'session',
+          queuedAfterCompactionSerial: 0,
+        },
+        { text: 'after switch' },
+      ],
+    });
+
+    const output = stripAnsi(component.render(120).join('\n'));
+
+    expect(output).toContain('Compact, then switch to Model B with thinking low');
+    expect(output).not.toContain('❯ /model model-b');
+    expect(output).not.toContain('ctrl-s to steer immediately');
+    expect(output).toContain('will send after current task');
+  });
+
   it('renders compaction hint when waiting for compaction', () => {
-    const component = new QueuePaneComponent({
+    const component = inlinePane({
       isCompacting: true,
       isStreaming: false,
       canSteerImmediately: true,
@@ -39,7 +79,7 @@ describe('QueuePaneComponent', () => {
   });
 
   it('omits the steer hint when immediate steering is disabled', () => {
-    const component = new QueuePaneComponent({
+    const component = inlinePane({
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: false,
@@ -54,7 +94,7 @@ describe('QueuePaneComponent', () => {
 
   it('truncates long messages to a single line', () => {
     const longText = 'a'.repeat(200);
-    const component = new QueuePaneComponent({
+    const component = inlinePane({
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
@@ -69,7 +109,7 @@ describe('QueuePaneComponent', () => {
   });
 
   it('collapses multiline text into a single line', () => {
-    const component = new QueuePaneComponent({
+    const component = inlinePane({
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
@@ -84,7 +124,7 @@ describe('QueuePaneComponent', () => {
   });
 
   it('renders bash queued items with a $ prompt to distinguish them from text', () => {
-    const component = new QueuePaneComponent({
+    const component = inlinePane({
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: false,
@@ -96,7 +136,7 @@ describe('QueuePaneComponent', () => {
   });
 
   it('omits the steer hint when every queued item is a bash command', () => {
-    const component = new QueuePaneComponent({
+    const component = inlinePane({
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
@@ -109,7 +149,7 @@ describe('QueuePaneComponent', () => {
   });
 
   it('keeps the steer hint when at least one queued item is steerable', () => {
-    const component = new QueuePaneComponent({
+    const component = inlinePane({
       isCompacting: false,
       isStreaming: true,
       canSteerImmediately: true,
@@ -118,5 +158,23 @@ describe('QueuePaneComponent', () => {
 
     const output = stripAnsi(component.render(120).join('\n'));
     expect(output).toContain('ctrl-s to steer immediately');
+  });
+
+  it('names the total in the hint only when a docked list has more rows than it shows', () => {
+    const options = (count: number): QueuePaneOptions => ({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      messages: Array.from({ length: count }, (_, i) => ({ text: `item ${String(i + 1)}` })),
+    });
+    const docked = new QueuePaneComponent({ maxBodyRows: 3 });
+    const hint = (pane: QueuePaneComponent): string =>
+      stripAnsi(pane.render(120).at(-1) ?? '').trim();
+
+    docked.setOptions(options(3));
+    expect(hint(docked)).toBe('↑ to edit · ctrl-s to steer immediately');
+    docked.setOptions(options(5));
+    expect(hint(docked)).toBe('5 queued · ↑ to edit · ctrl-s to steer immediately');
+    expect(hint(inlinePane(options(5)))).toBe('↑ to edit · ctrl-s to steer immediately');
   });
 });

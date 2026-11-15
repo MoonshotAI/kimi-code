@@ -14,6 +14,7 @@ import {
 import {
   DEFAULT_REPLY_STYLE_GUIDE,
   NOTIFY_USER_GUIDANCE,
+  PLAN_MODE_GUIDANCE,
   renderAgentProfilePrompt,
   profileCanDelegate,
   renderPromptTemplateResult,
@@ -21,8 +22,10 @@ import {
   rootDelegationExtras,
   subagentAllowlistFor,
   systemPromptVars,
+  TODO_LIST_GUIDANCE,
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
+import NOTIFY_USER_DESCRIPTION from '../../../src/features/notify/tools/notify-user/notify-user.md?raw';
 
 type AssertFalse<T extends false> = T;
 
@@ -59,6 +62,7 @@ describe('systemPromptVars', () => {
     expect(vars['additional_dirs_section']).toContain('/extra');
     expect(vars['skills_section']).toContain('# Skills');
     expect(vars['skills_section']).toContain('SKILLS');
+    expect(vars['skills_section']).toContain('invoke them with the `Skill` tool');
   });
 
   it('renders missing context fields as empty strings', () => {
@@ -76,15 +80,18 @@ describe('systemPromptVars', () => {
     expect(vars['role_additional']).toBe('');
   });
 
-  it('empties skills and the skills section when the Skill tool is off', () => {
+  it('keeps skills and the skills section when the Skill tool is off', () => {
     const vars = systemPromptVars({ skills: 'SKILLS' }, { skillActive: false });
 
-    expect(vars['skills']).toBe('');
-    expect(vars['skills_section']).toBe('');
+    expect(vars['skills']).toBe('SKILLS');
+    expect(vars['skills_section']).toContain('# Skills');
+    expect(vars['skills_section']).toContain('SKILLS');
+    expect(vars['skills_section']).toContain('use a user-initiated skill command');
+    expect(vars['skills_section']).not.toContain('invoke them with the `Skill` tool');
   });
 
-  it('lets a context skillActive override the profile default', () => {
-    const vars = systemPromptVars({ skills: 'SKILLS', skillActive: true }, { skillActive: false });
+  it('does not use context skillActive to hide the listing', () => {
+    const vars = systemPromptVars({ skills: 'SKILLS', skillActive: false }, { skillActive: true });
 
     expect(vars['skills']).toBe('SKILLS');
   });
@@ -199,15 +206,51 @@ describe('renderSystemPromptResult', () => {
     expect(prompt).toContain('ROLE_TEXT');
     expect(prompt).toContain('AGENTS');
     expect(prompt).toContain('/work');
+    expect(prompt).toContain('# Project information');
     expect(prompt).toContain('# Skills');
     expect(prompt).toContain('SKILLS');
   });
 
-  it('omits the skills section when the profile disables the Skill tool', () => {
+  it('omits the empty project information section only for read-only profiles', () => {
+    const full = renderSystemPromptResult('', {}, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', {}, { skillActive: false, readOnly: true }).text;
+
+    expect(full).toContain('# Project information');
+    expect(full).toContain('The applicable `AGENTS.md` instructions are:');
+    expect(readOnly).not.toContain('# Project information');
+    expect(readOnly).not.toContain('The applicable `AGENTS.md` instructions are:');
+  });
+
+  it('switches coding and change-work guidance for read-only profiles', () => {
+    const full = renderSystemPromptResult('', {}, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', {}, { skillActive: false, readOnly: true }).text;
+
+    expect(full).toContain('# Coding');
+    expect(full).toContain('Before you call a change done');
+    expect(readOnly).not.toContain('# Coding');
+    expect(readOnly).not.toContain('Before you call a change done');
+    expect(readOnly).not.toContain('When the standard way is blocked');
+    expect(readOnly).not.toContain('After you run tests or builds');
+    expect(readOnly).toContain('# Delivering work');
+    expect(readOnly).toContain('distinguish confirmed findings from hypotheses');
+    expect(readOnly).toContain('# Context management');
+  });
+
+  it('keeps the AGENTS.md maintenance sentence only for profiles that can change files', () => {
+    const full = renderSystemPromptResult('', { agentsMd: 'AGENTS' }, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', { agentsMd: 'AGENTS' }, { skillActive: false, readOnly: true }).text;
+
+    expect(full).toContain('If you change anything an `AGENTS.md` documents, update that `AGENTS.md` to match.');
+    expect(readOnly).not.toContain('If you change anything an `AGENTS.md` documents');
+    expect(readOnly).toContain('with more specific guidance.\n');
+    expect(readOnly).toContain('AGENTS');
+  });
+
+  it('includes the skills section when the profile disables the Skill tool', () => {
     const prompt = renderSystemPromptResult('', { skills: 'SKILLS' }, { skillActive: false }).text;
 
-    expect(prompt).not.toContain('# Skills');
-    expect(prompt).not.toContain('SKILLS');
+    expect(prompt).toContain('# Skills');
+    expect(prompt).toContain('SKILLS');
   });
 
   it('shows Windows notes only on Windows', () => {
@@ -518,11 +561,53 @@ describe('systemPromptVars notify_user_guidance', () => {
   it('injects the NotifyUser guidance only when the context marks the tool active', () => {
     const active = systemPromptVars({ notifyUserActive: true }, { skillActive: false });
     expect(active['notify_user_guidance']).toBe(` ${NOTIFY_USER_GUIDANCE}`);
-    expect(NOTIFY_USER_GUIDANCE).toContain('If you are working as a subagent');
-    expect(NOTIFY_USER_GUIDANCE).toContain('do not automatically reach your parent agent');
+    expect(NOTIFY_USER_GUIDANCE).toContain('use it proactively');
+    expect(NOTIFY_USER_DESCRIPTION).toContain('When working as a subagent, describe only your own subtask');
+    expect(NOTIFY_USER_DESCRIPTION).toContain('does not automatically send a message to your parent agent');
 
     expect(systemPromptVars({ notifyUserActive: false }, { skillActive: false })['notify_user_guidance']).toBe('');
     expect(systemPromptVars({}, { skillActive: false })['notify_user_guidance']).toBe('');
+  });
+});
+
+describe('systemPromptVars todo_list_guidance', () => {
+  it('adds the TodoList guidance paragraph only when the context marks the tool active', () => {
+    expect(systemPromptVars({ todoListActive: true }, { skillActive: false })['todo_list_guidance']).toBe(
+      `${TODO_LIST_GUIDANCE}\n\n`,
+    );
+    expect(systemPromptVars({ todoListActive: false }, { skillActive: false })['todo_list_guidance']).toBe('');
+    expect(systemPromptVars({}, { skillActive: false })['todo_list_guidance']).toBe('');
+  });
+
+  it('places the guidance as its own paragraph in the builtin template', () => {
+    const withTodo = renderSystemPromptResult('', { todoListActive: true }, { skillActive: false }).text;
+    const withoutTodo = renderSystemPromptResult('', {}, { skillActive: false }).text;
+
+    expect(withTodo).toContain(`\n\n${TODO_LIST_GUIDANCE}\n\nBefore you finalize a reply`);
+    expect(withoutTodo).not.toContain(TODO_LIST_GUIDANCE);
+    expect(withoutTodo).toMatch(/[^\n]\n\nBefore you finalize a reply/);
+  });
+});
+
+describe('systemPromptVars plan_mode_guidance', () => {
+  it('places the plan mode guidance after the opening of Delivering work only when plan mode is available', () => {
+    const withPlan = renderSystemPromptResult('', { planModeAvailable: true }, { skillActive: false }).text;
+    const withoutPlan = renderSystemPromptResult('', {}, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', { planModeAvailable: true }, { skillActive: false, readOnly: true }).text;
+
+    expect(withPlan).toContain(
+      `only if the user asked for a fix.\n\n${PLAN_MODE_GUIDANCE}\n\nBefore you call a change done`,
+    );
+    expect(withoutPlan).not.toContain(PLAN_MODE_GUIDANCE);
+    expect(withoutPlan).toContain('only if the user asked for a fix.\n\nBefore you call a change done');
+    expect(readOnly).not.toContain(PLAN_MODE_GUIDANCE);
+  });
+
+  it('tells the model that only the user turns plan mode on and to wait after planning first', () => {
+    expect(PLAN_MODE_GUIDANCE).toContain('only the user can turn on');
+    expect(PLAN_MODE_GUIDANCE).toContain('you cannot enter it yourself');
+    expect(PLAN_MODE_GUIDANCE).toContain('wait for their go-ahead before changing code');
+    expect(PLAN_MODE_GUIDANCE).not.toContain('EnterPlanMode');
   });
 });
 

@@ -18,7 +18,10 @@ import {
 import { IWireService } from '#/wire/wire';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { sessionOccupiedError } from '#/persistence/interface/sessionLock';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 
 import { noopLogger, registerTestAgentWire } from './stubs';
 
@@ -61,11 +64,13 @@ function createAppendLogHarness(storage: IFileSystemStorageService): IAppendLogS
 function createAgentWireHarness(
   log: IAppendLogStore,
   storage?: IFileSystemStorageService,
+  locks?: ISessionLockService,
 ): IWireService {
   const disposable = new DisposableStore();
   disposables.push(disposable);
 
   const ix = disposable.add(new TestInstantiationService());
+  if (locks !== undefined) ix.stub(ISessionLockService, locks);
   return registerTestAgentWire(ix, SCOPE, {
     log,
     storage,
@@ -410,6 +415,48 @@ describe('WireService migration rewrite', () => {
       type: 'metadata',
       protocol_version: WIRE_PROTOCOL_VERSION,
     });
+  });
+
+  it('completes a deferred migration before appending', async () => {
+    const storage = new InMemoryStorageService();
+    const log = await seedLegacyLog(storage);
+    const locks = new InMemorySessionLockService();
+    const hold = locks.hold.bind(locks);
+    let occupied = true;
+    locks.hold = (sessionId) => {
+      if (occupied) throw sessionOccupiedError(sessionId);
+      hold(sessionId);
+    };
+    const svc = createAgentWireHarness(log, storage, locks);
+
+    await drainJournal(svc);
+    expect((await collect<WireRecord>(log))[0]).toMatchObject({ protocol_version: '1.0' });
+
+    svc.appendRecord({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'blocked' }],
+      origin: { kind: 'user' },
+    });
+    await svc.drainPersisted();
+    await expect(svc.flush()).rejects.toThrow('Wire journal migration did not complete');
+    expect(await collect<WireRecord>(log)).toHaveLength(2);
+
+    occupied = false;
+    svc.appendRecord({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'after' }],
+      origin: { kind: 'user' },
+    });
+    await svc.drainPersisted();
+    await log.flush();
+
+    const records = await collect<WireRecord>(log);
+    expect(records[0]).toMatchObject({
+      type: 'metadata',
+      protocol_version: WIRE_PROTOCOL_VERSION,
+    });
+    expect(records.at(-1)).toMatchObject({ type: 'turn.prompt' });
+    await expect(drainJournal(svc)).resolves.toHaveLength(3);
   });
 
   it('journal read propagates a migration rewrite failure', async () => {

@@ -237,7 +237,7 @@ describe('AgentGroupComponent', () => {
       tool_call_id: 'call_agent_1',
       output: 'agent_id: sub_call_agent_1\nactual_subagent_type: explore\n',
       is_error: false,
-    });
+    }, { known: false });
 
     const out = renderText(group);
     // `a` must show as backgrounded, NOT completed.

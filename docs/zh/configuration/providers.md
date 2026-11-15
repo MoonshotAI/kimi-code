@@ -12,12 +12,13 @@ Kimi Code CLI 支持同时接入多家模型供应商服务，模型在供应商
 | [`anthropic`](#anthropic) | Anthropic Messages | Claude 系列模型 |
 | [`openai`](#openai) | OpenAI Chat Completions | OpenAI 及兼容服务、DeepSeek、Qwen 等 |
 | [`openai_responses`](#openai_responses) | OpenAI Responses API | OpenAI 较新的 Responses 接口 |
+| [`bedrock`](#bedrock) | Anthropic Messages / OpenAI 兼容（按模型区分） | Amazon Bedrock |
 | [`google-genai`](#google-genai) | Google GenAI | Gemini API |
 | [`vertexai`](#vertexai) | Google GenAI on Vertex | Google Cloud Vertex AI |
 
 所有供应商默认以流式方式与模型交互。thinking、视觉、工具调用等能力按模型名前缀自动匹配，通常不需要手动声明。
 
-**凭证优先级**：`api_key` 直接字段 > `[providers.<name>.env]` 子表键 > 两者都缺时启动报错。CLI 不会从 shell 环境变量自动取凭证，详见[配置覆盖：供应商凭证](./overrides.md#供应商凭证)。
+**凭证优先级**：`api_key` 或 `api_key_env`（互斥替代项，只能设置其中一个）> `[providers.<name>.env]` 子表键（两者都不存在时才读）> 全部缺失时启动报错。除显式声明的 `api_key_env` 外，CLI 不会从 shell 环境变量自动取凭证，详见[配置覆盖：供应商凭证](./overrides.md#供应商凭证)。
 
 ## `/provider` — 交互式供应商管理
 
@@ -34,7 +35,25 @@ Kimi Code CLI 支持同时接入多家模型供应商服务，模型在供应商
 添加时有两条路径：
 
 - **Known third-party provider**：从 [models.dev](https://models.dev/) 拉取模型目录，选供应商 → 输入 API 密钥 → 选默认模型。目录未声明协议类型的供应商（如 xai、openrouter 这类厂商专用 SDK）会按 OpenAI 兼容协议导入并显示 "guessed" 提示；目录没有可用端点时会先弹出 base URL 输入框；Amazon Bedrock / Cohere 等专有协议和无法识别的显式协议会被拒绝导入。已下线（deprecated）和 alpha 状态的模型不会出现在导入列表中。如果公共目录不可达，CLI 会回退到内置目录快照，离线或网络受限环境下也能完成导入
-- **Custom registry (api.json)**：粘贴自定义 registry 地址和 Bearer token，CLI 自动创建 `providers` / `models` 条目。后续启动时，同一个 registry 地址下的供应商会一起刷新，因此上游新增、删除供应商以及模型元数据变化都会同步。
+- **Custom registry (api.json)**：粘贴自定义 registry 地址，私有 registry 再附上 Bearer token，CLI 自动创建 `providers` / `models` 条目。当 registry 条目声明了 `env` 字段（存放 API 密钥的环境变量名）时，CLI 会把它作为提示打印出来——想用就在 `config.toml` 里自己设置 `api_key_env`。绑定永远不会自动发生：registry 既决定变量名、又决定凭证发往的端点，不能由它来选择读取你的哪份密钥。对私有 registry，Bearer token 本身仍会存为 `source.apiKey`，供刷新时重新拉取。后续启动时，同一个 registry 地址下的供应商会一起刷新，因此上游新增、删除供应商以及模型元数据变化都会同步。
+
+  registry 中的模型还可以声明 `upgrade` 对象。`model` 选择同一供应商下的替代模型，`migration_markdown` 提供迁移说明（其中的 `{model_from}` 和 `{model_to}` 会在导入时替换为模型 ID），`retirement_at` 是可选的 RFC3339 时间戳或 `null`。该字段会保存在对应的模型别名上，并通过 `GET /api/v1/models` 返回，客户端每次重新读取模型目录后都能恢复迁移提示。刷新会同步或移除这些元数据；只要默认模型仍在 registry 中，刷新就不会修改它。registry 删除默认模型时，如果该模型此前声明的 `upgrade` 目标仍然存在，默认模型会切换到该目标并保留 Thinking 设置；否则默认模型与 Thinking 设置一并清空。仍在使用被删除模型的已打开会话也会切换到该目标，目标支持时保留各自的 Thinking 档位。因此下线模型时，应先给它声明 `upgrade` 并保留一段过渡期，让客户端至少刷新一次，再从 registry 中删除。
+
+  启动时，如果当前模型存在有效的升级目标，TUI 会显示迁移提示，包括从会话列表选择并恢复会话之后。迁移说明以 Markdown 渲染。提示会等待输入框为空，且没有正在运行的轮次或打开的对话框；如果被审批或提问打断，会在输入框再次空闲后重新显示。按 `Enter` 确认；空格不会接受迁移。接受后会切换模型，并在原模型支持 Thinking 且目标模型支持当前档位时沿用当前档位，否则使用目标模型的默认档位；选择保留当前模型则会记录该决定，之后不再提示同一次迁移。如果启动刷新发现 registry 已删除默认模型，TUI 会显示警告；当前会话正在使用该模型时，会按同样的档位规则直接切换到替代模型，不再询问。
+
+  除了启动时自动刷新，你也可以在运行时手动触发同样的刷新：`/provider refresh` 重新拉取所有供应商的模型列表，`/provider refresh <providerId>` 只刷新指定供应商。命令会按供应商汇报新增和下架的模型；被下架的 alias 对绑定它的 agent 从下一轮起不再可解析，因此下架项会在输出中高亮标出。
+
+  这些字段是 Kimi registry 的扩展，不属于 models.dev 的 schema：
+
+  ```json
+  {
+    "upgrade": {
+      "model": "new-model-id",
+      "migration_markdown": "建议从 {model_from} 切换到 {model_to}。",
+      "retirement_at": "2027-01-01T00:00:00Z"
+    }
+  }
+  ```
 
 ::: warning
 通过 `/login` 登录的 Kimi Code OAuth 托管账号不会在 `/provider` 里显示，请用 `/login` 和 `/logout` 管理。
@@ -123,7 +142,7 @@ api_key = "xxxxx"
 
 如需经由兼容 Gemini 协议的代理/网关访问，可设置 `base_url`（或 `GOOGLE_GEMINI_BASE_URL` 环境变量）；不填时使用 SDK 默认地址 `https://generativelanguage.googleapis.com`。
 
-> 只填**主机根地址**。Google GenAI SDK 会自行追加 API 版本与路径（如 `/v1beta/models/<model>:generateContent`），所以结尾带 `/v1beta` 会导致路径重复成 `/v1beta/v1beta/…`。
+结尾的 `/v1beta` 会在请求前去掉。SDK 随后自行追加 API 版本与路径（如 `/v1beta/models/<model>:generateContent`）。
 
 ```toml
 [providers.gemini]
@@ -131,6 +150,67 @@ type = "google-genai"
 api_key = "xxxxx"
 base_url = "https://your-gateway.example"
 ```
+
+## `bedrock`
+
+用于接入 Amazon Bedrock。一个 `bedrock` 供应商可以承载 Anthropic Messages API 或 OpenAI 兼容 API 的模型——CLI 会按 Bedrock 模型 ID 逐个推断线路协议，因此 Claude、GPT 和 Kimi 模型可以共用同一个供应商条目。
+
+### 认证
+
+`type = "bedrock"` 的供应商可以使用标准 [AWS CLI 凭证链](https://docs.aws.amazon.com/zh_cn/cli/latest/userguide/cli-chap-configure.html)，基于你的 AWS 环境凭证（来自 SSO、实例角色、环境变量、共享配置等）生成短期持有者令牌（bearer token）。只需指定 AWS 区域，可选地再指定一个命名 [profile](https://docs.aws.amazon.com/zh_cn/cli/latest/userguide/cli-configure-files.html#cli-configure-files-using-profiles)：
+
+```toml
+[providers.bedrock]
+type = "bedrock"
+
+[providers.bedrock.env]
+AWS_REGION = "us-east-1"
+# AWS_PROFILE = "my-profile"   # 可选的 AWS CLI 命名 profile
+```
+
+另外，也可以改用 [Amazon Bedrock API 密钥](https://docs.aws.amazon.com/zh_cn/bedrock/latest/userguide/api-keys.html)，通过 `api_key`、`api_key_env` 或 `[providers.bedrock.env]` 子表中的 `AWS_BEARER_TOKEN_BEDROCK` 键来配置。不过出于安全考虑，AWS 一般不建议使用长期 API 密钥。已配置的密钥始终优先于环境凭证链。
+
+区域必须能从 `AWS_REGION` 或 `AWS_DEFAULT_REGION`（写在子表里或在 shell 中导出）解析出来；目前不支持从 `~/.aws/config` 推断默认区域。
+
+### 端点 URL
+
+base URL 默认取区域化的 `bedrock-runtime.<region>.amazonaws.com` 端点——只有当你需要自定义端点（如 `bedrock-mantle`、代理或 FIPS/双栈主机名）时才设置 `base_url`（或 `AWS_BEDROCK_BASE_URL` 环境键）。自定义 `base_url` 是完整 URL：必须包含模型所用协议的线路路径（`/anthropic` 或 `/openai/v1`），CLI 会原样使用它，不会追加协议后缀。
+
+### 模型与线路协议
+
+Bedrock 模型 ID 形如 `<vendor>.<model>`，并可带有跨区域推理 profile 前缀（`global.`、`us.`、`eu.` 等）。CLI 会在去掉该前缀后按模型 ID 推断线路协议，选择各模型系列在 `bedrock-runtime` 上实际提供的 API：
+
+- `anthropic.*` → Anthropic Messages API
+- `openai.gpt-oss*` → OpenAI Chat Completions API（这些开放权重模型在 `bedrock-runtime` 上仅提供此 API）
+- 其他 `openai.*` → OpenAI Responses API（GPT-6 / GPT-5.6 系列仅提供此 API，也是 OpenAI 推荐的方向）
+- `moonshotai.*` / `moonshot.*` → OpenAI Chat Completions API（Kimi 模型卡片推荐）
+
+其他前缀默认使用 OpenAI Chat Completions API。要为同时提供多种 API 的模型另行选择时，请在模型别名上显式设置 `protocol`：
+
+```toml
+[models."sonnet"]
+provider = "bedrock"
+model = "global.anthropic.claude-sonnet-4-6"
+max_context_size = 200000
+
+[models."gpt-6"]
+provider = "bedrock"
+model = "global.openai.gpt-6-astra"   # 推断为 OpenAI Responses API
+max_context_size = 1050000
+
+[models."gpt-oss"]
+provider = "bedrock"
+model = "openai.gpt-oss-120b-1:0"     # 推断为 OpenAI Chat Completions API
+max_context_size = 128000
+
+[models."kimi-k3-responses"]
+provider = "bedrock"
+model = "global.moonshotai.kimi-k3"
+protocol = "openai_responses"         # 显式覆盖：Kimi K3 同时提供 Responses API
+max_context_size = 1000000
+```
+
+当前大多数 Bedrock 模型要求使用推理 profile ID（即 `global.` / `us.` 等前缀），而不是基础模型 ID；请查阅目标模型的[模型卡片](https://docs.aws.amazon.com/zh_cn/bedrock/latest/userguide/model-cards.html)，了解所支持的 API 与推理 profile 的完整信息。
 
 ## `vertexai`
 
@@ -152,7 +232,7 @@ gcloud auth application-default login   # 一次性完成认证
 kimi
 ```
 
-如需让 Vertex 请求走自定义（如代理）端点，可设置 `base_url`（或 `GOOGLE_VERTEX_BASE_URL` 环境变量）；不填时使用 SDK 默认的区域化 `*-aiplatform.googleapis.com` 地址。与 `google-genai` 一样，只填主机根地址。SDK 会自行追加 `/v1beta1/publishers/google/models/…`。
+如需让 Vertex 请求走自定义（如代理）端点，可设置 `base_url`（或 `GOOGLE_VERTEX_BASE_URL` 环境变量）；不填时使用 SDK 默认的区域化 `*-aiplatform.googleapis.com` 地址。结尾的 `/v1beta1` 会在请求前去掉。SDK 随后自行追加 `/v1beta1/publishers/google/models/…`。
 
 
 ## 下一步

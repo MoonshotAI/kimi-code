@@ -9,7 +9,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
-import { watch } from '#human/utils/watch';
+import { watchCandidates } from '#human/utils/watch';
 
 import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -79,7 +79,7 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
     addTarget(this.bootstrap.osHomeDir, join(this.bootstrap.osHomeDir, '.agents', 'skills'));
     const ready: Promise<void>[] = [];
     for (const [base, candidates] of candidatesByBase) {
-      const handle = watch(base, {
+      const handle = watchCandidates(base, candidates, {
         ignored: subtreeWatchFilter(base, candidates),
         signal: true,
       });

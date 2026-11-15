@@ -1,13 +1,13 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { appendContext } from '../../agent/contextMemory/stubs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   AgentDateChangeService,
@@ -52,15 +52,15 @@ function systemPromptWithDate(iso: string): string {
   ].join('\n');
 }
 
-function updateSystemPrompt(profile: IAgentProfileService, systemPrompt: string, cwd: string): void {
+function updateSystemPrompt(profile: IAgentLoopService, systemPrompt: string, cwd: string): void {
   profile.update({
     systemPrompt,
     environmentDisclosure: { cwd },
   });
 }
 
-function dateReminders(context: IAgentContextMemoryService): readonly ContextMessage[] {
-  return context.get().filter((message) => {
+function dateReminders(context: IAgentLoopService): readonly ContextMessage[] {
+  return context.history().filter((message) => {
     return message.origin?.kind === 'injection' && message.origin.variant === 'date_change';
   });
 }
@@ -73,17 +73,17 @@ function messageText(message: ContextMessage): string {
 
 describe('AgentDateChangeService', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let clock: TestHostClock;
   let loop: IAgentLoopService;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
 
   beforeEach(async () => {
     clock = testHostClock(INITIAL_INSTANT);
     ctx = createTestAgent({ autoConfigure: false }, appService(IHostClock, clock));
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService);
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
     ctx.configure();
   });
@@ -166,7 +166,7 @@ describe('AgentDateChangeService', () => {
     const persistence = new InMemoryWireRecordPersistence();
     await ctx.dispose();
     ctx = createTestAgent({ persistence }, appService(IHostClock, clock));
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     updateSystemPrompt(profile, systemPromptWithDate(INITIAL_INSTANT), ctx.get(ISessionContext).cwd);
     await ctx.wire.flush();
     await ctx.dispose();
@@ -176,7 +176,7 @@ describe('AgentDateChangeService', () => {
       { autoConfigure: false, persistence },
       appService(IHostClock, clock),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
 
@@ -191,8 +191,8 @@ describe('AgentDateChangeService', () => {
     const persistence = new InMemoryWireRecordPersistence();
     await ctx.dispose();
     ctx = createTestAgent({ persistence }, appService(IHostClock, clock));
-    profile = ctx.get(IAgentProfileService);
-    profile.applyBindingSnapshot({
+    profile = ctx.get(IAgentLoopService);
+    await profile.applyBindingSnapshot({
       modelAlias: 'mock-model',
       profileName: 'agent',
       thinkingLevel: 'off',
@@ -200,7 +200,7 @@ describe('AgentDateChangeService', () => {
       disallowedTools: [],
     });
     await ctx.wire.flush();
-    const legacyBind = persistence.records.find((record) => record.type === 'profile.bind');
+    const legacyBind = persistence.records.findLast((record) => record.type === 'profile.bind');
     expect(legacyBind?.['environmentDisclosure']).toBeUndefined();
     await ctx.dispose();
 
@@ -209,7 +209,7 @@ describe('AgentDateChangeService', () => {
       { autoConfigure: false, persistence },
       appService(IHostClock, clock),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
 
@@ -230,12 +230,12 @@ describe('AgentDateChangeService', () => {
     try {
       await ctx.dispose();
       ctx = createTestAgent(appService(IHostClock, clock), hostEnvironmentServices(homeDir));
-      context = ctx.get(IAgentContextMemoryService);
+      context = ctx.get(IAgentLoopService);
       loop = ctx.get(IAgentLoopService);
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
         await ctx.restorePersisted();
 
-      await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'mock-model' });
+      await profile.bindProfile({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'mock-model' });
 
       await runWillBeginStepHooks(loop);
       const initial = dateReminders(context);
@@ -263,10 +263,9 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    context.append({
+    appendContext(context,{
       role: 'user',
       content: [{ type: 'text', text: 'older metadata reminder' }],
-      toolCalls: [],
       origin: {
         kind: 'injection',
         variant: 'date_change',
@@ -284,58 +283,46 @@ describe('AgentDateChangeService', () => {
     expect(dateReminders(context)).toHaveLength(2);
   });
 
-  it('re-injects after undo removes the structured reminder metadata', async () => {
+  it('keeps the structured reminder metadata exactly once across undo and the next step', async () => {
     updateSystemPrompt(
       profile,
       'You are a deterministic test agent.',
       ctx.get(ISessionContext).cwd,
     );
-    context.append({
-      role: 'user',
-      content: [{ type: 'text', text: 'first turn' }],
-      toolCalls: [],
-      origin: { kind: 'user' },
-    });
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+    await ctx.untilTurnEnd();
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    expect(context.undo(1)).toMatchObject({ removedCount: 1 });
-    expect(dateReminders(context)).toHaveLength(0);
-    context.append({
-      role: 'user',
-      content: [{ type: 'text', text: 'replacement turn' }],
-      toolCalls: [],
-      origin: { kind: 'user' },
-    });
+    await ctx.get(IAgentConversationUndoService).undo(1);
+    expect(dateReminders(context)).toHaveLength(1);
+    ctx.mockNextResponse({ type: 'text', text: 'replacement answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'replacement turn' }] });
+    await ctx.untilTurnEnd();
 
     await runWillBeginStepHooks(loop);
 
     expect(dateReminders(context)).toHaveLength(1);
   });
 
-  it('re-discloses after undo removes the initial disclosure', async () => {
+  it('keeps the initial date disclosure across undo and the next step', async () => {
     updateSystemPrompt(
       profile,
       'You are a deterministic test agent.',
       ctx.get(ISessionContext).cwd,
     );
-    context.append({
-      role: 'user',
-      content: [{ type: 'text', text: 'first turn' }],
-      toolCalls: [],
-      origin: { kind: 'user' },
-    });
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+    await ctx.untilTurnEnd();
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    expect(context.undo(1)).toMatchObject({ removedCount: 1 });
-    expect(dateReminders(context)).toHaveLength(0);
-    context.append({
-      role: 'user',
-      content: [{ type: 'text', text: 'replacement turn' }],
-      toolCalls: [],
-      origin: { kind: 'user' },
-    });
+    await ctx.get(IAgentConversationUndoService).undo(1);
+    expect(dateReminders(context)).toHaveLength(1);
+    ctx.mockNextResponse({ type: 'text', text: 'replacement answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'replacement turn' }] });
+    await ctx.untilTurnEnd();
 
     await runWillBeginStepHooks(loop);
 
@@ -432,5 +419,31 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
 
     expect(dateReminders(context)).toHaveLength(2);
+  });
+
+  it('labels the disclosure and change reminders with the local client timezone', async () => {
+    updateSystemPrompt(
+      profile,
+      'You are a deterministic test agent.',
+      ctx.get(ISessionContext).cwd,
+    );
+    await runWillBeginStepHooks(loop);
+
+    const initial = dateReminders(context);
+    expect(initial).toHaveLength(1);
+    const initialText = messageText(initial[0] as ContextMessage);
+    expect(initialText).toContain('2026-07-29');
+    expect(initialText).toContain(TEST_TIME_ZONE);
+    expect(initialText).toContain('local client');
+
+    clock.set('2026-07-30T04:00:00.000Z');
+    await runWillBeginStepHooks(loop);
+
+    const reminders = dateReminders(context);
+    expect(reminders).toHaveLength(2);
+    const changeText = messageText(reminders[1] as ContextMessage);
+    expect(changeText).toContain('2026-07-30');
+    expect(changeText).toContain(TEST_TIME_ZONE);
+    expect(changeText).toContain('local client');
   });
 });

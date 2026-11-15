@@ -1,7 +1,6 @@
 import * as pathe from 'pathe';
 
 import {
-  getShellPathBridge,
   translateShellDrivePath,
   type ShellPathBridge,
 } from '#/_base/execEnv/shellPathBridge';
@@ -220,10 +219,8 @@ export interface ResolvePathAccessOptions {
 }
 
 export interface ResolvePathAccessPathOptions {
-  readonly env: Pick<
-    IHostEnvironment,
-    'pathClass' | 'homeDir' | 'osKind' | 'shellName' | 'shellPath'
-  >;
+  readonly env: Pick<IHostEnvironment, 'pathClass' | 'homeDir'>;
+  readonly shellPathBridge?: ShellPathBridge;
   readonly workspace: WorkspaceConfig;
   readonly operation: PathAccessOperation;
   readonly policy?: WorkspaceAccessPolicy;
@@ -292,13 +289,13 @@ export function resolvePathAccessPath(
   path: string,
   options: ResolvePathAccessPathOptions,
 ): string {
-  const { env, workspace, operation, policy, expandHome = true } = options;
+  const { env, shellPathBridge, workspace, operation, policy, expandHome = true } = options;
   return resolvePathAccess(path, workspace.workspaceDir, workspace, {
     operation,
     policy,
     pathClass: env.pathClass,
     homeDir: expandHome ? env.homeDir : undefined,
-    shellPathBridge: env.pathClass === 'win32' ? getShellPathBridge(env) : undefined,
+    shellPathBridge,
   }).path;
 }
 

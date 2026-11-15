@@ -22,7 +22,6 @@ import '@moonshot-ai/agent-core-v2/app/flag/flag';
 import '@moonshot-ai/agent-core-v2/features/skill/catalog/configSection';
 
 import '@moonshot-ai/agent-core-v2/session/subagent/flag';
-import '@moonshot-ai/agent-core-v2/session/sessionTitle/flag';
 import '@moonshot-ai/agent-core-v2/features/tower/flag';
 import '@moonshot-ai/agent-core-v2/agent/toolSelect/flag';
 import '@moonshot-ai/agent-core-v2/agent/tools/task/task-wait/flag';
@@ -63,6 +62,7 @@ const SUPPORTED_PROVIDER_TYPES: ReadonlySet<string> = new Set([
   'kimi',
   'google-genai',
   'openai_responses',
+  'bedrock',
   'vertexai',
 ]);
 

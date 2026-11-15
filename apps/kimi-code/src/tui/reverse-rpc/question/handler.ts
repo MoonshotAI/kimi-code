@@ -5,15 +5,26 @@ import type {
   QuestionPanelResponse,
 } from '#/tui/reverse-rpc/types';
 
+import type { ProgramStatusInteractionTracker } from '#/tui/controllers/program-status';
+
 import type { QuestionController } from './controller';
 
-export function createQuestionAskHandler(controller: QuestionController): QuestionHandler {
+export function createQuestionAskHandler(
+  controller: QuestionController,
+  interactionTracker?: ProgramStatusInteractionTracker,
+): QuestionHandler {
   return async (event): Promise<QuestionResult> => {
+    const interaction = interactionTracker?.startInteraction({
+      agentId: event.agentId,
+      kind: 'question',
+    });
     try {
       const answers = await controller.show(adaptQuestionRequest(event));
       return adaptQuestionAnswers(event, answers);
     } catch {
       return null;
+    } finally {
+      if (interaction !== undefined) interactionTracker?.endInteraction(interaction);
     }
   };
 }

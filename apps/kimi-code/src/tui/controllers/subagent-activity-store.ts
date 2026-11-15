@@ -107,6 +107,7 @@ function capArgStrings(args: Record<string, unknown>): Record<string, unknown> {
 
 export class SubagentActivityStore {
   private readonly records = new Map<string, SubagentActivityRecord>();
+  private readonly startedSteps = new Set<string>();
   /** Raw streaming-arguments buffer per in-flight tool call (from deltas). */
   private readonly streamingArgs = new Map<string, string>();
 
@@ -147,7 +148,14 @@ export class SubagentActivityStore {
   applyEvent(event: Event): void {
     switch (event.type) {
       case 'turn.step.started': {
+        const key = `${event.agentId}:${event.turnId}:${event.stepId ?? event.step}`;
         const record = this.recordFor(event.agentId);
+        if (this.startedSteps.has(key)) {
+          this.currentStep(record).retrying = undefined;
+          this.bump(record);
+          return;
+        }
+        this.startedSteps.add(key);
         record.steps.push({ step: event.step, textTail: '', toolCalls: [] });
         record.totalSteps += 1;
         while (record.steps.length > MAX_SUBAGENT_ACTIVITY_STEPS) {
@@ -219,10 +227,9 @@ export class SubagentActivityStore {
         this.bump(record);
         return;
       }
-      case 'tool.progress': {
-        const kind = event.update.kind;
-        if (kind !== 'stdout' && kind !== 'stderr' && kind !== 'status') return;
-        const text = event.update.text;
+      case 'tool.updated': {
+        const status = event.fields['status'];
+        const text = event.output?.text ?? (event.output === undefined && typeof status === 'string' ? status : undefined);
         if (text === undefined || text.trim().length === 0) return;
         const record = this.records.get(event.agentId);
         const call = record === undefined ? undefined : this.findToolCall(record, event.toolCallId);
@@ -285,6 +292,7 @@ export class SubagentActivityStore {
 
   clear(): void {
     this.records.clear();
+    this.startedSteps.clear();
     this.streamingArgs.clear();
   }
 

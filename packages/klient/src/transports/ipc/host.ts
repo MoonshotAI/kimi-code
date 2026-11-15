@@ -73,7 +73,7 @@ export async function serveKlientIpc(options: ServeKlientIpcOptions): Promise<Kl
     };
     const sendError = (id: string, error: unknown): void => {
       if (error instanceof RPCError) {
-        send({ type: 'error', id, code: error.code, msg: error.message });
+        send({ type: 'error', id, code: error.code, msg: error.message, data: error.details });
       } else {
         send({
           type: 'error',

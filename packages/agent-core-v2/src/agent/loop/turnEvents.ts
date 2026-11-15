@@ -2,11 +2,13 @@
 import { z } from 'zod';
 
 import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/core/llm/origin';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
-import type { FinishReason } from '#human/llm/finish-reason';
-import type { ContentPart, TextPart } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import type { ContentPart, MediaPart, TextPart } from '@moonshot-ai/core/llm/message';
+import { mediaFileIdOf, mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
@@ -49,10 +51,10 @@ export function turnPromptText(
   input: readonly ContentPart[],
   origin?: PromptOrigin,
 ): string | undefined {
-  const bundledBlocks = origin?.kind === 'user' ? (origin.skillActivations?.length ?? 0) : 0;
-  const text = input
-    .filter((part): part is TextPart => part.type === 'text')
-    .slice(bundledBlocks)
+  const bundledActivations =
+    origin?.kind === 'user' ? (origin.skillActivations ?? []) : [];
+  const text = annotateBundledSkillParts(input, bundledActivations)
+    .filter((part): part is TextPart => part.type === 'text' && !isSkillActivationPart(part))
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;
@@ -63,20 +65,25 @@ export function turnPromptAttachments(
   origin?: PromptOrigin,
 ): TurnStartedPayload['promptAttachments'] {
   const attachments: TurnPromptAttachment[] = [];
-  const promptMediaFileId = (url: string, id: string | undefined): string | undefined => {
-    const fileId = parseDaemonFileUrl(url)?.fileId;
+  const promptMediaFileId = (part: MediaPart): string | undefined => {
+    const fileId = parseDaemonFileUrl(mediaUrlOf(part))?.fileId;
+    const id = mediaFileIdOf(part);
     if (id === undefined) return fileId;
     return fileId === id ? id : undefined;
   };
   for (const part of input) {
     if (part.type === 'image_url') {
-      const fileId = promptMediaFileId(part.imageUrl.url, part.imageUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'image', fileId, name: part.imageUrl.name });
+      const fileId = promptMediaFileId(part);
+      if (fileId !== undefined) {
+        attachments.push({ kind: 'image', fileId, name: part.imageUrl.name });
+      }
     } else if (part.type === 'video_url') {
-      const fileId = promptMediaFileId(part.videoUrl.url, part.videoUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'video', fileId, name: part.videoUrl.name });
+      const fileId = promptMediaFileId(part);
+      if (fileId !== undefined) {
+        attachments.push({ kind: 'video', fileId, name: part.videoUrl.name });
+      }
     } else if (part.type === 'audio_url') {
-      const fileId = promptMediaFileId(part.audioUrl.url, part.audioUrl.id);
+      const fileId = promptMediaFileId(part);
       if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
     }
   }
@@ -86,15 +93,6 @@ export function turnPromptAttachments(
     }
   }
   return attachments.length > 0 ? attachments : undefined;
-}
-
-export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {
-  if (origin.kind === 'user') return true;
-  if (origin.kind === 'system_trigger' && origin.name === 'subagent') return true;
-  return (
-    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
-    origin.trigger === 'user-slash'
-  );
 }
 
 export interface TurnStepStartedPayload {
@@ -154,7 +152,7 @@ const turnStepInterruptedSchema = z.object({
 
 export class TurnStepInterrupted extends AgentEvent2<TurnStepInterruptedPayload> {
   static override readonly type = 'turn.step.interrupted';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnStepInterruptedSchema;
 }
@@ -190,7 +188,7 @@ const turnStepRetryingSchema = z.object({
 
 export class TurnStepRetrying extends AgentEvent2<TurnStepRetryingPayload> {
   static override readonly type = 'turn.step.retrying';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnStepRetryingSchema;
 }
@@ -200,6 +198,7 @@ export interface AssistantDeltaPayload {
   readonly agentId: string;
   readonly turnId: number;
   readonly delta: string;
+  readonly block?: number;
 }
 
 export class AssistantDelta extends AgentEvent2<AssistantDeltaPayload> {
@@ -212,6 +211,7 @@ export interface ThinkingDeltaPayload {
   readonly agentId: string;
   readonly turnId: number;
   readonly delta: string;
+  readonly block?: number;
 }
 
 export class ThinkingDelta extends AgentEvent2<ThinkingDeltaPayload> {
@@ -219,6 +219,19 @@ export class ThinkingDelta extends AgentEvent2<ThinkingDeltaPayload> {
   static override readonly observable = true;
 }
 export interface ThinkingDelta extends ThinkingDeltaPayload {}
+
+export interface TurnStepStreamResetPayload {
+  readonly agentId: string;
+  readonly turnId: number;
+  readonly step: number;
+  readonly stepId: string;
+}
+
+export class TurnStepStreamReset extends AgentEvent2<TurnStepStreamResetPayload> {
+  static override readonly type = 'turn.step.stream_reset';
+  static override readonly observable = true;
+}
+export interface TurnStepStreamReset extends TurnStepStreamResetPayload {}
 
 export interface ToolCallDeltaPayload {
   readonly agentId: string;

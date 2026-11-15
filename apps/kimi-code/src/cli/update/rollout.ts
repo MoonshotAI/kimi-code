@@ -7,8 +7,8 @@ import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 
 import { getUpdateRolloutLogFile } from '#/utils/paths';
 
-import { selectUpdateTarget } from './select';
-import type { RolloutBatch, UpdateManifest, UpdateTarget } from './types';
+import { decideUpdate } from './select';
+import type { RolloutBatch, UpdateFeed, UpdateManifest, UpdatePlan } from './types';
 
 /**
  * Hard ceiling for any rollout delay. Combined with the uncovered-bucket
@@ -60,79 +60,49 @@ export function isRolloutEligible(
   return now.getTime() >= publishedAt + delayMs;
 }
 
-/** Which case a passive update check hit; written to the rollout log. */
 export type PassiveUpdateReason =
-  /** Nothing known yet (no cache / CDN never reached). */
   | 'no-latest'
-  /** Known version is not an upgrade over the running one. */
   | 'not-newer'
-  /** Plain-text fallback or legacy cache: visible immediately, no gating. */
   | 'no-manifest'
-  /** Gated: this device's batch delay has not elapsed yet. */
   | 'held'
-  /** Gated and the batch delay has elapsed: update is visible. */
   | 'eligible'
-  /** KIMI_CODE_EXPERIMENTAL_FLAG is on: rollout skipped, newest always visible. */
-  | 'experimental';
+  | 'experimental'
+  | 'switch-channel';
 
 export interface PassiveUpdateDecision {
-  readonly target: UpdateTarget | null;
+  readonly plan: UpdatePlan;
   readonly reason: PassiveUpdateReason;
   readonly bucket: number | null;
   readonly delaySeconds: number | null;
   readonly eligibleAt: string | null;
 }
 
-/**
- * Update decision for the passive surfaces (background install, startup
- * prompt, manual-command notice). Devices whose batch is not yet eligible see
- * no update at all. A null manifest (plain-text fallback or legacy cache)
- * keeps the pre-rollout behavior: the latest version is visible immediately.
- *
- * `kimi upgrade` must NOT go through this gate — it selects directly from the
- * raw latest version.
- */
-export function decidePassiveUpdateTarget(
+function passiveResult(
+  plan: UpdatePlan,
+  reason: PassiveUpdateReason,
+  bucket: number | null = null,
+  delaySeconds: number | null = null,
+  eligibleAt: string | null = null,
+): PassiveUpdateDecision {
+  return { plan, reason, bucket, delaySeconds, eligibleAt };
+}
+
+export function decidePassiveUpdate(
   currentVersion: string,
-  latest: string | null,
-  manifest: UpdateManifest | null,
+  feed: UpdateFeed,
   deviceId: string,
   now: Date,
-  bypassRollout = false,
+  experimentalBypass: boolean = false,
 ): PassiveUpdateDecision {
-  if (bypassRollout) {
-    if (latest === null) {
-      return { target: null, reason: 'no-latest', bucket: null, delaySeconds: null, eligibleAt: null };
-    }
-    const target = selectUpdateTarget(currentVersion, latest);
-    return {
-      target,
-      reason: target === null ? 'not-newer' : 'experimental',
-      bucket: null,
-      delaySeconds: null,
-      eligibleAt: null,
-    };
+  const plan = decideUpdate(currentVersion, feed);
+  if (plan.kind === 'none') {
+    return passiveResult(plan, feed.latest === null ? 'no-latest' : 'not-newer');
   }
+  if (plan.kind === 'switch-channel') return passiveResult(plan, 'switch-channel');
+  if (experimentalBypass) return passiveResult(plan, 'experimental');
+  if (feed.manifest === null) return passiveResult(plan, 'no-manifest');
 
-  if (manifest === null) {
-    if (latest === null) {
-      return { target: null, reason: 'no-latest', bucket: null, delaySeconds: null, eligibleAt: null };
-    }
-    const target = selectUpdateTarget(currentVersion, latest);
-    return {
-      target,
-      reason: target === null ? 'not-newer' : 'no-manifest',
-      bucket: null,
-      delaySeconds: null,
-      eligibleAt: null,
-    };
-  }
-
-  const target = selectUpdateTarget(currentVersion, manifest.version);
-  if (target === null) {
-    return { target: null, reason: 'not-newer', bucket: null, delaySeconds: null, eligibleAt: null };
-  }
-
+  const manifest = feed.manifest;
   const bucket = rolloutBucket(deviceId, manifest.version);
   const delaySeconds = rolloutDelayForBucket(manifest.rollout, bucket);
   const publishedAt = Date.parse(manifest.publishedAt);
@@ -140,23 +110,13 @@ export function decidePassiveUpdateTarget(
     ? new Date(publishedAt + delaySeconds * 1000).toISOString()
     : null;
   const eligible = isRolloutEligible(manifest, deviceId, now);
-  return {
-    target: eligible ? target : null,
-    reason: eligible ? 'eligible' : 'held',
+  return passiveResult(
+    eligible ? plan : { kind: 'none' },
+    eligible ? 'eligible' : 'held',
     bucket,
     delaySeconds,
     eligibleAt,
-  };
-}
-
-export function selectPassiveUpdateTarget(
-  currentVersion: string,
-  latest: string | null,
-  manifest: UpdateManifest | null,
-  deviceId: string,
-  now: Date,
-): UpdateTarget | null {
-  return decidePassiveUpdateTarget(currentVersion, latest, manifest, deviceId, now).target;
+  );
 }
 
 const ROLLOUT_LOG_MAX_BYTES = 256 * 1024;

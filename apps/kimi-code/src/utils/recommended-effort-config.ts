@@ -1,11 +1,7 @@
+import type { ClientConfigFetchOptions } from '@moonshot-ai/kimi-code-product/client-configs/node';
 import { z } from 'zod';
 
-import {
-  getClientConfig,
-  peekClientConfig,
-  resetClientConfigCache,
-  type ClientConfigFetchOptions,
-} from '#/utils/client-configs';
+import { clientConfigs } from '#/utils/client-configs';
 
 const CONFIG_NAME = 'recommended_effort';
 
@@ -35,13 +31,13 @@ const recommendedEffortConfigSchema = z
 export async function getRecommendedEffortConfig(
   options: ClientConfigFetchOptions = {},
 ): Promise<RecommendedEffortConfig | undefined> {
-  return getClientConfig(CONFIG_NAME, recommendedEffortConfigSchema, options);
+  return clientConfigs.get(CONFIG_NAME, recommendedEffortConfigSchema, options);
 }
 
 export function peekRecommendedEffortConfig(now?: number): RecommendedEffortConfig | undefined {
-  return peekClientConfig(CONFIG_NAME, recommendedEffortConfigSchema, now);
+  return clientConfigs.peek(CONFIG_NAME, recommendedEffortConfigSchema, now);
 }
 
 export function resetRecommendedEffortConfigCache(): void {
-  resetClientConfigCache(CONFIG_NAME);
+  clientConfigs.reset(CONFIG_NAME);
 }

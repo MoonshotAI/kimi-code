@@ -2,6 +2,7 @@ import { Text, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { outcomeRows } from './outcome';
 import type { ResultRenderer } from './types';
@@ -34,6 +35,7 @@ export class TruncatedOutputComponent implements Component {
   private readonly tail: boolean;
   /** Whether the last collapsed render cut rows; kept while expanded so the footer can still offer collapse. */
   private truncatedAtLastRender = false;
+  private renderCache: { width: number; source: string[]; lines: string[] } | undefined;
 
   constructor(
     output: string,
@@ -70,6 +72,7 @@ export class TruncatedOutputComponent implements Component {
 
   invalidate(): void {
     // Text component caches wrapped lines; invalidate on terminal resize.
+    this.renderCache = undefined;
     this.textComponent.invalidate();
   }
 
@@ -86,12 +89,24 @@ export class TruncatedOutputComponent implements Component {
 
   render(width: number): string[] {
     const contentLines = this.textComponent.render(width);
-    if (!this.expanded) this.truncatedAtLastRender = contentLines.length > this.maxLines;
+    // Collapsing swaps the hidden rows for a one-line hint, so a single
+    // hidden row would render at the same height as the full output.
+    this.truncatedAtLastRender = contentLines.length > this.maxLines + 1;
 
-    if (this.expanded || contentLines.length <= this.maxLines) {
+    if (this.expanded || contentLines.length <= this.maxLines + 1) {
       return contentLines;
     }
 
+    if (isRenderCacheEnabled() && this.renderCache?.width === width && this.renderCache.source === contentLines) {
+      return this.renderCache.lines;
+    }
+
+    const lines = this.collapse(width, contentLines);
+    if (isRenderCacheEnabled()) this.renderCache = { width, source: contentLines, lines };
+    return lines;
+  }
+
+  private collapse(width: number, contentLines: string[]): string[] {
     const remaining = contentLines.length - this.maxLines;
     if (this.tail) {
       const shown = contentLines.slice(contentLines.length - this.maxLines);

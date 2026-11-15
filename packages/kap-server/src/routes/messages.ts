@@ -5,7 +5,7 @@ import { getMessageResponseSchema, listMessagesResponseSchema } from '../protoco
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { requestLog } from '../lib/requestLog';
+import { sendMappedError as sendSessionMappedError } from './sessionErrors';
 import { defineRoute } from '../middleware/defineRoute';
 import {
   getMessage,
@@ -65,6 +65,7 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'List messages for a session',
       tags: ['messages'],
@@ -74,8 +75,8 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
         const { session_id } = req.params;
         const page = await listMessages(core, session_id, req.query);
         reply.send(okEnvelope(page, req.id));
-      } catch (err) {
-        sendMappedError(reply, req, err);
+      } catch (error) {
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -95,6 +96,7 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.MESSAGE_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Get a message by ID',
       tags: ['messages'],
@@ -104,8 +106,8 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
         const { session_id, message_id } = req.params;
         const message = await getMessage(core, session_id, message_id);
         reply.send(okEnvelope(message, req.id));
-      } catch (err) {
-        sendMappedError(reply, req, err);
+      } catch (error) {
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -122,17 +124,13 @@ function sendMappedError(
   err: unknown,
 ): void {
   const requestId = req.id;
-  const log = requestLog(req);
   if (err instanceof SessionNotFoundError) {
-    reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId));
     return;
   }
   if (err instanceof MessageNotFoundError) {
-    reply.send(errEnvelope(ErrorCode.MESSAGE_NOT_FOUND, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.MESSAGE_NOT_FOUND, err.message, requestId));
     return;
   }
-  log?.error({ err }, 'message request failed');
-  reply.send(
-    errEnvelope(ErrorCode.INTERNAL_ERROR, err instanceof Error ? err.message : String(err), requestId, err instanceof Error ? err.stack : undefined),
-  );
+  sendSessionMappedError(reply, req, err);
 }

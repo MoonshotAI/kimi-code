@@ -12,8 +12,6 @@ import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { LifecycleScope } from '#/app/scopes';
 import { SessionInitFeature } from '#/features/sessionInit/sessionInitFeature';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
 import {
@@ -21,7 +19,6 @@ import {
   registerFeature,
 } from '#/features/featureRegistry';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 
 describe('SessionInitFeature', () => {
@@ -50,10 +47,7 @@ describe('SessionInitFeature', () => {
     const session = host.child(LifecycleScope.Session, 'session-1', [
       stubPair(IAgentLifecycleService, {} as IAgentLifecycleService),
       stubPair(ISessionSubagentService, {} as ISessionSubagentService),
-      stubPair(IHostFileSystem, {} as IHostFileSystem),
-      stubPair(IHostEnvironment, {} as IHostEnvironment),
       stubPair(IBootstrapService, {} as IBootstrapService),
-      stubPair(ISessionContext, {} as ISessionContext),
     ]);
     const manager = host.app.accessor.get(IFeatureManager);
 

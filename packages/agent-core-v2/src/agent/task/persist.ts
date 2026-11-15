@@ -1,27 +1,31 @@
+import { existsSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { join } from 'pathe';
+import type { EnvironmentPath } from '#/environment/environment';
 
 import { BugIndicatingError } from '#/errors';
-import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
-
-import type { AgentTaskInfo, AgentTaskStatus } from './types';
+import { FileBody } from '#/tool/executor/output-store';
+import type { ToolOutput } from '#/tool/executor/types';
 
 const VALID_TASK_ID: RegExp = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
 
 const TASKS_SCOPE = 'tasks';
 const OUTPUT_LOG_KEY = 'output.log';
-const JSON_SUFFIX = '.json';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-type PersistedTask = AgentTaskInfo;
-
-type DiskPersistedTask = PersistedTask | LegacyPersistedTask;
-
 export interface AgentTaskPersistenceRoot {
   readonly dir: string;
   readonly scope: string;
+}
+
+export interface AgentTaskSpillTarget {
+  readonly fs: IHostFileSystem;
+  readonly dir: string;
+  readonly path?: Pick<EnvironmentPath, 'join'>;
 }
 
 export interface AgentTaskStoredOutputSnapshot {
@@ -30,11 +34,6 @@ export interface AgentTaskStoredOutputSnapshot {
   readonly previewBytes: number;
   readonly truncated: boolean;
   readonly preview: string;
-}
-
-interface ListedTask {
-  readonly keyId: string;
-  readonly task: PersistedTask;
 }
 
 interface TaskOutputData {
@@ -48,21 +47,28 @@ function validateTaskId(taskId: string): void {
   }
 }
 
+export function isTaskOutputFilePath(path: string, agentDir: string, pathApi: Pick<EnvironmentPath, 'isAbsolute' | 'relative'>): boolean {
+  if (!pathApi.isAbsolute(path) || path.includes('\0')) return false;
+  const parts = pathApi.relative(agentDir, path).replaceAll('\\', '/').split('/');
+  return parts.length === 3 && parts[0] === TASKS_SCOPE && VALID_TASK_ID.test(parts[1]!) && parts[2] === OUTPUT_LOG_KEY;
+}
+
 export class AgentTaskPersistence {
+  private readonly mirrors = new WeakMap<IHostFileSystem, Map<string, { readonly scope: string; readonly size: number }>>();
+  private readonly bodies = new Map<string, FileBody>();
+  private readonly outputs = new Map<string, ToolOutput>();
+  private readonly outputTails = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly agentDir: string,
     private readonly agentScope: string,
-    private readonly docs: IAtomicDocumentStore,
     private readonly bytes: IFileSystemStorageService,
     private readonly fallbackRoot?: AgentTaskPersistenceRoot,
+    private readonly spillTarget?: () => AgentTaskSpillTarget | undefined,
   ) {}
 
   private primaryRoot(): AgentTaskPersistenceRoot {
     return { dir: this.agentDir, scope: this.agentScope };
-  }
-
-  private tasksScope(root: AgentTaskPersistenceRoot = this.primaryRoot()): string {
-    return `${root.scope}/${TASKS_SCOPE}`;
   }
 
   private taskOutputScope(
@@ -78,32 +84,86 @@ export class AgentTaskPersistence {
     return join(root.dir, TASKS_SCOPE, taskId, OUTPUT_LOG_KEY);
   }
 
+  private taskOutputPhysicalFile(taskId: string): string {
+    return this.bytes.pathFor?.(this.taskOutputScope(taskId), OUTPUT_LOG_KEY) ??
+      this.taskOutputFileAt(taskId, this.primaryRoot());
+  }
+
+  private async outputPathFor(taskId: string, output: TaskOutputData): Promise<string> {
+    const target = this.spillTarget?.();
+    if (target !== undefined && await this.mirrorOutput(taskId, output, target)) {
+      return (target.path?.join ?? join)(target.dir, `${taskId}.log`);
+    }
+    return this.taskOutputFileAt(taskId, output.root);
+  }
+
+  private async mirrorOutput(taskId: string, output: TaskOutputData, target: AgentTaskSpillTarget): Promise<boolean> {
+    const mirrors = this.mirrors.get(target.fs) ?? new Map<string, { readonly scope: string; readonly size: number }>();
+    this.mirrors.set(target.fs, mirrors);
+    const path = (target.path?.join ?? join)(target.dir, `${taskId}.log`);
+    const mirrored = mirrors.get(path);
+    if (mirrored?.scope === output.root.scope && mirrored.size === output.data.byteLength) return true;
+    try {
+      await target.fs.mkdir(target.dir, { recursive: true });
+      await target.fs.writeText(path, textDecoder.decode(output.data));
+      mirrors.set(path, { scope: output.root.scope, size: output.data.byteLength });
+      return true;
+    } catch {
+      mirrors.delete(path);
+      return false;
+    }
+  }
+
+  private serializeOutput<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+    validateTaskId(taskId);
+    const run = (this.outputTails.get(taskId) ?? Promise.resolve()).catch(() => undefined).then(operation);
+    this.outputTails.set(taskId, run);
+    return run.finally(() => {
+      if (this.outputTails.get(taskId) === run) this.outputTails.delete(taskId);
+    });
+  }
+
   taskOutputFile(taskId: string): string {
     return this.taskOutputFileAt(taskId, this.primaryRoot());
   }
 
-  async writeTask(task: PersistedTask): Promise<void> {
-    validateTaskId(task.taskId);
-    await this.docs.set(this.tasksScope(), `${task.taskId}${JSON_SUFFIX}`, task);
-  }
-
-  async readTask(taskId: string): Promise<PersistedTask | undefined> {
-    validateTaskId(taskId);
-    const key = `${taskId}${JSON_SUFFIX}`;
-    const task = await this.docs.get<DiskPersistedTask>(this.tasksScope(), key);
-    if (task !== undefined) {
-      return isReadablePersistedTask(task) ? normalizePersistedTask(task) : undefined;
-    }
-    const fallbackRoot = this.fallbackRoot;
-    if (fallbackRoot === undefined) return undefined;
-    const fallback = await this.docs.get<DiskPersistedTask>(this.tasksScope(fallbackRoot), key);
-    if (fallback === undefined || !isReadablePersistedTask(fallback)) return undefined;
-    return normalizePersistedTask(fallback);
+  open(taskId: string): ToolOutput {
+    const current = this.outputs.get(taskId);
+    if (current !== undefined && current.closed !== true) return current;
+    const body = this.bodies.get(taskId) ?? new FileBody(this.taskOutputPhysicalFile(taskId), 0o700);
+    this.bodies.set(taskId, body);
+    const output = body.open();
+    this.outputs.set(taskId, output);
+    return output;
   }
 
   async appendTaskOutput(taskId: string, chunk: string): Promise<void> {
     if (chunk.length === 0) return;
-    await this.bytes.append(this.taskOutputScope(taskId), OUTPUT_LOG_KEY, textEncoder.encode(chunk));
+    await this.serializeOutput(taskId, async () => {
+      const previousSize = await this.taskOutputSizeBytes(taskId);
+      const output = this.open(taskId);
+      if (output.append(chunk) === undefined) {
+        throw new Error(output.error() ?? `Unable to append task output: ${taskId}`);
+      }
+      await output.flush();
+      const size = output.preview(0).totalBytes;
+      const target = this.spillTarget?.();
+      if (target === undefined) return;
+      const path = (target.path?.join ?? join)(target.dir, `${taskId}.log`);
+      const mirrors = this.mirrors.get(target.fs);
+      const mirrored = mirrors?.get(path);
+      if (mirrored?.scope === this.agentScope && mirrored.size === previousSize) {
+        try {
+          await target.fs.appendText(path, chunk);
+          mirrors!.set(path, { scope: this.agentScope, size });
+        } catch {
+          mirrors!.delete(path);
+        }
+        return;
+      }
+      const persisted = await this.readTaskOutputData(taskId);
+      if (persisted !== undefined) await this.mirrorOutput(taskId, persisted, target);
+    });
   }
 
   async taskOutputSizeBytes(taskId: string): Promise<number> {
@@ -125,65 +185,75 @@ export class AgentTaskPersistence {
     return textDecoder.decode(output.data.subarray(start, end));
   }
 
+  async readTaskOutputTail(
+    taskId: string,
+    maxBytes: number,
+  ): Promise<{ readonly offset: number; readonly data: Uint8Array } | undefined> {
+    await this.flushTaskOutput(taskId);
+    const limit = Math.max(0, Math.trunc(maxBytes));
+    const file = await open(this.taskOutputPhysicalFile(taskId), 'r').catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (file !== undefined) {
+      try {
+        const { size } = await file.stat();
+        const offset = Math.max(0, size - limit);
+        if (offset === size) return { offset, data: new Uint8Array() };
+        const data = Buffer.alloc(size - offset);
+        const { bytesRead } = await file.read(data, 0, data.byteLength, offset);
+        return { offset, data: data.subarray(0, bytesRead) };
+      } finally {
+        await file.close();
+      }
+    }
+    const root = this.fallbackRoot;
+    if (root === undefined) return undefined;
+    const scope = this.taskOutputScope(taskId, root);
+    const size = await this.bytes.size(scope, OUTPUT_LOG_KEY);
+    if (size === undefined) return undefined;
+    const offset = Math.max(0, size - limit);
+    if (offset === size) return { offset, data: new Uint8Array() };
+    const parts: Uint8Array[] = [];
+    for await (const part of this.bytes.readStream(scope, OUTPUT_LOG_KEY, { start: offset, end: size - 1 })) {
+      parts.push(part);
+    }
+    return { offset, data: Buffer.concat(parts) };
+  }
+
   async readTaskOutputSnapshot(
     taskId: string,
     maxPreviewBytes: number,
   ): Promise<AgentTaskStoredOutputSnapshot | undefined> {
-    const output = await this.readTaskOutputData(taskId);
-    if (output === undefined) return undefined;
-    const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
-    const previewBytes = Math.min(previewLimit, output.data.byteLength);
-    const previewOffset = output.data.byteLength - previewBytes;
-    return {
-      outputPath: this.taskOutputFileAt(taskId, output.root),
-      outputSizeBytes: output.data.byteLength,
-      previewBytes,
-      truncated: previewOffset > 0,
-      preview: textDecoder.decode(output.data.subarray(previewOffset)),
-    };
+    return this.serializeOutput(taskId, async () => {
+      const output = await this.readTaskOutputData(taskId);
+      if (output === undefined) return undefined;
+      const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
+      const previewBytes = Math.min(previewLimit, output.data.byteLength);
+      const previewOffset = output.data.byteLength - previewBytes;
+      return {
+        outputPath: await this.outputPathFor(taskId, output),
+        outputSizeBytes: output.data.byteLength,
+        previewBytes,
+        truncated: previewOffset > 0,
+        preview: textDecoder.decode(output.data.subarray(previewOffset)),
+      };
+    });
   }
 
-  async listTasks(): Promise<readonly PersistedTask[]> {
-    const primary = await this.listTasksAt(this.primaryRoot());
-    const tasks = [...primary.tasks];
-    const fallbackRoot = this.fallbackRoot;
-    if (fallbackRoot !== undefined) {
-      const fallback = await this.listTasksAt(fallbackRoot);
-      for (const entry of fallback.tasks) {
-        if (!primary.reservedIds.has(entry.keyId)) tasks.push(entry);
-      }
-    }
-    return tasks.map((entry) => entry.task).toSorted((a, b) => a.taskId.localeCompare(b.taskId));
-  }
-
-  private async listTasksAt(root: AgentTaskPersistenceRoot): Promise<{
-    readonly reservedIds: ReadonlySet<string>;
-    readonly tasks: readonly ListedTask[];
-  }> {
-    const keys = (await this.docs.list(this.tasksScope(root))).toSorted();
-    const reservedIds = new Set<string>();
-    const tasks: ListedTask[] = [];
-    for (const key of keys) {
-      if (!key.endsWith(JSON_SUFFIX)) continue;
-      const id = key.slice(0, -JSON_SUFFIX.length);
-      if (!VALID_TASK_ID.test(id)) continue;
-      reservedIds.add(id);
-      let task: DiskPersistedTask | undefined;
-      try {
-        task = await this.docs.get<DiskPersistedTask>(this.tasksScope(root), key);
-      } catch {
-        continue;
-      }
-      if (task === undefined || !isReadablePersistedTask(task)) continue;
-      tasks.push({ keyId: id, task: normalizePersistedTask(task) });
-    }
-    return { reservedIds, tasks };
+  private async flushTaskOutput(taskId: string): Promise<void> {
+    const output = this.outputs.get(taskId);
+    if (output !== undefined && output.error() !== 'Tool output is closed') await output.flush();
   }
 
   private async readTaskOutputData(taskId: string): Promise<TaskOutputData | undefined> {
+    await this.flushTaskOutput(taskId);
     const primaryRoot = this.primaryRoot();
-    const primary = await this.bytes.read(this.taskOutputScope(taskId, primaryRoot), OUTPUT_LOG_KEY);
-    if (primary !== undefined) return { root: primaryRoot, data: primary };
+    if (existsSync(this.taskOutputPhysicalFile(taskId))) {
+      const output = this.open(taskId);
+      const totalBytes = output.preview(0).totalBytes;
+      return { root: primaryRoot, data: textEncoder.encode(await output.read(0, totalBytes)) };
+    }
     const fallbackRoot = this.fallbackRoot;
     if (fallbackRoot === undefined) return undefined;
     const fallback = await this.bytes.read(
@@ -192,96 +262,4 @@ export class AgentTaskPersistence {
     );
     return fallback === undefined ? undefined : { root: fallbackRoot, data: fallback };
   }
-}
-
-function normalizePersistedTask(task: DiskPersistedTask): PersistedTask {
-  if (isLegacyPersistedTask(task)) return legacyPersistedTaskToInfo(task);
-  return {
-    ...task,
-    detached: task.detached ?? true,
-  };
-}
-
-type LegacyAgentTaskStatus =
-  | 'running'
-  | 'awaiting_approval'
-  | 'completed'
-  | 'failed'
-  | 'killed'
-  | 'lost';
-
-interface LegacyPersistedTask {
-  readonly task_id: string;
-  readonly command: string;
-  readonly description: string;
-  readonly pid: number;
-  readonly started_at: number;
-  readonly ended_at: number | null;
-  readonly exit_code: number | null;
-  readonly status: LegacyAgentTaskStatus;
-  readonly timed_out?: boolean;
-  readonly stop_reason?: string;
-  readonly timeout_ms?: number;
-  readonly agent_id?: string;
-  readonly subagent_type?: string;
-}
-
-function legacyPersistedTaskToInfo(task: LegacyPersistedTask): PersistedTask {
-  const status = legacyStatusToCurrent(task);
-  const stopReason = optionalNonEmptyString(task.stop_reason);
-  const timeoutMs = typeof task.timeout_ms === 'number' ? task.timeout_ms : undefined;
-  const base = {
-    taskId: task.task_id,
-    description: task.description,
-    status,
-    detached: true,
-    startedAt: task.started_at,
-    endedAt: task.ended_at,
-    stopReason,
-    timeoutMs,
-  };
-
-  if (task.task_id.startsWith('agent-')) {
-    return {
-      ...base,
-      kind: 'agent',
-      agentId: optionalNonEmptyString(task.agent_id),
-      subagentType: optionalNonEmptyString(task.subagent_type),
-    };
-  }
-
-  return {
-    ...base,
-    kind: 'process',
-    command: task.command,
-    pid: task.pid,
-    exitCode: task.exit_code,
-  };
-}
-
-function legacyStatusToCurrent(task: LegacyPersistedTask): AgentTaskStatus {
-  if (task.status === 'awaiting_approval') return 'running';
-  if (task.status === 'failed' && task.timed_out === true) return 'timed_out';
-  return task.status;
-}
-
-function isReadablePersistedTask(obj: unknown): obj is DiskPersistedTask {
-  return (
-    isRecord(obj) &&
-    (typeof obj['taskId'] === 'string' || typeof obj['task_id'] === 'string')
-  );
-}
-
-function isLegacyPersistedTask(task: DiskPersistedTask): task is LegacyPersistedTask {
-  return 'task_id' in task;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function optionalNonEmptyString(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }

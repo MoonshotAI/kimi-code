@@ -3,12 +3,13 @@ import type { FsGitStatus, FsGitStatusResponse, FsPullRequest } from './git';
 export function parsePorcelain(
   stdout: string,
   filter: ReadonlySet<string> | undefined,
+  pathPrefix = '',
 ): FsGitStatusResponse {
   const records = stdout.split('\0');
   let branch = '';
   let ahead = 0;
   let behind = 0;
-  const entries: Record<string, FsGitStatus> = {};
+  const entries = Object.create(null) as Record<string, FsGitStatus>;
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i]!;
@@ -23,7 +24,10 @@ export function parsePorcelain(
 
     if (record.length < 4) continue;
     const xy = record.slice(0, 2);
-    const wirePath = record.slice(3);
+    const repoPath = record.slice(3);
+    const wirePath = pathPrefix !== '' && repoPath.startsWith(pathPrefix)
+      ? repoPath.slice(pathPrefix.length)
+      : repoPath;
 
     if (xy.startsWith('R') || xy.startsWith('C')) {
       i++;
@@ -130,6 +134,7 @@ export function parsePullRequest(stdout: string): FsPullRequest | null {
   if (typeof state !== 'string') return null;
   const normalized = state.toLowerCase();
   if (normalized !== 'open' && normalized !== 'merged' && normalized !== 'closed') return null;
+  if (normalized === 'open' && record['isDraft'] === true) return { number, state: 'draft', url };
   return { number, state: normalized, url };
 }
 

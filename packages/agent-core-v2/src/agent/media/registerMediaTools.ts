@@ -1,59 +1,36 @@
-import type { ModelCapability } from '#human/llm/capability';
-import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from './sessionMediaStore';
 
-import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { WorkspaceConfig } from '#/tool/path-access';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
-import type { VideoUploader } from '#/agent/tools/read-media-file/read-media-file';
+import type { VideoUploader } from '#/llm-adapter/model/media';
 
 export interface RegisterMediaToolsDeps {
-  readonly attachmentStore?: ISessionMediaStore;
-  readonly runtime: IAgentRuntimeService;
+  readonly attachmentStore: ISessionMediaStore;
+  readonly environment: IAgentEnvironmentService;
   readonly workspace: WorkspaceConfig;
-  readonly capabilities: ModelCapability;
-  readonly videoUploader?: VideoUploader;
   readonly telemetry?: ITelemetryService;
-  readonly inlineVideoSupported?: boolean;
-  readonly providerType?: string;
 }
 
 export function registerMediaTools(
   toolRegistry: IAgentToolRegistryService,
   deps: RegisterMediaToolsDeps,
 ): IDisposable {
-  if (
-    (!deps.runtime.isAvailable(['fs']) && deps.attachmentStore === undefined) ||
-    (!deps.capabilities.image_in && !deps.capabilities.video_in)
-  ) {
-    return toDisposable(() => {});
-  }
   return toolRegistry.register(
-    new ReadMediaFileTool(
-      deps.runtime,
-      deps.workspace,
-      deps.capabilities,
-      deps.videoUploader,
-      deps.telemetry,
-      deps.inlineVideoSupported,
-      deps.providerType,
-      deps.attachmentStore,
-    ),
+    new ReadMediaFileTool(deps.environment, deps.workspace, deps.attachmentStore, deps.telemetry),
   );
 }
 
 export function createVideoUploader(
-  requester: Pick<ModelRequester, 'uploadVideo'> | undefined,
+  uploadVideo: VideoUploader | undefined,
   telemetry?: VideoUploadTelemetry,
 ): VideoUploader | undefined {
-  const uploadVideo = requester?.uploadVideo;
   if (uploadVideo === undefined) return undefined;
-  const bound = uploadVideo.bind(requester);
-  if (telemetry === undefined) return (input, options) => bound(input, options);
+  if (telemetry === undefined) return (input, options) => uploadVideo(input, options);
 
   return async (input, options) => {
     const startedAt = Date.now();
@@ -69,7 +46,7 @@ export function createVideoUploader(
       }
     };
     try {
-      const part = await bound(input, options);
+      const part = await uploadVideo(input, options);
       track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
       return part;
     } catch (error) {

@@ -27,7 +27,7 @@ export {
   toolCallLazyCreateToSessionUpdate,
   toolCallStartedUpgradeToSessionUpdate,
   toolCallStartToSessionUpdate,
-  toolProgressToSessionUpdate,
+  toolUpdatedToSessionUpdate,
   toolResultToSessionUpdate,
   turnEndReasonToStopReason,
 } from './events-map';
@@ -86,7 +86,7 @@ export {
   questionRequestToElicitationParams,
 } from './question';
 export { projectHistoryToSessionUpdates } from './replay';
-export { AcpRuntimeProviderFactory } from './acp-terminal';
+export { AcpEnvironmentProviderFactory } from './acp-terminal';
 export type {
   AcpTerminalCreatedEvent,
   AcpTerminalCreatedListener,

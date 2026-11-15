@@ -1,24 +1,20 @@
-import { errorStatusCode } from '#/llm/errors';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRecovery } from '#/llm/requester/recovery';
-import {
-  mergeRequestHeaders,
-  type LlmCredential,
-  type LlmCredentialProvider,
-} from '#/llm/requester/requester';
+import { errorStatusCode } from '@moonshot-ai/core/llm/protocol/errors';
+import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 
-export interface CredentialTokenSource {
+export interface AccessTokenResolver {
   (options?: { readonly force?: boolean }): Promise<string | undefined>;
 }
 
-export function staticCredentials(apiKey?: string): LlmCredentialProvider {
+export function createStaticCredentialProvider(apiKey?: string): LlmCredentialProvider {
   return {
     resolve: () =>
       apiKey === undefined || apiKey.trim().length === 0 ? undefined : { apiKey },
   };
 }
 
-export function oauthCredentials(getToken: CredentialTokenSource): LlmCredentialProvider {
+export function createOAuthCredentialProvider(
+  getToken: AccessTokenResolver,
+): LlmCredentialProvider {
   let refreshed: Promise<string | undefined> | undefined;
   return {
     resolve: async () => {
@@ -34,42 +30,3 @@ export function oauthCredentials(getToken: CredentialTokenSource): LlmCredential
     },
   };
 }
-
-export function applyCredential(
-  model: LlmModel,
-  credential: LlmCredential | undefined,
-): LlmModel {
-  if (credential === undefined) {
-    return model;
-  }
-  return {
-    ...model,
-    apiKey: credential.apiKey ?? model.apiKey,
-    defaultHeaders: mergeRequestHeaders(model.defaultHeaders, credential.headers),
-  };
-}
-
-export async function resolveModelCredentials(
-  model: LlmModel,
-  credentials: LlmCredentialProvider | undefined,
-): Promise<LlmModel> {
-  return applyCredential(model, await credentials?.resolve());
-}
-
-const CREDENTIALS_RECOVERY_ID = 'credentials';
-
-export const credentialsRecovery: LlmRecovery = {
-  propose: ({ error, applied, credentials }) => {
-    if (
-      credentials?.canRecover?.(error) !== true ||
-      applied.some((record) => record.strategy === CREDENTIALS_RECOVERY_ID)
-    ) {
-      return undefined;
-    }
-    return {
-      strategy: CREDENTIALS_RECOVERY_ID,
-      action: 'refresh',
-      prepare: () => credentials?.invalidate?.(),
-    };
-  },
-};

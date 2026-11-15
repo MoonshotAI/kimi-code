@@ -34,11 +34,11 @@ export interface ImageAttachmentOriginal {
   readonly byteLength: number;
   readonly mime: string;
   /**
-   * Where the original was persisted for readback (ReadMediaFile + region).
-   * Undefined until dispatch-time persistence succeeds; failures are retried
-   * at the next dispatch.
+   * Local resend copy, independent of the session attachment used for
+   * ReadMediaFile. Undefined until persistence succeeds; retried on dispatch.
    */
   path?: string;
+  attachment?: { readonly sessionId: string; readonly reference: string };
 }
 
 export interface ImageAttachment {
@@ -110,8 +110,13 @@ type MutableImageAttachment = {
 
 export class ImageAttachmentStore {
   private nextId = 1;
+  private currentGeneration = 0;
   private readonly byId = new Map<number, MediaAttachment>();
   private readonly stagingUses = new Map<number, number>();
+
+  get generation(): number {
+    return this.currentGeneration;
+  }
 
   addImage(
     bytes: Uint8Array,
@@ -242,6 +247,7 @@ export class ImageAttachmentStore {
     this.byId.clear();
     this.stagingUses.clear();
     this.nextId = 1;
+    this.currentGeneration += 1;
     return fileIds;
   }
 

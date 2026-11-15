@@ -58,6 +58,27 @@ describe('StagingLeaseTracker', () => {
   });
 
   describe('turn claiming', () => {
+    it('keeps main and BTW leases separate when their turn ids match', async () => {
+      const { tracker, deleted, warn } = makeTracker();
+      const main = tracker.create([1], [], 'user');
+      const btw = tracker.create([2], [], 'user', undefined, 'agent-btw');
+      tracker.handleTurnStarted(turnStarted(1, 'user'));
+      expect(main?.turnId).toBe('1');
+      expect(btw?.turnId).toBeUndefined();
+      tracker.handleTurnStarted(turnStarted(1, 'user'), 'agent-btw');
+      expect(btw?.turnId).toBe('1');
+      expect(warn).not.toHaveBeenCalled();
+      tracker.handleTurnEnded(turnEnded(1));
+      await tracker.drain();
+      expect(deleted.fileIds).toEqual(['file-1']);
+      tracker.handleTurnEnded(turnEnded(1), 'agent-btw');
+      await tracker.drain();
+      expect(deleted.fileIds).toEqual(['file-1', 'file-2']);
+      tracker.releaseAll();
+      await tracker.drain();
+      expect(deleted.fileIds).toEqual(['file-1', 'file-2']);
+    });
+
     it('claims the earliest unbound lease of the matching origin', () => {
       const { tracker } = makeTracker();
       const first = tracker.create([], ['/cache/a'], 'user');
@@ -335,6 +356,66 @@ describe('StagingLeaseTracker', () => {
       tracker.handleTurnEnded(turnEnded(7));
       expect(deleted.fileIds).toEqual(['file-1']);
       expect(deleted.paths).toEqual([]);
+    });
+  });
+
+  describe('trackDispatch across turn end', () => {
+    const origin: StagingLeaseOrigin = 'user';
+
+    function pending(): { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void } {
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it('holds an in-flight lease past turn end and releases it once the dispatch succeeds', async () => {
+      const { tracker, deleted } = makeTracker();
+      const lease = tracker.create([1], ['/cache/a'], origin);
+      tracker.bindToTurn(lease, '7');
+      const request = pending();
+
+      tracker.trackDispatch(lease, request.promise, vi.fn());
+      tracker.handleTurnEnded(turnEnded(7));
+      expect(deleted.fileIds).toEqual([]);
+
+      request.resolve();
+      await tracker.drain();
+      expect(deleted.fileIds).toEqual(['file-1']);
+      expect(deleted.paths).toEqual([]);
+    });
+
+    it('keeps media a failed in-flight dispatch hands back after its turn ended', async () => {
+      const { tracker, deleted } = makeTracker();
+      const lease = tracker.create([1], ['/cache/a'], origin);
+      tracker.bindToTurn(lease, '7');
+      const request = pending();
+
+      tracker.trackDispatch(lease, request.promise, () => tracker.defer(lease));
+      tracker.handleTurnEnded(turnEnded(7));
+      request.reject(new Error('boom'));
+      await tracker.drain();
+
+      expect(deleted.fileIds).toEqual([]);
+      expect(deleted.paths).toEqual([]);
+    });
+
+    it('deletes media of a failed in-flight dispatch nobody reclaims after its turn ended', async () => {
+      const { tracker, deleted } = makeTracker();
+      const lease = tracker.create([1], ['/cache/a'], origin);
+      tracker.bindToTurn(lease, '7');
+      const request = pending();
+
+      tracker.trackDispatch(lease, request.promise, vi.fn());
+      tracker.handleTurnEnded(turnEnded(7));
+      request.reject(new Error('boom'));
+      await tracker.drain();
+
+      expect(deleted.fileIds).toEqual(['file-1']);
+      expect(deleted.paths).toEqual(['/cache/a']);
     });
   });
 

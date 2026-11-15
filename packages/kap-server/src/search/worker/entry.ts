@@ -51,6 +51,7 @@ const core = new SearchIndexCore({
     post({ type: 'lockToken', token });
   },
 });
+if (typeof data.syncSessionCap === 'number') core.syncSessionCap = data.syncSessionCap;
 
 function toErrorPayload(error: unknown): SearchWorkerErrorPayload {
   if (error instanceof GlobalSearchError) {

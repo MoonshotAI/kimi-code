@@ -130,10 +130,10 @@ export interface ConfigChange {
 
 export interface CacheStats {
   inputOther: number;
-  inputCacheRead: number;
+  inputCacheRead?: number;
   inputCacheCreation: number;
   output: number;
-  /** cacheRead / (cacheRead + cacheCreation + inputOther). null when no input. */
+  /** cacheRead / (cacheRead + cacheCreation + inputOther). null when no input or cache read is unknown. */
   hitRate: number | null;
 }
 
@@ -144,7 +144,7 @@ export interface AnalysisSummary {
   toolErrorCount: number;
   truncatedToolCount: number;
   /** Sum of all step usages — total tokens processed across the session. */
-  totalTokens: number;
+  totalTokens: number | undefined;
   /** Latest context-window fill (last step.end snapshot). */
   contextTokens: number;
   /** Peak context-window fill seen across the session. */
@@ -178,17 +178,21 @@ const IDLE_GAP_MS = 3000;
 function addUsage(into: TokenUsage, u: TokenUsage): void {
   into.inputOther += u.inputOther;
   into.output += u.output;
-  into.inputCacheRead += u.inputCacheRead;
+  into.inputCacheRead =
+    into.inputCacheRead === undefined || u.inputCacheRead === undefined
+      ? undefined
+      : into.inputCacheRead + u.inputCacheRead;
   into.inputCacheCreation += u.inputCacheCreation;
 }
 
-function usageTotal(u: TokenUsage): number {
+function usageTotal(u: TokenUsage): number | undefined {
+  if (u.inputCacheRead === undefined) return undefined;
   return u.inputOther + u.output + u.inputCacheRead + u.inputCacheCreation;
 }
 
 /** Context-window fill after a step, mirroring the engine's token counting. */
-function contextFill(u: TokenUsage): number {
-  return u.inputCacheRead + u.inputCacheCreation + u.inputOther + u.output;
+function contextFill(u: TokenUsage): number | undefined {
+  return usageTotal(u);
 }
 
 function firstText(input: readonly unknown[] | undefined): string {
@@ -461,7 +465,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
               // token counting keeps the prior snapshot in that case. Carry the
               // running value so the chart shows no false drop.
               const fill = contextFill(ev.usage);
-              if (fill > 0) {
+              if (fill !== undefined && fill > 0) {
                 contextTokens = fill;
                 if (contextTokens > peakContext) peakContext = contextTokens;
               }
@@ -577,7 +581,7 @@ function summarize(
   let toolCallCount = 0;
   let toolErrorCount = 0;
   let truncatedToolCount = 0;
-  let totalTokens = 0;
+  let totalTokens: number | undefined = 0;
   let activeMs = 0;
   for (const turn of turns) {
     if (
@@ -590,7 +594,11 @@ function summarize(
     stepCount += turn.steps.length;
     toolCallCount += turn.toolCallCount;
     toolErrorCount += turn.toolErrorCount;
-    totalTokens += usageTotal(turn.tokens);
+    const turnTotal = usageTotal(turn.tokens);
+    totalTokens =
+      totalTokens === undefined || turnTotal === undefined
+        ? undefined
+        : totalTokens + turnTotal;
     activeMs += turn.durationMs ?? 0;
     for (const step of turn.steps) {
       for (const tc of step.toolCalls) if (tc.truncated) truncatedToolCount += 1;
@@ -611,12 +619,18 @@ function summarize(
 }
 
 function cacheStats(c: TokenUsage): CacheStats {
-  const inputTotal = c.inputOther + c.inputCacheRead + c.inputCacheCreation;
+  const inputTotal =
+    c.inputCacheRead === undefined
+      ? undefined
+      : c.inputOther + c.inputCacheRead + c.inputCacheCreation;
   return {
     inputOther: c.inputOther,
     inputCacheRead: c.inputCacheRead,
     inputCacheCreation: c.inputCacheCreation,
     output: c.output,
-    hitRate: inputTotal > 0 ? c.inputCacheRead / inputTotal : null,
+    hitRate:
+      c.inputCacheRead === undefined || inputTotal === undefined || inputTotal === 0
+        ? null
+        : c.inputCacheRead / inputTotal,
   };
 }

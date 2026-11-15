@@ -31,6 +31,8 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { toCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
+import { toLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type {
   AgentEventPayloads,
   AgentHandle,
@@ -46,7 +48,7 @@ import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
-  ToolProgressEvent,
+  ToolUpdatedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
@@ -74,7 +76,7 @@ import {
   toolCallLocations,
   toolCallStartedUpgradeToSessionUpdate,
   toolCallStartToSessionUpdate,
-  toolProgressToSessionUpdate,
+  toolUpdatedToSessionUpdate,
   toolResultToSessionUpdate,
   turnEndReasonToStopReason,
   usageUpdateNotification,
@@ -102,6 +104,8 @@ function leadingText(blocks: readonly ContentBlock[]): string | undefined {
  * only reaches us from `agent.activateSkill`, which rejects instead.
  */
 const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
+const SESSION_OCCUPIED_CODE = 'session.occupied';
+const SESSION_STALE_CODE = 'session.stale';
 
 /**
  * Map a prompt-launch rejection (from `agent.prompt` / `agent.activateSkill`)
@@ -111,6 +115,10 @@ const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
  *    re-auth flow (same mapping as the `turn.ended` auth path).
  *  - `turn.agent_busy` maps to `invalidRequest` (-32600), matching the legacy
  *    adapter's busy-prompt semantics.
+ *  - `session.occupied` / `session.stale` map to `invalidRequest` too:
+ *    occupied passes the engine message through (it is user-facing already),
+ *    stale swaps in a client-action message because the engine's names the
+ *    internal session id.
  *  - Everything else becomes a fixed-message `internalError` (-32603): the
  *    raw engine message and stack are logged server-side but NEVER cross the
  *    wire, so internal details cannot leak into the JSON-RPC channel.
@@ -128,6 +136,17 @@ export function mapPromptLaunchError(error: unknown, sessionId: string): Request
   if (code === TURN_AGENT_BUSY_CODE) {
     log.warn('acp: prompt rejected because another turn is active', { sessionId });
     return RequestError.invalidRequest({ code }, message);
+  }
+  if (code === SESSION_OCCUPIED_CODE) {
+    log.warn('acp: prompt rejected because another client holds the session', { sessionId });
+    return RequestError.invalidRequest({ code }, message);
+  }
+  if (code === SESSION_STALE_CODE) {
+    log.warn('acp: prompt rejected because the session was updated elsewhere', { sessionId });
+    return RequestError.invalidRequest(
+      { code },
+      'Session was updated by another client. Close and reopen the session, then retry.',
+    );
   }
   log.error('acp: prompt launch failed', {
     sessionId,
@@ -214,6 +233,7 @@ export class AcpSession {
    * content that includes the initial args. Cleaned at `tool.result`.
    */
   private readonly toolCallStreamArgs = new Map<string, { args: string }>();
+  private readonly toolStatuses = new Map<string, string>();
   /**
    * Locations derived at `tool.call.started`, keyed by the ACP wire
    * toolCallId, re-attached to the terminal `tool_call_update`
@@ -295,9 +315,9 @@ export class AcpSession {
           this.onToolCallDelta(event);
         });
       }),
-      events.on('tool.progress', (event) => {
+      events.on('tool.updated', (event) => {
         this.dispatchTurnEvent(event.turnId, () => {
-          this.onToolProgress(event);
+          this.onToolUpdated(event);
         });
       }),
       events.on('tool.result', (event) => {
@@ -404,9 +424,20 @@ export class AcpSession {
   async replayHistory(): Promise<void> {
     let messages: readonly ContextMessage[];
     try {
-      // `history` items cross the wire as JSON-cloned `ContextMessage`s (the
-      // facade types them via the engine RPC signature).
-      messages = (await this.agent.getContext()).history;
+      messages = (await this.agent.getContext()).history.map((message) => ({
+        ...toCoreMessage(toLlmMessage(message)),
+        id: message.id,
+        providerMessageId: message.providerMessageId,
+        name: message.name,
+        origin: message.origin,
+        isError: message.isError,
+        partial: message.partial,
+        toolCallDisplays: message.toolCallDisplays,
+        note: message.note,
+        usage: message.usage,
+        llmTiming: message.llmTiming,
+        durationMs: message.durationMs,
+      }));
     } catch (error) {
       log.warn('acp: replayHistory could not read context memory', {
         sessionId: this.sessionId,
@@ -808,17 +839,22 @@ export class AcpSession {
     this.emit(toolCallDeltaToSessionUpdate(this.sessionId, mapped, acc));
   }
 
-  private onToolProgress(event: AgentEventPayloads['tool.progress']): void {
+  private onToolUpdated(event: AgentEventPayloads['tool.updated']): void {
     if (this.driverFor(event.turnId) === undefined) return;
-    // The klient payload mirrors `ToolProgressEvent` field-for-field; the
+    const key = acpToolCallId(event.turnId, event.toolCallId);
+    const status = event.fields['status'];
+    if (typeof status !== 'string' || status.length === 0 || this.toolStatuses.get(key) === status) return;
+    this.toolStatuses.set(key, status);
+    // The klient payload mirrors `ToolUpdatedEvent` field-for-field; the
     // helper forwards only `status` updates with text (as a title refresh)
     // and returns null for everything else, which `emit` drops.
-    this.emit(toolProgressToSessionUpdate(this.sessionId, event as unknown as ToolProgressEvent));
+    this.emit(toolUpdatedToSessionUpdate(this.sessionId, event as unknown as ToolUpdatedEvent));
   }
 
   private onToolResult(event: AgentEventPayloads['tool.result']): void {
     if (this.driverFor(event.turnId) === undefined) return;
     const key = acpToolCallId(event.turnId, event.toolCallId);
+    this.toolStatuses.delete(key);
     const locations = this.toolLocations.get(key);
     this.toolLocations.delete(key);
     this.bashCallsAwaitingTerminal.delete(key);

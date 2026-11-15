@@ -7,9 +7,8 @@ const repoRoot = resolve(appRoot, '../..');
 const source = resolve(repoRoot, 'packages/pi-tui/native');
 const target = resolve(appRoot, 'native');
 
-// pi-tui ships platform-specific native helpers only for darwin/win32;
-// Linux has no native helper, so there is nothing to copy for it.
-const PLATFORMS = ['darwin', 'win32'];
+// pi-tui ships platform-specific native helpers for darwin/linux/win32.
+const PLATFORMS = ['darwin', 'linux', 'win32'];
 
 async function assertPrebuilds(platform) {
   const dir = resolve(source, platform, 'prebuilds');

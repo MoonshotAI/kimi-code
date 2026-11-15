@@ -10,24 +10,24 @@ import {
 import { Emitter } from '#/_base/event';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import {
-  rootDelegationExtras,
   subagentAllowlistFor,
   subagentTypeNotAllowedMessage,
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { Runtime } from '#/runtime/runtime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import type { Environment } from '#/environment/environment';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { createHooks } from '#/hooks';
-import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 
@@ -91,17 +91,13 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const caller = this.requireCaller(input.callerAgentId);
     const fork = input.fork === true;
     await this.catalog.ready;
-    const own = caller.accessor.get(IAgentProfileService).data();
+    const own = caller.accessor.get(IAgentLoopService).data();
     const requested = input.profileName !== undefined && input.profileName.length > 0
       ? input.profileName
       : undefined;
     const requestedProfileName =
       requested ?? (fork ? (own.profileName ?? DEFAULT_PROFILE_NAME) : DEFAULT_PROFILE_NAME);
-    const extras =
-      input.callerAgentId === MAIN_AGENT_ID
-        ? rootDelegationExtras(this.catalog, own, this.catalog.list())
-        : undefined;
-    let allowlist = subagentAllowlistFor(this.catalog, own, extras);
+    let allowlist = subagentAllowlistFor(this.catalog, own);
     if (allowlist !== undefined && own.subagents === undefined) {
       allowlist = withoutDelegatingTargets(this.catalog, allowlist);
     }
@@ -148,9 +144,10 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   async spawn(opts: SpawnSubagentOptions): Promise<SpawnedSubagent> {
     const caller = this.requireCaller(opts.callerAgentId);
     const { plan } = opts;
+    const callerBinding = caller.accessor.get(IAgentEnvironmentBindingService).current;
     const lease = plan.fork
       ? undefined
-      : caller.accessor.get(IAgentRuntimeService).acquire(['process']);
+      : await caller.accessor.get(IAgentEnvironmentService).acquireWhenReady(['process']);
     try {
       let created: IAgentScopeHandle;
       try {
@@ -170,7 +167,8 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
               thinking: plan.thinking,
             },
             labels: opts.labels,
-            runtimeId: lease!.runtime.identity.runtimeId,
+            environmentId: callerBinding.environmentId,
+            environmentCwd: callerBinding.cwd,
           });
           created = this.agentLifecycle.handleOf(createdContext.agentId)!;
         }
@@ -178,7 +176,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         throw wrapSubagentModelError(
           error,
           plan.model,
-          caller.accessor.get(IAgentProfileService).data().modelAlias,
+          caller.accessor.get(IAgentLoopService).data().modelAlias,
         );
       }
       created.accessor
@@ -187,14 +185,14 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       const createdUserTools = created.accessor.get(IAgentUserToolService);
       const callerUserTools = caller.accessor.get(IAgentUserToolService);
       if (plan.fork) {
-        const activeToolNames = created.accessor.get(IAgentProfileService).getActiveToolNames();
+        const activeToolNames = created.accessor.get(IAgentLoopService).getActiveToolNames();
         createdUserTools.inheritUserTools(callerUserTools, activeToolNames);
       } else {
         createdUserTools.inheritUserTools(callerUserTools);
       }
       const promptText = plan.fork
         ? opts.prompt
-        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.runtime);
+        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.environment, callerBinding.cwd);
       return {
         agentId: created.id,
         profileName: plan.profileName,
@@ -214,16 +212,17 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   private async applyPromptPrefix(
     profileName: string,
     prompt: string,
-    runtime: Runtime,
+    environment: Environment,
+    cwd: string | undefined,
   ): Promise<string> {
     const profile = this.catalog.get(profileName);
     if (profile?.promptPrefix === undefined) return prompt;
-    const view = new RuntimeWorkspaceView(runtime, {
-      workDir: this.sessionContext.cwd,
+    const view = new EnvironmentWorkspaceView(environment, {
+      workDir: cwd ?? this.sessionContext.cwd,
     });
     return applyProfilePromptPrefix(profile, prompt, {
       cwd: view.workDir,
-      process: runtime.process!,
+      process: environment.process!,
       log: this.log,
     });
   }

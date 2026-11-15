@@ -2,10 +2,9 @@
   description = "Kimi Code CLI";
 
   inputs = {
-    # Pinned to the 25.11 release channel because nixpkgs-unstable currently
-    # ships nodejs_24 = 24.14.1, which trips the >= 24.15.0 floor that the
-    # native SEA build enforces (see apps/kimi-code/scripts/native/build.mjs).
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    # nixos-unstable provides fetchPnpmDeps fetcherVersion 5. The nodejsFor
+    # check below enforces the native SEA build's >= 24.15.0 Node.js floor.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
   outputs =
@@ -50,7 +49,7 @@
       pnpmFor =
         pkgs:
         pkgs.pnpm_10.override {
-          nodejs = nodejsFor pkgs;
+          nodejs-slim = nodejsFor pkgs;
         };
 
       # -------------------------------------------------------------------
@@ -64,22 +63,21 @@
       workspacePaths = [
         ./packages/acp-server
         ./packages/agent-core-v2
+        ./packages/core
         ./packages/kap-server
-        ./packages/kaos
         ./packages/klient
-        ./packages/kosong
         ./packages/migration-legacy
         ./packages/minidb
         ./packages/node-sdk
         ./packages/oauth
         ./packages/pi-tui
+        ./packages/product
         ./packages/remote-control
+        ./packages/session-import
         ./packages/telemetry
-        ./packages/transcript
         ./packages/tree-sitter-bash
         ./apps/kimi-code
         ./apps/vscode
-        ./apps/kimi-inspect
         ./apps/vis
         ./apps/vis/server
         ./apps/vis/web
@@ -89,22 +87,21 @@
       workspaceNames = [
         "@moonshot-ai/acp-server"
         "@moonshot-ai/agent-core-v2"
+        "@moonshot-ai/core"
         "@moonshot-ai/kap-server"
-        "@moonshot-ai/kaos"
-        "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/minidb"
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
         "@moonshot-ai/klient"
         "@moonshot-ai/pi-tui"
+        "@moonshot-ai/kimi-code-product"
         "@moonshot-ai/remote-control"
+        "@moonshot-ai/session-import"
         "@moonshot-ai/kimi-telemetry"
-        "@moonshot-ai/transcript"
         "@moonshot-ai/tree-sitter-bash"
         "@moonshot-ai/kimi-code"
         "kimi-code"
-        "@moonshot-ai/kimi-inspect"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"
@@ -157,8 +154,8 @@
             pnpmDeps = pkgs.fetchPnpmDeps {
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
-              fetcherVersion = 3;
-              hash = "sha256-rKG18o/SNptyamq3LKveIEN/1LA0myX0JK/o6+yQ5Js=";
+              fetcherVersion = 5;
+              hash = "sha256-QOHwKZaAAU4OG9MEvNEWh0DViOvkAaqlVSlYMHUltbE=";
             };
 
             nativeBuildInputs = [

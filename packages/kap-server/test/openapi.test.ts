@@ -86,6 +86,20 @@ describe('server-v2 OpenAPI', () => {
     expect(headers['cache-control']).toBeDefined();
   });
 
+  it('documents raw download failures with HTTP error statuses', async () => {
+    const doc = await fetchOpenApi();
+    for (const [path, method] of [
+      ['/api/v1/sessions/{session_id}/fs/{*}', 'get'],
+      ['/api/v1/fs:content', 'get'],
+    ] as const) {
+      const responses = asRecord(operation(doc, path, method)['responses']);
+      for (const status of ['400', '403', '404', '409', '413', '500']) {
+        const content = asRecord(asRecord(responses[status])['content']);
+        expect(asRecord(content['application/json'])).toBeDefined();
+      }
+    }
+  });
+
   it('represents the fs-action dispatcher as a oneOf union', async () => {
     const doc = await fetchOpenApi();
     const fsActionOp = operation(doc, '/api/v1/sessions/{session_id}/{tail}', 'post');
@@ -113,6 +127,46 @@ describe('server-v2 OpenAPI', () => {
         return Array.isArray(values) && values.includes(40929);
       }),
     ).toBe(true);
+  });
+
+  it('documents the Tower mode failure on the profile route', async () => {
+    const doc = await fetchOpenApi();
+    const op = operation(doc, '/api/v1/sessions/{session_id}/profile', 'post');
+    const content = asRecord(asRecord(asRecord(op['responses'])['200'])['content']);
+    const variants = asRecord(asRecord(content['application/json'])['schema'])['oneOf'];
+    expect(
+      (variants as unknown[]).some((variant) => {
+        const values = asRecord(asRecord(asRecord(variant)['properties'])['code'])['enum'];
+        return Array.isArray(values) && values.includes(40935);
+      }),
+    ).toBe(true);
+  });
+
+  it('documents session conflicts for session mutation routes', async () => {
+    const doc = await fetchOpenApi();
+    const paths = [
+      '/api/v1/sessions/{session_id}/profile',
+      '/api/v1/sessions/{session_id}/title/generate',
+      '/api/v1/sessions/{session_id}/children',
+      '/api/v1/sessions/{session_id}/skills/{tail}',
+    ];
+    for (const path of paths) {
+      const op = operation(doc, path, 'post');
+      const responses = asRecord(op['responses']);
+      const content = asRecord(asRecord(responses['200'])['content']);
+      const schema = asRecord(asRecord(content['application/json'])['schema']);
+      const variants = schema['oneOf'];
+      expect(Array.isArray(variants)).toBe(true);
+      for (const code of [40931, 40932]) {
+        expect(
+          (variants as unknown[]).some((variant) => {
+            const properties = asRecord(asRecord(variant)['properties']);
+            const values = asRecord(properties['code'])['enum'];
+            return Array.isArray(values) && values.includes(code);
+          }),
+        ).toBe(true);
+      }
+    }
   });
 });
 

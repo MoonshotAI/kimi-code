@@ -22,6 +22,7 @@ import { UserMessageComponent } from '../components/messages/user-message';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import type { TranscriptEntry } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import { isSessionOccupiedError, isSessionStaleError } from '../utils/session-lock-errors';
 import { getTranscriptComponentEntry } from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SlashCommandHost } from './dispatch';
@@ -102,12 +103,18 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
       showUndoLimitStatus(host, formatUndoLimitMessage(limit.requestedCount, limit));
       return false;
     }
+    if (isSessionOccupiedError(error)) {
+      host.showError(formatErrorMessage(error));
+      return false;
+    }
+    if (isSessionStaleError(error)) {
+      host.showStatus('Loaded updates from another client. Review and run /undo again.', 'warning');
+      return false;
+    }
     const message = formatErrorMessage(error);
     host.showError(`Failed to undo: ${message}`);
     return false;
   }
-  host.noteContextCut?.();
-  await refreshTodoPanel(host);
 
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
@@ -128,7 +135,7 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
       if (entry?.hookResult === true) continue;
       break;
     }
-    removeUndoContextComponents(children, lastUserComponentIndex, groupChildIndices);
+    removeUndoContextComponents(host, children, lastUserComponentIndex, groupChildIndices);
   }
 
   const groupEntryIndices = new Set<number>();
@@ -158,21 +165,6 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
   return true;
 }
 
-async function refreshTodoPanel(host: SlashCommandHost): Promise<void> {
-  const session = host.session;
-  if (session === undefined) return;
-  try {
-    const todos = await session.getTodos();
-    if (todos.length > 0 && todos.every((todo) => todo.status === 'done')) {
-      host.streamingUI.setTodoList([]);
-      return;
-    }
-    host.streamingUI.setTodoList(todos);
-  } catch {
-    return;
-  }
-}
-
 async function showUndoSelector(host: SlashCommandHost): Promise<void> {
   if (host.session === undefined) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
@@ -196,7 +188,7 @@ async function showUndoSelector(host: SlashCommandHost): Promise<void> {
       onSelect: (choice) => {
         void undoByCount(host, choice.count).then((undone) => {
           if (undone) {
-            host.restoreInputText(choice.input);
+            host.restoreInputText(choice.input, choice.inlineSkillActivations);
             return;
           }
           host.restoreEditor();
@@ -304,6 +296,7 @@ function createUndoChoices(
     id: entry.id,
     count: anchors.length - index,
     input: formatUndoChoiceInput(entry),
+    inlineSkillActivations: entry.inlineSkillActivations,
     label: formatUndoChoiceLabel(entry),
   }));
 }
@@ -496,7 +489,8 @@ function findUndoAnchorComponentIndex(
 }
 
 function removeUndoContextComponents(
-  children: Component[],
+  host: SlashCommandHost,
+  children: readonly Component[],
   startIndex: number,
   additionalIndices: ReadonlySet<number>,
 ): void {
@@ -507,7 +501,7 @@ function removeUndoContextComponents(
       (i >= startIndex || additionalIndices.has(i)) &&
       isUndoContextComponent(child)
     ) {
-      children.splice(i, 1);
+      host.state.transcriptContainer.removeChild(child);
     }
   }
 }

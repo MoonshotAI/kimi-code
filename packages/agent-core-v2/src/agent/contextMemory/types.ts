@@ -1,5 +1,5 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
@@ -15,6 +15,7 @@ export interface PromptFileAttachment {
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skillActivations?: readonly BundledSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
 }
@@ -32,6 +33,7 @@ export interface BundledSkillActivation {
 
 export interface SkillActivationOrigin {
   readonly kind: 'skill_activation';
+  readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string | undefined;
@@ -119,13 +121,23 @@ export type PromptOrigin =
   | HookResultOrigin
   | RetryOrigin;
 
+export interface ContextMessageTiming {
+  readonly llmFirstTokenLatencyMs?: number;
+  readonly llmStreamDurationMs?: number;
+}
+
 export type ContextMessage = Message & {
   readonly id?: string;
   readonly providerMessageId?: string;
+  readonly name?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
+  readonly partial?: boolean;
   toolCallDisplays?: Record<string, ToolInputDisplay>;
   readonly note?: string;
+  readonly usage?: TokenUsage;
+  readonly llmTiming?: ContextMessageTiming;
+  readonly durationMs?: number;
 };
 
 export interface UserMessageRecord {

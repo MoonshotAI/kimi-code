@@ -104,4 +104,15 @@ describe('ScopeUnits — kernel materialization fold (D11/G2)', () => {
     expect(log).toEqual([]);
     app.dispose();
   });
+
+  it('releases the provider-book registration when the target scope dies', () => {
+    const app = appWithPack();
+    const pack = app.accessor.get(IPack) as unknown as FeaturePack;
+    const baseline = pack.unitBook.size;
+    const a1 = app.createChild('agent', 'a1');
+    expect(pack.unitBook.size).toBe(baseline + 1);
+    a1.dispose();
+    expect(pack.unitBook.size).toBe(baseline);
+    app.dispose();
+  });
 });

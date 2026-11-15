@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import { Error2, isError2 } from '#/_base/errors/errors';
@@ -154,7 +154,7 @@ async function expectError2(promise: Promise<unknown>, code: string): Promise<Er
     () => {
       throw new Error(`expected the call to throw ${code}`);
     },
-    (cause: unknown) => cause,
+    (error: unknown) => error,
   );
   expect(isError2(err)).toBe(true);
   expect((err as Error2).code).toBe(code);
@@ -175,6 +175,7 @@ describe('IModelsDevImportService', () => {
     const openai = byId.get('openai');
     expect(openai).toMatchObject({
       wire_type: 'openai',
+      base_url: 'https://api.openai.com/v1',
       guessed: false,
       needs_base_url: false,
       rejected: false,
@@ -183,10 +184,11 @@ describe('IModelsDevImportService', () => {
     expect(openai?.models).toEqual([
       expect.objectContaining({ id: 'gpt-4.1', max_context_size: 1047576 }),
     ]);
-    expect(byId.get('gateway')).toMatchObject({ needs_base_url: true, wire_type: 'openai' });
+    expect(byId.get('gateway')).toMatchObject({ needs_base_url: true, wire_type: 'openai', base_url: null });
     expect(byId.get('bedrock')).toMatchObject({
       rejected: true,
       wire_type: null,
+      base_url: null,
       reject_reason: 'proprietary-sdk',
     });
   });
@@ -317,6 +319,22 @@ describe('IModelsDevImportService', () => {
     expect(providers['openai']?.apiKey).toBe('sk-new');
   });
 
+  it('keeps a hand-edited api_key_env on a re-import without a key, drops it when a new key is given', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
+    const { config, imports } = createHost({
+      providers: { openai: { type: 'openai', apiKeyEnv: 'OPENAI_OWN_KEY' } },
+    });
+
+    await imports.importModelsDevProvider({ catalogId: 'openai' });
+    let providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+    expect(providers['openai']?.apiKeyEnv).toBe('OPENAI_OWN_KEY');
+
+    await imports.importModelsDevProvider({ catalogId: 'openai', apiKey: 'sk-new' });
+    providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+    expect(providers['openai']?.apiKey).toBe('sk-new');
+    expect(providers['openai']?.apiKeyEnv).toBeUndefined();
+  });
+
   it('rejects importing over an OAuth-managed provider', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
     const { imports } = createHost({
@@ -406,8 +424,17 @@ describe('IModelsDevImportService', () => {
         'acme-old/gpt-y': { provider: 'acme-old', model: 'gpt-y', maxContextSize: 128000 },
       },
     });
+    const replaceSections = vi.spyOn(config, 'replaceSections');
+    const replace = vi.spyOn(config, 'replace');
 
     const result = await imports.importCustomRegistry({ url: REGISTRY_URL, apiKey: 'tok-2' });
+    expect(replaceSections).toHaveBeenCalledTimes(1);
+    expect(replaceSections).toHaveBeenCalledWith(
+      expect.any(Object),
+      undefined,
+      expect.objectContaining({ expectedValues: { defaultModel: undefined } }),
+    );
+    expect(replace).not.toHaveBeenCalled();
     expect(result.modelsImported).toBe(1);
     expect(result.providers.map((provider) => provider.id)).toEqual(['acme-gpt']);
 
@@ -424,6 +451,20 @@ describe('IModelsDevImportService', () => {
     expect(models['acme-gpt/gpt-x']).toMatchObject({ provider: 'acme-gpt', model: 'gpt-x' });
   });
 
+  it('returns declared credential env names as hints without persisting them', async () => {
+    const docWithEnv = {
+      'acme-gpt': { ...REGISTRY_DOC['acme-gpt'], env: ['ACME_API_KEY'] },
+    };
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(docWithEnv) });
+    const { config, imports } = createHost();
+
+    const result = await imports.importCustomRegistry({ url: REGISTRY_URL });
+
+    expect(result.credentialEnv).toEqual({ 'acme-gpt': 'ACME_API_KEY' });
+    const providers = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue ?? {};
+    expect(providers['acme-gpt']).not.toHaveProperty('apiKeyEnv');
+  });
+
   it('rejects a registry import that would rewrite an OAuth-managed provider', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
     const { imports } = createHost({
@@ -433,6 +474,50 @@ describe('IModelsDevImportService', () => {
       imports.importCustomRegistry({ url: REGISTRY_URL }),
       codes.PROVIDER_OAUTH_MANAGED,
     );
+  });
+
+  it('maps reserved provider ids to provider.registry_import_invalid without changing config', async () => {
+    setModelsDevUpstreamForTest({
+      fetchImpl: fetchJson({
+        shadow: {
+          id: 'moonshot-cn',
+          name: 'Shadow Moonshot',
+          api: 'https://shadow.example/v1',
+          type: 'openai',
+          models: { m1: { id: 'm1' } },
+        },
+      }),
+    });
+    const initial = { providers: { acme: { type: 'openai', apiKey: 'sk-acme' } }, models: {} };
+    const { config, imports } = createHost(initial);
+
+    await expectError2(
+      imports.importCustomRegistry({ url: REGISTRY_URL }),
+      codes.REGISTRY_IMPORT_INVALID,
+    );
+    expect(config.getAll()).toEqual(initial);
+  });
+
+  it('maps registry endpoint changes to provider.registry_import_invalid without changing config', async () => {
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson(REGISTRY_DOC) });
+    const initial = {
+      providers: {
+        'acme-gpt': {
+          type: 'openai',
+          baseUrl: 'https://old.example/v1',
+          apiKeyEnv: 'ACME_API_KEY',
+          source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: '' },
+        },
+      },
+      models: {},
+    };
+    const { config, imports } = createHost(initial);
+
+    await expectError2(
+      imports.importCustomRegistry({ url: REGISTRY_URL }),
+      codes.REGISTRY_IMPORT_INVALID,
+    );
+    expect(config.getAll()).toEqual(initial);
   });
 
   it('maps an unreachable registry to provider.registry_import_invalid', async () => {

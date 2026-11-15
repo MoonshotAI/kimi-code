@@ -30,7 +30,7 @@ import {
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
   IAgentLifecycleService,
-  IAgentProfileService,
+  IAgentLoopService,
   IEventBus,
   interactions,
   ISessionTokenCountingService,
@@ -72,8 +72,8 @@ export interface SessionEventSink {
 /**
  * The v2 approval payload (`agent-core-v2/src/agent/interaction/approval.ts` —
  * the package index exports only the service identifier, not the model). A
- * superset of v1's `ApprovalRequest`: the extra id/sessionId/agentId fields
- * are stripped when the handler is fed.
+ * superset of v1's `ApprovalRequest`: the extra id/sessionId fields are
+ * stripped when the handler is fed, while agentId remains available.
  */
 interface ApprovalInteractionPayload {
   readonly id?: string;
@@ -283,7 +283,7 @@ function interactionAgentId(interaction: Interaction): string | undefined {
  * wire-compatibility concerns.
  */
 function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
-  const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
+  const profile = agent.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
   const usageService = agent.accessor.get(ISessionUsageService) as ISessionUsageService | undefined;
   const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
     | ISessionTokenCountingService
@@ -295,8 +295,8 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event
   // strategy inside the service (`ISessionTokenCountingService.statusSize`).
   const context = agentContextOf(agent);
   const contextTokens = tokenCounting.statusSize(context);
-  const capabilities = profile.getModelCapabilities();
-  const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  const model = profile.getModel() === '' ? undefined : profile.resolveModelContext().model;
+  const maxContextTokens = model?.maxInputSize ?? model?.maxContextSize;
   const contextUsage =
     Number.isFinite(contextTokens) &&
     maxContextTokens !== undefined &&

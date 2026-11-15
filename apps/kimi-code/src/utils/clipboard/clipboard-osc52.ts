@@ -13,16 +13,17 @@ function isInsideTmux(): boolean {
  * native clipboard tool exists. Terminals without OSC 52 support silently
  * ignore it.
  *
- * tmux swallows bare OSC sequences, so inside tmux the sequence is wrapped in
- * a DCS passthrough with doubled ESC bytes (same convention as
- * `buildTerminalNotificationSequences`).
+ * Inside tmux the bare sequence reaches the outer terminal only with
+ * `set-clipboard on`, and the DCS passthrough form (doubled ESC bytes, same
+ * convention as `buildTerminalNotificationSequences`) only with
+ * `allow-passthrough on`, so both are sent.
  */
 export function buildClipboardOSC52(text: string, insideTmux = isInsideTmux()): string {
   const payload = Buffer.from(text, 'utf8').toString('base64');
   const sequence = `${ESC}]52;c;${payload}${BEL}`;
   if (!insideTmux) return sequence;
   const escaped = sequence.replaceAll(ESC, `${ESC}${ESC}`);
-  return `${ESC}Ptmux;${escaped}${ESC}${ST}`;
+  return `${sequence}${ESC}Ptmux;${escaped}${ESC}${ST}`;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { PRIMARY_SUBAGENT_MODEL_CHOICE, type SubagentModelSource } from './configSection';
+import type { SubagentModelSource } from './configSection';
 
 export const DEFAULT_PROFILE_NAME = 'coder';
 
@@ -34,11 +34,7 @@ export function forkIncompatibility(
   if (requestedProfileName !== undefined && requestedProfileName !== own.profileName) {
     return FORK_WITH_TYPE_UNAVAILABLE;
   }
-  if (
-    args.model !== undefined &&
-    args.model !== PRIMARY_SUBAGENT_MODEL_CHOICE &&
-    args.model !== own.modelAlias
-  ) {
+  if (args.model !== undefined && args.model !== own.modelAlias) {
     return FORK_WITH_MODEL_UNAVAILABLE;
   }
   return undefined;

@@ -4,9 +4,10 @@ import { registerFeature } from '#/features/featureRegistry';
 import './configSection';
 import { IAgentPlanService } from './plan';
 import { AgentPlanService } from './planService';
-import { IEnterPlanModeTool } from './tools/enter-plan-mode/enter-plan-mode';
-import { EnterPlanModeTool } from './tools/enter-plan-mode/enterPlanModeTool';
-import { IExitPlanModeTool } from './tools/exit-plan-mode/exit-plan-mode';
+import {
+  EXIT_PLAN_MODE_TOOL_NAME,
+  IExitPlanModeTool,
+} from './tools/exit-plan-mode/exit-plan-mode';
 import { ExitPlanModeTool } from './tools/exit-plan-mode/exitPlanModeTool';
 
 export class PlanFeature extends Feature {
@@ -15,12 +16,8 @@ export class PlanFeature extends Feature {
   constructor() {
     super();
     this.contributeAgentService(IAgentPlanService, AgentPlanService);
-    this.contributeTool(IEnterPlanModeTool, EnterPlanModeTool, {
-      name: 'EnterPlanMode',
-      domain: 'plan',
-    });
     this.contributeTool(IExitPlanModeTool, ExitPlanModeTool, {
-      name: 'ExitPlanMode',
+      name: EXIT_PLAN_MODE_TOOL_NAME,
       domain: 'plan',
     });
   }

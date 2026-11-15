@@ -5,6 +5,7 @@ export interface ISessionAgentProfileCatalogSeed {
   readonly _serviceBrand: undefined;
 
   readonly workspaceKey: string;
+  readonly contextKey?: string;
 }
 
 export const ISessionAgentProfileCatalogSeed: ServiceIdentifier<ISessionAgentProfileCatalogSeed> =

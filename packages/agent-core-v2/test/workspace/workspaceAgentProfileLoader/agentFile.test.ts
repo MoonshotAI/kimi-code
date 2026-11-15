@@ -214,22 +214,22 @@ describe('agentProfileFromFile', () => {
     expect(prompt).toBe('cwd=/work agents=AGENTS_MD_CONTENT skills=SKILLS_LISTING');
   });
 
-  it('empties ${skills} when the file allowlist drops the Skill tool', () => {
+  it('keeps ${skills} when the file allowlist drops the Skill tool', () => {
     const profile = agentProfileFromFile(
       { ...base, prompt: 'skills=${skills}', tools: ['Read'] },
       basePrompt,
     );
 
-    expect(profile.systemPrompt({ skills: 'SKILLS_LISTING' })).toBe('skills=');
+    expect(profile.systemPrompt({ skills: 'SKILLS_LISTING' })).toBe('skills=SKILLS_LISTING');
   });
 
-  it('empties ${skills} when Skill is in disallowedTools', () => {
+  it('keeps ${skills} when Skill is in disallowedTools', () => {
     const profile = agentProfileFromFile(
       { ...base, prompt: 'skills=${skills}', disallowedTools: ['Skill'] },
       basePrompt,
     );
 
-    expect(profile.systemPrompt({ skills: 'SKILLS_LISTING' })).toBe('skills=');
+    expect(profile.systemPrompt({ skills: 'SKILLS_LISTING' })).toBe('skills=SKILLS_LISTING');
   });
 
   it('embeds the effective default prompt via ${base_prompt}', () => {

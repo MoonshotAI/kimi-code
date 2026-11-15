@@ -6,7 +6,7 @@ import { defineState } from '#/state/state';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type { ContextInjectionContext } from '#/features/reminder/types';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { systemReminderContent } from '#/features/reminder/systemReminder';
@@ -66,7 +66,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -141,7 +141,7 @@ export class AgentPluginService extends Service implements IAgentPluginService {
     if (desired === undefined) {
       if (
         latest === undefined &&
-        (!forceRefresh || !shouldNeutralizePluginSessionStart(this.context.get()))
+        (!forceRefresh || !shouldNeutralizePluginSessionStart(this.context.history()))
       ) {
         return undefined;
       }

@@ -1,5 +1,5 @@
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
-import { Error2, type Error2Options } from '#/_base/errors/errors';
+import { Error2, unwrapErrorCause, type Error2Options } from '#/_base/errors/errors';
 
 export const OsFsErrors = {
   codes: {
@@ -9,6 +9,7 @@ export const OsFsErrors = {
     OS_FS_ALREADY_EXISTS: 'os.fs.already_exists',
     OS_FS_PERMISSION_DENIED: 'os.fs.permission_denied',
     OS_FS_NOT_EMPTY: 'os.fs.not_empty',
+    OS_FS_DIRECTORY_TOO_LARGE: 'os.fs.directory_too_large',
     OS_FS_UNAVAILABLE: 'os.fs.unavailable',
     OS_FS_UNKNOWN: 'os.fs.unknown',
   },
@@ -45,6 +46,11 @@ export const OsFsErrors = {
       retryable: false,
       public: true,
     },
+    'os.fs.directory_too_large': {
+      title: 'Directory listing exceeds the supported limit',
+      retryable: false,
+      public: true,
+    },
     'os.fs.unavailable': {
       title: 'Filesystem unavailable',
       retryable: true,
@@ -63,6 +69,8 @@ registerErrorDomain(OsFsErrors);
 export type HostFsErrorCode = (typeof OsFsErrors.codes)[keyof typeof OsFsErrors.codes];
 
 export class HostFsError extends Error2 {
+  declare readonly code: HostFsErrorCode;
+
   constructor(code: HostFsErrorCode, message: string, options?: Error2Options) {
     super(code, message, options);
     this.name = 'HostFsError';
@@ -76,6 +84,7 @@ const REASONS: Record<HostFsErrorCode, string> = {
   'os.fs.already_exists': 'path already exists',
   'os.fs.permission_denied': 'permission denied',
   'os.fs.not_empty': 'directory is not empty',
+  'os.fs.directory_too_large': 'directory listing exceeds the supported limit',
   'os.fs.unavailable': 'filesystem resource unavailable',
   'os.fs.unknown': 'unrecognized filesystem error',
 };
@@ -121,4 +130,14 @@ export function toHostFsError(error: unknown, ctx: { path: string; op: string })
     details: { path: ctx.path, op: ctx.op, errno, syscall: readSyscall(error) },
     cause: error,
   });
+}
+
+export function isHostFsNotFound(error: unknown): boolean {
+  if (error instanceof HostFsError) return error.code === OsFsErrors.codes.OS_FS_NOT_FOUND;
+  return readErrno(unwrapErrorCause(error)) === 'ENOENT';
+}
+
+export function isHostFsNotDirectory(error: unknown): boolean {
+  if (error instanceof HostFsError) return error.code === OsFsErrors.codes.OS_FS_NOT_DIRECTORY;
+  return readErrno(unwrapErrorCause(error)) === 'ENOTDIR';
 }

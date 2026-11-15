@@ -2,6 +2,8 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 
 export const BTW_READONLY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 
+export const BTW_AGENT_LABEL = 'btw';
+
 export const TOOL_CALL_DISABLED_MESSAGE =
   'Only the read-only tools Read, Grep, and Glob are available for side questions. Other tool calls are disabled.';
 

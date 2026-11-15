@@ -19,7 +19,7 @@ import type {
 import type {
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
-  ToolProgressEvent,
+  ToolUpdatedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
@@ -331,17 +331,18 @@ export function toolCallStartedUpgradeToSessionUpdate(
  * `update.kind === 'status'` with non-empty `text` produces a notification
  * (refreshes the tool card title); everything else returns `null`.
  */
-export function toolProgressToSessionUpdate(
+export function toolUpdatedToSessionUpdate(
   sessionId: string,
-  event: ToolProgressEvent,
+  event: ToolUpdatedEvent,
 ): SessionNotification | null {
-  if (event.update.kind === 'status' && event.update.text) {
+  const status = event.fields['status'];
+  if (typeof status === 'string' && status.length > 0) {
     return {
       sessionId,
       update: {
         sessionUpdate: 'tool_call_update',
         toolCallId: acpToolCallId(event.turnId, event.toolCallId),
-        title: event.update.text,
+        title: status,
       },
     };
   }

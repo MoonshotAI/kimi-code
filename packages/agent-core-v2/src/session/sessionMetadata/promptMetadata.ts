@@ -2,7 +2,7 @@ import type { IEventService } from '#/app/event/event';
 
 import { titleFromPromptMetadataText } from '#/agent/prompt/promptMetadataText';
 
-import type { ISessionMetadata, SessionTitleKind } from './sessionMetadata';
+import type { ISessionMetadata } from './sessionMetadata';
 import { SessionMetaUpdated } from './sessionMetaEvents';
 
 export function isUntitled(title: string | undefined): boolean {
@@ -20,24 +20,17 @@ export async function applyPromptMetadataUpdate(
   text: string | undefined,
 ): Promise<void> {
   if (text === undefined) return;
-  const current = await target.metadata.read();
-  const patch: { lastPrompt: string; title?: string; titleKind?: SessionTitleKind } = {
-    lastPrompt: text,
-  };
-  if (current.titleKind !== 'custom' && isUntitled(current.title)) {
-    patch.title = titleFromPromptMetadataText(text);
-    patch.titleKind = 'replaceable';
-  }
-  await target.metadata.update(patch);
+  const title = titleFromPromptMetadataText(text);
+  const applied = await target.metadata.applyPromptMetadata(text, title);
   target.eventService.publish(
     new SessionMetaUpdated({
       payload: {
         agentId: 'main',
         sessionId: target.sessionId,
-        title: patch.title,
+        title: applied ? title : undefined,
         patch: {
-          title: patch.title,
-          isCustomTitle: patch.titleKind === undefined ? undefined : false,
+          title: applied ? title : undefined,
+          isCustomTitle: applied ? false : undefined,
           lastPrompt: text,
         },
       },

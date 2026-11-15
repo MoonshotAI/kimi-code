@@ -1,4 +1,11 @@
 export type TelemetryPrimitive = boolean | number | string | undefined | null;
+export type TelemetryRegion = 'mainland-cn' | 'global';
+
+export interface TelemetryRegionResolution {
+  readonly region: TelemetryRegion;
+  readonly source: string;
+}
+
 export type TelemetryProperties = Record<string, TelemetryPrimitive>;
 export type TelemetryContext = Record<string, TelemetryPrimitive>;
 

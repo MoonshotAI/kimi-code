@@ -1,4 +1,5 @@
 import { Emitter, type Event } from '#/_base/event';
+import { isError2 } from '#/_base/errors/errors';
 import type { IOAuthService } from '#/app/auth/auth';
 import {
   type ConfigChangedEvent,
@@ -7,7 +8,11 @@ import {
   IConfigService,
   type ResolvedConfig,
 } from '#/app/config/config';
+import type { IProviderDiscoveryService, RetiredModel } from '#/app/kosongConfig/discovery';
 import type { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
+import type { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { ErrorCodes } from '#/errors';
+import type { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 
 export class StubConfigService implements IConfigService {
   declare readonly _serviceBrand: undefined;
@@ -38,6 +43,8 @@ export class StubConfigService implements IConfigService {
       memoryValue: undefined,
     };
   }
+
+  assertValid(): void {}
 
   getAll(): ResolvedConfig {
     return Object.fromEntries(this._values) as ResolvedConfig;
@@ -128,6 +135,27 @@ export function stubOAuthService(tokenProvider?: StubTokenProvider): IOAuthServi
   } as unknown as IOAuthService;
 }
 
+export interface StubProviderDiscovery extends IProviderDiscoveryService {
+  readonly retired: Record<string, string>;
+  retire(event: RetiredModel): void;
+}
+
+export function stubProviderDiscovery(): StubProviderDiscovery {
+  const retirements = new Emitter<RetiredModel>();
+  const retired: Record<string, string> = {};
+  return {
+    _serviceBrand: undefined,
+    retired,
+    onDidRetireModel: retirements.event,
+    refreshProviderModels: () => Promise.reject(new Error('not implemented')),
+    retiredModelReplacement: (alias) => retired[alias],
+    retire: (event) => {
+      retired[event.from] = event.to;
+      retirements.fire(event);
+    },
+  };
+}
+
 export function stubModelOAuthTokens(
   tokenProvider?: StubTokenProvider,
   cachedToken?: string,
@@ -141,5 +169,29 @@ export function stubModelOAuthTokens(
         : tokenProvider.getAccessToken(
             options?.force === true ? { force: true } : undefined,
           ),
+  };
+}
+
+export function stubSessionRunGate(
+  locks: ISessionLockService,
+  sessionId = 'test-session',
+): ISessionRunGate {
+  const begin = () => locks.hold(sessionId);
+  return {
+    _serviceBrand: undefined,
+    begin,
+    tryAcquire: () => {
+      try {
+        begin();
+        return locks.lease(sessionId);
+      } catch (error) {
+        if (isError2(error) && error.code === ErrorCodes.SESSION_OCCUPIED) return undefined;
+        throw error;
+      }
+    },
+    acquire: () => {
+      begin();
+      return locks.lease(sessionId);
+    },
   };
 }

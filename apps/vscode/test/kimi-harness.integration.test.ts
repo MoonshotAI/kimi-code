@@ -30,7 +30,7 @@ vi.mock("vscode", () => ({
 import {
   createFakeProviderHarness,
   type FakeProviderHarness,
-} from "../../../packages/kosong/test/e2e/fake-provider-harness";
+} from "./fake-provider-harness";
 import { Events, Methods } from "../shared/bridge";
 import {
   MCP_SECRET_MASK,
@@ -398,6 +398,33 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       "export",
       "import",
       "skill:review",
+    ]);
+  });
+
+  it("omits skills restricted to specific client scopes from the slash commands", async () => {
+    const commands = await configHandlers[Methods.GetSlashCommands]!(undefined, {
+      workDir: "/workspace",
+      harness: {
+        listWorkspaceSkills: async () => [
+          { name: "tui-only", description: "TUI only", path: "/skills/tui-only", source: "builtin", type: "inline", scopes: ["tui"] },
+          { name: "web-only", description: "Web only", path: "/skills/web-only", source: "builtin", type: "inline", scopes: ["web"] },
+          { name: "unrestricted", description: "Unrestricted", path: "/skills/unrestricted", source: "builtin", type: "inline" },
+        ],
+      },
+      logError: () => undefined,
+    } as unknown as HandlerContext);
+
+    expect((commands as Array<{ name: string }>).map((command) => command.name)).toEqual([
+      "init",
+      "compact",
+      "clear",
+      "yolo",
+      "auto",
+      "plan",
+      "add-dir",
+      "export",
+      "import",
+      "skill:unrestricted",
     ]);
   });
 
@@ -1174,7 +1201,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     expect(rig.provider.requests).toHaveLength(0);
   });
 
-  it("keeps a slash-added directory after VS Code closes and resumes the session", async () => {
+  it("clears a non-persisted slash-added directory after VS Code closes and resumes the session", async () => {
     const rig = await createRuntimeRig();
     const additionalDir = join(rig.workDir, "directory with spaces");
     await mkdir(additionalDir);
@@ -1185,7 +1212,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     await rig.runtime.detachView("view-1");
     const resumed = await openRuntimeSession(rig, sessionId);
 
-    expect(resumed.session.summary?.additionalDirs).toContain(additionalDir);
+    expect(resumed.session.summary?.additionalDirs).not.toContain(additionalDir);
   });
 
   it("rejects an invalid plan subcommand without leaving the runtime busy", async () => {

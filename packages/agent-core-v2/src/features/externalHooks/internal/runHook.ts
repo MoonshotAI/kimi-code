@@ -69,7 +69,7 @@ export async function runHook(
       env: options.env,
     });
   } catch (error) {
-    return allowResult({ stderr: errorMessage(error) });
+    return allowResult({ stderr: errorMessage(error), errored: true, error: errorMessage(error) });
   }
 
   return new Promise<HookResult>((resolve) => {
@@ -108,7 +108,7 @@ export async function runHook(
       },
       (error) => {
         void proc.dispose();
-        settle(allowResult({ stdout, stderr: stderr + errorMessage(error) }));
+        settle(allowResult({ stdout, stderr: stderr + errorMessage(error), errored: true, error: errorMessage(error) }));
       },
     );
 
@@ -211,7 +211,9 @@ function allowResult(input: {
   readonly stderr?: string;
   readonly exitCode?: number;
   readonly timedOut?: boolean;
+  readonly errored?: boolean;
   readonly structuredOutput?: boolean;
+  readonly error?: string;
 }): HookResult {
   return {
     action: 'allow',
@@ -220,7 +222,9 @@ function allowResult(input: {
     stderr: input.stderr,
     exitCode: input.exitCode,
     timedOut: input.timedOut,
+    errored: input.errored,
     structuredOutput: input.structuredOutput,
+    error: input.error,
   };
 }
 

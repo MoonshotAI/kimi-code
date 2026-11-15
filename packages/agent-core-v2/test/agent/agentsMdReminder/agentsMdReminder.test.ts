@@ -7,15 +7,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { RuntimeLease } from '#/runtime/runtime';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { Environment } from '#/environment/environment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { stubAgentEnvironment } from '../../environment/stubs';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import type { WatchChange } from '#human/utils/watch';
@@ -31,6 +34,8 @@ import type {
 } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { memoryOutputStore } from '#/tool/executor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -40,13 +45,11 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { profileKey } from '#/agent/profile/profileOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderHarness } from '../../features/reminder/stubs';
 import { OrderedHookSlot } from '#/hooks';
@@ -58,9 +61,10 @@ import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../loop/stubs';
-import { stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
-import { registerLogServices } from '../../_base/log/stubs';
+import { appendContext, compactContext, stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
+import { stubLog } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
+import { executeLegacyTool } from '../toolExecutor/execute';
 
 let disposables: DisposableStore;
 let homeDir: string;
@@ -105,6 +109,9 @@ function createHarness(
     readonly cwd?: string;
     readonly hostFs?: IHostFileSystem;
     readonly pathClass?: 'posix' | 'win32';
+    readonly environmentWorkDir?: string;
+    readonly acquireError?: Error;
+    readonly log?: ILogService;
     readonly restoredProfile?: {
       readonly systemPrompt: string;
       readonly agentsMdPaths?: readonly string[];
@@ -128,14 +135,15 @@ function createHarness(
         });
         reg.define(IAgentToolRegistryService, AgentToolRegistryService);
         reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+        reg.defineInstance(IAgentTaskOutputService, { open: memoryOutputStore().open } as unknown as IAgentTaskOutputService);
         reg.definePartialInstance(IFileSystemStorageService, {
           write: async () => {},
         });
         reg.define(IAgentToolResultTruncationService, ToolResultTruncationService);
-        registerLogServices(reg);
       } else {
         reg.defineInstance(IAgentToolExecutorService, events.executor);
       }
+      reg.defineInstance(ILogService, options.log ?? stubLog());
       reg.defineInstance(IAgentScopeContext, {
         _serviceBrand: undefined,
         agentId: 'main',
@@ -148,14 +156,17 @@ function createHarness(
         dispatch: async () => {},
       } as unknown as IEventDispatcher;
       reg.defineInstance(IEventDispatcher, dispatcher);
-      reg.defineInstance(IBootstrapService, { homeDir } as unknown as IBootstrapService);
+      reg.defineInstance(IBootstrapService, {
+        homeDir,
+        getEnv: () => undefined,
+      } as unknown as IBootstrapService);
       const agentState = new AgentStateService();
-      agentState.contributeState(profileKey);
-      agentState.set(profileKey, {
-        thinkingLevel: 'off',
-        renderGeneration: 0,
-        systemPrompt: options.restoredProfile?.systemPrompt ?? '',
-        agentsMdPaths: options.restoredProfile?.agentsMdPaths,
+      Object.assign(context, {
+        data: () => ({
+          ...loop.data(),
+          systemPrompt: options.restoredProfile?.systemPrompt ?? '',
+          agentsMdPaths: options.restoredProfile?.agentsMdPaths,
+        }),
       });
       reg.defineInstance(IAgentStateService, agentState);
       reg.defineInstance(
@@ -167,7 +178,7 @@ function createHarness(
         }),
       );
       reg.defineInstance(IAgentLoopService, loop);
-      reg.defineInstance(IAgentContextMemoryService, context);
+      reg.defineInstance(IAgentLoopService, context);
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,
         sessionId: 'session-1',
@@ -194,36 +205,39 @@ function createHarness(
       } as unknown as IHostEnvironment;
       reg.defineInstance(IHostFileSystem, hostFs);
       reg.defineInstance(IHostEnvironment, hostEnvironment);
-      reg.defineInstance(IAgentRuntimeService, {
-        _serviceBrand: undefined,
-        onDidChange: () => ({ dispose: () => {} }),
-        isAvailable: () => true,
-        inspect() { return this.acquire().runtime; },
-        acquire: (): RuntimeLease => ({
-          runtime: {
-            identity: { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'test' },
-            capabilities: new Set(['fs', 'process', 'terminal']),
-            environment: hostEnvironment,
-            path: {
-              separator: options.pathClass === 'win32' ? '\\' : '/',
-              delimiter: options.pathClass === 'win32' ? ';' : ':',
-              isAbsolute: (path: string) => path.startsWith('/') || /^[A-Za-z]:[\\\\]/.test(path),
-              join,
-              relative: (from: string, to: string) => normalize(to).replace(`${normalize(from)}/`, ''),
-              resolve: (...paths: readonly string[]) => normalize(join(...paths)),
-              basename: (path: string) => basename(path),
-              dirname: (path: string) => dirname(path),
-            },
-            workspace: { mapRoots: (roots) => roots },
-            fs: hostFs,
-            status: 'ready',
-            onDidChangeStatus: () => ({ dispose: () => {} }),
-            dispose: () => {},
-          },
-          track: (resource) => resource,
-          dispose: () => {},
-        }),
-      } satisfies IAgentRuntimeService);
+      const environment = {
+        identity: { environmentId: 'local', generation: 'test' },
+        capabilities: new Set(['fs', 'process']),
+        host: hostEnvironment,
+        path: {
+          separator: options.pathClass === 'win32' ? '\\' : '/',
+          delimiter: options.pathClass === 'win32' ? ';' : ':',
+          isAbsolute: (path: string) => path.startsWith('/') || /^[A-Za-z]:[\\\\]/.test(path),
+          join,
+          relative: (from: string, to: string) => normalize(to).replace(`${normalize(from)}/`, ''),
+          resolve: (...paths: readonly string[]) => normalize(join(...paths)),
+          basename: (path: string) => basename(path),
+          dirname: (path: string) => dirname(path),
+        },
+        workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
+        fs: hostFs,
+        status: 'ready',
+        onDidChangeStatus: () => ({ dispose: () => {} }),
+        dispose: () => {},
+      } as unknown as Environment;
+      const agentEnvironment = stubAgentEnvironment(environment, {
+        workDir: options.environmentWorkDir ?? options.cwd ?? workDir,
+      });
+      if (options.acquireError !== undefined) {
+        const failure = options.acquireError;
+        agentEnvironment.acquire = () => {
+          throw failure;
+        };
+        agentEnvironment.acquireWhenReady = async () => {
+          throw failure;
+        };
+      }
+      reg.defineInstance(IAgentEnvironmentService, agentEnvironment);
       reg.defineInstance(IBashParserService, new BashParserService());
       reg.defineInstance(
         ITelemetryService,
@@ -334,48 +348,14 @@ async function writeAgentsMd(dir: string, content = 'instructions'): Promise<str
 }
 
 describe('agentsMdReminder instructions change announcements', () => {
-  it('appends a path-announcement reminder when an injected AGENTS.md changes on disk', async () => {
-    const h = createHarness();
-    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
-    h.reminder.seedInjected([rootAgentsMd], workDir);
-
-    h.instructionsChange.fire([{ path: rootAgentsMd, action: 'modified', kind: 'file' }]);
-
-    expect(h.reminders).toHaveLength(1);
-    expect(h.reminders[0]?.origin).toEqual({ kind: 'injection', variant: 'agents_md_change' });
-    expect(h.reminders[0]?.content).toContain(rootAgentsMd);
-    expect(h.reminders[0]?.content).toContain('stale');
-  });
-
-  it('marks deleted AGENTS.md files in the announcement', async () => {
-    const h = createHarness();
-    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
-    h.reminder.seedInjected([rootAgentsMd], workDir);
-
-    h.instructionsChange.fire([{ path: rootAgentsMd, action: 'deleted', kind: 'file' }]);
-
-    expect(h.reminders).toHaveLength(1);
-    expect(h.reminders[0]?.content).toContain(`${rootAgentsMd} (deleted)`);
-  });
-
-  it('stays silent when the agent has not been seeded yet', async () => {
-    const h = createHarness();
-
-    h.instructionsChange.fire([
-      { path: join(workDir, 'AGENTS.md'), action: 'modified', kind: 'file' },
-    ]);
-
-    expect(h.reminders).toHaveLength(0);
-  });
-
-  it('reminds an announced created path on the next access to its directory', async () => {
+  it('does not announce a created path, but reminds on the next access to its directory', async () => {
     const h = createHarness();
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
     h.reminder.seedInjected([], workDir);
 
     h.instructionsChange.fire([{ path: rootAgentsMd, action: 'created', kind: 'file' }]);
 
-    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders).toHaveLength(0);
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
@@ -496,7 +476,7 @@ describe('agentsMdReminder path-carrying tools', () => {
 
 describe('agentsMdReminder re-injection after context loss', () => {
   function compact(h: Harness): void {
-    h.context.applyCompaction({
+    compactContext(h.context,{
       summary: 'compaction summary',
       compactedCount: 1,
       tokensBefore: 100,
@@ -556,7 +536,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
     await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
 
-    h.context.clear();
+    h.context.replaceHistory([], 'clear');
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     await fire(h, didCtx('Read', { path: join(subDir, 'other.ts') }));
@@ -586,11 +566,11 @@ describe('agentsMdReminder re-injection after context loss', () => {
     const subDir = join(workDir, 'packages', 'kap-server');
     const subAgentsMd = await writeAgentsMd(subDir);
     h.reminder.seedInjected([], workDir);
+    h.context.beginTurn();
 
-    h.context.append({
+    appendContext(h.context,{
       role: 'user',
       content: [{ type: 'text', text: 'prompt' }],
-      toolCalls: [],
     });
     await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
@@ -637,13 +617,13 @@ describe('agentsMdReminder re-injection after context loss', () => {
     expect(messageText(messages[1]!)).not.toContain(agentsMdA);
   });
 
-  it('re-reminds a created-and-announced path on the next access after compaction', async () => {
+  it('re-reminds a created path on the next access after compaction', async () => {
     const h = createHarness();
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
     h.reminder.seedInjected([], workDir);
 
     h.instructionsChange.fire([{ path: rootAgentsMd, action: 'created', kind: 'file' }]);
-    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders).toHaveLength(0);
 
     compact(h);
 
@@ -814,12 +794,11 @@ describe('agentsMdReminder duplicate calls', () => {
       { type: 'function', id: 'call-1', name: 'Read', arguments: JSON.stringify(args) },
       { type: 'function', id: 'call-2', name: 'Read', arguments: JSON.stringify(args) },
     ];
-    const results = [];
-    for await (const item of h.ix
-      .get(IAgentToolExecutorService)
-      .execute(calls, { turnId: 1, signal: new AbortController().signal })) {
-      results.push(item);
-    }
+    const results = await executeLegacyTool(
+      h.ix.get(IAgentToolExecutorService),
+      calls,
+      { turnId: 1, signal: new AbortController().signal },
+    );
 
     expect(results).toHaveLength(2);
     for (const item of results) {
@@ -1219,12 +1198,11 @@ describe('agentsMdReminder round-2 hardening', () => {
       name: 'Read',
       arguments: JSON.stringify({ path: join(workDir, 'packages', 'kap-server', 'big.ts') }),
     };
-    const results = [];
-    for await (const item of h.ix
-      .get(IAgentToolExecutorService)
-      .execute([toolCall], { turnId: 1, signal: new AbortController().signal })) {
-      results.push(item);
-    }
+    const results = await executeLegacyTool(
+      h.ix.get(IAgentToolExecutorService),
+      [toolCall],
+      { turnId: 1, signal: new AbortController().signal },
+    );
 
     expect(results).toHaveLength(1);
     const output = results[0]!.result.output;
@@ -1258,20 +1236,14 @@ describe('agentsMdReminder round-2 hardening', () => {
     }
     h.ix.get(IAgentToolRegistryService).register(new ResolvedReadTool());
 
-    const results = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
-      [
-        {
-          type: 'function',
-          id: 'call-resolved-read',
-          name: 'Read',
-          arguments: JSON.stringify({ path: '~/pkg/index.ts' }),
-        },
-      ],
-      { turnId: 1, signal: new AbortController().signal },
-    )) {
-      results.push(item);
-    }
+    const results = await executeLegacyTool(h.ix.get(IAgentToolExecutorService), [
+      {
+        type: 'function',
+        id: 'call-resolved-read',
+        name: 'Read',
+        arguments: JSON.stringify({ path: '~/pkg/index.ts' }),
+      },
+    ], { turnId: 1, signal: new AbortController().signal });
 
     expect(results).toHaveLength(1);
     expect(outputText(results[0]!.result)).toBe('home file contents');
@@ -1304,24 +1276,18 @@ describe('agentsMdReminder round-2 hardening', () => {
       }
     }
     h.ix.get(IAgentToolRegistryService).register(new ReadTool());
-    h.ix.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
+    h.ix.get(IAgentToolExecutorService).registerLegacyStarting((event) => {
       event.veto({ output: 'permission denied', isError: true });
     });
 
-    const results = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
-      [
-        {
-          type: 'function',
-          id: 'call-denied-read',
-          name: 'Read',
-          arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
-        },
-      ],
-      { turnId: 1, signal: new AbortController().signal },
-    )) {
-      results.push(item);
-    }
+    const results = await executeLegacyTool(h.ix.get(IAgentToolExecutorService), [
+      {
+        type: 'function',
+        id: 'call-denied-read',
+        name: 'Read',
+        arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
+      },
+    ], { turnId: 1, signal: new AbortController().signal });
 
     expect(results).toHaveLength(1);
     expect(outputText(results[0]!.result)).toBe('permission denied');
@@ -1400,16 +1366,10 @@ describe('agentsMdReminder cancellation outcomes', () => {
         arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
       },
     ];
-    const pending = (async () => {
-      const results = [];
-      for await (const item of h.ix.get(IAgentToolExecutorService).execute(calls, {
-        turnId: 1,
-        signal: controller.signal,
-      })) {
-        results.push(item);
-      }
-      return results;
-    })();
+    const pending = executeLegacyTool(h.ix.get(IAgentToolExecutorService), calls, {
+      turnId: 1,
+      signal: controller.signal,
+    });
 
     await started;
     controller.abort();
@@ -1422,23 +1382,17 @@ describe('agentsMdReminder cancellation outcomes', () => {
       h.telemetryEvents.filter((event) => event.event === 'agents_md_reminder_shown'),
     ).toEqual([]);
 
-    const real = [];
-    for await (const item of h.ix.get(IAgentToolExecutorService).execute(
-      [
-        {
-          type: 'function',
-          id: 'call-real-read',
-          name: 'Read',
-          arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
-        },
-      ],
+    const real = await executeLegacyTool(h.ix.get(IAgentToolExecutorService), [
       {
-        turnId: 2,
-        signal: new AbortController().signal,
+        type: 'function',
+        id: 'call-real-read',
+        name: 'Read',
+        arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
       },
-    )) {
-      real.push(item);
-    }
+    ], {
+      turnId: 2,
+      signal: new AbortController().signal,
+    });
     expect(outputText(real[0]!.result)).toBe('read result');
     await h.step();
     expect(agentsMdMessages(h)).toHaveLength(1);
@@ -1515,6 +1469,68 @@ describe('agentsMdReminder Windows Bash paths', () => {
       expect(reminderText(h)).toContain(agentsMdPath);
     }
   });
+});
+
+describe('agentsMdReminder remote environment binding', () => {
+  const sessionCwd = '/Users/local/Projects/kimi-code';
+  const remoteWorkDir = '/remote/work';
+  const remoteSubDir = `${remoteWorkDir}/packages/kap-server`;
+  const remoteAgentsMd = `${remoteSubDir}/AGENTS.md`;
+
+  function remoteProbeFs(): IHostFileSystem {
+    const directory: HostFileStat = {
+      isFile: false,
+      isDirectory: true,
+      size: 0,
+    };
+    const stat = vi.fn(async (path: string): Promise<HostFileStat> => {
+      if (path === remoteSubDir || path === `${remoteWorkDir}/.git`) return directory;
+      throw new Error(`missing: ${path}`);
+    });
+    const readText = vi.fn(async (path: string): Promise<string> => {
+      if (path === remoteAgentsMd) return 'remote instructions';
+      throw new Error(`missing: ${path}`);
+    });
+    return { stat, readText } as unknown as IHostFileSystem;
+  }
+
+  function remoteHarness(): Harness {
+    const h = createHarness({
+      cwd: sessionCwd,
+      hostFs: remoteProbeFs(),
+      environmentWorkDir: remoteWorkDir,
+    });
+    h.reminder.seedInjected([], remoteWorkDir);
+    return h;
+  }
+
+  it('reminds for a relative Bash target resolved against the bound environment workDir', async () => {
+    const h = remoteHarness();
+
+    const result = await fire(h, didCtx('Bash', { command: 'ls packages/kap-server' }));
+
+    expect(outputText(result)).toBe('original result');
+    expect(reminderText(h)).toContain(remoteAgentsMd);
+  });
+
+});
+
+describe('agentsMdReminder environment degradation', () => {
+  it('skips the reminder without escaping when the seeded environment is disconnected', async () => {
+    const h = createHarness({
+      acquireError: new EnvironmentError('environment.unavailable', 'environment remote is disconnected'),
+    });
+    const dir = join(workDir, 'pkg');
+    await writeAgentsMd(dir, 'pkg instructions');
+    h.reminder.seedInjected([], workDir);
+
+    const result = await fire(h, didCtx('Read', { path: join(dir, 'index.ts') }));
+
+    expect(outputText(result)).toBe('original result');
+    expect(agentsMdMessages(h)).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
+  });
+
 });
 
 describe('extractBashTargetDirs', () => {

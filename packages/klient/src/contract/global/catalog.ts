@@ -19,6 +19,13 @@ export const modelCatalogItemSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   support_efforts: z.array(z.string()).optional(),
   default_effort: z.string().optional(),
+  upgrade: z
+    .object({
+      model: z.string(),
+      migration_markdown: z.string(),
+      retirement_at: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const providerCatalogStatusSchema = z.enum(['connected', 'error', 'unconfigured']);
@@ -28,6 +35,7 @@ export const providerCatalogItemSchema = z.object({
   type: z.string(),
   base_url: z.string().optional(),
   default_model: z.string().optional(),
+  api_key_env: z.string().optional(),
   has_api_key: z.boolean(),
   status: providerCatalogStatusSchema,
   models: z.array(z.string()).optional(),
@@ -46,11 +54,9 @@ const generateInputSchema = z.object({
 });
 
 const generateParamsSchema = z.object({
-  cacheKey: z.string().optional(),
-  temperature: z.number().optional(),
-  topP: z.number().optional(),
-  thinkingEffort: z.string().optional(),
-  maxCompletionTokens: z.number().optional(),
+  protocol: z.unknown().optional(),
+  model: z.unknown().optional(),
+  endpoint: z.unknown().optional(),
 }).optional();
 
 const generateEventSchema = z.object({

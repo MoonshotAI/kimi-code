@@ -30,11 +30,18 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
   const messages = ctx?.messages ?? [];
   const sessionUsage = ctx?.usage.byScope.session ?? EMPTY_USAGE;
   const turnUsage = ctx?.usage.byScope.turn ?? EMPTY_USAGE;
+  const predictionUsage = ctx?.usage.byScope.prediction ?? EMPTY_USAGE;
   const cumulativeUsage: TokenUsage = {
-    inputOther: sessionUsage.inputOther + turnUsage.inputOther,
-    output: sessionUsage.output + turnUsage.output,
-    inputCacheRead: sessionUsage.inputCacheRead + turnUsage.inputCacheRead,
-    inputCacheCreation: sessionUsage.inputCacheCreation + turnUsage.inputCacheCreation,
+    inputOther: sessionUsage.inputOther + turnUsage.inputOther + predictionUsage.inputOther,
+    output: sessionUsage.output + turnUsage.output + predictionUsage.output,
+    inputCacheRead:
+      sessionUsage.inputCacheRead === undefined ||
+      turnUsage.inputCacheRead === undefined ||
+      predictionUsage.inputCacheRead === undefined
+        ? undefined
+        : sessionUsage.inputCacheRead + turnUsage.inputCacheRead + predictionUsage.inputCacheRead,
+    inputCacheCreation:
+      sessionUsage.inputCacheCreation + turnUsage.inputCacheCreation + predictionUsage.inputCacheCreation,
   };
   // Live context-window fill (latest step.end usage), distinct from the
   // cumulative session-scoped + turn-scoped spend the bar breaks down.
@@ -210,6 +217,9 @@ const SEG_COLORS = {
 } as const;
 
 function TokenBar({ usage, contextTokens }: { usage: TokenUsage; contextTokens: number }) {
+  if (usage.inputCacheRead === undefined) {
+    return <div className="px-3 py-1 font-mono text-[10px] text-fg-3">cache_read unknown</div>;
+  }
   const total =
     usage.inputOther + usage.output + usage.inputCacheRead + usage.inputCacheCreation;
   return (

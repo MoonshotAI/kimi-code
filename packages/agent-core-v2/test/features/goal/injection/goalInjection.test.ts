@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
+import { compactContext } from '../../../agent/contextMemory/stubs';
 import { IAgentGoalService } from '#/features/goal/goalService';
-
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+
+import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import {
   InMemoryWireRecordPersistence,
   agentService,
@@ -25,7 +24,7 @@ async function injectDynamic(ctx: TestAgentContext, isNewTurn: boolean): Promise
 
 async function registerLookupTool(
   ctx: TestAgentContext,
-  profile: IAgentProfileService,
+  profile: IAgentLoopService,
 ): Promise<void> {
   profile.update({ activeToolNames: ['Lookup'] });
   await ctx.rpc.registerTool({
@@ -54,12 +53,12 @@ function lookupCall(): ToolCall {
 describe('GoalInjection content', () => {
   let ctx: TestAgentContext;
   let goals: GoalServiceTestManager;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
 
   beforeEach(async () => {
     ctx = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
     goals = ctx.get(IAgentGoalService);
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
   });
 
@@ -85,22 +84,26 @@ describe('GoalInjection content', () => {
 
   it('activates injection after restore and removes it on close', async () => {
     const local = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
-    await local.dispatcher.restore();
+    await local.restorePersisted();
     const localGoals = local.get(IAgentGoalService);
-    const localContext = local.get(IAgentContextMemoryService);
+    const localContext = local.get(IAgentLoopService);
     const localLoop = local.get(IAgentLoopService) as StubLoop;
     await localGoals.createGoal({ objective: 'work' });
 
     await injectDynamic(local, true);
     expect(lastGoalReminder(localContext)).toContain('<untrusted_objective>');
-    expect(localContext.get().filter((message) =>
-      message.origin?.kind === 'injection' && message.origin.variant === 'goal'
-    )).toHaveLength(1);
+    expect(
+      localContext
+        .history()
+        .filter(
+          (message) => message.origin?.kind === 'injection' && message.origin.variant === 'goal',
+        ),
+    ).toHaveLength(1);
 
     await local.dispose();
-    const count = localContext.get().length;
+    const count = localContext.history().length;
     await runWillBeginStepHooks(localLoop, true);
-    expect(localContext.get()).toHaveLength(count);
+    expect(localContext.history()).toHaveLength(count);
   });
 
   it('wraps the objective for a paused goal', async () => {
@@ -142,7 +145,9 @@ describe('GoalInjection content', () => {
         completionCriterion: 'tests pass',
       });
     }))!;
-    expect(text).toContain('<untrusted_completion_criterion>\ntests pass\n</untrusted_completion_criterion>');
+    expect(text).toContain(
+      '<untrusted_completion_criterion>\ntests pass\n</untrusted_completion_criterion>',
+    );
   });
 
   it('escapes objective and completion criterion delimiters inside untrusted wrappers', async () => {
@@ -225,6 +230,88 @@ describe('GoalInjection content', () => {
     expect(text).toMatch(/Progress: [^\n]*\.\nBudgets: /);
     expect(text).toMatch(/Budgets: [^\n]*\.\nBudget guidance: /);
   });
+
+  it('uses a sparse reminder for an unchanged active goal', async () => {
+    await goals.createGoal({ objective: 'Ship feature X', completionCriterion: 'tests pass' });
+    await injectDynamic(ctx, true);
+    const full = lastGoalReminder(context)!;
+
+    await injectDynamic(ctx, true);
+    const sparse = lastGoalReminder(context)!;
+    await injectDynamic(ctx, true);
+
+    expect(lastGoalReminder(context)).toBe(sparse);
+    expect(full).toContain('Blocked audit:');
+    expect(sparse).toContain('The full audit is in the earlier goal reminder.');
+    expect(sparse).toContain('<untrusted_objective>\nShip feature X\n</untrusted_objective>');
+    expect(sparse).toContain(
+      '<untrusted_completion_criterion>\ntests pass\n</untrusted_completion_criterion>',
+    );
+    expect(sparse).toContain('Status: active');
+    expect(sparse.length).toBeLessThan(full.length);
+  });
+
+  it('sends the full reminder with the edited objective on the next new turn only', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    await injectDynamic(ctx, true);
+    await injectDynamic(ctx, true);
+    const sparse = lastGoalReminder(context)!;
+    expect(sparse).toContain('The full audit is in the earlier goal reminder.');
+
+    await goals.editGoalObjective({ objective: 'new task' });
+    await injectDynamic(ctx, false);
+    expect(lastGoalReminder(context)).toBe(sparse);
+
+    await injectDynamic(ctx, true);
+    const refreshed = lastGoalReminder(context)!;
+    expect(refreshed).toContain('<untrusted_objective>\nnew task\n</untrusted_objective>');
+    expect(refreshed).toContain('Blocked audit:');
+  });
+
+  it('refreshes the full reminder when the goal resumes after being paused', async () => {
+    await goals.createGoal({ objective: 'work' });
+    await injectDynamic(ctx, true);
+    await goals.pauseGoal();
+    await injectDynamic(ctx, true);
+    await goals.resumeGoal();
+
+    await injectDynamic(ctx, true);
+    const resumed = lastGoalReminder(context)!;
+    await injectDynamic(ctx, true);
+
+    expect(resumed).toContain('Blocked audit:');
+    expect(lastGoalReminder(context)).toContain('The full audit is in the earlier goal reminder.');
+  });
+
+  it('refreshes the full reminder when the goal enters the nearing-budget band', async () => {
+    await goals.createGoal({ objective: 'work' });
+    await goals.setBudgetLimits({ budgetLimits: { turnBudget: 4 } }, 'model');
+    await injectDynamic(ctx, true);
+    await goals.incrementTurn();
+    await goals.incrementTurn();
+    await goals.incrementTurn();
+
+    await injectDynamic(ctx, true);
+
+    expect(lastGoalReminder(context)).toContain('Blocked audit:');
+    expect(lastGoalReminder(context)).toContain('nearing a budget');
+  });
+
+  it('refreshes the full reminder after compaction removes the previous reminders', async () => {
+    await goals.createGoal({ objective: 'work' });
+    await injectDynamic(ctx, true);
+    await injectDynamic(ctx, true);
+    expect(lastGoalReminder(context)).toContain('The full audit is in the earlier goal reminder.');
+    compactContext(context, {
+      summary: 'Earlier goal work.',
+      compactedCount: context.history().length,
+      tokensBefore: 100,
+    }, { dispatcher: ctx.dispatcher });
+
+    await injectDynamic(ctx, true);
+
+    expect(lastGoalReminder(context)).toContain('Blocked audit:');
+  });
 });
 
 function goalReminderRecords(persistence: InMemoryWireRecordPersistence) {
@@ -243,8 +330,8 @@ async function flushedGoalReminderRecords(
   return goalReminderRecords(persistence);
 }
 
-function lastGoalReminder(context: IAgentContextMemoryService): string | undefined {
-  const message = context.get().findLast((item) => {
+function lastGoalReminder(context: IAgentLoopService): string | undefined {
+  const message = context.history().findLast((item) => {
     return item.origin?.kind === 'injection' && item.origin.variant === 'goal';
   });
   if (message === undefined) return undefined;
@@ -255,7 +342,7 @@ describe('GoalInjection integration', () => {
   describe('enabled goal injection', () => {
     let ctx: TestAgentContext;
     let goals: GoalServiceTestManager;
-    let profile: IAgentProfileService;
+    let profile: IAgentLoopService;
     let persistence: InMemoryWireRecordPersistence;
 
     beforeEach(async () => {
@@ -265,7 +352,7 @@ describe('GoalInjection integration', () => {
         agentService(IAgentSwarmService, stubAgentSwarm()),
       );
       goals = ctx.get(IAgentGoalService);
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       await ctx.restorePersisted();
     });
 
@@ -346,6 +433,7 @@ describe('GoalInjection integration', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start.' }] });
       await ctx.untilTurnEnd();
       await ctx.untilTurnEnd();
+      await profile.settled();
 
       expect(ctx.llmCalls).toHaveLength(3);
     });
@@ -356,5 +444,4 @@ describe('GoalInjection integration', () => {
       await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(0);
     });
   });
-
 });

@@ -8,15 +8,22 @@ import {
 } from '#/features/todo/tools/todo-list/todo-list';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
+import { recordingTelemetry, type TelemetryRecord } from '../../../app/telemetry/stubs';
 import { createTestAgent, type TestAgentContext } from '../../../harness';
 
 const signal = new AbortController().signal;
 
+function paragraphs(output: unknown): string[] {
+  return typeof output === 'string' ? output.split('\n\n') : [];
+}
+
 describe('TodoListTool', () => {
   let ctx: TestAgentContext;
+  let telemetry: TelemetryRecord[];
 
   beforeEach(async () => {
-    ctx = createTestAgent();
+    telemetry = [];
+    ctx = createTestAgent({ telemetry: recordingTelemetry(telemetry) });
     await ctx.restorePersisted();
   });
 
@@ -87,13 +94,68 @@ describe('TodoListTool', () => {
     expect(result.output).toContain('Todo list updated');
     expect(result.output).toContain('[pending] first');
     expect(result.output).toContain('[in_progress] second');
-    expect(result.output).toContain(
-      'Ensure that you continue to use the todo list to track progress.',
-    );
-    expect(result.output).toContain('exactly one task in_progress');
     expect(todos()).toEqual([
       { title: 'first', status: 'pending' },
       { title: 'second', status: 'in_progress' },
+    ]);
+  });
+
+  it('follows the written list with a next step that names the item in progress', async () => {
+    const tool = ctx.get(ITodoListTool);
+    const write = (callId: string, list: TodoItem[]) =>
+      executeTool(tool, { turnId: 1, toolCallId: callId, args: { todos: list }, signal });
+
+    const midway = await write('call_1', [
+      { title: 'parse config', status: 'in_progress' },
+      { title: 'update callers', status: 'pending' },
+    ]);
+    const lastItem = await write('call_2', [
+      { title: 'parse config', status: 'done' },
+      { title: 'update callers', status: 'in_progress' },
+    ]);
+    const nothingStarted = await write('call_3', [
+      { title: 'parse config', status: 'done' },
+      { title: 'update callers', status: 'pending' },
+    ]);
+    const finished = await write('call_4', [
+      { title: 'parse config', status: 'done' },
+      { title: 'update callers', status: 'done' },
+    ]);
+
+    expect(paragraphs(midway.output)).toHaveLength(2);
+    expect(paragraphs(midway.output)[1]).toContain('"parse config"');
+    expect(paragraphs(lastItem.output)).toHaveLength(2);
+    expect(paragraphs(lastItem.output)[1]).toContain('"update callers"');
+    expect(paragraphs(lastItem.output)[1]).not.toBe(paragraphs(midway.output)[1]);
+    expect(paragraphs(nothingStarted.output)).toHaveLength(2);
+    expect(paragraphs(finished.output)).toHaveLength(1);
+  });
+
+  it('tracks each write with the resulting open item count', async () => {
+    const tool = ctx.get(ITodoListTool);
+
+    await executeTool(tool, {
+      turnId: 3,
+      toolCallId: 'call_1',
+      args: {
+        todos: [
+          { title: 'parse config', status: 'done' },
+          { title: 'update callers', status: 'in_progress' },
+        ],
+      },
+      signal,
+    });
+
+    expect(telemetry.filter((record) => record.event === 'todo_list_written')).toEqual([
+      {
+        event: 'todo_list_written',
+        properties: expect.objectContaining({
+          turn_id: 3,
+          item_count: 2,
+          open_count: 1,
+          after_reminder: false,
+        }),
+      },
     ]);
   });
 

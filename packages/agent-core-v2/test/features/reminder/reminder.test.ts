@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appendContext } from '../../agent/contextMemory/stubs';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
+import { historyFromContext } from '#/agent/loop/history';
+import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ReminderFeature } from '#/features/reminder/reminderFeature';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
@@ -19,7 +20,6 @@ function userMessage(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin: { kind: 'user' },
   };
 }
@@ -28,13 +28,12 @@ function compactionSummary(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin: { kind: 'compaction_summary' },
   };
 }
 
-function lastText(context: IAgentContextMemoryService): string | undefined {
-  const message = context.get().at(-1);
+function lastText(context: IAgentLoopService): string | undefined {
+  const message = context.history().at(-1);
   const part = message?.content[0];
   return part?.type === 'text' ? part.text : undefined;
 }
@@ -42,12 +41,12 @@ function lastText(context: IAgentContextMemoryService): string | undefined {
 describe('AgentReminderService', () => {
   let ctx: TestAgentContext;
   let reminder: IAgentReminderService;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let loop: StubLoop;
 
   beforeEach(async () => {
     ctx = createTestAgent();
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService) as StubLoop;
     await ctx.restorePersisted();
     reminder = ctx.get(IAgentReminderService);
@@ -66,9 +65,10 @@ describe('AgentReminderService', () => {
     deleteCount: number,
     inserted: readonly ContextMessage[],
   ): void {
-    const backing = [...ctx.agentState.get(contextMemoryKey)];
+    const loop = ctx.get(IAgentLoopService);
+    const backing = [...loop.history()];
     backing.splice(start, deleteCount, ...inserted);
-    ctx.agentState.set(contextMemoryKey, backing);
+    loop.replaceHistory(historyFromContext(backing), inserted.some(isCompactionSummaryMessage) ? 'compaction' : 'fork');
     ctx.get(IEventBus).publish(
       new ContextSpliced({
         agentId: 'main',
@@ -93,7 +93,7 @@ describe('AgentReminderService', () => {
     expect(seen).toEqual([null]);
     expect(lastText(context)).toContain('<system-reminder>');
     expect(lastText(context)).toContain('recorded reminder');
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(context.history().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'recording_test',
     });
@@ -112,7 +112,7 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(context.history().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'date_test',
       disclosure: {
@@ -132,7 +132,7 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    const message = context.get().at(-1);
+    const message = context.history().at(-1);
     expect(message?.content).toEqual([
       { type: 'text', text: 'caption' },
       { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
@@ -145,7 +145,7 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    expect(context.get()).toHaveLength(0);
+    expect(context.history()).toHaveLength(0);
   });
 
   it('passes the previous injection index back to the provider', async () => {
@@ -160,7 +160,7 @@ describe('AgentReminderService', () => {
     await runInjectionStep();
 
     expect(seen).toEqual([null, 0]);
-    expect(context.get()).toHaveLength(1);
+    expect(context.history()).toHaveLength(1);
   });
 
   it('reconciles only providers registered under the requested name while idle', async () => {
@@ -175,10 +175,11 @@ describe('AgentReminderService', () => {
     });
 
     await reminder.reconcileWhenIdle('target');
+    loop.flushReminders();
 
     expect(seen).toEqual(['target']);
-    expect(context.get()).toHaveLength(1);
-    expect(context.get()[0]?.origin).toEqual({ kind: 'injection', variant: 'target' });
+    expect(context.history()).toHaveLength(1);
+    expect(context.history()[0]?.origin).toEqual({ kind: 'injection', variant: 'target' });
   });
 
   it('leaves reconciliation to the next step head when quiescence cannot be acquired', async () => {
@@ -195,7 +196,7 @@ describe('AgentReminderService', () => {
     await reminder.reconcileWhenIdle('target');
 
     expect(calls).toBe(0);
-    expect(context.get()).toHaveLength(0);
+    expect(context.history()).toHaveLength(0);
   });
 
   it('exposes all live injection positions alongside the newest one', async () => {
@@ -230,7 +231,7 @@ describe('AgentReminderService', () => {
     await runInjectionStep();
 
     expect(seen).toEqual([null, 0, 0]);
-    expect(context.get().map((message) => message.origin?.kind)).toEqual([
+    expect(context.history().map((message) => message.origin?.kind)).toEqual([
       'injection',
       'user',
     ]);
@@ -250,12 +251,12 @@ describe('AgentReminderService', () => {
     });
 
     await runInjectionStep();
-    spliceContext(0, context.get().length, []);
+    spliceContext(0, context.history().length, []);
     await runInjectionStep();
 
     expect(seenA).toEqual([null, null]);
     expect(seenB).toEqual([null, null]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'injection', variant: 'recording_a' },
       { kind: 'injection', variant: 'recording_b' },
     ]);
@@ -264,7 +265,7 @@ describe('AgentReminderService', () => {
   it('re-injects at the next step after compaction swallows the reminder', async () => {
     const seen: Array<number | null> = [];
 
-    context.append(userMessage('before reminder'));
+    appendContext(context,userMessage('before reminder'));
     reminder.register('recording_test', ({ lastInjectedAt }) => {
       seen.push(lastInjectedAt);
       return lastInjectedAt === null ? 'recorded reminder' : undefined;
@@ -279,7 +280,7 @@ describe('AgentReminderService', () => {
     await runInjectionStep();
 
     expect(seen).toEqual([null, null]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'recording_test' },
     ]);
@@ -289,7 +290,7 @@ describe('AgentReminderService', () => {
     const seenA: Array<number | null> = [];
     const seenB: Array<number | null> = [];
 
-    context.append(
+    appendContext(context,
       userMessage('old request'),
       userMessage('old follow-up'),
     );
@@ -308,7 +309,7 @@ describe('AgentReminderService', () => {
 
     expect(seenA).toEqual([null, 1]);
     expect(seenB).toEqual([null, 2]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'recording_a' },
       { kind: 'injection', variant: 'recording_b' },
@@ -328,7 +329,7 @@ describe('AgentReminderService', () => {
     await runInjectionStep();
 
     expect(seen).toEqual([true, false, true]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'per_turn_test' },
     ]);
@@ -362,7 +363,7 @@ describe('AgentReminderService', () => {
     await runInjectionStep(true);
 
     expect(seen).toEqual([true, true]);
-    expect(context.get().map((message) => message.origin)).toEqual([
+    expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'compaction_summary' },
       { kind: 'injection', variant: 'per_turn_test' },
     ]);
@@ -379,9 +380,10 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    const message = context.get().at(-1);
+    const message = context.history().at(-1);
     expect(message?.role).toBe('system');
-    expect(message?.tools).toEqual([
+    if (message?.role !== 'system') throw new Error('expected system message');
+    expect(message.tools).toEqual([
       { name: 'TestTool', description: 'test tool', parameters: { type: 'object' } },
     ]);
     expect(message?.origin).toEqual({ kind: 'injection', variant: 'schema_test' });
@@ -395,7 +397,7 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(context.history().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'schema_test',
       disclosure: { kind: 'test_receipt', id: 'r1' },
@@ -407,7 +409,7 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    expect(context.get()).toHaveLength(0);
+    expect(context.history()).toHaveLength(0);
   });
 
   it('skips a throwing step provider and still runs the rest', async () => {
@@ -418,7 +420,7 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    expect(context.get()).toHaveLength(1);
+    expect(context.history()).toHaveLength(1);
     expect(lastText(context)).toContain('surviving reminder');
   });
 
@@ -428,7 +430,7 @@ describe('AgentReminderService', () => {
 
     await runInjectionStep();
 
-    expect(context.get()).toHaveLength(1);
+    expect(context.history()).toHaveLength(1);
     expect(lastText(context)).toContain('surviving reminder');
   });
 
@@ -475,6 +477,7 @@ describe('AgentReminderService', () => {
     expect(() => ctx.get(IAgentReminderService)).toThrow("unknown service 'agentReminderService'");
 
     ctx.get(IFeatureManager).provideUnit(ReminderFeature);
+    await ctx.restorePersisted();
 
     let calls = 0;
     const revived = await vi.waitFor(() => ctx.get(IAgentReminderService));
@@ -483,6 +486,7 @@ describe('AgentReminderService', () => {
       return undefined;
     });
     loop = ctx.get(IAgentLoopService) as StubLoop;
+    await loop.start();
     await vi.waitFor(async () => {
       await runInjectionStep();
       expect(calls).toBeGreaterThan(0);

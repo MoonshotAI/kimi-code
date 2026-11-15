@@ -14,13 +14,12 @@ import {
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
-import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
 import {
   createAgentTaskPersistence,
-  type TaskServiceTestManager,
+  taskHistoryRecords,
 } from '../agent/task/stubs';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
@@ -66,7 +65,7 @@ describe('Agent resume', () => {
 
   it('does not reconstruct an event-point interruption after restore', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       {
         type: 'context.append_message',
         message: {
@@ -103,13 +102,13 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      expect(ctx.context.get()).not.toContainEqual(
+      expect(ctx.context.history()).not.toContainEqual(
         expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
       );
       ctx.mockNextResponse({ type: 'text', text: 'Fresh response after resume.' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
       await ctx.untilTurnEnd();
-      expect(ctx.context.get()).not.toContainEqual(
+      expect(ctx.context.history()).not.toContainEqual(
         expect.objectContaining({
           role: 'user',
           origin: { kind: 'injection', variant: 'interruption' },
@@ -132,7 +131,7 @@ describe('Agent resume', () => {
 
   it('resumes a journal that stops mid-turn without any turn-closing record', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       contextAppendRecord(0, [{ role: 'user', text: 'dangling turn', origin: { kind: 'user' } }]),
       turnPromptRecord(0, { kind: 'user' }),
       {
@@ -166,7 +165,7 @@ describe('Agent resume', () => {
 
   it('closes a restored open tool call with an interrupted result before the next prompt', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       contextAppendRecord(0, [{ role: 'user', text: 'Run lookup', origin: { kind: 'user' } }]),
       turnPromptRecord(0, { kind: 'user' }),
       {
@@ -202,7 +201,7 @@ describe('Agent resume', () => {
       expect(ctx.llmInputs()).toMatchInlineSnapshot(`
         call 1:
           system: <system-prompt>
-          tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, EnterPlanMode, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
+          tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
           messages:
             user: text "Run lookup"
             assistant: []  calls call_open:Lookup { "query": "moon" }
@@ -218,7 +217,7 @@ describe('Agent resume', () => {
 
   it('does not reconcile a legacy interruption whose delivery was recorded', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       {
         type: 'context.append_message',
         message: {
@@ -244,7 +243,7 @@ describe('Agent resume', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt after resume' }] });
       await ctx.untilTurnEnd();
 
-      expect(ctx.context.get()).not.toContainEqual(
+      expect(ctx.context.history()).not.toContainEqual(
         expect.objectContaining({ origin: { kind: 'injection', variant: 'interruption' } }),
       );
     } finally {
@@ -253,7 +252,7 @@ describe('Agent resume', () => {
   });
 
   it('persists prompt terminal events as durable records so replays can reconcile the queue', async () => {
-    const persistence = new RecordingAgentPersistence([resumeConfigRecord()]);
+    const persistence = new RecordingAgentPersistence([resumeProfileRecord()]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     try {
@@ -264,7 +263,6 @@ describe('Agent resume', () => {
 
       await vi.waitFor(() => {
         const types = persistence.appended.map((record) => record.type);
-        expect(types).toContain('prompt.accepted');
         expect(types).toContain('prompt.completed');
       });
     } finally {
@@ -286,7 +284,7 @@ describe('Agent resume', () => {
     await ctx.restorePersisted();
     const plan = await ctx.get(IAgentPlanService).status();
     expect(plan?.path).toContain('resume-plan');
-    expect(ctx.newEvents()).toMatchInlineSnapshot(`[]`);
+    expect(ctx.newEvents()).toMatchInlineSnapshot(`[emit] agent.status.updated   { "time": "<time>", "agentId": "main", "model": "mock-model", "thinkingEffort": "off", "maxContextTokens": 1000000 }`);
     expect(ctx.llmCalls).toHaveLength(0);
     expect(execWithEnv).not.toHaveBeenCalled();
     expect(persistence.appended).toEqual([]);
@@ -382,9 +380,41 @@ describe('Agent resume', () => {
     });
   });
 
+  it('offers the same tools on the first request after resume as before it', async () => {
+    const persistence = new RecordingAgentPersistence([]);
+    const live = testAgent({ persistence, autoConfigure: false });
+    live.configure({
+      modelCapabilities: {
+        image_in: true,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: true,
+        maxContextSize: 0,
+      },
+    });
+    live.mockNextResponse({ type: 'text', text: 'Response before resume.' });
+    await live.rpc.prompt({ input: [{ type: 'text', text: 'Prompt before resume' }] });
+    await live.untilTurnEnd();
+    const liveTools = live.llmCalls.at(-1)!.tools.map((tool) => tool.name);
+    expect(liveTools).toContain('ReadMediaFile');
+
+    const resumed = testAgent({
+      persistence: new RecordingAgentPersistence(persistence.records as unknown as WireRecord[]),
+      autoConfigure: false,
+      initialConfig: live.kimiConfig,
+    });
+    await resumed.restorePersisted();
+    resumed.mockNextResponse({ type: 'text', text: 'Response after resume.' });
+    await resumed.rpc.prompt({ input: [{ type: 'text', text: 'Prompt after resume' }] });
+    await resumed.untilTurnEnd();
+
+    expect(resumed.llmCalls[0]!.tools.map((tool) => tool.name)).toEqual(liveTools);
+  });
+
   it('restores a cancelled queued-turn gap before allocating the next turn', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       {
         type: 'turn.prompt',
         input: [{ type: 'text', text: 'Historical prompt' }],
@@ -408,10 +438,19 @@ describe('Agent resume', () => {
         event: { type: 'step.end', uuid: 'historical-step', turnId: '0' },
       },
       { type: 'turn.cancel', turnId: 1, target: 'queued' },
+      { type: 'agent.turn.started', turnId: 99, queueItemId: 'ignored' },
+      {
+        type: 'agent.message.appended',
+        message: {
+          message: { role: 'user', content: [{ type: 'text', text: 'ignored agent history' }] },
+          meta: {},
+        },
+      },
     ] as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
+    expect(JSON.stringify(ctx.context.history())).not.toContain('ignored agent history');
     ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
     await ctx.untilTurnEnd();
@@ -421,7 +460,7 @@ describe('Agent resume', () => {
 
   it('projects restored pending tool results before later user messages', async () => {
     const persistence = new RecordingAgentPersistence([
-      resumeConfigRecord(),
+      resumeProfileRecord(),
       {
         type: 'context.append_message',
         message: {
@@ -474,7 +513,7 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(ctx.context.get().map((message) => message.role)).toEqual([
+    expect(ctx.context.history().map((message) => message.role)).toEqual([
       'user',
       'assistant',
       'user',
@@ -498,14 +537,14 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(ctx.context.get().map((message) => message.role)).toEqual([
+    expect(ctx.context.history().map((message) => message.role)).toEqual([
       'user',
       'assistant',
       'tool',
       'tool',
       'user',
     ]);
-    expect(ctx.context.get()[4]?.content).toEqual([
+    expect(ctx.context.history()[4]?.content).toEqual([
       {
         type: 'text',
         text: '<system-reminder>\nresume skill body\n</system-reminder>',
@@ -521,7 +560,7 @@ describe('Agent resume', () => {
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
       call 1:
         system: <system-prompt>
-        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, EnterPlanMode, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
+        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
         messages:
           user: text "Historical prompt before skill"
           assistant: []  calls call_resume_write:Write { "path": "result.txt" }, call_resume_skill:Skill { "skill": "review" }
@@ -563,7 +602,9 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    const toolCall = ctx.context.get()[0]?.toolCalls[0] as
+    const message = ctx.context.history()[0];
+    if (message?.role !== 'assistant') throw new Error('expected assistant message');
+    const toolCall = message.toolCalls[0] as
       | { name?: string; arguments?: string | null; function?: unknown }
       | undefined;
     expect(toolCall).toMatchObject({
@@ -602,36 +643,31 @@ describe('Agent resume', () => {
         tokensBefore: 10,
         tokensAfter: 3,
       },
-    ] as unknown as WireRecord[]);
-    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-delivered-'));
-    try {
-      const backgroundPersistence = createAgentTaskPersistence(homeDir);
-      const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
-      await backgroundPersistence.writeTask({
+      ...taskHistoryRecords([{
         taskId: 'agent-seen0000',
         kind: 'agent',
         description: 'already delivered',
         startedAt: 1_700_000_000,
         endedAt: 1_700_000_010,
         status: 'completed',
-      });
+      }]),
+    ] as unknown as WireRecord[]);
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-delivered-'));
+    const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
+    try {
+      const backgroundPersistence = createAgentTaskPersistence(homeDir);
       await backgroundPersistence.appendTaskOutput(
         'agent-seen0000',
         'already delivered summary',
       );
-      const steer = vi.spyOn(ctx.get(IAgentPromptService), 'steer');
-
       await ctx.restorePersisted();
+
+      expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
       expect(
-        ctx.context.get().some((message) => message.origin?.kind === 'task'),
+        ctx.context.history().some((message) => message.origin?.kind === 'task'),
       ).toBe(false);
-
-      const background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
-      await background.loadFromDisk();
-      await background.reconcile();
-
-      expect(steer).not.toHaveBeenCalled();
     } finally {
+      await ctx.dispose();
       await rm(homeDir, { recursive: true, force: true });
     }
   });
@@ -672,7 +708,7 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(ctx.context.get()).toEqual([
+    expect(ctx.context.history()).toEqual([
       expect.objectContaining({
         role: 'user',
         content: [{ type: 'text', text: 'Compacted implementation notes.' }],
@@ -689,6 +725,14 @@ describe('Agent resume', () => {
         protocol_version: '1.4',
         created_at: 1,
       },
+      ...taskHistoryRecords([{
+        taskId: 'agent-new00000',
+        kind: 'agent',
+        description: 'newly delivered',
+        startedAt: 1_700_000_000,
+        endedAt: 1_700_000_010,
+        status: 'completed',
+      }]),
       {
         type: 'turn.prompt',
         input: [{ type: 'text', text: 'Historical prompt' }],
@@ -696,25 +740,20 @@ describe('Agent resume', () => {
       },
     ] as unknown as WireRecord[]);
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-undelivered-'));
+    const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
     try {
       const backgroundPersistence = createAgentTaskPersistence(homeDir);
-      const ctx = testAgent(homeDirServices(homeDir), { autoConfigure: false, persistence });
-      await backgroundPersistence.writeTask({
-        taskId: 'agent-new00000',
-        kind: 'agent',
-        description: 'newly delivered',
-        startedAt: 1_700_000_000,
-        endedAt: 1_700_000_010,
-        status: 'completed',
-      });
       await backgroundPersistence.appendTaskOutput('agent-new00000', 'newly delivered summary');
-      const steer = vi.spyOn(ctx.get(IAgentPromptService), 'steer');
+      const steer = vi.spyOn(ctx.get(IAgentLoopService), 'steer');
 
       await ctx.restorePersisted();
 
       expect(steer).not.toHaveBeenCalled();
+      ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
+      await ctx.untilTurnEnd();
       expect(
-        ctx.context.get().some(
+        ctx.context.history().some(
           (message) =>
             message.origin?.kind === 'task' &&
             message.origin.taskId === 'agent-new00000',
@@ -734,6 +773,7 @@ describe('Agent resume', () => {
         }),
       );
     } finally {
+      await ctx.dispose();
       await rm(homeDir, { recursive: true, force: true });
     }
   });
@@ -777,7 +817,7 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(ctx.context.get().map((message) => message.role)).toEqual([
+    expect(ctx.context.history().map((message) => message.role)).toEqual([
       'user',
       'assistant',
       'tool',
@@ -813,7 +853,7 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
   });
 
   it('restores an envelope-less active goal without charging offline time', async () => {
@@ -1012,15 +1052,65 @@ describe('Agent resume', () => {
           step: 1,
         },
       },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 1 },
+        turns: 1,
+        time: 3,
+      },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        branch: 'b1',
+        reason: 'undo',
+        base: { branch: 'main', line: 5 },
+        turns: 1,
+        legacyUndoLine: 12,
+        time: 3,
+      },
       { type: 'context.undo', count: 1 },
+      { type: 'context.undone', agentId: 'main', turns: 1, time: 3 },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'third prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'agent.switched',
+        agentId: 'main',
+        reason: 'undo',
+        turns: 1,
+        time: 4,
+      },
     ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
-    await ctx.restorePersisted();
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await ctx.restorePersisted();
 
-    expect(ctx.context.get()).toHaveLength(2);
-    expect(ctx.context.get()[0]?.role).toBe('user');
-    expect(ctx.context.get()[1]?.role).toBe('assistant');
+      expect(ctx.context.history()).toHaveLength(3);
+      expect(ctx.context.history()[0]?.role).toBe('user');
+      expect(ctx.context.history()[1]?.role).toBe('assistant');
+      expect(ctx.context.history()[2]?.role).toBe('user');
+      const skipped = unexpected.filter(
+        (error) => (error as { code?: unknown }).code === 'wire.unknown_record',
+      );
+      expect(skipped.map((error) => (error as Error).message)).toEqual([
+        'Malformed agent.switched record ignored during tree projection',
+        "Duplicate agent.switched branch 'b1' ignored during tree projection",
+      ]);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 
   it('skips a fractional undo record on resume without corrupting checkpointed state', async () => {
@@ -1048,7 +1138,7 @@ describe('Agent resume', () => {
     try {
       await ctx.restorePersisted();
 
-      expect(ctx.context.get()).toHaveLength(1);
+      expect(ctx.context.history()).toHaveLength(1);
       await expect(ctx.get(IAgentPlanService).status()).resolves.toBeNull();
       const malformed = unexpected.filter((error) =>
         String((error as Error).message).includes('Malformed wire record'),
@@ -1118,13 +1208,7 @@ function resumeHistory(): WireRecord[] {
       protocol_version: '1.4',
       created_at: 1,
     },
-    {
-      type: 'config.update',
-      cwd: process.cwd(),
-      modelAlias: MOCK_PROVIDER.model,
-      systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-      thinkingLevel: 'off',
-    },
+    resumeProfileRecord(),
     {
       type: 'tools.set_active_tools',
       names: ['Bash'],
@@ -1238,7 +1322,7 @@ function resumeHistory(): WireRecord[] {
 
 function resumeDeferredSystemReminderHistory(): WireRecord[] {
   return [
-    resumeConfigRecord(),
+    resumeProfileRecord(),
     {
       type: 'context.append_message',
       message: {
@@ -1314,13 +1398,13 @@ function resumeDeferredSystemReminderHistory(): WireRecord[] {
   ] as unknown as WireRecord[];
 }
 
-function resumeConfigRecord(): WireRecord {
+function resumeProfileRecord(): WireRecord {
   return {
-    type: 'config.update',
-    cwd: process.cwd(),
+    type: 'profile.bind',
     modelAlias: MOCK_PROVIDER.model,
     systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-    thinkingLevel: 'off',
+    thinkingEffort: 'off',
+    disallowedTools: [],
   } as unknown as WireRecord;
 }
 
@@ -1415,7 +1499,7 @@ function loopEventsForTurn(turnId: string, responseText: string): WireRecord[] {
 
 function multiTurnResumeHistory(): WireRecord[] {
   return [
-    resumeConfigRecord(),
+    resumeProfileRecord(),
     ...canonicalPromptedTurn(0, 'First historical prompt', 'First historical response.', 0),
     ...canonicalPromptedTurn(1, 'Second historical prompt', 'Second historical response.', 2),
   ];
@@ -1423,7 +1507,7 @@ function multiTurnResumeHistory(): WireRecord[] {
 
 function goalContinuationResumeHistory(): WireRecord[] {
   return [
-    resumeConfigRecord(),
+    resumeProfileRecord(),
     ...canonicalPromptedTurn(0, 'Goal prompt', 'Starting the goal.', 0),
     ...canonicalContinuationTurn(1, 'Continuation turn one.', 2),
     ...canonicalContinuationTurn(2, 'Continuation turn two.', 3),

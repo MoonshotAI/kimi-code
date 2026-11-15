@@ -92,6 +92,10 @@ export class SearchableList<T> {
     this.cursor = Math.min(Math.max(0, this.filtered().length - 1), this.cursor + 1);
   }
 
+  moveTo(index: number): void {
+    this.cursor = Math.max(0, Math.min(index, this.filtered().length - 1));
+  }
+
   pageUp(): void {
     this.cursor = Math.max(0, this.cursor - this.pageSize);
   }

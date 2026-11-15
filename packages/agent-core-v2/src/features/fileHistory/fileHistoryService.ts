@@ -1,25 +1,32 @@
 import { createHash } from 'node:crypto';
-import { isAbsolute, relative, resolve } from 'pathe';
 
 import { Service } from '#/_base/di/service';
-import { unwrapErrorCause } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { runLegacyBeforeExecute } from '#/agent/toolExecutor/legacyHooks';
 import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import {
+  hostWorkspacePathSemantics,
+  resolveWorkspacePath,
+  type WorkspacePathSemantics,
+} from '#/session/workspaceContext/workspacePaths';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { Environment, EnvironmentLease } from '#/environment/environment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 
 import {
   IAgentFileHistoryService,
@@ -56,7 +63,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IBlobStore private readonly blobs: IBlobStore,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
@@ -67,15 +74,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     super();
     this.agentState.contributeState(fileHistoryKey);
     if (this.agentCtx.agentId !== MAIN_AGENT_ID) {
-      this._register(
-        toolExecutor.onWillExecuteTool((event) => this.onSubagentWillExecuteTool(event)),
-      );
+      this._register(toolExecutor.registerHook({
+        beforeExecute: (context) => runLegacyBeforeExecute(context, (event) => this.onSubagentWillExecuteTool(event)),
+      }));
       return;
     }
 
-    this._register(
-      toolExecutor.onWillExecuteTool((event) => this.onWillExecuteTool(event)),
-    );
+    this._register(toolExecutor.registerHook({
+      beforeExecute: (context) => runLegacyBeforeExecute(context, (event) => this.onWillExecuteTool(event)),
+    }));
     this._register(
       eventBus.subscribe(TurnStarted, (event) => {
         if (event.agentId !== this.agentCtx.agentId) return;
@@ -463,17 +470,24 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   ): Promise<
     Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number; mtimeMs?: number }
   > {
-    const absolute = isAbsolute(pathKey) ? pathKey : resolve(this.workspaceCtx.workDir, pathKey);
-    const lease = this.runtime.acquire(['fs']);
+    let lease: EnvironmentLease;
     try {
-      const fs = lease.runtime.fs;
+      lease = this.environment.acquire(['fs']);
+    } catch (error) {
+      if (error instanceof EnvironmentError) return 'unreadable';
+      throw error;
+    }
+    try {
+      const fs = lease.environment.fs;
       if (fs === undefined) return 'unreadable';
+      const path = lease.environment.path;
+      if (path === undefined) return 'unreadable';
+      const absolute = resolveWorkspacePath(path, this.workspaceCtx.workDir, pathKey);
       let info;
       try {
         info = await fs.stat(absolute);
       } catch (error) {
-        const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
-        return code === 'ENOENT' ? 'missing' : 'unreadable';
+        return isHostFsNotFound(error) ? 'missing' : 'unreadable';
       }
       if (!info.isFile) return 'unreadable';
       if (info.size > FILE_HISTORY_MAX_FILE_BYTES) {
@@ -500,21 +514,44 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   private pathKey(path: string): string {
     let raw = path;
-    if (isAbsolute(path)) {
-      const relativePath = relative(this.workspaceCtx.workDir, path);
-      if (relativePath !== '' && relativePath !== '..' && !relativePath.startsWith('../')) {
+    const { semantics, caseInsensitive } = this.pathSemantics();
+    if (semantics.isAbsolute(path)) {
+      const relativePath = semantics.relative(this.workspaceCtx.workDir, path);
+      if (
+        relativePath !== '' &&
+        !relativePath.startsWith('..') &&
+        !semantics.isAbsolute(relativePath)
+      ) {
         raw = relativePath;
       }
     }
-    const key = this.comparisonKey(raw);
+    const key = caseInsensitive ? raw.toLowerCase() : raw;
     const existing = this.history().tracked.find(
-      (tracked) => this.comparisonKey(tracked) === key,
+      (tracked) => (caseInsensitive ? tracked.toLowerCase() : tracked) === key,
     );
     return existing ?? raw;
   }
 
-  private comparisonKey(pathKey: string): string {
-    return isWindowsPath(this.workspaceCtx.workDir) ? pathKey.toLowerCase() : pathKey;
+  private pathSemantics(): {
+    semantics: WorkspacePathSemantics;
+    caseInsensitive: boolean;
+  } {
+    const path = this.inspectEnvironment()?.path;
+    if (path !== undefined) {
+      return { semantics: path, caseInsensitive: path.separator === '\\' };
+    }
+    return {
+      semantics: hostWorkspacePathSemantics,
+      caseInsensitive: isWindowsPath(this.workspaceCtx.workDir),
+    };
+  }
+
+  private inspectEnvironment(): Environment | undefined {
+    try {
+      return this.environment.inspect();
+    } catch {
+      return undefined;
+    }
   }
 }
 
@@ -614,7 +651,7 @@ function splitLines(content: string): string[] {
   if (content === '') return [];
   const lines = content.split('\n');
   if (lines.at(-1) === '') lines.pop();
-  else lines[lines.length - 1] = `${lines[lines.length - 1]!}\u0000`;
+  else lines[lines.length - 1] = `${lines.at(-1)!}\u0000`;
   return lines;
 }
 

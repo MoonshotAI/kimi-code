@@ -25,6 +25,9 @@ export function registerReverseRPCHandlers(
     hidePanel: () => {
       modalCoordinator.hide('approval');
     },
+    dismissPanel: () => {
+      modalCoordinator.dismiss('approval');
+    },
   });
 
   questionController.setUIHooks({
@@ -33,6 +36,9 @@ export function registerReverseRPCHandlers(
     },
     hidePanel: () => {
       modalCoordinator.hide('question');
+    },
+    dismissPanel: () => {
+      modalCoordinator.dismiss('question');
     },
   });
 

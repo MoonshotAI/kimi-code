@@ -21,23 +21,13 @@ import {
   promptWithSkillsPayloadSchema,
   promptWithSkillsResultSchema,
   runShellCommandPayloadSchema,
-  runtimeBindingSchema,
+  environmentBindingSchema,
   setModelResultSchema,
   shellCommandResultSchema,
-  steerPayloadSchema,
+  steerResultSchema,
+  steerEntrySchema,
   usageStatusSchema,
 } from './schemas.js';
-
-export const agentPromptContract = {
-  submit: {
-    input: z.tuple([promptPayloadSchema]),
-    output: maybe(promptLaunchResultSchema),
-  },
-  submitSteer: {
-    input: z.tuple([steerPayloadSchema]),
-    output: maybe(promptLaunchResultSchema),
-  },
-} satisfies ServiceContract;
 
 export const agentSkillContract = {
   activate: { input: z.tuple([activateSkillPayloadSchema]), output: promptLaunchResultSchema },
@@ -48,6 +38,14 @@ export const agentSkillContract = {
 } satisfies ServiceContract;
 
 export const agentLoopContract = {
+  submit: {
+    input: z.tuple([promptPayloadSchema]),
+    output: maybe(promptLaunchResultSchema),
+  },
+  notifyClient: {
+    input: z.tuple([steerEntrySchema]),
+    output: steerResultSchema,
+  },
   cancelFromUser: { input: z.tuple([z.number().optional()]), output: noResult },
 } satisfies ServiceContract;
 
@@ -60,10 +58,8 @@ export const agentCommandContract = {
   run: { input: z.tuple([z.string(), z.string().optional()]), output: noResult },
 } satisfies ServiceContract;
 
-export const agentRuntimeBindingContract = {
-  get: { input: z.tuple([]), output: runtimeBindingSchema },
-  set: { input: z.tuple([runtimeBindingSchema]), output: runtimeBindingSchema },
-  switch: { input: z.tuple([z.string()]), output: runtimeBindingSchema },
+export const agentEnvironmentBindingContract = {
+  current: { input: z.tuple([]), output: environmentBindingSchema },
 } satisfies ServiceContract;
 
 /** `history` items are full `ContextMessage`s, mirrored as `unknown`. */
@@ -108,6 +104,7 @@ export const mcpServerEntrySchema = z.object({
   status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth', 'removed']),
   toolCount: z.number(),
   error: z.string().optional(),
+  nextRetryAt: z.number().optional(),
 });
 
 export const agentMcpContract = {

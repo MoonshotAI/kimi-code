@@ -16,7 +16,7 @@ export interface FullCompactionTask {
   readonly promise: Promise<CompactionResult>;
   readonly trigger: CompactionSource;
   readonly tokenCount: number;
-  readonly traceId?: string;
+  readonly requestId?: string;
 }
 
 export interface IAgentFullCompactionService {

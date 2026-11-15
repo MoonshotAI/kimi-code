@@ -95,12 +95,14 @@ export class SessionSkillCatalogService
   private remerge(): void {
     const m = new InMemorySkillCatalog();
     const base = this.data.catalog;
-    for (const skill of base.listSkills()) m.register(skill, { replace: true });
+    for (const skill of base.listDefaultSkills()) m.register(skill, { replace: true });
+    m.registerVariants(base.listSkills(), { replace: true });
     m.addRoots(base.getSkillRoots());
     m.recordSkipped(base.getSkippedByPolicy());
     const ordered = [...this.contributions.values()].toSorted((a, b) => a.priority - b.priority);
     for (const { c } of ordered) {
       for (const skill of c.skills) m.register(skill, { replace: true });
+      m.registerVariants(c.variants ?? c.skills, { replace: true });
       m.addRoots(c.scannedRoots ?? []);
       m.recordSkipped(c.skipped ?? []);
     }

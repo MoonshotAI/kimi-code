@@ -193,6 +193,12 @@ export interface ConfigInspectValue<T = unknown> {
   readonly memoryValue: T | undefined;
 }
 
+export interface ConfigReplaceSectionsOptions {
+  readonly preserveUnknown?: boolean;
+  readonly exactKeys?: Readonly<Record<string, readonly string[]>>;
+  readonly expectedValues?: Readonly<Record<string, unknown>>;
+}
+
 export interface IConfigService {
   readonly _serviceBrand: undefined;
 
@@ -202,12 +208,14 @@ export interface IConfigService {
   readonly onDidChangeDiagnostics: Event<readonly ConfigDiagnostic[]>;
   get<T = unknown>(domain: string): T;
   inspect<T = unknown>(domain: string): ConfigInspectValue<T>;
+  assertValid(domain: string): void;
   getAll(): ResolvedConfig;
   set(domain: string, patch: unknown, target?: ConfigTarget): Promise<void>;
   replace(domain: string, value: unknown, target?: ConfigTarget): Promise<void>;
   replaceSections(
     sections: Readonly<Record<string, unknown>>,
     target?: ConfigTarget,
+    options?: ConfigReplaceSectionsOptions,
   ): Promise<void>;
   reload(): Promise<void>;
   diagnostics(): readonly ConfigDiagnostic[];

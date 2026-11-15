@@ -15,7 +15,7 @@ export function slugifyWorkDirName(name: string): string {
 }
 
 export function encodeWorkDirKey(workDir: string): string {
-  const normalized = workDir.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalized = workDir.replaceAll('\\', '/').replace(/\/+$/, '');
   const base = normalized.split('/').pop() ?? normalized;
   const slug = slugifyWorkDirName(base);
   const hash = createHash('sha256').update(normalized).digest('hex').slice(0, HASH_LENGTH);
@@ -29,4 +29,8 @@ export function workspaceRootKey(root: string): string {
   const shaped = WIN_SHAPED.test(slashed);
   const normalized = slashed.replace(/\/+$/, '');
   return shaped ? normalized.toLowerCase() : normalized;
+}
+
+export function isWorkDirKey(id: string): boolean {
+  return id.startsWith(WORKDIR_KEY_PREFIX);
 }

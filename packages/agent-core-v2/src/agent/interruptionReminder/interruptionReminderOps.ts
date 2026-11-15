@@ -6,7 +6,34 @@ import { defineState } from '#/state/state';
 
 export const INTERRUPTION_REMINDER_VARIANT = 'interruption';
 
-export type InterruptionReminderState = null;
+export interface InterruptionReminderPending {
+  readonly turnId: number;
+  readonly ownerPromptId?: string;
+}
+
+export interface InterruptionReminderState {
+  readonly pending: InterruptionReminderPending | undefined;
+  readonly consumedTurnIds: readonly number[];
+}
+
+const interruptionCancellationRequestedSchema = z.object({
+  agentId: z.string(),
+  turnId: z.number().int().nonnegative(),
+  ownerPromptId: z.string().optional(),
+});
+
+export class InterruptionCancellationRequested extends AgentEvent2<
+  z.infer<typeof interruptionCancellationRequestedSchema>
+> {
+  static override readonly type = 'interruptionReminder.requested';
+  static override readonly durable = true;
+  static override readonly schema = interruptionCancellationRequestedSchema;
+}
+export interface InterruptionCancellationRequested {
+  readonly agentId: string;
+  readonly turnId: number;
+  readonly ownerPromptId?: string;
+}
 
 const interruptionReminderRecordedSchema = z.object({
   agentId: z.string(),
@@ -27,7 +54,18 @@ export interface InterruptionReminderRecorded {
 
 export const interruptionReminderKey = defineState(
   'interruptionReminder',
-  (): InterruptionReminderState => null,
+  (): InterruptionReminderState => ({ pending: undefined, consumedTurnIds: [] }),
 )
   .replayable({ schema: z.custom<InterruptionReminderState>() })
-  .on(InterruptionReminderRecorded, () => {});
+  .undoable()
+  .on(InterruptionCancellationRequested, (s, e) => {
+    if (s.consumedTurnIds.includes(e.turnId)) return s;
+    return { ...s, pending: { turnId: e.turnId, ownerPromptId: e.ownerPromptId } };
+  })
+  .on(InterruptionReminderRecorded, (s, e) => {
+    if (s.consumedTurnIds.includes(e.turnId)) return s;
+    return {
+      pending: s.pending?.turnId === e.turnId ? undefined : s.pending,
+      consumedTurnIds: [...s.consumedTurnIds, e.turnId],
+    };
+  });

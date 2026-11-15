@@ -71,6 +71,7 @@ const goalUpdateSchema = z
   .object({
     agentId: z.string(),
     goalId: z.string().optional(),
+    objective: z.string().optional(),
     status: GoalStatusSchema.optional(),
     reason: z.string().optional(),
     turnsUsed: z.number().finite().nonnegative().optional(),
@@ -90,6 +91,7 @@ export class GoalUpdate extends AgentEvent2<z.infer<typeof goalUpdateSchema>> {
 export interface GoalUpdate {
   readonly agentId: string;
   readonly goalId?: string;
+  readonly objective?: string;
   readonly status?: GoalStatus;
   readonly reason?: string;
   readonly turnsUsed?: number;
@@ -108,17 +110,6 @@ export class GoalClear extends AgentEvent2<z.infer<typeof goalClearSchema>> {
   static override readonly schema = goalClearSchema;
 }
 export interface GoalClear {
-  readonly agentId: string;
-}
-
-const goalForkedSchema = z.object({ agentId: z.string() });
-
-export class GoalForked extends AgentEvent2<z.infer<typeof goalForkedSchema>> {
-  static override readonly type = 'forked';
-  static override readonly durable = true;
-  static override readonly schema = goalForkedSchema;
-}
-export interface GoalForked {
   readonly agentId: string;
 }
 

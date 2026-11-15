@@ -8,11 +8,11 @@ import {
   ContextClear,
   ContextUndo,
 } from '#/agent/contextMemory/contextEvents';
-import { isUndoAnchorOrigin } from '#/agent/contextMemory/conversationTime';
+import { isUndoAnchorTurnPrompt, isValidUndoCount } from '#/agent/undo/turnUndo';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
-import type { ContentPart } from '#human/llm/message';
-import { defineState } from '#/state/state';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
+import { defineState, registerUndoableProtocol } from '#/state/state';
 
 import type { TurnEndReason, TurnInterruptReason } from './turnEvents';
 
@@ -27,18 +27,13 @@ export interface TurnModelState {
   };
 }
 
-const turnInputShape = {
-  agentId: z.string(),
-  input: z.custom<readonly ContentPart[]>(),
-  origin: z.custom<PromptOrigin>(),
-};
-
 const turnPromptSchema = z.object({
   agentId: z.string(),
   input: z.custom<readonly ContentPart[]>(),
   origin: z.custom<PromptOrigin>(),
   promptId: z.string().optional(),
   turnId: z.number().optional(),
+  trigger: z.enum(['normal', 'notify', 'continue']).optional(),
 });
 
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
@@ -52,9 +47,17 @@ export interface TurnPrompt {
   readonly origin: PromptOrigin;
   readonly promptId?: string;
   readonly turnId?: number;
+  readonly trigger?: 'normal' | 'notify' | 'continue';
 }
 
-const turnSteerSchema = z.object(turnInputShape);
+const turnSteerSchema = z.object({
+  agentId: z.string(),
+  input: z.custom<readonly ContentPart[]>(),
+  origin: z.custom<PromptOrigin>(),
+  messageId: z.string().optional(),
+  promptIds: z.array(z.string()).optional(),
+  turnId: z.number().optional(),
+});
 
 export class TurnSteer extends AgentEvent2<z.infer<typeof turnSteerSchema>> {
   static override readonly type = 'turn.steer';
@@ -66,6 +69,9 @@ export interface TurnSteer {
   readonly agentId: string;
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
+  readonly messageId?: string;
+  readonly promptIds?: readonly string[];
+  readonly turnId?: number;
 }
 
 const turnCancelSchema = z.object({
@@ -94,6 +100,7 @@ const turnEndedSchema = z.object({
   error: z.custom<KimiErrorPayload>().optional(),
   durationMs: z.number().optional(),
   stopReason: z.string().optional(),
+  requestId: z.string().optional(),
 });
 
 export interface TurnEndedPayload {
@@ -104,6 +111,7 @@ export interface TurnEndedPayload {
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
   readonly stopReason?: string;
+  readonly requestId?: string;
 }
 
 export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
@@ -122,6 +130,7 @@ export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
     if (this.error !== undefined) record['error'] = this.error;
     if (this.durationMs !== undefined) record['durationMs'] = this.durationMs;
     if (this.stopReason !== undefined) record['stopReason'] = this.stopReason;
+    if (this.requestId !== undefined) record['requestId'] = this.requestId;
     record['time'] = this.time;
     return record as SerializedEvent2;
   }
@@ -147,7 +156,7 @@ export const turnKey = defineState(
   .on(TurnPrompt, (s, e) => {
     const assigned = e.turnId ?? s.nextTurnId;
     const next = advanceTurnClock(s, assigned + 1);
-    if (!isUndoAnchorOrigin(e.origin)) return next;
+    if (!isUndoAnchorTurnPrompt(e)) return next;
     return { ...next, anchorTurnIds: [...s.anchorTurnIds, assigned] };
   })
   .on(TurnSteer, () => {})
@@ -184,6 +193,7 @@ export interface TurnEndedEvent {
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
+  readonly requestId?: string;
 }
 
 function advanceTurnClock(
@@ -201,3 +211,17 @@ function advanceTurnClock(
     cancelledTurnIds: [...pendingCancellations].toSorted((a, b) => a - b),
   };
 }
+
+registerUndoableProtocol({
+  events: {
+    appendLoopEvent: ContextAppendLoopEvent,
+    turnPrompt: TurnPrompt,
+    turnSteer: TurnSteer,
+    turnEnded: TurnEnded,
+    applyCompaction: ContextApplyCompaction,
+    clear: ContextClear,
+    undo: ContextUndo,
+  },
+  isUndoAnchor: (prompt) => isUndoAnchorTurnPrompt(prompt as TurnPrompt),
+  isValidUndoCount,
+});

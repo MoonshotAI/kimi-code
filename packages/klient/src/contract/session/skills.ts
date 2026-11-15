@@ -15,9 +15,11 @@ export const skillSummarySchema = z.object({
   description: z.string(),
   path: z.string(),
   source: z.enum(['project', 'user', 'extra', 'builtin']),
+  workspaceDir: z.string().optional(),
   type: z.string().optional(),
   disableModelInvocation: z.boolean().optional(),
   isSubSkill: z.boolean().optional(),
+  scopes: z.array(z.enum(['tui', 'web'])).optional(),
 });
 
 export const sessionSkillCatalogContract = {

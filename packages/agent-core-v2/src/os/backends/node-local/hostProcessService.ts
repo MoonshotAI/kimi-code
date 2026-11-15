@@ -1,9 +1,10 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { stat } from 'node:fs/promises';
 import type { Readable, Writable } from 'node:stream';
 
+import spawn from 'cross-spawn';
+
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   HostProcessError,
@@ -14,6 +15,7 @@ import {
 } from '#/os/interface/hostProcess';
 
 const isWindows: boolean = process.platform === 'win32';
+const TASKKILL_TIMEOUT_MS = 5_000;
 
 function buildSpawnOptions(options: HostProcessOptions): SpawnOptions {
   const detached = options.detached ?? !isWindows;
@@ -23,6 +25,7 @@ function buildSpawnOptions(options: HostProcessOptions): SpawnOptions {
     stdio: options.mergeStderr ? ['pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
     detached,
     windowsHide: options.windowsHide ?? true,
+    timeout: options.timeout,
   };
 
   if (options.shell !== undefined) {
@@ -39,19 +42,63 @@ function buildEnv(overrides: Record<string, string> | undefined): Record<string,
   return { ...(process.env as Record<string, string>), ...overrides };
 }
 
-function waitForSpawn(child: ChildProcess): Promise<void> {
+function waitForSpawn(child: ChildProcess, mergeStderr: boolean): Promise<IHostProcess> {
   return new Promise((resolve, reject) => {
+    const streams = [child.stdin, child.stdout, child.stderr].filter(
+      (stream): stream is Readable | Writable => stream !== null,
+    );
+    let streamError: Error | undefined;
+    const onStreamError = (error: Error): void => {
+      streamError ??= error;
+    };
+    const releaseStreams = streams.map((stream) => {
+      const onClose = (): void => {
+        stream.off('error', onStreamError);
+      };
+      stream.on('error', onStreamError);
+      stream.once('close', onClose);
+      return (): void => {
+        stream.off('error', onStreamError);
+        stream.off('close', onClose);
+      };
+    });
     const onSpawn = (): void => {
-      child.off('error', onError);
-      resolve();
+      try {
+        if (streamError !== undefined) throw streamError;
+        const proc = new HostProcess(child, mergeStderr);
+        child.off('error', onError);
+        for (const release of releaseStreams) release();
+        resolve(proc);
+      } catch (error) {
+        onError(error as Error);
+      }
     };
     const onError = (err: Error): void => {
       child.off('spawn', onSpawn);
+      child.off('error', onError);
+      for (const stream of streams) stream.destroy();
       reject(err);
     };
     child.once('spawn', onSpawn);
     child.once('error', onError);
   });
+}
+
+function spawnFailedError(
+  command: string,
+  args: readonly string[],
+  cwd: string | undefined,
+  error: unknown,
+): HostProcessError {
+  const err = error as NodeJS.ErrnoException;
+  return new HostProcessError(
+    HostProcessErrorCode.SpawnFailed,
+    `Failed to spawn "${command}": ${err.message}`,
+    {
+      details: { command, args: [...args], cwd, errno: err.code },
+      cause: error,
+    },
+  );
 }
 
 class HostProcess implements IHostProcess {
@@ -115,17 +162,32 @@ class HostProcess implements IHostProcess {
 
     if (isWindows) {
       const taskkillArgs = ['/T', '/F', '/PID', String(this.pid)];
-      return new Promise<void>((resolve) => {
-        const killer = spawn('taskkill', taskkillArgs, {
-          stdio: 'ignore',
-          windowsHide: true,
-        });
-        const done = (): void => {
-          resolve();
-        };
-        killer.once('error', done);
-        killer.once('close', done);
+      const killer = nodeSpawn('taskkill', taskkillArgs, {
+        stdio: 'ignore',
+        windowsHide: true,
       });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const exited = await Promise.race([
+        new Promise<true>((resolve) => {
+          const done = (): void => {
+            resolve(true);
+          };
+          killer.once('error', done);
+          killer.once('close', done);
+        }),
+        new Promise<false>((resolve) => {
+          timeout = setTimeout(() => {
+            resolve(false);
+          }, TASKKILL_TIMEOUT_MS);
+          timeout.unref?.();
+        }),
+      ]);
+      clearTimeout(timeout);
+      if (!exited) {
+        killer.unref();
+        killer.kill();
+      }
+      return;
     }
 
     try {
@@ -170,29 +232,26 @@ export class HostProcessService implements IHostProcessService {
     args: readonly string[] = [],
     options: HostProcessOptions = {},
   ): Promise<IHostProcess> {
-    const spawnOptions = buildSpawnOptions(options);
-    const child = spawn(command, args as string[], spawnOptions);
-    try {
-      await waitForSpawn(child);
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      throw new HostProcessError(
-        HostProcessErrorCode.SpawnFailed,
-        `Failed to spawn "${command}": ${err.message}`,
-        {
-          details: { command, args: [...args], cwd: options.cwd, errno: err.code },
-          cause: error,
-        },
-      );
+    if (options.cwd !== undefined) {
+      const cwdStat = await stat(options.cwd).catch(() => undefined);
+      if (cwdStat === undefined || !cwdStat.isDirectory()) {
+        throw new HostProcessError(
+          HostProcessErrorCode.SpawnFailed,
+          `Failed to spawn "${command}": cwd ${options.cwd} does not exist or is not a directory`,
+          {
+            details: { command, args: [...args], cwd: options.cwd },
+          },
+        );
+      }
     }
-    return new HostProcess(child, options.mergeStderr ?? false);
+    const spawnOptions = buildSpawnOptions(options);
+    const spawnImpl = isWindows && options.shell === undefined ? spawn : nodeSpawn;
+    let child: ChildProcess;
+    try {
+      child = spawnImpl(command, [...args], spawnOptions);
+      return await waitForSpawn(child, options.mergeStderr ?? false);
+    } catch (error) {
+      throw spawnFailedError(command, args, options.cwd, error);
+    }
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IHostProcessService,
-  HostProcessService,
-  ScopeActivation.OnScopeCreated,
-  'hostProcess',
-);

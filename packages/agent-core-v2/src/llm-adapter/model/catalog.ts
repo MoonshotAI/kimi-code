@@ -2,52 +2,25 @@ import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-import type { ModelCapability } from '../contract/capability';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
-import type { TokenUsage } from '#human/llm/usage';
+import type { LlmEndpoint, LlmModelSpec } from '@moonshot-ai/core/llm/request';
 import type { Protocol, ProtocolProviderOptions } from '../protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
 
-import type { ModelRecord } from './model';
+import type { ModelRecord, ModelUpgrade } from './model';
 import { effectiveModelConfig } from './model-auth';
-import type {
-  ModelRequestEvent,
-  ModelRequestInput,
-  ModelRequestParams,
-  ModelRequester,
-} from './model-requester';
 
 export interface Model {
   readonly id: string;
-  readonly name: string;
   readonly aliases: readonly string[];
   readonly protocol: Protocol;
-  readonly baseUrl?: string;
-  readonly headers: Readonly<Record<string, string>>;
-
-  readonly capabilities: ModelCapability;
-  readonly maxContextSize: number;
-  readonly maxInputSize?: number;
+  readonly spec: LlmModelSpec;
+  readonly endpoint: LlmEndpoint;
   readonly maxOutputSize?: number;
   readonly displayName?: string;
   readonly reasoningKey?: string;
-  readonly supportEfforts?: readonly string[];
-  readonly defaultEffort?: string;
-  readonly alwaysThinking: boolean;
   readonly providerType?: string;
   readonly providerName: string;
-
-  readonly credentials?: LlmCredentialProvider;
   readonly providerOptions?: ProtocolProviderOptions;
-}
-
-export interface ModelPingResult {
-  readonly ok: boolean;
-  readonly durationMs: number;
-  readonly text?: string;
-  readonly finishReason?: string;
-  readonly usage?: TokenUsage;
-  readonly error?: string;
 }
 
 export const modelCatalogItemSchema = z.object({
@@ -58,6 +31,13 @@ export const modelCatalogItemSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   support_efforts: z.array(z.string()).optional(),
   default_effort: z.string().optional(),
+  upgrade: z
+    .object({
+      model: z.string().min(1),
+      migration_markdown: z.string(),
+      retirement_at: z.string().optional(),
+    })
+    .optional(),
 });
 export type ModelCatalogItem = z.infer<typeof modelCatalogItemSchema>;
 
@@ -73,6 +53,7 @@ export const providerCatalogItemSchema = z.object({
   type: z.string().min(1),
   base_url: z.string().min(1).optional(),
   default_model: z.string().min(1).optional(),
+  api_key_env: z.string().optional(),
   has_api_key: z.boolean(),
   status: providerCatalogStatusSchema,
   models: z.array(z.string().min(1)).optional(),
@@ -88,6 +69,17 @@ export type SetDefaultModelResponse = z.infer<typeof setDefaultModelResponseSche
 export interface ProviderCredentialState {
   readonly hasApiKey: boolean;
   readonly hasOAuthToken: boolean;
+  readonly supportsAmbientCredential: boolean;
+  readonly hasCredentialConflict: boolean;
+}
+
+function toProtocolModelUpgrade(upgrade: ModelUpgrade | undefined) {
+  if (upgrade === undefined) return undefined;
+  return {
+    model: upgrade.model,
+    migration_markdown: upgrade.migrationMarkdown,
+    retirement_at: upgrade.retirementAt,
+  };
 }
 
 export function toProtocolModel(
@@ -98,11 +90,15 @@ export function toProtocolModel(
   return {
     provider: model.providerName,
     model: model.id,
-    display_name: model.displayName ?? model.name ?? model.id,
-    max_context_size: model.maxContextSize,
+    display_name: model.displayName ?? model.spec.name,
+    max_context_size: model.spec.maxContextSize ?? 0,
     capabilities: effectiveModelConfig(record, providerType ?? model.providerType).capabilities,
-    support_efforts: model.supportEfforts === undefined ? undefined : [...model.supportEfforts],
-    default_effort: model.defaultEffort,
+    support_efforts:
+      model.spec.thinking?.supportEfforts === undefined
+        ? undefined
+        : [...model.spec.thinking.supportEfforts],
+    default_effort: model.spec.thinking?.defaultEffort,
+    upgrade: toProtocolModelUpgrade(record.upgrade),
   };
 }
 
@@ -120,6 +116,7 @@ export function toProtocolModelFallback(
     capabilities: effective.capabilities,
     support_efforts: effective.supportEfforts,
     default_effort: effective.defaultEffort,
+    upgrade: toProtocolModelUpgrade(record.upgrade),
   };
 }
 
@@ -138,8 +135,13 @@ export function toProtocolProvider(
     type: provider.type ?? 'openai',
     base_url: provider.baseUrl,
     default_model: defaultModel,
+    api_key_env: provider.apiKeyEnv,
     has_api_key: credential.hasApiKey,
-    status: credential.hasApiKey || credential.hasOAuthToken ? 'connected' : 'unconfigured',
+    status: credential.hasCredentialConflict
+      ? 'error'
+      : credential.hasApiKey || credential.hasOAuthToken || credential.supportsAmbientCredential
+        ? 'connected'
+        : 'unconfigured',
     models: providerModels,
   };
 }
@@ -167,14 +169,6 @@ export interface IModelCatalog {
   readonly _serviceBrand: undefined;
 
   get(id: string): Model;
-  getRequester(id: string): ModelRequester;
-  generate(
-    id: string,
-    input: ModelRequestInput,
-    signal?: AbortSignal,
-    params?: ModelRequestParams,
-  ): AsyncIterable<ModelRequestEvent>;
-  ping(id: string): Promise<ModelPingResult>;
   findByName(name: string): readonly string[];
 
   listModels(): Promise<readonly ModelCatalogItem[]>;

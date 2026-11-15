@@ -14,7 +14,7 @@ import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { handleExport, registerExportCommand } from '#/cli/sub/export';
-import { refreshKimiRegion } from '#/utils/region';
+import { resetKimiRegionCache } from '#/utils/region';
 import type { ExportDeps } from '#/cli/sub/export';
 import type {
   ExportSessionInput,
@@ -101,13 +101,13 @@ beforeEach(() => {
   // Pin region to cn: the telemetry endpoint assertion must not follow the
   // dev machine's own login/marker state.
   vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
-  refreshKimiRegion();
+  resetKimiRegionCache();
   tmp = mkdtempSync(join(tmpdir(), 'kimi-export-'));
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  refreshKimiRegion();
+  resetKimiRegionCache();
   rmSync(tmp, { recursive: true, force: true });
   vi.clearAllMocks();
   mocks.harnessGetConfig.mockResolvedValue({
@@ -424,6 +424,9 @@ describe('kimi export', () => {
       uiMode: 'shell',
       model: 'k2',
       sessionId: undefined,
+      region: 'mainland-cn',
+      regionSource: 'env',
+      resolveRegion: expect.any(Function),
       endpoint: expect.any(Function),
       getAccessToken: expect.any(Function),
       onUnexpectedError: expect.any(Function),

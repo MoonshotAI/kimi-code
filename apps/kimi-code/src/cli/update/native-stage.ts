@@ -26,6 +26,7 @@ import {
   nativeBinaryUrl,
   selectPlatformEntry,
 } from './native-manifest';
+import { UPDATE_CHANNELS, type InstallIntent, type UpdateChannel } from './types';
 
 const StagedNativeUpdateSchema = z
   .object({
@@ -40,16 +41,36 @@ const StagedNativeUpdateSchema = z
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     exeSize: z.number().int().min(1),
     stagedAt: z.string().min(1),
+    channel: z.enum(UPDATE_CHANNELS),
     /**
      * True when the stage was produced by an explicit user-initiated
      * `kimi upgrade` (vs the passive background downloader): manual stages
      * still apply when automatic updates are opted out via env.
      */
     manual: z.boolean().optional(),
+    /** A user-confirmed cross-channel install; valid only with `manual: true`. */
+    intent: z.literal('switch-channel').optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.intent !== 'switch-channel' || value.manual === true, {
+    error: 'switch-channel stages must be manual',
+  });
 
 export type StagedNativeUpdate = z.infer<typeof StagedNativeUpdateSchema>;
+
+export function matchesStagedUpdateRequest(
+  staged: StagedNativeUpdate,
+  request: {
+    readonly version: string;
+    readonly channel: UpdateChannel;
+    readonly manual?: boolean;
+    readonly intent?: InstallIntent;
+  },
+): boolean {
+  if (staged.version !== request.version || staged.channel !== request.channel) return false;
+  if (request.intent !== 'switch-channel') return true;
+  return request.manual === true && staged.manual === true && staged.intent === 'switch-channel';
+}
 
 export function stagedExeFileName(version: string, platform: NodeJS.Platform): string {
   return platform === 'win32' ? `kimi-${version}.exe` : `kimi-${version}`;
@@ -122,7 +143,9 @@ function isSameStagedRecord(a: StagedNativeUpdate, b: StagedNativeUpdate): boole
     a.exeFileName === b.exeFileName &&
     a.sha256 === b.sha256 &&
     a.exeSize === b.exeSize &&
-    a.stagedAt === b.stagedAt
+    a.stagedAt === b.stagedAt &&
+    a.channel === b.channel &&
+    a.intent === b.intent
   );
 }
 
@@ -276,6 +299,7 @@ async function cleanupStagingOrphans(stagingDir: string): Promise<void> {
 
 export interface StageNativeUpdateOptions {
   readonly version: string;
+  readonly channel?: UpdateChannel;
   /** Path of the installed executable the staged binary will later replace. */
   readonly exePath: string;
   readonly platform?: NodeJS.Platform;
@@ -287,6 +311,7 @@ export interface StageNativeUpdateOptions {
   readonly idleTimeoutMs?: number;
   /** True when the stage answers an explicit user-initiated `kimi upgrade`. */
   readonly manual?: boolean;
+  readonly intent?: InstallIntent;
 }
 
 export type StageNativeUpdateStatus = 'already-staged' | 'staged';
@@ -420,6 +445,10 @@ export async function stageNativeUpdate(
 ): Promise<StageNativeUpdateResult> {
   const platform = options.platform ?? process.platform;
   const arch = options.arch ?? process.arch;
+  if (options.intent === 'switch-channel' && options.manual !== true) {
+    throw new Error('channel switch staging requires manual confirmation');
+  }
+  const channel = options.channel ?? 'stable';
   // Validate BEFORE anything derives a filesystem path from the version: the
   // hidden download command takes it from argv, and a non-semver could carry
   // path traversal into the cleanup paths below.
@@ -434,7 +463,17 @@ export async function stageNativeUpdate(
   const exeFileName = uniqueStagedExeFileName(options.version, platform);
 
   const existing = await readStagedNativeUpdate(options.exePath);
-  if (existing !== null && existing.version === options.version) {
+  // A channel switch never adopts a stage without the switch intent: the
+  // startup swap would discard that older version as a downgrade.
+  if (
+    existing !== null &&
+    matchesStagedUpdateRequest(existing, {
+      version: options.version,
+      channel,
+      manual: options.manual,
+      intent: options.intent,
+    })
+  ) {
     // readStagedNativeUpdate checks only the recorded size — a same-size
     // corruption after the download (disk damage, a non-durable write)
     // would still be adopted here and reported as success, only for the
@@ -478,7 +517,9 @@ export async function stageNativeUpdate(
     sha256: '',
     exeSize: 0,
     stagedAt: new Date().toISOString(),
+    channel,
     manual: options.manual === true ? true : undefined,
+    intent: options.intent === 'switch-channel' ? 'switch-channel' : undefined,
   };
 
   // The .part intermediate is just the publish name plus the suffix — the

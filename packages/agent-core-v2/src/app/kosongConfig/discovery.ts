@@ -2,6 +2,7 @@
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import { Event2 } from '#/app/event/event2';
 
 export const providerRefreshChangeSchema = z.object({
@@ -18,10 +19,18 @@ export const providerRefreshFailureSchema = z.object({
 });
 export type ProviderRefreshFailure = z.infer<typeof providerRefreshFailureSchema>;
 
+export const retiredDefaultSchema = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+  from_display_name: z.string().min(1),
+});
+export type RetiredDefault = z.infer<typeof retiredDefaultSchema>;
+
 export const refreshProviderModelsResponseSchema = z.object({
   changed: z.array(providerRefreshChangeSchema),
   unchanged: z.array(z.string().min(1)),
   failed: z.array(providerRefreshFailureSchema),
+  retired_default: retiredDefaultSchema.optional(),
 });
 export type RefreshProviderModelsResponse = z.infer<
   typeof refreshProviderModelsResponseSchema
@@ -43,6 +52,7 @@ export interface ModelCatalogChangedEvent {
   readonly changed: readonly ProviderRefreshChange[];
   readonly unchanged: readonly string[];
   readonly failed: readonly ProviderRefreshFailure[];
+  readonly retired_default?: RetiredDefault;
 }
 
 export interface RefreshProviderModelsOptions {
@@ -50,12 +60,21 @@ export interface RefreshProviderModelsOptions {
   readonly providerId?: string;
 }
 
+export interface RetiredModel {
+  readonly from: string;
+  readonly to: string;
+}
+
 export interface IProviderDiscoveryService {
   readonly _serviceBrand: undefined;
+
+  readonly onDidRetireModel: Event<RetiredModel>;
 
   refreshProviderModels(
     options?: RefreshProviderModelsOptions,
   ): Promise<RefreshProviderModelsResponse>;
+
+  retiredModelReplacement(alias: string): string | undefined;
 }
 
 export const IProviderDiscoveryService: ServiceIdentifier<IProviderDiscoveryService> =

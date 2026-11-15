@@ -21,8 +21,6 @@ import { readdir, readFile, rename, rmdir, stat, unlink, utimes } from 'node:fs/
 import { constants as osConstants } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import { gt } from 'semver';
-
 import { log } from '@moonshot-ai/kimi-code-sdk';
 
 import {
@@ -39,6 +37,7 @@ import {
   type StagedNativeUpdate,
 } from './native-stage';
 import { isAutoUpdateDisabledByEnv, shouldAutoInstallUpdates } from './preflight';
+import { decideUpdate } from './select';
 import { getNativeStagedStateFile, getNativeStagingDir } from '#/utils/paths';
 import { createFileIfAbsent } from '#/utils/persistence';
 
@@ -504,10 +503,17 @@ export async function maybeRelaunchWithStagedNativeUpdate(
     return false;
   };
 
-  // Downgrade guard: the staged version must be newer than what is running.
-  // (The user may have installed a newer build manually after we staged.)
-  if (!gt(staged.version, deps.currentVersion)) {
-    logSwap('discarding staged update (not newer)', {
+  const plan = decideUpdate(deps.currentVersion, {
+    channel: staged.channel,
+    latest: staged.version,
+  });
+  const allowed = plan.kind === 'upgrade' || (
+    plan.kind === 'switch-channel' &&
+    staged.manual === true &&
+    staged.intent === 'switch-channel'
+  );
+  if (!allowed) {
+    logSwap('discarding staged update (not an allowed update)', {
       staged: staged.version,
       current: deps.currentVersion,
     });

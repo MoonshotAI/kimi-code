@@ -4,12 +4,23 @@ export interface Expandable {
 
 /**
  * An expandable component that can say whether ctrl+o would change what it
- * shows — content it keeps out of its collapsed form. Drives the footer's
- * `ctrl+o expand` / `ctrl+o collapse` hint.
+ * shows — content it keeps out of its collapsed form.
  */
 export interface HidesContent extends Expandable {
   hasHiddenContent(): boolean;
   isExpanded(): boolean;
+}
+
+export interface OmitsExpandHint {
+  omitsExpandHint(): boolean;
+}
+
+export interface HasRowDetail {
+  renderRowDetail(width: number): string[];
+}
+
+export interface HasStatusMarker {
+  statusMarker(): string;
 }
 
 export interface Disposable {
@@ -34,6 +45,21 @@ export function hasHiddenContent(obj: unknown): boolean {
   );
 }
 
+export function countedByExpandHint(obj: unknown): boolean {
+  if (omitsExpandHint(obj)) return false;
+  return hasHiddenContent(obj);
+}
+
+function omitsExpandHint(obj: unknown): boolean {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'omitsExpandHint' in obj &&
+    typeof (obj as OmitsExpandHint).omitsExpandHint === 'function' &&
+    (obj as OmitsExpandHint).omitsExpandHint()
+  );
+}
+
 /** Whether an expandable component currently shows its expanded form. */
 export function isExpandedComponent(obj: unknown): boolean {
   return (
@@ -41,6 +67,24 @@ export function isExpandedComponent(obj: unknown): boolean {
     'isExpanded' in obj &&
     typeof (obj as HidesContent).isExpanded === 'function' &&
     (obj as HidesContent).isExpanded()
+  );
+}
+
+export function hasRowDetail(obj: unknown): obj is HasRowDetail {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'renderRowDetail' in obj &&
+    typeof (obj as HasRowDetail).renderRowDetail === 'function'
+  );
+}
+
+export function hasStatusMarker(obj: unknown): obj is HasStatusMarker {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'statusMarker' in obj &&
+    typeof obj.statusMarker === 'function'
   );
 }
 

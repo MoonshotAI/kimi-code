@@ -26,6 +26,7 @@ export const providerWireTypeSchema = z.enum([
   'openai',
   'openai_responses',
   'anthropic',
+  'bedrock',
   'google-genai',
   'vertexai',
 ]);
@@ -36,6 +37,7 @@ export const createProviderModelSchema = z.object({
   max_context_size: z.number().int().min(1),
   display_name: z.string().min(1).optional(),
   capabilities: z.array(z.string()).optional(),
+  protocol: z.enum(['anthropic', 'openai', 'openai_responses']).optional(),
   max_output_size: z.number().int().min(1).optional(),
   support_efforts: z.array(z.string().min(1)).optional(),
   adaptive_thinking: z.boolean().optional(),
@@ -79,6 +81,7 @@ export const createProviderRequestSchema = z
     id: providerIdSchema,
     type: providerWireTypeSchema,
     api_key: z.string().optional(),
+    api_key_env: z.string().optional(),
     base_url: z.string().trim().optional(),
     default_model: z.string().min(1).optional(),
     models: z.array(createProviderModelSchema).min(1),
@@ -106,6 +109,7 @@ export const replaceProviderRequestSchema = z
     new_id: providerIdSchema.optional(),
     type: providerWireTypeSchema,
     api_key: z.string().optional(),
+    api_key_env: z.string().optional(),
     base_url: z.string().trim().optional(),
     default_model: z.string().min(1).optional(),
     models: z.array(createProviderModelSchema).min(1),
@@ -143,6 +147,7 @@ export const catalogProviderItemSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   wire_type: providerWireTypeSchema.nullable(),
+  base_url: z.string().nullable(),
   guessed: z.boolean(),
   needs_base_url: z.boolean(),
   rejected: z.boolean(),
@@ -178,5 +183,6 @@ export type ImportCatalogProviderResponse = z.infer<typeof importCatalogProvider
 export const importCustomRegistryResponseSchema = z.object({
   providers: z.array(providerCatalogItemSchema),
   models_imported: z.number().int().min(0),
+  credential_env: z.record(z.string(), z.string()).optional(),
 });
 export type ImportCustomRegistryResponse = z.infer<typeof importCustomRegistryResponseSchema>;

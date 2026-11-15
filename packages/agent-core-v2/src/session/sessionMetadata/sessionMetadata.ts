@@ -25,6 +25,8 @@ export interface SessionMeta {
   readonly archived: boolean;
   readonly archivedAt?: number;
   readonly cwd?: string;
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
   readonly forkedFrom?: string;
   readonly agents?: Readonly<Record<string, AgentMeta>>;
   readonly custom?: Record<string, unknown>;
@@ -41,9 +43,11 @@ export interface ISessionMetadata {
   readonly _serviceBrand: undefined;
 
   readonly ready: Promise<void>;
+  readonly effectiveCwd: string;
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
   read(): Promise<SessionMeta>;
   update(patch: SessionMetaPatch, opts?: { readonly touchUpdatedAt?: boolean }): Promise<void>;
+  applyPromptMetadata(lastPrompt: string, title: string): Promise<boolean>;
   setTitle(title: string): Promise<void>;
   setGeneratedTitleIfUncustomized(
     title: string,

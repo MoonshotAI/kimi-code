@@ -2,8 +2,6 @@ import type { GoalSnapshot } from '#/features/goal/types';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-import type { SessionStatusResponse } from './sessionProtocol';
-
 export interface SessionWireFields {
   readonly id: string;
   readonly workspaceId: string;
@@ -20,7 +18,6 @@ export interface SessionWireFields {
 export interface ISessionLegacyService {
   readonly _serviceBrand: undefined;
 
-  status(sessionId: string): Promise<SessionStatusResponse>;
   goal(sessionId: string): Promise<GoalSnapshot | null>;
 }
 

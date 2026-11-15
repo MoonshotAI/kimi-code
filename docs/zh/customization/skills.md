@@ -8,8 +8,29 @@ Agent Skills 是 Kimi Code CLI 扩展模型能力的轻量机制。一个 Skill 
 
 Skill 文件需放在[已知的扫描目录](#skill-存放位置)中。支持两种文件结构：
 
-- **目录形式（推荐）**：在 Skills 目录下创建一个子目录，主文件命名为 `SKILL.md`，可在同目录下放置脚本、参考资料等辅助文件。同目录下同时存在 `<name>/SKILL.md` 和同名 `<name>.md` 时，以子目录为准。
-- **扁平形式**：直接使用单个 `.md` 文件，Skill 名称取文件名（去掉 `.md`）。
+- **目录形式（推荐）**：在 Skills 目录下创建一个子目录，主文件命名为 `SKILL.md`，可在同目录下放置脚本、参考资料等辅助文件。
+- **扁平形式**：不建子目录，把一个 `.md` 文件直接放在 Skills 目录下，适合不需要辅助文件的简单 Skill。
+
+两种结构都会注册出 Skill，区别只在文件组织方式：
+
+```text
+skills/
+├── review-pr/              # 目录形式 → Skill 名 review-pr
+│   ├── SKILL.md            # 主文件
+│   └── checklist.md        # 辅助文件，正文用 ${KIMI_SKILL_DIR} 引用
+└── commit.md               # 扁平形式 → Skill 名 commit
+```
+
+Skill 名的推导规则：
+
+- 目录形式取 frontmatter 的 `name` 字段（必填，见下文表格）；惯例让子目录名与 `name` 保持一致——`review-pr/SKILL.md` 里写 `name: review-pr`，注册为 `review-pr`。
+- 扁平形式的 `name` 可省略，省略时取文件名去掉 `.md` 扩展名：`commit.md` 注册为 `commit`。注意「去掉 `.md`」只发生在注册后的 Skill 名上——磁盘上的文件必须带 `.md` 扩展名才会被扫描到，不要真的创建一个没有扩展名的 `commit` 文件。
+- 同一目录下 `<name>/SKILL.md` 与 `<name>.md` 同时存在时，以目录形式为准，扁平文件被忽略。
+
+扁平形式还有两点限制：
+
+- 只有直接放在 Skills 目录顶层的 `.md` 文件会被识别；子目录里散放的 `.md`（`SKILL.md` 除外）不会被当作 Skill。
+- 扁平 Skill 没有自己的目录，`${KIMI_SKILL_DIR}` 指向 Skills 目录本身，不便携带辅助文件——需要辅助文件时请改用目录形式。
 
 ### 文件格式
 
@@ -39,7 +60,7 @@ arguments:
 
 | 字段 | 说明 |
 | --- | --- |
-| `name` | Skill 名称，大小写不敏感。目录型 `SKILL.md` 必填，扁平 `.md` 省略时取文件名 |
+| `name` | Skill 名称，大小写不敏感。目录型 `SKILL.md` 必填；扁平 `.md` 省略时取文件名（不含 `.md` 扩展名） |
 | `description` | 一行总结，模型用它判断何时使用。目录型必填，扁平 `.md` 省略时取正文第一行非空内容（截至 240 字符） |
 | `type` | 类型：`prompt`（默认）、`inline`（同 `prompt`）、`flow`（仅手动调用）。其他值被跳过 |
 | `whenToUse` | 触发场景描述，也接受 `when-to-use`、`when_to_use` 写法 |
@@ -74,6 +95,8 @@ Kimi 专属用户级 Skill 目录会随 `KIMI_CODE_HOME` 移动，隔离数据�
 **项目级**（项目根 = 工作目录向上最近的含 `.git` 的目录）：
 - `.kimi-code/skills/`
 - `.agents/skills/`
+
+当工作区包含多个已配置的源目录时，Kimi Code CLI 会按上述项目根规则发现每个源目录的项目级 Skills，并合并到同一个 Skill 列表中。同名 Skill 会作为不同变体全部保留。仅按名称调用时，仍优先使用主目录，其后按工作区中的目录顺序确定默认项；菜单会显示各来源目录的最后一级名称，便于选择指定变体。无所属目录的 Skill 会在右侧显示「全局」，内置 Skill 则显示「内置」。斜杠补全中，普通命令位于前面，所有 Skill 连续归入同一个 "Skills" 分组。任意源目录中的 Skill 发生变化时，列表都会自动刷新。仅当前会话临时添加的目录不参与合并；如需使用其中的 Skills，请将该目录记住到工作区。
 
 **额外目录**：通过 `config.toml` 顶层的 `extra_skill_dirs` 声明：
 

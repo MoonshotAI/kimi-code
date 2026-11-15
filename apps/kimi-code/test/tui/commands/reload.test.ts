@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   handleReloadCommand,
@@ -16,13 +16,24 @@ import {
 } from '#/tui/commands/experimental-flags';
 import {
   createMarkdownOptions,
+  getMarkdownMermaidMode,
+  setMarkdownMermaidMode,
   setMarkdownRenderLatex,
 } from '#/tui/utils/markdown-options';
 
 const tempDirs: string[] = [];
 const originalKimiCodeHome = process.env['KIMI_CODE_HOME'];
 
+beforeEach(() => {
+  vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '');
+  vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
+  vi.stubEnv('TERM', 'xterm-256color');
+  vi.stubEnv('TERMUX_VERSION', '');
+  vi.stubEnv('TMUX', '');
+});
+
 afterEach(async () => {
+  vi.unstubAllEnvs();
   setExperimentalFeatures([]);
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
@@ -143,6 +154,27 @@ auto_install = false
     }
   });
 
+  it('applies the mermaid mode before theme application rebuilds Markdown', async () => {
+    await writeTuiConfig('[markdown]\nmermaid = "off"\n');
+    const host = makeHost();
+
+    let mermaidWhenThemeApplied: string | undefined;
+    const mutable = host as unknown as { applyTheme: unknown };
+    mutable.applyTheme = vi.fn(() => {
+      mermaidWhenThemeApplied = getMarkdownMermaidMode();
+    });
+
+    try {
+      await handleReloadTuiCommand(host);
+      expect(mermaidWhenThemeApplied).toBe('off');
+      expect(host.setAppState).toHaveBeenCalledWith(
+        expect.objectContaining({ markdown: { mermaid: 'off' } }),
+      );
+    } finally {
+      setMarkdownMermaidMode('final');
+    }
+  });
+
   it('refreshes workspace commands and lazy defaults on a session-less v2 reload', async () => {
     await writeTuiConfig('theme = "dark"\n');
     const host = makeHost();
@@ -165,9 +197,62 @@ auto_install = false
       host.refreshSlashCommandAutocomplete.mock.invocationCallOrder[0]!,
     );
     expect(host.showStatus).toHaveBeenCalledWith(
-      'Runtime and TUI config reloaded; no active session.',
+      'Environment and TUI config reloaded; no active session.',
       'success',
     );
+  });
+
+  it('applies follow_up_behavior from tui.toml', async () => {
+    await writeTuiConfig('follow_up_behavior = "steer"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.state.appState.followUpBehavior).toBe('steer');
+  });
+
+  it('returns follow_up_behavior to unset when the key is removed from tui.toml', async () => {
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost();
+    host.state.appState.followUpBehavior = 'steer';
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.state.appState.followUpBehavior).toBeUndefined();
+  });
+
+  it('notices a required restart when tui_mode differs from the running UI mode', async () => {
+    await writeTuiConfig('tui_mode = "fullscreen"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.setAppState).toHaveBeenCalledWith(
+      expect.objectContaining({ tuiMode: 'fullscreen' }),
+    );
+    expect(host.showNotice).toHaveBeenCalledWith(
+      'TUI mode takes effect after restarting Kimi Code.',
+    );
+  });
+
+  it('does not notice when tui_mode matches the running UI mode', async () => {
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.showNotice).not.toHaveBeenCalled();
+  });
+
+  it('does not notice when tui_mode is unset and experimental flag keeps fullscreen active', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost();
+    (host.state as { ui: { mode: string } }).ui.mode = 'fullscreen';
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.showNotice).not.toHaveBeenCalled();
   });
 });
 
@@ -192,9 +277,14 @@ function makeHost({
       upgrade: { autoInstall: true },
       availableModels: {},
       availableProviders: {},
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     },
+    transcriptContainer: { setPresentationOptions: vi.fn() },
     editor: {
       setDisablePasteBurst: vi.fn(),
+    },
+    ui: {
+      mode: 'regular' as const,
     },
     theme: {
       palette: {
@@ -227,6 +317,7 @@ function makeHost({
     refreshSlashCommandAutocomplete: vi.fn(),
     reloadCurrentSessionView: vi.fn(async () => {}),
     showStatus: vi.fn(),
+    showNotice: vi.fn(),
   } as unknown as SlashCommandHost & {
     readonly harness: {
       readonly reloadSession: ReturnType<typeof vi.fn>;
@@ -236,5 +327,6 @@ function makeHost({
     readonly refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
     readonly reloadCurrentSessionView: ReturnType<typeof vi.fn>;
     readonly showStatus: ReturnType<typeof vi.fn>;
+    readonly showNotice: ReturnType<typeof vi.fn>;
   };
 }

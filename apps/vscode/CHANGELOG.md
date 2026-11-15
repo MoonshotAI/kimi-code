@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.9.0
+
+### Minor Changes
+
+- [#4611](https://github.com/MoonshotAI/kimi-code/pull/4611) [`cc6b98e`](https://github.com/MoonshotAI/kimi-code/commit/cc6b98ec0eb19236c9498b55ccb68dc07d7c5b4e) Thanks [@Grapedge](https://github.com/Grapedge)! - Automatically refresh the VS Code model list on startup and every six hours.
+
+### Patch Changes
+
+- Updated dependencies [[`8019337`](https://github.com/MoonshotAI/kimi-code/commit/80193374ebb47973a97d21d0b4ce4c27128eee82)]:
+  - @moonshot-ai/kimi-code-sdk@0.23.0
+  - @moonshot-ai/migration-legacy@0.1.18
+
+## 0.8.4
+
+### Patch Changes
+
+- Updated dependencies [[`b3c6e0a`](https://github.com/MoonshotAI/kimi-code/commit/b3c6e0a75a3b1716a360a75eed7194be9b97c176)]:
+  - @moonshot-ai/kimi-code-sdk@0.22.0
+
+## 0.8.3
+
+### Patch Changes
+
+- [#4186](https://github.com/MoonshotAI/kimi-code/pull/4186) [`0341173`](https://github.com/MoonshotAI/kimi-code/commit/034117338c382efb8a7f8d13b4020e1c407fa692) Thanks [@gaoyuan1223m](https://github.com/gaoyuan1223m)! - Add Back navigation to the VS Code question prompt so users can return to earlier questions without losing answers.
+
+- Updated dependencies [[`c1459a6`](https://github.com/MoonshotAI/kimi-code/commit/c1459a61845056832b85a0a220ee11a2bc5132f8), [`9f0693b`](https://github.com/MoonshotAI/kimi-code/commit/9f0693becb63a329cbf764325688448e76f40922)]:
+  - @moonshot-ai/kimi-code-sdk@0.21.1
+  - @moonshot-ai/kimi-code-oauth@0.5.0
+
+## 0.8.2
+
+### Patch Changes
+
+- Updated dependencies [[`cbd7540`](https://github.com/MoonshotAI/kimi-code/commit/cbd754049a114ee36d1b27675c82819e4963c692), [`e5b4b88`](https://github.com/MoonshotAI/kimi-code/commit/e5b4b88ba93d5a27aa9a36cf847eed4f1aa39c48)]:
+  - @moonshot-ai/kimi-code-sdk@0.21.0
+  - @moonshot-ai/migration-legacy@0.1.17
+
+## 0.8.1
+
+### Patch Changes
+
+- [#3915](https://github.com/MoonshotAI/kimi-code/pull/3915) [`02d829e`](https://github.com/MoonshotAI/kimi-code/commit/02d829e13120781dfd2f7aa5e78b9ce56cfc013a) Thanks [@Grapedge](https://github.com/Grapedge)! - Fix the VS Code question dialog submitting unfinished custom answers when pressing Enter to confirm IME input.
+
+## 0.8.0
+
+### Minor Changes
+
+- [#3852](https://github.com/MoonshotAI/kimi-code/pull/3852) [`bbcdde0`](https://github.com/MoonshotAI/kimi-code/commit/bbcdde0b13a06fbadedca680ef565a5b01cb6c61) Thanks [@Grapedge](https://github.com/Grapedge)! - Add anonymous usage telemetry to the VS Code extension, following the VS Code telemetry setting.
+
+### Patch Changes
+
+- Updated dependencies [[`bbcdde0`](https://github.com/MoonshotAI/kimi-code/commit/bbcdde0b13a06fbadedca680ef565a5b01cb6c61)]:
+  - @moonshot-ai/kimi-telemetry@0.2.0
+
 ## 0.7.5
 
 ### Patch Changes

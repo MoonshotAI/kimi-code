@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -10,12 +10,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   flushTelemetrySync,
   initializeTelemetry,
+  setTelemetryEnabled,
   setTelemetryModel,
   shutdownTelemetry,
   track,
 } from '../src';
 import { isTelemetryDisabledByEnv } from '../src/bootstrap';
-import { TelemetryClient, resetDefaultTelemetryClientForTests } from '../src/client';
+import {
+  getDefaultTelemetryClient,
+  TelemetryClient,
+  resetDefaultTelemetryClientForTests,
+} from '../src/client';
 import { installCrashHandlersForClient, setCrashPhase, uninstallCrashHandlers } from '../src/crash';
 import { EventSink } from '../src/sink';
 import { SystemMetricsCollector } from '../src/systemMetrics';
@@ -34,6 +39,7 @@ import type {
   TelemetryEvent,
   TelemetryProperties,
   TelemetryTransport,
+  TelemetryRegionResolution,
 } from '../src/types';
 
 const tempDirs: string[] = [];
@@ -73,9 +79,14 @@ class RecordingTransport implements TelemetryTransport {
   }
 }
 
-function makeSink(transport: TelemetryTransport, flushThreshold = 10): EventSink {
+function makeSink(
+  transport: TelemetryTransport,
+  flushThreshold = 10,
+  resolveRegion?: () => TelemetryRegionResolution,
+): EventSink {
   return new EventSink({
     transport,
+    resolveRegion,
     context: {
       appName: 'kimi-code-cli',
       version: '1.2.3',
@@ -158,14 +169,14 @@ describe('TelemetryClient', () => {
     });
   });
 
-  it('forwards directly to the attached sink and can be disabled', async () => {
+  it('forwards directly to the attached sink and stops after teardown', async () => {
     const client = new TelemetryClient();
     const transport = new RecordingTransport();
     client.attachSink(makeSink(transport));
 
-    client.track('before_disable');
-    client.disable();
-    client.track('after_disable');
+    client.track('before_teardown');
+    client.teardown();
+    client.track('after_teardown');
     await client.flush();
 
     expect(transport.sent).toHaveLength(0);
@@ -249,7 +260,7 @@ describe('TelemetryClient', () => {
 
     client.setSystemMetricsCollector(first);
     client.setSystemMetricsCollector(second);
-    client.disable();
+    client.teardown();
 
     expect(first.stop).toHaveBeenCalledTimes(1);
     expect(second.stop).toHaveBeenCalledTimes(1);
@@ -298,6 +309,51 @@ describe('TelemetryClient', () => {
     expect(event?.timestamp).toBeGreaterThanOrEqual(before);
     expect(event?.timestamp).toBeLessThanOrEqual(Date.now() / 1000);
     expect(event?.properties).toEqual({});
+  });
+
+  it('drops buffered and incoming events while disabled, then resumes after re-enable', async () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    client.track('buffered');
+
+    client.setEnabled(false);
+    client.track('during');
+    client.setEnabled(true);
+    client.track('after');
+    await client.flush();
+
+    expect(transport.sent.flat().map((event) => event.event)).toEqual(['after']);
+  });
+
+  it('tolerates repeated enable and disable calls', async () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+
+    client.setEnabled(false);
+    client.setEnabled(false);
+    client.track('during');
+    client.setEnabled(true);
+    client.setEnabled(true);
+    client.track('after');
+    await client.flush();
+
+    expect(transport.sent.flat().map((event) => event.event)).toEqual(['after']);
+  });
+
+  it('toggles the default client through the module-level setter', async () => {
+    const client = getDefaultTelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+
+    setTelemetryEnabled(false);
+    track('during');
+    setTelemetryEnabled(true);
+    track('after');
+    await client.flush();
+
+    expect(transport.sent.flat().map((event) => event.event)).toEqual(['after']);
   });
 });
 
@@ -439,7 +495,7 @@ describe('SystemMetricsCollector', () => {
 describe('EventSink', () => {
   it('enriches context without mutating the original event', () => {
     const transport = new RecordingTransport();
-    const sink = makeSink(transport);
+    const sink = makeSink(transport, 10, () => ({ region: 'global', source: 'local-signals' }));
     const event: TelemetryEvent = {
       event_id: 'e1',
       device_id: 'dev',
@@ -460,16 +516,34 @@ describe('EventSink', () => {
       ui_mode: 'shell',
       model: 'kimi-k2',
       terminal: 'test-terminal',
+      region: 'global',
+      region_source: 'local-signals',
     });
   });
 
-  it('delegates retry of disk events to its transport', async () => {
+  it('delegates retry and requeues a failed flush', async () => {
     const transport = new RecordingTransport();
     const sink = makeSink(transport);
 
     await sink.retryDiskEvents();
-
     expect(transport.retryCount).toBe(1);
+
+    let failures = 0;
+    transport.send = async (events) => {
+      if (failures++ === 0) throw new Error('disk full');
+      transport.sent.push([...events]);
+    };
+    sink.accept({
+      event_id: 'e1',
+      device_id: 'dev',
+      session_id: 'ses',
+      event: 'test',
+      timestamp: 1,
+      properties: {},
+    });
+    await expect(sink.flush()).rejects.toThrow('disk full');
+    await sink.flush();
+    expect(transport.sent[0]?.[0]?.event).toBe('test');
   });
 
   it('applies a reconciled model only to events accepted after setModel', () => {
@@ -653,9 +727,10 @@ describe('AsyncTransport', () => {
     const fetchImpl = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
       new Response('', { status: 200 }),
     );
-    let endpoint = 'https://cn.test/events';
+    let endpoint: string | undefined = 'https://cn.test/events';
+    const homeDir = await tempHome();
     const transport = new AsyncTransport({
-      homeDir: await tempHome(),
+      homeDir,
       deviceId: 'dev',
       endpoint: () => endpoint,
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -668,6 +743,22 @@ describe('AsyncTransport', () => {
     endpoint = 'https://global.test/events';
     await transport.send([sampleEvent()]);
     expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://global.test/events');
+
+    endpoint = undefined;
+    await transport.send([sampleEvent('dropped')]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(() => statSync(join(homeDir, 'telemetry'))).toThrow();
+
+    const blockedHome = await tempHome();
+    writeFileSync(join(blockedHome, 'telemetry'), 'not a directory', 'utf-8');
+    const failingTransport = new AsyncTransport({
+      homeDir: blockedHome,
+      deviceId: 'dev',
+      endpoint: 'https://cn.test/events',
+      fetchImpl: vi.fn(async () => new Response('', { status: 500 })) as unknown as typeof fetch,
+      retryBackoffsMs: [],
+    });
+    await expect(failingTransport.send([sampleEvent('spooled')])).rejects.toThrow();
   });
 
   it('retries anonymously on 401 with a token', async () => {
@@ -776,26 +867,37 @@ describe('AsyncTransport', () => {
     expect(() => statSync(join(homeDir, 'telemetry'))).toThrow();
   });
 
-  it('retries disk events through the outbound pipeline and deletes the file on success', async () => {
+  it('keeps regionless disk files while the endpoint is absent and resends them once it returns', async () => {
     const homeDir = await tempHome();
     const telemetryDir = join(homeDir, 'telemetry');
     mkdirSync(telemetryDir, { recursive: true });
     const file = join(telemetryDir, 'failed_retry.jsonl');
     writeFileSync(file, `${JSON.stringify(sampleEvent('from_disk'))}\n`);
+    const expired = join(telemetryDir, 'failed_expired.jsonl');
+    writeFileSync(expired, `${JSON.stringify(sampleEvent('old'))}\n`);
+    const expiredSec = (Date.now() - DISK_EVENT_MAX_AGE_MS - 1) / 1000;
+    utimesSync(expired, expiredSec, expiredSec);
     const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    let endpoint: string | undefined;
     const transport = new AsyncTransport({
       homeDir,
       deviceId: 'dev',
-      endpoint: 'https://mock.test/events',
+      endpoint: () => endpoint,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
     await transport.retryDiskEvents();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(() => statSync(expired)).toThrow();
+    expect(readFileSync(file, 'utf-8')).toContain('from_disk');
 
+    endpoint = 'https://cn.test/events';
+    await transport.retryDiskEvents();
     const init = requestInitFrom(fetchImpl);
     const payload = JSON.parse(init.body as string) as { events: Array<{ event: string }> };
-    expect(payload.events[0]?.['event']).toBe('kfc_from_disk');
+    expect(payload.events.map((event) => event.event)).toEqual(['kfc_from_disk']);
     expect(() => statSync(file)).toThrow();
+    expect(readdirSync(telemetryDir)).toHaveLength(0);
   });
 
   it('removes expired and corrupted disk files', async () => {
@@ -944,6 +1046,93 @@ describe('telemetry bootstrap', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('starts paused and skips the disk replay when initiallyEnabled is false', async () => {
+    const homeDir = await tempHome();
+    const telemetryDir = join(homeDir, 'telemetry');
+    mkdirSync(telemetryDir, { recursive: true });
+    const spool = join(telemetryDir, 'failed_retry.jsonl');
+    writeFileSync(spool, `${JSON.stringify(sampleEvent('from_disk'))}\n`);
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir,
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+    });
+    track('dropped_while_paused');
+    await shutdownTelemetry();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(statSync(spool).isFile()).toBe(true);
+  });
+
+  it('drops events queued before initialization when bootstrap starts paused', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    track('queued_before_init');
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+    });
+    await shutdownTelemetry();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('resumes intake after a paused start without re-initialization', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+      endpoint: 'https://mock.test/events',
+    });
+    track('dropped');
+    setTelemetryEnabled(true);
+    track('sent');
+    await shutdownTelemetry();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const init = requestInitFrom(fetchImpl);
+    const payload = JSON.parse(init.body as string) as { events: Array<{ event: string }> };
+    expect(payload.events[0]?.['event']).toBe('kfc_sent');
+  });
+
+  it('replays disk events on bootstrap by default', async () => {
+    const homeDir = await tempHome();
+    const telemetryDir = join(homeDir, 'telemetry');
+    mkdirSync(telemetryDir, { recursive: true });
+    const spool = join(telemetryDir, 'failed_default.jsonl');
+    writeFileSync(spool, `${JSON.stringify(sampleEvent('from_disk'))}\n`);
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir,
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      endpoint: 'https://mock.test/events',
+    });
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+    await shutdownTelemetry();
+
+    expect(() => statSync(spool)).toThrow();
+  });
+
   it('queues singleton track calls before initialization, then flushes after bootstrap', async () => {
     const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
     vi.stubGlobal('fetch', fetchImpl);
@@ -955,6 +1144,7 @@ describe('telemetry bootstrap', () => {
       sessionId: 'ses',
       appName: 'kimi-code-cli',
       version: '1.2.3',
+      endpoint: 'https://mock.test/events',
     });
 
     await shutdownTelemetry();
@@ -1017,6 +1207,7 @@ describe('telemetry bootstrap', () => {
       appName: 'kimi-code-cli',
       version: '1.2.3',
       model: 'model-a',
+      endpoint: 'https://mock.test/events',
     });
     track('first');
     setTelemetryModel('model-b');
@@ -1232,21 +1423,43 @@ describe('crash handler', () => {
     });
   });
 
-  it('ignores aborted-operation rejections while observing', () => {
+  it('ignores aborted-operation rejections in both observing and sole-listener modes', () => {
     const client = new TelemetryClient();
     const transport = new RecordingTransport();
     client.attachSink(makeSink(transport));
     installCrashHandlersForClient(client);
+    const abort = new DOMException('The operation was aborted.', 'AbortError');
     const owner = (): void => {};
     process.on('unhandledRejection', owner);
     try {
       (process.emit as (event: string, ...args: unknown[]) => boolean)(
         'unhandledRejection',
-        new DOMException('The operation was aborted.', 'AbortError'),
+        abort,
         Promise.resolve(),
       );
     } finally {
       process.off('unhandledRejection', owner);
+    }
+
+    expect(transport.saved).toHaveLength(0);
+
+    uninstallCrashHandlers();
+    // Drop every other listener so the crash handler is the sole one, as in
+    // print/server mode; an aborted-operation rejection must not be rethrown.
+    const others = process.listeners('unhandledRejection');
+    process.removeAllListeners('unhandledRejection');
+    installCrashHandlersForClient(client);
+    try {
+      (process.emit as (event: string, ...args: unknown[]) => boolean)(
+        'unhandledRejection',
+        abort,
+        Promise.resolve(),
+      );
+    } finally {
+      uninstallCrashHandlers();
+      for (const listener of others) {
+        process.on('unhandledRejection', listener as (...args: unknown[]) => void);
+      }
     }
 
     expect(transport.saved).toHaveLength(0);

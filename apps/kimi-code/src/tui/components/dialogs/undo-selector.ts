@@ -9,6 +9,7 @@ import {
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import type { InlineSkillActivation } from '../../types';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 const MAX_VISIBLE_CHOICES = 5;
@@ -18,6 +19,7 @@ export interface UndoChoice {
   readonly id: string;
   readonly count: number;
   readonly input: string;
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
   readonly label: string;
 }
 

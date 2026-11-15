@@ -39,7 +39,6 @@
     "node_modules",
     "dist",
     "coverage",
-    "packages/kosong/test/type-safety-negative.ts",
     "**/*.disabled/**",
     "**/*.disabled"
   ]

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import { TurnTimeline } from '#/tui/utils/turn-timeline';
 import { getBuiltInPalette } from '#/tui/theme';
 
 function makeHost() {
@@ -18,7 +19,6 @@ function makeHost() {
       queuedMessageDispatchPending: false,
       theme: { palette: getBuiltInPalette('dark') },
       toolOutputExpanded: false,
-      todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
       ui: { requestRender: vi.fn() },
     },
@@ -26,6 +26,7 @@ function makeHost() {
     aborted: false,
     sessionEventUnsubscribe: undefined,
     streamingUI: {
+      timeline: new TurnTimeline(),
       setTurnId: vi.fn(),
       setStep: vi.fn(),
       flushNow: vi.fn(),
@@ -47,7 +48,6 @@ function makeHost() {
     showNotice: vi.fn(),
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
-    noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
@@ -58,6 +58,11 @@ function makeHost() {
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
     tasksBrowserController: {},
+    surveyController: {
+      notifyToolCallStarted: vi.fn(),
+      notifyToolCallEnded: vi.fn(),
+      notifySubagentSpawned: vi.fn(),
+    },
   };
   return { host: host as any };
 }
@@ -178,5 +183,15 @@ describe('SessionEventHandler step retry state', () => {
     handler.clearStepRetryAttemptTimer();
     vi.advanceTimersByTime(10_000);
     expect(host.state.appState.stepRetry).toMatchObject({ phase: 'backoff' });
+  });
+
+  it('records cache activity when a step completes without usage', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.handleEvent(
+      { type: 'turn.step.completed', sessionId: 's1', agentId: 'main', turnId: 1, step: 1 } as any,
+      vi.fn(),
+    );
+    expect(host.recordSessionActivity).toHaveBeenCalledTimes(1);
   });
 });

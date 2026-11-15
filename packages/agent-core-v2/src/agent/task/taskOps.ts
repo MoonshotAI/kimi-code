@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
 
-import type { AgentTaskNotificationContext } from './task';
 import type { AgentTaskInfo } from './types';
 
 export type TaskModelState = Map<string, AgentTaskInfo>;
@@ -28,7 +27,6 @@ export interface TaskStarted {
 const taskTerminatedSchema = z.object({
   agentId: z.string(),
   info: z.custom<AgentTaskInfo>(),
-  outputTail: z.string().optional(),
 });
 
 export class TaskTerminated extends AgentEvent2<z.infer<typeof taskTerminatedSchema>> {
@@ -39,7 +37,6 @@ export class TaskTerminated extends AgentEvent2<z.infer<typeof taskTerminatedSch
 export interface TaskTerminated {
   readonly agentId: string;
   readonly info: AgentTaskInfo;
-  readonly outputTail?: string;
 }
 
 export interface TaskTerminatedNoticePayload {
@@ -52,27 +49,6 @@ export class TaskTerminatedNotice extends AgentEvent2<TaskTerminatedNoticePayloa
   static override readonly observable = true;
 }
 export interface TaskTerminatedNotice extends TaskTerminatedNoticePayload {}
-
-export class TaskNotified extends AgentEvent2<AgentTaskNotificationContext> {
-  static override readonly type = 'task.notified';
-  static override readonly observable = true;
-}
-export interface TaskNotified extends AgentTaskNotificationContext {}
-
-const taskWaitDeliveredSchema = z.object({
-  agentId: z.string(),
-  keys: z.array(z.string()),
-});
-
-export class TaskWaitDelivered extends AgentEvent2<z.infer<typeof taskWaitDeliveredSchema>> {
-  static override readonly type = 'task.waitDelivered';
-  static override readonly durable = true;
-  static override readonly schema = taskWaitDeliveredSchema;
-}
-export interface TaskWaitDelivered {
-  readonly agentId: string;
-  readonly keys: string[];
-}
 
 export const taskKey = defineState('task', (): TaskModelState => new Map()).replayable({
   schema: z.custom<TaskModelState>(),

@@ -1,12 +1,13 @@
 /**
  * CustomRegistryImportDialog — blue rounded box that collects a custom
- * registry URL and a Bearer token before importing the registry's
+ * registry URL and an optional Bearer token before importing the registry's
  * provider entries.
  *
  * Geometry mirrors `ApiKeyInputDialogComponent` so the chrome stays
  * consistent with the API-key login flow. Two fields, switched with
  * Tab / Shift-Tab / Up / Down; Enter advances to the next field (and submits
- * on the last field), Esc cancels. Both fields are required.
+ * on the last field), Esc cancels. Only the URL is required — public
+ * registries take an empty token.
  */
 
 import {
@@ -23,7 +24,7 @@ import { currentTheme } from '#/tui/theme';
 
 export interface CustomRegistryImportValue {
   readonly url: string;
-  readonly apiKey: string;
+  readonly apiKey?: string;
 }
 
 export type CustomRegistryImportResult =
@@ -31,9 +32,8 @@ export type CustomRegistryImportResult =
   | { readonly kind: 'cancel' };
 
 const TITLE = 'Import custom provider registry';
-const SUBTITLE_DEFAULT = 'Paste an api.json URL and its Bearer token.';
+const SUBTITLE_DEFAULT = 'Paste an api.json URL; the Bearer token is optional.';
 const SUBTITLE_URL_EMPTY = 'Registry URL cannot be empty.';
-const SUBTITLE_TOKEN_EMPTY = 'Bearer token cannot be empty.';
 const FOOTER_NOT_LAST = 'Tab / ↑↓ to switch  ·  Enter for next field  ·  Esc to cancel';
 const FOOTER_LAST = 'Tab / ↑↓ to switch  ·  Enter to submit  ·  Esc to cancel';
 
@@ -72,7 +72,7 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
   private readonly onDone: (result: CustomRegistryImportResult) => void;
   private activeField: FieldId = 'url';
   private done = false;
-  private hint: 'none' | 'url-empty' | 'token-empty' = 'none';
+  private hint: 'none' | 'url-empty' = 'none';
 
   constructor(
     onDone: (result: CustomRegistryImportResult) => void,
@@ -144,12 +144,7 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
 
     const border = (s: string): string => currentTheme.fg('primary', s);
     const titleStyled = currentTheme.boldFg('textStrong', TITLE);
-    const subtitleText =
-      this.hint === 'url-empty'
-        ? SUBTITLE_URL_EMPTY
-        : this.hint === 'token-empty'
-          ? SUBTITLE_TOKEN_EMPTY
-          : SUBTITLE_DEFAULT;
+    const subtitleText = this.hint === 'url-empty' ? SUBTITLE_URL_EMPTY : SUBTITLE_DEFAULT;
     const subtitleStyled = currentTheme.fg('textDim', subtitleText);
     const footerStyled = currentTheme.fg(
       'textDim',
@@ -157,7 +152,7 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     );
 
     const urlLabelText = 'Registry URL';
-    const tokenLabelText = 'Bearer token';
+    const tokenLabelText = 'Bearer token (optional)';
     const urlLabelStyled =
       this.activeField === 'url'
         ? currentTheme.boldFg('accent', urlLabelText)
@@ -233,14 +228,12 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
       this.activeField = 'url';
       return;
     }
-    if (tokenValue.length === 0) {
-      this.hint = 'token-empty';
-      this.activeField = 'token';
-      return;
-    }
 
     this.done = true;
-    this.onDone({ kind: 'ok', value: { url: urlValue, apiKey: tokenValue } });
+    this.onDone({
+      kind: 'ok',
+      value: { url: urlValue, apiKey: tokenValue.length > 0 ? tokenValue : undefined },
+    });
   }
 
   private cancel(): void {

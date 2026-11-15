@@ -239,4 +239,46 @@ describe('BannerComponent', () => {
     expect(lines[0]).toContain('✦ Tip:');
     expect(lines[0]).toContain('Use /help');
   });
+
+  it('renders a title-only banner without a main-text line', () => {
+    const lines = new BannerComponent(makeBannerState({ tag: 'Big news', mainText: null })).render(80);
+    expect(lines.length).toBe(2);
+    expect(lines[0]).toContain('✦ Big news');
+    expect(lines[1]).toBe('');
+  });
+
+  it('renders subtext under a title-only banner', () => {
+    const lines = new BannerComponent(
+      makeBannerState({ tag: 'Big news', mainText: null, subText: 'Details here' }),
+    ).render(80);
+    expect(lines.length).toBe(3);
+    expect(lines[0]).toContain('✦ Big news');
+    expect(lines[1]).toContain('Details here');
+    expect(lines[2]).toBe('');
+  });
+
+  it('wraps a long title-only tag instead of dropping it', () => {
+    const width = 20;
+    const lines = new BannerComponent(
+      makeBannerState({ tag: 'A fairly long banner title', mainText: null }),
+    ).render(width);
+    const joined = lines.join('\n');
+    for (const word of ['fairly', 'long', 'banner', 'title']) {
+      expect(joined).toContain(word);
+    }
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it('drops the subtext indent when a title-only banner cannot fit it', () => {
+    for (const width of [1, 2]) {
+      const lines = new BannerComponent(
+        makeBannerState({ tag: 'Big news', mainText: null, subText: 'Details here' }),
+      ).render(width);
+      for (const line of lines) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
 });

@@ -8,7 +8,21 @@ export const TowerTeardownToolInputSchema = z
     force: z
       .boolean()
       .optional()
-      .describe('Remove worktrees even when they contain uncommitted changes'),
+      .describe(
+        'Remove worktrees even when they contain uncommitted changes — a worktree whose roster agent is still running is kept regardless',
+      ),
+    exclude: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Worktree names to keep — they are skipped and reported, whatever their state',
+      ),
+    dry_run: z
+      .boolean()
+      .optional()
+      .describe(
+        'Print the would-remove / would-keep list with reasons without changing anything on disk or in state',
+      ),
   })
   .strict();
 

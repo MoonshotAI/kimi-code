@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ShellPathBridge } from '#/_base/execEnv/shellPathBridge';
+import { getShellPathBridge, type ShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
   DEFAULT_WORKSPACE_ACCESS_POLICY,
   extendWorkspaceWithSkillRoots,
@@ -122,6 +122,7 @@ describe('resolvePathAccess shell path bridge', () => {
   it('routes win32 file-tool paths through the shell path bridge', () => {
     const result = resolvePathAccessPath('/c/workspace/file.txt', {
       env: WIN_ENV,
+      shellPathBridge: getShellPathBridge(WIN_ENV),
       workspace: { workspaceDir: 'C:\\workspace', additionalDirs: [] },
       operation: 'read',
     });
@@ -131,6 +132,7 @@ describe('resolvePathAccess shell path bridge', () => {
   it('passes root-relative POSIX paths through when cygpath is unavailable', () => {
     const result = resolvePathAccessPath('/tmp/scratch.txt', {
       env: WIN_ENV,
+      shellPathBridge: getShellPathBridge(WIN_ENV),
       workspace: { workspaceDir: 'C:\\workspace', additionalDirs: [] },
       operation: 'read',
     });

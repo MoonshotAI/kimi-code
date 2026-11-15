@@ -1,4 +1,4 @@
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { describe, expect, it } from 'vitest';
 
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
@@ -63,7 +63,6 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ],
     ['AskUserQuestion', { questions: [] }],
     ['Skill', { name: 'test-skill' }],
-    ['EnterPlanMode', {}],
     ['ExitPlanMode', {}],
     ['CreateGoal', { title: 'ship it' }],
     ['GetGoal', {}],

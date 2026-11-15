@@ -161,6 +161,18 @@ describe('tool-result registry', () => {
     expect(out).toContain('src/d.ts');
   });
 
+  it('keeps the expanded Grep glance indented when it wraps', () => {
+    const renderer = pickResultRenderer('Grep');
+    const [glance] = renderer(
+      call('Grep', { pattern: 'foo' }),
+      result('src/alpha.ts\nsrc/beta.ts\nsrc/gamma.ts\nsrc/delta.ts'),
+      expandedCtx,
+    );
+    const lines = glance!.render(24).map((line) => strip(line).trimEnd());
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) expect(line).toMatch(/^ {2}\S/);
+  });
+
   it('Grep glance strips trailing :line:text in content mode', () => {
     const renderer = pickResultRenderer('Grep');
     const out = strip(

@@ -8,8 +8,8 @@
  *
  * Coverage:
  *   1. HTTP envelope unwrap throws on `code !== 0`.
- *   2. WS handshake completes (server_hello + client_hello ack).
- *   3. Subscribe ack succeeds for a real session id.
+ *   2. WS connects without a handshake.
+ *   3. Subscribe succeeds for a real session id.
  *   4. `waitForFrame` times out cleanly (no zombie waiters).
  *   5. Created session is observable via `getSession`.
  */
@@ -22,7 +22,6 @@ import type {
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { ErrorCode } from '@moonshot-ai/kap-server/protocol/error-codes';
 import type { Message } from '@moonshot-ai/kap-server/protocol/message';
-import type { SessionStatusResponse } from '@moonshot-ai/kap-server/protocol/rest-session';
 import type { Session } from '@moonshot-ai/kap-server/protocol/session';
 
 import { DaemonClient, EnvelopeError } from '../harness/index.js';
@@ -84,15 +83,11 @@ describeLive('DaemonClient (live server required)', () => {
     expect(caughtError).toBeInstanceOf(EnvelopeError);
   });
 
-  it('completes handshake (server_hello + client_hello ack)', async () => {
-    const log = createCaseLogger('client: ws handshake');
+  it('opens the WebSocket without a handshake', async () => {
+    const log = createCaseLogger('client: ws connect');
     const client = new DaemonClient({ baseUrl: BASE_URL });
     log('connect request', { url: `${BASE_URL.replace(/^http/, 'ws')}/api/v1/ws` });
-    const hello = await client.connect();
-    log('server hello', hello);
-    // heartbeat_ms is optional — kap-server omits it (no server heartbeat).
-    expect(hello.heartbeat_ms === undefined || hello.heartbeat_ms > 0).toBe(true);
-    expect(typeof hello.ws_connection_id).toBe('string');
+    await expect(client.connect()).resolves.toBeUndefined();
     await client.close();
     log('closed');
   });
@@ -104,7 +99,7 @@ describeLive('DaemonClient (live server required)', () => {
     created.push({ client, sid: session.id });
     log('created session', session);
     await client.connect();
-    log('subscribe request', { type: 'subscribe', session_ids: [session.id] });
+    log('subscribe request', { type: 'subscribe', session_id: session.id });
     await expect(client.subscribe(session.id)).resolves.toBeUndefined();
     log('subscribe accepted', { session_id: session.id });
   });
@@ -231,7 +226,7 @@ describeLive('DaemonClient (live server required)', () => {
             },
           ],
         },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       successLog('seed prompt completed', {
         prompt_id: promptResult.prompt_id,
@@ -253,14 +248,13 @@ describeLive('DaemonClient (live server required)', () => {
         body: populatedCompactRequest,
       });
 
-      const completedPromise = client.waitForFrame(
-        (f) => f.type === 'compaction.completed' && f.session_id === populated.id,
+      const compaction = await client.runUntilIdle(
+        populated.id,
+        () => client.compactSession(populated.id, populatedCompactRequest),
         { timeoutMs: PROMPT_TIMEOUT_MS },
       );
-      const compactResponse = await client.compactSession(populated.id, populatedCompactRequest);
-      successLog('rest response', compactResponse);
-      const completedFrame = await completedPromise;
-      successLog('compaction completed frame', frameForLog(completedFrame));
+      successLog('rest response', compaction.result);
+      successLog('compaction idle frame', frameForLog(compaction.finalFrame));
 
       const afterCompact = await client.listMessages(populated.id, { page_size: 100 });
       successLog('messages after compact', afterCompact);
@@ -294,7 +288,7 @@ describeLive('DaemonClient (live server required)', () => {
       const keepPrompt = await client.submitAndWait(
         session.id,
         { content: [{ type: 'text', text: 'Remember KEEP. Reply with "OK".' }] },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('keep prompt completed', {
         prompt_id: keepPrompt.prompt_id,
@@ -305,7 +299,7 @@ describeLive('DaemonClient (live server required)', () => {
       const undoPrompt = await client.submitAndWait(
         session.id,
         { content: [{ type: 'text', text: 'Remember UNDO-ME. Reply with "OK".' }] },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('undo prompt completed', {
         prompt_id: undoPrompt.prompt_id,
@@ -317,14 +311,14 @@ describeLive('DaemonClient (live server required)', () => {
       log('messages before undo', beforeUndo);
       expect(textFromMessages(beforeUndo.items)).toContain('UNDO-ME');
 
-      const result = await client.undoSession(session.id, { count: 1, page_size: 100 });
+      const undoTurn = (await client.listTurns(session.id)).turns.at(-1)!;
+      const result = await client.undoSession(session.id, { turn_id: undoTurn.turn_id });
       log('undo response', result);
+      expect(result.removed_turn_ids).toEqual([undoTurn.turn_id]);
 
-      const afterText = textFromMessages(result.messages.items);
+      const afterText = textFromMessages((await client.listMessages(session.id, { page_size: 100 })).items);
       expect(afterText).toContain('KEEP');
       expect(afterText).not.toContain('UNDO-ME');
-      expect(result.messages.has_more).toBe(false);
-      expect(result.status.context_tokens).toBeGreaterThanOrEqual(0);
     },
     PROMPT_TIMEOUT_MS * 2 + 30_000,
   );
@@ -400,20 +394,16 @@ describe('DaemonClient session action helpers', () => {
     });
   });
 
-  it('undoSession posts the action-suffix route and unwraps messages plus status', async () => {
+  it('undoSession posts the action-suffix route and unwraps the removed turns', async () => {
     const log = createCaseLogger('client helper: undoSession');
     const calls: FetchCall[] = [];
-    const message = testMessage({ id: 'msg_kept', session_id: 'sess_source' });
-    const undoResponse = {
-      messages: { items: [message], has_more: false },
-      status: testSessionStatus(),
-    };
+    const undoResponse = { removed_turn_ids: ['t_undone'] };
     const client = new DaemonClient({
       baseUrl: 'http://server.example.test',
       fetchImpl: recordingFetch(okEnvelope(undoResponse), calls),
     });
 
-    const result = await client.undoSession('sess_source', { count: 2, page_size: 25 });
+    const result = await client.undoSession('sess_source', { turn_id: 't_undone', agent_id: 'main' });
 
     log('fetch calls', calls);
     log('unwrapped result', result);
@@ -421,10 +411,7 @@ describe('DaemonClient session action helpers', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe('http://server.example.test/api/v1/sessions/sess_source:undo');
     expect(calls[0]?.init.method).toBe('POST');
-    expect(parseRecordedJsonBody(calls[0])).toEqual({
-      count: 2,
-      page_size: 25,
-    });
+    expect(parseRecordedJsonBody(calls[0])).toEqual({ turn_id: 't_undone', agent_id: 'main' });
   });
 
   it('model catalog helpers call the catalog and action-suffix routes', async () => {
@@ -470,8 +457,8 @@ describe('DaemonClient session action helpers', () => {
     expect(parseRecordedJsonBody(calls[2])).toEqual({});
   });
 
-  it('child-session and pending reverse-RPC helpers call recovery routes', async () => {
-    const log = createCaseLogger('client helper: children + pending');
+  it('child-session and interaction helpers call recovery routes', async () => {
+    const log = createCaseLogger('client helper: children + interactions');
     const calls: FetchCall[] = [];
     const child = testSession({ id: 'sess_child', title: 'Child session' });
     const client = new DaemonClient({
@@ -480,9 +467,7 @@ describe('DaemonClient session action helpers', () => {
         [
           okEnvelope(child),
           okEnvelope({ items: [child], has_more: false }),
-          okEnvelope({ items: [] }),
-          okEnvelope({ items: [] }),
-          okEnvelope({ dismissed: true, dismissed_at: '2026-06-09T00:00:00.000Z' }),
+          okEnvelope({ outcome: 'dismissed', ended_at: '2026-06-09T00:00:00.000Z' }),
         ],
         calls,
       ),
@@ -497,26 +482,24 @@ describe('DaemonClient session action helpers', () => {
     await expect(
       client.listChildren('sess_parent', { page_size: 5, busy: false }),
     ).resolves.toEqual({ items: [child], has_more: false });
-    await expect(client.listPendingApprovals('sess_parent')).resolves.toEqual({ items: [] });
-    await expect(client.listPendingQuestions('sess_parent')).resolves.toEqual({ items: [] });
-    await expect(client.dismissQuestion('sess_parent', 'question_1')).resolves.toEqual({
-      dismissed: true,
-      dismissed_at: '2026-06-09T00:00:00.000Z',
+    await expect(
+      client.respondInteraction('sess_parent', 'question_1', { kind: 'question', dismissed: true }),
+    ).resolves.toEqual({
+      outcome: 'dismissed',
+      ended_at: '2026-06-09T00:00:00.000Z',
     });
 
     log('fetch calls', calls);
     expect(calls.map((call) => [call.init.method, call.url])).toEqual([
       ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/children'],
       ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/children?page_size=5&busy=false'],
-      ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/approvals?status=pending'],
-      ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/questions?status=pending'],
-      ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/questions/question_1:dismiss'],
+      ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/interactions/question_1'],
     ]);
     expect(parseRecordedJsonBody(calls[0])).toEqual({
       title: 'Child session',
       metadata: { topic: 'side-question' },
     });
-    expect(parseRecordedJsonBody(calls[4])).toEqual({});
+    expect(parseRecordedJsonBody(calls[2])).toEqual({ kind: 'question', dismissed: true });
   });
 
   it('uploadFile posts multipart form data and deleteFile hits the file route', async () => {
@@ -609,18 +592,16 @@ function okEnvelope<T>(data: T): { code: 0; msg: string; data: T; request_id: st
 
 function frameForLog(frame: {
   type: string;
-  seq?: number;
   session_id?: string;
-  id?: string;
+  request_id?: string;
   code?: number;
   msg?: string;
   payload?: unknown;
 }): Record<string, unknown> {
   return {
     type: frame.type,
-    seq: frame.seq,
     session_id: frame.session_id,
-    id: frame.id,
+    request_id: frame.request_id,
     code: frame.code,
     msg: frame.msg,
     payload: frame.payload,
@@ -649,7 +630,6 @@ function testSession(overrides: Partial<Session> = {}): Session {
     },
     permission_rules: [],
     message_count: 0,
-    last_seq: 0,
   };
   return {
     ...base,
@@ -700,20 +680,6 @@ function testMessage(overrides: Partial<Message> = {}): Message {
     content: [{ type: 'text', text: 'kept' }],
     created_at: '2026-06-09T00:00:00.000Z',
     ...overrides,
-  };
-}
-
-function testSessionStatus(): SessionStatusResponse {
-  return {
-    busy: false,
-    model: 'kimi-code/kimi-for-coding',
-    thinking_level: 'off',
-    permission: 'manual',
-    plan_mode: false,
-    swarm_mode: false,
-    context_tokens: 0,
-    max_context_tokens: 100,
-    context_usage: 0,
   };
 }
 

@@ -41,7 +41,7 @@ describe('server-e2e report', () => {
     recordReportEvent(
       {
         kind: 'http',
-        caseName: 'refresh: replay from zero',
+        caseName: 'send: prompt completes',
         method: 'POST',
         path: '/sessions',
         status: 200,
@@ -61,7 +61,7 @@ describe('server-e2e report', () => {
     recordReportEvent(
       {
         kind: 'ws',
-        caseName: 'refresh: replay from zero',
+        caseName: 'send: prompt completes',
         direction: 'lifecycle',
         message: 'open',
         url: 'ws://server.example.test/api/v1/ws',
@@ -71,13 +71,12 @@ describe('server-e2e report', () => {
     recordReportEvent(
       {
         kind: 'ws',
-        caseName: 'refresh: replay from zero',
+        caseName: 'send: prompt completes',
         direction: 'in',
         frame: {
-          type: 'prompt.completed',
-          seq: 3,
+          type: 'event.session.work_changed',
           session_id: 'session_1',
-          payload: { promptId: 'prompt_1' },
+          payload: { busy: false, last_turn_reason: 'completed' },
         },
       },
       { reportDir },
@@ -85,7 +84,7 @@ describe('server-e2e report', () => {
     recordReportEvent(
       {
         kind: 'log',
-        caseName: 'refresh: replay from zero',
+        caseName: 'send: prompt completes',
         label: 'fresh listSessions snapshot',
         value: {
           count: 20,
@@ -99,7 +98,7 @@ describe('server-e2e report', () => {
     const html = readFileSync(htmlPath, 'utf8');
 
     expect(html).toContain('Daemon E2E Report');
-    expect(html).toContain('refresh: replay from zero');
+    expect(html).toContain('send: prompt completes');
     expect(html).toContain('class="case-nav"');
     expect(html).toContain('class="case-link"');
     expect(html).toContain('Client -&gt; Server');
@@ -121,7 +120,7 @@ describe('server-e2e report', () => {
     expect(html).toContain('POST /sessions');
     expect(html).toContain('HTTP 200');
     expect(html).toContain('WS open');
-    expect(html).toContain('WS &lt;- prompt.completed');
+    expect(html).toContain('WS &lt;- event.session.work_changed');
     expect(html).toContain('<span class="event-title">fresh listSessions snapshot</span>');
     expect(html).not.toContain('<span class="event-meta">');
     expect(html).toContain('session_1');
@@ -197,7 +196,6 @@ describe('server-e2e report', () => {
             },
             permission_rules: [],
             message_count: 0,
-            last_seq: 0,
           },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
@@ -232,6 +230,45 @@ describe('server-e2e report', () => {
     });
   });
 
+  it('makes concurrent DaemonClient.connect calls wait for the same socket to open', async () => {
+    DeferredOpenWebSocket.instances = [];
+    const client = new DaemonClient({
+      baseUrl: 'http://server.example.test',
+      wsImpl: DeferredOpenWebSocket as unknown as typeof WsWebSocket,
+      logger: () => {},
+      reportDir: tmpReportDir(),
+    });
+
+    let settled = 0;
+    const first = client.connect().then(() => (settled += 1));
+    const second = client.connect().then(() => (settled += 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(0);
+    expect(DeferredOpenWebSocket.instances).toHaveLength(1);
+
+    DeferredOpenWebSocket.instances[0]!.emit('open');
+    await Promise.all([first, second]);
+    expect(settled).toBe(2);
+    await client.close();
+  });
+
+  it('closes a DaemonClient socket that was still opening when close was called', async () => {
+    DeferredOpenWebSocket.instances = [];
+    const client = new DaemonClient({
+      baseUrl: 'http://server.example.test',
+      wsImpl: DeferredOpenWebSocket as unknown as typeof WsWebSocket,
+      logger: () => {},
+      reportDir: tmpReportDir(),
+    });
+
+    const connecting = client.connect();
+    const closing = client.close();
+    DeferredOpenWebSocket.instances[0]!.emit('open');
+    await connecting;
+    await closing;
+    expect(DeferredOpenWebSocket.instances[0]!.closed).toBe(true);
+  });
+
   it('records WsClient inbound and outbound frames', async () => {
     const reportDir = tmpReportDir();
     resetReportDir(reportDir);
@@ -246,10 +283,10 @@ describe('server-e2e report', () => {
     });
 
     await ws.open();
-    ws.send({ type: 'client_hello', id: 'hello_1', payload: { client_id: 'test' } });
+    ws.send({ type: 'subscribe', request_id: 'sub_1', session_id: 'session_1' });
     FakeWebSocket.instances[0]?.emit(
       'message',
-      JSON.stringify({ type: 'server_hello', payload: { heartbeat_ms: 30_000 } }),
+      JSON.stringify({ type: 'response', request_id: 'sub_1', code: 0 }),
     );
 
     const events = readReportEvents(reportDir).filter((event) => event.kind === 'ws');
@@ -263,12 +300,12 @@ describe('server-e2e report', () => {
         expect.objectContaining({
           caseName: 'client: ws handshake',
           direction: 'out',
-          frame: { type: 'client_hello', id: 'hello_1', payload: { client_id: 'test' } },
+          frame: { type: 'subscribe', request_id: 'sub_1', session_id: 'session_1' },
         }),
         expect.objectContaining({
           caseName: 'client: ws handshake',
           direction: 'in',
-          frame: { type: 'server_hello', payload: { heartbeat_ms: 30_000 } },
+          frame: { type: 'response', request_id: 'sub_1', code: 0 },
         }),
       ]),
     );
@@ -394,7 +431,6 @@ describe('server-e2e report', () => {
             },
             permission_rules: [],
             message_count: 0,
-            last_seq: 0,
           },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
@@ -408,26 +444,11 @@ describe('server-e2e report', () => {
     });
 
     await client.createSession({ metadata: { cwd: '/tmp/workspace' } });
-    const connect = client.connect();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await client.connect();
     const ws = FakeWebSocket.instances[0];
     expect(ws).toBeDefined();
-    ws?.emit(
-      'message',
-      JSON.stringify({
-        type: 'server_hello',
-        payload: { heartbeat_ms: 30_000, ws_connection_id: 'ws_1' },
-      }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const hello = ws?.sent.map((raw) => JSON.parse(raw) as { type: string; id?: string })
-      .find((frame) => frame.type === 'client_hello');
-    expect(hello?.id).toBeDefined();
-    ws?.emit(
-      'message',
-      JSON.stringify({ type: 'ack', id: hello?.id, code: 0, payload: {} }),
-    );
-    await connect;
+    ws?.emit('message', JSON.stringify({ type: 'ping' }));
+    expect(ws?.sent.map((raw) => JSON.parse(raw) as unknown)).toEqual([{ type: 'pong' }]);
     await client.close();
 
     const events = readReportEvents(reportDir);
@@ -441,13 +462,13 @@ describe('server-e2e report', () => {
         expect.objectContaining({
           kind: 'ws',
           direction: 'in',
-          frame: expect.objectContaining({ type: 'server_hello' }),
+          frame: { type: 'ping' },
           caseName: 'server client: custom report dir',
         }),
         expect.objectContaining({
           kind: 'ws',
           direction: 'out',
-          frame: expect.objectContaining({ type: 'client_hello' }),
+          frame: { type: 'pong' },
           caseName: 'server client: custom report dir',
         }),
       ]),
@@ -459,6 +480,24 @@ async function recordLater(reportDir: string, caseName: string, delayMs: number)
   setActiveReportCase(caseName);
   await new Promise((resolve) => setTimeout(resolve, delayMs));
   recordReportEvent({ kind: 'log', label: 'later' }, { reportDir });
+}
+
+class DeferredOpenWebSocket extends EventEmitter {
+  static instances: DeferredOpenWebSocket[] = [];
+
+  closed = false;
+
+  constructor(readonly url: string) {
+    super();
+    DeferredOpenWebSocket.instances.push(this);
+  }
+
+  send(): void {}
+
+  close(): void {
+    this.closed = true;
+    this.emit('close', 1000, '');
+  }
 }
 
 class FakeWebSocket extends EventEmitter {

@@ -90,9 +90,10 @@ export class ShellRunComponent extends Container {
     if (this.running) return this.runningHidesRows;
     // More physical lines than the collapsed cap is hidden for certain, even
     // for a card that finished while already expanded; a wrapped overflow
-    // shows up once a collapsed render has recorded it.
+    // shows up once a collapsed render has recorded it. The preview's hint
+    // row replaces the hidden rows, so a single hidden row gains nothing.
     return (
-      this.finalOutput.split('\n').length > SHELL_OUTPUT_PREVIEW_LINES ||
+      this.finalOutput.split('\n').length > SHELL_OUTPUT_PREVIEW_LINES + 1 ||
       this.children.some(
         (child) => child instanceof TruncatedOutputComponent && child.wasTruncated(),
       )

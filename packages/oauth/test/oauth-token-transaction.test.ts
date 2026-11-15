@@ -179,6 +179,29 @@ describe('OAuthTokenTransaction', () => {
     await subject.save(stripped);
     expect(stored).toBeUndefined();
   });
+
+  it('clears tokens only when the stored grant still matches the expected snapshot', async () => {
+    let stored: TestTokens | undefined = tokens('access-0', 'refresh-0');
+    const subject = transaction('same-server', () => stored, (value) => (stored = value));
+
+    await expect(subject.clearIfCurrent(tokens('access-9', 'refresh-9'))).resolves.toBe(false);
+    expect(stored).toEqual(tokens('access-0', 'refresh-0'));
+
+    await expect(subject.clearIfCurrent(tokens('access-0', 'refresh-0'))).resolves.toBe(true);
+    expect(stored).toBeUndefined();
+  });
+
+  it('preserves a grant saved concurrently with the expected snapshot read', async () => {
+    let stored: TestTokens | undefined = tokens('access-0', 'refresh-0');
+    const rejected = transaction('same-server', () => stored, (value) => (stored = value));
+    const peer = transaction('same-server', () => stored, (value) => (stored = value));
+    const snapshot = tokens('access-0', 'refresh-0');
+
+    await peer.save(tokens('access-1', 'refresh-1'));
+
+    await expect(rejected.clearIfCurrent(snapshot)).resolves.toBe(false);
+    expect(stored).toEqual(tokens('access-1', 'refresh-1'));
+  });
 });
 
 function transaction(

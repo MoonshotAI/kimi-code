@@ -4,7 +4,7 @@ import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/ki
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runShell } from '#/cli/run-shell';
-import { refreshKimiRegion } from '#/utils/region';
+import { resetKimiRegionCache } from '#/utils/region';
 
 import { captureProcessWrite, ExitCalled, mockProcessExit } from '../helpers/process';
 
@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => {
     tuiGetStartupMcpMs: vi.fn(async () => 0),
     tuiGetCurrentSessionId: vi.fn(() => ''),
     tuiHasSessionContent: vi.fn(() => false),
+    tuiPromptSshPassword: vi.fn(async () => 'secret'),
     createKimiDeviceId: vi.fn<CreateKimiDeviceId>(() => 'device-1'),
     initializeTelemetry: vi.fn(),
     setCrashPhase: vi.fn(),
@@ -61,9 +62,9 @@ const mocks = vi.hoisted(() => {
     resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
     flushDiagnosticLogsSync: vi.fn(),
     harnessCreatesDeviceIdOnConstruction: false,
-    execFileSync: vi.fn(() => ''),
+    execFileSync: vi.fn<(_cmd: string) => string>(() => ''),
     spawnSync: vi.fn(),
-    resolveCommandPath: vi.fn(() => '/bin/stty' as string | undefined),
+    resolveCommandPath: vi.fn<(_cmd: string) => string | undefined>(() => '/bin/stty'),
     TuiConfigParseError,
   };
 });
@@ -121,7 +122,8 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   withTelemetryContext: mocks.withTelemetryContext,
 }));
 
-vi.mock('../../src/tui/config', () => ({
+vi.mock('../../src/tui/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/tui/config.js')>()),
   loadTuiConfig: mocks.loadTuiConfig,
   TuiConfigParseError: mocks.TuiConfigParseError,
 }));
@@ -140,6 +142,7 @@ vi.mock('../../src/tui/index', () => ({
     getStartupMcpMs = mocks.tuiGetStartupMcpMs;
     getCurrentSessionId = mocks.tuiGetCurrentSessionId;
     hasSessionContent = mocks.tuiHasSessionContent;
+    promptSshPassword = mocks.tuiPromptSshPassword;
   },
 }));
 
@@ -166,13 +169,19 @@ describe('runShell', () => {
     // Pin region to cn: the telemetry endpoint assertion below must not
     // follow the dev machine's own login/marker state.
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
-    refreshKimiRegion();
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '');
+    vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', '');
+    vi.stubEnv('TERM', 'xterm-256color');
+    vi.stubEnv('TERMUX_VERSION', '');
+    vi.stubEnv('TMUX', '');
+    resetKimiRegionCache();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
-    refreshKimiRegion();
+    resetKimiRegionCache();
     mocks.harnessGetConfig.mockResolvedValue({
       providers: {},
       defaultModel: 'k2',
@@ -186,6 +195,7 @@ describe('runShell', () => {
       (homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home',
     );
     mocks.resolveCommandPath.mockImplementation(() => '/bin/stty');
+    mocks.execFileSync.mockImplementation(() => '');
     mocks.harnessCreatesDeviceIdOnConstruction = false;
   });
 
@@ -201,6 +211,7 @@ describe('runShell', () => {
     skillsDirs: [],
     agent: undefined,
     agentFiles: [],
+    environment: undefined,
   };
 
   function stubTuiStartup(): void {
@@ -241,6 +252,24 @@ describe('runShell', () => {
     expect(mocks.kimiHarnessConstructor).toHaveBeenCalledTimes(1);
   });
 
+  it('routes SSH password requests to the TUI after startup', async () => {
+    stubTuiStartup();
+    await runShell(minimalCliOptions, '1.2.3-test');
+    const options = mocks.kimiHarnessConstructor.mock.calls[0]![0] as {
+      sshPassword: {
+        prompt: (environmentId: string) => Promise<string | undefined>;
+        askpassCommand: readonly string[];
+      };
+    };
+    await expect(options.sshPassword.prompt('dev-box')).resolves.toBe('secret');
+    expect(mocks.tuiPromptSshPassword).toHaveBeenCalledExactlyOnceWith('dev-box');
+    expect(options.sshPassword.askpassCommand).toEqual([
+      process.execPath,
+      ...process.execArgv,
+      process.argv[1],
+    ]);
+  });
+
   it('constructs KimiHarness and KimiTUI with startup input', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
@@ -263,6 +292,7 @@ describe('runShell', () => {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
+      environment: undefined,
       addDirs: ['../shared', '/tmp/extra'],
     };
 
@@ -305,6 +335,9 @@ describe('runShell', () => {
       uiMode: 'shell',
       model: 'k2',
       sessionId: undefined,
+      region: 'mainland-cn',
+      regionSource: 'env',
+      resolveRegion: expect.any(Function),
       endpoint: expect.any(Function),
       getAccessToken: expect.any(Function),
       onUnexpectedError: expect.any(Function),
@@ -328,6 +361,7 @@ describe('runShell', () => {
       },
       version: '1.2.3-test',
       workDir: process.cwd(),
+      resolvedTuiMode: 'regular',
       telemetryDisabled: false,
     });
     expect(mocks.tuiStart).toHaveBeenCalledOnce();
@@ -338,6 +372,8 @@ describe('runShell', () => {
       init_ms: expect.any(Number),
       mcp_ms: 47,
       tui_mode: 'regular',
+      tui_mode_config: 'unset',
+      tui_mode_fallback: undefined,
     });
   });
 
@@ -383,6 +419,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: 'reviewer',
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -426,6 +463,7 @@ describe('runShell', () => {
         skillsDirs: ['/skills'],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -461,6 +499,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -503,6 +542,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -548,6 +588,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -560,6 +601,8 @@ describe('runShell', () => {
       init_ms: expect.any(Number),
       mcp_ms: 47,
       tui_mode: 'regular',
+      tui_mode_config: 'unset',
+      tui_mode_fallback: undefined,
     });
   });
 
@@ -584,6 +627,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -637,6 +681,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -650,6 +695,74 @@ describe('runShell', () => {
         editorCommand: 'vim',
         notifications: { enabled: true, condition: 'always' },
       },
+    });
+  });
+
+  it('passes the KIMI_CODE_TUI_ANIMATION_FPS frame rate to the TUI', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', '25');
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: '',
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
+        environment: undefined,
+      },
+      '1.2.3-test',
+    );
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({ animationFrameRate: 25, startupNotice: undefined });
+  });
+
+  it('adds an ignored KIMI_CODE_TUI_ANIMATION_FPS to the startup notice after a tui.toml warning', async () => {
+    vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', 'fast');
+    mocks.loadTuiConfig.mockRejectedValue(
+      new mocks.TuiConfigParseError({
+        theme: 'dark',
+        editorCommand: null,
+        notifications: { enabled: true, condition: 'unfocused' },
+      }),
+    );
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: '',
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
+        environment: undefined,
+      },
+      '1.2.3-test',
+    );
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({
+      animationFrameRate: undefined,
+      startupNotice: 'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.\n' +
+        'Ignored KIMI_CODE_TUI_ANIMATION_FPS="fast": expected a whole number from 1 to 60.',
     });
   });
 
@@ -677,6 +790,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -716,6 +830,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -767,6 +882,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -811,6 +927,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       ),
@@ -820,6 +937,8 @@ describe('runShell', () => {
     expect(mocks.harnessTrack).toHaveBeenCalledWith('exit', {
       duration_ms: expect.any(Number),
       tui_mode: 'regular',
+      tui_mode_config: 'unset',
+      tui_mode_fallback: undefined,
     });
     expect(mocks.shutdownTelemetry).toHaveBeenCalledOnce();
     expect(mocks.harnessClose).toHaveBeenCalledOnce();
@@ -853,6 +972,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -870,6 +990,8 @@ describe('runShell', () => {
       expect(mocks.lifecycleTrack).toHaveBeenCalledWith('exit', {
         duration_ms: expect.any(Number),
         tui_mode: 'regular',
+        tui_mode_config: 'unset',
+        tui_mode_fallback: undefined,
       });
       expect(mocks.harnessTrack).not.toHaveBeenCalledWith('exit', expect.anything());
       expect(mocks.shutdownTelemetry).toHaveBeenCalledOnce();
@@ -910,6 +1032,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -958,6 +1081,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
         { migrateOnly: true },
@@ -979,5 +1103,82 @@ describe('runShell', () => {
     } finally {
       stderrSpy.mockRestore();
     }
+  });
+
+  it('resolves fullscreen by default when KIMI_CODE_EXPERIMENTAL_FLAG is enabled and tui_mode is unset', async () => {
+    stubTuiStartup();
+    await withEnv({ KIMI_CODE_EXPERIMENTAL_FLAG: '1' }, async () => {
+      await runShell(minimalCliOptions, '1.2.3-test');
+    });
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({ resolvedTuiMode: 'fullscreen' });
+    expect(mocks.harnessTrack).toHaveBeenCalledWith(
+      'startup_perf',
+      expect.objectContaining({
+        tui_mode_config: 'unset',
+        tui_mode_fallback: undefined,
+      }),
+    );
+  });
+
+  it('keeps explicit regular in tui.toml even when KIMI_CODE_EXPERIMENTAL_FLAG is enabled', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      tuiMode: 'regular',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await withEnv({ KIMI_CODE_EXPERIMENTAL_FLAG: '1' }, async () => {
+      await runShell(minimalCliOptions, '1.2.3-test');
+    });
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({ resolvedTuiMode: 'regular' });
+    expect(mocks.harnessTrack).toHaveBeenCalledWith(
+      'startup_perf',
+      expect.objectContaining({
+        tui_mode_config: 'regular',
+        tui_mode_fallback: undefined,
+      }),
+    );
+  });
+
+  it('records tui_mode_fallback when fullscreen is downgraded by tmux -CC control mode', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      tuiMode: 'fullscreen',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+    mocks.resolveCommandPath.mockImplementation((cmd: string) =>
+      cmd === 'tmux' ? '/usr/bin/tmux' : '/bin/stty',
+    );
+    mocks.execFileSync.mockImplementation((cmd: string) => (cmd === '/usr/bin/tmux' ? '1\n' : ''));
+
+    await withEnv(
+      {
+        TMUX: '/tmp/tmux-501/default,123,0',
+        TERM_PROGRAM: 'tmux',
+        TERM: 'tmux-256color',
+      },
+      async () => {
+        await runShell(minimalCliOptions, '1.2.3-test');
+      },
+    );
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput).toMatchObject({ resolvedTuiMode: 'regular' });
+    expect(mocks.harnessTrack).toHaveBeenCalledWith(
+      'startup_perf',
+      expect.objectContaining({
+        tui_mode: 'regular',
+        tui_mode_config: 'fullscreen',
+        tui_mode_fallback: 'tmux_cc',
+      }),
+    );
   });
 });

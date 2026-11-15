@@ -15,7 +15,7 @@ const DEFAULT_MAIN_AGENT_ID = 'main';
 export interface AdapterTokenUsage {
   readonly inputOther: number;
   readonly output: number;
-  readonly inputCacheRead: number;
+  readonly inputCacheRead?: number;
   readonly inputCacheCreation: number;
 }
 
@@ -117,7 +117,7 @@ export function adaptSdkEvent(
       event: withSessionId(
         {
           type: 'TurnBegin',
-          payload: { user_input: options.pendingInput },
+          payload: { user_input: options.pendingInput, turnIndex: sdkEvent.turnId },
         },
         sdkEvent.sessionId,
       ),
@@ -377,7 +377,10 @@ function usageDelta(current: AdapterTokenUsage, previous: AdapterTokenUsage | un
   return {
     input_other: delta(current.inputOther, previous?.inputOther),
     output: delta(current.output, previous?.output),
-    input_cache_read: delta(current.inputCacheRead, previous?.inputCacheRead),
+    input_cache_read:
+      previous === undefined
+        ? current.inputCacheRead
+        : optionalDelta(current.inputCacheRead, previous.inputCacheRead),
     input_cache_creation: delta(
       current.inputCacheCreation,
       previous?.inputCacheCreation,
@@ -388,6 +391,11 @@ function usageDelta(current: AdapterTokenUsage, previous: AdapterTokenUsage | un
 function delta(current: number, previous: number | undefined): number {
   if (previous === undefined || current < previous) return current;
   return current - previous;
+}
+
+function optionalDelta(current: number | undefined, previous: number | undefined): undefined | number {
+  if (current === undefined || previous === undefined) return undefined;
+  return delta(current, previous);
 }
 
 function resetTurnUsage(state: EventAdapterState, agentId: string): EventAdapterState {

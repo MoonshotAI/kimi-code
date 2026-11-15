@@ -1,5 +1,6 @@
+import type { KimiHarnessEnvironmentOptions } from '#/kimi-harness';
 export { KimiHarness } from '#/kimi-harness';
-export type { KimiHarnessRuntimeOptions } from '#/kimi-harness';
+export type { KimiHarnessEnvironmentOptions, KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
 export {
@@ -17,9 +18,9 @@ export {
   type ValidateKimiConfigTomlInput,
 } from '#/config-rpc';
 export { SDKRpcClientBase } from '#/rpc';
+export type { ConfigSectionChange } from '#/rpc';
 export { KimiForCodingProvider } from '#/kimi-code-model-provider';
 export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
-export { removeProviderFromConfig } from '#/v2/config-mapper';
 
 export {
   applyCatalogProvider,
@@ -27,6 +28,7 @@ export {
   catalogModelToAlias,
   catalogProviderModels,
   CatalogFetchError,
+  RegistryImportError,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,
@@ -63,6 +65,23 @@ export {
   redact,
   resolveGlobalLogPath,
 } from '#/logging/index';
+export {
+  computeUpdateStatus,
+  isMissingMarketplaceTokenError,
+  isTrustedPluginMarketplaceUrl,
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  parsePluginMarketplace,
+  marketplaceEntryInstallableOnHost,
+  marketplaceEntrySupportsClient,
+  marketplaceEntryVisibleOnHost,
+  pluginClientForIdentity,
+  PLUGIN_MARKETPLACE_CLASSIFICATIONS,
+  PLUGIN_MARKETPLACE_CLIENTS,
+  PLUGIN_MARKETPLACE_TIERS,
+  readPluginMarketplace,
+  withLatestVersions,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+export { PluginAvailabilityStore } from '@moonshot-ai/agent-core-v2/app/plugin/availability';
 export { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
 export type { LogContext, LogLevel, LogPayload, Logger } from '#/logging/index';
 
@@ -71,7 +90,6 @@ export { resolveConfigPath } from '@moonshot-ai/agent-core-v2';
 export { limitAgentReplayByTurns } from '#/replay';
 export { parseAgentFileText, resolveAgentPath } from '@moonshot-ai/agent-core-v2';
 export { SECONDARY_DERIVED_MODEL_ALIAS } from '#/config/index';
-export { PRIMARY_SUBAGENT_MODEL_CHOICE } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 
 export { installGlobalProxyDispatcher } from '#/proxy';
 
