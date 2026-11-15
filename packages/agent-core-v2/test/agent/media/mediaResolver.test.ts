@@ -201,6 +201,7 @@ function requester(opts: {
   headers?: Record<string, string>;
   uploadVideo?: VideoUploader;
   uploadImage?: ImageUploader;
+  fileExists?: (id: string) => Promise<boolean>;
   credentialProvider?: LlmCredentialProvider;
 }): TestMediaResolution {
   const model: TestMediaResolution['model'] = {
@@ -228,6 +229,7 @@ function requester(opts: {
             ...(opts.uploadVideo === undefined ? [] : ['video' as const]),
             ...(opts.uploadImage === undefined ? [] : ['image' as const]),
           ]),
+          exists: opts.fileExists,
           upload: async (file, { signal }) => {
             if (file.kind === 'video') {
               const part = await opts.uploadVideo!(
@@ -365,7 +367,7 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(upload).toHaveBeenCalledTimes(1);
   });
 
-  it('reuses a persisted upload across resolver instances without re-uploading', async () => {
+  it('re-uploads a persisted video when the remote file no longer exists', async () => {
     const files = new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]);
     const blobs = blobStore();
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
@@ -376,15 +378,17 @@ describe('AgentMediaResolverService video strategy', () => {
       requester({ uploadVideo: upload1 }),
     );
 
+    const fileExists = vi.fn(async () => false);
     const upload2 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-2'));
     const out = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
       [message],
-      requester({ uploadVideo: upload2 }),
+      requester({ uploadVideo: upload2, fileExists }),
     );
 
-    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(firstPart(out)).toEqual(msPart('prov-2'));
+    expect(fileExists).toHaveBeenCalledWith('prov-1', expect.anything());
     expect(upload1).toHaveBeenCalledTimes(1);
-    expect(upload2).not.toHaveBeenCalled();
+    expect(upload2).toHaveBeenCalledTimes(1);
   });
 
   type TagCase = {
@@ -947,6 +951,11 @@ describe('AgentMediaResolverService image upload', () => {
     const mockFetch: typeof fetch = async (input, init) => {
       const httpRequest = new Request(input, init);
       const path = new URL(httpRequest.url).pathname;
+      if (httpRequest.method === 'GET') {
+        expect(path).toBe('/v1/files/uploaded-screenshot');
+        urls.push(path);
+        return Response.json({ id: 'uploaded-screenshot' });
+      }
       expect(httpRequest.method).toBe('POST');
       urls.push(path);
       if (path === '/v1/files') {
@@ -987,7 +996,12 @@ describe('AgentMediaResolverService image upload', () => {
       for await (const event of events) eventTypes.push(event.type);
       expect(eventTypes).toContain('finish');
     }
-    expect(urls).toEqual(['/v1/files', '/v1/chat/completions', '/v1/chat/completions']);
+    expect(urls).toEqual([
+      '/v1/files',
+      '/v1/chat/completions',
+      '/v1/files/uploaded-screenshot',
+      '/v1/chat/completions',
+    ]);
     for (const body of bodies) {
       const { messages: wireMessages } = JSON.parse(body) as { messages: unknown[] };
       expect(wireMessages).toContainEqual(expect.objectContaining({
@@ -1003,25 +1017,29 @@ describe('AgentMediaResolverService image upload', () => {
     }
   });
 
-  it('uploads an image once and serves later resolves from the cached reference', async () => {
-    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
+  it('re-uploads an image when its memoized remote file no longer exists', async () => {
+    const upload = vi.fn()
+      .mockResolvedValueOnce(msImagePart('img-1'))
+      .mockResolvedValueOnce(msImagePart('img-2'));
+    const fileExists = vi.fn(async () => false);
     const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
-    const req = requester({ uploadImage: upload });
+    const req = requester({ uploadImage: upload, fileExists });
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
     const first = await resolveMedia(res, [message], req);
     const second = await resolveMedia(res, [message], req);
 
     expect(firstPart(first)).toEqual(msImagePart('img-1'));
-    expect(firstPart(second)).toEqual(msImagePart('img-1'));
-    expect(upload).toHaveBeenCalledTimes(1);
+    expect(firstPart(second)).toEqual(msImagePart('img-2'));
+    expect(fileExists).toHaveBeenCalledWith('img-1', expect.anything());
+    expect(upload).toHaveBeenCalledTimes(2);
     expect(upload).toHaveBeenCalledWith(
       { data: PNG_BYTES, mimeType: 'image/png', filename: 'pic.png' },
       expect.anything(),
     );
   });
 
-  it('reuses a persisted image upload across resolver instances without re-uploading', async () => {
+  it('validates a persisted image upload across resolver instances and re-uploads only when missing', async () => {
     const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
     const blobs = blobStore();
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
@@ -1032,15 +1050,28 @@ describe('AgentMediaResolverService image upload', () => {
       requester({ uploadImage: upload1 }),
     );
 
+    const available = vi.fn(async () => true);
     const upload2 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-2'));
-    const out = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
+    const cached = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
       [message],
-      requester({ uploadImage: upload2 }),
+      requester({ uploadImage: upload2, fileExists: available }),
     );
 
-    expect(firstPart(out)).toEqual(msImagePart('img-1'));
-    expect(upload1).toHaveBeenCalledTimes(1);
+    expect(firstPart(cached)).toEqual(msImagePart('img-1'));
+    expect(available).toHaveBeenCalledWith('img-1', expect.anything());
     expect(upload2).not.toHaveBeenCalled();
+
+    const missing = vi.fn(async () => false);
+    const upload3 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-3'));
+    const refreshed = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
+      [message],
+      requester({ uploadImage: upload3, fileExists: missing }),
+    );
+
+    expect(firstPart(refreshed)).toEqual(msImagePart('img-3'));
+    expect(missing).toHaveBeenCalledWith('img-1', expect.anything());
+    expect(upload1).toHaveBeenCalledTimes(1);
+    expect(upload3).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to the inline base64 part when the upload fails for a non-auth reason', async () => {

@@ -33,6 +33,7 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -108,7 +109,7 @@ describe('Agent loop', () => {
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "model": "mock-model", "thinkingEffort": "off", "maxContextTokens": 1000000 }
       [wire] tools.set_active_tools      { "agentId": "main", "names": [], "time": "<time>" }
-      [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
+      [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "createdAt": "<time>" }
       [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal", "time": "<time>" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
       [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
@@ -198,7 +199,7 @@ describe('Agent loop', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "model": "mock-model", "thinkingEffort": "off", "maxContextTokens": 1000000 }
-      [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
+      [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "createdAt": "<time>" }
       [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal", "time": "<time>" }
       [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
       [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
@@ -549,7 +550,7 @@ describe('Agent loop', () => {
     expect(await ctx.untilApproval(true)).toMatchInlineSnapshot(`
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "model": "mock-model", "thinkingEffort": "off", "maxContextTokens": 1000000 }
       [wire] tools.set_active_tools          { "agentId": "main", "names": [ "Lookup" ], "time": "<time>" }
-      [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
+      [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "createdAt": "<time>" }
       [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "trigger": "normal", "time": "<time>" }
       [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
       [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
@@ -584,12 +585,12 @@ describe('Agent loop', () => {
       [wire] interaction.resolved                { "agentId": "main", "id": "<approval-1>", "response": { "decision": "approved", "selectedLabel": "approve" }, "time": "<time>" }
       [emit] permission.approval.resolved        { "time": "<time>", "id": "<approval-1>", "sessionId": "test-session", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "moon" } }, "toolInput": { "query": "moon" }, "decision": "approved", "selectedLabel": "approve" }
       [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "result": { "decision": "approved", "selectedLabel": "approve" }, "agentId": "main", "time": "<time>" }
-      [emit] tool.call.started                   { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }
-      [emit] tool.updated                        { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
+      [emit] tool.call.started                   { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }
+      [emit] tool.updated                        { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
       [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
-      [emit] tool.updated                        { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
-      [emit] tool.updated                        { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "success", "detached": false, "fields": {} }
-      [emit] tool.result                         { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": "lookup-result" }
+      [emit] tool.updated                        { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
+      [emit] tool.updated                        { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "success", "detached": false, "fields": {} }
+      [emit] tool.result                         { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "output": "lookup-result" }
       [emit] turn.step.completed                 { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }
       [emit] context.spliced                     { "time": "<time>", "agentId": "main", "start": 2, "deleteCount": 0, "messages": [ { "role": "tool", "content": [ { "type": "text", "text": "lookup-result" } ], "toolCallId": "call_lookup" } ] }
       [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-4>", "toolCallId": "call_lookup", "result": { "output": "lookup-result" } }, "time": "<time>" }
@@ -1050,27 +1051,54 @@ describe('Agent loop', () => {
     });
   });
 
-  it('runs a queued notify in a new turn after stopTurn', async () => {
-    profile.update({ activeToolNames: [] });
+  it('tracks a subagent run through a tool-only notify handoff', async () => {
+    const lookupCall: ToolCall = {
+      type: 'function',
+      id: 'call_lookup',
+      name: 'Lookup',
+      arguments: '{"query":"moon"}',
+    };
+    const lookupTool: ExecutableTool<{ query: string }> = {
+      name: 'Lookup',
+      description: 'Look up a short test value.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      resolveExecution: () => ({
+        approvalRule: 'Lookup',
+        execute: async () => ({ output: 'lookup-result' }),
+      }),
+    };
+    profile.update({ activeToolNames: ['Lookup'] });
+    ctx.get(IAgentToolRegistryService).register(lookupTool);
 
-    loop.hooks.onDidFinishStep.register('test-continue-like-stop-hook', async (hookCtx, next) => {
+    loop.hooks.onDidFinishStep.register('test-notify-handoff', async (hookCtx, next) => {
       if (hookCtx.turnId === 0) loop.notify();
       await next();
     });
-    loop.hooks.onDidFinishStep.register('test-hard-stop', async (hookCtx, next) => {
-      if (hookCtx.turnId === 0) hookCtx.stopTurn = true;
-      await next();
-    });
 
-    ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
+    ctx.mockNextResponse({ type: 'text', text: '' }, lookupCall);
     ctx.mockNextResponse({ type: 'text', text: 'Notify answer.' });
 
-    const { turn } = submitTurn(loop, 'hello');
-    await ctx.untilTurnEnd();
-    await ctx.untilTurnEnd();
+    const run = await runAgentTurn(
+      ctx.get(IAgentLifecycleService).handleOf('main')!,
+      { kind: 'prompt', prompt: 'hello' },
+      { signal: new AbortController().signal },
+    );
+    const completion = expect(run.completion).resolves.toMatchObject({ summary: 'Notify answer.' });
+    await ctx.untilApproval(true);
+    await completion;
 
     expect(ctx.llmCalls).toHaveLength(2);
-    await expect(turn!.result).resolves.toEqual({
+    await expect(loop.settled()).resolves.toEqual({
+      type: 'completed',
+      steps: 1,
+      truncated: false,
+    });
+    await expect(run.turn!.result).resolves.toEqual({
       type: 'completed',
       steps: 1,
       truncated: false,

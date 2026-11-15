@@ -17,6 +17,7 @@ import type { WaitForTasks } from './tool/tasks';
 import type { ToolCompletionFactory } from './tool/outcome';
 
 export interface LoopToolContext {
+  readonly origin: 'loop';
   readonly turnId: number;
   readonly step?: number;
   readonly trace?: LLMRequestTrace;
@@ -33,11 +34,12 @@ export interface LoopToolExecutor {
 export interface CreateLoopOptions {
   readonly createTurnExecution?: TurnExecutionFactory;
   readonly executor: LoopToolExecutor;
-  readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'turnId'>;
+  readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'origin' | 'turnId'>;
   readonly hooks?: readonly HookRegistration[];
   readonly input?: LoopInput;
   readonly abortGraceMs?: number;
   readonly completionEntry?: ToolCompletionFactory;
+  readonly shouldQueueTaskNotification?: (taskId: string) => boolean;
   readonly onListenerError?: (error: unknown, event: LoopEmitted) => void;
 }
 
@@ -51,6 +53,7 @@ export interface Loop {
   readonly policy: PolicyRegistry;
   submit(entry: UserEntry): LoopAck<'prompt.submitted'> | undefined;
   notify(entry: UserEntry): LoopAck<'prompt.notified'> | undefined;
+  recordNotification(entry: UserEntry): LoopAck<'prompt.notified'> | undefined;
   remind(...entries: readonly RemindEntry[]): LoopAck<'prompt.reminded'> | undefined;
   flushReminders(): void;
   steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined;

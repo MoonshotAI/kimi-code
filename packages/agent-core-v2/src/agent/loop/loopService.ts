@@ -20,12 +20,12 @@ import { IAgentTaskHistoryService } from '#/agent/task/taskService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
-import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { IAgentTaskOutputService, taskNotificationId } from '#/agent/task/taskOutput';
 import { restoreTaskCompletions } from '#/agent/task/completionRestore';
 import { completionEntry as coreCompletionEntry, type ToolCompletionInput } from './core/tool/outcome';
 import { IConfigService } from '#/app/config/config';
 import { type ContentPart, type ToolDescription as Tool, type UserMessage } from '#human/llm/message';
-import { BugIndicatingError, ErrorCodes, Error2 } from '#/errors';
+import { BugIndicatingError, ErrorCodes, Error2, isError2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import { newMessageId } from '#/agent/contextMemory/messageId';
@@ -125,9 +125,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly pendingReminders: HistoryMessage[] = [];
   private readonly pendingNotifications: UserEntry[] = [];
   private readonly pendingSendNowNotifications = new Set<string>();
+  private readonly suppressedTaskNotifications = new Set<string>();
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private historySnapshotDepth = 0;
+  private taskReconciliation: Promise<void> | undefined;
   private loop: Loop | undefined;
   private initialized = false;
   private startPromise: Promise<void> | undefined;
@@ -386,17 +388,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
       const tools = initialTools === undefined ? this.requestFactory.baselineTools() : [...initialTools];
-      const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
-      await taskHistory.reconcile();
-      const completions = await restoreTaskCompletions({
-        wire: this.wire,
-        agentId: this.scopeContext.agentId,
-        taskOutputs: this.taskOutputs,
-        messages: seededMessages ?? snapshot.input.messages ?? [],
-        pending: snapshot.input.inbox?.notify ?? [],
-        isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
-      });
-      this.createLoopFromSnapshot(snapshot, tools, completions, seededMessages);
+      this.createLoopFromSnapshot(snapshot, tools, seededMessages);
+      await this.taskReconciliation;
     } finally {
       lease.release();
     }
@@ -405,13 +398,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private createLoopFromSnapshot(
     snapshot: LoopJournalSnapshot,
     tools: readonly Tool[],
-    completions: readonly UserEntry[],
     seededMessages?: readonly HistoryMessage[],
     minimumNextTurnId = 0,
     historyRevision?: number,
   ): void {
     this.initialized = true;
     const loop = createLoop({
+      shouldQueueTaskNotification: (taskId) => !this.suppressedTaskNotifications.has(taskId),
       completionEntry: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
         if (handler?.snapshot().fields.task === undefined) {
@@ -444,10 +437,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           tools,
         },
         messages: seededMessages === undefined ? snapshot.input.messages : [...seededMessages],
-        inbox: {
-          ...snapshot.input.inbox,
-          notify: [...(snapshot.input.inbox?.notify ?? []), ...completions],
-        },
         nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId),
         historyRevision,
       },
@@ -476,6 +465,51 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       this.maybeSettle();
     });
+    this.scheduleTaskReconciliation();
+    this.maybeSettle();
+  }
+
+  private scheduleTaskReconciliation(seededMessages?: readonly HistoryMessage[]): void {
+    const previous = this.taskReconciliation?.catch(() => undefined) ?? Promise.resolve();
+    const current = previous.then(() => this.reconcileTasks(seededMessages));
+    this.taskReconciliation = current;
+    void current.catch((error) => {
+      this.logger.error('background task reconciliation failed', { error });
+    });
+  }
+
+  private async reconcileTasks(seededMessages?: readonly HistoryMessage[]): Promise<void> {
+    const loop = this.loop;
+    if (loop === undefined) return;
+    let completions: readonly UserEntry[] = [];
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const snapshot = this.journal.snapshot();
+        this.profileAdapter.restore(snapshot);
+        const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
+        await taskHistory.reconcile();
+        completions = await restoreTaskCompletions({
+          wire: this.wire,
+          agentId: this.scopeContext.agentId,
+          taskOutputs: this.taskOutputs,
+          messages: seededMessages ?? snapshot.input.messages ?? [],
+          pending: [
+            ...(snapshot.input.inbox?.notify ?? []),
+            ...(snapshot.input.inbox?.remind ?? []),
+            ...loop.state.inbox.notify,
+            ...loop.state.inbox.remind,
+            ...this.pendingNotifications,
+            ...this.pendingReminders,
+          ],
+          isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
+        });
+        break;
+      } catch (error) {
+        if (!isError2(error) || error.code !== ErrorCodes.RECORDS_WRITE_FAILED || attempt >= 2) throw error;
+        await this.wire.settled();
+      }
+    }
+    for (const completion of completions) loop.recordNotification(completion);
     this.drainPendingToLoop();
     this.maybeSettle();
   }
@@ -502,6 +536,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         ? { ...current, status: 'failed' as const }
         : current;
     void this.dispatcher.dispatch(new TaskTerminated({ agentId: this.scopeContext.agentId, info }));
+    if (this.suppressedTaskNotifications.delete(info.taskId)) this.dropTaskNotification(info.taskId);
+  }
+
+  private dropTaskNotification(taskId: string): void {
+    for (const status of TERMINAL_STATUSES) this.dropNotification(taskNotificationId(taskId, status));
   }
 
   async initializeHistory(messages: readonly HistoryMessage[]): Promise<void> {
@@ -528,6 +567,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const minimumNextTurnId = loop.state.nextTurnId;
     const historyRevision = loop.historyRevision + 1;
     const baselineTools = loop.state.profile.tools ?? [];
+    await this.taskReconciliation;
     const lease = this.runGate.acquire();
     try {
       await loop.reset(async () => {
@@ -535,35 +575,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         await this.wire.drainPersisted().catch(() => undefined);
         const snapshot = this.journal.snapshot();
         this.profileAdapter.restore(snapshot);
-        const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
-        await taskHistory.reconcile();
-        const completions = await restoreTaskCompletions({
-          wire: this.wire,
-          agentId: this.scopeContext.agentId,
-          taskOutputs: this.taskOutputs,
-          messages: seededMessages ?? snapshot.input.messages ?? [],
-          pending: snapshot.input.inbox?.notify ?? [],
-          isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
-        });
-        const input = {
-          ...snapshot,
-          input: {
-            ...snapshot.input,
-            profile: { systemPrompt: this.getSystemPrompt(), tools: baselineTools },
-            messages: seededMessages === undefined ? snapshot.input.messages : [...seededMessages],
-            inbox: {
-              ...snapshot.input.inbox,
-              notify: [...(snapshot.input.inbox?.notify ?? []), ...completions],
-            },
-            nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId),
-            historyRevision,
-          },
+        return {
+          ...snapshot.input,
+          profile: { systemPrompt: this.getSystemPrompt(), tools: baselineTools },
+          messages: seededMessages === undefined ? snapshot.input.messages : [...seededMessages],
+          nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId),
+          historyRevision,
         };
-        return input.input;
       });
       this.turns.invalidateHistory();
-      this.drainPendingToLoop();
+      this.scheduleTaskReconciliation(seededMessages);
       this.maybeSettle();
+      await this.taskReconciliation;
     } finally {
       lease.release();
     }
@@ -579,12 +602,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.pendingNotifications.length = 0;
     this.turns.close(reason);
     this.closePromise = (async () => {
-      this.loop?.flushReminders();
-      await this.loop?.close();
-      await this.turns.drain();
-      await this.journal.settled();
-      await this.wire.drainPersisted();
-      this.maybeSettle();
+      try {
+        await this.taskReconciliation;
+      } finally {
+        this.loop?.flushReminders();
+        await this.loop?.close();
+        await this.turns.drain();
+        await this.journal.settled();
+        await this.wire.drainPersisted();
+        await this.wire.flush();
+        this.maybeSettle();
+      }
     })();
     return this.closePromise;
   }
@@ -909,6 +937,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.loop?.abortTool(toolCallId, reason);
   }
 
+  suppressTaskNotifications(taskIds: readonly string[]): void {
+    for (const taskId of taskIds) {
+      this.suppressedTaskNotifications.add(taskId);
+      this.dropTaskNotification(taskId);
+    }
+  }
+
   registerToolBatchStarting(hook: import('./core/index').LoopHooks['tool.batch-starting']): IDisposable {
     const registration = { point: 'tool.batch-starting' as const, id: randomUUID(), hook };
     this.batchStartingHooks.set(registration.id, registration);
@@ -1016,16 +1051,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  async settled(): Promise<void> {
+  async settled(): Promise<TurnResult | undefined> {
     await this.startPromise;
+    await this.taskReconciliation;
     const loop = this.loop;
     if (loop === undefined) {
-      if (!this.hasPendingRequests()) return;
+      if (!this.hasPendingRequests()) return this.turns.lastResult;
       await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
-      return;
+      return this.turns.lastResult;
     }
     await loop.waitForIdle();
     await this.turns.drain();
+    await this.wire.flush();
+    return this.turns.lastResult;
   }
 
   async retry(): Promise<TurnResult | undefined> {

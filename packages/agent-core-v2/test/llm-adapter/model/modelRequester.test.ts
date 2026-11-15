@@ -467,7 +467,7 @@ describe('generateModel request execution', () => {
     expect(seen).toEqual(['sk-1']);
   });
 
-  it('uploadImage uses the capability declaration and validates Kimi upload responses', async () => {
+  it('uploadImage uses the capability declaration, validates Kimi uploads, and checks cached files', async () => {
     const model = modelWith(createStaticCredentialProvider('sk-1'));
     const initial = new ProtocolAdapterRegistry().request(model);
     await expect(
@@ -516,8 +516,11 @@ describe('generateModel request execution', () => {
       ...failures.map(({ body }) => Response.json(body)),
       Response.json({ id: 'img-ready', extract_status: 'ready', status: 'uploaded' }),
     ];
+    const requests: Request[] = [];
     const mockFetch: typeof fetch = async (input) => {
-      if (new Request(input).url === 'data:,') return new Response();
+      const request = new Request(input);
+      requests.push(request);
+      if (request.url === 'data:,') return new Response();
       return responses.shift()!;
     };
     const input = { data: new Uint8Array([1]), mimeType: 'image/png' };
@@ -545,6 +548,27 @@ describe('generateModel request execution', () => {
     });
     expect(seen).toEqual(['sk-1']);
     expect(responses).toHaveLength(0);
+
+    responses.push(
+      Response.json({ id: 'img-ready' }),
+      Response.json({ error: { message: 'file not found' } }, { status: 404 }),
+      Response.json(
+        { error: { message: 'Invalid request: blob ID k3.missing does not exist' } },
+        { status: 400 },
+      ),
+    );
+    const fileContext = {
+      endpoint: { baseUrl: 'https://example.test/v1', fetch: mockFetch },
+      signal: new AbortController().signal,
+    };
+    await expect(kimiFiles.exists!('img-ready', fileContext)).resolves.toBe(true);
+    await expect(kimiFiles.exists!('deleted-file', fileContext)).resolves.toBe(false);
+    await expect(kimiFiles.exists!('k3.missing', fileContext)).resolves.toBe(false);
+    expect(requests.slice(-3).map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+      ['GET', '/v1/files/img-ready'],
+      ['GET', '/v1/files/deleted-file'],
+      ['GET', '/v1/files/k3.missing'],
+    ]);
   });
 
   it('reports the event-loop-busy overlap of the decode window as clientBlockedMs', async () => {

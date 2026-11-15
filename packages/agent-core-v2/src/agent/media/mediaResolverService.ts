@@ -22,6 +22,7 @@ import {
   mediaCredentialProvider,
   mediaSupportForRequest,
   supportsLlmUpload,
+  uploadedMediaExists,
   videoUploaderFor,
   type ImageUploader,
   type MediaKindSupport,
@@ -281,14 +282,21 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     }
     const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
     const memoed = this.resolved.get(cacheKey);
-    if (memoed !== undefined && mediaAcceptsSource(support, memoed)) return memoed;
+    if (memoed?.type === 'image_url' && mediaAcceptsSource(support, memoed)) {
+      const id = mediaFileIdOf(memoed) ?? msFileIdFromUrl(mediaUrlOf(memoed));
+      if (id === undefined || (await this.cachedUploadAvailable(request, id, signal))) return memoed;
+      this.resolved.delete(cacheKey);
+    }
     const cachedLlmFileId = await this.readCachedUpload(IMAGE_CACHE_SCOPE, cacheKey);
     if (cachedLlmFileId !== undefined) {
       const part: ContentPart = {
         type: 'image_url',
         imageUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId },
       };
-      if (mediaAcceptsSource(support, part)) {
+      if (
+        mediaAcceptsSource(support, part) &&
+        (await this.cachedUploadAvailable(request, cachedLlmFileId, signal))
+      ) {
         this.resolved.set(cacheKey, part);
         return part;
       }
@@ -456,8 +464,13 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       : `${ref.fileId}\0${providerKey}`;
 
     const memoed = this.resolved.get(cacheKey);
-    if (memoed !== undefined && (memoed.type === 'text' || mediaAcceptsSource(support, memoed))) {
-      return this.memoedOutcome(ref, memoed);
+    if (memoed?.type === 'text') return this.memoedOutcome(ref, memoed);
+    if (memoed?.type === 'video_url' && mediaAcceptsSource(support, memoed)) {
+      const id = mediaFileIdOf(memoed) ?? msFileIdFromUrl(mediaUrlOf(memoed));
+      if (id === undefined || (await this.cachedUploadAvailable(request, id, signal))) {
+        return this.memoedOutcome(ref, memoed);
+      }
+      this.resolved.delete(cacheKey);
     }
 
     const { part, memoize } = await this.resolveVideoUncached(
@@ -495,7 +508,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         type: 'video_url',
         videoUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId },
       };
-      if (mediaAcceptsSource(support, part)) return { part, memoize: true };
+      if (
+        mediaAcceptsSource(support, part) &&
+        (await this.cachedUploadAvailable(request, cachedLlmFileId, signal))
+      ) {
+        return { part, memoize: true };
+      }
     }
     const tagPath = await this.displayPath(ref);
 
@@ -590,6 +608,23 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       const canonical = await this.mediaStore.read(ref.fileId);
       if (canonical === undefined) throw new Error(`media ${ref.fileId} is unavailable`);
       return { bytes: Buffer.from(canonical.data), filename: canonical.name };
+    }
+  }
+
+  private async cachedUploadAvailable(
+    request: InitializedLlmRequester,
+    id: string,
+    signal: AbortSignal | undefined,
+  ): Promise<boolean> {
+    try {
+      return await runWithCredentialRecovery(
+        mediaCredentialProvider(request),
+        () => uploadedMediaExists(request, id, signal),
+        signal,
+      );
+    } catch (error) {
+      if (signal?.aborted || isMediaUploadAuthError(error)) throw error;
+      return true;
     }
   }
 
