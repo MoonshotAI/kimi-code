@@ -212,6 +212,7 @@ Session actions are non-CRUD operations on one session. Following the `:{action}
 | `POST /api/v1/sessions/{session_id}:compact` | Manually compact the main agent's context |
 | `POST /api/v1/sessions/{session_id}:undo` | Undo a turn and the turns after it |
 | `POST /api/v1/sessions/{session_id}:cancel` | Cancel a target agent's running turn (defaults to main agent) and optional background tasks |
+| `POST /api/v1/sessions/{session_id}:continue` | Continue the main agent's interrupted, failed, or unfinished turn without a new user message |
 | `POST /api/v1/sessions/{session_id}:btw` | Start a read-only side conversation |
 | `POST /api/v1/sessions/{session_id}:archive` | Archive the session |
 | `POST /api/v1/sessions/{session_id}:restore` | Unarchive the session |
@@ -294,6 +295,16 @@ On success, `data` is `{ cancelled }`: `true` when a running turn or background 
 Cancelling a turn does not clear the queue: queued user prompts and user steering messages not yet inserted are kept and start after the stopped turn ends; queued skill activations are cancelled. See [Stopping a turn](./server-api-conversation.md#stopping-a-turn) for the flow.
 
 - `40401`: the session or specified `agent_id` does not exist
+
+#### `POST /api/v1/sessions/{session_id}:continue`
+
+Continues `main`'s interrupted, failed, or crash-unfinished work without submitting a new user message. Takes an empty JSON body; cold sessions are resumed from disk automatically.
+
+The call does not wait for the turn to finish: it triggers continuation and returns `{ continued: true }` immediately while turn and item frames stream over WebSocket (a fresh continuation turn contains no opening `user_message` item).
+
+- `40401`: the session does not exist
+- `40901`: `main` has a running turn or an active context compaction
+- `40940`: the session has no turns yet, or `main`'s latest turn already `completed` normally (nothing to continue)
 
 #### `POST /api/v1/sessions/{session_id}:btw`
 

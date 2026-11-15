@@ -212,6 +212,7 @@
 | `POST /api/v1/sessions/{session_id}:compact` | 手动压缩 main agent 的上下文 |
 | `POST /api/v1/sessions/{session_id}:undo` | 撤销某一轮及其之后的轮次 |
 | `POST /api/v1/sessions/{session_id}:cancel` | 取消指定 Agent（默认 main agent）正在运行的轮次及可选后台任务 |
+| `POST /api/v1/sessions/{session_id}:continue` | 在无新用户消息的情况下继续 main agent 被中断或失败的轮次 |
 | `POST /api/v1/sessions/{session_id}:btw` | 开启只读的旁路对话 |
 | `POST /api/v1/sessions/{session_id}:archive` | 归档会话 |
 | `POST /api/v1/sessions/{session_id}:restore` | 取消归档 |
@@ -294,6 +295,16 @@
 取消轮次不会清空队列：排队的用户提示词和尚未插入的用户插话保留下来，在被取消的轮次结束后开始执行；排队的 Skill 激活被取消。流程见 [停止](./server-api-conversation.md#停止)。
 
 - `40401`：会话或指定的 `agent_id` 不存在
+
+#### `POST /api/v1/sessions/{session_id}:continue`
+
+在没有新用户消息的情况下继续 `main` 被中断、失败或因进程异常退出而未完结的工作。请求体为空；冷会话会自动从磁盘恢复。
+
+调用不阻塞等待轮次执行完成，触发继续后立即返回 `{ continued: true }`，后续轮次与条目经 WebSocket 推送（新开启的续跑轮次不含 `user_message` 条目）。
+
+- `40401`：会话不存在
+- `40901`：`main` 正在运行轮次或正在压缩上下文
+- `40940`：会话尚未产生轮次，或 `main` 最近一轮已正常 `completed`（无可继续的中断或失败轮次）
 
 #### `POST /api/v1/sessions/{session_id}:btw`
 

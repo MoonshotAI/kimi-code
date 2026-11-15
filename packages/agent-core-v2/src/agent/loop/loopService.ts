@@ -1336,6 +1336,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.turns.drain();
   }
 
+  continueTurn(): void {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    const loop = this.loop;
+    if (loop === undefined) return;
+    if (this.pendingReminders.length > 0 && this.quiescenceDepth === 0) {
+      loop.remind(...this.pendingReminders.splice(0));
+    }
+    loop.continue({ force: true });
+  }
+
   async retry(): Promise<TurnResult | undefined> {
     const previous = this.turns.lastResult;
     this.loop?.continue({ force: true });

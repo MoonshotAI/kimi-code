@@ -42,6 +42,7 @@ import {
   deleteSessionResponseSchema,
   getSessionResponseSchema,
   sessionCancelResponseSchema,
+  sessionContinueResponseSchema,
   takeoverSessionResponseSchema,
 } from '../protocol/rest-session';
 
@@ -185,6 +186,13 @@ function patchSessionAction(paths: Record<string, unknown>): void {
     'runSessionCancelAction',
     sessionCancelResponseSchema,
     cancelSessionRequestSchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'continue',
+    'runSessionContinueAction',
+    sessionContinueResponseSchema,
   );
   projectSessionAction(
     paths,

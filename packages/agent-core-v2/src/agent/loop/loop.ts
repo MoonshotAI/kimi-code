@@ -53,6 +53,7 @@ export interface AgentActivitySnapshot {
 
 export interface LoopSnapshot {
   readonly state: 'idle' | 'running';
+  readonly hasUnfinishedTurn?: boolean;
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
   readonly queue: readonly UserMessage[];
@@ -300,6 +301,8 @@ export interface IAgentLoopService extends EffectiveProfileReader {
   snapshot(): LoopSnapshot;
 
   settled(): Promise<void>;
+
+  continueTurn(): void;
 
   retry(): Promise<TurnResult | undefined>;
 

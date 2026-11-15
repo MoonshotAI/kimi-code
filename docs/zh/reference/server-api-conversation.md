@@ -380,6 +380,7 @@ S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id"
 
 - [`POST /api/v1/sessions/{session_id}:cancel`](./server-api-sessions.md#post-api-v1-sessions-session-id-cancel) 取消目标 Agent（默认 `main`，可通过 `agent_id` 指定子 Agent 或旁路对话 Agent）正在运行的轮次；传入 `include_background: true` 时还会一并停止已转入后台运行的任务。有活动轮次或后台任务被取消时返回 `{ cancelled: true }`，否则幂等返回 `{ cancelled: false }`。未完结的 `tool_call` 以 `outcome: "interrupted"` 结束并保留已产生输出，未决交互以 `cancelled` 结束。
 - 取消轮次不会清空排队中的用户输入；若希望连同排队输入全部停下，先对排队项调用 [`POST .../prompts/{prompt_id}:abort`](./server-api-sessions.md#post-api-v1-sessions-session-id-prompts-prompt-id-abort) 撤回，再调用 `:cancel`。
+- **中断或失败后继续**：当 `main` 的上一轮以 `interrupted` 或 `failed` 结束（或存在进程异常退出留下的未结轮次）时，调用 [`POST /api/v1/sessions/{session_id}:continue`](./server-api-sessions.md#post-api-v1-sessions-session-id-continue) 可在不发送新用户消息的情况下让 `main` 从中断处继续执行（新轮次无开场 `user_message`，调用立即返回 `{ continued: true }`，后续事件经 WebSocket 推送）。
 
 ### 撤销
 

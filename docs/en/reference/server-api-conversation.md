@@ -380,6 +380,7 @@ S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id"
 
 - [`POST /api/v1/sessions/{session_id}:cancel`](./server-api-sessions.md#post-api-v1-sessions-session-id-cancel) cancels the target agent's running turn (defaults to `main`, or pass `agent_id` for a subagent or side conversation); passing `include_background: true` also stops detached background tasks. Returns `{ cancelled: true }` when a turn or background task was cancelled, or `{ cancelled: false }` idempotently when idle. In-flight `tool_call` items end with `outcome: "interrupted"` and keep partial output; pending interactions end with `cancelled`.
 - Cancelling a turn does not clear queued user prompts. To stop everything, first withdraw queued prompts with [`POST .../prompts/{prompt_id}:abort`](./server-api-sessions.md#post-api-v1-sessions-session-id-prompts-prompt-id-abort), then call `:cancel`.
+- **Continuing after an interruption or failure**: When `main`'s latest turn ended as `interrupted` or `failed` (or an unfinished turn remains after an unclean exit), call [`POST /api/v1/sessions/{session_id}:continue`](./server-api-sessions.md#post-api-v1-sessions-session-id-continue) to resume `main` without sending a new user message (the new turn has no opening `user_message`; the call returns `{ continued: true }` immediately and streams events over WebSocket).
 
 ### Undo
 

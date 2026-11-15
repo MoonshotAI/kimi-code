@@ -38,6 +38,10 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
+import { IAgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentState';
+import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
+import { turnKey } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { wrapSystemReminder } from '@moonshot-ai/agent-core-v2/features/reminder/systemReminder';
 import {
   legacySessionMetaScopeOf,
   sessionScopeOf,
@@ -55,6 +59,7 @@ import {
   deleteSessionResponseSchema,
   forkSessionRequestSchema,
   sessionCancelResponseSchema,
+  sessionContinueResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
   takeoverSessionResponseSchema,
@@ -426,6 +431,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           compactSessionResponseSchema,
           undoSessionResponseSchema,
           sessionCancelResponseSchema,
+          sessionContinueResponseSchema,
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
           deleteSessionResponseSchema,
@@ -440,6 +446,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
         [ErrorCode.TURN_NOT_FOUND]: {},
+        [ErrorCode.TURN_NOT_CONTINUABLE]: {},
       },
       description: 'Run a session action',
       tags: ['sessions'],
@@ -522,6 +529,7 @@ type SessionAction =
   | 'compact'
   | 'undo'
   | 'cancel'
+  | 'continue'
   | 'btw'
   | 'restore'
   | 'archive'
@@ -550,6 +558,7 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   compact: { body: compactSessionRequestSchema, handle: compactSessionAction },
   undo: { body: undoSessionRequestSchema, handle: undoSessionAction },
   cancel: { body: cancelSessionRequestSchema, handle: cancelSessionAction },
+  continue: { handle: continueSessionAction },
   btw: { handle: btwSessionAction },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
@@ -695,6 +704,61 @@ async function cancelSessionAction(
     'session action completed',
   );
   reply.send(okEnvelope({ cancelled }, req.id));
+}
+
+const CONTINUE_INTERRUPTED_REMINDER =
+  'No new user message was sent. Continue the interrupted work from where it stopped; do not repeat steps that already completed.';
+
+async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  await reloadOnStale(
+    core.accessor,
+    id,
+    async () => {
+      const session = await resumeSessionById(core.accessor, id);
+      if (session === undefined) {
+        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+      }
+      const agent = await ensureMainAgent(session);
+      const loop = agent.accessor.get(IAgentLoopService);
+      await loop.start();
+      const snap = loop.snapshot();
+      const compacting = agent.accessor.get(IAgentFullCompactionService).isActive();
+      if (snap.state === 'running' || snap.paused || compacting) {
+        throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
+      }
+      const hasUnfinished = snap.hasUnfinishedTurn === true;
+      const agentStates = agent.accessor.get(IAgentStateService);
+      const lastEndedReason = agentStates.has(turnKey) ? agentStates.get(turnKey).lastEnded?.reason : undefined;
+      const metaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
+      const effectiveReason = lastEndedReason ?? metaReason;
+      const isContinuableEnded = effectiveReason === 'cancelled' || effectiveReason === 'failed';
+      if (!hasUnfinished && !isContinuableEnded) {
+        throw new Error2(
+          ErrorCodes.TURN_NOT_CONTINUABLE,
+          `session ${id} has no interrupted, failed, or unfinished turn to continue`,
+        );
+      }
+      const sessionModel = loop.getModel();
+      await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
+      if (!hasUnfinished) {
+        loop.remind(
+          historyEntryFromContext({
+            role: 'user',
+            content: [{ type: 'text', text: wrapSystemReminder(CONTINUE_INTERRUPTED_REMINDER) }],
+            origin: {
+              kind: 'injection',
+              variant: 'turn_continue',
+            },
+          }),
+        );
+      }
+      loop.continueTurn();
+      requestLog(req)?.info({ session_id: id, action: 'continue' }, 'session action completed');
+      reply.send(okEnvelope({ continued: true }, req.id));
+    },
+    { retry: false },
+  );
 }
 
 async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {

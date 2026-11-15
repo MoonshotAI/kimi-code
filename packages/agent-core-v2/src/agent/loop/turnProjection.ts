@@ -251,7 +251,8 @@ export class AgentTurnProjection {
     const current = active?.current;
     const retry = active?.retry;
     return {
-      state: loop?.state.turn === undefined && active === undefined ? 'idle' : 'running',
+      state: loop?.state.status === 'running' || active !== undefined ? 'running' : 'idle',
+      hasUnfinishedTurn: loop?.state.status === 'interrupted',
       activeTurnId: loop?.state.turn?.id ?? active?.id,
       activePromptId: this.options.prompts.activePrompt()?.id,
       queue,
