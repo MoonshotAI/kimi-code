@@ -467,7 +467,7 @@ function makeSteps(entry: Entry, stats: ReaderStats): HistoryStep[] {
         const texts = parts.map((part) => {
           if (part?.type === 'text') return textOf(part.text);
           if (part?.type === 'image' || part?.type === 'document') {
-            stats[part.type === 'image' ? 'imageBlocks' : 'documentBlocks']++;
+            if (part.type === 'document') stats.documentBlocks++;
             stats.nonTextPayloadBytes += Buffer.byteLength(textOf(part));
             return `[${part.type}: non-text payload omitted]`;
           }
@@ -476,7 +476,7 @@ function makeSteps(entry: Entry, stats: ReaderStats): HistoryStep[] {
         });
         add('tool_result', texts.join('\n'), { ...block, content: undefined }, { callId: block.tool_use_id, metadata: { ...recordMetadata(entry, { ...block, content: undefined }), ...toolResultMetadata(row.toolUseResult, texts.join('\n'), stats), isError: block.is_error, exitCode: row.toolUseResult?.['exitCode'] ?? row.toolUseResult?.['exit_code'] ?? row.toolUseResult?.['code'], supplemented: entry.supplemented ?? false } });
       } else if (block.type === 'image' || block.type === 'document') {
-        stats[block.type === 'image' ? 'imageBlocks' : 'documentBlocks']++;
+        if (block.type === 'document') stats.documentBlocks++;
         stats.nonTextPayloadBytes += Buffer.byteLength(textOf(block));
         add('event', `[${block.type}: non-text payload omitted]`, { ...block, source: block.source ? { ...block.source, data: undefined } : undefined });
       } else {
