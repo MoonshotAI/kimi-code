@@ -440,7 +440,7 @@ describe('conversation contract e2e', () => {
     server = undefined;
     if (home !== undefined) await rm(home, { recursive: true, force: true });
     home = undefined;
-  });
+  }, 30000);
 
   async function boot(routes: readonly LlmRoute[]): Promise<void> {
     llm = await startMockLlm(routes);
@@ -1079,7 +1079,11 @@ describe('conversation contract e2e', () => {
 
     const freshRes = await fetch(
       `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      { method: 'POST', headers: authHeaders(server!), body: '{}' },
+      {
+        method: 'POST',
+        headers: authHeaders(server!, { 'content-type': 'application/json' }),
+        body: '{}',
+      },
     );
     expect(((await freshRes.json()) as { code: number }).code).toBe(40940);
 
@@ -1088,7 +1092,11 @@ describe('conversation contract e2e', () => {
 
     const busyRes = await fetch(
       `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      { method: 'POST', headers: authHeaders(server!), body: '{}' },
+      {
+        method: 'POST',
+        headers: authHeaders(server!, { 'content-type': 'application/json' }),
+        body: '{}',
+      },
     );
     expect(((await busyRes.json()) as { code: number }).code).toBe(40901);
 
@@ -1120,7 +1128,11 @@ describe('conversation contract e2e', () => {
 
     const completedRes = await fetch(
       `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
-      { method: 'POST', headers: authHeaders(server!), body: '{}' },
+      {
+        method: 'POST',
+        headers: authHeaders(server!, { 'content-type': 'application/json' }),
+        body: '{}',
+      },
     );
     expect(((await completedRes.json()) as { code: number }).code).toBe(40940);
 

@@ -302,6 +302,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     flushReminders() {
       stub.drainNextBatch(stub, ['message']);
     },
+    continueTurn() {},
   };
   return stub;
 }

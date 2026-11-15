@@ -723,7 +723,7 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
       const loop = agent.accessor.get(IAgentLoopService);
       await loop.start();
       const snap = loop.snapshot();
-      const compacting = agent.accessor.get(IAgentFullCompactionService).isActive();
+      const compacting = agent.accessor.get(IAgentFullCompactionService).compacting !== null;
       if (snap.state === 'running' || snap.paused || compacting) {
         throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
       }
