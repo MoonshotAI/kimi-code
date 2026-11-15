@@ -91,26 +91,6 @@
       }
     },
     {
-      // The worker closures: these modules (and everything
-      // packages/minidb/src/worker/ pulls in) are loaded by a bare
-      // node:worker_threads Worker under Node's native type stripping with
-      // `execArgv: ['--experimental-transform-types']`, which requires
-      // explicit `.ts` import specifiers (the strip loader does not remap
-      // `.js` -> `.ts`). Keep the exception scoped to exactly those closures.
-      "files": [
-        "packages/minidb/src/worker/**/*.ts",
-        "packages/minidb/src/codec.ts",
-        "packages/minidb/src/crc32.ts",
-        "packages/minidb/src/trigram.ts",
-        "packages/minidb/src/text-postings.ts",
-        "packages/minidb/src/text-index/tokenize.ts",
-        "packages/minidb/src/gen-codec.ts"
-      ],
-      "rules": {
-        "import/extensions": "off"
-      }
-    },
-    {
       "files": [
         "**/*.test.ts",
         "**/*.test.tsx",

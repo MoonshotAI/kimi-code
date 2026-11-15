@@ -182,7 +182,7 @@ describe('check-import-boundaries', () => {
 
   it('allows package imports outside kosong', () => {
     const violations = checkSource(
-      `import { something } from '@moonshot-ai/minidb';
+      `import { something } from 'pathe';
        import { Database } from 'better-sqlite3';`,
       at('log', 'log.ts'),
     );

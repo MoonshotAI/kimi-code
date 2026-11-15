@@ -7,6 +7,8 @@ import { dirname, join } from 'pathe';
 import { fileURLToPath } from 'node:url';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
+import { LifecycleScope } from '#/app/scopes';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
@@ -747,11 +749,6 @@ export class SqliteQueryStore extends Disposable implements IQueryStore {
     );
   }
 
-  protected async resetAfterPeerRebuild(): Promise<void> {
-    const db = await this.openDb();
-    this.storeEpochCounter = resetDatabase(db);
-  }
-
   storeEpoch(): number {
     return this.storeEpochCounter;
   }
@@ -860,3 +857,11 @@ class SqliteQuery<T> implements IQuery<T> {
     });
   }
 }
+
+registerScopedService(
+  LifecycleScope.App,
+  IQueryStore,
+  SqliteQueryStore,
+  ScopeActivation.OnScopeCreated,
+  'storage',
+);

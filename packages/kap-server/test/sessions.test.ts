@@ -2744,7 +2744,7 @@ describe('server-v2 /api/v1/sessions status context window', () => {
   });
 });
 
-describe('server-v2 /api/v1/sessions (SQLite-primary dual-write read model)', () => {
+describe('server-v2 /api/v1/sessions (SQLite read model)', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
@@ -2867,8 +2867,8 @@ describe('server-v2 /api/v1/sessions (SQLite-primary dual-write read model)', ()
   it('serves session routes from the authoritative store when the read model cannot open', async () => {
     await (server as RunningServer).close();
     server = undefined;
-    await rm(join(home as string, 'cache', 'query-store'), { recursive: true, force: true });
-    await writeFile(join(home as string, 'cache', 'query-store'), 'sabotage', 'utf8');
+    await rm(join(home as string, 'cache', 'query-store.sqlite'), { force: true });
+    await writeFile(join(home as string, 'cache', 'query-store.sqlite'), 'sabotage', 'utf8');
 
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,

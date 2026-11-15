@@ -15,21 +15,19 @@ import { ScopeActivation, _clearScopedRegistryForTests, registerScopedService } 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { drainQueryStoreDisposals, DualWriteQueryStore } from '#/persistence/backends/dualWriteQueryStore';
-import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
-import { sqliteNativeBinding } from '#/persistence/backends/sqlite/sqliteQueryStore';
+import {
+  drainQueryStoreDisposals,
+  sqliteNativeBinding,
+  SqliteQueryStore,
+} from '#/persistence/backends/sqlite/sqliteQueryStore';
 import { IQueryStore, QueryStoreRebuiltError } from '#/persistence/interface/queryStore';
-import { stubBootstrap } from '../../app/bootstrap/stubs';
-import { stubLog } from '../../_base/log/stubs';
+import { stubBootstrap } from '../../../app/bootstrap/stubs';
+import { stubLog } from '../../../_base/log/stubs';
 
 const COLLECTION = 'session';
 const STORE_FILE = 'query-store.sqlite';
 
-function backup(store: IQueryStore): MiniDbQueryStore {
-  return (store as unknown as { minidb: MiniDbQueryStore }).minidb;
-}
-
-describe('DualWriteQueryStore', () => {
+describe('SqliteQueryStore', () => {
   let homeDir: string;
   let disposeHost: (() => void) | undefined;
 
@@ -38,7 +36,7 @@ describe('DualWriteQueryStore', () => {
     registerScopedService(
       LifecycleScope.App,
       IQueryStore,
-      DualWriteQueryStore,
+      SqliteQueryStore,
       ScopeActivation.OnDemand,
       'storage',
     );
@@ -61,35 +59,22 @@ describe('DualWriteQueryStore', () => {
     return host.app.accessor.get(IQueryStore);
   }
 
-  it('put/get/delete round-trip and resets after a backup delete failure', async () => {
+  it('put/get/delete round-trip', async () => {
     const store = build();
     await store.put(COLLECTION, 'a', { id: 'a', v: 1 });
     expect(await store.get(COLLECTION, 'a')).toEqual({ id: 'a', v: 1 });
-    expect(await backup(store).get(COLLECTION, 'a')).toEqual({ id: 'a', v: 1 });
     expect(await store.get(COLLECTION, 'missing')).toBeUndefined();
     await store.delete(COLLECTION, 'a');
     expect(await store.get(COLLECTION, 'a')).toBeUndefined();
-    expect(await backup(store).get(COLLECTION, 'a')).toBeUndefined();
-
-    await store.put(COLLECTION, 'a', { id: 'a', v: 2 });
-    await store.setCheckpoint('projection', { seq: 1 });
-    backup(store).delete = async () => {
-      throw new Error('minidb delete failed');
-    };
-    await expect(store.delete(COLLECTION, 'a')).rejects.toThrow('minidb delete failed');
-    expect(await store.get(COLLECTION, 'a')).toBeUndefined();
-    expect(await store.getCheckpoint('projection')).toBeUndefined();
-    expect(await backup(store).get(COLLECTION, 'a')).toEqual({ id: 'a', v: 2 });
   });
 
-  it('batch keeps SQLite atomic and resets after non-atomic minidb failures', async () => {
+  it('batch applies put and delete atomically', async () => {
     const store = build();
     await store.batch([
       { kind: 'put', collection: COLLECTION, key: 'a', value: { v: 1 } },
       { kind: 'put', collection: COLLECTION, key: 'b', value: { v: 2 } },
     ]);
     expect(await store.get(COLLECTION, 'a')).toEqual({ v: 1 });
-    expect(await backup(store).get(COLLECTION, 'a')).toEqual({ v: 1 });
     await expect(
       store.batch([
         { kind: 'put', collection: COLLECTION, key: 'c', value: { v: 3 } },
@@ -98,67 +83,9 @@ describe('DualWriteQueryStore', () => {
     ).rejects.toThrow(TypeError);
     expect(await store.get(COLLECTION, 'c')).toBeUndefined();
     expect(await store.get(COLLECTION, 'invalid')).toBeUndefined();
-    expect(await backup(store).get(COLLECTION, 'c')).toBeUndefined();
-
-    const minidb = backup(store);
-    const originalBatch = minidb.batch.bind(minidb);
-    let failNextBatch = true;
-    minidb.batch = async (ops) => {
-      if (failNextBatch) {
-        failNextBatch = false;
-        throw new Error('minidb batch failed');
-      }
-      await originalBatch(ops);
-    };
-    const retry = [{ kind: 'put' as const, collection: COLLECTION, key: 'c', value: { v: 3 } }];
-    await expect(store.batch(retry)).rejects.toThrow('minidb batch failed');
-    expect(await store.get(COLLECTION, 'c')).toBeUndefined();
-    expect(await minidb.get(COLLECTION, 'c')).toBeUndefined();
-    await store.batch(retry);
-    expect(await minidb.get(COLLECTION, 'c')).toEqual({ v: 3 });
-
     await store.batch([{ kind: 'delete', collection: COLLECTION, key: 'a' }]);
     expect(await store.get(COLLECTION, 'a')).toBeUndefined();
-    expect(await minidb.get(COLLECTION, 'a')).toBeUndefined();
-    expect(await store.get(COLLECTION, 'b')).toBeUndefined();
-
-    class DelayedResetStore extends DualWriteQueryStore {
-      override async resetAfterPeerRebuild(): Promise<void> {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        return super.resetAfterPeerRebuild();
-      }
-    }
-    const concurrent = new DelayedResetStore(stubBootstrap(homeDir), stubLog());
-    const concurrentBackup = backup(concurrent);
-    const originalPut = concurrentBackup.put.bind(concurrentBackup);
-    let markStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve;
-    });
-    let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    concurrentBackup.put = async (collection, key, value, options) => {
-      if (key === 'first') {
-        markStarted();
-        (concurrentBackup as unknown as { storeEpochCounter: number }).storeEpochCounter += 1;
-        await firstGate;
-        throw new Error('minidb put rebuilt');
-      }
-      return originalPut(collection, key, value, options);
-    };
-    const first = concurrent.put(COLLECTION, 'first', { value: 1 });
-    await started;
-    const second = concurrent.put(COLLECTION, 'second', { value: 2 });
-    releaseFirst();
-    await expect(first).rejects.toThrow('minidb put rebuilt');
-    await second;
-    expect(await concurrent.get(COLLECTION, 'second')).toEqual({ value: 2 });
-    expect(await concurrentBackup.get(COLLECTION, 'second')).toEqual({ value: 2 });
-    expect(await concurrent.get(COLLECTION, 'first')).toBeUndefined();
-    expect(await concurrentBackup.get(COLLECTION, 'first')).toBeUndefined();
-    await concurrent.close();
+    expect(await store.get(COLLECTION, 'b')).toEqual({ v: 2 });
   });
 
   it('isolates collections by prefix', async () => {
@@ -328,7 +255,7 @@ describe('DualWriteQueryStore', () => {
     }
   });
 
-  it('rejects text indexes, dual-writes checkpoints and preserves legacy derived caches', async () => {
+  it('rejects text indexes, persists checkpoints and preserves legacy derived caches', async () => {
     const store = build();
     await store.put(COLLECTION, 'a', { id: 'a', body: 'hello world' });
     await expect(
@@ -368,52 +295,15 @@ describe('DualWriteQueryStore', () => {
       QueryStoreRebuiltError,
     );
     expect(await store.getCheckpoint('projection')).toBeUndefined();
-    expect(await backup(store).getCheckpoint('projection')).toBeUndefined();
-
     await store.setCheckpoint('projection', { seq: 1 });
     expect(await store.getCheckpoint('projection')).toEqual({ seq: 1 });
-    expect(await backup(store).getCheckpoint('projection')).toEqual({ seq: 1 });
-
-    const minidb = backup(store);
-    const originalSetCheckpoint = minidb.setCheckpoint.bind(minidb);
-    let failNextCheckpoint = true;
-    minidb.setCheckpoint = async (source, checkpoint) => {
-      if (failNextCheckpoint) {
-        failNextCheckpoint = false;
-        throw new Error('minidb checkpoint failed');
-      }
-      await originalSetCheckpoint(source, checkpoint);
-    };
-    await expect(store.setCheckpoint('projection', { seq: 2 })).rejects.toThrow(
-      'minidb checkpoint failed',
-    );
-    expect(await store.getCheckpoint('projection')).toBeUndefined();
-    expect(await minidb.getCheckpoint('projection')).toEqual({ seq: 1 });
-    await store.setCheckpoint('projection', { seq: 2 });
-    expect(await store.getCheckpoint('projection')).toEqual({ seq: 2 });
-    expect(await minidb.getCheckpoint('projection')).toEqual({ seq: 2 });
-
-    const primaryEpoch = store.storeEpoch();
-    minidb.setCheckpoint = async () => {
-      (minidb as unknown as { storeEpochCounter: number }).storeEpochCounter += 1;
-      throw new Error('minidb checkpoint rebuilt');
-    };
-    await expect(store.setCheckpoint('projection', { seq: 3 })).rejects.toThrow(
-      'minidb checkpoint rebuilt',
-    );
-    expect(store.storeEpoch()).toBe(primaryEpoch + 1);
-    expect(await store.getCheckpoint('projection')).toBeUndefined();
-    minidb.setCheckpoint = originalSetCheckpoint;
-    await store.setCheckpoint('projection', { seq: 3 });
-    expect(await store.getCheckpoint('projection')).toEqual({ seq: 3 });
-    expect(await minidb.getCheckpoint('projection')).toEqual({ seq: 3 });
 
     expect(await fsp.readFile(join(storeDir, 'shard-01', 'marker'), 'utf8')).toBe('derived');
     expect(await fsp.readFile(join(searchDir, 'marker'), 'utf8')).toBe('derived');
     expect(await fsp.readFile(authoritative, 'utf8')).toBe('{"id":"session"}');
   });
 
-  it('serializes cross-process writes and rejects stale checkpoints', async () => {
+  it('shares the store with a second SQLite connection and rejects stale checkpoints', async () => {
     const store = build();
     await store.put(COLLECTION, 'seed', { id: 'seed', v: 0 });
     const file = join(homeDir, 'cache', STORE_FILE);
@@ -471,7 +361,6 @@ setTimeout(() => {
       expect(await childExit).toEqual([0, null]);
       expect(errors).toBe('');
       expect(await store.getCheckpoint('projection')).toBeUndefined();
-      expect(await backup(store).getCheckpoint('projection')).toEqual({ seq: 1 });
       expect(store.storeEpoch()).toBe(staleEpoch + 1);
       await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byParent', field: 'parent' });
       expect(
@@ -482,87 +371,6 @@ setTimeout(() => {
       await store.close();
     } finally {
       peer.close();
-    }
-
-    const startWriter = async (mode: 'old' | 'new') => {
-      const source = createRequire(import.meta.url).resolve(
-        '#/persistence/backends/dualWriteQueryStore',
-      );
-      const script = join(homeDir, `dual-write-${mode}.mjs`);
-      const value = mode === 'old' ? 1 : 2;
-      await fsp.writeFile(
-        script,
-        `import { DualWriteQueryStore } from ${JSON.stringify(pathToFileURL(source).href)};
-const store = new DualWriteQueryStore(
-  { cacheDir: ${JSON.stringify(join(homeDir, 'cache'))} },
-  { info() {}, warn() {}, error(...args) { console.error(...args); }, debug() {} },
-);
-${mode === 'old' ? `const put = store.minidb.put.bind(store.minidb);
-store.minidb.put = async (...args) => {
-  console.log('primary-written');
-  await new Promise((resolve) => process.stdin.once('data', resolve));
-  return put(...args);
-};
-` : ''}console.log('ready');
-await store.put('session', 'shared', { id: 'shared', v: ${value} });
-console.log('done ' + JSON.stringify({
-  primary: await store.get('session', 'shared'),
-  backup: await store.minidb.get('session', 'shared'),
-}));
-await store.close();
-`,
-      );
-      const child = spawn(process.execPath, ['--import', 'tsx', script], {
-        cwd: process.cwd(),
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      let output = '';
-      let errors = '';
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', (chunk: string) => {
-        output += chunk;
-      });
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (chunk: string) => {
-        errors += chunk;
-      });
-      const finished = once(child, 'exit');
-      const waitFor = async (marker: string): Promise<void> => {
-        if (output.includes(marker)) return;
-        await new Promise<void>((resolve) => {
-          const onData = (): void => {
-            if (!output.includes(marker)) return;
-            child.stdout.off('data', onData);
-            resolve();
-          };
-          child.stdout.on('data', onData);
-        });
-      };
-      return { child, finished, waitFor, output: () => output, errors: () => errors };
-    };
-    const older = await startWriter('old');
-    let newer: Awaited<ReturnType<typeof startWriter>> | undefined;
-    try {
-      await older.waitFor('primary-written');
-      newer = await startWriter('new');
-      await newer.waitFor('ready');
-      const completedBeforeRelease = await Promise.race([
-        newer.waitFor('done').then(() => true),
-        new Promise<false>((resolve) => setTimeout(() => resolve(false), 200)),
-      ]);
-      expect(completedBeforeRelease).toBe(false);
-      older.child.stdin.end('go\n');
-      await newer.waitFor('done');
-      await expect(older.finished).resolves.toEqual([0, null]);
-      await expect(newer.finished).resolves.toEqual([0, null]);
-      expect(older.errors()).toBe('');
-      expect(newer.errors()).toBe('');
-      expect(newer.output()).toContain('"primary":{"id":"shared","v":2}');
-      expect(newer.output()).toContain('"backup":{"id":"shared","v":2}');
-    } finally {
-      if (older.child.stdin.writable) older.child.stdin.end('go\n');
-      older.child.kill();
-      newer?.child.kill();
     }
 
     const configured = process.env['KIMI_CODE_SQLITE_NATIVE_BINDING'];
@@ -588,19 +396,9 @@ await store.close();
     const first = build();
     await first.put(COLLECTION, 'a', { id: 'a', v: 1 });
     await first.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
-    const firstMiniDb = backup(first);
-    const closeMiniDb = firstMiniDb.close.bind(firstMiniDb);
-    let miniDbCloseCount = 0;
-    firstMiniDb.close = async () => {
-      miniDbCloseCount += 1;
-      await closeMiniDb();
-    };
     await first.close();
-    expect(miniDbCloseCount).toBe(1);
     disposeHost?.();
     disposeHost = undefined;
-    await drainQueryStoreDisposals();
-    expect(miniDbCloseCount).toBe(2);
 
     const file = join(homeDir, 'cache', STORE_FILE);
     const peer = new Database(file);
@@ -620,20 +418,19 @@ await store.close();
     expect(await second.get(COLLECTION, 'a')).toBeUndefined();
     await second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
     await second.put(COLLECTION, 'b', { id: 'b', v: 2 });
-    expect(await backup(second).get(COLLECTION, 'b')).toEqual({ id: 'b', v: 2 });
     const page = await second.query<{ id: string; v: number }>(COLLECTION).where({ v: 2 }).execute();
     expect(page.items).toEqual([{ id: 'b', v: 2 }]);
 
     await second.close();
     (disposeHost as (() => void) | undefined)?.();
     disposeHost = undefined;
+    await drainQueryStoreDisposals();
     await fsp.writeFile(file, 'not a sqlite database');
     const third = build();
     await expect(third.get(COLLECTION, 'b')).rejects.toThrow(/SQLITE_NOTADB|not a database/i);
     expect(await third.get(COLLECTION, 'b')).toBeUndefined();
     await third.put(COLLECTION, 'c', { id: 'c', v: 3 });
     expect(await third.get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
-    expect(await backup(third).get(COLLECTION, 'c')).toEqual({ id: 'c', v: 3 });
     const artifacts = await fsp.readdir(join(homeDir, 'cache'));
     expect(artifacts.some((name) => name.startsWith(`${STORE_FILE}.corrupt-`))).toBe(true);
   });
@@ -699,7 +496,6 @@ await store.close();
     expect(await store.getCheckpoint('projection')).toBeUndefined();
     await store.setCheckpoint('projection', { seq: 7 }, store.storeEpoch());
     expect(await store.getCheckpoint('projection')).toEqual({ seq: 7 });
-    expect(await backup(store).getCheckpoint('projection')).toEqual({ seq: 7 });
   });
 
   it('getMany returns present values and skips missing keys', async () => {
@@ -892,7 +688,7 @@ await store.close();
       .orderBy('updatedAt', 'desc')
       .limit(10)
       .execute();
-    expect(childPage.items.map((item) => item.id)).toEqual(['child']);
+    expect(childPage.items.map((i) => i.id)).toEqual(['child']);
 
     const internal = store as unknown as { dbPromise: Promise<Database.Database> };
     const db = await internal.dbPromise;

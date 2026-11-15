@@ -67,7 +67,6 @@
         ./packages/kap-server
         ./packages/klient
         ./packages/migration-legacy
-        ./packages/minidb
         ./packages/node-sdk
         ./packages/oauth
         ./packages/pi-tui
@@ -90,7 +89,6 @@
         "@moonshot-ai/agent-core-v2"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/migration-legacy"
-        "@moonshot-ai/minidb"
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
         "@moonshot-ai/klient"

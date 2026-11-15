@@ -5,7 +5,6 @@ export default defineConfig({
   test: {
     projects: [
       'packages/*',
-      '!packages/minidb',
       'apps/kimi-code',
       'apps/vis/server',
       'apps/vis/web',

@@ -486,9 +486,6 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
-      '@moonshot-ai/minidb':
-        specifier: workspace:^
-        version: link:../minidb
       '@moonshot-ai/tree-sitter-bash':
         specifier: workspace:^
         version: link:../tree-sitter-bash
@@ -718,8 +715,6 @@ importers:
       '@moonshot-ai/transcript':
         specifier: workspace:^
         version: link:../transcript
-
-  packages/minidb: {}
 
   packages/node-sdk:
     dependencies:
