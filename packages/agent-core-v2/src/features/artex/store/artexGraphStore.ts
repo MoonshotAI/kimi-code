@@ -83,6 +83,7 @@ export interface IArtexGraphStore {
   listByKind(kind: ArtexNodeKind, limit?: number): Promise<readonly ArtexNode[]>;
   frontier(limit?: number): Promise<readonly ArtexIntentNode[]>;
   setNodeState(id: number, state: ArtexNodeState): Promise<void>;
+  mergeNodePayload(id: number, patch: Record<string, unknown>): Promise<void>;
 
   anchor(nodeId: number, assetId: number): Promise<void>;
   link(from: number, rel: ArtexEdgeRelation, to: number): Promise<void>;

@@ -6,6 +6,11 @@ import { registerFeature } from '#/features/featureRegistry';
 
 import { ARTEX_FLAG_ID } from './artex';
 import { ArtexGraphStoreProvider, IArtexGraphStoreProvider } from './store/artexGraphStoreProvider';
+import { ARTEX_CONFIG_DEFAULTS, ARTEX_SECTION, ArtexConfigSchema, artexEnvBindings, stripArtexEnv } from './config/configSection';
+import { ArtexOrchestrator, IArtexOrchestrator } from './engine/artexOrchestrator';
+import { ArtexModeService } from './agent/artexModeService';
+import { IArtexModeService } from './agent/artexMode';
+import { ARTEX_PROFILES } from './profiles/artexProfiles';
 
 export class ArtexFeature extends Feature {
   static override readonly name = 'artex';
@@ -17,9 +22,21 @@ export class ArtexFeature extends Feature {
     this.onDispose(() => {
       assembledFlagServices.delete(flags);
     });
+    this.contributeConfig(ARTEX_SECTION, ArtexConfigSchema, {
+      defaultValue: ARTEX_CONFIG_DEFAULTS,
+      env: artexEnvBindings,
+      stripEnv: stripArtexEnv,
+    });
     this.contributeService(LifecycleScope.App, IArtexGraphStoreProvider, ArtexGraphStoreProvider, {
       activation: ScopeActivation.OnDemand,
     });
+    this.contributeService(LifecycleScope.Session, IArtexOrchestrator, ArtexOrchestrator, {
+      activation: ScopeActivation.OnDemand,
+    });
+    this.contributeAgentService(IArtexModeService, ArtexModeService, {
+      activation: ScopeActivation.OnScopeCreated,
+    });
+    this.contributeProfiles(ARTEX_PROFILES);
   }
 }
 

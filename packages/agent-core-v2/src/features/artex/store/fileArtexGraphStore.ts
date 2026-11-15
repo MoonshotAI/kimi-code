@@ -240,6 +240,16 @@ export class FileArtexGraphStore implements IArtexGraphStore {
     });
   }
 
+  mergeNodePayload(id: number, patch: Record<string, unknown>): Promise<void> {
+    return this.mutate((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === id);
+      if (!node) return;
+      node.payload = { ...node.payload, ...patch };
+      node.contentVersion += 1;
+      node.updatedAt = this.now();
+    });
+  }
+
   anchor(nodeId: number, assetId: number): Promise<void> {
     return this.mutate((state) => {
       this.addAnchor(state, nodeId, assetId);
