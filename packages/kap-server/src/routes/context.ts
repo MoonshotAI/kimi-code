@@ -9,6 +9,7 @@ import {
   type ContextMessage,
   type IAgentScopeHandle,
   type Scope,
+  type Tool,
 } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
@@ -65,6 +66,7 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 
 const DEFAULT_ITEMS_LIMIT = 100;
 const PREVIEW_MAX_CHARS = 240;
+const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
 const MEDIA_TYPES = new Set([
   'image',
   'image_url',
@@ -120,6 +122,7 @@ function measureMessage(
   const data = asRecord(message);
   const content = data['content'];
   const toolCalls = asArray(data['toolCalls']);
+  const messageTools = asArray(data['tools']);
   let chars = 0;
   let hasMedia = false;
   let preview = '';
@@ -166,6 +169,14 @@ function measureMessage(
     else if (call['arguments'] !== undefined) chars += estimateValueChars(call['arguments']);
   }
 
+  for (const tool of messageTools) {
+    chars += estimateValueChars(tool);
+    const desc = asRecord(tool)['description'];
+    if (typeof desc === 'string') {
+      appendPreview(desc);
+    }
+  }
+
   return { chars, hasMedia, preview };
 }
 
@@ -190,14 +201,73 @@ async function resolveAgent(
   return { agent, resolvedAgentId };
 }
 
+function filterMediaTools(
+  tools: readonly Tool[],
+  capabilities: { readonly image_in?: boolean; readonly video_in?: boolean } | undefined,
+): readonly Tool[] {
+  if (capabilities?.image_in === true || capabilities?.video_in === true) return tools;
+  return tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
+}
+
+export function splitSystemPromptParts(systemPrompt: string): ContextItemPart[] {
+  if (!systemPrompt) return [];
+  const sections: ContextItemPart[] = [];
+  let fence: string | undefined;
+  let currentName: string | undefined;
+  let currentLines: string[] = [];
+
+  for (const line of systemPrompt.split('\n')) {
+    const fenceMatch = /^(`{3,}|~{3,})/.exec(line);
+    if (fenceMatch !== null) {
+      const marker = fenceMatch[1]!;
+      if (fence === undefined) {
+        fence = marker;
+      } else if (
+        marker[0] === fence[0] &&
+        marker.length >= fence.length &&
+        line.slice(marker.length).trim() === ''
+      ) {
+        fence = undefined;
+      }
+    } else if (fence === undefined && /^# \S/.test(line)) {
+      const text = currentLines.join('\n').trim();
+      if (text.length > 0 || currentName !== undefined) {
+        sections.push({ kind: 'text', name: currentName, text });
+      }
+      currentName = line.slice(2).trim();
+      currentLines = [];
+      continue;
+    }
+    currentLines.push(line);
+  }
+
+  const tail = currentLines.join('\n').trim();
+  if (tail.length > 0 || currentName !== undefined) {
+    sections.push({ kind: 'text', name: currentName, text: tail });
+  }
+  return sections.length > 0 ? sections : [{ kind: 'text', text: systemPrompt }];
+}
+
 function readAgentContextSources(agent: IAgentScopeHandle) {
+  const loop = agent.accessor.get(IAgentLoopService);
   const profile = agent.accessor.get(IAgentProfileService);
   const toolSelect = agent.accessor.get(IAgentToolSelectService);
   const legacyStatus = readLegacyStatus(agent);
-  const systemPrompt = profile.getSystemPrompt();
-  const tools = toolSelect.defaultTools().filter((t) => t.deferred !== true);
-  const messages = agent.accessor.get(IAgentLoopService).history();
-  const modelAlias = profile.data().modelAlias || legacyStatus?.model || undefined;
+  const loopData = loop.data();
+  const profileData = profile.data();
+  const systemPrompt = loop.getSystemPrompt() || profile.getSystemPrompt();
+  const capabilities = loopData.modelAlias !== undefined
+    ? loopData.modelCapabilities
+    : profileData.modelCapabilities;
+  const rawMessages = loop.history();
+  const disclosure = toolSelect.enabled(capabilities);
+  const requestTools = filterMediaTools(
+    toolSelect.requestTools(loop.baselineTools(), disclosure, true, rawMessages),
+    capabilities,
+  );
+  const tools = requestTools.filter((t) => t.deferred !== true);
+  const messages = toolSelect.shapeHistory(rawMessages, disclosure, requestTools);
+  const modelAlias = loopData.modelAlias || profileData.modelAlias || legacyStatus?.model || undefined;
   return {
     systemPrompt,
     tools,
@@ -430,6 +500,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
         sources.messages.forEach((message, index) => {
           const data = asRecord(message);
           const calls = asArray(data['toolCalls']);
+          const messageTools = asArray(data['tools']);
           for (const tool of calls) {
             const call = asRecord(tool);
             if (typeof call['id'] === 'string' && typeof call['name'] === 'string') {
@@ -439,11 +510,14 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
           const callNames = calls
             .map((tool) => asRecord(tool)['name'])
             .filter((name): name is string => typeof name === 'string');
+          const declaredToolNames = messageTools
+            .map((tool) => asRecord(tool)['name'])
+            .filter((name): name is string => typeof name === 'string');
           const role = typeof data['role'] === 'string' ? data['role'] : 'unknown';
           const name =
             typeof data['toolCallId'] === 'string'
               ? (toolNames.get(data['toolCallId']) ?? data['toolCallId'])
-              : callNames.join(', ') || undefined;
+              : callNames.join(', ') || declaredToolNames.join(', ') || undefined;
           const measured = measureMessage(message, true);
           allNonToolItems.push({
             id: `message-${index}`,
@@ -513,7 +587,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
             sequence: undefined,
             chars: sources.systemPrompt.length,
             has_media: false,
-            parts: [{ kind: 'text', text: sources.systemPrompt }],
+            parts: splitSystemPromptParts(sources.systemPrompt),
             raw: sources.systemPrompt,
           };
         } else if (item_id.startsWith('tool-')) {
@@ -528,7 +602,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
               sequence: undefined,
               chars: estimateValueChars(tool),
               has_media: false,
-              parts: [{ kind: 'data', data: tool }],
+              parts: [{ kind: 'definition', name: typeof data['name'] === 'string' ? data['name'] : undefined, data: tool }],
               raw: tool,
             };
           }
@@ -538,7 +612,11 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
           if (message !== undefined) {
             const data = asRecord(message);
             const calls = asArray(data['toolCalls']);
+            const messageTools = asArray(data['tools']);
             const callNames = calls
+              .map((tool) => asRecord(tool)['name'])
+              .filter((name): name is string => typeof name === 'string');
+            const declaredToolNames = messageTools
               .map((tool) => asRecord(tool)['name'])
               .filter((name): name is string => typeof name === 'string');
             let resolvedToolName: string | undefined;
@@ -555,11 +633,21 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
               resolvedToolName = resolvedToolName ?? targetId;
             } else if (callNames.length > 0) {
               resolvedToolName = callNames.join(', ');
+            } else if (declaredToolNames.length > 0) {
+              resolvedToolName = declaredToolNames.join(', ');
             }
 
             const measured = measureMessage(message, false);
             const parts: ContextItemPart[] = [
               ...inspectContentParts(data['content'] ?? []),
+              ...messageTools.map((tool) => {
+                const toolObj = asRecord(tool);
+                return {
+                  kind: 'definition',
+                  name: typeof toolObj['name'] === 'string' ? toolObj['name'] : undefined,
+                  data: sanitizeMediaValue(tool),
+                };
+              }),
               ...calls.map((tool) => {
                 const call = asRecord(tool);
                 let args = call['arguments'];
