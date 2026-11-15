@@ -1037,18 +1037,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  async settled(): Promise<void> {
+  async settled(): Promise<TurnResult | undefined> {
     await this.startPromise;
     await this.taskReconciliation;
     const loop = this.loop;
     if (loop === undefined) {
-      if (!this.hasPendingRequests()) return;
+      if (!this.hasPendingRequests()) return this.turns.lastResult;
       await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
-      return;
+      return this.turns.lastResult;
     }
     await loop.waitForIdle();
     await this.turns.drain();
     await this.wire.flush();
+    return this.turns.lastResult;
   }
 
   async retry(): Promise<TurnResult | undefined> {

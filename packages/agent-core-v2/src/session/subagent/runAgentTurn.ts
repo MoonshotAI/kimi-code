@@ -113,14 +113,22 @@ async function awaitRun(
   turn: Turn,
   options: RunAgentTurnOptions,
 ): Promise<AgentRunCompletion> {
+  const loop = target.accessor.get(IAgentLoopService);
   const controller = new AbortController();
   const unlink = linkAbortSignal(options.signal, controller);
-  const cancelTurn = (reason: unknown): void => {
-    turn.cancel(reason);
+  const onAbort = (): void => {
+    loop.cancel(undefined, controller.signal.reason);
   };
+  controller.signal.addEventListener('abort', onAbort, { once: true });
   try {
-    const result = classifyTurnResult(await awaitTurn(turn, controller, cancelTurn));
-    const summary = latestAssistantText(target.accessor.get(IAgentLoopService).history());
+    if (controller.signal.aborted) onAbort();
+    const initialResult = await abortable(turn.result, controller.signal);
+    controller.signal.throwIfAborted();
+    const initial = classifyTurnResult(initialResult);
+    const lastResult = await abortable(loop.settled(), controller.signal);
+    controller.signal.throwIfAborted();
+    const result = classifyTurnResult(lastResult ?? initial);
+    const summary = latestAssistantText(loop.history());
     const stopReason = result.stopReason;
     if (summary.trim().length === 0) {
       throw new Error2(
@@ -132,31 +140,9 @@ async function awaitRun(
     const usage = target.accessor.get(ISessionUsageService)?.status(agentContextOf(target)).total;
     return { summary, usage, stopReason };
   } finally {
+    controller.signal.removeEventListener('abort', onAbort);
     unlink();
-    if (controller.signal.aborted) {
-      cancelTurn(controller.signal.reason);
-    }
-  }
-}
-
-async function awaitTurn(
-  turn: Turn,
-  controller: AbortController,
-  cancelTurn: (reason: unknown) => void,
-): Promise<TurnResult> {
-  const cancelOnAbort = (): void => {
-    cancelTurn(controller.signal.reason);
-  };
-  controller.signal.addEventListener('abort', cancelOnAbort, { once: true });
-  try {
-    if (controller.signal.aborted) {
-      cancelOnAbort();
-    }
-    const result = await turn.result;
-    controller.signal.throwIfAborted();
-    return result;
-  } finally {
-    controller.signal.removeEventListener('abort', cancelOnAbort);
+    if (controller.signal.aborted) onAbort();
   }
 }
 

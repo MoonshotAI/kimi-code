@@ -298,7 +298,7 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   snapshot(): LoopSnapshot;
 
-  settled(): Promise<void>;
+  settled(): Promise<TurnResult | undefined>;
 
   retry(): Promise<TurnResult | undefined>;
 

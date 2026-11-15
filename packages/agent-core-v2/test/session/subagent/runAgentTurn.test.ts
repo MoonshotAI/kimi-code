@@ -115,8 +115,14 @@ function handleWith(
   messages: readonly ContextMessage[],
   events = new EventBusStub(),
   retry?: () => Promise<TurnResult>,
-): { readonly handle: IAgentScopeHandle; readonly prompts: unknown[] } {
+  settled?: () => Promise<TurnResult | undefined>,
+): {
+  readonly handle: IAgentScopeHandle;
+  readonly prompts: unknown[];
+  readonly cancellations: Array<{ readonly target: unknown; readonly reason: unknown }>;
+} {
   const prompts: unknown[] = [];
+  const cancellations: Array<{ readonly target: unknown; readonly reason: unknown }> = [];
   const services = new Map<unknown, unknown>([
     [
       IAgentLoopService,
@@ -127,7 +133,11 @@ function handleWith(
         },
         promptHandle: () => ({ launched: Promise.resolve(turn) }),
         retry,
-        cancel: () => true,
+        settled: settled ?? (async () => (await turn).result),
+        cancel: (target?: unknown, reason?: unknown) => {
+          cancellations.push({ target, reason });
+          return true;
+        },
         get: () => messages,
         history: () => messages,
       },
@@ -142,7 +152,7 @@ function handleWith(
     },
     dispose: () => {},
   };
-  return { handle, prompts };
+  return { handle, prompts, cancellations };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
@@ -157,14 +167,33 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 describe('runAgentTurn', () => {
   const signal = new AbortController().signal;
 
-  it('returns a short final message as is without a continuation prompt', async () => {
+  it('returns the final message after a notify continuation without settling early', async () => {
+    const events = new EventBusStub();
+    const messages = [assistant('')];
+    const continuation = createControlledPromise<TurnResult | undefined>();
     const { handle, prompts } = handleWith(
       makeTurn({ type: 'completed', steps: 1, truncated: false }),
-      [assistant('src/a.ts:12')],
+      messages,
+      events,
+      undefined,
+      () => continuation,
     );
     const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
+    let didSettle = false;
+    void run.completion.then(
+      () => { didSettle = true; },
+      () => { didSettle = true; },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(didSettle).toBe(false);
+
+    messages.push(assistant('src/a.ts:12'));
+    continuation.resolve({ type: 'completed', steps: 1, truncated: false });
     await expect(run.completion).resolves.toMatchObject({ summary: 'src/a.ts:12' });
     expect(prompts).toHaveLength(1);
+
+    events.emit(delta(1, ' late text'));
+    expect(events.listenerCount()).toBe(0);
   });
 
   it('carries the loop stop reason alongside the handoff text', async () => {
@@ -371,22 +400,24 @@ describe('runAgentTurn partial output', () => {
     expect(kept).not.toMatch(/[\uD800-\uDFFF]/u);
   });
 
-  it('stops listening once the run settles', async () => {
-    const events = new EventBusStub();
-    const { turn, finish } = pendingTurn(1);
-    const run = await runAgentTurn(
-      handleWith(turn, [assistant('Done.')], events).handle,
-      { kind: 'prompt', prompt: 'find it' },
-      { signal },
+  it('cancels the active loop turn when aborted during a notify continuation', async () => {
+    const continuation = createControlledPromise<TurnResult | undefined>();
+    const controller = new AbortController();
+    const reason = userCancellationReason();
+    const { handle, cancellations } = handleWith(
+      makeTurn({ type: 'completed', steps: 1, truncated: false }),
+      [assistant('')],
+      new EventBusStub(),
+      undefined,
+      () => continuation,
     );
-    expect(events.listenerCount()).toBe(3);
+    const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, {
+      signal: controller.signal,
+    });
 
-    events.emit(delta(1, 'Done.'));
-    finish({ type: 'completed', steps: 1, truncated: false });
-    await run.completion;
-    events.emit(delta(1, ' late text'));
+    controller.abort(reason);
+    await rejection(run.completion);
 
-    expect(events.listenerCount()).toBe(0);
-    expect(run.partialOutput()).toBe('Done.');
+    expect(cancellations).toContainEqual({ target: undefined, reason });
   });
 });

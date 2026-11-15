@@ -276,7 +276,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     tryAcquireHistorySnapshot: () => toDisposable(() => {}),
     resetLoop: () => Promise.resolve(),
     registerLoopErrorHandler: errorHandlers.register,
-    settled: () => Promise.resolve(),
+    settled: () => Promise.resolve(undefined),
     retry: async () => { throw new Error('retry is not supported by this stub'); },
     close: () => Promise.resolve(),
     drainNextBatch(context, kinds) {
