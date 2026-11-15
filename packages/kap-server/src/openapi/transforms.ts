@@ -38,9 +38,11 @@ import {
 } from '../protocol/rest-fs';
 import {
   archiveSessionResponseSchema,
-  takeoverSessionResponseSchema,
+  cancelSessionRequestSchema,
   deleteSessionResponseSchema,
   getSessionResponseSchema,
+  sessionCancelResponseSchema,
+  takeoverSessionResponseSchema,
 } from '../protocol/rest-session';
 
 const binarySchema = {
@@ -176,22 +178,42 @@ function patchSessionAction(paths: Record<string, unknown>): void {
   const operation = asRecord(pathItem?.['post']);
   if (pathItem === undefined || operation === undefined) return;
 
-  projectSessionAction(paths, pathItem, 'archive', 'runSessionArchiveAction', {
-    description: 'Session archive response',
-    content: jsonContent(openApiDocumentEnvelopeJsonSchema(archiveSessionResponseSchema)),
-  });
-  projectSessionAction(paths, pathItem, 'delete', 'runSessionDeleteAction', {
-    description: 'Session delete response',
-    content: jsonContent(openApiDocumentEnvelopeJsonSchema(deleteSessionResponseSchema)),
-  });
-  projectSessionAction(paths, pathItem, 'reload', 'runSessionReloadAction', {
-    description: 'Session reload response',
-    content: jsonContent(openApiDocumentEnvelopeJsonSchema(getSessionResponseSchema)),
-  });
-  projectSessionAction(paths, pathItem, 'takeover', 'runSessionTakeoverAction', {
-    description: 'Session lock takeover response',
-    content: jsonContent(openApiDocumentEnvelopeJsonSchema(takeoverSessionResponseSchema)),
-  });
+  projectSessionAction(
+    paths,
+    pathItem,
+    'cancel',
+    'runSessionCancelAction',
+    sessionCancelResponseSchema,
+    cancelSessionRequestSchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'archive',
+    'runSessionArchiveAction',
+    archiveSessionResponseSchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'delete',
+    'runSessionDeleteAction',
+    deleteSessionResponseSchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'reload',
+    'runSessionReloadAction',
+    getSessionResponseSchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'takeover',
+    'runSessionTakeoverAction',
+    takeoverSessionResponseSchema,
+  );
   delete paths[internalPath];
 }
 
@@ -200,14 +222,35 @@ function projectSessionAction(
   pathItem: Record<string, unknown>,
   action: string,
   operationId: string,
-  okResponse: Record<string, unknown>,
+  successDataSchema: z.ZodTypeAny,
+  bodySchema?: z.ZodTypeAny,
 ): void {
   const cloned = cloneRecord(pathItem);
   replacePathParamName(cloned, 'tail', 'session_id');
   const clonedOperation = asRecord(cloned['post']);
   if (clonedOperation !== undefined) {
     clonedOperation['operationId'] = operationId;
-    setResponse(clonedOperation, '200', okResponse);
+    if (bodySchema !== undefined) {
+      clonedOperation['requestBody'] = {
+        required: false,
+        content: jsonContent(openApiDocumentJsonSchema(bodySchema)),
+      };
+    } else {
+      delete clonedOperation['requestBody'];
+    }
+    const existingResponses = asRecord(clonedOperation['responses']);
+    const existing200 = asRecord(existingResponses?.['200']);
+    const existingContent = asRecord(existing200?.['content']);
+    const existingSchema = asRecord(asRecord(existingContent?.['application/json'])?.['schema']);
+    const existingOneOf = existingSchema?.['oneOf'];
+    const okVariant = openApiDocumentEnvelopeJsonSchema(successDataSchema);
+    const mergedSchema = Array.isArray(existingOneOf) && existingOneOf.length > 1
+      ? { oneOf: [okVariant, ...existingOneOf.slice(1)] }
+      : okVariant;
+    setResponse(clonedOperation, '200', {
+      description: `Session ${action} response`,
+      content: jsonContent(mergedSchema),
+    });
   }
   paths[`/api/v1/sessions/{session_id}:${action}`] = cloned;
 }

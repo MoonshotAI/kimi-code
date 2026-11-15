@@ -78,7 +78,6 @@ import {
 import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middleware/origin';
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
-import { GuiStoreService } from './services/guiStore/guiStoreService';
 import {
   initializeServerTelemetry,
   type ServerTelemetry,
@@ -201,7 +200,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
-  const guiStore = new GuiStoreService(homeDir, logger);
   let authTokenService: IAuthTokenService;
   let passwordConfigured = false;
   if (opts.authTokenService !== undefined) {
@@ -540,7 +538,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     hostIdentity: opts.hostIdentity,
     debugEndpoints,
     enableShutdown,
-    guiStore,
     remoteControl: {
       service: remoteControlManager,
       devices: remoteControlDevices,
@@ -557,7 +554,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     onShutdown: requestClose,
     drainIdleSessions,
     hostBridges,
-    connectionRegistry,
     conversations,
     sessionRating,
     dangerousBypassAuth: opts.disableAuth === true,
