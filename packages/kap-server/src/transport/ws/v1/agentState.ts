@@ -14,9 +14,9 @@ import {
 
 import type {
   AgentState,
+  ContextState,
   GoalState,
   TodoItemState,
-  UsageState,
 } from '../../../protocol/ws-agent';
 import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
 
@@ -35,7 +35,7 @@ export function readAgentState(handle: IAgentScopeHandle, running: boolean): Age
   };
 }
 
-export function readUsageState(handle: IAgentScopeHandle): UsageState | undefined {
+export function readContextState(handle: IAgentScopeHandle): ContextState | undefined {
   const status = readLegacyStatus(handle);
   if (status === undefined) return undefined;
   return {

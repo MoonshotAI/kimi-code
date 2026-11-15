@@ -258,8 +258,14 @@ function replayFrames(frames: readonly any[]): any[] {
   return turns;
 }
 
-const getSessionFacts = (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> =>
-  rest(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}`);
+const getSessionFacts = async (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> => {
+  const session = await rest<{ activity: 'idle' | 'turn' | 'background'; pending_interaction?: string }>(
+    server,
+    base,
+    `/api/v1/sessions/${encodeURIComponent(sid)}`,
+  );
+  return { busy: session.activity !== 'idle', pending_interaction: session.pending_interaction };
+};
 
 async function createSession(server: RunningServer, base: string): Promise<string> {
   const data = await rest<{ id: string }>(server, base, '/api/v1/sessions', {
@@ -339,8 +345,8 @@ async function subscribeConversation(
     frames.push(frame);
     if (CONVERSATION_FRAME_TYPES.has(frame.type) && frame.agent_id === agentId) conversation.push(frame);
     if (frame.type === 'task') tasks.push(frame);
-    if (frame.type === 'agent' && frame.agent_id === MAIN_AGENT_ID) agents.push(frame);
-    if (frame.type === 'todo' && frame.agent_id === MAIN_AGENT_ID) todos.push(frame);
+    if (frame.type === 'agent' && frame.agent_id === agentId) agents.push(frame);
+    if (frame.type === 'todo' && frame.agent_id === agentId) todos.push(frame);
   });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', () => {

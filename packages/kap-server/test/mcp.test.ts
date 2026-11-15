@@ -337,7 +337,7 @@ describe('server /api/v1/mcp', () => {
       };
       await boot(stub);
 
-      const res = await call('POST', '/api/v1/mcp/auth:complete', { flowId: 'flow-1' });
+      const res = await call('POST', '/api/v1/mcp/auth:complete', { flow_id: 'flow-1' });
       expect(res.status).toBe(200);
       expect(res.body.code).toBe(40929);
       expect(res.body.data).toBeNull();
@@ -371,15 +371,15 @@ describe('server /api/v1/mcp', () => {
       await boot(stub);
       await call('POST', '/api/v1/mcp/servers', STDIO_A);
 
-      const res = await call<McpServerInspection[]>('POST', '/api/v1/mcp/servers:inspect', {
+      const res = await call<unknown[]>('POST', '/api/v1/mcp/servers:inspect', {
         targets: [{ source: 'global', name: 'a' }],
       });
       expect(res.body.code).toBe(0);
       expect(res.body.data).toEqual([
         {
-          serverId: 'global:a',
+          server_id: 'global:a',
           locator: { source: 'global', name: 'a' },
-          runtimeName: 'a',
+          runtime_name: 'a',
           origin: 'global',
           config: {
             transport: 'stdio',
@@ -389,8 +389,8 @@ describe('server /api/v1/mcp', () => {
           },
           enabled: true,
           editable: true,
-          authStatus: 'not-applicable',
-          checkedAt: 1000,
+          auth_status: 'not-applicable',
+          checked_at: 1000,
         },
       ]);
     });
@@ -427,7 +427,7 @@ describe('server /api/v1/mcp', () => {
       const verified = await call('GET', '/api/v1/mcp/auth-statuses?verify=true');
       expect(verified.body).toMatchObject({
         code: 0,
-        data: [{ name: 'a', authStatus: 'not-applicable' }],
+        data: [{ name: 'a', auth_status: 'not-applicable' }],
       });
       expect(stub.state.verifySeen).toBe(true);
 
@@ -448,24 +448,24 @@ describe('server /api/v1/mcp', () => {
         code: 0,
         data: {
           status: 'authorization-required',
-          flowId: 'flow-1',
-          authorizationUrl: 'https://example.com/oauth/authorize?client=x',
+          flow_id: 'flow-1',
+          authorization_url: 'https://example.com/oauth/authorize?client=x',
         },
       });
 
-      const complete = await call('POST', '/api/v1/mcp/auth:complete', { flowId: 'flow-1' });
+      const complete = await call('POST', '/api/v1/mcp/auth:complete', { flow_id: 'flow-1' });
       expect(complete.body).toMatchObject({ code: 0, data: null });
 
-      const unknownFlow = await call('POST', '/api/v1/mcp/auth:complete', { flowId: 'nope' });
+      const unknownFlow = await call('POST', '/api/v1/mcp/auth:complete', { flow_id: 'nope' });
       expect(unknownFlow.body.code).toBe(40001);
 
-      const cancel = await call('POST', '/api/v1/mcp/auth:cancel', { flowId: 'flow-1' });
+      const cancel = await call('POST', '/api/v1/mcp/auth:cancel', { flow_id: 'flow-1' });
       expect(cancel.body).toMatchObject({ code: 0, data: null });
 
       const reset = await call('POST', '/api/v1/mcp/auth:reset', {
         source: 'plugin',
-        pluginId: 'p',
-        serverName: 's',
+        plugin_id: 'p',
+        server_name: 's',
       });
       expect(reset.body).toMatchObject({ code: 0, data: null });
       expect(stub.state.lastResetLocator).toEqual({ source: 'plugin', pluginId: 'p', serverName: 's' });
@@ -476,8 +476,8 @@ describe('server /api/v1/mcp', () => {
       await boot(stub);
 
       const res = await call('POST', '/api/v1/mcp/auth:complete', {
-        flowId: 'flow-1',
-        timeoutMs: 2 ** 31,
+        flow_id: 'flow-1',
+        timeout_ms: 2 ** 31,
       });
 
       expect(res.body.code).toBe(40001);
@@ -501,7 +501,7 @@ describe('server /api/v1/mcp', () => {
       const pending = authedFetch(server as RunningServer, base, '/api/v1/mcp/auth:complete', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ flowId: 'flow-1' }),
+        body: JSON.stringify({ flow_id: 'flow-1' }),
         signal: controller.signal,
       });
       await vi.waitFor(() => expect(reached).toBe(true));

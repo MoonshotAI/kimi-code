@@ -9,7 +9,7 @@ const agentFrameFields = {
 };
 
 export const agentStateSchema = z.object({
-  status: z.enum(['idle', 'running']),
+  status: z.enum(['idle', 'running', 'ended']),
   compacting: z.boolean(),
   model: z.string().optional(),
   thinking: z.string().optional(),
@@ -26,17 +26,17 @@ export const agentEventMessageSchema = agentStateSchema.extend({
 });
 export type AgentEventMessage = z.infer<typeof agentEventMessageSchema>;
 
-export const usageStateSchema = z.object({
+export const contextStateSchema = z.object({
   context_tokens: z.number().int().nonnegative(),
   max_context_tokens: z.number().int().positive().optional(),
 });
-export type UsageState = z.infer<typeof usageStateSchema>;
+export type ContextState = z.infer<typeof contextStateSchema>;
 
-export const usageEventMessageSchema = usageStateSchema.extend({
-  type: z.literal('usage'),
+export const contextEventMessageSchema = contextStateSchema.extend({
+  type: z.literal('context'),
   ...agentFrameFields,
 });
-export type UsageEventMessage = z.infer<typeof usageEventMessageSchema>;
+export type ContextEventMessage = z.infer<typeof contextEventMessageSchema>;
 
 export const goalStateSchema = z.object({
   objective: z.string(),
@@ -70,6 +70,6 @@ export type TodoEventMessage = z.infer<typeof todoEventMessageSchema>;
 
 export type AgentFeedMessage =
   | AgentEventMessage
-  | UsageEventMessage
+  | ContextEventMessage
   | GoalEventMessage
   | TodoEventMessage;

@@ -4,13 +4,17 @@ import {
   ErrorCodes,
   IMcpManagementService,
   isError2,
+  type GlobalMcpServerConfig,
+  type McpManagedServer,
+  type McpServerAuthBeginResult,
+  type McpServerAuthStatus,
+  type McpServerInspection,
+  type McpServerLocator,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  McpServerHttpConfigSchema,
-  McpServerSseConfigSchema,
-  McpServerStdioConfigSchema,
-} from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
+import type { McpServerConfig } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
+import { MAX_MCP_TIMEOUT_MS, McpTimeoutMsSchema } from '@moonshot-ai/agent-core-v2/mcpCore/config-schema';
+import type { McpServerConfigView } from '@moonshot-ai/agent-core-v2/mcpCore/configView';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -52,6 +56,7 @@ interface McpRouteHost {
   ): unknown;
 }
 
+const stringRecordSchema = z.record(z.string(), z.string());
 const serverNameSchema = z.string().min(1);
 
 const serverNameParamSchema = z.object({ name: serverNameSchema });
@@ -63,16 +68,54 @@ const authStatusesQuerySchema = z.object({
   verify: z.enum(['true', 'false']).optional(),
 });
 
+const mcpServerCommonWireFields = {
+  enabled: z.boolean().optional(),
+  deferred: z.boolean().optional(),
+  startup_timeout_ms: McpTimeoutMsSchema.optional(),
+  tool_timeout_ms: McpTimeoutMsSchema.optional(),
+  enabled_tools: z.array(z.string()).optional(),
+  disabled_tools: z.array(z.string()).optional(),
+} as const;
+
+const mcpServerStdioWireSchema = z.object({
+  transport: z.literal('stdio'),
+  command: z.string().min(1),
+  args: z.array(z.string()).optional(),
+  env: stringRecordSchema.optional(),
+  cwd: z.string().optional(),
+  executor: z.enum(['local', 'kaos']).optional(),
+  environment_id: z.string().min(1).optional(),
+  ...mcpServerCommonWireFields,
+});
+
+const mcpServerHttpWireSchema = z.object({
+  transport: z.literal('http'),
+  url: z.string().url(),
+  headers: stringRecordSchema.optional(),
+  auth: z.literal('oauth').optional(),
+  bearer_token_env_var: z.string().min(1).optional(),
+  ...mcpServerCommonWireFields,
+});
+
+const mcpServerSseWireSchema = z.object({
+  transport: z.literal('sse'),
+  url: z.string().url(),
+  headers: stringRecordSchema.optional(),
+  auth: z.literal('oauth').optional(),
+  bearer_token_env_var: z.string().min(1).optional(),
+  ...mcpServerCommonWireFields,
+});
+
 const globalMcpServerConfigSchema = z.discriminatedUnion('transport', [
-  McpServerStdioConfigSchema.extend({ name: serverNameSchema }),
-  McpServerHttpConfigSchema.extend({ name: serverNameSchema }),
-  McpServerSseConfigSchema.extend({ name: serverNameSchema }),
+  mcpServerStdioWireSchema.extend({ name: serverNameSchema }),
+  mcpServerHttpWireSchema.extend({ name: serverNameSchema }),
+  mcpServerSseWireSchema.extend({ name: serverNameSchema }),
 ]);
 
 const mcpServerConfigBodySchema = z.discriminatedUnion('transport', [
-  McpServerStdioConfigSchema,
-  McpServerHttpConfigSchema,
-  McpServerSseConfigSchema,
+  mcpServerStdioWireSchema,
+  mcpServerHttpWireSchema,
+  mcpServerSseWireSchema,
 ]);
 
 const testServerBodySchema = z.object({
@@ -85,10 +128,11 @@ const mcpServerLocatorSchema = z.discriminatedUnion('source', [
   z.object({ source: z.literal('global'), name: serverNameSchema }),
   z.object({
     source: z.literal('plugin'),
-    pluginId: z.string().min(1),
-    serverName: z.string().min(1),
+    plugin_id: z.string().min(1),
+    server_name: z.string().min(1),
   }),
 ]);
+type McpServerLocatorWire = z.infer<typeof mcpServerLocatorSchema>;
 
 const inspectServersBodySchema = z.object({
   targets: z.array(mcpServerLocatorSchema).optional(),
@@ -96,16 +140,11 @@ const inspectServersBodySchema = z.object({
 });
 
 const authCompleteBodySchema = z.object({
-  flowId: z.string().min(1),
-  timeoutMs: z
-    .number()
-    .int()
-    .min(1)
-    .max(2 ** 31 - 1)
-    .optional(),
+  flow_id: z.string().min(1),
+  timeout_ms: z.number().int().min(1).max(MAX_MCP_TIMEOUT_MS).optional(),
 });
 
-const authCancelBodySchema = z.object({ flowId: z.string().min(1) });
+const authCancelBodySchema = z.object({ flow_id: z.string().min(1) });
 
 const mcpServerSourceSchema = z.enum(['global', 'plugin', 'caller']);
 
@@ -119,10 +158,11 @@ const mcpServerAuthStateSchema = z.enum([
 ]);
 
 const mcpServerConfigDataSchema = z.union([
-  McpServerStdioConfigSchema.extend({ envKeys: z.array(z.string()).optional() }),
-  McpServerHttpConfigSchema.extend({ headerKeys: z.array(z.string()).optional() }),
-  McpServerSseConfigSchema.extend({ headerKeys: z.array(z.string()).optional() }),
+  mcpServerStdioWireSchema.extend({ env_keys: z.array(z.string()).optional() }),
+  mcpServerHttpWireSchema.extend({ header_keys: z.array(z.string()).optional() }),
+  mcpServerSseWireSchema.extend({ header_keys: z.array(z.string()).optional() }),
 ]);
+type McpServerConfigDataWire = z.infer<typeof mcpServerConfigDataSchema>;
 
 const mcpManagedServerSchema = z.object({
   name: z.string(),
@@ -132,6 +172,7 @@ const mcpManagedServerSchema = z.object({
   mutable: z.boolean(),
   plugin: z.object({ id: z.string(), name: z.string() }).optional(),
 });
+type McpManagedServerWire = z.infer<typeof mcpManagedServerSchema>;
 
 const mcpServerTestResultSchema = z.object({
   success: z.boolean(),
@@ -140,31 +181,160 @@ const mcpServerTestResultSchema = z.object({
 
 const mcpServerAuthStatusSchema = z.object({
   name: z.string(),
-  authStatus: mcpServerAuthStateSchema,
+  auth_status: mcpServerAuthStateSchema,
 });
+type McpServerAuthStatusWire = z.infer<typeof mcpServerAuthStatusSchema>;
 
 const mcpServerInspectionSchema = z.object({
-  serverId: z.string(),
+  server_id: z.string(),
   locator: mcpServerLocatorSchema,
-  runtimeName: z.string(),
-  canonicalUrl: z.string().optional(),
+  runtime_name: z.string(),
+  canonical_url: z.string().optional(),
   origin: mcpServerSourceSchema,
   config: mcpServerConfigDataSchema,
   enabled: z.boolean(),
   editable: z.boolean(),
-  authStatus: mcpServerAuthStateSchema,
-  checkedAt: z.number().optional(),
+  auth_status: mcpServerAuthStateSchema,
+  checked_at: z.number().optional(),
   error: z.string().optional(),
 });
+type McpServerInspectionWire = z.infer<typeof mcpServerInspectionSchema>;
 
 const mcpServerAuthBeginResultSchema = z.union([
   z.object({
     status: z.literal('authorization-required'),
-    flowId: z.string(),
-    authorizationUrl: z.string(),
+    flow_id: z.string(),
+    authorization_url: z.string(),
   }),
   z.object({ status: z.literal('already-authorized') }),
 ]);
+type McpServerAuthBeginResultWire = z.infer<typeof mcpServerAuthBeginResultSchema>;
+
+type McpServerConfigWire = z.infer<typeof mcpServerConfigBodySchema>;
+type GlobalMcpServerConfigWire = z.infer<typeof globalMcpServerConfigSchema>;
+
+function fromMcpServerConfigWire(wire: McpServerConfigWire): McpServerConfig {
+  const common = {
+    enabled: wire.enabled,
+    deferred: wire.deferred,
+    startupTimeoutMs: wire.startup_timeout_ms,
+    toolTimeoutMs: wire.tool_timeout_ms,
+    enabledTools: wire.enabled_tools,
+    disabledTools: wire.disabled_tools,
+  };
+  if (wire.transport === 'stdio') {
+    return {
+      transport: 'stdio',
+      command: wire.command,
+      args: wire.args,
+      env: wire.env,
+      cwd: wire.cwd,
+      executor: wire.executor,
+      environment_id: wire.environment_id,
+      ...common,
+    };
+  }
+  return {
+    transport: wire.transport,
+    url: wire.url,
+    headers: wire.headers,
+    auth: wire.auth,
+    bearerTokenEnvVar: wire.bearer_token_env_var,
+    ...common,
+  };
+}
+
+function fromGlobalMcpServerConfigWire(wire: GlobalMcpServerConfigWire): GlobalMcpServerConfig {
+  return { ...fromMcpServerConfigWire(wire), name: wire.name };
+}
+
+function toMcpServerConfigDataWire(
+  config: McpServerConfig | McpServerConfigView,
+): McpServerConfigDataWire {
+  const common = {
+    enabled: config.enabled,
+    deferred: config.deferred,
+    startup_timeout_ms: config.startupTimeoutMs,
+    tool_timeout_ms: config.toolTimeoutMs,
+    enabled_tools: config.enabledTools,
+    disabled_tools: config.disabledTools,
+  };
+  if (config.transport === 'stdio') {
+    const envKeys = 'envKeys' in config && config.envKeys !== undefined ? [...config.envKeys] : undefined;
+    return {
+      transport: 'stdio',
+      command: config.command,
+      args: config.args,
+      env: 'env' in config ? config.env : undefined,
+      env_keys: envKeys,
+      cwd: config.cwd,
+      executor: config.executor,
+      environment_id: config.environment_id,
+      ...common,
+    };
+  }
+  const headerKeys =
+    'headerKeys' in config && config.headerKeys !== undefined ? [...config.headerKeys] : undefined;
+  return {
+    transport: config.transport,
+    url: config.url,
+    headers: 'headers' in config ? config.headers : undefined,
+    header_keys: headerKeys,
+    auth: config.auth,
+    bearer_token_env_var: config.bearerTokenEnvVar,
+    ...common,
+  };
+}
+
+function fromMcpLocatorWire(locator: McpServerLocatorWire): McpServerLocator {
+  if (locator.source === 'global') return { source: 'global', name: locator.name };
+  return { source: 'plugin', pluginId: locator.plugin_id, serverName: locator.server_name };
+}
+
+function toMcpLocatorWire(locator: McpServerLocator): McpServerLocatorWire {
+  if (locator.source === 'global') return { source: 'global', name: locator.name };
+  return { source: 'plugin', plugin_id: locator.pluginId, server_name: locator.serverName };
+}
+
+function toManagedServerWire(server: McpManagedServer): McpManagedServerWire {
+  return {
+    name: server.name,
+    config: toMcpServerConfigDataWire(server.config),
+    source: server.source,
+    origin: server.origin,
+    mutable: server.mutable,
+    plugin: server.plugin,
+  };
+}
+
+function toAuthStatusWire(item: McpServerAuthStatus): McpServerAuthStatusWire {
+  return { name: item.name, auth_status: item.authStatus };
+}
+
+function toInspectionWire(item: McpServerInspection): McpServerInspectionWire {
+  return {
+    server_id: item.serverId,
+    locator: toMcpLocatorWire(item.locator),
+    runtime_name: item.runtimeName,
+    canonical_url: item.canonicalUrl,
+    origin: item.origin,
+    config: toMcpServerConfigDataWire(item.config),
+    enabled: item.enabled,
+    editable: item.editable,
+    auth_status: item.authStatus,
+    checked_at: item.checkedAt,
+    error: item.error,
+  };
+}
+
+function toAuthBeginResultWire(result: McpServerAuthBeginResult): McpServerAuthBeginResultWire {
+  if (result.status === 'already-authorized') return { status: 'already-authorized' };
+  return {
+    status: 'authorization-required',
+    flow_id: result.flowId,
+    authorization_url: result.authorizationUrl,
+  };
+}
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
@@ -226,7 +396,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const servers = await management().listServers({ cwd: req.query.cwd });
-        reply.send(okEnvelope(servers, req.id));
+        reply.send(okEnvelope(servers.map(toManagedServerWire), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -252,7 +422,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const server = await management().getServer(req.params.name, { cwd: req.query.cwd });
-        reply.send(okEnvelope(server, req.id));
+        reply.send(okEnvelope(toManagedServerWire(server), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -278,8 +448,10 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        const servers = await management().addServer(req.body, { cwd: req.query.cwd });
-        reply.send(okEnvelope(servers, req.id));
+        const servers = await management().addServer(fromGlobalMcpServerConfigWire(req.body), {
+          cwd: req.query.cwd,
+        });
+        reply.send(okEnvelope(servers.map(toManagedServerWire), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -307,10 +479,10 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const servers = await management().updateServer(
-          { ...req.body, name: req.params.name },
+          { ...fromMcpServerConfigWire(req.body), name: req.params.name },
           { cwd: req.query.cwd },
         );
-        reply.send(okEnvelope(servers, req.id));
+        reply.send(okEnvelope(servers.map(toManagedServerWire), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -337,7 +509,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const servers = await management().removeServer(req.params.name, { cwd: req.query.cwd });
-        reply.send(okEnvelope(servers, req.id));
+        reply.send(okEnvelope(servers.map(toManagedServerWire), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -362,7 +534,14 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        const result = await management().testServer(req.body);
+        const result = await management().testServer({
+          name: req.body.name,
+          server:
+            req.body.server === undefined
+              ? undefined
+              : fromGlobalMcpServerConfigWire(req.body.server),
+          cwd: req.body.cwd,
+        });
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
@@ -388,10 +567,11 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        const inspections = await management().inspectServers(req.body.targets, {
-          cwd: req.body.cwd,
-        });
-        reply.send(okEnvelope(inspections, req.id));
+        const inspections = await management().inspectServers(
+          req.body.targets?.map(fromMcpLocatorWire),
+          { cwd: req.body.cwd },
+        );
+        reply.send(okEnvelope(inspections.map(toInspectionWire), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -420,7 +600,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
           cwd: req.query.cwd,
           verify: req.query.verify === undefined ? undefined : req.query.verify === 'true',
         });
-        reply.send(okEnvelope(statuses, req.id));
+        reply.send(okEnvelope(statuses.map(toAuthStatusWire), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -446,8 +626,10 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        const result = await management().beginServerAuth(req.body, { cwd: req.query.cwd });
-        reply.send(okEnvelope(result, req.id));
+        const result = await management().beginServerAuth(fromMcpLocatorWire(req.body), {
+          cwd: req.query.cwd,
+        });
+        reply.send(okEnvelope(toAuthBeginResultWire(result), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -467,7 +649,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
       success: { data: z.null() },
       errors: oauthErrorSchemas,
       description:
-        'Await the browser callback of a begun flow and finish the code exchange (`40001` for an unknown `flowId`).',
+        'Await the browser callback of a begun flow and finish the code exchange (`40001` for an unknown `flow_id`).',
       tags: ['mcp'],
     },
     async (req, reply) => {
@@ -479,7 +661,10 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
       };
       raw.once('close', onClose);
       try {
-        await management().completeServerAuth(req.body, { signal: disconnect.signal });
+        await management().completeServerAuth(
+          { flowId: req.body.flow_id, timeoutMs: req.body.timeout_ms },
+          { signal: disconnect.signal },
+        );
         reply.send(okEnvelope(null, req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
@@ -506,7 +691,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        await management().cancelServerAuth(req.body);
+        await management().cancelServerAuth({ flowId: req.body.flow_id });
         reply.send(okEnvelope(null, req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
@@ -533,7 +718,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
-        await management().resetServerAuth(req.body, { cwd: req.query.cwd });
+        await management().resetServerAuth(fromMcpLocatorWire(req.body), { cwd: req.query.cwd });
         reply.send(okEnvelope(null, req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);

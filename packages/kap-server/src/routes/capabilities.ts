@@ -1,4 +1,10 @@
-import { CapabilityErrors, ICapabilityService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
+import {
+  CapabilityErrors,
+  ICapabilityService,
+  isError2,
+  type CapabilityStatus,
+  type Scope,
+} from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -9,6 +15,7 @@ import {
   capabilityInstallOptionsSchema,
   capabilityStatusSchema,
   listCapabilitiesResponseSchema,
+  type CapabilityStatusWire,
 } from '../protocol/rest-capability';
 import { parseActionSuffix } from './action-suffix';
 
@@ -35,6 +42,32 @@ const capabilityTailParamsSchema = z.object({
   tail: z.string().min(1),
 });
 
+function toCapabilityStatusWire(status: CapabilityStatus): CapabilityStatusWire {
+  return {
+    id: status.id,
+    plugin_id: status.pluginId,
+    display_name: status.displayName,
+    description: status.description,
+    supported: status.supported,
+    state: status.state,
+    version: status.version,
+    steps: status.steps.map((step) => ({
+      id: step.id,
+      state: step.state,
+      detail: step.detail,
+      optional: step.optional,
+    })),
+    install: {
+      running: status.install.running,
+      step: status.install.step,
+      percent: status.install.percent,
+      error: status.install.error,
+      note: status.install.note,
+      confirmation_required: status.install.confirmationRequired,
+    },
+  };
+}
+
 export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Scope): void {
   const listRoute = defineRoute(
     {
@@ -48,7 +81,7 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
     },
     async (req, reply) => {
       const capabilities = await core.accessor.get(ICapabilityService).listCapabilities();
-      reply.send(okEnvelope({ capabilities }, req.id));
+      reply.send(okEnvelope({ capabilities: capabilities.map(toCapabilityStatusWire) }, req.id));
     },
   );
   app.get(
@@ -75,7 +108,7 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
         const capability = await core.accessor
           .get(ICapabilityService)
           .getCapability(req.params.capability_id);
-        reply.send(okEnvelope(capability, req.id));
+        reply.send(okEnvelope(toCapabilityStatusWire(capability), req.id));
       } catch (error) {
         reply.send(mapCapabilityError(error, req.id));
       }
@@ -118,8 +151,10 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
       try {
         const capability = await core.accessor
           .get(ICapabilityService)
-          .installCapability(parsed.id, req.body ?? {});
-        reply.send(okEnvelope(capability, req.id));
+          .installCapability(parsed.id, {
+            stopRunningProcesses: req.body?.stop_running_processes,
+          });
+        reply.send(okEnvelope(toCapabilityStatusWire(capability), req.id));
       } catch (error) {
         reply.send(mapCapabilityError(error, req.id));
       }

@@ -1,5 +1,6 @@
+import type { CapabilityInstallProgressWire } from '../../../protocol/rest-capability';
 import type { ConfigResponse } from '../../../protocol/rest-config';
-import type { Session, SessionPendingInteraction } from '../../../protocol/session';
+import type { Session } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
 
 export interface SessionMetaUpdatedEvent {
@@ -13,49 +14,16 @@ export interface SessionCreatedEvent {
   readonly session: Session;
 }
 
-export interface SessionArchivedEvent {
-  readonly type: 'event.session.archived';
-  readonly workspace_id: string;
+export interface SessionGlobalEvent {
+  readonly type: 'session';
+  readonly change: 'created' | 'updated' | 'archived' | 'restored' | 'deleted';
+  readonly session: Session;
 }
 
-export interface SessionRestoredEvent {
-  readonly type: 'event.session.restored';
-  readonly workspace_id: string;
-}
-
-export interface SessionDeletedEvent {
-  readonly type: 'event.session.deleted';
-  readonly workspace_id: string;
-}
-
-export interface WorkspaceCreatedEvent {
-  readonly type: 'event.workspace.created';
+export interface WorkspaceGlobalEvent {
+  readonly type: 'workspace';
+  readonly change: 'created' | 'updated' | 'deleted';
   readonly workspace: Workspace;
-}
-
-export interface WorkspaceUpdatedEvent {
-  readonly type: 'event.workspace.updated';
-  readonly workspace: Workspace;
-}
-
-export interface WorkspaceDeletedEvent {
-  readonly type: 'event.workspace.deleted';
-  readonly workspace_id: string;
-  readonly root: string;
-}
-
-export interface SessionWorkChangedEvent {
-  readonly type: 'event.session.work_changed';
-  readonly busy: boolean;
-  readonly main_turn_active?: boolean;
-  readonly pending_interaction?: SessionPendingInteraction;
-  readonly last_turn_reason?: 'completed' | 'cancelled' | 'failed';
-}
-
-export interface ConfigChangedEvent {
-  readonly type: 'event.config.changed';
-  readonly changedFields: string[];
-  readonly config: ConfigResponse;
 }
 
 export interface ConfigWarningItem {
@@ -63,9 +31,15 @@ export interface ConfigWarningItem {
   readonly message: string;
 }
 
-export interface ConfigWarningEvent {
-  readonly type: 'event.config.warning';
-  readonly warnings: readonly ConfigWarningItem[];
+export interface ConfigGlobalEvent {
+  readonly type: 'config';
+  readonly config: ConfigResponse;
+  readonly warnings?: readonly ConfigWarningItem[];
+}
+
+export interface InvalidatedGlobalEvent {
+  readonly type: 'invalidated';
+  readonly kind: 'models' | 'plugins';
 }
 
 export interface ModelCatalogRefreshChange {
@@ -86,44 +60,21 @@ export interface ModelCatalogRetiredDefault {
   readonly from_display_name: string;
 }
 
-export interface ModelCatalogChangedEvent {
-  readonly type: 'event.model_catalog.changed';
-  readonly changed: readonly ModelCatalogRefreshChange[];
-  readonly unchanged: readonly string[];
-  readonly failed: readonly ModelCatalogRefreshFailure[];
-  readonly retired_default?: ModelCatalogRetiredDefault;
-}
-
-export interface PluginChangedEvent {
-  readonly type: 'event.plugin.changed';
-}
-
 export interface CapabilityChangedEvent {
   readonly type: 'event.capability.changed';
   readonly capability_id: string;
-  readonly install: {
-    readonly running: boolean;
-    readonly step?: string;
-    readonly percent?: number;
-    readonly error?: string;
-    readonly note?: string;
-  };
+  readonly install: CapabilityInstallProgressWire;
 }
 
 export type PushEvent =
-  | SessionMetaUpdatedEvent
-  | SessionCreatedEvent
-  | SessionArchivedEvent
-  | SessionRestoredEvent
-  | SessionDeletedEvent
-  | WorkspaceCreatedEvent
-  | WorkspaceUpdatedEvent
-  | WorkspaceDeletedEvent
-  | SessionWorkChangedEvent
-  | ConfigChangedEvent
-  | ConfigWarningEvent
-  | ModelCatalogChangedEvent
-  | PluginChangedEvent
+  | SessionGlobalEvent
+  | WorkspaceGlobalEvent
+  | ConfigGlobalEvent
+  | InvalidatedGlobalEvent
   | CapabilityChangedEvent;
 
-export type Event = PushEvent & { agentId: string; sessionId: string; readonly time?: number };
+export type Event = PushEvent & {
+  readonly agentId?: string;
+  readonly sessionId?: string;
+  readonly time?: number;
+};
