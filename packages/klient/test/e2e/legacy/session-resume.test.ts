@@ -9,9 +9,9 @@
  *      `core.rpc.resumeSession({sessionId})` before `getContext`, so any
  *      session whose snapshot exists on disk is rehydrated transparently.
  *
- *   2. **`GET /sessions/{sid}.busy` must reflect runtime work.** Session
+ *   2. **`GET /sessions/{sid}.activity` must reflect runtime work.** Session
  *      activity is aggregated from agent turns and background tasks, so this
- *      test asserts the live server transitions `false → true → false` across
+ *      test asserts the live server transitions `idle → turn → idle` across
  *      a prompt.
  *
  * Both tests gate on `daemonReachable()` so CI without a server stays green.
@@ -115,18 +115,18 @@ describeLive('session resume + activity (live server required)', () => {
     PROMPT_TIMEOUT_MS + 30_000,
   );
 
-  // ── Gap 2: live busy field ─────────────────────────────────────────────
-  // Asserts the live server transitions `false → true → false` across a
+  // ── Gap 2: live activity field ──────────────────────────────────────────
+  // Asserts the live server transitions `idle → turn → idle` across a
   // prompt, using the aggregate work fact exposed by both backends.
   it(
-    'GET /sessions/{sid}.busy transitions false → true → false across a prompt',
+    'GET /sessions/{sid}.activity transitions idle → turn → idle across a prompt',
     async () => {
       const log = createCaseLogger('session busy: live transition');
       const client = new DaemonClient({ baseUrl: BASE_URL });
       const session = await client.createSession({ metadata: { cwd: process.cwd() } });
       created.push({ client, sid: session.id });
       log('created session', session);
-      expect(session.busy).toBe(false);
+      expect(session.activity).toBe('idle');
 
       await client.connect();
       await client.subscribe(session.id);
@@ -135,7 +135,7 @@ describeLive('session resume + activity (live server required)', () => {
       // Poll busy while the prompt is mid-flight; `runUntilIdle` resolves
       // once `event.session.work_changed` reports the session idle again.
       let seenBusy = false;
-      const busySamples: Array<{ at_ms: number; busy: boolean; current_prompt_id?: string }> = [];
+      const busySamples: Array<{ at_ms: number; busy: boolean; activity: string }> = [];
       const startedAt = Date.now();
       const { result: submit, finalFrame: idleFrame } = await client.runUntilIdle(
         session.id,
@@ -148,10 +148,10 @@ describeLive('session resume + activity (live server required)', () => {
             const snap = await client.http.getSession(session.id);
             busySamples.push({
               at_ms: Date.now() - startedAt,
-              busy: snap.busy,
-              current_prompt_id: snap.current_prompt_id,
+              busy: snap.activity !== 'idle',
+              activity: snap.activity,
             });
-            if (snap.busy) {
+            if (snap.activity !== 'idle') {
               seenBusy = true;
               break;
             }
@@ -168,7 +168,7 @@ describeLive('session resume + activity (live server required)', () => {
       log('final session snapshot', after);
 
       expect(seenBusy, 'expected at least one busy reading during prompt').toBe(true);
-      expect(after.busy).toBe(false);
+      expect(after.activity).toBe('idle');
     },
     PROMPT_TIMEOUT_MS + 30_000,
   );
@@ -185,15 +185,13 @@ function frameForLog(frame: { type: string; session_id?: string; payload?: unkno
 function sessionSummaryForLog(session: {
   id: string;
   title: string;
-  busy: boolean;
-  message_count: number;
-  metadata: Record<string, unknown>;
+  activity: string;
+  cwd: string;
 }): Record<string, unknown> {
   return {
     id: session.id,
     title: session.title,
-    busy: session.busy,
-    message_count: session.message_count,
-    cwd: session.metadata['cwd'],
+    activity: session.activity,
+    cwd: session.cwd,
   };
 }
