@@ -71,6 +71,7 @@ export const thinkingDeltaEventSchema = z.object({
 export const toolCallStartedEventSchema = z.object({
   type: z.literal('tool.call.started'),
   time: z.number().optional(),
+  origin: z.enum(['loop', 'shellCommand']),
   turnId: z.number(),
   toolCallId: z.string(),
   name: z.string(),
@@ -92,6 +93,7 @@ export const toolCallDeltaEventSchema = z.object({
 export const toolUpdatedEventSchema = z.object({
   type: z.literal('tool.updated'),
   time: z.number().optional(),
+  origin: z.enum(['loop', 'shellCommand']),
   turnId: z.number(),
   toolCallId: z.string(),
   taskId: z.string(),
@@ -104,6 +106,7 @@ export const toolUpdatedEventSchema = z.object({
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
   time: z.number().optional(),
+  origin: z.enum(['loop', 'shellCommand']),
   turnId: z.number(),
   toolCallId: z.string(),
   output: z.unknown(),

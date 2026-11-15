@@ -86,10 +86,11 @@ describe('AgentShellCommandService', () => {
 
   it('publishes shell.completed with the outcome for interactive runs', async () => {
     await setup('hello\n', 0);
-    const events: { type: string; commandId?: string; isError?: boolean }[] = [];
+    const events: { type: string; commandId?: string; isError?: boolean; origin?: string }[] = [];
     ctx.get(IEventBus).subscribe((event) => events.push(event as (typeof events)[number]));
 
-    await shell.run({ command: 'echo hello', commandId: 'cmd-1' });
+    const result = await shell.run({ command: 'echo hello', commandId: 'cmd-1' });
+    expect(result).toMatchObject({ stdout: 'hello\n', isError: false });
     expect(events.filter((e) => e.type === 'shell.completed')).toEqual([
       expect.objectContaining({
         type: 'shell.completed',
@@ -98,6 +99,9 @@ describe('AgentShellCommandService', () => {
         taskId: expect.any(String),
       }),
     ]);
+    const toolEvents = events.filter((e) => e.type.startsWith('tool.'));
+    expect(toolEvents.length).toBeGreaterThan(0);
+    expect(toolEvents.every((e) => e.origin === 'shellCommand')).toBe(true);
   });
 
   it('publishes shell.completed as failed for a failing command', async () => {

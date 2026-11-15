@@ -843,6 +843,7 @@ describe('event hub', () => {
     const delta = { type: 'tool.call.delta', turnId: 1, toolCallId: 'tc1', name: 'Bash', argumentsPart: '{"command":' };
     const progress = {
       type: 'tool.updated',
+      origin: 'loop',
       turnId: 1,
       toolCallId: 'tc1',
       taskId: 'task-1',

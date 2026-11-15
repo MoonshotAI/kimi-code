@@ -515,7 +515,7 @@ function agentHandler(ctx: TestAgentContext, args: SubagentToolInput, inputSigna
     id: 'call_agent_timeout',
     name: 'Agent',
     arguments: JSON.stringify(args),
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
   if (inputSignal?.aborted === true) void handler.stop(inputSignal.reason);
   else inputSignal?.addEventListener('abort', () => {
     void handler.stop(inputSignal.reason);
@@ -5131,8 +5131,8 @@ describe('Agent tools', () => {
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 0, "part": { "type": "text", "text": "I will look it up." }, "startedAt": "<time>" }, "time": "<time>" }
         [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
         [wire] token_counting.measured     { "agentId": "main", "length": 3, "tokens": 134, "time": "<time>" }
-        [emit] tool.call.started           { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }
-        [emit] tool.updated                { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
+        [emit] tool.call.started           { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }
+        [emit] tool.updated                { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
         [emit] toolCall                    { "turnId": 0, "toolCallId": "call_lookup", "args": { "query": "moon" } }
       `);
       expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -5148,9 +5148,9 @@ describe('Agent tools', () => {
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.call", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
         [wire] interaction.request         { "agentId": "main", "id": "<user_tool-1>", "kind": "user_tool", "toolCallId": "call_lookup", "request": { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }, "time": "<time>" }
         [wire] interaction.resolved        { "agentId": "main", "id": "<user_tool-1>", "response": { "content": "moon-result", "output": "moon-result" }, "time": "<time>" }
-        [emit] tool.updated                { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
-        [emit] tool.updated                { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "success", "detached": false, "fields": {} }
-        [emit] tool.result                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "output": "moon-result" }
+        [emit] tool.updated                { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "running", "detached": false, "fields": {} }
+        [emit] tool.updated                { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "taskId": "<taskId>", "status": "success", "detached": false, "fields": {} }
+        [emit] tool.result                 { "time": "<time>", "agentId": "main", "origin": "loop", "turnId": 0, "toolCallId": "call_lookup", "output": "moon-result" }
         [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 118, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 3, "deleteCount": 0, "messages": [ { "role": "tool", "content": [ { "type": "text", "text": "moon-result" } ], "toolCallId": "call_lookup" } ] }
         [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-4>", "toolCallId": "call_lookup", "result": { "output": "moon-result" } }, "time": "<time>" }

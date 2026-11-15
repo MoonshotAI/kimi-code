@@ -1573,6 +1573,7 @@ class LoopActor implements Loop {
       for (const call of step.calls) {
         if (step.settled[call.key] !== undefined) continue;
         const context: LoopToolContext = {
+          origin: 'loop',
           turnId: turn.id,
           step: turn.step,
           ...this.toolContext?.(turn.id),

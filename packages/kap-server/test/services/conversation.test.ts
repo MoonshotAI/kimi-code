@@ -1001,6 +1001,7 @@ const updated = (
   output?: { offset: number; text: string },
 ): ToolUpdated => new ToolUpdated({
   agentId: 'main',
+  origin: 'loop',
   turnId: 0,
   toolCallId: 'call-1',
   taskId: 'task-1',

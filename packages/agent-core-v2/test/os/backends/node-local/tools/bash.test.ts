@@ -346,6 +346,7 @@ async function executeTool(
     name: 'Bash',
     arguments: JSON.stringify(ctx.args),
   }, {
+    origin: 'loop',
     turnId: ctx.turnId,
     onForegroundTaskStart: ctx.onForegroundTaskStart,
   });
