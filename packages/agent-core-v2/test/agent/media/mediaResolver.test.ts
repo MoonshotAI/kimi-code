@@ -1213,6 +1213,7 @@ describe('AgentMediaResolverService expired upload recovery', () => {
     messages: readonly Message[],
     resolution: TestMediaResolution,
     reject: (body: string, call: number) => Response | undefined,
+    expectDone = true,
   ): Promise<{ bodies: string[]; eventTypes: string[]; recovered: boolean }> {
     const bodies: string[] = [];
     const mockFetch: typeof fetch = async (input, init) => {
@@ -1247,7 +1248,7 @@ describe('AgentMediaResolverService expired upload recovery', () => {
       if (event.type === 'llm.retrying' && event.reason === 'recovery') recovered = true;
       if (event.type === 'llm.ended' && event.outcome.type === 'done') done = true;
     }
-    expect(done).toBe(true);
+    expect(done).toBe(expectDone);
     return { bodies, eventTypes, recovered };
   }
 
@@ -1360,6 +1361,67 @@ describe('AgentMediaResolverService expired upload recovery', () => {
     expect(result.bodies[1]).toContain('current-upload');
     expect(result.bodies[1]).toContain('image omitted');
     expect(result.bodies[1]).not.toContain('expired-upload');
+  });
+
+  it('keeps request-size recovery targeted at canonical local media', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('uploaded-image'));
+    const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
+
+    const result = await runRequest(
+      res,
+      [imageMessage(buildKimiFileUrl(FILE_ID))],
+      requester({ uploadImage: upload }),
+      (body, call) => call === 1
+        ? Response.json({ error: { message: 'request_too_large: media size limit exceeded' } }, { status: 413 })
+        : undefined,
+    );
+
+    expect(result.recovered).toBe(true);
+    expect(result.bodies).toHaveLength(2);
+    expect(result.bodies[0]).toContain('ms://uploaded-image');
+    expect(result.bodies[1]).toContain('image omitted');
+    expect(result.bodies[1]).not.toContain('uploaded-image');
+  });
+
+  it('removes a rejected persisted upload before a new resolver can reuse it', async () => {
+    const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
+    const blobs = blobStore();
+    const message = imageMessage(buildKimiFileUrl(FILE_ID));
+    const first = new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext);
+    await resolveMedia(first, [message], requester({ uploadImage: async () => msImagePart('expired-upload') }));
+    const second = new AgentMediaResolverService(fileService(new Map()), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext);
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('fresh-upload'));
+
+    const result = await runRequest(
+      second,
+      [message],
+      requester({ uploadImage: upload }),
+      (body, call) => call === 1 ? expiredUpload('image') : undefined,
+    );
+
+    expect(result.recovered).toBe(true);
+    expect(result.bodies).toHaveLength(2);
+    expect(result.bodies[1]).toContain('image omitted');
+    expect(upload).not.toHaveBeenCalled();
+
+    const third = new AgentMediaResolverService(fileService(new Map()), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext);
+    const resolved = await resolveMedia(third, [message], requester({ uploadImage: upload }));
+    expect(JSON.stringify(resolved)).not.toContain('expired-upload');
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('declines an expired-upload error that does not match request media', async () => {
+    const result = await runRequest(
+      resolver(new Map()),
+      [imageMessage('ms://current-upload')],
+      requester({}),
+      () => expiredUpload('image'),
+      false,
+    );
+
+    expect(result.recovered).toBe(false);
+    expect(result.bodies).toHaveLength(1);
+    expect(result.bodies[0]).toContain('current-upload');
   });
 });
 

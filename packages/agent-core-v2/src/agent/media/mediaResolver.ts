@@ -13,6 +13,7 @@ export interface IAgentMediaResolverService {
     signal?: AbortSignal,
   ): Promise<readonly Message[]>;
   displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>>;
+  hasUpload(llmFileId: string): boolean;
   invalidateUpload(llmFileId: string): void;
 }
 

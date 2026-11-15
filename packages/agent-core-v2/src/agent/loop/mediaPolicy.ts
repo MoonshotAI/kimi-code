@@ -93,31 +93,37 @@ function createMediaRecovery(
       const isRejected = (part: ContentPart): boolean =>
         isMediaPart(part) &&
         (mediaFileIdOf(part) === llmFileId || mediaUrlOf(part) === `ms://${llmFileId}`);
+      const directlyRejected = context.request.content.messages.some(
+        (message) => message.content.some(isRejected),
+      );
+      if (!directlyRejected && !service.hasUpload(llmFileId)) return undefined;
       return {
         strategy: 'media-upload',
         action: 'invalidated',
         beforeNextAttempt: () => {
           service.invalidateUpload(llmFileId);
         },
-        rewrite: (request) => {
-          let changed = false;
-          const messages = request.content.messages.map((message) => {
-            let messageChanged = false;
-            const content = message.content.map((part): ContentPart => {
-              if (!isMediaPart(part) || !isRejected(part)) return part;
-              changed = true;
-              messageChanged = true;
-              return {
-                type: 'text',
-                text: mediaPlaceholderText(mediaKindOfPart(part)!, 'unavailable'),
-              };
-            });
-            return messageChanged ? { ...message, content } : message;
-          });
-          return changed
-            ? { ...request, content: { ...request.content, messages } }
-            : request;
-        },
+        rewrite: directlyRejected
+          ? (request) => {
+              let changed = false;
+              const messages = request.content.messages.map((message) => {
+                let messageChanged = false;
+                const content = message.content.map((part): ContentPart => {
+                  if (!isMediaPart(part) || !isRejected(part)) return part;
+                  changed = true;
+                  messageChanged = true;
+                  return {
+                    type: 'text',
+                    text: mediaPlaceholderText(mediaKindOfPart(part)!, 'unavailable'),
+                  };
+                });
+                return messageChanged ? { ...message, content } : message;
+              });
+              return changed
+                ? { ...request, content: { ...request.content, messages } }
+                : request;
+            }
+          : undefined,
       };
     },
   };
@@ -171,7 +177,6 @@ export function createAgentMediaPolicy(
     },
     resolver: {
       id: 'agent-media',
-      recoveryRequest: 'resolved',
       resolve: async (current, control) => {
         mediaPaths =
           countMediaParts(current.content.messages) === 0

@@ -115,6 +115,15 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   private readonly imageUploadUnsupported = new Set<string>();
   private readonly invalidUploads = new Set<string>();
 
+  hasUpload(llmFileId: string): boolean {
+    for (const part of this.resolved.values()) {
+      if (part.type !== 'image_url' && part.type !== 'video_url' && part.type !== 'audio_url') continue;
+      const uploadedId = mediaFileIdOf(part) ?? msFileIdFromUrl(mediaUrlOf(part));
+      if (uploadedId === llmFileId) return true;
+    }
+    return false;
+  }
+
   invalidateUpload(llmFileId: string): void {
     this.invalidUploads.add(llmFileId);
     for (const [key, part] of this.resolved) {
@@ -614,9 +623,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const data = await this.blobs.get(scope, blobKey(cacheKey)).catch(() => undefined);
     if (data === undefined) return undefined;
     const llmFileId = textDecoder.decode(data);
-    return PROVIDER_ID_RE.test(llmFileId) && !this.invalidUploads.has(llmFileId)
-      ? llmFileId
-      : undefined;
+    if (!PROVIDER_ID_RE.test(llmFileId)) return undefined;
+    if (this.invalidUploads.has(llmFileId)) {
+      await this.blobs.delete(scope, blobKey(cacheKey)).catch(() => undefined);
+      return undefined;
+    }
+    return llmFileId;
   }
 
   private async writeCachedUpload(
