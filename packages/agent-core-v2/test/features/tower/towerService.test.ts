@@ -3530,7 +3530,7 @@ describe('AgentTowerService', () => {
       expect(loop.snapshot().hasPendingRequests).toBe(false);
     });
 
-    function publishUserPrompt(promptId: string): void {
+    function publishPrompt(promptId: string, origin: PromptSubmitted['origin']): void {
       publishAsMain(
         ix,
         new PromptSubmitted({
@@ -3539,6 +3539,7 @@ describe('AgentTowerService', () => {
           userMessageId: promptId,
           status: 'queued',
           content: [{ type: 'text', text: 'hold on' }],
+          origin,
           createdAt: new Date().toISOString(),
         }),
       );
@@ -3557,7 +3558,7 @@ describe('AgentTowerService', () => {
           origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
         }),
       );
-      publishUserPrompt('p1');
+      publishPrompt('p1', { kind: 'user' });
       await flushWake();
 
       expect(loop.cancels).toHaveLength(1);
@@ -3565,7 +3566,7 @@ describe('AgentTowerService', () => {
       expect(isUserCancellation(loop.cancels[0]?.reason)).toBe(true);
     });
 
-    it('ignores turns seeded by other notification origins', async () => {
+    it('ignores non-user submissions and turns seeded by other notification origins', async () => {
       const tower = ix.get(IAgentTowerService);
       await tower.enter();
 
@@ -3578,7 +3579,25 @@ describe('AgentTowerService', () => {
           origin: { kind: 'injection', variant: 'cron' },
         }),
       );
-      publishUserPrompt('p1');
+      publishPrompt('p1', { kind: 'user' });
+      await flushWake();
+
+      const wakeTurn = loop.startTurn();
+      publishAsMain(
+        ix,
+        new TurnStarted({
+          agentId: 'main',
+          turnId: wakeTurn.id,
+          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+        }),
+      );
+      publishPrompt('p2', {
+        kind: 'task',
+        taskId: 'task-1',
+        status: 'completed',
+        notificationId: 'task:task-1:completed',
+      });
+      publishPrompt('p3', { kind: 'injection', variant: 'cron' });
       await flushWake();
 
       expect(loop.cancels).toEqual([]);
@@ -3598,7 +3617,7 @@ describe('AgentTowerService', () => {
         }),
       );
       publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: wakeTurn.id, reason: 'completed' }));
-      publishUserPrompt('p1');
+      publishPrompt('p1', { kind: 'user' });
       await flushWake();
 
       expect(loop.cancels).toEqual([]);

@@ -216,6 +216,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         if (this.agentCtx.agentId !== 'main') return;
         if (!this.isActive) return;
         if (event.agentId !== this.agentCtx.agentId) return;
+        if (event.origin.kind !== 'user') return;
         const turnId = this.wakeTurnId;
         if (turnId === undefined) return;
         queueMicrotask(() => {
