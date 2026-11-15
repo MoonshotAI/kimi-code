@@ -133,6 +133,8 @@ defaultCwd = "/srv/work"
 
 默认情况下，server 的所有工具都会直接进入模型的顶层工具列表；接入的 server 较多、或单个 server 暴露的工具较多时，这些工具定义会持续占用上下文。把 server 标记为 deferred 后，它的工具不再进入顶层工具列表：模型先看到一份可加载工具清单，需要时通过内置的 `select_tools` 工具加载完整定义，加载后同一轮即可调用。
 
+如果 deferred server 的工具定义在会话运行期间发生变化，旧定义会被卸载，工具也会重新出现在可加载公告中。模型必须再次通过 `select_tools` 加载新定义，然后才能继续调用；重新加载前的调用会被拒绝，避免旧参数进入新实现。未标记为 deferred 的工具在会话中会继续使用初始定义；定义变化后的调用会返回 schema 更新错误。
+
 按需加载是实验功能，同时满足两个前提才会生效：
 
 - 启用 `tool-select` 实验标志：设置环境变量 `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT=1`，或在 `config.toml` 的 `[experimental]` 下写 `tool-select = true`；总开关 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 会一并启用。
