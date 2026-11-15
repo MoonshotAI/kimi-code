@@ -29,6 +29,10 @@ export const ARTEX_PLANNER_TOOL_NAMES: readonly string[] = [
   'add_company_scope',
   'add_task_scope',
   'list_untested_assets',
+  'traffic_search',
+  'traffic_get',
+  'traffic_blob',
+  'bind_finding_traffic',
 ];
 
 export const ARTEX_WORKER_TOOL_NAMES: readonly string[] = [
@@ -43,6 +47,10 @@ export const ARTEX_WORKER_TOOL_NAMES: readonly string[] = [
   'search_all_worker_traces',
   'get_worker_trace',
   'node_detail',
+  'traffic_search',
+  'traffic_get',
+  'traffic_blob',
+  'bind_finding_traffic',
 ];
 
 export const ARTEX_MAIN_AGENT_TOOL_NAMES: readonly string[] = [

@@ -44,6 +44,13 @@ import {
   IArtexListTaskCredentialsTool,
 } from './list_task_credentials/list_task_credentials';
 import { ArtexSetConstraintsTool, IArtexSetConstraintsTool } from './set_constraints/set_constraints';
+import { ArtexTrafficSearchTool, IArtexTrafficSearchTool } from './traffic_search/traffic_search';
+import { ArtexTrafficGetTool, IArtexTrafficGetTool } from './traffic_get/traffic_get';
+import { ArtexTrafficBlobTool, IArtexTrafficBlobTool } from './traffic_blob/traffic_blob';
+import {
+  ArtexBindFindingTrafficTool,
+  IArtexBindFindingTrafficTool,
+} from './bind_finding_traffic/bind_finding_traffic';
 
 export interface ArtexToolRegistration {
   readonly id: ServiceIdentifier<AnyAgentTool>;
@@ -87,4 +94,8 @@ export const ARTEX_TOOLS: readonly ArtexToolRegistration[] = [
     name: 'list_task_credentials',
   },
   { id: IArtexSetConstraintsTool, ctor: ArtexSetConstraintsTool, name: 'set_constraints' },
+  { id: IArtexTrafficSearchTool, ctor: ArtexTrafficSearchTool, name: 'traffic_search' },
+  { id: IArtexTrafficGetTool, ctor: ArtexTrafficGetTool, name: 'traffic_get' },
+  { id: IArtexTrafficBlobTool, ctor: ArtexTrafficBlobTool, name: 'traffic_blob' },
+  { id: IArtexBindFindingTrafficTool, ctor: ArtexBindFindingTrafficTool, name: 'bind_finding_traffic' },
 ];

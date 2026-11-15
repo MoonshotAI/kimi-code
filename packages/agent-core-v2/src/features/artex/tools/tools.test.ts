@@ -10,10 +10,39 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { ArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import type { IArtexGraphStore } from '#/features/artex/store/artexGraphStore';
 import type { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
+import { ArtexTrafficStoreProvider } from '#/features/artex/store/artexTrafficStoreProvider';
+import type { FileArtexTrafficStore } from '#/features/artex/store/fileArtexTrafficStore';
+import type { IArtexTrafficRecorder } from '#/features/artex/traffic/artexTrafficRecorder';
 
 import { ArtexRecordFactTool, type RecordFactInput } from './record_fact/record_fact';
 import { ArtexReportFindingTool, type ReportFindingInput } from './report_finding/report_finding';
 import { ArtexProveGoalTool, type ProveGoalInput } from './prove_goal/prove_goal';
+
+function recordingRecorderFor(store: FileArtexTrafficStore): IArtexTrafficRecorder {
+  return {
+    _serviceBrand: undefined,
+    state: { status: 'recording', proxyUrl: 'http://127.0.0.1:0' },
+    isRecording: true,
+    ensureStarted: async () => ({ status: 'recording', proxyUrl: 'http://127.0.0.1:0' }),
+    stop: async () => {},
+    store: () => store,
+    proxyEnvOverlay: () => undefined,
+  } as unknown as IArtexTrafficRecorder;
+}
+
+async function recordProofExchange(store: FileArtexTrafficStore, body: string): Promise<string> {
+  return store.record({
+    host: '10.0.0.5',
+    method: 'GET',
+    url: 'http://10.0.0.5/admin/users.json',
+    status: 200,
+    contentType: 'application/json',
+    reqHead: 'GET /admin/users.json HTTP/1.1',
+    respHead: 'HTTP 200\nContent-Type: application/json',
+    reqBody: Buffer.from(''),
+    respBody: Buffer.from(body),
+  });
+}
 
 const SCOPE = { agentId: 'worker-1' } as unknown as IAgentScopeContext;
 
@@ -41,6 +70,7 @@ describe('artex graph tools', () => {
   let recordFact: ArtexRecordFactTool;
   let reportFinding: ArtexReportFindingTool;
   let proveGoal: ArtexProveGoalTool;
+  let trafficStore: FileArtexTrafficStore;
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'artex-tools-'));
@@ -49,8 +79,9 @@ describe('artex graph tools', () => {
     await store.init('scope', 'capture the flag');
     await store.addGoal({ text: 'capture the flag', summary: 'capture the flag' });
     session = sessionContextFor(dir);
+    trafficStore = new ArtexTrafficStoreProvider().open(dir);
     recordFact = new ArtexRecordFactTool(session, provider, SCOPE);
-    reportFinding = new ArtexReportFindingTool(session, provider, SCOPE);
+    reportFinding = new ArtexReportFindingTool(session, provider, SCOPE, recordingRecorderFor(trafficStore));
     proveGoal = new ArtexProveGoalTool(session, provider);
   });
 
@@ -135,5 +166,66 @@ describe('artex graph tools', () => {
     const duplicate = await exec<ReportFindingInput>(reportFinding, args);
     expect(duplicate.isError).toBe(true);
     expect(await store.listByKind('finding')).toHaveLength(1);
+  });
+
+  it('report_finding binds proof traffic and marks verified when a quote matches byte-for-byte', async () => {
+    const trafficId = await recordProofExchange(trafficStore, '{"users":[{"name":"root","role":"admin"}]}');
+    const result = await exec<ReportFindingInput>(reportFinding, {
+      vulnclass: 'idor',
+      name: 'admin user dump',
+      severity: 'high',
+      summary: 'unauthenticated admin user listing',
+      evidence: 'GET /admin/users.json -> 200 with user records',
+      confidence_level: 3,
+      traffic_refs: [{ traffic_id: trafficId, role: 'proof', note: 'the admin dump' }],
+      evidence_quotes: ['"name":"root","role":"admin"'],
+    });
+    expect(result.isError ?? false).toBe(false);
+    const payload = JSON.parse(typeof result.output === 'string' ? result.output : '{}') as {
+      evidence_status: string;
+      verification_status: string;
+      bound_traffic: number;
+    };
+    expect(payload.bound_traffic).toBe(1);
+    expect(payload.evidence_status).toBe('bound');
+    expect(payload.verification_status).toBe('verified');
+    const finding = (await store.listByKind('finding'))[0]!;
+    const stored = finding.payload as { verification_status?: string; confidence_level?: number };
+    expect(stored.verification_status).toBe('verified');
+    expect(stored.confidence_level).toBe(3);
+  });
+
+  it('report_finding stays unverified when a quote is not present verbatim in bound evidence', async () => {
+    const trafficId = await recordProofExchange(trafficStore, '{"users":[{"name":"root","role":"admin"}]}');
+    const result = await exec<ReportFindingInput>(reportFinding, {
+      vulnclass: 'idor',
+      name: 'admin user dump 2',
+      severity: 'high',
+      summary: 'unauthenticated admin user listing',
+      evidence: 'GET /admin/users.json -> 200',
+      confidence_level: 3,
+      traffic_refs: [{ traffic_id: trafficId, role: 'proof' }],
+      evidence_quotes: ['"name":"superuser"'],
+    });
+    expect(result.isError ?? false).toBe(false);
+    const payload = JSON.parse(typeof result.output === 'string' ? result.output : '{}') as {
+      verification_status: string;
+      verification_note: string;
+    };
+    expect(payload.verification_status).toBe('unverified');
+    expect(payload.verification_note).toContain('not found verbatim');
+  });
+
+  it('report_finding refuses an unknown traffic ref without saving the finding', async () => {
+    const before = (await store.listByKind('finding')).length;
+    const result = await exec<ReportFindingInput>(reportFinding, {
+      vulnclass: 'idor',
+      name: 'phantom',
+      summary: 'bad ref',
+      confidence_level: 3,
+      traffic_refs: [{ traffic_id: '0000-9999', role: 'proof' }],
+    });
+    expect(result.isError).toBe(true);
+    expect(await store.listByKind('finding')).toHaveLength(before);
   });
 });
