@@ -389,6 +389,7 @@ describe('Bash environment generation guard', () => {
       {} as never,
       toolPolicy,
       stubConfigService(),
+      { items: [], records: [], onDidChange: () => ({ dispose: () => {} }) },
     );
   }
 

@@ -19,6 +19,7 @@ import {
 } from '#/features/artex/store/artexGraphStoreProvider';
 import type { IArtexGraphStore } from '#/features/artex/store/artexGraphStore';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
+import { IArtexTrafficRecorder } from '#/features/artex/traffic/artexTrafficRecorder';
 import {
   resolveArtexPlannerDebounceMs,
   resolveArtexSwarmTimeoutMs,
@@ -92,6 +93,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
     @IConfigService private readonly config: IConfigService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IArtexSessionContext private readonly artexSession: IArtexSessionContext,
+    @IArtexTrafficRecorder private readonly recorder: IArtexTrafficRecorder,
   ) {
     super();
   }
@@ -100,6 +102,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
     const root = options.workspaceRoot ?? this.sessionContext.sessionDir;
     const store = this.storeProvider.open(root, options.explorationId);
     this.artexSession.setActiveExplorationId(options.explorationId);
+    await this.recorder.ensureStarted();
     const owner = `artex-orchestrator:${this.sessionContext.sessionId}`;
     const targetConcurrency = resolveArtexTargetConcurrency(this.config);
     const timeoutMs = resolveArtexSwarmTimeoutMs(this.config);

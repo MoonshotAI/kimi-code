@@ -23,8 +23,16 @@ import { type ISessionContext, makeSessionContext } from '#/session/sessionConte
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
+import type { CollectionView } from '#/_base/di/collection';
+import type { AgentSubprocessEnvContributor } from '#/agent/subprocessEnv/subprocessEnv';
 import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
 import { SessionStateService } from '#/session/state/sessionStateService';
+
+const noEnvContributions: CollectionView<AgentSubprocessEnvContributor> = {
+  items: [],
+  records: [],
+  onDidChange: () => ({ dispose: () => {} }),
+};
 import {
   workspaceContextAdditionalDirsKey,
   workspaceContextWorkDirKey,
@@ -423,7 +431,7 @@ function bashTool(
     },
   );
   const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
-  const tool = new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), channel.toolExecutor, channel.outputs, toolPolicy, config);
+  const tool = new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), channel.toolExecutor, channel.outputs, toolPolicy, config, noEnvContributions);
   channel.raw.addExecute(new LegacyExecutableToolAdapter(tool));
   channelsByTool.set(tool, channel);
   return tool;
@@ -634,6 +642,7 @@ describe('BashTool', () => {
       channel.outputs,
       stubToolPolicy(),
       stubConfig(),
+      noEnvContributions,
     );
     channel.raw.addExecute(new LegacyExecutableToolAdapter(tool));
     channelsByTool.set(tool, channel);
@@ -1134,6 +1143,7 @@ describe('BashTool display cwd', () => {
       {} as never,
       {} as unknown as IAgentToolPolicyService,
       {} as unknown as IConfigService,
+      noEnvContributions,
     );
   }
 
@@ -1179,6 +1189,7 @@ describe('BashTool spawn cwd', () => {
       channel.outputs,
       stubToolPolicy(),
       stubConfig(),
+      noEnvContributions,
     );
     channel.raw.addExecute(new LegacyExecutableToolAdapter(tool));
     channelsByTool.set(tool, channel);

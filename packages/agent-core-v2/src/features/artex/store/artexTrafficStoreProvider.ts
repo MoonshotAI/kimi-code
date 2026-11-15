@@ -15,7 +15,13 @@ export const IArtexTrafficStoreProvider = createDecorator<IArtexTrafficStoreProv
 export class ArtexTrafficStoreProvider extends Disposable implements IArtexTrafficStoreProvider {
   declare readonly _serviceBrand: undefined;
 
+  private readonly stores = new Map<string, FileArtexTrafficStore>();
+
   open(workspaceRoot: string): FileArtexTrafficStore {
-    return new FileArtexTrafficStore(workspaceRoot);
+    const existing = this.stores.get(workspaceRoot);
+    if (existing) return existing;
+    const store = new FileArtexTrafficStore(workspaceRoot);
+    this.stores.set(workspaceRoot, store);
+    return store;
   }
 }

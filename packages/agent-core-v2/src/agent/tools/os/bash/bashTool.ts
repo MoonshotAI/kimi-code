@@ -1,7 +1,9 @@
 import type { Readable } from 'node:stream';
 
+import type { CollectionView } from '#/_base/di/collection';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { AgentSubprocessEnvContributions, type AgentSubprocessEnvContributor } from '#/agent/subprocessEnv/subprocessEnv';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
@@ -82,6 +84,7 @@ export class BashTool implements IBashTool {
     @IAgentTaskOutputService private readonly taskOutputs: IAgentTaskOutputService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
+    @AgentSubprocessEnvContributions private readonly envContributions: CollectionView<AgentSubprocessEnvContributor>,
   ) {}
 
   private allowBackground(): boolean {
@@ -177,6 +180,10 @@ export class BashTool implements IBashTool {
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
       SHELL: env.shellPath,
     };
+    for (const contributor of this.envContributions.items) {
+      const overlay = contributor.overlay();
+      if (overlay !== undefined) Object.assign(noninteractiveEnv, overlay);
+    }
 
     return processService.spawn(env.shellPath, ['-c', shellCommand], { cwd: effectiveCwd, env: noninteractiveEnv });
   }

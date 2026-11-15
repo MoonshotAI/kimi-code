@@ -7,6 +7,9 @@ import { registerFeature } from '#/features/featureRegistry';
 import { ARTEX_FLAG_ID } from './artex';
 import { ArtexGraphStoreProvider, IArtexGraphStoreProvider } from './store/artexGraphStoreProvider';
 import { ArtexWorkStoreProvider, IArtexWorkStoreProvider } from './store/artexWorkStoreProvider';
+import { ArtexTrafficStoreProvider, IArtexTrafficStoreProvider } from './store/artexTrafficStoreProvider';
+import { ArtexTrafficRecorder, IArtexTrafficRecorder } from './traffic/artexTrafficRecorder';
+import { ArtexProxyEnvContributor, IArtexProxyEnvContributor } from './traffic/artexProxyEnvContributor';
 import { ARTEX_CONFIG_DEFAULTS, ARTEX_SECTION, ArtexConfigSchema, artexEnvBindings, stripArtexEnv } from './config/configSection';
 import { ArtexOrchestrator, IArtexOrchestrator } from './engine/artexOrchestrator';
 import { ArtexModeService } from './agent/artexModeService';
@@ -39,6 +42,9 @@ export class ArtexFeature extends Feature {
     this.contributeService(LifecycleScope.App, IArtexWorkStoreProvider, ArtexWorkStoreProvider, {
       activation: ScopeActivation.OnDemand,
     });
+    this.contributeService(LifecycleScope.App, IArtexTrafficStoreProvider, ArtexTrafficStoreProvider, {
+      activation: ScopeActivation.OnDemand,
+    });
     this.contributeService(LifecycleScope.App, IArtexTargetResolver, SystemArtexTargetResolver, {
       activation: ScopeActivation.OnDemand,
     });
@@ -51,10 +57,16 @@ export class ArtexFeature extends Feature {
     this.contributeService(LifecycleScope.Session, IArtexEgressPacer, ArtexEgressPacer, {
       activation: ScopeActivation.OnDemand,
     });
+    this.contributeService(LifecycleScope.Session, IArtexTrafficRecorder, ArtexTrafficRecorder, {
+      activation: ScopeActivation.OnDemand,
+    });
     this.contributeAgentService(IArtexModeService, ArtexModeService, {
       activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeAgentService(IArtexToolHooksService, ArtexToolHooksService, {
+      activation: ScopeActivation.OnScopeCreated,
+    });
+    this.contributeAgentService(IArtexProxyEnvContributor, ArtexProxyEnvContributor, {
       activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeProfiles(ARTEX_PROFILES);
