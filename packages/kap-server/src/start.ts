@@ -414,13 +414,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
-    const warnings: ConfigWarningItem[] = diagnostics
-      .filter((diagnostic) => diagnostic.severity === 'warning')
-      .map((diagnostic) =>
-        diagnostic.domain === undefined
-          ? { message: diagnostic.message }
-          : { domain: diagnostic.domain, message: diagnostic.message },
-      );
+    const warnings: ConfigWarningItem[] = diagnostics.map((diagnostic) =>
+      diagnostic.domain === undefined
+        ? { message: diagnostic.message }
+        : { domain: diagnostic.domain, message: diagnostic.message },
+    );
     core.accessor.get(IEventService).publish(new ConfigWarning({ payload: { warnings } }));
   };
   const configWarningSubscription = configService.onDidChangeDiagnostics(publishConfigWarnings);
@@ -440,7 +438,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   });
   void configService.ready
     .then(() => {
-      if (configService.diagnostics().some((diagnostic) => diagnostic.severity === 'warning')) {
+      if (configService.diagnostics().length > 0) {
         publishConfigWarnings(configService.diagnostics());
       }
     })
