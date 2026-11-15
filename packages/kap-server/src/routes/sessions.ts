@@ -33,7 +33,6 @@ import {
   setSessionArchived,
   Error2,
   type IAgentScopeHandle,
-  type ISessionScopeHandle,
   type Scope,
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
@@ -66,18 +65,18 @@ import {
   updateSessionProfileRequestSchema,
 } from '../protocol/rest-session';
 import {
-  emptySessionUsage,
   sessionSchema,
   type Session,
   type SessionGit,
   type SessionPendingInteraction,
 } from '../protocol/session';
+import { agentStateSchema } from '../protocol/ws-agent';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
+import { readAgentState } from '../transport/ws/v1/agentState';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
 import { sendEnvironmentError } from './environment';
@@ -191,12 +190,24 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
     },
     async (req, reply) => {
       const body = req.body;
-      const callerCwd = typeof body.metadata?.cwd === 'string' ? body.metadata.cwd : undefined;
+      const topCwd = body.cwd;
+      const metaCwd = typeof body.metadata?.cwd === 'string' ? body.metadata.cwd : undefined;
+      if (topCwd !== undefined && metaCwd !== undefined && topCwd !== metaCwd) {
+        reply.send(
+          buildValidationEnvelope(
+            [{ path: 'cwd', message: `cwd (${topCwd}) must equal metadata.cwd (${metaCwd})` }],
+            req.id,
+          ),
+        );
+        return;
+      }
+      const callerCwd = topCwd ?? metaCwd;
+      const cwdPath = topCwd !== undefined ? 'cwd' : 'metadata.cwd';
       const workspaceId = body.workspace_id;
       if (workspaceId === undefined && callerCwd === undefined) {
         reply.send(
           buildValidationEnvelope(
-            [{ path: 'metadata.cwd', message: 'either workspace_id or metadata.cwd is required' }],
+            [{ path: cwdPath, message: 'either workspace_id or cwd is required' }],
             req.id,
           ),
         );
@@ -223,8 +234,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
             buildValidationEnvelope(
               [
                 {
-                  path: 'metadata.cwd',
-                  message: `metadata.cwd (${callerCwd}) must equal workspace root (${workspace.root})`,
+                  path: cwdPath,
+                  message: `${cwdPath} (${callerCwd}) must equal workspace root (${workspace.root})`,
                 },
               ],
               req.id,
@@ -382,7 +393,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
       path: '/sessions/{session_id}/profile',
       params: sessionIdParamSchema,
       body: updateSessionProfileRequestSchema,
-      success: { data: sessionSchema },
+      success: { data: z.object({ session: sessionSchema, agent: agentStateSchema }) },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -402,6 +413,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           await applySessionAgentConfig(core, session_id, agent_config);
         }
         const session = toWireSession(fields, fields.root, resolveSessionFacts(core, fields.id));
+        const main = await resolveMainAgent(core, session_id);
+        const agent = readAgentState(main, session.activity === 'turn');
         if (typeof req.body.title === 'string' && req.body.title.trim().length > 0) {
           core.accessor.get(IEventService).publish(
             new SessionMetaUpdated({
@@ -414,7 +427,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
             }),
           );
         }
-        reply.send(okEnvelope(session, req.id));
+        reply.send(okEnvelope({ session, agent }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
       }
@@ -583,7 +596,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
         );
         const items =
           req.query.busy !== undefined
-            ? projected.filter((session) => session.busy === req.query.busy)
+            ? projected.filter((session) => (session.activity !== 'idle') === req.query.busy)
             : projected;
         reply.send(okEnvelope({ items, has_more: page.nextCursor !== undefined }, req.id));
       } catch (error) {
@@ -1146,26 +1159,26 @@ export function toWireSession(
   facts: SessionFacts,
   git?: SessionGit,
 ): Session {
+  const lastTurnReason =
+    facts.lastTurnReason ?? (facts.live === false ? fields.lastTurnReason : undefined);
+  const lastTurnOutcome =
+    lastTurnReason === 'cancelled' ? 'interrupted' : lastTurnReason;
+  const activity = facts.mainTurnActive ? 'turn' : facts.busy ? 'background' : 'idle';
   return {
     id: fields.id,
     workspace_id: fields.workspaceId,
+    cwd,
     title: fields.title ?? '',
     created_at: new Date(fields.createdAt).toISOString(),
     updated_at: new Date(fields.updatedAt).toISOString(),
     archived_at:
       fields.archivedAt === undefined ? undefined : new Date(fields.archivedAt).toISOString(),
-    busy: facts.busy,
-    main_turn_active: facts.mainTurnActive,
+    activity,
     pending_interaction: facts.pendingInteraction,
-    last_turn_reason:
-      facts.lastTurnReason ?? (facts.live === false ? fields.lastTurnReason : undefined),
+    last_turn_outcome: lastTurnOutcome,
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
-    metadata: buildWireMetadata(fields.custom, cwd),
-    agent_config: { model: facts.model ?? '' },
-    usage: emptySessionUsage(),
-    permission_rules: [],
-    message_count: 0,
+    metadata: buildWireMetadata(fields.custom),
     git,
   };
 }
@@ -1176,7 +1189,6 @@ export interface SessionFacts {
   readonly pendingInteraction: SessionPendingInteraction;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   readonly live?: boolean;
-  readonly model?: string;
 }
 
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
@@ -1192,14 +1204,7 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
   return {
     ...handle.accessor.get(ISessionActivityView).state(),
     live: true,
-    model: readLiveSessionModel(handle),
   };
-}
-
-function readLiveSessionModel(session: ISessionScopeHandle): string | undefined {
-  const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
-  if (main === undefined) return undefined;
-  return readLegacyStatus(main)?.model;
 }
 
 async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {
@@ -1218,11 +1223,10 @@ function normalizeOptional(value: string | undefined): string | undefined {
 
 function buildWireMetadata(
   custom: Record<string, unknown> | undefined,
-  cwd: string,
-): { cwd: string; [key: string]: unknown } {
-  if (custom === undefined) return { cwd };
+): Record<string, unknown> | undefined {
+  if (custom === undefined) return undefined;
   const { goal: _drop, ...rest } = custom as { goal?: unknown; [key: string]: unknown };
-  return { ...rest, cwd };
+  return Object.keys(rest).length === 0 ? undefined : rest;
 }
 
 function buildValidationEnvelope(

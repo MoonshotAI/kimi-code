@@ -198,8 +198,13 @@ export class ConversationFeed implements IDisposable {
     return { turns: page, has_more: start > 0 || page.length < selected.length };
   }
 
+  flushPending(): void {
+    if (this.flushQueued) this.flush();
+  }
+
   dispose(): void {
     if (this.disposed) return;
+    this.flushPending();
     this.disposed = true;
     for (const disposable of this.disposables.splice(0)) disposable.dispose();
     this.listeners.clear();
@@ -303,10 +308,6 @@ export class ConversationFeed implements IDisposable {
     queueMicrotask(() => {
       this.flushPending();
     });
-  }
-
-  private flushPending(): void {
-    if (this.flushQueued) this.flush();
   }
 
   private flush(): void {

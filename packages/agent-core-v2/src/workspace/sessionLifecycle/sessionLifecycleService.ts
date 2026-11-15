@@ -620,7 +620,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.appendLogStore.flush();
       this.event.publish(
         new SessionDeleted({
-          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId, session: summary },
         }),
       );
     } finally {

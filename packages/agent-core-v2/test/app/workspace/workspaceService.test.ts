@@ -187,7 +187,11 @@ describe('WorkspaceService (file-backed)', () => {
     ]);
     expect(published[0]?.payload).toMatchObject({ workspace: { id: created.id, name: 'proj' } });
     expect(published[2]?.payload).toMatchObject({ workspace: { id: created.id, name: 'renamed' } });
-    expect(published[3]?.payload).toEqual({ workspaceId: created.id, root: homeDir });
+    expect(published[3]?.payload).toEqual({
+      workspaceId: created.id,
+      root: homeDir,
+      workspace: { ...created, name: 'renamed', lastOpenedAt: expect.any(Number) },
+    });
   });
 
   it('publishes no event when deleting an unknown workspace', async () => {
