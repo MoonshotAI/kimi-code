@@ -67,7 +67,6 @@ describe('AgentTaskService Wire history', () => {
   });
 
   it('projects a restored running task as lost without manufacturing endedAt', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'restored lost task acknowledged' });
     await restoreTaskHistory(ctx, [processInfo()]);
     await vi.waitFor(() => {
       expect(ctx.get(IAgentLoopService).history().filter((message) =>
@@ -75,6 +74,7 @@ describe('AgentTaskService Wire history', () => {
     });
     await ctx.get(IAgentLoopService).settled();
 
+    expect(ctx.llmCalls).toEqual([]);
     expect(ctx.get(IAgentTaskService).getTask('bash-00000001')).toMatchObject({
       status: 'lost',
       startedAt: 100,
@@ -87,7 +87,6 @@ describe('AgentTaskService Wire history', () => {
     ctx.get(IEventBus).subscribe((event) => {
       emitted.push(event.type);
     });
-    ctx.mockNextResponse({ type: 'text', text: 'restored lost task acknowledged' });
     await restoreTaskHistory(ctx, [processInfo()]);
     await vi.waitFor(() => {
       expect(ctx.get(IAgentLoopService).history().filter((message) =>
@@ -95,6 +94,7 @@ describe('AgentTaskService Wire history', () => {
     });
     await ctx.get(IAgentLoopService).settled();
 
+    expect(ctx.llmCalls).toEqual([]);
     expect(emitted.filter((type) => type === 'task.terminated')).toEqual([]);
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
@@ -191,7 +191,6 @@ describe('AgentTaskService Wire history', () => {
 
   it('lists live tasks as active and includes lost tasks only in full history', async () => {
     installControlledTask(ctx);
-    ctx.mockNextResponse({ type: 'text', text: 'restored lost task acknowledged' });
     await restoreTaskHistory(ctx, [processInfo()]);
     await vi.waitFor(() => {
       expect(ctx.get(IAgentLoopService).history().filter((message) =>
@@ -219,16 +218,26 @@ describe('AgentTaskService Wire history', () => {
 
   it('restores an undelivered terminal notification through Core once', async () => {
     const completed = processInfo({ status: 'completed', endedAt: 200, exitCode: 0 });
-    ctx.mockNextResponse({ type: 'text', text: 'restored completion' });
+    const loop = ctx.get(IAgentLoopService);
+    const quiescence = loop.tryAcquireQuiescence();
+    expect(quiescence).toBeDefined();
 
     await restoreTaskHistory(ctx, [completed]);
-    await ctx.get(IAgentLoopService).settled();
+    quiescence!.dispose();
+    await loop.settled();
 
+    expect(ctx.llmCalls).toEqual([]);
     const origins = ctx.get(IAgentLoopService).history().map((message) => message.origin);
     expect(origins.filter((origin) => origin?.kind === 'task' && origin.taskId === completed.taskId)).toHaveLength(1);
     expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(0);
     const records = await ctx.persistedWireRecords();
     expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { kind?: string }).kind === 'task')).toBe(true);
+    expect(records.some((record) => record.type === 'turn.ended' && record['stopReason'] === 'prompt_only')).toBe(true);
+    expect(records.filter((record) =>
+      record.type === 'context.append_message' &&
+      ((record['message'] as { origin?: { kind?: string; taskId?: string } } | undefined)?.origin?.kind === 'task') &&
+      ((record['message'] as { origin?: { taskId?: string } } | undefined)?.origin?.taskId === completed.taskId)
+    )).toHaveLength(1);
     expect(JSON.stringify(records)).toContain('<notification');
     expect(JSON.stringify(records)).not.toContain('[async tool completed]');
   });
@@ -299,7 +308,6 @@ describe('AgentTaskService Wire history', () => {
   });
 
   it('keeps repeated restores idempotent without synthesizing terminal records', async () => {
-    ctx.mockNextResponse({ type: 'text', text: 'restored lost task acknowledged' });
     await restoreTaskHistory(ctx, [processInfo()]);
     await vi.waitFor(() => {
       expect(ctx.get(IAgentLoopService).history().filter((message) =>
@@ -309,6 +317,7 @@ describe('AgentTaskService Wire history', () => {
     await ctx.restore(await ctx.persistedWireRecords());
     await ctx.get(IAgentLoopService).settled();
 
+    expect(ctx.llmCalls).toEqual([]);
     expect(ctx.get(IAgentTaskService).list(false)).toHaveLength(1);
     expect(ctx.get(IAgentTaskService).getTask('bash-00000001')?.endedAt).toBeNull();
     expect(ctx.get(IAgentLoopService).history().filter((message) =>
