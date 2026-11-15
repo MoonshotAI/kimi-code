@@ -350,6 +350,7 @@ export class AgentPromptProjection {
       userMessageId: projection.userMessageId,
       status,
       content: stripBundledSkillBlocks(projection.message),
+      origin: projection.origin,
       clientMetadata: projection.origin.kind === 'user' ? projection.origin.clientMetadata : undefined,
       createdAt: projection.createdAt,
     }));
