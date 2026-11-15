@@ -20,7 +20,7 @@ import { IAgentTaskHistoryService } from '#/agent/task/taskService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
-import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { IAgentTaskOutputService, taskNotificationId } from '#/agent/task/taskOutput';
 import { restoreTaskCompletions } from '#/agent/task/completionRestore';
 import { completionEntry as coreCompletionEntry, type ToolCompletionInput } from './core/tool/outcome';
 import { IConfigService } from '#/app/config/config';
@@ -125,6 +125,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly pendingReminders: HistoryMessage[] = [];
   private readonly pendingNotifications: UserEntry[] = [];
   private readonly pendingSendNowNotifications = new Set<string>();
+  private readonly suppressedTaskNotifications = new Set<string>();
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private historySnapshotDepth = 0;
@@ -403,6 +404,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): void {
     this.initialized = true;
     const loop = createLoop({
+      shouldQueueTaskNotification: (taskId) => !this.suppressedTaskNotifications.has(taskId),
       completionEntry: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
         if (handler?.snapshot().fields.task === undefined) {
@@ -534,6 +536,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         ? { ...current, status: 'failed' as const }
         : current;
     void this.dispatcher.dispatch(new TaskTerminated({ agentId: this.scopeContext.agentId, info }));
+    if (this.suppressedTaskNotifications.delete(info.taskId)) this.dropTaskNotification(info.taskId);
+  }
+
+  private dropTaskNotification(taskId: string): void {
+    for (const status of TERMINAL_STATUSES) this.dropNotification(taskNotificationId(taskId, status));
   }
 
   async initializeHistory(messages: readonly HistoryMessage[]): Promise<void> {
@@ -928,6 +935,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   abortTool(toolCallId: string, reason?: unknown): void {
     if (this.disposing) return;
     this.loop?.abortTool(toolCallId, reason);
+  }
+
+  suppressTaskNotifications(taskIds: readonly string[]): void {
+    for (const taskId of taskIds) {
+      this.suppressedTaskNotifications.add(taskId);
+      this.dropTaskNotification(taskId);
+    }
   }
 
   registerToolBatchStarting(hook: import('./core/index').LoopHooks['tool.batch-starting']): IDisposable {

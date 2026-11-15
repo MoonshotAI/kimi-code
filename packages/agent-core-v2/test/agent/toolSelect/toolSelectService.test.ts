@@ -282,6 +282,8 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
 
   detachTool(): void {}
 
+  suppressTaskNotifications(): void {}
+
   registerToolBatchStarting(): IDisposable {
     return toDisposable(() => {});
   }

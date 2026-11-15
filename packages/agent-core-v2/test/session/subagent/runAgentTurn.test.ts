@@ -7,6 +7,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
 import { LifecycleScope } from '#/app/scopes';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import {
   createMaxStepsExceededError,
   IAgentLoopService,
@@ -110,19 +111,60 @@ function retrying(turnId: number, stepId: string): TurnStepRetrying {
   });
 }
 
+interface TaskFixture {
+  readonly info: AgentTaskInfo;
+  readonly wait?: Promise<AgentTaskInfo | undefined>;
+  readonly stop?: Promise<AgentTaskInfo | undefined>;
+}
+
+class TaskServiceStub {
+  private readonly fixtures = new Map<string, TaskFixture>();
+  readonly waits: string[] = [];
+  readonly stops: Array<{ readonly taskId: string; readonly reason: string | undefined }> = [];
+  readonly service = {
+    list: (activeOnly = false) => activeOnly ? [...this.fixtures.values()].map((fixture) => fixture.info) : [],
+    wait: (taskId: string) => {
+      this.waits.push(taskId);
+      const fixture = this.fixtures.get(taskId);
+      return fixture?.wait ?? Promise.resolve(fixture?.info);
+    },
+    stop: async (taskId: string, reason?: string) => {
+      this.stops.push({ taskId, reason });
+      const fixture = this.fixtures.get(taskId);
+      if (fixture?.stop !== undefined) await fixture.stop;
+      this.fixtures.delete(taskId);
+      return fixture?.info;
+    },
+  } as unknown as IAgentTaskService;
+
+  add(taskId: string, fixture: Partial<Omit<TaskFixture, 'info'>> = {}): void {
+    this.fixtures.set(taskId, {
+      info: { taskId, status: 'running' } as AgentTaskInfo,
+      ...fixture,
+    });
+  }
+
+  finish(taskId: string): void {
+    this.fixtures.delete(taskId);
+  }
+}
+
 function handleWith(
   turn: Turn | Promise<Turn>,
   messages: readonly ContextMessage[],
   events = new EventBusStub(),
   retry?: () => Promise<TurnResult>,
   settled?: () => Promise<TurnResult | undefined>,
+  tasks = new TaskServiceStub(),
 ): {
   readonly handle: IAgentScopeHandle;
   readonly prompts: unknown[];
   readonly cancellations: Array<{ readonly target: unknown; readonly reason: unknown }>;
+  readonly suppressions: readonly string[][];
 } {
   const prompts: unknown[] = [];
   const cancellations: Array<{ readonly target: unknown; readonly reason: unknown }> = [];
+  const suppressions: string[][] = [];
   const services = new Map<unknown, unknown>([
     [
       IAgentLoopService,
@@ -138,10 +180,14 @@ function handleWith(
           cancellations.push({ target, reason });
           return true;
         },
+        suppressTaskNotifications: (taskIds: readonly string[]) => {
+          suppressions.push([...taskIds]);
+        },
         get: () => messages,
         history: () => messages,
       },
     ],
+    [IAgentTaskService, tasks.service],
     [IEventBus, events.bus],
   ]);
   const handle: IAgentScopeHandle = {
@@ -152,7 +198,7 @@ function handleWith(
     },
     dispose: () => {},
   };
-  return { handle, prompts, cancellations };
+  return { handle, prompts, cancellations, suppressions };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
@@ -167,16 +213,20 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 describe('runAgentTurn', () => {
   const signal = new AbortController().signal;
 
-  it('returns the final message after a notify continuation without settling early', async () => {
+  it('returns the final message only after the loop and background tasks are quiescent', async () => {
     const events = new EventBusStub();
     const messages = [assistant('')];
     const continuation = createControlledPromise<TurnResult | undefined>();
+    const taskWait = createControlledPromise<AgentTaskInfo | undefined>();
+    const tasks = new TaskServiceStub();
+    tasks.add('bash-background', { wait: taskWait });
     const { handle, prompts } = handleWith(
       makeTurn({ type: 'completed', steps: 1, truncated: false }),
       messages,
       events,
       undefined,
       () => continuation,
+      tasks,
     );
     const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
     let didSettle = false;
@@ -189,6 +239,12 @@ describe('runAgentTurn', () => {
 
     messages.push(assistant('src/a.ts:12'));
     continuation.resolve({ type: 'completed', steps: 1, truncated: false });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(didSettle).toBe(false);
+    expect(tasks.waits).toEqual(['bash-background']);
+
+    tasks.finish('bash-background');
+    taskWait.resolve(undefined);
     await expect(run.completion).resolves.toMatchObject({ summary: 'src/a.ts:12' });
     expect(prompts).toHaveLength(1);
 
@@ -400,24 +456,41 @@ describe('runAgentTurn partial output', () => {
     expect(kept).not.toMatch(/[\uD800-\uDFFF]/u);
   });
 
-  it('cancels the active loop turn when aborted during a notify continuation', async () => {
+  it('waits for task cleanup and loop unwinding before completing a cancellation', async () => {
     const continuation = createControlledPromise<TurnResult | undefined>();
+    const taskStop = createControlledPromise<AgentTaskInfo | undefined>();
     const controller = new AbortController();
     const reason = userCancellationReason();
-    const { handle, cancellations } = handleWith(
+    const tasks = new TaskServiceStub();
+    tasks.add('bash-background', { stop: taskStop });
+    const { handle, cancellations, suppressions } = handleWith(
       makeTurn({ type: 'completed', steps: 1, truncated: false }),
       [assistant('')],
       new EventBusStub(),
       undefined,
       () => continuation,
+      tasks,
     );
     const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, {
       signal: controller.signal,
     });
+    let didSettle = false;
+    void run.completion.then(
+      () => { didSettle = true; },
+      () => { didSettle = true; },
+    );
 
     controller.abort(reason);
-    await rejection(run.completion);
-
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(didSettle).toBe(false);
     expect(cancellations).toContainEqual({ target: undefined, reason });
+    expect(suppressions).toContainEqual(['bash-background']);
+    expect(tasks.stops).toEqual([{ taskId: 'bash-background', reason: reason.message }]);
+
+    tasks.finish('bash-background');
+    taskStop.resolve(undefined);
+    continuation.resolve({ type: 'cancelled', steps: 1, reason });
+    const error = await rejection(run.completion);
+    expect(error).toBe(reason);
   });
 });
