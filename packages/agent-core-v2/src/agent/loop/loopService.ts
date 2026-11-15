@@ -20,7 +20,7 @@ import { IAgentTaskHistoryService } from '#/agent/task/taskService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
-import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
+import { IAgentTaskOutputService, taskNotificationId } from '#/agent/task/taskOutput';
 import { restoreTaskCompletions } from '#/agent/task/completionRestore';
 import { completionEntry as coreCompletionEntry, type ToolCompletionInput } from './core/tool/outcome';
 import { IConfigService } from '#/app/config/config';
@@ -125,6 +125,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly pendingReminders: HistoryMessage[] = [];
   private readonly pendingNotifications: UserEntry[] = [];
   private readonly pendingSendNowNotifications = new Set<string>();
+  private readonly suppressedTaskNotifications = new Set<string>();
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
   private historySnapshotDepth = 0;
@@ -403,6 +404,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): void {
     this.initialized = true;
     const loop = createLoop({
+      shouldQueueTaskNotification: (taskId) => !this.suppressedTaskNotifications.has(taskId),
       completionEntry: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
         if (handler?.snapshot().fields.task === undefined) {
@@ -534,6 +536,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         ? { ...current, status: 'failed' as const }
         : current;
     void this.dispatcher.dispatch(new TaskTerminated({ agentId: this.scopeContext.agentId, info }));
+    if (this.suppressedTaskNotifications.delete(info.taskId)) this.dropTaskNotification(info.taskId);
+  }
+
+  private dropTaskNotification(taskId: string): void {
+    for (const status of TERMINAL_STATUSES) this.dropNotification(taskNotificationId(taskId, status));
   }
 
   async initializeHistory(messages: readonly HistoryMessage[]): Promise<void> {
@@ -930,6 +937,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.loop?.abortTool(toolCallId, reason);
   }
 
+  suppressTaskNotifications(taskIds: readonly string[]): void {
+    for (const taskId of taskIds) {
+      this.suppressedTaskNotifications.add(taskId);
+      this.dropTaskNotification(taskId);
+    }
+  }
+
   registerToolBatchStarting(hook: import('./core/index').LoopHooks['tool.batch-starting']): IDisposable {
     const registration = { point: 'tool.batch-starting' as const, id: randomUUID(), hook };
     this.batchStartingHooks.set(registration.id, registration);
@@ -1037,18 +1051,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  async settled(): Promise<void> {
+  async settled(): Promise<TurnResult | undefined> {
     await this.startPromise;
     await this.taskReconciliation;
     const loop = this.loop;
     if (loop === undefined) {
-      if (!this.hasPendingRequests()) return;
+      if (!this.hasPendingRequests()) return this.turns.lastResult;
       await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
-      return;
+      return this.turns.lastResult;
     }
     await loop.waitForIdle();
     await this.turns.drain();
     await this.wire.flush();
+    return this.turns.lastResult;
   }
 
   async retry(): Promise<TurnResult | undefined> {
