@@ -2412,7 +2412,7 @@ describe('FullCompaction', () => {
   it('compacts and retries when provider context overflow follows an earlier LLM retry', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
-    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history, callbacks) => {
+    const legacyGenerate = requesterFromGenerateFn(async (_provider, _system, _tools, history, callbacks) => {
       callCount += 1;
       inputs.push(inputHistorySnapshot(history));
       if (callCount === 1) {
@@ -2433,6 +2433,13 @@ describe('FullCompaction', () => {
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
     });
+    const generate: GenerateFn = {
+      ...legacyGenerate,
+      generate: (config, content, control) => {
+        control.onEvent?.({ type: 'llm.sent' });
+        return legacyGenerate.generate(config, content, control);
+      },
+    };
     const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,

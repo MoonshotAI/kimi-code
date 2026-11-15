@@ -117,7 +117,6 @@ export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
   return {
     async generate(config, content, control) {
       const emit = control.onEvent;
-      emit?.({ type: 'llm.sent' });
       const parts: StreamedMessagePart[] = [];
       let result: LegacyGenerateResult;
       try {
