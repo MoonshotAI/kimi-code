@@ -3113,6 +3113,12 @@ describe('ConfigService persistence guards', () => {
     expect(config.diagnostics().some((d) => d.severity === 'error')).toBe(true);
     expect(config.get(PROVIDERS_SECTION)).toEqual({});
     expect(config.get<CronConfig>(CRON_SECTION)).toEqual(DEFAULT_CRON_CONFIG);
+    expect(() => {
+      config.assertValid(PROVIDERS_SECTION);
+    }).toThrow('could not be read');
+    expect(() => {
+      config.assertValid(PROVIDERS_SECTION, { tolerateReadError: true });
+    }).not.toThrow();
 
     await expectPersistBlocked(config.set(THINKING_SECTION, { enabled: true }));
     await expectPersistBlocked(config.replace(THINKING_SECTION, { enabled: true }));
@@ -3140,6 +3146,12 @@ describe('ConfigService persistence guards', () => {
     expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
       acme: { type: 'openai', apiKey: 'sk-acme' },
     });
+    expect(() => {
+      config.assertValid(PROVIDERS_SECTION);
+    }).toThrow('could not be read');
+    expect(() => {
+      config.assertValid(PROVIDERS_SECTION, { tolerateReadError: true });
+    }).not.toThrow();
     await expectPersistBlocked(config.set(THINKING_SECTION, { enabled: true }));
     expect(await stored(storage)).toBe('= broken =');
 
@@ -3149,6 +3161,9 @@ describe('ConfigService persistence guards', () => {
     expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
       beta: { type: 'openai', apiKey: 'sk-beta' },
     });
+    expect(() => {
+      config.assertValid(PROVIDERS_SECTION);
+    }).not.toThrow();
     await config.set(THINKING_SECTION, { enabled: true });
     expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ enabled: true });
 
