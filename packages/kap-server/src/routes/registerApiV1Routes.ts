@@ -8,20 +8,15 @@ import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
 import type { MetaFeature } from '../protocol/rest-meta';
-import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import type { ConversationService } from '../services/conversation/conversationService';
 import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
-import { registerConnectionsRoutes } from './connections';
 import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
-import { registerGuiStoreRoutes } from './guiStore';
 import { registerInteractionsRoutes } from './interactions';
-import { registerMessagesRoutes } from './messages';
-import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
 import { registerMcpRoutes } from './mcp';
@@ -64,9 +59,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
   readonly enableShutdown?: boolean;
-  readonly guiStore: IGuiStoreService;
   readonly onShutdown: () => void;
-  readonly connectionRegistry: IConnectionRegistry;
   readonly conversations: ConversationService;
   readonly sessionRating: SessionRatingHost;
   readonly remoteControl: RemoteControlRouteOptions;
@@ -151,10 +144,6 @@ export async function registerApiV1Routes(
         core,
       );
       registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core);
-      registerMessagesRoutes(
-        apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
-        core,
-      );
       registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
       registerInteractionsRoutes(
         apiV1 as unknown as Parameters<typeof registerInteractionsRoutes>[0],
@@ -182,16 +171,11 @@ export async function registerApiV1Routes(
         core,
       );
       registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);
-      registerGuiStoreRoutes(apiV1 as unknown as Parameters<typeof registerGuiStoreRoutes>[0], opts.guiStore);
       registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], core);
       registerMcpRoutes(apiV1 as unknown as Parameters<typeof registerMcpRoutes>[0], core);
       registerFileHistoryRoutes(
         apiV1 as unknown as Parameters<typeof registerFileHistoryRoutes>[0],
         core,
-      );
-      registerConnectionsRoutes(
-        apiV1 as unknown as Parameters<typeof registerConnectionsRoutes>[0],
-        opts.connectionRegistry,
       );
       registerConversationRoutes(
         apiV1 as unknown as Parameters<typeof registerConversationRoutes>[0],

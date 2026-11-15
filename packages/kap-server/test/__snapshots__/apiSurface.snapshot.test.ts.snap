@@ -70,10 +70,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/connections",
-    ],
-    [
-      "GET",
       "/api/v1/debug/{service}/{method}",
     ],
     [
@@ -119,14 +115,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/fs:home",
-    ],
-    [
-      "GET",
-      "/api/v1/gui/store/getItem",
-    ],
-    [
-      "GET",
-      "/api/v1/gui/store/length",
     ],
     [
       "GET",
@@ -210,10 +198,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/children",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/environment",
     ],
     [
@@ -234,23 +218,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/goal",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/media/{file_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/messages",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/messages/{message_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/profile",
     ],
     [
       "GET",
@@ -298,19 +266,11 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "PATCH",
-      "/api/v1/sessions/{session_id}/goal",
-    ],
-    [
-      "PATCH",
       "/api/v1/workspaces/{workspace_id}",
     ],
     [
       "POST",
       "/api/v1/capabilities/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/client_configs",
     ],
     [
       "POST",
@@ -339,18 +299,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/fs:suggest",
-    ],
-    [
-      "POST",
-      "/api/v1/gui/store/clear",
-    ],
-    [
-      "POST",
-      "/api/v1/gui/store/removeItem",
-    ],
-    [
-      "POST",
-      "/api/v1/gui/store/setItem",
     ],
     [
       "POST",
@@ -446,6 +394,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/sessions/{session_id}:cancel",
+    ],
+    [
+      "POST",
       "/api/v1/sessions/{session_id}:delete",
     ],
     [
@@ -459,10 +411,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/children",
     ],
     [
       "POST",

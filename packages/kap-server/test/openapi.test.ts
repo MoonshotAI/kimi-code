@@ -146,10 +146,13 @@ describe('server-v2 OpenAPI', () => {
 
   it('documents session conflicts for session mutation routes', async () => {
     const doc = await fetchOpenApi();
+    const docPaths = asRecord(doc['paths']);
+    expect(docPaths['/api/v1/client-configs/{name}']).toBeUndefined();
+    expect(docPaths['/api/v1/client_configs']).toBeUndefined();
     const paths = [
       '/api/v1/sessions/{session_id}/profile',
       '/api/v1/sessions/{session_id}/title/generate',
-      '/api/v1/sessions/{session_id}/children',
+      '/api/v1/sessions/{session_id}:cancel',
       '/api/v1/sessions/{session_id}/skills/{tail}',
     ];
     for (const path of paths) {

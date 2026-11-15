@@ -101,13 +101,13 @@ describeLive('session resume + activity (live server required)', () => {
       // states (fresh-start vs. long-running). Every one must return 200.
       const probeSet = sessions.slice(0, 3);
       for (const s of probeSet) {
-        const { items: msgs } = await fresh.listMessages(s.id, { page_size: 5 });
-        log('fresh listMessages snapshot', {
+        const { turns } = await fresh.listTurns(s.id);
+        log('fresh listTurns snapshot', {
           session: sessionSummaryForLog(s),
-          count: msgs.length,
-          messages: msgs,
+          count: turns.length,
+          turns,
         });
-        expect(Array.isArray(msgs), `messages for ${s.id} should be an array`).toBe(true);
+        expect(Array.isArray(turns), `turns for ${s.id} should be an array`).toBe(true);
       }
       await fresh.close();
       log('closed fresh client');
