@@ -1972,6 +1972,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     onWarning?: (message: string) => void,
   ): Promise<IAgentScopeHandle> {
     await this.modelReady;
+    // A fresh local agent starts before the default profile is bound below, so
+    // its initial tool baseline is computed without a profile allowlist.
     const context = await ensureMainAgent(session);
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(context.agentId);
     if (agent === undefined) {

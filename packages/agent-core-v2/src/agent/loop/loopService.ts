@@ -499,6 +499,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
+      // Capture the baseline once; createLoopFromSnapshot stores it in the loop profile.
       const tools = initialTools === undefined ? this.toolSelect.initialTools() : [...initialTools];
       const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
       await taskHistory.reconcile();

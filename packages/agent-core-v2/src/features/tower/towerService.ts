@@ -455,6 +455,8 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       return { entered: true };
     }
     await this.adoptTowerRoster();
+    // Entering Tower expands the runtime policy only; it does not rebuild the
+    // tool-schema baseline captured when the loop started.
     for (const name of TOWER_MODE_TOOLS) this.loop.addActiveTool(name);
     this.lastPublished = true;
     this.dispatchEnter();

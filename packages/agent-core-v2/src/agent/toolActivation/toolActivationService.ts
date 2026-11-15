@@ -52,6 +52,10 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     return Promise.resolve();
   }
 
+  /**
+   * Materialize contributions admitted by the current profile, workspace gate,
+   * and environment. Registry membership alone does not put a tool in an LLM request.
+   */
   private activateRecords(records: readonly AgentToolContribution[]): void {
     if (records.length === 0) return;
     const data = this.profile.data();
