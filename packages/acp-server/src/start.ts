@@ -2,6 +2,11 @@ import { Readable, Writable } from 'node:stream';
 
 import { ndJsonStream, type AgentConnection, type Stream } from '@agentclientprotocol/sdk';
 import {
+  assertKimiHostIdentity,
+  createKimiDefaultHeaders,
+  type KimiHostIdentity,
+} from '@moonshot-ai/kimi-code-oauth';
+import {
   bootstrap,
   drainLogCloses,
   drainQueryStoreDisposals,
@@ -32,6 +37,14 @@ export interface RunAcpServerOptions extends AcpServerOptions {
   readonly configPath?: string;
   readonly input?: NodeJS.ReadableStream;
   readonly output?: NodeJS.WritableStream;
+  readonly hostIdentity?: KimiHostIdentity;
+  readonly requestHeaders?: Record<string, string>;
+  /**
+   * Extra App-scope service seeds forwarded to `bootstrap()`. Intended for
+   * tests — e.g. seeding a scripted `IProtocolAdapterRegistry` to drive a
+   * deterministic turn without a real LLM. Seeds shadow any registered
+   * binding with the same service identifier.
+   */
   readonly extraSeeds?: ScopeSeed;
 }
 
@@ -59,14 +72,27 @@ export async function runAcpServerWithStream(
   const homeDir = resolveKimiHome(opts.homeDir);
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
+  // `bootstrap()` seeds `IFileSystemStorageService` with a `FileStorageService`
+  // rooted at `homeDir`, so session metadata, wire records, blobs, and the
+  // session index all persist to disk. Host identity headers (User-Agent,
+  // X-Msh-*) are forwarded to outbound provider requests so managed vendors
+  // (e.g. api.kimi.ai) recognize the client and honor normal connection timeouts.
+  const identity: KimiHostIdentity = opts.hostIdentity
+    ? assertKimiHostIdentity(opts.hostIdentity)
+    : {
+        productName: opts.agentInfo?.name ?? 'kimi-code-acp',
+        version: opts.agentInfo?.version ?? '0.0.0',
+        platform: 'kimi_code_cli',
+      };
+  const requestHeaders =
+    opts.requestHeaders ?? createKimiDefaultHeaders({ homeDir, ...identity });
   const { app: core } = bootstrap(
     {
       homeDir,
       configPath,
-      clientIdentity: {
-        productName: opts.agentInfo?.name ?? 'kimi-code-acp',
-        version: opts.agentInfo?.version ?? '0.0.0',
-        platform: 'kimi_code_cli',
+      clientIdentity: identity,
+      args: {
+        requestHeaders,
       },
     },
     [...logSeed(logging), ...(opts.extraSeeds ?? [])],
