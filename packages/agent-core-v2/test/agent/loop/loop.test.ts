@@ -33,6 +33,7 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
+import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -1050,27 +1051,54 @@ describe('Agent loop', () => {
     });
   });
 
-  it('runs a queued notify in a new turn after stopTurn', async () => {
-    profile.update({ activeToolNames: [] });
+  it('tracks a subagent run through a tool-only notify handoff', async () => {
+    const lookupCall: ToolCall = {
+      type: 'function',
+      id: 'call_lookup',
+      name: 'Lookup',
+      arguments: '{"query":"moon"}',
+    };
+    const lookupTool: ExecutableTool<{ query: string }> = {
+      name: 'Lookup',
+      description: 'Look up a short test value.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      resolveExecution: () => ({
+        approvalRule: 'Lookup',
+        execute: async () => ({ output: 'lookup-result' }),
+      }),
+    };
+    profile.update({ activeToolNames: ['Lookup'] });
+    ctx.get(IAgentToolRegistryService).register(lookupTool);
 
-    loop.hooks.onDidFinishStep.register('test-continue-like-stop-hook', async (hookCtx, next) => {
+    loop.hooks.onDidFinishStep.register('test-notify-handoff', async (hookCtx, next) => {
       if (hookCtx.turnId === 0) loop.notify();
       await next();
     });
-    loop.hooks.onDidFinishStep.register('test-hard-stop', async (hookCtx, next) => {
-      if (hookCtx.turnId === 0) hookCtx.stopTurn = true;
-      await next();
-    });
 
-    ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
+    ctx.mockNextResponse({ type: 'text', text: '' }, lookupCall);
     ctx.mockNextResponse({ type: 'text', text: 'Notify answer.' });
 
-    const { turn } = submitTurn(loop, 'hello');
-    await ctx.untilTurnEnd();
-    await ctx.untilTurnEnd();
+    const run = await runAgentTurn(
+      ctx.get(IAgentLifecycleService).handleOf('main')!,
+      { kind: 'prompt', prompt: 'hello' },
+      { signal: new AbortController().signal },
+    );
+    const completion = expect(run.completion).resolves.toMatchObject({ summary: 'Notify answer.' });
+    await ctx.untilApproval(true);
+    await completion;
 
     expect(ctx.llmCalls).toHaveLength(2);
-    await expect(turn!.result).resolves.toEqual({
+    await expect(loop.settled()).resolves.toEqual({
+      type: 'completed',
+      steps: 1,
+      truncated: false,
+    });
+    await expect(run.turn!.result).resolves.toEqual({
       type: 'completed',
       steps: 1,
       truncated: false,
