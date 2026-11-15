@@ -6,6 +6,8 @@ export const SESSION_INDEX_SCHEMA_VERSION = 4;
 
 export const PARENT_INDEX_NAME = 'byParent';
 
+export const SESSION_INDEX_PROJECTION_LOCK_ID = 'session-index-projection';
+
 export interface SessionWorkspaceCounts {
   readonly active: number;
   readonly archived: number;

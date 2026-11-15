@@ -27,6 +27,7 @@ import {
 } from '#/app/sessionIndex/sessionIndex';
 import {
   SESSION_INDEX_MANIFEST,
+  SESSION_INDEX_PROJECTION_LOCK_ID,
   recencyColumn,
   sessionCollection,
 } from '#/app/sessionIndex/sessionIndexModel';
@@ -40,6 +41,8 @@ import { drainQueryStoreDisposals, SqliteQueryStore } from '#/persistence/backen
 import { DATABASE_SECTION } from '#/persistence/configSection';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { SessionLockService } from '#/persistence/backends/node-fs/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import {
   IQueryStore,
@@ -101,6 +104,7 @@ describe('FileSessionIndex (legacy)', () => {
       stubPair(IQueryStore, stubQueryStore()),
       stubPair(ISessionIndexMirror, stubSessionIndexMirror()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: false } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
       stubPair(ILogService, stubLog()),
     ]);
@@ -394,6 +398,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
@@ -802,6 +807,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1025,6 +1031,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1101,6 +1108,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1126,7 +1134,7 @@ describe('FileSessionIndex (read model)', () => {
     expect(rebuilt.items.map((s) => s.id)).toEqual(['a', 'c']);
   });
 
-  it('reprojects automatically after the store is wiped, without per-request backfill', async () => {
+  it('reprojects automatically after the store is wiped and serializes competing projections', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
 
@@ -1140,14 +1148,70 @@ describe('FileSessionIndex (read model)', () => {
     await drainQueryStoreDisposals();
     await fsp.rm(join(homeDir, 'cache', 'query-store.sqlite'), { recursive: true, force: true });
 
-    const second = build();
-    const fallback = await second.listRecent({ workspaceIds: [workspaceId] });
-    expect(fallback.items.map((s) => s.id)).toEqual(['a', 'b']);
-    const status = await second.prepare();
-    expect(status.state).toBe('ready');
-    const warm = await second.listRecent({ workspaceIds: [workspaceId] });
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    class GatedQueryStore extends SqliteQueryStore {
+      private gated = true;
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        if (this.gated) {
+          this.gated = false;
+          markEntered();
+          await gate;
+        }
+        return super.batch(ops);
+      }
+    }
+    let secondBatches = 0;
+    class SecondQueryStore extends SqliteQueryStore {
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        secondBatches += 1;
+        return super.batch(ops);
+      }
+    }
+
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      GatedQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const projected = build();
+    const firstPrepare = projected.prepare();
+    await entered;
+
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      SecondQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const waiting = build();
+    const secondPrepare = waiting.prepare();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(waiting.status().state).toBe('preparing');
+      expect(secondBatches).toBe(0);
+    } finally {
+      releaseFirst();
+    }
+    await Promise.all([firstPrepare, secondPrepare]);
+
+    expect(secondBatches).toBe(0);
+    expect(waiting.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    const warm = await waiting.listRecent({ workspaceIds: [workspaceId] });
     expect(warm.items.map((s) => s.id)).toEqual(['a', 'b']);
-    expect(await second.count({ workspaceIds: [workspaceId] })).toBe(2);
+    expect(await waiting.count({ workspaceIds: [workspaceId] })).toBe(2);
+    await expect(
+      fsp.access(join(homeDir, 'locks', 'sessions', `${SESSION_INDEX_PROJECTION_LOCK_ID}.lock`)),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('reconciliation repairs external edits and deletions of state.json', async () => {
@@ -1191,6 +1255,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1251,6 +1316,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1310,6 +1376,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1386,6 +1453,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1454,6 +1522,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1522,6 +1591,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1682,7 +1752,7 @@ describe('FileSessionIndex (read model)', () => {
     expect(fileStorage.listCalls).toBe(2);
   });
 
-  it('re-projects when the published checkpoint predates the current schema version', async () => {
+  it('re-projects when the published checkpoint predates the current schema version and reclaims a dead projection lock', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
 
     const first = build();
@@ -1693,11 +1763,26 @@ describe('FileSessionIndex (read model)', () => {
     await drainSessionIndexMirror();
     await drainQueryStoreDisposals();
 
+    const lockPath = join(homeDir, 'locks', 'sessions', `${SESSION_INDEX_PROJECTION_LOCK_ID}.lock`);
+    await fsp.mkdir(join(homeDir, 'locks', 'sessions'), { recursive: true });
+    await fsp.writeFile(
+      lockPath,
+      JSON.stringify({
+        version: 1,
+        token: 'dead-process',
+        pid: 2_147_483_000,
+        hostname: os.hostname(),
+        startedAt: Date.now(),
+        clientIdentity: 'dead-process',
+      }),
+    );
+
     const second = build();
     const status = await second.prepare();
     expect(status).toEqual({ state: 'ready', generation: 2, degradedCount: 0 });
     const page = await second.listRecent({ workspaceIds: [workspaceId] });
     expect(page.items.map((s) => s.id)).toEqual(['a']);
+    await expect(fsp.access(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('reconciliation reads only the journaled sessions and refreshes the checkpoint', async () => {
@@ -1720,6 +1805,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1767,6 +1853,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
@@ -1812,7 +1899,8 @@ describe('FileSessionIndex (read model)', () => {
         stubPair(IBootstrapService, stubBootstrap(homeDir)),
         stubPair(ILogService, stubLog()),
         stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
-        stubPair(ITelemetryService, noopTelemetryService),
+        stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
+      stubPair(ITelemetryService, noopTelemetryService),
       ]);
       disposeHost = () => {
         host.dispose();
@@ -1860,6 +1948,7 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
       stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ISessionLockService, new SessionLockService(stubBootstrap(homeDir), stubLog())),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
