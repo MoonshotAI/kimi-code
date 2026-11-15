@@ -7,44 +7,82 @@ onMounted(() => redirectLegacyServerApiAnchor('zh'))
 
 # 服务 API【测试版】
 
-`kimi web` 启动的本地服务提供两组接口：REST API（`/api/v1`）和 WebSocket 事件流（`/api/v1/ws`）。脚本和第三方客户端可以用它们创建会话、提交提示词、实时接收对话内容，以及管理配置、模型和工作区。启动服务的方法和命令行选项见 [kimi 命令](./kimi-command.md#kimi-web)。
+`kimi web` 启动的本地服务（以及桌面端内嵌服务）对外提供 **Kimi Agent Protocol（KAP）**：由 HTTP REST 接口（`/api/v1`）与 WebSocket 事件流（`/api/v1/ws`）组成。任何客户端或脚本都可以用它创建会话、提交输入、实时接收流式对话与状态、回应审批，以及管理工作区、模型、插件和 MCP。启动服务的方式与命令行选项见 [kimi 命令](./kimi-command.md#kimi-web)。
 
 ::: warning 注意
-这些接口是实验性特性，不保证稳定：端点、字段和事件类型可能在任何版本中变化。集成时以你所用版本服务的 `/openapi.json` 和 `/asyncapi.json` 为准。
+本协议处于 Beta 阶段，接口与字段可能随版本演进。运行中的服务同时提供由校验 schema 实时生成的 [`GET /openapi.json`](#在线-schema) 与 [`GET /asyncapi.json`](#在线-schema)。
 :::
 
-本页说明所有接口共用的约定，并用一个最小例子走通完整流程。各类接口的细节分在以下几页：
+## 文档结构
 
-- [会话与对话](./server-api-conversation.md)：WebSocket 协议，以及客户端如何订阅会话、显示对话、提交输入、处理审批和任务、断线后恢复。写客户端从这一页开始。
-- [会话接口](./server-api-sessions.md)：创建、列出、修改会话，会话动作（分叉、压缩、撤销等），消息与轮次的分页读取，提示词和交互的 REST 接口。
-- [服务与配置接口](./server-api-service.md)：服务信息、登录与用量、远程控制、配置、模型与供应商、Skill 与 MCP、插件、工作区、文件上传、全局搜索。
-- [文件接口](./server-api-files.md)：读写会话目录、工作区和本机文件，以及下载类接口的 HTTP 行为。
+1. **本页（概览与快速开始）**：[给 Agent 的资料](#给-agent-的资料)、通用约定、[鉴权](#鉴权)、[响应信封](#响应信封)、[错误码](#错误码)，以及 5 分钟走完最小闭环的 [快速开始](#快速开始)。
+2. **[会话与对话](./server-api-conversation.md)**：客户端协议指南——连接与订阅、一轮对话（Turn / Item）、提交输入与插话、停止 / 撤销 / 压缩、审批与提问、任务输出流、Agent 状态与全局事件。每节包含完整的交互消息序列与客户端处理规则，**实现客户端从这一页开始**。
+3. **[会话接口](./server-api-sessions.md)**：`/api/v1/sessions` 下的全部 REST 接口参考（会话创建与分组列表、批量归档恢复、profile 设置、会话动作、轮次分页、输入队列与交互应答）。
+4. **[服务与配置接口](./server-api-service.md)**：服务元信息、OAuth 登录与额度、远程控制、配置、模型与供应商、工作区、内置能力与插件、MCP 管理、文件上传与全局搜索。
+5. **[文件接口](./server-api-files.md)**：会话文件系统、工作区文件系统、本机文件接口及流式下载的 HTTP 行为。
 
-## 在线 schema
+## 给 Agent 的资料
 
-本组页面是整理过、供人阅读的参考。每个端点精确的机器可读定义以服务运行时提供的两份文档为准：`GET /openapi.json`（REST，OpenAPI 格式）和 `GET /asyncapi.json`（WebSocket，AsyncAPI 格式）。两份文档都由服务实际执行的校验 schema 生成，读取时同样需要鉴权。本页与在线 schema 不一致时，以在线 schema 为准。
+如果你希望让 AI Agent 为你实现一个 Kimi Code 客户端、看板或自动化脚本：
 
-## 地址
+- **发一个文件**：直接把单文件协议汇总 <a href="/kap.md" target="_blank" download="kap.md"><code>/kap.md</code></a> 发给 Agent。
+- **按场景只发一部分**：上下文有限时，按要做的事挑选页面，每组都带上本页的通用约定与错误码：
 
-默认地址为 `http://127.0.0.1:58627`。端口被占用时，服务会依次尝试下一个端口，最多重试 100 次。用 `--port` 和 `--host` 可以修改绑定地址。
+| 要做的事 | 必读指南 | 接口参考 |
+| --- | --- | --- |
+| 只读看板、多会话状态监控 | [订阅会话](./server-api-conversation.md#订阅会话)、[全局事件](./server-api-conversation.md#全局事件) | [会话列表与会话对象](./server-api-sessions.md#会话) |
+| 最小的对话客户端 | [快速开始](#快速开始)、[对话](./server-api-conversation.md#对话)、[提交输入](./server-api-conversation.md#提交输入) | [会话接口](./server-api-sessions.md) |
+| 远程处理审批与提问 | [审批与提问](./server-api-conversation.md#审批与提问) | [答复交互](./server-api-sessions.md#审批与提问) |
+| 后台任务监控与脚本自动化 | [快速开始](#快速开始)、[任务](./server-api-conversation.md#任务) | [会话动作](./server-api-sessions.md#会话动作)、[提示词](./server-api-sessions.md#提示词) |
 
-同一个 home 目录下可以同时运行多个实例，运行中的实例登记在 `~/.kimi-code/server/instances/`。
+随资料附上这段说明即可：
+
+```text
+按所附的 Kimi Agent Protocol 文档实现一个 Kimi Code 客户端。
+- 服务地址：http://127.0.0.1:58627/api/v1；WebSocket：ws://127.0.0.1:58627/api/v1/ws；凭证：YOUR_TOKEN。
+- 只使用文档写明的消息、接口和字段；遇到不认识的事件类型、条目类型或字段时跳过，不报错。
+- HTTP 出错时以响应信封里的 code 判断，含义见「错误码」。
+- 提交输入时由客户端生成会话内唯一的 prompt_id，网络出错或超时时用同一个 prompt_id 原样重发。
+```
+
+## 通用约定
+
+- **命名与时间**：REST 与 WebSocket 核心字段使用 `snake_case`；时间统一为 ISO 8601 字符串，时长以 `_ms` 结尾（毫秒数字）。
+- **不透明 ID**：`session_id`、`turn_id`、`item_id`、`interaction_id`、`task_id` 均为不透明字符串，客户端不要从格式推断含义。`turn_id` 与 `item_id` 由服务端从持久化记录确定性推出，实时事件与历史翻页得到同一个 ID。
+- **动作路径**：对单个资源或集合执行非 CRUD 操作时，路径以 `:{action}` 结尾并用 `POST` 调用，如 `POST /api/v1/sessions/{session_id}:fork`、`POST /api/v1/sessions:archive`。
+- **例子怎么读**：文档中的协议交互块标明四类方向——`客户端`（WebSocket 客户端 → 服务端）、`服务端`（WebSocket 服务端 → 客户端）、`HTTP`（HTTP 请求）、`响应`（HTTP 响应信封中的 `data`）。高亮字段是当前步骤关注的重点，点击折叠的 `{…}` 或右上角「全部展开」可查看完整载荷：
+
+```wire focus=request_id,code,cancelled
+C { "type": "task.watch", "request_id": "r2", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
+S { "type": "response", "request_id": "r2", "code": 0 }
+H POST /api/v1/sessions/s1:cancel
+R { "cancelled": true }
+```
+
+## 地址与在线 schema
+
+默认监听地址为 `http://127.0.0.1:58627`（端口被占用时依次尝试下一个端口，最多 100 次；可用 `--host` 和 `--port` 指定，传入 `--port 0` 可让操作系统自动分配空闲端口）。
+
+服务运行时提供两份由实际校验 schema 生成的机器可读定义（读取同样需要鉴权）：
+
+- `GET /openapi.json`：REST 接口定义（OpenAPI 3.0）
+- `GET /asyncapi.json`：WebSocket 消息定义（AsyncAPI）
 
 ## 鉴权
 
-所有 `/api/*` 路径，以及 `/openapi.json` 和 `/asyncapi.json`，都需要 bearer token，只有下面三种请求例外：
+所有 `/api/*` 路径以及 `/openapi.json`、`/asyncapi.json` 均需 bearer token，仅以下三类请求免鉴权：
 
-- `OPTIONS` 预检请求；
-- `GET /api/v1/healthz`（探活）；
-- 静态网页资源（不在 `/api/` 下的路径）。
+- `OPTIONS` 预检请求
+- `GET /api/v1/healthz`（探活）
+- 静态网页资源（不在 `/api/` 下的路径）
 
-REST 请求用 `Authorization: Bearer <token>` 请求头携带 token。WebSocket 升级请求可以用同样的请求头，也可以用子协议 `kimi-code.bearer.<token>`。token 的生成和轮换见 [在网页中使用](../guides/web.md#开始使用)。
+客户端获取 `(origin, token)` 的标准方式有两种：由宿主启动 `kimi web --no-open --port 0` 并从进程启动输出中读取监听地址与 `Token`，或由宿主环境（如桌面端或远程网关）直接注入 `(origin, token)`。REST 请求通过 `Authorization: Bearer <token>` 请求头携带凭证；WebSocket 升级请求可使用同一请求头，或使用子协议 `kimi-code.bearer.<token>`（适合浏览器 `new WebSocket(url, [protocol])`）。
 
-鉴权失败时返回 HTTP 401，信封 `code` 为 `40101`。服务绑定在非 loopback 地址时，同一来源 60 秒内鉴权失败 10 次会被封禁 60 秒，封禁期间每个请求都返回 HTTP 429，`code` 为 `42901`。
+凭证缺失或无效返回 HTTP 401（信封 `code` 为 `40101`）；请求头 `Host` 不在允许列表或权限不足返回 HTTP 403（`code` 为 `40301`）。服务绑定在非 loopback 地址时，同一来源 60 秒内连续鉴权失败 10 次会被封禁 60 秒，期间返回 HTTP 429（`code` 为 `42901`）。
 
 ## 响应信封
 
-所有 JSON 响应都包在同一种信封里：
+除二进制流下载接口外，所有 JSON 响应都封装在同一信封中：
 
 ```json
 {
@@ -57,116 +95,157 @@ REST 请求用 `Authorization: Bearer <token>` 请求头携带 token。WebSocket
 
 | 字段 | 说明 |
 | --- | --- |
-| `code` | 业务结果，`0` 表示成功，其他值见 [错误码](#错误码) |
-| `msg` | 结果说明 |
-| `data` | 成功时的业务数据。部分错误也会带 `data`，例如无法执行的撤销返回 `40911`，`data` 为 `{ reason, requestedCount, undoableCount }`。客户端应先判断 `code`，再读 `data` |
-| `request_id` | 本次请求的 ULID。客户端可以用 `X-Request-Id` 请求头指定，值不合法时服务端重新生成 |
+| `code` | 业务结果码，`0` 表示成功，非 `0` 见 [错误码](#错误码)。客户端应始终先判断 `code` |
+| `msg` | 结果说明或错误信息 |
+| `data` | 成功时的业务数据（各接口文档列出的响应字段即 `data` 的内容）；出错时通常为 `null` |
+| `details` | 可选。按错误码附带的结构化上下文（如 `40001` 的字段校验明细、`40931` 的锁持有者、`40113` 的 `model_id`） |
+| `request_id` | 本次请求的 ULID（可通过 `X-Request-Id` 请求头传入） |
 
-HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况如下：
+HTTP 状态码除以下场景外均为 `200`，业务成败以信封 `code` 为准：
 
-| 场景 | HTTP 状态 |
+| 场景 | HTTP 状态码 |
 | --- | --- |
-| 鉴权失败 / 触发限流 | 401 / 429 |
-| 创建供应商、导入供应商目录（`:import_catalog`）、导入自定义目录（`:import_registry`）成功 | 201，响应体仍是 `code` 为 `0` 的信封 |
-| 删除供应商成功 | 204，没有响应体 |
-| 二进制与流式端点 | 支持时返回 206（Range 分段）和 304（ETag 未变），各端点能力不同，见 [二进制与流式端点](./server-api-files.md#二进制与流式端点) |
-| `GET /api/v1/files/{file_id}`、`GET /api/v1/fs:content` 和会话文件 `:download` 出错 | 真实的 4xx / 500 状态码，响应体仍是信封 |
+| 鉴权失败 / 缺少允许的 Host 或 Origin / 触发限流 | `401` / `403` / `429` |
+| 创建供应商、`:import_catalog`、`:import_registry` 成功 | `201`（响应体仍为标准信封） |
+| 删除供应商成功 | `204`（无响应体） |
+| 二进制与流式下载端点 | 支持 `206`（Range）与 `304`（ETag），出错时返回真实 `4xx` / `500` 状态码，见 [二进制与流式端点](./server-api-files.md#二进制与流式端点) |
 
 ## 错误码
 
-错误码按前三位分段：
+HTTP 与 WebSocket `response` 帧共用同一套错误码：
 
-| 段位 | 含义 | 示例 |
-| --- | --- | --- |
-| `0` | 成功 | |
-| `400xx` | 请求参数错误 | `40001` 校验失败（`details` 逐字段说明）、`40003` 供应商由 OAuth 托管、`40006` 工作区源文件夹重复 |
-| `401xx` | 鉴权与就绪状态 | `40101` 未授权、`40110` 未配置供应商、`40113` 模型无法解析 |
-| `404xx` | 资源不存在 | `40401` 会话、`40408` MCP 服务、`40409` 文件路径 |
-| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 交互已结束、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新、`40935` 无法进入 Tower 模式 |
-| `413xx` | 体积或范围超限 | `41302` 读取文件超过 10 MB、`41304` 路径超出会话目录 |
-| `429xx` | 限流 | `42901` 鉴权失败封禁、`42902` 文件监听数超限 |
-| `500xx` | 服务端内部错误 | `50001` 未捕获异常、`50003` 持久化失败 |
-| `6xxxx` / `7xxxx` / `8xxxx` | 工具运行时、LLM 供应商、MCP 透传的错误 | `msg` 保留上游原文 |
+| 段位 / 常用码 | 含义 |
+| --- | --- |
+| `0` | 成功 |
+| `40001` | 参数或字段校验失败（`details` 列出具体字段） |
+| `40003`–`40006` | 供应商由 OAuth 托管不可手改（`40003`）、目录条目无法导入（`40004`）、私有注册表不可用（`40005`）、工作区源文件夹重复（`40006`） |
+| `40101` | 凭证缺失或无效（HTTP 401） |
+| `40301` | 权限不足或请求 `Host` 未被允许（HTTP 403） |
+| `40110`–`40113` | 未配置供应商（`40110`）、供应商缺少凭据（`40111`）、凭据被拒（`40112`）、模型无法解析（`40113`） |
+| `40401`–`40421` | 会话或 Agent 不存在（`40401`）、提示词不存在（`40402`）、交互不存在或已过期（`40404`）、任务不存在（`40406`）、文件不存在（`40407`）、MCP 服务不存在（`40408`）、路径不存在（`40409`）、工作区不存在（`40410`）、Skill 不存在（`40415`）、目录条目不存在（`40417`）、能力不存在（`40418`）、插件不存在（`40419`）、环境不存在（`40420`）、轮次不存在（`40421`） |
+| `40901` / `40902` | 会话或 Agent 忙（`40901`）、交互已结束（`40902`） |
+| `40910`–`40920` | 无法压缩（`40910`）、无法撤销（`40911`）、Skill 不可激活（`40912`）、目标状态冲突（`40913`–`40918`、`40920`） |
+| `40922`–`40935` | 分页条件与 `page_token` 不符（`40922`）、标题无法生成（`40923`）、能力安装中或不支持（`40924`/`40925`）、环境不可用（`40926`）、`prompt_id` 被用于不同请求（`40927`）、远程控制冲突（`40928`）、MCP OAuth 失败（`40929`）、会话版本过高（`40930`）、会话正被其他进程占用（`40931`）、会话已被其他进程更新（`40932`）、任务不能转后台（`40933`）、插件目录已变化（`40934`）、无法进入 Tower 模式（`40935`） |
+| `41302`–`41305` | 文件超过 10 MiB（`41302`）、远程目录条目过多（`41303`）、路径越出工作区（`41304`）、搜索超时（`41305`） |
+| `42901` / `42902` | 鉴权失败封禁（`42901`）、文件监听数超限（`42902`） |
+| `50001`–`50004` | 服务端内部错误（`50001`）、持久化读写失败（`50003`）、模型目录不可用（`50004`） |
+| `6xxxx` / `7xxxx` / `8xxxx` | 工具运行时、LLM 供应商、MCP 透传错误，`msg` 保留上游原文 |
 
-各接口可能返回的错误码列在接口说明的末尾。
+### 多进程并发码（`40931` 与 `40932`）
 
-### 多个客户端打开同一会话
+同一个 `kap-server` 下的多个客户端（如浏览器多标签页、桌面端与远程控制）共享内存态，不会触发这两个错误。只有当不同进程（例如独立运行的 CLI 与桌面端内嵌服务）操作同一个会话时才会出现：
 
-`40931` 和 `40932` 只在同一个会话被多个客户端打开时出现。
-
-- **`40931`**：另一个 Kimi Code 进程正在写入这个会话。等它空闲后重试。如果确认那个进程已经退出、只是留下了锁，先调用 [`POST /api/v1/sessions/{session_id}:takeover`](./server-api-sessions.md#post-api-v1-sessions-session-id-takeover) 再重试。
-- **`40932`**：会话已被其他客户端更新。提交提示词、激活 Skill 和压缩遇到这种情况时，服务端会重新载入会话，向订阅者推送最新的 `turns` 帧，然后重新执行请求，调用方不会收到 `40932`。只有撤销会返回 `40932`：服务端已经重新载入会话，这次没有撤销任何内容。客户端应让用户先查看刷新后的历史，再决定是否撤销。
+- **`40931`（会话正被占用）**：另一个进程正在写入该会话（`details` 含占用方信息）。等对方空闲后重试；若确认持锁进程已异常退出、仅残留了锁文件，先调用 [`POST /api/v1/sessions/{session_id}:takeover`](./server-api-sessions.md#post-api-v1-sessions-session-id-takeover) 再重试。
+- **`40932`（会话已过期）**：会话已被其他进程更新。提交输入、激活 Skill 和压缩遇到此情况时，服务端会自动重新加载会话、向订阅者重发最新 `turns` 并继续执行；只有 `:undo` 会直接返回 `40932`（此时服务端已完成重载，未执行撤销，客户端应让用户先查看刷新后的历史再决定是否撤销）。
 
 ## 分页
 
-列表接口有两种分页方式：
+列表接口支持三类分页参数：
 
-- **游标分页**：`before_id` 和 `after_id`（二选一）加 `page_size`（1–100），响应带 `items` 与 `has_more`。消息列表、子会话列表和扁平视图下的会话列表支持这种方式。Agent 的轮次例外，按轮次的 `ordinal` 分页（`before_ordinal` 加 `page_size`）。
-- **`page_token` 分页**：令牌不透明，绑定了查询条件。`GET /api/v1/sessions` 和 `POST /api/v1/search` 用这种方式。翻页过程中改变任何查询条件，令牌就会失效：`/api/v1/sessions` 返回 `40922`，搜索返回 `40001`。`GET /api/v1/sessions` 另外提供无状态的 `page` 页码模式。
+- **`page_token` / `page` 分页**：[`GET /api/v1/sessions`](./server-api-sessions.md#get-api-v1-sessions)（扁平与按工作区分组视图均支持）与 [`POST /api/v1/search`](./server-api-service.md#post-api-v1-search) 使用不透明的 `next_page_token`（绑定查询条件，中途修改过滤或排序条件返回 `40922` / `40001`）；`GET /api/v1/sessions` 同时支持从 1 开始的无状态 `page` 页码。
+- **轮次 `before_ordinal` 分页**：[`GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns`](./server-api-sessions.md#get-api-v1-sessions-session-id-agents-agent-id-turns) 按轮次在当前历史中的位置 `ordinal` 向前翻页。
+- **ID 游标分页（`before_id` / `after_id`）**：扁平会话列表支持 `before_id` 与 `after_id`（二选一）加 `page_size`。
 
-## 动作路径
+## 快速开始
 
-对单个资源执行增删改查以外的操作时，路径以 `:动作名` 结尾，用 POST 调用，例如 `POST /api/v1/sessions/{session_id}:fork`、`POST /api/v1/sessions/{session_id}:archive`。
+下面用 `curl` 和一段零依赖的 Node.js 脚本（Node.js 22+ 内置 `WebSocket`）走完最小闭环：启动服务、创建会话、订阅实时事件、提交输入、接收流式回复并往前翻页。
 
-## 用 API 驱动一个会话
+### 1. 准备环境变量
 
-下面用 curl 走一遍最小流程：确认服务状态，创建会话，订阅事件，提交提示词，再读回历史。示例假设服务运行在默认地址，token 已存入 shell 变量 `TOKEN`。
+先启动服务（`kimi web --no-open --port 0`），从终端输出的 `Local` 与 `Token` 行获取监听地址和凭证（或使用外部传入的 `(origin, token)`）：
 
-1. 确认服务状态：
+```sh
+export KAP="http://127.0.0.1:58627"
+export TOKEN="<启动输出中的 Token>"
+```
 
-   ```sh
-   curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:58627/api/v1/meta
-   ```
+### 2. 创建会话
 
-2. 创建会话，用 `metadata.cwd` 指定工作目录：
+```sh
+curl -s -X POST "$KAP/api/v1/sessions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"cwd\": \"$PWD\"}"
+```
 
-   ```sh
-   curl -s -X POST http://127.0.0.1:58627/api/v1/sessions \
-     -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"metadata": {"cwd": "/path/to/project"}}'
-   ```
+把响应里的 `data.id`（形如 `session_...`）记为 `SESSION`：
 
-   响应里的 `data.id`（形如 `session_...`）就是后续请求使用的会话 id。
+```sh
+export SESSION="<上一步返回的 data.id>"
+```
 
-3. 连接 WebSocket 并订阅这个会话。任何 WebSocket 客户端都可以，下面是一个不需要依赖的 Node.js 脚本（Node.js 22 及以上内置 `WebSocket` 客户端）：
+### 3. 连接 WebSocket 并订阅会话
 
-   ```js
-   // subscribe.mjs. Usage: TOKEN=... node subscribe.mjs session_...
-   const ws = new WebSocket('ws://127.0.0.1:58627/api/v1/ws', [
-     `kimi-code.bearer.${process.env.TOKEN}`,
-   ]);
-   ws.onmessage = (e) => console.log(e.data);
-   ws.onopen = () =>
-     ws.send(
-       JSON.stringify({
-         type: 'subscribe',
-         request_id: '1',
-         session_id: process.argv[2],
-       }),
-     );
-   ```
+先建立订阅再提交输入，确保不漏掉轮次开头的事件。将下面代码存为 `subscribe.mjs` 并运行 `node subscribe.mjs`：
 
-4. 提交提示词：
+```js
+const { KAP, TOKEN, SESSION } = process.env;
+const ws = new WebSocket(`${KAP.replace(/^http/, 'ws')}/api/v1/ws`, [
+  `kimi-code.bearer.${TOKEN}`,
+]);
 
-   ```sh
-   curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
-     -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"content": [{"type": "text", "text": "用一句话介绍这个仓库"}]}'
-   ```
+ws.onopen = () => {
+  ws.send(
+    JSON.stringify({
+      type: 'subscribe',
+      request_id: 'sub-1',
+      session_id: SESSION,
+      agent_ids: ['main'],
+    }),
+  );
+};
 
-   订阅端会先收到一帧 `turns`，里面是 main agent 最近的轮次。随后依次收到：`turn.started`（轮次开始），提示词对应的 `item.ended`，思考、回复和工具调用流式产生时的 `item.started`、`item.delta`、`item.ended`，每一步结束时的 `turn.updated`，最后是 `turn.ended`（轮次结束）。这些帧的含义见 [实时更新](./server-api-conversation.md#实时更新)。
+ws.onmessage = (frame) => {
+  const event = JSON.parse(frame.data);
+  if (event.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
+  console.log(event.type, event);
+};
+```
 
-5. 随时可以用 REST 读回历史消息：
+### 4. 提交输入并观察实时事件流
 
-   ```sh
-   curl -s -H "Authorization: Bearer $TOKEN" \
-     "http://127.0.0.1:58627/api/v1/sessions/<session_id>/messages?page_size=20"
-   ```
+另开一个终端提交一条提示词（带上客户端生成的 `prompt_id` 以保证网络重试幂等）：
+
+```sh
+curl -s -X POST "$KAP/api/v1/sessions/$SESSION/prompts" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt_id": "p-1", "content": [{"type": "text", "text": "用一句话介绍这个仓库"}]}'
+```
+
+从订阅到这一轮结束，客户端与服务端的完整交互帧序列如下（点击帧中的 `…` 或右上角「全部展开」可查看完整字段）：
+
+```wire focus=code,status,turn.kind,item.type,item.prompt_ids,delta,turn.outcome
+C { "type": "subscribe", "request_id": "sub-1", "session_id": "s1", "agent_ids": ["main"] }
+S { "type": "response", "request_id": "sub-1", "code": 0 }
+S { "type": "task.list", "session_id": "s1", "agent_id": "main", "tasks": [] }
+S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "turns", "session_id": "s1", "agent_id": "main", "turns": [], "has_more": false }
+H POST /api/v1/sessions/s1/prompts
+  { "prompt_id": "p-1", "content": [ { "type": "text", "text": "用一句话介绍这个仓库" } ] }
+R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "content": [ { "type": "text", "text": "用一句话介绍这个仓库" } ], "created_at": "2026-10-29T10:30:00.000Z" }
+S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": [] } }
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "用一句话介绍这个仓库", "attachments": [], "skills": [] } }
+S { "type": "item.started", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.500Z", "text": "" } }
+S { "type": "item.delta", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "这是 Kimi Code 的核心仓库。" }
+S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.500Z", "text": "这是 Kimi Code 的核心仓库。" } }
+S { "type": "turn.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 1, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:00.400Z", "ended_at": "2026-10-29T10:30:01.800Z" } }
+S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:01.800Z", "duration_ms": 1800, "steps": [ { "index": 1, "outcome": "completed", "finish_reason": "stop" } ] } }
+S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+```
+
+### 5. 往前翻页读取更早的轮次
+
+订阅时的 `turns` 帧最多携带最近 10 轮。用户向上滚动时，把本地最早一轮的 `ordinal` 作为 `before_ordinal` 传入，读取更早的历史轮次（结构与 WebSocket 推送的 `Turn` 完全一致）：
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$KAP/api/v1/sessions/$SESSION/agents/main/turns?before_ordinal=10&page_size=20"
+```
 
 ## 下一步
 
-- [会话与对话](./server-api-conversation.md)：WebSocket 协议和客户端流程
-- [在网页中使用](../guides/web.md)：启动服务并在浏览器中使用 Kimi Code
-- [kimi 命令](./kimi-command.md#kimi-web)：`kimi web` 的全部命令行选项
+- [会话与对话](./server-api-conversation.md)：完整的 WebSocket 事件流例子与客户端状态归并规则
+- [会话接口](./server-api-sessions.md)：会话管理、轮次、提示词与审批的 REST 接口详情
+- [服务与配置接口](./server-api-service.md)：工作区、模型、插件、MCP 与全局搜索接口
+- [文件接口](./server-api-files.md)：会话与工作区文件读写及流式下载

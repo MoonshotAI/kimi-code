@@ -1,6 +1,9 @@
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 import llmstxt from 'vitepress-plugin-llms'
+import fs from 'node:fs'
+import path from 'node:path'
+import { buildSingleFileKapMarkdown, installKapMarkdownPlugin } from './theme/kapWire'
 
 const rawBase = process.env.VITEPRESS_BASE
 const base = rawBase
@@ -28,6 +31,22 @@ const config = withMermaid(defineConfig({
   ],
 
   srcExclude: ['AGENTS.md', 'superpowers/**'],
+
+  ignoreDeadLinks: [/^\/kap(\.md)?$/, /^\/llms(-full)?\.txt$/],
+
+  markdown: {
+    config(md) {
+      installKapMarkdownPlugin(md)
+    },
+  },
+
+  buildEnd(siteConfig) {
+    const rootDir = path.resolve(siteConfig.outDir, '../..')
+    fs.writeFileSync(
+      path.join(siteConfig.outDir, 'kap.md'),
+      buildSingleFileKapMarkdown(rootDir, 'zh'),
+    )
+  },
 
   locales: {
     zh: {
@@ -224,7 +243,22 @@ const config = withMermaid(defineConfig({
     optimizeDeps: {
       include: mermaidOptimizeDeps.map((dep) => `mermaid > ${dep}`),
     },
-    plugins: [llmstxt()],
+    plugins: [
+      llmstxt(),
+      {
+        name: 'kap-single-file-md',
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url === '/kap.md' || req.url === `${base}kap.md`) {
+              res.setHeader('Content-Type', 'text/markdown; charset=utf-8')
+              res.end(buildSingleFileKapMarkdown(server.config.root, 'zh'))
+              return
+            }
+            next()
+          })
+        },
+      },
+    ],
   },
 }))
 

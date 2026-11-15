@@ -26,13 +26,13 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `kimi_agent_protocol_version` | string | Kimi Agent Protocol 协议版本（当前为 `"0.1.0"`） |
 | `server_version` | string | 服务版本 |
 | `capabilities` | object | 能力集：`websocket`、`file_upload`、`fs_query`、`mcp`、`tasks`，值恒为 `true` |
 | `server_id` | string | 本服务实例的唯一 id |
 | `started_at` | string | 启动时间，ISO 8601 格式 |
 | `open_in_apps` | array | 可作为 `open-in` 目标的宿主应用：`finder` / `cursor` / `vscode` / `iterm` / `terminal`。目前恒为空 |
 | `dangerous_bypass_auth` | boolean | 服务是否以 `--dangerous-bypass-auth` 启动（为 `true` 时客户端可以跳过 token 提示） |
-| `backend` | string | 引擎后端：`v1` / `v2`。本服务恒为 `v2` |
 | `web_title` | string | 来自 `--web-title` 的自定义浏览器标签页标题，未设置时省略 |
 | `experimental_flags` | object | 实验开关 id → 是否启用，在请求时解析 |
 | `features` | array | 引擎 feature，每项为 `{ name, state, meta }`。`state` 为 `Pending` / `Activating` / `Active` / `Unloading` / `Failed` |
@@ -294,13 +294,12 @@
 
 ## 配置
 
-这一组接口读写全局配置（`config.toml`），并读取由 Kimi Code 服务远程下发的客户端配置。
+这一组接口读写全局配置（`config.toml`）。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/config` | 读取全局配置（密钥字段脱敏） |
-| `POST /api/v1/config` | 合并式更新配置，并广播 `event.config.changed` |
-| `POST /api/v1/client_configs` | 读取由 Kimi Code 服务远程控制的指定客户端配置 |
+| `POST /api/v1/config` | 合并式更新配置，并广播 `config` |
 
 ### `GET /api/v1/config`
 
@@ -345,21 +344,9 @@
 
 成功时 `data` 为更新后的完整配置，形态与 `GET /api/v1/config` 相同。
 
-每一次配置变更都会广播全局事件 `event.config.changed`（见 [全局事件](./server-api-conversation.md#全局事件)），包括经本接口成功更新、在进程外编辑 `config.toml`，以及服务端内部写入（如 OAuth 登录刷新）。短时间内的多次变更合并为一个事件：`changedFields` 携带受影响的域名（camelCase 配置域，例如 `defaultModel`），`config` 携带当前完整的配置投影（形状与 `GET /api/v1/config` 的响应相同）。
+每一次配置变更都会广播全局事件 `config`（见 [全局事件](./server-api-conversation.md#全局事件)），包括经本接口成功更新、在进程外编辑 `config.toml`，以及服务端内部写入（如 OAuth 登录刷新）。短时间内的多次变更会合并。事件携带当前完整的配置投影（形状与 `GET /api/v1/config` 的响应相同），配置读取产生的警告通过可选的 `warnings` 一并下发。
 
 - `40001`：补丁被拒绝（值非法或持久化失败），响应带底层错误信息
-
-### `POST /api/v1/client_configs`
-
-读取由 Kimi Code 服务远程控制的指定客户端配置，包括哪些模型或思考强度的切换需要用户确认，以及客户端的升级策略。服务端从账号所在区域的 Kimi Code 服务读取（设置了 `KIMI_CODE_BASE_URL` 时改用该地址），并把结果规范化成该名称预期的结构。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `name` | body | string | 必填。`model_switch_confirm` / `effort_switch_confirm` / `client_upgrade_policy` |
-
-成功时 `data` 为 `{ name, config }`。名称不在上述范围内或读取失败时，`config` 为 `null`，客户端回退到内置行为。
-
-读到的值不会变成 `null`：缺失或格式不对的字段取关闭状态的默认值。例如格式不对的 `model_switch_confirm` 返回 `{ enable: false, rules: [] }`。
 
 ## 模型与供应商
 
@@ -520,7 +507,7 @@
 
 从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名。模型来源为静态的供应商不发起网络请求，直接报告 `unchanged`。
 
-本接口和集合级的 `:refresh`、`:refresh_oauth` 都遵循同一条广播规则：刷新报告的 `changed` 非空（至少一个供应商的别名或托管模型元数据发生变化）时，服务端广播全局事件 `event.model_catalog.changed`（见 [全局事件](./server-api-conversation.md#全局事件)），事件内容与刷新报告相同。
+本接口和集合级的 `:refresh`、`:refresh_oauth` 都遵循同一条广播规则：刷新报告的 `changed` 非空（至少一个供应商的别名或托管模型元数据发生变化）时，服务端广播全局事件 `invalidated`（`kind: "models"`，见 [全局事件](./server-api-conversation.md#全局事件)），客户端收到后重新读取 `GET /api/v1/models`。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -535,7 +522,7 @@
 | `failed` | array | 刷新失败的供应商，每项为 `{ provider, reason }` |
 | `retired_default` | object | 可选。刷新发现 registry 移除了当前默认模型、且该模型此前声明过 `upgrade` 替代模型时出现，为 `{ from, to, from_display_name }` |
 
-出现 `retired_default` 时，默认模型已重定向为 `to`，仍绑定 `from` 的已打开会话也已切换到 `to`；`from_display_name` 是被移除模型的显示名，供提示使用。`event.model_catalog.changed` 事件中也会出现同一字段。
+出现 `retired_default` 时，默认模型已重定向为 `to`，仍绑定 `from` 的已打开会话也已切换到 `to`；`from_display_name` 是被移除模型的显示名，供提示使用。
 
 - `40001`：路径中的动作后缀非法或不支持
 - `40412`：供应商不存在
@@ -714,8 +701,8 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `id` | string | 能力 id |
-| `pluginId` | string | 可选。插件 id |
-| `displayName` | string | 展示名称 |
+| `plugin_id` | string | 可选。插件 id |
+| `display_name` | string | 展示名称 |
 | `description` | string | 描述 |
 | `supported` | boolean | 当前平台是否支持 |
 | `state` | string | `ready`（所有必需检测步骤均为 `ok`）/ `partial`（部分步骤为 `ok`）/ `not_installed` / `unsupported`（当前平台 / 架构不可用） |
@@ -726,7 +713,7 @@
 | `install.percent` | number | 可选。安装进度，取值 0 到 100 |
 | `install.error` | string | 可选。安装错误 |
 | `install.note` | string | 可选。安装说明 |
-| `install.confirmationRequired` | string | 可选。为 `stop-processes` 时，安装因相关进程仍在运行而停止，需要用户确认后带 `stopRunningProcesses: true` 重新安装 |
+| `install.confirmation_required` | string | 可选。为 `stop-processes` 时，安装因相关进程仍在运行而停止，需要用户确认后带 `stop_running_processes: true` 重新安装 |
 
 ### `GET /api/v1/capabilities`
 
@@ -755,11 +742,11 @@
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `capability_id` | path | string | 必填。能力 id |
-| `stopRunningProcesses` | body | boolean | 可选。为 `true` 时允许安装过程停止仍在运行的相关进程。请求体可省略 |
+| `stop_running_processes` | body | boolean | 可选。为 `true` 时允许安装过程停止仍在运行的相关进程。请求体可省略 |
 
 成功时 `data` 为 [能力状态对象](#能力状态对象)。
 
-目前只有 Windows 上的 `kimi-cu` 会检查运行中的进程：存在相关进程且没有传 `stopRunningProcesses: true` 时，后台安装结束，`install.confirmationRequired` 为 `stop-processes`。
+目前只有 Windows 上的 `kimi-cu` 会检查运行中的进程：存在相关进程且没有传 `stop_running_processes: true` 时，后台安装结束，`install.confirmation_required` 为 `stop-processes`。
 
 - `40001`：缺少动作后缀或动作未知
 - `40418`：没有该 id 的能力
@@ -773,25 +760,25 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `id` | string | 插件 id |
-| `displayName` | string | 展示名称 |
+| `display_name` | string | 展示名称 |
 | `description` | string | 可选。描述 |
-| `shortDescription` | string | 可选。简短描述 |
-| `longDescription` | string | 可选。详细描述 |
+| `short_description` | string | 可选。简短描述 |
+| `long_description` | string | 可选。详细描述 |
 | `version` | string | 可选。版本 |
 | `enabled` | boolean | 是否启用 |
-| `state` | string | `ok` / `error`。加载失败时也会置 `hasErrors` |
-| `skillCount` | integer | Skill 数量 |
-| `mcpServerCount` | integer | MCP 服务数量 |
-| `enabledMcpServerCount` | integer | 已启用的 MCP 服务数量 |
-| `hookCount` | integer | hook 数量 |
-| `commandCount` | integer | 命令数量 |
-| `hasErrors` | boolean | 是否有错误 |
+| `state` | string | `ok` / `error`。加载失败时也会置 `has_errors` |
+| `skill_count` | integer | Skill 数量 |
+| `mcp_server_count` | integer | MCP 服务数量 |
+| `enabled_mcp_server_count` | integer | 已启用的 MCP 服务数量 |
+| `hook_count` | integer | hook 数量 |
+| `command_count` | integer | 命令数量 |
+| `has_errors` | boolean | 是否有错误 |
 | `source` | string | `local-path` / `zip-url` / `github` |
-| `originalSource` | string | 可选。原始来源 |
-| `github` | object | 可选。GitHub 来源的插件携带来源信息 `{ owner, repo, ref, installedSha? }`，其中 `ref` 为 `{ kind, value }`，`kind` 为 `branch` / `tag` / `sha` |
+| `original_source` | string | 可选。原始来源 |
+| `github` | object | 可选。GitHub 来源的插件携带来源信息 `{ owner, repo, ref, installed_sha? }`，其中 `ref` 为 `{ kind, value }`，`kind` 为 `branch` / `tag` / `sha` |
 | `origin` | string | `marketplace` / `custom` / `unknown` |
-| `catalogId` | string | 可选。目录 id |
-| `installedAt` | string | 安装时间，ISO 时间戳 |
+| `catalog_id` | string | 可选。目录 id |
+| `installed_at` | string | 安装时间，ISO 时间戳 |
 
 ### `GET /api/v1/plugins`
 
@@ -801,7 +788,7 @@
 
 ### `GET /api/v1/plugins/{plugin_id}`
 
-读取已安装插件的详情与能力。`skills` 和 `mcpServers` 两份清单都来自插件的真实文件与 manifest。`interface.skillOverrides` 和 `interface.mcpOverrides` 只覆盖展示信息，不改变调用名称或运行配置。
+读取已安装插件的详情与能力。`skills` 和 `mcp_servers` 两份清单都来自插件的真实文件与 manifest。manifest 中的 `interface.skillOverrides` 和 `interface.mcpOverrides` 只覆盖展示信息，不改变调用名称或运行配置。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -813,26 +800,26 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `root` | string | 插件根目录 |
-| `updatedAt` | string | 可选。更新时间 |
-| `manifestKind` | string | 可选。manifest 类型：`kimi-plugin-root` / `kimi-plugin-dir` |
-| `manifestPath` | string | 可选。manifest 路径 |
-| `skills` | array | 实际发现的 Skill：调用名称 `name`，以及可选的展示名称 `displayName` 与描述 `description` |
-| `mcpServers` | array | manifest 声明的 MCP 服务：名称、运行时名称、启停状态、传输方式、非敏感连接配置，以及可选的展示名称、描述和图标 URL |
-| `shadowedManifestPath` | string | 可选。被遮蔽的 manifest 路径 |
+| `updated_at` | string | 可选。更新时间 |
+| `manifest_kind` | string | 可选。manifest 类型：`kimi-plugin-root` / `kimi-plugin-dir` |
+| `manifest_path` | string | 可选。manifest 路径 |
+| `skills` | array | 实际发现的 Skill：调用名称 `name`，以及可选的展示名称 `display_name` 与描述 `description` |
+| `mcp_servers` | array | manifest 声明的 MCP 服务：`name`、`runtime_name`、`enabled`、`transport`、非敏感连接配置（`command`、`args`、`cwd`、`url`、`env_keys`、`header_keys`），以及可选的 `display_name`、`description` 和 `icon_url` |
+| `shadowed_manifest_path` | string | 可选。被遮蔽的 manifest 路径 |
 | `diagnostics` | array | 诊断信息，每项为 `{ severity, message }`，`severity` 为 `error` / `warn` / `info` |
 
 - `40419`：没有该 id 的已安装插件
 
 ### `POST /api/v1/plugins`
 
-安装插件并返回其摘要。请求体二选一：自定义安装只传 `source`；市场安装传 `marketplaceId` 及预期版本信息，不直接传 `source`。两种写法都不接受其他字段。
+安装插件并返回其摘要。请求体二选一：自定义安装只传 `source`；市场安装传 `marketplace_id` 及预期版本信息，不直接传 `source`。两种写法都不接受其他字段。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `source` | body | string | 自定义安装时必填。本地绝对路径、http(s) ZIP URL 或 GitHub URL。GitHub URL 可以用 `/tree/<branch-or-sha>`、`/releases/tag/<tag>` 或 `/commit/<sha>` 锁定版本 |
-| `marketplaceId` | body | string | 市场安装时必填。目录条目 id |
-| `expectedVersion` | body | string | 市场安装用。用户看到的版本；无版本的自定义条目可省略 |
-| `expectedSha256` | body | string | 市场安装用。用户看到的 `sha256sum`（64 位十六进制）。ZIP 条目声明了 `sha256sum` 时，必须传入且与目录一致；本地目录和 GitHub 条目无需传 |
+| `marketplace_id` | body | string | 市场安装时必填。目录条目 id |
+| `expected_version` | body | string | 市场安装用。用户看到的版本；无版本的自定义条目可省略 |
+| `expected_sha256` | body | string | 市场安装用。用户看到的 `sha256sum`（64 位十六进制）。ZIP 条目声明了 `sha256sum` 时，必须传入且与目录一致；本地目录和 GitHub 条目无需传 |
 
 市场安装时，服务端从同一份目录快照解析 `source`、`sha256sum` 和预期插件 ID，在解压前校验压缩包，并校验 manifest ID。
 
@@ -849,21 +836,21 @@
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `marketplaceId` | body | string | 必填。目录条目 id |
-| `expectedVersion` | body | string | 用户看到的版本 |
-| `expectedSha256` | body | string | 可选。用户看到的 `sha256sum`（64 位十六进制），提供时必须与当前目录一致 |
+| `marketplace_id` | body | string | 必填。目录条目 id |
+| `expected_version` | body | string | 用户看到的版本 |
+| `expected_sha256` | body | string | 可选。用户看到的 `sha256sum`（64 位十六进制），提供时必须与当前目录一致 |
 | `locale` | body | string | 可选。展示文案的语言，选择规则与 [`GET /api/v1/plugins/{plugin_id}`](#get-api-v1-plugins-plugin-id) 的 `locale` 相同 |
 
-成功时 `data` 为 `{ skills, mcpServers }`，例如：
+成功时 `data` 为 `{ skills, mcp_servers }`，例如：
 
 ```json
 {
   "skills": [{ "name": "<Skill 名称>", "description": "<可选描述>" }],
-  "mcpServers": [{ "name": "<manifest 中的名称>", "runtimeName": "<运行时名称>", "enabled": true, "transport": "stdio" }]
+  "mcp_servers": [{ "name": "<manifest 中的名称>", "runtime_name": "<运行时名称>", "enabled": true, "transport": "stdio" }]
 }
 ```
 
-两类条目还可以包含 overrides 提供的 `displayName`、`description`，MCP 条目还可以包含 `iconUrl`。MCP 条目的字段结构与 [`GET /api/v1/plugins/{plugin_id}`](#get-api-v1-plugins-plugin-id) 相同，示例只列出常用字段。
+两类条目还可以包含 overrides 提供的 `display_name`、`description`，MCP 条目还可以包含 `icon_url`。MCP 条目的字段结构与 [`GET /api/v1/plugins/{plugin_id}`](#get-api-v1-plugins-plugin-id) 相同，示例只列出常用字段。
 
 - `40001`：请求、压缩包、SHA-256 或 manifest 无效
 - `40419`：没有该 id 的市场条目
@@ -888,29 +875,29 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | string | 目录条目 id，市场安装时作为 `marketplaceId` 传入 |
+| `id` | string | 目录条目 id，市场安装时作为 `marketplace_id` 传入 |
 | `tier` | string | 条目层级：`official` / `curated` / `third-party`。条目声明了 `distribution` 时，`distribution.category` 为 `official` 取 `official`，否则取 `curated`；没有声明时取条目的 `tier`，缺省为 `third-party` |
 | `classification` | string | 条目分类：`official` / `third_party`。条目声明了 `distribution` 时取 `distribution.category`，否则由 `tier` 推出：`official` 取 `official`，其余取 `third_party` |
-| `displayName` | string | 展示名称 |
-| `description` | string | 可选。描述，语言由 `defaultLocale` 声明 |
-| `shortDescription` | string | 可选。简短描述 |
-| `longDescription` | string | 可选。详细描述 |
-| `cliDescription` | string | 可选。CLI 描述，语言由 `defaultLocale` 声明 |
+| `display_name` | string | 展示名称 |
+| `description` | string | 可选。描述，语言由 `default_locale` 声明 |
+| `short_description` | string | 可选。简短描述 |
+| `long_description` | string | 可选。详细描述 |
+| `cli_description` | string | 可选。CLI 描述，语言由 `default_locale` 声明 |
 | `homepage` | string | 可选。主页 |
 | `keywords` | string[] | 可选。关键词 |
 | `version` | string | 可选。版本 |
 | `source` | string | 条目来源 |
-| `iconUrl` | string | 可选。图标 URL |
+| `icon_url` | string | 可选。图标 URL |
 | `sha256sum` | string | 可选。压缩包摘要 |
 | `filename` | string | 可选。文件名 |
-| `locale` | object | 可选。各语言的 `displayName`、`shortDescription`、`longDescription` 和 `cliDescription` 翻译 |
-| `defaultLocale` | string | 可选。顶层 `description` / `cliDescription` 的语言 |
+| `locale` | object | 可选。各语言的 `display_name`、`short_description`、`long_description` 和 `cli_description` 翻译（另含 `default_locale`） |
+| `default_locale` | string | 可选。顶层 `description` / `cli_description` 的语言 |
 | `platforms` | string[] | 可选。`darwin` / `win32` / `linux` / `cloud` |
-| `distribution` | object | 可选。分发信息：`category` 为 `official` / `third_party`；可选的 `region`（string）、`defaultInstall`（boolean）、`weight`（number）、`userLevel` 原样取自目录 |
+| `distribution` | object | 可选。分发信息：`category` 为 `official` / `third_party`；可选的 `region`（string）、`default_install`（boolean）、`weight`（number）、`user_level` |
 | `billing` | object | 可选。计费信息，原样取自目录 |
 | `installed` | object | 可选。已安装时携带实时安装状态 `{ version?, enabled }` |
-| `updateAvailable` | boolean | 可选。有可用更新时为 `true`，否则省略 |
-| `capabilityId` | string | 可选。只由服务端标注，且只在使用默认市场时标注：`kimi-browser-extension` 映射到 `kimi-webbridge` 能力，`kimi-cu` / `kimi-cu-win` 映射到 `kimi-cu` 能力 |
+| `update_available` | boolean | 可选。有可用更新时为 `true`，否则省略 |
+| `capability_id` | string | 可选。只由服务端标注，且只在使用默认市场时标注：`kimi-browser-extension` 映射到 `kimi-webbridge` 能力，`kimi-cu` / `kimi-cu-win` 映射到 `kimi-cu` 能力 |
 
 - `50001`：市场不可达或返回了非法目录
 
@@ -971,7 +958,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 ### 工作区对象
 
-注册和更新工作区时，服务端广播 [全局事件](./server-api-conversation.md#全局事件) `event.workspace.created` / `event.workspace.updated`。
+注册和更新工作区时，服务端广播 [全局事件](./server-api-conversation.md#全局事件) `workspace`（`change: "created"` / `"updated"`），并携带变化后的完整工作区对象。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -1163,74 +1150,13 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 - `40407`（HTTP 404）：没有该 id 的文件
 
-## GUI 存储
+## 全局搜索
 
-由服务端支撑的键值存储，接口对齐浏览器的 `localStorage`，数据持久化在服务的 home 目录下。web UI 用它保存跨客户端的 UI 状态。值是不透明字符串，序列化由调用方负责。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/gui/store/length` | 已存键的数量 |
-| `GET /api/v1/gui/store/getItem` | 按键读取值 |
-| `POST /api/v1/gui/store/setItem` | 按键写入值 |
-| `POST /api/v1/gui/store/removeItem` | 按键删除值 |
-| `POST /api/v1/gui/store/clear` | 删除所有值 |
-
-### `GET /api/v1/gui/store/length`
-
-返回已存键的数量，对齐 `localStorage.length`。无参数。
-
-成功时 `data` 为 `{ length }`。
-
-### `GET /api/v1/gui/store/getItem`
-
-读取一个值，对齐 `localStorage.getItem`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `key` | query | string | 必填。要读取的键，1–256 个字符 |
-
-成功时 `data` 为 `{ value }`：已存的字符串，键不存在时为 `null`。
-
-### `POST /api/v1/gui/store/setItem`
-
-写入一个值，对齐 `localStorage.setItem`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `key` | body | string | 必填。要写入的键，1–256 个字符 |
-| `value` | body | string | 必填。要存储的值 |
-
-成功时 `data` 为 `null`。
-
-### `POST /api/v1/gui/store/removeItem`
-
-删除一个值，对齐 `localStorage.removeItem`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `key` | body | string | 必填。要删除的键，1–256 个字符 |
-
-成功时 `data` 为 `null`。
-
-### `POST /api/v1/gui/store/clear`
-
-删除所有已存的值，对齐 `localStorage.clear`。无参数。
-
-成功时 `data` 为 `null`。
-
-## 全局搜索与其他
-
-跨会话全文搜索、列出在线的 WebSocket 连接，以及其他接口的入口。
+跨会话全文搜索接口。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `POST /api/v1/search` | 跨会话全文搜索，`mode` 为 `terms`（默认）或 `literal`（精确子串），`page_token` 分页 |
-| `GET /api/v1/connections` | 列出当前在线的 WebSocket 连接 |
-| `GET /api/v1/sessions` | 会话列表与分组查询，见 [`GET /api/v1/sessions`](./server-api-sessions.md#get-api-v1-sessions) |
-| `POST /api/v1/sessions:archive` | 批量归档会话，见 [`POST /api/v1/sessions:archive`](./server-api-sessions.md#post-api-v1-sessions-archive) |
-| `POST /api/v1/sessions:restore` | 批量恢复已归档会话，见 [`POST /api/v1/sessions:restore`](./server-api-sessions.md#post-api-v1-sessions-restore) |
-| `/api/v1/mcp/*` | 统一的 MCP 管理面，见 [MCP 管理](#mcp-管理) |
-| `/api/v1/debug/*` | 反射式调试 RPC，仅在 `--debug-endpoints` 且 loopback 时挂载，不属于稳定协议 |
 
 ### `POST /api/v1/search`
 
@@ -1287,20 +1213,6 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 - `40001`：请求体校验失败、查询不可用（为空或超过 32 个词项），或分页令牌非法
 
-### `GET /api/v1/connections`
-
-列出当前连接到本服务的 WebSocket 客户端，最早连接的在前。无参数。
-
-成功时 `data` 为 `{ connections }`，每项字段如下：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | string | 连接 id |
-| `connected_at` | string | 连接时间，ISO 8601 |
-| `remote_address` | string \| null | 远端地址，未知时为 `null` |
-| `user_agent` | string \| null | User-Agent，未知时为 `null` |
-| `subscriptions` | string[] | 该连接订阅的会话 id |
-
 ## MCP 管理
 
 `/api/v1/mcp/*` 是服务统一的 MCP 管理面，独立于任何会话，直接管理 MCP 服务注册表本身。它覆盖用户级配置的增删改查（每条配置写入前校验）、连接测试、按 locator 寻址的检查目录、各服务的授权状态，以及完整的 OAuth 流程。
@@ -1323,9 +1235,9 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 管理面有两种寻址方式：
 
 - **运行时名称**：增删改查接口与 `servers:test` 使用普通的运行时 `name`。
-- **locator**：检查与 OAuth 接口使用 locator，因为插件条目和文件条目可能共用同一个运行时名称。文件层条目的 locator 为 `{ "source": "global", "name" }`，插件清单条目为 `{ "source": "plugin", "pluginId", "serverName" }`。
+- **locator**：检查与 OAuth 接口使用 locator，因为插件条目和文件条目可能共用同一个运行时名称。文件层条目的 locator 为 `{ "source": "global", "name" }`，插件清单条目为 `{ "source": "plugin", "plugin_id", "server_name" }`。
 
-检查结果还带有稳定的 `serverId` 标识：`global:<name>` 或 `plugin:<pluginId>:<serverName>`（URL 编码）。
+检查结果还带有稳定的 `server_id` 标识：`global:<name>` 或 `plugin:<plugin_id>:<server_name>`（URL 编码）。
 
 除 `auth:complete` 和 `auth:cancel` 外，各接口都接受可选的 `cwd`：`servers:test` 和 `servers:inspect` 放在请求体中，其余接口（包括 `auth:begin` 和 `auth:reset`）是查询参数。不传时目录只覆盖用户级文件与插件清单；传入后，该目录的项目根层与项目本地层会并入，但仅在工作区 [受信任](#get-api-v1-workspaces-workspace-id-trust) 时并入，否则跳过项目层。对 stdio 服务执行 `servers:test` 时，`cwd` 同时是子进程的工作目录。
 
@@ -1344,7 +1256,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `name` | string | 运行时名称 |
-| `config` | object | 可变条目携带完整配置，便于编辑界面预填；只读条目脱敏为排序后的键名列表（`envKeys` / `headerKeys`），不会泄露密钥值 |
+| `config` | object | 可变条目携带完整配置（共享字段为 `enabled`、`deferred`、`startup_timeout_ms`、`tool_timeout_ms`、`enabled_tools`、`disabled_tools`；`stdio` 另有 `command`、`args`、`env`、`cwd`、`executor`、`environment_id`；`http` / `sse` 另有 `url`、`headers`、`auth`、`bearer_token_env_var`），便于编辑界面预填；只读条目脱敏为排序后的键名列表（`env_keys` / `header_keys`），不会泄露密钥值 |
 | `source` | string | `global`（配置文件层，包括用户级文件和项目层）或 `plugin`（插件清单）。schema 中另有 `caller`，目前不会返回 |
 | `origin` | string | 条目的定义位置：文件路径或插件 id |
 | `mutable` | boolean | 只有用户级条目可变；插件与项目层条目均为只读 |
@@ -1436,16 +1348,16 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `serverId` | string | 稳定标识，格式见 [MCP 管理](#mcp-管理) |
+| `server_id` | string | 稳定标识，格式见 [MCP 管理](#mcp-管理) |
 | `locator` | object | 该条目的 locator |
-| `runtimeName` | string | 运行时名称 |
-| `canonicalUrl` | string | 可选。远程服务的凭据 URL |
+| `runtime_name` | string | 运行时名称 |
+| `canonical_url` | string | 可选。远程服务的凭据 URL |
 | `origin` | string | 条目来源，取值与 [`GET /api/v1/mcp/servers`](#get-api-v1-mcp-servers) 的 `source` 相同 |
 | `config` | object | 脱敏后的配置 |
 | `enabled` | boolean | 是否启用 |
 | `editable` | boolean | 是否可编辑 |
-| `authStatus` | string | `not-applicable` / `bearer-token` / `oauth-required` / `oauth-authorized` / `oauth-expired` / `unavailable`。运行时名称被多个已启用的 MCP 服务共用时无法无歧义地探测，报告 `unavailable` |
-| `checkedAt` | number | 可选。检查时间 |
+| `auth_status` | string | `not-applicable` / `bearer-token` / `oauth-required` / `oauth-authorized` / `oauth-expired` / `unavailable`。运行时名称被多个已启用的 MCP 服务共用时无法无歧义地探测，报告 `unavailable` |
+| `checked_at` | number | 可选。检查时间 |
 | `error` | string | 可选。错误说明，例如运行时名称被共用时的说明 |
 
 - `40001`：校验失败
@@ -1460,7 +1372,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 | `cwd` | query | string | 并入该目录（须受信任）的项目层 |
 | `verify` | query | string | `true`：对每个 OAuth 候选发起真实连接验证。`false`：完全离线，只凭配置与已存储的 token 分类。缺省：保留隐式 OAuth 探测，只探测未固定且没有已存储凭据的远程服务 |
 
-成功时 `data` 是 `{ name, authStatus }` 数组，`authStatus` 的取值与 [`servers:inspect`](#post-api-v1-mcp-servers-inspect) 相同。
+成功时 `data` 是 `{ name, auth_status }` 数组，`auth_status` 的取值与 [`servers:inspect`](#post-api-v1-mcp-servers-inspect) 相同。
 
 ### `POST /api/v1/mcp/auth:begin`
 
@@ -1476,8 +1388,8 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `status` | string | `authorization-required`：需要授权。`already-authorized`：授权已存在，此时没有其他字段 |
-| `flowId` | string | 仅 `authorization-required`：流程 id，供 `auth:complete` 与 `auth:cancel` 使用 |
-| `authorizationUrl` | string | 仅 `authorization-required`：在浏览器中打开该 URL 完成授权 |
+| `flow_id` | string | 仅 `authorization-required`：流程 id，供 `auth:complete` 与 `auth:cancel` 使用 |
+| `authorization_url` | string | 仅 `authorization-required`：在浏览器中打开该 URL 完成授权 |
 
 - `40001`：校验失败；该 MCP 服务无法使用 OAuth（stdio 传输、静态 bearer token，或未设置 `auth: "oauth"` 的静态请求头）；或运行时名称被多个已启用的 MCP 服务共用
 - `40408`：locator 未匹配到任何条目
@@ -1485,16 +1397,16 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 ### `POST /api/v1/mcp/auth:complete`
 
-等待已开始流程的浏览器回调，并完成 code 交换。等待默认 15 分钟，可用 `timeoutMs` 覆盖；空闲流程无论如何都会在 15 分钟后过期。客户端关闭 HTTP 连接会中止等待。
+等待已开始流程的浏览器回调，并完成 code 交换。等待默认 15 分钟，可用 `timeout_ms` 覆盖；空闲流程无论如何都会在 15 分钟后过期。客户端关闭 HTTP 连接会中止等待。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `flowId` | body | string | 必填。`auth:begin` 返回的流程 id |
-| `timeoutMs` | body | integer | 等待时长（毫秒），1 到 2³¹−1。默认 15 分钟 |
+| `flow_id` | body | string | 必填。`auth:begin` 返回的流程 id |
+| `timeout_ms` | body | integer | 等待时长（毫秒），1 到 2³¹−1。默认 15 分钟 |
 
 成功时 `data` 为 `null`。
 
-- `40001`：校验失败，包括 `flowId` 未知、`timeoutMs` 超出范围
+- `40001`：校验失败，包括 `flow_id` 未知、`timeout_ms` 超出范围
 - `40929`：OAuth 流程本身失败
 
 ### `POST /api/v1/mcp/auth:cancel`
@@ -1503,7 +1415,7 @@ cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `flowId` | body | string | 必填。要终止的流程 id |
+| `flow_id` | body | string | 必填。要终止的流程 id |
 
 成功时 `data` 为 `null`。
 

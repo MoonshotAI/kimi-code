@@ -26,13 +26,13 @@ Returns this instance's identity and capability map. Most fields are frozen at b
 
 | Field | Type | Description |
 | --- | --- | --- |
+| `kimi_agent_protocol_version` | string | Kimi Agent Protocol version (currently `"0.1.0"`) |
 | `server_version` | string | Server version |
 | `capabilities` | object | Capability map: `websocket`, `file_upload`, `fs_query`, `mcp`, `tasks`, all always `true` |
 | `server_id` | string | Unique id of this server instance |
 | `started_at` | string | Boot time, ISO 8601 |
 | `open_in_apps` | array | Host apps usable as `open-in` targets: `finder` / `cursor` / `vscode` / `iterm` / `terminal`. Currently always empty |
 | `dangerous_bypass_auth` | boolean | Whether the server was started with `--dangerous-bypass-auth` (when `true`, clients may skip the token prompt) |
-| `backend` | string | Engine backend: `v1` / `v2`. Always `v2` for this server |
 | `web_title` | string | Custom browser tab title from `--web-title`; omitted when unset |
 | `experimental_flags` | object | Experimental flag id → enabled, resolved at request time |
 | `features` | array | Engine features, each `{ name, state, meta }`. `state` is `Pending` / `Activating` / `Active` / `Unloading` / `Failed` |
@@ -294,13 +294,12 @@ On success, `data` is `{ ok: true }`.
 
 ## Configuration
 
-These endpoints read and write the global configuration (`config.toml`) and read client configurations delivered remotely by the Kimi Code service.
+These endpoints read and write the global configuration (`config.toml`).
 
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/config` | Read the global config (secret fields redacted) |
-| `POST /api/v1/config` | Merge-patch the config and broadcast `event.config.changed` |
-| `POST /api/v1/client_configs` | Read a named client configuration controlled remotely by the Kimi Code service |
+| `POST /api/v1/config` | Merge-patch the config and broadcast `config` |
 
 ### `GET /api/v1/config`
 
@@ -345,21 +344,9 @@ The request body is a partial config object: it may contain any top-level domain
 
 On success, `data` is the full updated config, in the same shape as `GET /api/v1/config`.
 
-Every config change broadcasts the global event `event.config.changed` (see [Global events](./server-api-conversation.md#global-events)). This covers a successful update through this endpoint, an edit of `config.toml` outside the process, and server-side writes such as an OAuth login refresh. Changes within a short window are merged into one event: `changedFields` carries the affected domain names (camelCase config domains, for example `defaultModel`), and `config` carries the full current config projection (same shape as the `GET /api/v1/config` response).
+Every config change broadcasts the global event `config` (see [Global events](./server-api-conversation.md#global-events)). This covers a successful update through this endpoint, an edit of `config.toml` outside the process, and server-side writes such as an OAuth login refresh. Changes within a short window are merged. The frame carries the full current config projection (same shape as the `GET /api/v1/config` response), with any warnings from config loading in the optional `warnings` field.
 
 - `40001`: the patch was rejected (invalid value or persistence failure); the response carries the underlying error message
-
-### `POST /api/v1/client_configs`
-
-Reads a named client configuration that the Kimi Code service controls remotely, including which model or thinking-effort switches ask the user to confirm, and the client upgrade policy. The server reads it from the Kimi Code service of the account's region (or from `KIMI_CODE_BASE_URL` when that is set) and normalizes the result to the shape that name expects.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `name` | body | string | Required. `model_switch_confirm` / `effort_switch_confirm` / `client_upgrade_policy` |
-
-On success, `data` is `{ name, config }`. When the name is outside that list or the read fails, `config` is `null` and the client falls back to its built-in behavior.
-
-A value that was read never becomes `null`: fields that are missing or malformed take their off defaults. For example, a malformed `model_switch_confirm` comes back as `{ enable: false, rules: [] }`.
 
 ## Models and providers
 
@@ -520,7 +507,7 @@ On success, the server returns HTTP 204 with no body; the status code itself rep
 
 Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. A provider with a static model source makes no network request and is reported as `unchanged` directly.
 
-This endpoint and the collection-level `:refresh` and `:refresh_oauth` follow the same broadcast rule. When the refresh report's `changed` is non-empty (at least one provider's aliases or managed model metadata changed), the server broadcasts the global event `event.model_catalog.changed` (see [Global events](./server-api-conversation.md#global-events)), with the same content as the refresh report.
+This endpoint and the collection-level `:refresh` and `:refresh_oauth` follow the same broadcast rule. When the refresh report's `changed` is non-empty (at least one provider's aliases or managed model metadata changed), the server broadcasts the global event `invalidated` with `kind: "models"` (see [Global events](./server-api-conversation.md#global-events)); clients then refetch `GET /api/v1/models`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -535,7 +522,7 @@ On success, `data` is a refresh report:
 | `failed` | array | Providers whose refresh failed, each `{ provider, reason }` |
 | `retired_default` | object | Optional. Present when the refresh finds that the registry dropped the current default model and that model had declared an `upgrade` replacement: `{ from, to, from_display_name }` |
 
-When `retired_default` is present, the default model has been redirected to `to`, and open sessions still bound to `from` have also been switched to `to`. `from_display_name` is the dropped model's display name, for use in notices. The same field also appears in the `event.model_catalog.changed` event.
+When `retired_default` is present, the default model has been redirected to `to`, and open sessions still bound to `from` have also been switched to `to`. `from_display_name` is the dropped model's display name, for use in notices.
 
 - `40001`: malformed or unsupported action suffix in the path
 - `40412`: provider not found
@@ -714,8 +701,8 @@ Every capability endpoint returns this structure.
 | Field | Type | Description |
 | --- | --- | --- |
 | `id` | string | Capability id |
-| `pluginId` | string | Optional. Plugin id |
-| `displayName` | string | Display name |
+| `plugin_id` | string | Optional. Plugin id |
+| `display_name` | string | Display name |
 | `description` | string | Description |
 | `supported` | boolean | Whether the current platform is supported |
 | `state` | string | `ready` (every required detection step is `ok`) / `partial` (some steps are `ok`) / `not_installed` / `unsupported` (not available on the current platform / architecture) |
@@ -726,7 +713,7 @@ Every capability endpoint returns this structure.
 | `install.percent` | number | Optional. Install progress, from 0 to 100 |
 | `install.error` | string | Optional. Install error |
 | `install.note` | string | Optional. Install note |
-| `install.confirmationRequired` | string | Optional. When `stop-processes`, the install stopped because related processes are still running; after the user confirms, install again with `stopRunningProcesses: true` |
+| `install.confirmation_required` | string | Optional. When `stop-processes`, the install stopped because related processes are still running; after the user confirms, install again with `stop_running_processes: true` |
 
 ### `GET /api/v1/capabilities`
 
@@ -755,11 +742,11 @@ The server dispatches through the route `POST /api/v1/capabilities/{tail}`, and 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `capability_id` | path | string | Required. Capability id |
-| `stopRunningProcesses` | body | boolean | Optional. When `true`, the install may stop related processes that are still running. The request body may be omitted |
+| `stop_running_processes` | body | boolean | Optional. When `true`, the install may stop related processes that are still running. The request body may be omitted |
 
 On success, `data` is a [capability status object](#capability-status-object).
 
-Currently only `kimi-cu` on Windows checks for running processes. When related processes exist and `stopRunningProcesses: true` was not passed, the background install ends with `install.confirmationRequired` set to `stop-processes`.
+Currently only `kimi-cu` on Windows checks for running processes. When related processes exist and `stop_running_processes: true` was not passed, the background install ends with `install.confirmation_required` set to `stop-processes`.
 
 - `40001`: missing or unknown action suffix
 - `40418`: no capability with that id
@@ -773,25 +760,25 @@ Listing and installing plugins return this structure. Plugin details add fields 
 | Field | Type | Description |
 | --- | --- | --- |
 | `id` | string | Plugin id |
-| `displayName` | string | Display name |
+| `display_name` | string | Display name |
 | `description` | string | Optional. Description |
-| `shortDescription` | string | Optional. Short description |
-| `longDescription` | string | Optional. Long description |
+| `short_description` | string | Optional. Short description |
+| `long_description` | string | Optional. Long description |
 | `version` | string | Optional. Version |
 | `enabled` | boolean | Whether the plugin is enabled |
-| `state` | string | `ok` / `error`. A load failure also sets `hasErrors` |
-| `skillCount` | integer | Number of skills |
-| `mcpServerCount` | integer | Number of MCP servers |
-| `enabledMcpServerCount` | integer | Number of enabled MCP servers |
-| `hookCount` | integer | Number of hooks |
-| `commandCount` | integer | Number of commands |
-| `hasErrors` | boolean | Whether there are errors |
+| `state` | string | `ok` / `error`. A load failure also sets `has_errors` |
+| `skill_count` | integer | Number of skills |
+| `mcp_server_count` | integer | Number of MCP servers |
+| `enabled_mcp_server_count` | integer | Number of enabled MCP servers |
+| `hook_count` | integer | Number of hooks |
+| `command_count` | integer | Number of commands |
+| `has_errors` | boolean | Whether there are errors |
 | `source` | string | `local-path` / `zip-url` / `github` |
-| `originalSource` | string | Optional. Original source |
-| `github` | object | Optional. GitHub-sourced plugins carry the provenance `{ owner, repo, ref, installedSha? }`, where `ref` is `{ kind, value }` and `kind` is `branch` / `tag` / `sha` |
+| `original_source` | string | Optional. Original source |
+| `github` | object | Optional. GitHub-sourced plugins carry the provenance `{ owner, repo, ref, installed_sha? }`, where `ref` is `{ kind, value }` and `kind` is `branch` / `tag` / `sha` |
 | `origin` | string | `marketplace` / `custom` / `unknown` |
-| `catalogId` | string | Optional. Catalog id |
-| `installedAt` | string | Install time, ISO timestamp |
+| `catalog_id` | string | Optional. Catalog id |
+| `installed_at` | string | Install time, ISO timestamp |
 
 ### `GET /api/v1/plugins`
 
@@ -801,7 +788,7 @@ On success, `data` is `{ plugins }`, where each item is a [plugin summary](#plug
 
 ### `GET /api/v1/plugins/{plugin_id}`
 
-Reads an installed plugin's details and capabilities. Both the `skills` and `mcpServers` lists come from the plugin's actual files and manifest. `interface.skillOverrides` and `interface.mcpOverrides` override display information only; they do not change invocation names or runtime configuration.
+Reads an installed plugin's details and capabilities. Both the `skills` and `mcp_servers` lists come from the plugin's actual files and manifest. `interface.skillOverrides` and `interface.mcpOverrides` in the manifest override display information only; they do not change invocation names or runtime configuration.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -813,26 +800,26 @@ On success, `data` is a [plugin summary](#plugin-summary) plus these fields:
 | Field | Type | Description |
 | --- | --- | --- |
 | `root` | string | Plugin root directory |
-| `updatedAt` | string | Optional. Update time |
-| `manifestKind` | string | Optional. Manifest kind: `kimi-plugin-root` / `kimi-plugin-dir` |
-| `manifestPath` | string | Optional. Manifest path |
-| `skills` | array | Skills actually discovered: the invocation name `name`, plus the optional display name `displayName` and description `description` |
-| `mcpServers` | array | MCP servers declared in the manifest: name, runtime name, enabled state, transport, non-secret connection settings, and optional display name, description, and icon URL |
-| `shadowedManifestPath` | string | Optional. Path of the shadowed manifest |
+| `updated_at` | string | Optional. Update time |
+| `manifest_kind` | string | Optional. Manifest kind: `kimi-plugin-root` / `kimi-plugin-dir` |
+| `manifest_path` | string | Optional. Manifest path |
+| `skills` | array | Skills actually discovered: the invocation name `name`, plus the optional display name `display_name` and description `description` |
+| `mcp_servers` | array | MCP servers declared in the manifest: `name`, `runtime_name`, `enabled`, `transport`, non-secret connection settings (`command`, `args`, `cwd`, `url`, `env_keys`, `header_keys`), and optional `display_name`, `description`, and `icon_url` |
+| `shadowed_manifest_path` | string | Optional. Path of the shadowed manifest |
 | `diagnostics` | array | Diagnostics, each `{ severity, message }`, where `severity` is `error` / `warn` / `info` |
 
 - `40419`: no installed plugin with that id
 
 ### `POST /api/v1/plugins`
 
-Installs a plugin and returns its summary. The request body takes one of two forms: a custom install passes only `source`; a marketplace install passes `marketplaceId` plus the expected version information, and does not pass `source` directly. Neither form accepts other fields.
+Installs a plugin and returns its summary. The request body takes one of two forms: a custom install passes only `source`; a marketplace install passes `marketplace_id` plus the expected version information, and does not pass `source` directly. Neither form accepts other fields.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `source` | body | string | Required for a custom install. An absolute local path, an http(s) ZIP URL, or a GitHub URL. A GitHub URL can pin a version with `/tree/<branch-or-sha>`, `/releases/tag/<tag>`, or `/commit/<sha>` |
-| `marketplaceId` | body | string | Required for a marketplace install. Catalog entry id |
-| `expectedVersion` | body | string | For marketplace installs. The version shown to the user; custom entries without a version may omit it |
-| `expectedSha256` | body | string | For marketplace installs. The `sha256sum` shown to the user (64 hex characters). When a ZIP entry declares `sha256sum`, it must be passed and must match the catalog; local-directory and GitHub entries do not need it |
+| `marketplace_id` | body | string | Required for a marketplace install. Catalog entry id |
+| `expected_version` | body | string | For marketplace installs. The version shown to the user; custom entries without a version may omit it |
+| `expected_sha256` | body | string | For marketplace installs. The `sha256sum` shown to the user (64 hex characters). When a ZIP entry declares `sha256sum`, it must be passed and must match the catalog; local-directory and GitHub entries do not need it |
 
 For a marketplace install, the server resolves `source`, `sha256sum`, and the expected plugin ID from the same catalog snapshot, verifies the archive before extraction, and checks the manifest ID.
 
@@ -849,21 +836,21 @@ Inspects a marketplace entry's capabilities read-only, without installing the pl
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `marketplaceId` | body | string | Required. Catalog entry id |
-| `expectedVersion` | body | string | The version shown to the user |
-| `expectedSha256` | body | string | Optional. The `sha256sum` shown to the user (64 hex characters); when given, it must match the current catalog |
+| `marketplace_id` | body | string | Required. Catalog entry id |
+| `expected_version` | body | string | The version shown to the user |
+| `expected_sha256` | body | string | Optional. The `sha256sum` shown to the user (64 hex characters); when given, it must match the current catalog |
 | `locale` | body | string | Optional. Language of the display text, selected by the same rules as `locale` in [`GET /api/v1/plugins/{plugin_id}`](#get-api-v1-plugins-plugin-id) |
 
-On success, `data` is `{ skills, mcpServers }`, for example:
+On success, `data` is `{ skills, mcp_servers }`, for example:
 
 ```json
 {
   "skills": [{ "name": "<skill name>", "description": "<optional description>" }],
-  "mcpServers": [{ "name": "<name in manifest>", "runtimeName": "<runtime name>", "enabled": true, "transport": "stdio" }]
+  "mcp_servers": [{ "name": "<name in manifest>", "runtime_name": "<runtime name>", "enabled": true, "transport": "stdio" }]
 }
 ```
 
-Both entry types can also include `displayName` and `description` from overrides, and MCP entries can also include `iconUrl`. MCP entries use the same field structure as [`GET /api/v1/plugins/{plugin_id}`](#get-api-v1-plugins-plugin-id); the example lists only the common fields.
+Both entry types can also include `display_name` and `description` from overrides, and MCP entries can also include `icon_url`. MCP entries use the same field structure as [`GET /api/v1/plugins/{plugin_id}`](#get-api-v1-plugins-plugin-id); the example lists only the common fields.
 
 - `40001`: the request, archive, SHA-256, or manifest is invalid
 - `40419`: no marketplace entry with that id
@@ -888,29 +875,29 @@ On success, `data` is `{ entries }`, each item with the fields below. For the re
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `id` | string | Catalog entry id, passed as `marketplaceId` for a marketplace install |
+| `id` | string | Catalog entry id, passed as `marketplace_id` for a marketplace install |
 | `tier` | string | Entry tier: `official` / `curated` / `third-party`. When the entry declares `distribution`, it is `official` if `distribution.category` is `official`, otherwise `curated`; without `distribution`, it is the entry's `tier`, defaulting to `third-party` |
 | `classification` | string | Entry classification: `official` / `third_party`. When the entry declares `distribution`, it is `distribution.category`; otherwise it is derived from `tier`: `official` gives `official`, anything else gives `third_party` |
-| `displayName` | string | Display name |
-| `description` | string | Optional. Description, in the language declared by `defaultLocale` |
-| `shortDescription` | string | Optional. Short description |
-| `longDescription` | string | Optional. Long description |
-| `cliDescription` | string | Optional. CLI description, in the language declared by `defaultLocale` |
+| `display_name` | string | Display name |
+| `description` | string | Optional. Description, in the language declared by `default_locale` |
+| `short_description` | string | Optional. Short description |
+| `long_description` | string | Optional. Long description |
+| `cli_description` | string | Optional. CLI description, in the language declared by `default_locale` |
 | `homepage` | string | Optional. Homepage |
 | `keywords` | string[] | Optional. Keywords |
 | `version` | string | Optional. Version |
 | `source` | string | Entry source |
-| `iconUrl` | string | Optional. Icon URL |
+| `icon_url` | string | Optional. Icon URL |
 | `sha256sum` | string | Optional. Archive digest |
 | `filename` | string | Optional. File name |
-| `locale` | object | Optional. Per-language translations of `displayName`, `shortDescription`, `longDescription`, and `cliDescription` |
-| `defaultLocale` | string | Optional. Language of the top-level `description` / `cliDescription` |
+| `locale` | object | Optional. Per-language translations of `display_name`, `short_description`, `long_description`, and `cli_description` (plus `default_locale`) |
+| `default_locale` | string | Optional. Language of the top-level `description` / `cli_description` |
 | `platforms` | string[] | Optional. `darwin` / `win32` / `linux` / `cloud` |
-| `distribution` | object | Optional. Distribution info: `category` is `official` / `third_party`; the optional `region` (string), `defaultInstall` (boolean), `weight` (number), and `userLevel` are taken as-is from the catalog |
+| `distribution` | object | Optional. Distribution info: `category` is `official` / `third_party`; optional `region` (string), `default_install` (boolean), `weight` (number), and `user_level` |
 | `billing` | object | Optional. Billing info, taken as-is from the catalog |
 | `installed` | object | Optional. Present when installed, with the live install state `{ version?, enabled }` |
-| `updateAvailable` | boolean | Optional. `true` when an update is available, otherwise omitted |
-| `capabilityId` | string | Optional. Set only by the server, and only when the default marketplace is used: `kimi-browser-extension` maps to the `kimi-webbridge` capability, and `kimi-cu` / `kimi-cu-win` map to the `kimi-cu` capability |
+| `update_available` | boolean | Optional. `true` when an update is available, otherwise omitted |
+| `capability_id` | string | Optional. Set only by the server, and only when the default marketplace is used: `kimi-browser-extension` maps to the `kimi-webbridge` capability, and `kimi-cu` / `kimi-cu-win` map to the `kimi-cu` capability |
 
 - `50001`: the marketplace is unreachable or returned an invalid catalog
 
@@ -971,7 +958,7 @@ These endpoints manage the workspace registry and read and write each workspace'
 
 ### Workspace object
 
-When a workspace is registered or updated, the server broadcasts the [global events](./server-api-conversation.md#global-events) `event.workspace.created` / `event.workspace.updated`.
+When a workspace is registered or updated, the server broadcasts the [global event](./server-api-conversation.md#global-events) `workspace` with `change: "created"` or `"updated"` and the full workspace object.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -1163,74 +1150,13 @@ On success, `data` is `{ deleted: true }`.
 
 - `40407` (HTTP 404): no file with that id
 
-## GUI store
+## Global search
 
-A server-backed key/value store whose interface mirrors the browser's `localStorage`, with data persisted under the server's home directory. The web UI uses it to keep cross-client UI state. Values are opaque strings, and serialization is the caller's job.
-
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v1/gui/store/length` | Number of stored keys |
-| `GET /api/v1/gui/store/getItem` | Read a value by key |
-| `POST /api/v1/gui/store/setItem` | Write a value by key |
-| `POST /api/v1/gui/store/removeItem` | Delete a value by key |
-| `POST /api/v1/gui/store/clear` | Delete all values |
-
-### `GET /api/v1/gui/store/length`
-
-Returns the number of stored keys, mirroring `localStorage.length`. No parameters.
-
-On success, `data` is `{ length }`.
-
-### `GET /api/v1/gui/store/getItem`
-
-Reads one value, mirroring `localStorage.getItem`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `key` | query | string | Required. Key to read, 1–256 characters |
-
-On success, `data` is `{ value }`: the stored string, or `null` when the key does not exist.
-
-### `POST /api/v1/gui/store/setItem`
-
-Writes one value, mirroring `localStorage.setItem`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `key` | body | string | Required. Key to write, 1–256 characters |
-| `value` | body | string | Required. Value to store |
-
-On success, `data` is `null`.
-
-### `POST /api/v1/gui/store/removeItem`
-
-Deletes one value, mirroring `localStorage.removeItem`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `key` | body | string | Required. Key to delete, 1–256 characters |
-
-On success, `data` is `null`.
-
-### `POST /api/v1/gui/store/clear`
-
-Deletes every stored value, mirroring `localStorage.clear`. No parameters.
-
-On success, `data` is `null`.
-
-## Global search and other endpoints
-
-Cross-session full-text search, the list of live WebSocket connections, and entry points to other endpoints.
+Cross-session full-text search endpoint.
 
 | Method and path | Description |
 | --- | --- |
 | `POST /api/v1/search` | Cross-session full-text search; `mode` is `terms` (default) or `literal` (exact substring); paginated with `page_token` |
-| `GET /api/v1/connections` | List live WebSocket connections |
-| `GET /api/v1/sessions` | Session list and grouped queries; see [`GET /api/v1/sessions`](./server-api-sessions.md#get-api-v1-sessions) |
-| `POST /api/v1/sessions:archive` | Batch-archive sessions; see [`POST /api/v1/sessions:archive`](./server-api-sessions.md#post-api-v1-sessions-archive) |
-| `POST /api/v1/sessions:restore` | Batch-restore archived sessions; see [`POST /api/v1/sessions:restore`](./server-api-sessions.md#post-api-v1-sessions-restore) |
-| `/api/v1/mcp/*` | Unified MCP management plane; see [MCP management](#mcp-management) |
-| `/api/v1/debug/*` | Reflection debug RPC; mounted only with `--debug-endpoints` on loopback, not part of the stable protocol |
 
 ### `POST /api/v1/search`
 
@@ -1287,20 +1213,6 @@ Fields of each `items` entry:
 
 - `40001`: body validation failed, the query is unusable (empty, or more than 32 terms), or the page token is invalid
 
-### `GET /api/v1/connections`
-
-Lists the WebSocket clients currently connected to this server, oldest connection first. No parameters.
-
-On success, `data` is `{ connections }`, each item with these fields:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `id` | string | Connection id |
-| `connected_at` | string | Connection time, ISO 8601 |
-| `remote_address` | string \| null | Remote address; `null` when unknown |
-| `user_agent` | string \| null | User-Agent; `null` when unknown |
-| `subscriptions` | string[] | Ids of the sessions this connection subscribes to |
-
 ## MCP management
 
 `/api/v1/mcp/*` is the server's unified MCP management plane. It is independent of any session and manages the MCP server registry itself. It covers CRUD on user-level config (each entry is validated before it is written), connection tests, a locator-addressed inspection catalog, per-server auth status, and the full OAuth flow.
@@ -1323,9 +1235,9 @@ On success, `data` is `{ connections }`, each item with these fields:
 The management plane uses two addressing schemes:
 
 - **Runtime name**: the CRUD endpoints and `servers:test` use a plain runtime `name`.
-- **Locator**: the inspection and OAuth endpoints use a locator, because a plugin entry and a file entry can share one runtime name. A file-layer entry's locator is `{ "source": "global", "name" }`, and a plugin-manifest entry's is `{ "source": "plugin", "pluginId", "serverName" }`.
+- **Locator**: the inspection and OAuth endpoints use a locator, because a plugin entry and a file entry can share one runtime name. A file-layer entry's locator is `{ "source": "global", "name" }`, and a plugin-manifest entry's is `{ "source": "plugin", "plugin_id", "server_name" }`.
 
-Inspection results also carry a stable `serverId`: `global:<name>` or `plugin:<pluginId>:<serverName>` (URL-encoded).
+Inspection results also carry a stable `server_id`: `global:<name>` or `plugin:<plugin_id>:<server_name>` (URL-encoded).
 
 Every endpoint except `auth:complete` and `auth:cancel` accepts an optional `cwd`: in the request body for `servers:test` and `servers:inspect`, and as a query parameter for the rest (including `auth:begin` and `auth:reset`). Without it, the catalog covers only the user-level file and plugin manifests. With it, the project-root and project-local layers of that directory join in, but only when the workspace is [trusted](#get-api-v1-workspaces-workspace-id-trust); otherwise the project layers are skipped. For `servers:test` on a stdio server, `cwd` is also the child process's working directory.
 
@@ -1344,7 +1256,7 @@ On success, `data` is an array of managed MCP servers, each with these fields:
 | Field | Type | Description |
 | --- | --- | --- |
 | `name` | string | Runtime name |
-| `config` | object | Mutable entries carry the full config so edit UIs can prefill it; read-only entries are redacted to sorted key lists (`envKeys` / `headerKeys`) and never disclose secret values |
+| `config` | object | Mutable entries carry the full config (common fields `enabled`, `deferred`, `startup_timeout_ms`, `tool_timeout_ms`, `enabled_tools`, `disabled_tools`; `stdio` adds `command`, `args`, `env`, `cwd`, `executor`, `environment_id`; `http` / `sse` add `url`, `headers`, `auth`, `bearer_token_env_var`) so edit UIs can prefill it; read-only entries are redacted to sorted key lists (`env_keys` / `header_keys`) and never disclose secret values |
 | `source` | string | `global` (a config-file layer, including the user-level file and project layers) or `plugin` (a plugin manifest). The schema also has `caller`, which is currently never returned |
 | `origin` | string | Where the entry is defined: a file path or a plugin id |
 | `mutable` | boolean | Only user-level entries are mutable; plugin and project-layer entries are read-only |
@@ -1436,16 +1348,16 @@ On success, `data` is an array of inspection results, each with these fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `serverId` | string | Stable identifier; format in [MCP management](#mcp-management) |
+| `server_id` | string | Stable identifier; format in [MCP management](#mcp-management) |
 | `locator` | object | The entry's locator |
-| `runtimeName` | string | Runtime name |
-| `canonicalUrl` | string | Optional. Credential URL of a remote server |
+| `runtime_name` | string | Runtime name |
+| `canonical_url` | string | Optional. Credential URL of a remote server |
 | `origin` | string | Entry source, with the same values as `source` in [`GET /api/v1/mcp/servers`](#get-api-v1-mcp-servers) |
 | `config` | object | Redacted config |
 | `enabled` | boolean | Whether the entry is enabled |
 | `editable` | boolean | Whether the entry is editable |
-| `authStatus` | string | `not-applicable` / `bearer-token` / `oauth-required` / `oauth-authorized` / `oauth-expired` / `unavailable`. A runtime name shared by multiple enabled MCP servers cannot be probed unambiguously and reports `unavailable` |
-| `checkedAt` | number | Optional. Check time |
+| `auth_status` | string | `not-applicable` / `bearer-token` / `oauth-required` / `oauth-authorized` / `oauth-expired` / `unavailable`. A runtime name shared by multiple enabled MCP servers cannot be probed unambiguously and reports `unavailable` |
+| `checked_at` | number | Optional. Check time |
 | `error` | string | Optional. Error explanation, for example when the runtime name is shared |
 
 - `40001`: validation failure
@@ -1460,7 +1372,7 @@ Reads the OAuth state of each MCP server in the registry catalog. When only the 
 | `cwd` | query | string | Include the project layers of this directory (must be trusted) |
 | `verify` | query | string | `true`: verify every OAuth candidate through a real connection. `false`: fully offline, classifying only from config and stored tokens. Omitted: keep implicit OAuth detection, probing only unpinned remote servers without stored credentials |
 
-On success, `data` is an array of `{ name, authStatus }`, with the same `authStatus` values as [`servers:inspect`](#post-api-v1-mcp-servers-inspect).
+On success, `data` is an array of `{ name, auth_status }`, with the same `auth_status` values as [`servers:inspect`](#post-api-v1-mcp-servers-inspect).
 
 ### `POST /api/v1/mcp/auth:begin`
 
@@ -1476,8 +1388,8 @@ On success, `data.status` is one of two values:
 | Field | Type | Description |
 | --- | --- | --- |
 | `status` | string | `authorization-required`: authorization is needed. `already-authorized`: a grant already exists, and no other fields are present |
-| `flowId` | string | `authorization-required` only: flow id, used by `auth:complete` and `auth:cancel` |
-| `authorizationUrl` | string | `authorization-required` only: open this URL in a browser to grant access |
+| `flow_id` | string | `authorization-required` only: flow id, used by `auth:complete` and `auth:cancel` |
+| `authorization_url` | string | `authorization-required` only: open this URL in a browser to grant access |
 
 - `40001`: validation failure; the MCP server cannot use OAuth (stdio transport, a static bearer token, or static headers without `auth: "oauth"`); or the runtime name is shared by multiple enabled MCP servers
 - `40408`: the locator matches no entry
@@ -1485,16 +1397,16 @@ On success, `data.status` is one of two values:
 
 ### `POST /api/v1/mcp/auth:complete`
 
-Waits for the browser callback of a begun flow and finishes the code exchange. The wait defaults to 15 minutes and can be overridden with `timeoutMs`; an idle flow expires after 15 minutes regardless. Closing the HTTP connection on the client side aborts the wait.
+Waits for the browser callback of a begun flow and finishes the code exchange. The wait defaults to 15 minutes and can be overridden with `timeout_ms`; an idle flow expires after 15 minutes regardless. Closing the HTTP connection on the client side aborts the wait.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `flowId` | body | string | Required. Flow id returned by `auth:begin` |
-| `timeoutMs` | body | integer | Wait time in milliseconds, from 1 to 2³¹−1. Default 15 minutes |
+| `flow_id` | body | string | Required. Flow id returned by `auth:begin` |
+| `timeout_ms` | body | integer | Wait time in milliseconds, from 1 to 2³¹−1. Default 15 minutes |
 
 On success, `data` is `null`.
 
-- `40001`: validation failure, including an unknown `flowId` or an out-of-range `timeoutMs`
+- `40001`: validation failure, including an unknown `flow_id` or an out-of-range `timeout_ms`
 - `40929`: the OAuth flow itself failed
 
 ### `POST /api/v1/mcp/auth:cancel`
@@ -1503,7 +1415,7 @@ Terminates a begun flow without finishing it. Unknown flows are ignored.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `flowId` | body | string | Required. Id of the flow to terminate |
+| `flow_id` | body | string | Required. Id of the flow to terminate |
 
 On success, `data` is `null`.
 
