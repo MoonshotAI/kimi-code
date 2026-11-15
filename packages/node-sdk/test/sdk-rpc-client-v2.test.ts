@@ -327,19 +327,19 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     {
       name: 'a valid default next to an invalid entry',
       config: '[environments]\ndefault = "good"\n\n[environments.good]\ntype = "ssh"\nhost = "example.com"\ndefault_cwd = "/remote/work"\n\n[environments.bad]\ntype = "ssh"\n',
-      allowsExplicitLocal: true,
+      readFailure: false,
     },
     {
       name: 'an invalid default reference',
       config: '[environments]\ndefault = "missing"\n',
-      allowsExplicitLocal: true,
+      readFailure: false,
     },
     {
       name: 'malformed TOML',
       config: '[environments\n',
-      allowsExplicitLocal: false,
+      readFailure: true,
     },
-  ])('validates implicit and explicit local creation with $name', async ({ config, allowsExplicitLocal }) => {
+  ])('creates and resumes sessions with $name', async ({ config, readFailure }) => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-work-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-home-'));
@@ -356,14 +356,17 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       onClose: () => client.close(),
     });
     try {
-      await expect(harness.createSession({ workDir })).rejects.toMatchObject({ code: 'config.invalid' });
-      const localCreation = client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
-      if (allowsExplicitLocal) {
-        const local = await localCreation;
-        expect(local.id).not.toBe('');
-      } else {
-        await expect(localCreation).rejects.toMatchObject({ code: 'config.invalid' });
-      }
+      const implicit = await harness.createSession({ workDir });
+      expect(implicit.id).not.toBe('');
+      await implicit.close();
+      const resumed = await harness.resumeSession({ id: implicit.id });
+      expect(resumed.id).toBe(implicit.id);
+
+      const local = await client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
+      expect(local.id).not.toBe('');
+      expect(client.engineAccessor.get(IConfigService).diagnostics()).toContainEqual(
+        expect.objectContaining({ severity: readFailure ? 'error' : 'warning' }),
+      );
     } finally {
       await harness.close();
       vi.unstubAllEnvs();

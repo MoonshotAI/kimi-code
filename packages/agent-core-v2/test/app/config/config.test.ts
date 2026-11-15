@@ -3152,6 +3152,22 @@ describe('ConfigService persistence guards', () => {
     await config.set(THINKING_SECTION, { enabled: true });
     expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ enabled: true });
 
+    await overwrite(storage, '[providers.beta]\ntype = "openai"\napi_key = 42\n');
+    await config.reload();
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      beta: { type: 'openai', apiKey: 'sk-beta' },
+    });
+    expect(config.diagnostics()).toContainEqual(expect.objectContaining({
+      domain: PROVIDERS_SECTION,
+      severity: 'warning',
+    }));
+
+    await overwrite(storage, '[providers.gamma]\ntype = "openai"\napi_key = "sk-gamma"\n');
+    await config.reload();
+    expect(config.get<Record<string, unknown>>(PROVIDERS_SECTION)).toEqual({
+      gamma: { type: 'openai', apiKey: 'sk-gamma' },
+    });
+
     disposables.dispose();
   });
 

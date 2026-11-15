@@ -186,9 +186,7 @@ export async function runV2Print(
   }
   const telemetryEnabled = shouldEnableTelemetry({ enabled: configTelemetryEnabled });
   for (const diagnostic of configService.diagnostics()) {
-    if (diagnostic.severity === 'warning') {
-      stderr.write(`Warning: ${diagnostic.message}\n`);
-    }
+    stderr.write(`${diagnostic.severity === 'error' ? 'Error' : 'Warning'}: ${diagnostic.message}\n`);
   }
 
   let restorePermission = async (): Promise<void> => {};
