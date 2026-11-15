@@ -587,6 +587,8 @@ Remote working directories must be absolute POSIX paths or Windows drive paths; 
 
 The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without a `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
 
+If the environment section is invalid, implicit session creation uses the last valid declarations when available instead of failing, or falls back to the local environment with a warning otherwise. This can change where commands run; check config diagnostics before relying on a configured remote environment.
+
 ### SSH entries
 
 | Field | Type | Required | Description |
