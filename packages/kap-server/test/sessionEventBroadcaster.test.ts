@@ -949,7 +949,10 @@ describe('SessionEventBroadcaster', () => {
       expect(sessionEvents()).toHaveLength(1);
     });
 
-    it('replays event.config.warning to a global-only target added after publication', async () => {
+    it('delivers event.config.warning to a global-only target that never subscribed', async () => {
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
       const warnings = [
         {
           domain: 'loopControl',
@@ -959,10 +962,6 @@ describe('SessionEventBroadcaster', () => {
         { message: 'Environment variable OLD_VAR is deprecated; use NEW_VAR instead.' },
       ];
       eventBus.emit({ type: 'event.config.warning', payload: { warnings } });
-      await settle();
-
-      const globalView = collectingTarget();
-      bc.addGlobalTarget(globalView.target);
 
       await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
       expect(globalView.envelopes[0]).toMatchObject({

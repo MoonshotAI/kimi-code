@@ -134,7 +134,6 @@ export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
   private readonly workTrackers = new Map<string, WorkTracker>();
   private readonly globalTargets = new Set<BroadcastTarget>();
-  private lastConfigWarning: EventEnvelope | undefined;
   private globalQueue: Promise<void> = Promise.resolve();
   private readonly coreEventSubscription: IDisposable;
   private readonly deletionSubscription: IDisposable | undefined;
@@ -188,14 +187,7 @@ export class SessionEventBroadcaster {
   }
 
   addGlobalTarget(target: BroadcastTarget): void {
-    if (this.globalTargets.has(target)) return;
     this.globalTargets.add(target);
-    if (this.lastConfigWarning !== undefined) {
-      try {
-        target.send(this.lastConfigWarning, 'immediate');
-      } catch {
-      }
-    }
   }
 
   removeGlobalTarget(target: BroadcastTarget): void {
@@ -712,9 +704,6 @@ export class SessionEventBroadcaster {
         event.time !== undefined ? new Date(event.time).toISOString() : new Date().toISOString(),
       payload: event,
     };
-    if (event.type === 'event.config.warning') {
-      this.lastConfigWarning = envelope;
-    }
     for (const target of this.globalTargets) {
       try {
         target.send(envelope, 'immediate');
