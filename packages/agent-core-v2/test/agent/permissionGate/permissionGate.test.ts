@@ -140,7 +140,7 @@ describe('AgentPermissionGate', () => {
     expect(await svc.authorize(makeContext('bash'))).toEqual({ executionMetadata });
   });
 
-  it('tracks the policy decision with the reason payload', async () => {
+  it('tracks the policy decision with the reason payload on the legacy path', async () => {
     policyResult = {
       policyName: 'user-configured-deny',
       result: {
@@ -150,22 +150,48 @@ describe('AgentPermissionGate', () => {
       },
     };
     const svc = make();
+    const ctx = makeContext('Bash');
 
-    await svc.authorize(makeContext('Bash'));
+    await executorEvents.fireBeforeExecute(ctx);
 
-    expect(records).toContainEqual({
-      event: 'permission_policy_decision',
-      properties: {
-        turn_id: 1,
-        tool_call_id: 'call-Bash',
-        policy_name: 'user-configured-deny',
-        tool_name: 'Bash',
-        permission_mode: 'auto',
-        decision: 'deny',
-        matched_rule: 'Bash',
-        match_strategy: 'literal',
+    expect(records).toEqual([
+      {
+        event: 'permission_policy_decision',
+        properties: {
+          turn_id: 1,
+          tool_call_id: 'call-Bash',
+          policy_name: 'user-configured-deny',
+          tool_name: 'Bash',
+          permission_mode: 'auto',
+          decision: 'deny',
+          matched_rule: 'Bash',
+          match_strategy: 'literal',
+        },
       },
-    });
+    ]);
+  });
+
+  it('does not track the policy decision on the direct authorize path', async () => {
+    policyResult = {
+      policyName: 'user-configured-deny',
+      result: {
+        kind: 'deny',
+        message: 'nope',
+        reason: { matched_rule: 'Bash', match_strategy: 'literal' },
+      },
+    };
+    const blocked: BeforeExecuteDecision = { veto: { output: 'nope', isError: true } };
+    resolvePermissionResolution.mockResolvedValue(blocked);
+    const svc = make();
+    const ctx = makeContext('Bash');
+
+    expect(await svc.authorize(ctx)).toBe(blocked);
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
+      policyResult.result,
+      ctx,
+      'user-configured-deny',
+    );
+    expect(records).toEqual([]);
   });
 
   it('vetoes with the resolved denial and ends adjudication on a deny resolution', async () => {

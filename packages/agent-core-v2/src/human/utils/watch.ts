@@ -296,7 +296,8 @@ const watchMachine = setup({
         'leg.nativeError': [
           {
             guard: ({ context, event }) =>
-              context.input.options?.listing === false && event.error.code === 'ENOENT',
+              context.input.options?.listing === false &&
+              isMissingWatchTargetError(event.error, context.input.path),
             target: 'backoff',
             actions: assign({
               ready: true,
@@ -315,8 +316,11 @@ const watchMachine = setup({
           {
             target: 'backoff',
             actions: [
+              // Settle ready even though watching failed: consumers must not
+              // block on an unwatchable path; retries continue in background.
               assign({
                 recovering: true,
+                ready: true,
                 retryDelayMs: ({ context }) =>
                   Math.min(
                     NATIVE_RETRY_BASE_MS * 2 ** context.retryAttempts,
@@ -719,6 +723,14 @@ function watchPathExists(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isMissingWatchTargetError(error: NodeJS.ErrnoException, path: string): boolean {
+  if (error.code === 'ENOENT') return true;
+  // macOS reports EPERM (not ENOENT) when fs.watch targets a missing path;
+  // forgive EPERM only when the path is truly absent so permission denials on
+  // existing paths still take the reporting backoff path.
+  return error.code === 'EPERM' && !existsSync(path);
 }
 
 function resolveLongPath(path: string): string {

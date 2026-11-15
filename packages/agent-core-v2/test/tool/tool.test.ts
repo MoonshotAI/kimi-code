@@ -1474,10 +1474,13 @@ describe('tool parameter schemas', () => {
 describe('Agent tool execution contract', () => {
   let ctx: TestAgentContext | undefined;
 
+  const tempHomeDirs: string[] = [];
+
   afterEach(async () => {
     vi.useRealTimers();
     await ctx?.dispose();
     ctx = undefined;
+    for (const dir of tempHomeDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
   function createAgentToolContext(
@@ -3801,6 +3804,8 @@ describe('Agent tool execution contract', () => {
 
   it('treats timeoutMs=0 as no deadline for background subagents and preserves the metadata', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const homeDir = mkdtempSync(join(tmpdir(), 'agent-tool-timeout-home-'));
+    tempHomeDirs.push(homeDir);
     const completion = deferred<{ readonly summary: string }>();
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-child'],
@@ -3816,9 +3821,13 @@ describe('Agent tool execution contract', () => {
           void completion.promise.then(resolve, reject);
         }),
     });
-    const context = createAgentToolContext(lifecycle, {
-      initialConfig: { subagent: { timeoutMs: 0 } },
-    });
+    // A real temp home keeps fs fast during the long fake-time advance; the
+    // default fake home ('/home/fake') is slow or unwatchable on some hosts.
+    const context = createAgentToolContext(
+      lifecycle,
+      homeDirServices(homeDir),
+      { initialConfig: { subagent: { timeoutMs: 0 } } },
+    );
     const handler = agentHandler(context, {
       prompt: 'Investigate',
       description: 'Find cause',
@@ -3861,7 +3870,9 @@ describe('Agent tool execution contract', () => {
           void completion.promise.then(resolve, reject);
         }),
     });
-    const context = createAgentToolContext(lifecycle);
+    const homeDir = mkdtempSync(join(tmpdir(), 'agent-tool-print-home-'));
+    tempHomeDirs.push(homeDir);
+    const context = createAgentToolContext(lifecycle, homeDirServices(homeDir));
     await applyPrintModeConfigDefaults(context.get(IConfigService));
 
     const handler = agentHandler(context, {
@@ -3908,7 +3919,9 @@ describe('Agent tool execution contract', () => {
           void completion.promise.then(resolve, reject);
         }),
     });
-    const context = createAgentToolContext(lifecycle);
+    const homeDir = mkdtempSync(join(tmpdir(), 'agent-tool-print-home-'));
+    tempHomeDirs.push(homeDir);
+    const context = createAgentToolContext(lifecycle, homeDirServices(homeDir));
     await applyPrintModeConfigDefaults(context.get(IConfigService));
 
     const handler = agentHandler(context, {
