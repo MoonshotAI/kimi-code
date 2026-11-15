@@ -51,6 +51,7 @@ export interface Loop {
   readonly policy: PolicyRegistry;
   submit(entry: UserEntry): LoopAck<'prompt.submitted'> | undefined;
   notify(entry: UserEntry): LoopAck<'prompt.notified'> | undefined;
+  recordNotification(entry: UserEntry): LoopAck<'prompt.notified'> | undefined;
   remind(...entries: readonly RemindEntry[]): LoopAck<'prompt.reminded'> | undefined;
   flushReminders(): void;
   steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined;

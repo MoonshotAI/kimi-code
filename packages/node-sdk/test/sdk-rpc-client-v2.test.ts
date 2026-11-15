@@ -1571,6 +1571,7 @@ key = "${titleOAuthRef.key}"
         expect.objectContaining({ role: 'user', toolCalls: [] }),
         expect.objectContaining({ role: 'user', toolCalls: [] }),
       ]);
+
     } finally {
       await client.close();
     }
