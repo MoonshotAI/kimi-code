@@ -477,7 +477,7 @@ describe('AskUserQuestionTool', () => {
         id: toolCallId,
         name: 'AskUserQuestion',
         arguments: JSON.stringify({ ...input(), background: true }),
-      }, { turnId });
+      }, { origin: 'loop', turnId });
     }
 
     function text(response: ToolExecutionResponse): string {

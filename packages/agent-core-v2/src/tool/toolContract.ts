@@ -50,7 +50,10 @@ export interface ToolUpdate {
 
 export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
 
+export type ToolExecutionOrigin = 'loop' | 'shellCommand';
+
 export interface ExecutableToolContext {
+  readonly origin?: ToolExecutionOrigin;
   readonly turnId: number;
   readonly toolCallId: string;
   readonly trace?: LLMRequestTrace;
