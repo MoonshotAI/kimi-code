@@ -25,6 +25,7 @@ export async function executeLegacyTool(
 ): Promise<LegacyExecutionResult[]> {
   return Promise.all(calls.map(async (call) => {
     const handler = executor.executor.execute(call, {
+      origin: 'loop',
       turnId: options.turnId,
       trace: options.trace,
     });

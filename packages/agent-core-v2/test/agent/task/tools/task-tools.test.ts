@@ -1283,7 +1283,7 @@ describe('WaitForTool', () => {
       }),
     ]).execute(
       { type: 'function', id: 'wait-fields', name: 'WaitFor', arguments: '{}' },
-      { turnId: 0 },
+      { origin: 'loop', turnId: 0 },
     );
 
     await handler.wait();

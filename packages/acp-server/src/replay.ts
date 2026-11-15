@@ -117,6 +117,7 @@ function syntheticToolCall(
 ): SessionNotification {
   return toolCallStartToSessionUpdate(sessionId, {
     type: 'tool.call.started',
+    origin: 'loop',
     turnId,
     toolCallId: toolCall.id,
     name: toolCall.name,
