@@ -15,6 +15,10 @@ import { ArtexAddHintTool, IArtexAddHintTool } from './add_hint/add_hint';
 import { ArtexSetGoalsTool, IArtexSetGoalsTool } from './set_goals/set_goals';
 import { ArtexSteerWorkTool, IArtexSteerWorkTool } from './steer_work/steer_work';
 import { ArtexKillWorkTool, IArtexKillWorkTool } from './kill_work/kill_work';
+import {
+  ArtexGetWorkerOutputTool,
+  IArtexGetWorkerOutputTool,
+} from './get_worker_output/get_worker_output';
 
 export interface ArtexToolRegistration {
   readonly id: ServiceIdentifier<AnyAgentTool>;
@@ -39,4 +43,5 @@ export const ARTEX_TOOLS: readonly ArtexToolRegistration[] = [
   { id: IArtexSetGoalsTool, ctor: ArtexSetGoalsTool, name: 'set_goals' },
   { id: IArtexSteerWorkTool, ctor: ArtexSteerWorkTool, name: 'steer_work' },
   { id: IArtexKillWorkTool, ctor: ArtexKillWorkTool, name: 'kill_work' },
+  { id: IArtexGetWorkerOutputTool, ctor: ArtexGetWorkerOutputTool, name: 'get_worker_output' },
 ];

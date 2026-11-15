@@ -1,0 +1,1 @@
+Fetch the final output conclusion of an intent (work). A normally finished work returns its summary; a terminated (stopped)/failed work returns its last output as of abort. Check what a running intent is doing before you kill_work or steer_work it.
