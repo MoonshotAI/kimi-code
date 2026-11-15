@@ -18,7 +18,6 @@ import { WATCH_SECTION, type WatchConfig } from '#/app/watch/configSection';
 
 import {
   type AnyEnvBindings,
-  type ConfigAssertValidOptions,
   type ConfigChangedEvent,
   type ConfigDiagnostic,
   type ConfigSectionChangedEvent,
@@ -415,8 +414,8 @@ export class ConfigService extends Disposable implements IConfigService {
     };
   }
 
-  assertValid(domain: string, options?: ConfigAssertValidOptions): void {
-    if (this.readError !== undefined && options?.tolerateReadError !== true) {
+  assertValid(domain: string): void {
+    if (this.readError !== undefined) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `Cannot use config section '${domain}' because ${this.bootstrap.configPath} could not be read`,

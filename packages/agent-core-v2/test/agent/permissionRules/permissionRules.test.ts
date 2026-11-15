@@ -4,7 +4,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
-import { type ConfigAssertValidOptions, IConfigService } from '#/app/config/config';
+import { IConfigService } from '#/app/config/config';
 import { IAgentPermissionRulesService, type PermissionApprovalResultRecord, type PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { AgentPermissionRulesService } from '#/agent/permissionRules/permissionRulesService';
 import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
@@ -54,7 +54,6 @@ function sessionApproval(pattern: string): PermissionApprovalResultRecord {
 class InMemoryConfigStub {
   permission: PermissionConfig | undefined;
   memoryPermission: PermissionConfig | undefined;
-  readError: Error | undefined;
   replaceError: Error | undefined;
   readonly replaced: PermissionConfig[] = [];
   private instance: IConfigService | undefined;
@@ -70,14 +69,7 @@ class InMemoryConfigStub {
         userValue: (domain === PERMISSION_SECTION ? this.permission : undefined) as T,
         memoryValue: (domain === PERMISSION_SECTION ? this.memoryPermission : undefined) as T,
       }),
-      assertValid: (domain: string, options?: ConfigAssertValidOptions): void => {
-        if (
-          domain === PERMISSION_SECTION &&
-          this.readError !== undefined &&
-          options?.tolerateReadError !== true
-        ) {
-          throw this.readError;
-        }
+      assertValid: (domain: string): void => {
         if (domain === PERMISSION_SECTION && this.permission !== undefined) {
           PermissionConfigSchema.parse(this.permission);
         }
@@ -332,13 +324,10 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
       rules: [runtimeRule, { ...runtimeRule, scope: 'turn-override' }, userRule],
     };
     expect(readUserPermissionRules(config.asService())).toEqual([userRule]);
-    config.readError = new Error('read failed');
-    expect(readUserPermissionRules(config.asService())).toEqual([userRule]);
-    config.readError = undefined;
     config.permission = {
       rules: [{ ...runtimeRule, scope: 'invalid' }],
     } as unknown as PermissionConfig;
-    expect(() => readUserPermissionRules(config.asService())).toThrow();
+    expect(readUserPermissionRules(config.asService())).toEqual([]);
   });
 
   it('only persists approval records (permission.rules.add is live-only)', async () => {

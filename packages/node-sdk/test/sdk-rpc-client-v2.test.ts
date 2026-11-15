@@ -339,7 +339,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       config: '[environments\n',
       readFailure: true,
     },
-  ])('rejects implicit local creation with $name and allows explicit local', async ({ config, readFailure }) => {
+  ])('creates and resumes sessions with $name', async ({ config, readFailure }) => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-work-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-home-'));
@@ -356,17 +356,17 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       onClose: () => client.close(),
     });
     try {
-      await expect(harness.createSession({ workDir })).rejects.toMatchObject({ code: 'config.invalid' });
+      const implicit = await harness.createSession({ workDir });
+      expect(implicit.id).not.toBe('');
+      await implicit.close();
+      const resumed = await harness.resumeSession({ id: implicit.id });
+      expect(resumed.id).toBe(implicit.id);
+
       const local = await client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
       expect(local.id).not.toBe('');
-      if (readFailure) {
-        expect(client.engineAccessor.get(IConfigService).diagnostics()).toContainEqual(
-          expect.objectContaining({ severity: 'error' }),
-        );
-        await client.closeSession({ sessionId: local.id });
-        const resumed = await harness.resumeSession({ id: local.id });
-        expect(resumed.id).toBe(local.id);
-      }
+      expect(client.engineAccessor.get(IConfigService).diagnostics()).toContainEqual(
+        expect.objectContaining({ severity: readFailure ? 'error' : 'warning' }),
+      );
     } finally {
       await harness.close();
       vi.unstubAllEnvs();

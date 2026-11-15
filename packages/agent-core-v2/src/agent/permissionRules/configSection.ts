@@ -48,7 +48,6 @@ export const PermissionConfigSchema = z.object({
 export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
 
 export function readUserPermissionRules(config: IConfigService): readonly PermissionRule[] {
-  config.assertValid(PERMISSION_SECTION, { tolerateReadError: true });
   const rules = config.get<PermissionConfig | undefined>(PERMISSION_SECTION)?.rules ?? [];
   return rules.filter((rule) => rule.scope === 'project' || rule.scope === 'user');
 }
