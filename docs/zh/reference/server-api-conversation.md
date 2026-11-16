@@ -34,7 +34,7 @@ C { "type": "subscribe", "request_id": "sub-2", "session_id": "s404" }
 S { "type": "response", "request_id": "sub-2", "code": 40401, "msg": "session not found" }
 ```
 
-同一连接上的 `subscribe` 和 `unsubscribe` 按发送顺序串行处理，应答顺序与发送顺序严格一致；任务控制命令（`task.*`）按每个任务独立排队，不阻塞会话订阅。
+同一连接上的 `subscribe` 和 `unsubscribe` 按发送顺序串行处理，应答顺序与发送顺序严格一致；任务控制命令（`task.*`）按每个任务独立排队，不阻塞会话订阅。除 `response` 与 `pong` 外，服务端推送的每一帧事件均携带 ISO 8601 时间戳字段 `event_created_at`。
 
 | 命令 | 字段 | 用途 |
 | --- | --- | --- |
@@ -57,13 +57,13 @@ S { "type": "response", "request_id": "sub-2", "code": 40401, "msg": "session no
 ```wire focus=agent_ids,code,interaction_id,tasks,status,context_tokens,has_more
 C { "type": "subscribe", "request_id": "sub-1", "session_id": "s1", "agent_ids": ["main"] }
 S { "type": "response", "request_id": "sub-1", "code": 0 }
-S { "type": "interaction", "session_id": "s1", "agent_id": "sub_7", "interaction_id": "i12", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": { "tool_name": "Bash", "action": "Run command", "expires_at": "2026-10-30T10:30:00.000Z" } }
-S { "type": "task.list", "session_id": "s1", "agent_id": "main", "tasks": [ { "task_id": "task-7q2m", "kind": "subagent", "status": "running", "phase": "working", "detached": false, "description": "Find call sites", "child_agent_id": "sub_7", "parent_tool_call_id": "call_agent_1", "started_at": "2026-10-29T10:29:50.000Z" } ] }
-S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "running", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
-S { "type": "context", "session_id": "s1", "agent_id": "main", "context_tokens": 18210, "max_context_tokens": 262144 }
-S { "type": "goal", "session_id": "s1", "agent_id": "main" }
-S { "type": "todo", "session_id": "s1", "agent_id": "main", "items": [] }
-S { "type": "turns", "session_id": "s1", "agent_id": "main", "turns": [ { "turn_id": "t_9", "ordinal": 9, "turn_number": 9, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:29:45.000Z", "steps": [], "items": [] } ], "has_more": true }
+S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "interaction_id": "i12", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": { "tool_name": "Bash", "action": "Run command", "expires_at": "2026-10-30T10:30:00.000Z" } }
+S { "type": "task.list", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "tasks": [ { "task_id": "task-7q2m", "kind": "subagent", "status": "running", "phase": "working", "detached": false, "description": "Find call sites", "child_agent_id": "sub_7", "parent_tool_call_id": "call_agent_1", "started_at": "2026-10-29T10:29:50.000Z" } ] }
+S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "running", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "context", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "context_tokens": 18210, "max_context_tokens": 262144 }
+S { "type": "goal", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main" }
+S { "type": "todo", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "items": [] }
+S { "type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turns": [ { "turn_id": "t_9", "ordinal": 9, "turn_number": 9, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:29:45.000Z", "steps": [], "items": [] } ], "has_more": true }
 ```
 
 注意虽然只订阅了 `main`，但子 Agent `sub_7` 发起的审批 `i12` 照常送达（`interaction` 不受 `agent_ids` 过滤）；`sub_7` 的运行状态与描述则直接从 `main` 的 `task.list` 中读取。
@@ -75,9 +75,9 @@ S { "type": "turns", "session_id": "s1", "agent_id": "main", "turns": [ { "turn_
 ```wire focus=agent_ids,agent_id,code
 C { "type": "subscribe", "request_id": "sub-2", "session_id": "s1", "agent_ids": ["sub_7"] }
 S { "type": "response", "request_id": "sub-2", "code": 0 }
-S { "type": "task.list", "session_id": "s1", "agent_id": "sub_7", "tasks": [] }
-S { "type": "agent", "session_id": "s1", "agent_id": "sub_7", "status": "running", "compacting": false, "model": "kimi-for-coding", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
-S { "type": "turns", "session_id": "s1", "agent_id": "sub_7", "turns": [], "has_more": false }
+S { "type": "task.list", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "tasks": [] }
+S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "status": "running", "compacting": false, "model": "kimi-for-coding", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "turns": [], "has_more": false }
 … 用户收起子 Agent 面板
 C { "type": "unsubscribe", "request_id": "unsub-1", "session_id": "s1", "agent_ids": ["sub_7"] }
 S { "type": "response", "request_id": "unsub-1", "code": 0 }
@@ -124,33 +124,33 @@ S { "type": "response", "request_id": "unsub-1", "code": 0 }
 <strong>一轮开始与用户消息</strong>
 
 ```wire focus=turn.turn_id,turn.kind,item.type,item.prompt_ids,item.placement
-S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": [] } }
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "README 里写的启动命令还能用吗", "attachments": [], "skills": [] } }
+S { "type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": [] } }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "README 里写的启动命令还能用吗", "attachments": [], "skills": [] } }
 ```
 </li>
 <li>
 <strong>思考与调用工具（Step 1）</strong>
 
 ```wire focus=item.type,item.name,item.stage,field,delta,set,item.output,step.finish_reason
-S { "type": "item.started", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.400Z", "text": "", "started_at": "2026-10-29T10:30:00.400Z" } }
-S { "type": "item.delta", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "r_1", "field": "text", "delta": "先读取 README.md" }
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.400Z", "text": "先读取 README.md 确认启动脚本。", "started_at": "2026-10-29T10:30:00.400Z", "duration_ms": 1200 } }
-S { "type": "item.started", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "input", "started_at": "2026-10-29T10:30:01.700Z" } }
-S { "type": "item.delta", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "field": "input_text", "delta": "{\"path\":\"README.md\"}" }
-S { "type": "item.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "set": { "stage": "executing", "input": { "path": "README.md" } } }
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "executing", "input": { "path": "README.md" }, "output": "1\t# App\n2\tRun `pnpm dev`", "started_at": "2026-10-29T10:30:01.700Z", "ended_at": "2026-10-29T10:30:02.100Z" } }
-S { "type": "turn.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 1, "outcome": "completed", "finish_reason": "tool_calls", "started_at": "2026-10-29T10:30:00.300Z", "ended_at": "2026-10-29T10:30:02.100Z", "usage": { "input_other": 5210, "output": 96, "input_cache_read": 0, "input_cache_creation": 0 } } }
+S { "type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.400Z", "text": "", "started_at": "2026-10-29T10:30:00.400Z" } }
+S { "type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "r_1", "field": "text", "delta": "先读取 README.md" }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.400Z", "text": "先读取 README.md 确认启动脚本。", "started_at": "2026-10-29T10:30:00.400Z", "duration_ms": 1200 } }
+S { "type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "input", "started_at": "2026-10-29T10:30:01.700Z" } }
+S { "type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "field": "input_text", "delta": "{\"path\":\"README.md\"}" }
+S { "type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "set": { "stage": "executing", "input": { "path": "README.md" } } }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "executing", "input": { "path": "README.md" }, "output": "1\t# App\n2\tRun `pnpm dev`", "started_at": "2026-10-29T10:30:01.700Z", "ended_at": "2026-10-29T10:30:02.100Z" } }
+S { "type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 1, "outcome": "completed", "finish_reason": "tool_calls", "started_at": "2026-10-29T10:30:00.300Z", "ended_at": "2026-10-29T10:30:02.100Z", "usage": { "input_other": 5210, "output": 96, "input_cache_read": 0, "input_cache_creation": 0 } } }
 ```
 </li>
 <li>
 <strong>正文回复与一轮结束（Step 2）</strong>
 
 ```wire focus=item.type,delta,item.text,turn.outcome,turn.duration_ms
-S { "type": "item.started", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "running", "created_at": "2026-10-29T10:30:02.400Z", "text": "" } }
-S { "type": "item.delta", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "还能用，README 里的 `pnpm dev` 与 package.json 一致。" }
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:02.400Z", "text": "还能用，README 里的 `pnpm dev` 与 package.json 一致。" } }
-S { "type": "turn.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 2, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:02.200Z", "ended_at": "2026-10-29T10:30:04.200Z" } }
-S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:04.200Z", "duration_ms": 4200, "steps": [ { "index": 1, "outcome": "completed", "finish_reason": "tool_calls" }, { "index": 2, "outcome": "completed", "finish_reason": "stop" } ] } }
+S { "type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "running", "created_at": "2026-10-29T10:30:02.400Z", "text": "" } }
+S { "type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "还能用，README 里的 `pnpm dev` 与 package.json 一致。" }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:02.400Z", "text": "还能用，README 里的 `pnpm dev` 与 package.json 一致。" } }
+S { "type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 2, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:02.200Z", "ended_at": "2026-10-29T10:30:04.200Z" } }
+S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:04.200Z", "duration_ms": 4200, "steps": [ { "index": 1, "outcome": "completed", "finish_reason": "tool_calls" }, { "index": 2, "outcome": "completed", "finish_reason": "stop" } ] } }
 ```
 </li>
 <li>
@@ -158,8 +158,8 @@ S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "tur
 当上游模型返回可重试错误时，<code>turn.updated</code> 携带 <code>retry</code> 状态供客户端显示倒计时；若该步此前已输出半截条目，重试开始前服务端先发 <code>item.removed</code> 删掉半截内容；重试耗尽后该轮以 <code>outcome: "failed"</code> 结束：
 
 ```wire focus=retry.attempt,retry.delay_ms,turn.outcome,turn.end_reason,turn.error
-S { "type": "turn.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_2", "retry": { "attempt": 1, "next_attempt": 2, "max_attempts": 3, "delay_ms": 2000, "error": { "name": "ProviderError", "message": "upstream overloaded", "status_code": 529 } } }
-S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_2", "ordinal": 1, "turn_number": 1, "kind": "agent", "status": "ended", "outcome": "failed", "end_reason": "error", "error": { "code": "provider.overloaded", "message": "模型服务繁忙，请稍后再试", "status_code": 529, "retryable": true }, "started_at": "2026-10-29T10:31:00.000Z", "ended_at": "2026-10-29T10:31:08.000Z", "steps": [] } }
+S { "type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_2", "retry": { "attempt": 1, "next_attempt": 2, "max_attempts": 3, "delay_ms": 2000, "error": { "name": "ProviderError", "message": "upstream overloaded", "status_code": 529 } } }
+S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_2", "ordinal": 1, "turn_number": 1, "kind": "agent", "status": "ended", "outcome": "failed", "end_reason": "error", "error": { "code": "provider.overloaded", "message": "模型服务繁忙，请稍后再试", "status_code": 529, "retryable": true }, "started_at": "2026-10-29T10:31:00.000Z", "ended_at": "2026-10-29T10:31:08.000Z", "steps": [] } }
 ```
 </li>
 </ol>
@@ -267,8 +267,8 @@ S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "tur
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-1", "content": [ { "type": "text", "text": "帮我看看这个报错" } ] }
 R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "content": [ { "type": "text", "text": "帮我看看这个报错" } ], "created_at": "2026-10-29T10:35:00.000Z" }
-S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:35:00.000Z", "steps": [] } }
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "帮我看看这个报错", "attachments": [], "skills": [] } }
+S { "type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:35:00.000Z", "steps": [] } }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "帮我看看这个报错", "attachments": [], "skills": [] } }
 ```
 </li>
 <li>
@@ -282,7 +282,7 @@ H POST /api/v1/sessions/s1/prompts:steer
   { "prompt_ids": ["p-2"] }
 R { "steered": true, "prompt_ids": ["p-2"] }
 … 当前步骤结束，到达下一个插话点
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_2", "type": "user_message", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:12.000Z", "prompt_ids": ["p-2"], "placement": "steer", "origin": { "kind": "user" }, "text": "顺便也检查一下 lint", "attachments": [], "skills": [] } }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_2", "type": "user_message", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:12.000Z", "prompt_ids": ["p-2"], "placement": "steer", "origin": { "kind": "user" }, "text": "顺便也检查一下 lint", "attachments": [], "skills": [] } }
 ```
 </li>
 <li>
@@ -331,8 +331,8 @@ H POST /api/v1/sessions/s1/prompts/p-9:abort
 R { "aborted": true }
 H POST /api/v1/sessions/s1:cancel
 R { "cancelled": true }
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item": { "item_id": "call_bash_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "interrupted", "created_at": "2026-10-29T10:36:00.000Z", "name": "Bash", "stage": "executing", "error": "partial output...\n[Command interrupted by user]" } }
-S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_3", "ordinal": 2, "turn_number": 2, "kind": "agent", "status": "ended", "outcome": "interrupted", "end_reason": "user_cancelled", "started_at": "2026-10-29T10:35:50.000Z", "ended_at": "2026-10-29T10:36:02.000Z", "steps": [] } }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item": { "item_id": "call_bash_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "interrupted", "created_at": "2026-10-29T10:36:00.000Z", "name": "Bash", "stage": "executing", "error": "partial output...\n[Command interrupted by user]" } }
+S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_3", "ordinal": 2, "turn_number": 2, "kind": "agent", "status": "ended", "outcome": "interrupted", "end_reason": "user_cancelled", "started_at": "2026-10-29T10:35:50.000Z", "ended_at": "2026-10-29T10:36:02.000Z", "steps": [] } }
 ```
 </li>
 <li>
@@ -342,7 +342,7 @@ S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "tur
 H POST /api/v1/sessions/s1:undo
   { "turn_id": "t_5" }
 R { "removed_turn_ids": ["t_5", "t_6", "t_7"] }
-S { "type": "turns.removed", "session_id": "s1", "agent_id": "main", "turn_ids": ["t_5", "t_6", "t_7"] }
+S { "type": "turns.removed", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_ids": ["t_5", "t_6", "t_7"] }
 ```
 </li>
 <li>
@@ -352,11 +352,11 @@ S { "type": "turns.removed", "session_id": "s1", "agent_id": "main", "turn_ids":
 H POST /api/v1/sessions/s1:compact
   { "instruction": "保留数据库迁移相关的结论" }
 R {}
-S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": true, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
-S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_8", "item": { "item_id": "sys_1", "type": "system", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:38:00.000Z", "kind": "compaction", "trigger": "manual", "instruction": "保留数据库迁移相关的结论", "tokens_before": 182340, "tokens_after": 8120, "summary": "…" } }
-S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
-S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": true, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_8", "item": { "item_id": "sys_1", "type": "system", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:38:00.000Z", "kind": "compaction", "trigger": "manual", "instruction": "保留数据库迁移相关的结论", "tokens_before": 182340, "tokens_after": 8120, "summary": "…" } }
+S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
+S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
 ```
 </li>
 <li>
@@ -395,24 +395,24 @@ S { "type": "response", "request_id": "sub-btw", "code": 0 }
 <strong>收到审批并同意（记住本会话同类操作）</strong>
 
 ```wire focus=set,interaction_id,kind,status,decision,scope,outcome
-S { "type": "item.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": { "stage": "awaiting_approval", "interaction_id": "i9" } }
-S { "type": "interaction", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": { "tool_name": "Bash", "action": "Run command", "tool_input_display": { "command": "rm -rf dist" }, "expires_at": "2026-10-30T10:31:00.000Z" } }
+S { "type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": { "stage": "awaiting_approval", "interaction_id": "i9" } }
+S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": { "tool_name": "Bash", "action": "Run command", "tool_input_display": { "command": "rm -rf dist" }, "expires_at": "2026-10-30T10:31:00.000Z" } }
 H POST /api/v1/sessions/s1/interactions/i9
   { "kind": "approval", "decision": "approved", "scope": "session" }
 R { "outcome": "approved", "ended_at": "2026-10-29T10:31:00.000Z" }
-S { "type": "interaction", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "ended", "outcome": "approved", "ended_at": "2026-10-29T10:31:00.000Z", "response": { "decision": "approved", "scope": "session" } }
-S { "type": "item.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": { "stage": "executing" } }
+S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "ended", "outcome": "approved", "ended_at": "2026-10-29T10:31:00.000Z", "response": { "decision": "approved", "scope": "session" } }
+S { "type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": { "stage": "executing" } }
 ```
 </li>
 <li>
 <strong>收到提问并回答</strong>
 
 ```wire focus=interaction_id,kind,request.questions,answers,outcome
-S { "type": "interaction", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "pending", "tool_call_id": "c8", "request": { "questions": [ { "id": "q1", "question": "使用哪个包管理器？", "multi_select": false, "allow_other": true, "options": [ { "id": "a", "label": "pnpm (Recommended)" }, { "id": "b", "label": "npm" } ] } ] } }
+S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "pending", "tool_call_id": "c8", "request": { "questions": [ { "id": "q1", "question": "使用哪个包管理器？", "multi_select": false, "allow_other": true, "options": [ { "id": "a", "label": "pnpm (Recommended)" }, { "id": "b", "label": "npm" } ] } ] } }
 H POST /api/v1/sessions/s1/interactions/i10
   { "kind": "question", "answers": { "q1": { "kind": "single", "option_id": "a" } }, "method": "click" }
 R { "outcome": "answered", "ended_at": "2026-10-29T10:31:20.000Z" }
-S { "type": "interaction", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "ended", "outcome": "answered", "ended_at": "2026-10-29T10:31:20.000Z" }
+S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "ended", "outcome": "answered", "ended_at": "2026-10-29T10:31:20.000Z" }
 ```
 </li>
 </ol>
@@ -440,11 +440,11 @@ Shell 命令（前台与后台）和 subagent（含 AgentSwarm 成员）统一�
 <strong>后台启动命令，订阅输出流（<code>task.watch</code>）</strong>
 
 ```wire focus=task_id,detached,parent_tool_call_id,offset,text
-S { "type": "task", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true, "description": "Start dev server", "command": "pnpm dev", "parent_tool_call_id": "call_bash_1", "started_at": "2026-10-29T10:33:20.100Z" }
+S { "type": "task", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true, "description": "Start dev server", "command": "pnpm dev", "parent_tool_call_id": "call_bash_1", "started_at": "2026-10-29T10:33:20.100Z" }
 C { "type": "task.watch", "request_id": "r2", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
 S { "type": "response", "request_id": "r2", "code": 0, "task": { "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true } }
-S { "type": "task.output", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 0, "text": "> dev\n> vite\n\n" }
-S { "type": "task.output", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 14, "text": "  VITE ready in 312 ms\n" }
+S { "type": "task.output", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 0, "text": "> dev\n> vite\n\n" }
+S { "type": "task.output", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 14, "text": "  VITE ready in 312 ms\n" }
 ```
 </li>
 <li>
@@ -456,9 +456,9 @@ S { "type": "response", "request_id": "r3", "code": 0 }
 … 稍后重新打开面板，传入已有输出的 UTF-8 字节末尾 37
 C { "type": "task.watch", "request_id": "r4", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "since_offset": 37 }
 S { "type": "response", "request_id": "r4", "code": 0, "task": { "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true } }
-S { "type": "task.output", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 37, "text": "10:41:07 [vite] hmr update\n" }
+S { "type": "task.output", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 37, "text": "10:41:07 [vite] hmr update\n" }
 C { "type": "task.stop", "request_id": "r5", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
-S { "type": "task", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "ended", "outcome": "killed", "detached": true, "started_at": "2026-10-29T10:33:20.100Z", "ended_at": "2026-10-29T10:52:03.410Z" }
+S { "type": "task", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "ended", "outcome": "killed", "detached": true, "started_at": "2026-10-29T10:33:20.100Z", "ended_at": "2026-10-29T10:52:03.410Z" }
 S { "type": "response", "request_id": "r5", "code": 0, "task": { "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "ended", "outcome": "killed", "detached": true } }
 ```
 </li>

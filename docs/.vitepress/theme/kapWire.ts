@@ -509,6 +509,16 @@ const KAP_PAGE_ANCHORS: Record<'zh' | 'en', Record<string, string>> = {
 export function buildSingleFileKapMarkdown(docsRoot: string, locale: 'zh' | 'en' = 'zh'): string {
   const refDir = path.join(docsRoot, locale, 'reference')
   const pageAnchors = KAP_PAGE_ANCHORS[locale]
+  const duplicateSessionAnchors: Record<string, string> =
+    locale === 'en'
+      ? {
+          '#conversation': '#conversation-1',
+          '#approvals-and-questions': '#post-api-v1-sessions-session-id-interactions-interaction-id',
+        }
+      : {
+          '#对话': '#对话-1',
+          '#审批与提问': '#post-api-v1-sessions-session-id-interactions-interaction-id',
+        }
   const sections = KAP_SOURCE_FILES.map((file) => {
     let text = fs.readFileSync(path.join(refDir, file), 'utf8')
     text = text.replace(/^<script setup>[\s\S]*?<\/script>\s*/m, '')
@@ -526,6 +536,9 @@ export function buildSingleFileKapMarkdown(docsRoot: string, locale: 'zh' | 'en'
         /\]\(\.\/(server-api(?:-[a-z]+)?\.md)(#[^)]+)?\)/g,
         (_match, targetFile: string, hash?: string) => {
           const fallback = pageAnchors[targetFile] ?? '#'
+          if (hash && targetFile === 'server-api-sessions.md' && duplicateSessionAnchors[hash]) {
+            return `](${duplicateSessionAnchors[hash]})`
+          }
           return `](${hash ?? fallback})`
         },
       )

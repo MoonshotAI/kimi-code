@@ -277,7 +277,7 @@
 
 - `40421`：这一轮不存在
 - `40901`：Agent 正在工作（有运行中的轮次、排队的输入，或正在压缩上下文），等它结束后可以重试
-- `40911`：这一轮无法撤销：开场不是用户输入，或要删除的范围跨过了上下文压缩
+- `40911`：这一轮无法撤销：开场不是用户输入（`data` 为 `null`），或要删除的范围跨过了上下文压缩 / 可撤销锚点不足（`data` 为 `{ reason: "compaction_boundary" | "empty" | "insufficient", requestedCount, undoableCount }`）
 - `40932`：会话已被其他客户端更新。服务端已重新载入会话，这次没有撤销任何内容（见 [错误码](./server-api.md#错误码)）
 
 #### `POST /api/v1/sessions/{session_id}:cancel`

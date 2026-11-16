@@ -277,7 +277,7 @@ On success, `data` is `{ removed_turn_ids }`: the removed turns in ascending ord
 
 - `40421`: the turn does not exist
 - `40901`: the agent is working (a running turn, queued input, or a context compaction in progress); retry after it finishes
-- `40911`: the turn cannot be undone: it does not open with user input, or the removed range crosses a context compaction
+- `40911`: the turn cannot be undone: it does not open with user input (`data` is `null`), or the removed range crosses a context compaction / lacks enough undo anchors (`data` is `{ reason: "compaction_boundary" | "empty" | "insufficient", requestedCount, undoableCount }`)
 - `40932`: another client updated the session. The server has reloaded the session, and nothing was undone this time (see [Error codes](./server-api.md#error-codes))
 
 #### `POST /api/v1/sessions/{session_id}:cancel`

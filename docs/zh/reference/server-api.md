@@ -98,7 +98,7 @@ R { "cancelled": true }
 | --- | --- |
 | `code` | 业务结果码，`0` 表示成功，非 `0` 见 [错误码](#错误码)。客户端应始终先判断 `code` |
 | `msg` | 结果说明或错误信息 |
-| `data` | 成功时的业务数据（各接口文档列出的响应字段即 `data` 的内容）；出错时通常为 `null` |
+| `data` | 成功时的业务数据（各接口文档列出的响应字段即 `data` 的内容）；出错时除 `40911`（`:undo` 越过压缩边界或锚点不足时返回 `{ reason, requestedCount, undoableCount }`）外均为 `null` |
 | `details` | 可选。按错误码附带的结构化上下文（如 `40001` 的字段校验明细、`40931` 的锁持有者、`40113` 的 `model_id`） |
 | `request_id` | 本次请求的 ULID（可通过 `X-Request-Id` 请求头传入） |
 
@@ -219,29 +219,29 @@ curl -s -X POST "$KAP/api/v1/sessions/$SESSION/prompts" \
 ```wire focus=code,status,turn.kind,item.type,item.prompt_ids,delta,turn.outcome
 C { "type": "subscribe", "request_id": "sub-1", "session_id": "s1", "agent_ids": ["main"] }
 S { "type": "response", "request_id": "sub-1", "code": 0 }
-S { "type": "task.list", "session_id": "s1", "agent_id": "main", "tasks": [] }
-S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
-S { "type": "turns", "session_id": "s1", "agent_id": "main", "turns": [], "has_more": false }
+S { "type": "task.list", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "tasks": [] }
+S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turns": [], "has_more": false }
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-1", "content": [ { "type": "text", "text": "用一句话介绍这个仓库" } ] }
 R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "content": [ { "type": "text", "text": "用一句话介绍这个仓库" } ], "created_at": "2026-10-29T10:30:00.000Z" }
-S { "type": "turn.started", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": [] } }
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "用一句话介绍这个仓库", "attachments": [], "skills": [] } }
-S { "type": "item.started", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.500Z", "text": "" } }
-S { "type": "item.delta", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "这是 Kimi Code 的核心仓库。" }
-S { "type": "item.ended", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.500Z", "text": "这是 Kimi Code 的核心仓库。" } }
-S { "type": "turn.updated", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 1, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:00.400Z", "ended_at": "2026-10-29T10:30:01.800Z" } }
-S { "type": "turn.ended", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:01.800Z", "duration_ms": 1800, "steps": [ { "index": 1, "outcome": "completed", "finish_reason": "stop" } ] } }
-S { "type": "agent", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S { "type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": [] } }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "用一句话介绍这个仓库", "attachments": [], "skills": [] } }
+S { "type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.500Z", "text": "" } }
+S { "type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "这是 Kimi Code 的核心仓库。" }
+S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.500Z", "text": "这是 Kimi Code 的核心仓库。" } }
+S { "type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 1, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:00.400Z", "ended_at": "2026-10-29T10:30:01.800Z" } }
+S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:01.800Z", "duration_ms": 1800, "steps": [ { "index": 1, "outcome": "completed", "finish_reason": "stop" } ] } }
+S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
 ```
 
 ### 5. 往前翻页读取更早的轮次
 
-订阅时的 `turns` 帧最多携带最近 10 轮。用户向上滚动时，把本地最早一轮的 `ordinal` 作为 `before_ordinal` 传入，读取更早的历史轮次（结构与 WebSocket 推送的 `Turn` 完全一致）：
+订阅时的 `turns` 帧最多携带最近 10 轮。当 `has_more` 为 `true` 且用户向上滚动时，把本地已加载最早一轮的 `ordinal`（`FIRST_ORDINAL`）作为 `before_ordinal` 传入，读取更早的历史轮次（结构与 WebSocket 推送的 `Turn` 完全一致）：
 
 ```sh
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "$KAP/api/v1/sessions/$SESSION/agents/main/turns?before_ordinal=10&page_size=20"
+  "$KAP/api/v1/sessions/$SESSION/agents/main/turns?before_ordinal=$FIRST_ORDINAL&page_size=20"
 ```
 
 ## 下一步
