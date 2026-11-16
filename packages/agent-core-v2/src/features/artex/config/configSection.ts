@@ -6,6 +6,7 @@ import {
   type IConfigService,
   stripEnvBoundFields,
 } from '#/app/config/config';
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 
 import { MAX_AGENT_SWARM_SUBAGENTS } from '#/features/swarm/tools/agent-swarm/agent-swarm';
 import { DEFAULT_SWARM_TIMEOUT_MS } from '#/features/swarm/configSection';
@@ -82,6 +83,12 @@ export const ARTEX_CONFIG_DEFAULTS: ArtexConfig = {
   plannerDebounceMs: ARTEX_DEFAULT_PLANNER_DEBOUNCE_MS,
   claimSweepIntervalMs: ARTEX_DEFAULT_CLAIM_SWEEP_INTERVAL_MS,
 };
+
+registerConfigSection(ARTEX_SECTION, ArtexConfigSchema, {
+  defaultValue: ARTEX_CONFIG_DEFAULTS,
+  env: artexEnvBindings,
+  stripEnv: stripArtexEnv,
+});
 
 function artexConfig(config: IConfigService): ArtexConfig | undefined {
   return config.get<ArtexConfig | undefined>(ARTEX_SECTION);

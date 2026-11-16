@@ -8,7 +8,8 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (31 sections · 2 overlay(s))
+# Index (32 sections · 2 overlay(s))
+#   artex                    src/features/artex/config/configSection.ts
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
@@ -42,6 +43,30 @@
 #   workspace                src/workspace/workspaceTrust/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
+
+# ##########################################################################
+# artex
+#   owner: src/features/artex/config/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     target_concurrency <- KIMI_CODE_ARTEX_TARGET_CONCURRENCY (custom parse)
+#     swarm_timeout_ms <- KIMI_CODE_ARTEX_SWARM_TIMEOUT_MS (custom parse)
+#     planner_debounce_ms <- KIMI_CODE_ARTEX_PLANNER_DEBOUNCE_MS (custom parse)
+#     claim_sweep_interval_ms <- KIMI_CODE_ARTEX_CLAIM_SWEEP_INTERVAL_MS (custom parse)
+#     noise_profile <- KIMI_CODE_ARTEX_NOISE_PROFILE (custom parse)
+#     noise_rps <- KIMI_CODE_ARTEX_NOISE_RPS (custom parse)
+#     noise_max_per_host <- KIMI_CODE_ARTEX_NOISE_MAX_PER_HOST (custom parse)
+# ##########################################################################
+
+[artex]
+target_concurrency = 120
+# swarm_timeout_ms: integer
+planner_debounce_ms = 800
+claim_sweep_interval_ms = 15000
+# noise_profile: "off" | "quiet" | "balanced" | "aggressive"
+# noise_rps: number
+# noise_max_per_host: integer
 
 # ##########################################################################
 # background

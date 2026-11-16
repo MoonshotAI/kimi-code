@@ -32,6 +32,7 @@ import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
 import { IBootstrapService, type HostArgs } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -40,6 +41,7 @@ import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolCo
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 
 const signal = new AbortController().signal;
@@ -67,6 +69,7 @@ describe('AgentPermissionPolicyService chain', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(IFlagService, stubFlag(false));
         reg.definePartialInstance(IBootstrapService, {
           get args() {
             return hostArgs;
@@ -512,6 +515,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(IFlagService, stubFlag(false));
         reg.definePartialInstance(IBootstrapService, {
           args: { requestHeaders: {}, nonInteractive: false },
         });
