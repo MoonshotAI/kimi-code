@@ -1,12 +1,4 @@
-import type {
-  ToolExecuteInput,
-  ToolHookRegistration,
-  ToolResult as LegacyToolResult,
-  ToolStartingDecision as LegacyStartingDecision,
-  ToolPermittingDecision as LegacyPermittingDecision,
-  ToolEndingDecision as LegacyEndingDecision,
-} from '@moonshot-ai/core/tool/executor';
-import { toolExecutionFailureOf } from '@moonshot-ai/core/tool/executor';
+import type { ContentPart, ToolCall } from '@moonshot-ai/core/llm/message';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import type { LoopToolContext, LoopToolExecutor } from '@moonshot-ai/core/loop/create-loop';
 import {
@@ -15,14 +7,85 @@ import {
   type AfterExecuteHookContext,
   type ToolDecision,
   type ToolDecisionContext,
-  type ToolResult,
+  type ToolResult as RuntimeToolResult,
   type ToolReturn,
   type ToolStartingDecision,
 } from '#/tool/executor';
 
+interface LegacyCause {
+  readonly by?: string;
+  readonly reason: string;
+  readonly message?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+}
+
+export interface ToolResult {
+  content: ContentPart[];
+  isError?: boolean;
+  durationMs?: number;
+  blocked?: LegacyCause;
+}
+
+export interface ToolExecuteInput {
+  toolCall: ToolCall;
+  signal: AbortSignal;
+  turnId?: number;
+  step?: number;
+  onUpdate?: (update: { key: string; text: string; percent?: number }) => void;
+  detach?: (input: string | { text: string }) => void;
+  onAdjudicated?: (final: ToolCall, blocked?: LegacyCause) => void;
+}
+
+interface LegacyStartingEvent {
+  readonly toolCall: ToolCall;
+  readonly turnId?: number;
+  readonly step?: number;
+  readonly signal: AbortSignal;
+}
+
+interface LegacyEndingEvent extends LegacyStartingEvent {
+  readonly result: ToolResult;
+  readonly failed: boolean;
+}
+
+type LegacyStartingDecision =
+  | { readonly toolCall: ToolCall }
+  | { readonly blocked: LegacyCause; readonly result?: ToolResult }
+  | { readonly skipPermitting: true };
+
+type LegacyPermittingDecision =
+  | { readonly toolCall: ToolCall }
+  | { readonly blocked: LegacyCause; readonly result?: ToolResult };
+
+type LegacyEndingDecision = { readonly result?: ToolResult };
+
+interface LegacyToolHooks {
+  readonly 'tool.starting': (
+    event: LegacyStartingEvent,
+    signal: AbortSignal,
+  ) => Promise<void | LegacyStartingDecision> | void | LegacyStartingDecision;
+  readonly 'tool.permitting': (
+    event: LegacyStartingEvent,
+    signal: AbortSignal,
+  ) => Promise<void | LegacyPermittingDecision> | void | LegacyPermittingDecision;
+  readonly 'tool.ending': (
+    event: LegacyEndingEvent,
+    signal: AbortSignal,
+  ) => Promise<void | LegacyEndingDecision> | void | LegacyEndingDecision;
+}
+
+export type ToolHookRegistration = {
+  [P in keyof LegacyToolHooks]: {
+    readonly point: P;
+    readonly hook: LegacyToolHooks[P];
+    readonly id?: string;
+    readonly onFailure?: 'pause' | 'block';
+  };
+}[keyof LegacyToolHooks];
+
 export function executorFrom(
   names: readonly string[],
-  execute: (input: ToolExecuteInput) => Promise<LegacyToolResult>,
+  execute: (input: ToolExecuteInput) => Promise<ToolResult>,
   registrations: readonly ToolHookRegistration[] = [],
 ): LoopToolExecutor {
   const hook = {
@@ -92,14 +155,8 @@ export function executorFrom(
           context.detach(text);
         },
       };
-      try {
-        const result = await execute(input);
-        return legacyResult(result);
-      } catch (error) {
-        const failure = toolExecutionFailureOf(error);
-        if (failure !== undefined) return legacyResult(failure.result);
-        throw error;
-      }
+      const result = await execute(input);
+      return legacyResult(result);
     },
   })), { hook });
 }
@@ -122,7 +179,7 @@ function startingDecision(decision: LegacyStartingDecision | LegacyPermittingDec
   };
 }
 
-function legacyResult(result: LegacyToolResult): ToolReturn {
+function legacyResult(result: ToolResult): ToolReturn {
   if (result.isError === true) {
     return {
       content: result.content,
@@ -133,13 +190,13 @@ function legacyResult(result: LegacyToolResult): ToolReturn {
   return { content: result.content, outcome: 'success' };
 }
 
-function oldResult(result: ToolResult): LegacyToolResult {
+function oldResult(result: RuntimeToolResult): ToolResult {
   return {
     content: result.content,
     isError: result.outcome.type === 'success' ? undefined : true,
   };
 }
 
-function newResult(previous: ToolResult, content: ToolResult['content']): ToolResult {
+function newResult(previous: RuntimeToolResult, content: RuntimeToolResult['content']): RuntimeToolResult {
   return { ...previous, content };
 }

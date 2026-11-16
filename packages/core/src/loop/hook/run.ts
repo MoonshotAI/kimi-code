@@ -3,7 +3,6 @@
  * applies each hook's failure policy (pause the hook, or block) when it throws or returns an invalid value.
  */
 import type { Message } from '#/llm/message';
-import type { ToolResult } from '#/tool/executor';
 import type {
   HookPoint,
   MessageAppendingDecision,
@@ -14,6 +13,7 @@ import type {
   StepStoppingVerdict,
   ToolBatchStartingDecision,
   ToolBatchStartingEvent,
+  ToolResult,
   TurnStartingEvent,
   TurnStartingVerdict,
 } from '../contract/hook';

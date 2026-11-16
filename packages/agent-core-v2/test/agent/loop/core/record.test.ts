@@ -11,7 +11,7 @@ import {
 } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
-import type { ToolExecuteInput, ToolResult } from '@moonshot-ai/core/tool/executor';
+import type { ToolExecuteInput, ToolResult } from './executor';
 import { executorFrom, successfulExecutor } from './executor';
 
 function requester(responses: MockProviderResponse[]): LoopLlmRequester {

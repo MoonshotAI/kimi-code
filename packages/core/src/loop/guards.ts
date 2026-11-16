@@ -4,13 +4,32 @@
  */
 import type { AssistantMessage, Message, ToolCall } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
-
-export { isToolResult } from '#/tool/contract';
+import type { ToolResult } from './contract/hook';
+import type { Cause } from './contract/outcome';
 
 export type Fields = Record<string, unknown>;
 
 export function isObject(value: unknown): value is Fields {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isCause(value: unknown): value is Cause {
+  return (
+    isObject(value) &&
+    typeof value['reason'] === 'string' &&
+    (value['by'] === undefined || typeof value['by'] === 'string') &&
+    (value['message'] === undefined || typeof value['message'] === 'string') &&
+    (value['details'] === undefined || isObject(value['details']))
+  );
+}
+
+export function isToolResult(value: unknown): value is ToolResult {
+  return (
+    isObject(value) &&
+    Array.isArray(value['content']) &&
+    value['content'].every((part) => isObject(part) && typeof part['type'] === 'string') &&
+    (value['blocked'] === undefined || isCause(value['blocked']))
+  );
 }
 
 function isContent(value: unknown): boolean {

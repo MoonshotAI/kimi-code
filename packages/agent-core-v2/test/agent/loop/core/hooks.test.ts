@@ -14,7 +14,7 @@ import type {
   ToolExecuteInput,
   ToolHookRegistration,
   ToolResult,
-} from '@moonshot-ai/core/tool/executor';
+} from './executor';
 import { executorFrom, successfulExecutor } from './executor';
 
 function requester(responses: MockProviderResponse[], onGenerate?: () => void): LoopLlmRequester {

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTestLoop as createLoop } from './core/factory';
 import { createUserMessage, extractText, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
 import { createMockProviderRequester, type MockProviderResponse } from '../../harness/scripted-generate';
-import type { ToolResult } from '@moonshot-ai/core/tool/executor';
+import type { ToolResult } from './core/executor';
 import { executorFrom } from './core/executor';
 
 function call(id: string, name = 'Bash'): ToolCall {
