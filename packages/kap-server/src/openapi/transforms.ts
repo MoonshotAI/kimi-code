@@ -24,6 +24,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { z } from 'zod';
 
+import { buildSuccessEnvelopeSchema } from '../middleware/defineRoute';
 import {
   openApiDocumentEnvelopeJsonSchema,
   openApiDocumentJsonSchema,
@@ -38,7 +39,7 @@ import {
 } from '../protocol/rest-fs';
 import {
   archiveSessionResponseSchema,
-  cancelSessionRequestSchema,
+  cancelSessionBodySchema,
   deleteSessionResponseSchema,
   getSessionResponseSchema,
   sessionCancelResponseSchema,
@@ -184,7 +185,7 @@ function patchSessionAction(paths: Record<string, unknown>): void {
     'cancel',
     'runSessionCancelAction',
     sessionCancelResponseSchema,
-    cancelSessionRequestSchema,
+    cancelSessionBodySchema,
   );
   projectSessionAction(
     paths,
@@ -243,7 +244,10 @@ function projectSessionAction(
     const existingContent = asRecord(existing200?.['content']);
     const existingSchema = asRecord(asRecord(existingContent?.['application/json'])?.['schema']);
     const existingOneOf = existingSchema?.['oneOf'];
-    const okVariant = openApiDocumentEnvelopeJsonSchema(successDataSchema);
+    const okVariant = openApiDocumentJsonSchema(
+      buildSuccessEnvelopeSchema(successDataSchema),
+      'output',
+    );
     const mergedSchema = Array.isArray(existingOneOf) && existingOneOf.length > 1
       ? { oneOf: [okVariant, ...existingOneOf.slice(1)] }
       : okVariant;

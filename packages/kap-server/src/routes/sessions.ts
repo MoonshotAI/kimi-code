@@ -25,6 +25,7 @@ import {
   IWorkspaceService,
   closeSessionById,
   getLiveSessionById,
+  getOrRestoreAgent,
   programForSession,
   resolveSubagentModelPool,
   reloadOnStale,
@@ -676,7 +677,14 @@ async function cancelSessionAction(
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
   const targetAgentId = body.agent_id ?? MAIN_AGENT_ID;
-  const live = getLiveSessionById(core.accessor, id);
+  let live = getLiveSessionById(core.accessor, id);
+  if (live === undefined) {
+    try {
+      await core.accessor.get(ISessionManager).whenResumeSettled(id);
+    } catch {
+    }
+    live = getLiveSessionById(core.accessor, id);
+  }
   if (live === undefined) {
     const summary = await core.accessor.get(ISessionIndex).get(id);
     if (summary === undefined) {

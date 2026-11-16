@@ -30,7 +30,7 @@ function buildErrorEnvelopeSchema(
   });
 }
 
-function buildSuccessEnvelopeSchema(successDataSchema: z.ZodTypeAny): z.ZodTypeAny {
+export function buildSuccessEnvelopeSchema(successDataSchema: z.ZodTypeAny): z.ZodTypeAny {
   return z.object({
     code: z.literal(0),
     msg: z.string(),

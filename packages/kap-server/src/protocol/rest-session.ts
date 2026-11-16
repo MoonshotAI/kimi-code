@@ -380,12 +380,14 @@ export const deleteSessionResponseSchema = z.object({
 });
 export type DeleteSessionResponse = z.infer<typeof deleteSessionResponseSchema>;
 
+export const cancelSessionBodySchema = z.object({
+  agent_id: z.string().min(1).optional(),
+  include_background: z.boolean().optional(),
+});
+
 export const cancelSessionRequestSchema = z.preprocess(
   (value) => (value === undefined ? {} : value),
-  z.object({
-    agent_id: z.string().min(1).optional(),
-    include_background: z.boolean().optional(),
-  }),
+  cancelSessionBodySchema,
 );
 export type CancelSessionRequest = z.infer<typeof cancelSessionRequestSchema>;
 
