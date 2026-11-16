@@ -154,6 +154,17 @@ describe('AgentTaskPersistence', () => {
       expect(Buffer.from(tail!.data).toString('utf-8')).toBe('def');
     });
 
+    it('readTaskOutputTail preserves raw bytes when the tail splits a UTF-8 character', async () => {
+      const output = persistence.open('bash-tail0000');
+      output.append('background-ready💡\n');
+
+      expect(await persistence.readTaskOutputTail('bash-tail0000', 3)).toEqual({
+        offset: 18,
+        data: Buffer.from([0x92, 0xa1, 0x0a]),
+      });
+      await output.close();
+    });
+
     it('readTaskOutputTail returns undefined for a missing log', async () => {
       expect(await persistence.readTaskOutputTail('bash-none0003', 10)).toBeUndefined();
     });

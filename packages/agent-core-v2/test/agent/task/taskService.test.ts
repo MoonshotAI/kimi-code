@@ -148,7 +148,7 @@ describe('AgentTaskService', () => {
     const info = await channel.service.wait(task.handler.taskId);
     if (info === undefined) throw new Error('missing task info');
     const completion = await channel.outputs.createCompletion(info, task.handler.snapshot().id);
-    expect(completion.meta?.origin).toMatchObject({ kind: 'task', taskId: task.handler.taskId });
+    expect(completion.attributes?.origin).toMatchObject({ kind: 'task', taskId: task.handler.taskId });
   });
 
   it('cancels only the wait signal without stopping or suppressing the task', async () => {
@@ -176,7 +176,7 @@ describe('AgentTaskService', () => {
     const completions = await Promise.all(infos.map((info, index) =>
       channel.outputs.createCompletion(info!, index === 0 ? first.handler.snapshot().id : second.handler.snapshot().id)
     ));
-    expect(completions.map((entry) => entry.meta?.origin)).toEqual([
+    expect(completions.map((entry) => entry.attributes?.origin)).toEqual([
       expect.objectContaining({ taskId: first.handler.taskId }),
       expect.objectContaining({ taskId: second.handler.taskId }),
     ]);

@@ -3,7 +3,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { IFlagService } from '#/app/flag/flag';
-import type { ToolDescription as Tool } from '#human/llm/message';
+import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
@@ -110,9 +110,9 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.flags.enabled(TOOL_SELECT_FLAG_ID);
   }
 
-  enabled(capabilities: ToolSelectCapabilities = this.profile.getModelCapabilities()): boolean {
+  enabled(capabilities: ToolSelectCapabilities | undefined = this.profile.getModelCapabilities()): boolean {
     return (
-      capabilities.dynamically_loaded_tools === true &&
+      capabilities?.dynamically_loaded_tools === true &&
       capabilities.tool_use === true &&
       this.featureEnabled()
     );

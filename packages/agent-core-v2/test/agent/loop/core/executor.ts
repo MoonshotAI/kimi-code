@@ -5,10 +5,10 @@ import type {
   ToolStartingDecision as LegacyStartingDecision,
   ToolPermittingDecision as LegacyPermittingDecision,
   ToolEndingDecision as LegacyEndingDecision,
-} from '#human/tool/executor';
-import { toolExecutionFailureOf } from '#human/tool/executor';
+} from '@moonshot-ai/core/tool/executor';
+import { toolExecutionFailureOf } from '@moonshot-ai/core/tool/executor';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
-import type { LoopToolContext, LoopToolExecutor } from '#/agent/loop/core/create-loop';
+import type { LoopToolContext, LoopToolExecutor } from '@moonshot-ai/core/loop/create-loop';
 import {
   textToolContent,
   ToolExecutor,

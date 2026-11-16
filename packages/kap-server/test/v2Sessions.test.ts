@@ -215,6 +215,16 @@ const gitStub: IGitService = {
   findWorkTree: async () => null,
 };
 
+function hostProcessWithoutGh(): HostProcessService {
+  const service = new HostProcessService();
+  const spawn = service.spawn.bind(service);
+  service.spawn = async (command, args, options) => {
+    if (command === 'gh') throw new Error('gh is not used in these tests');
+    return spawn(command, args, options);
+  };
+  return service;
+}
+
 describe('server /api/v2/sessions', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
@@ -674,7 +684,7 @@ describe('server /api/v2/sessions', () => {
             { environmentId: 'dev-box', generation: 'remote-generation' },
             { capabilities: ['fs', 'process'] },
           ),
-          { fs: new HostFileSystem(), process: new HostProcessService() },
+          { fs: new HostFileSystem(), process: hostProcessWithoutGh() },
         ),
       );
       try {
@@ -720,7 +730,7 @@ describe('server /api/v2/sessions', () => {
         { capabilities: ['fs', 'process'], status: 'connecting' },
       );
       const registration = (server as RunningServer).core.accessor.get(IEnvironmentService).register(
-        Object.assign(environment, { fs: new HostFileSystem(), process: new HostProcessService() }),
+        Object.assign(environment, { fs: new HostFileSystem(), process: hostProcessWithoutGh() }),
       );
       try {
         const pending = await getData('?include=git');

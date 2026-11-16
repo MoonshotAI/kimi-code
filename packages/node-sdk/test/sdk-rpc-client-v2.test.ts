@@ -62,6 +62,7 @@ import {
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
+  ISessionLockService,
   IWorkspaceInstanceManager,
   IEnvironmentService,
   IWorkspaceService,
@@ -1520,6 +1521,36 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('resumes an occupied session read-only and keeps prompt writes locked', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-occupied-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const owner = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      await owner.createSession({ id: 'ses_resume_occupied', workDir });
+      await owner.importContext({
+        sessionId: 'ses_resume_occupied',
+        content: 'persisted occupied history',
+        source: "session 'owner'",
+      });
+      await owner.closeSession({ sessionId: 'ses_resume_occupied' });
+      owner.engineAccessor.get(ISessionLockService).hold('ses_resume_occupied');
+
+      const resumed = await harness.resumeSession({ id: 'ses_resume_occupied' });
+      expect(JSON.stringify(resumed.getResumeState()?.agents[MAIN_AGENT_ID]?.replay))
+        .toContain('persisted occupied history');
+      expect(owner.engineAccessor.get(ISessionLockService).held('ses_resume_occupied')).toBe(true);
+      await expect(resumed.prompt('must not write while occupied')).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_OCCUPIED,
+      });
+    } finally {
+      await harness.close();
+      await owner.close();
+    }
+  });
+
   it('folds the resumed main agent replay from the persisted wire on cold and live resumes', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-fold-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -2465,12 +2496,12 @@ key = "${titleOAuthRef.key}"
       latestProject.additional_dirs = [extraDir, failureDir];
       await writeFile(projectsPath, JSON.stringify(latestProjects), 'utf8');
       const failureReloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
-      vi.spyOn(currentProgram().instructions, 'reload').mockRejectedValueOnce(
-        new Error('instructions reload failed'),
-      );
+      const instructionsReload = vi.spyOn(currentProgram().instructions, 'reload');
+      instructionsReload.mockRejectedValue(new Error('instructions reload failed'));
       await expect(client.reloadSession({ sessionId: 'ses_dirs_reload' })).rejects.toThrow(
         'instructions reload failed',
       );
+      instructionsReload.mockRestore();
       expect(getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')).toBe(beforeFailure);
       expect(failureReloadDirs).toHaveBeenCalledTimes(1);
       expect(dirsReminders()).toHaveLength(2);
@@ -3204,21 +3235,24 @@ describe('foldAgentWireReplay', () => {
     }
   });
 
-  it('degrades to an empty fold on a missing or corrupt journal', async () => {
+  it('degrades to an empty fold on a missing journal and tolerates a truncated tail', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
     tempDirs.push(dir);
     const empty = { replay: [], toolStore: {} };
     await expect(foldAgentWireReplay(join(dir, 'missing.jsonl'))).resolves.toEqual(empty);
+    await expect(foldAgentWireReplay(dir)).resolves.toMatchObject({
+      ...empty,
+      error: expect.stringMatching(/EISDIR/i),
+    });
+    const unrecoverable = join(dir, 'unrecoverable.jsonl');
+    await writeFile(unrecoverable, '{not json\n', 'utf-8');
+    await expect(foldAgentWireReplay(unrecoverable)).resolves.toMatchObject({
+      ...empty,
+      error: expect.stringContaining('line 1'),
+    });
     const emptyFile = join(dir, 'empty.jsonl');
     await writeFile(emptyFile, '', 'utf-8');
     await expect(foldAgentWireReplay(emptyFile)).resolves.toEqual({ ...empty, userTurnCount: 0 });
-    const corrupt = join(dir, 'corrupt.jsonl');
-    await writeFile(
-      corrupt,
-      '{"type":"metadata","protocol_version":"1.5","created_at":1}\n{not json\n{"type":"permission.set_mode","mode":"auto"}\n',
-      'utf-8',
-    );
-    await expect(foldAgentWireReplay(corrupt)).resolves.toEqual(empty);
     // A truncated TAIL line is tolerated: everything before it still folds.
     const truncatedTail = join(dir, 'truncated.jsonl');
     await writeFile(
@@ -3228,6 +3262,39 @@ describe('foldAgentWireReplay', () => {
     );
     const folded = await foldAgentWireReplay(truncatedTail);
     expect(folded.replay).toEqual([{ type: 'permission_updated', mode: 'auto', time: 2 }]);
+  });
+
+  it('preserves valid history and reports corrupt records in the middle of a journal', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
+    tempDirs.push(dir);
+    const wirePath = join(dir, 'corrupt.jsonl');
+    await writeFile(
+      wirePath,
+      '{"type":"metadata","protocol_version":"1.5","created_at":1}\n' +
+        '{"type":"permission.set_mode","mode":"auto","time":2}\n' +
+        '{not json\n' +
+        '{"type":"context.append_message","message":null,"time":3}\n' +
+        '{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"still here"}]},"time":4}\n',
+      'utf-8',
+    );
+
+    for (const turnLimit of [undefined, 1]) {
+      const folded = await foldAgentWireReplay(wirePath, turnLimit);
+      expect(folded.replay).toEqual([
+        { type: 'permission_updated', mode: 'auto', time: 2 },
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'still here' }],
+            toolCalls: [],
+          },
+          time: 4,
+        },
+      ]);
+      expect(folded.warning).toContain('lines 3, 4');
+      expect(folded.error).toBeUndefined();
+    }
   });
 });
 

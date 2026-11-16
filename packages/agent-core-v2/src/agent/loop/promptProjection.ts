@@ -2,9 +2,8 @@ import { createControlledPromise } from '@antfu/utils';
 
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { stripBundledSkillBlocks } from '#human/agent/origin';
-import type { HistoryMessage, UserEntry } from '#human/agent/turn';
-import type { UserMessage } from '#human/llm/message';
+import { stripBundledSkillBlocks } from '@moonshot-ai/core/llm/origin';
+import type { Message, UserMessage } from '@moonshot-ai/core/llm/message';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import {
   PromptAborted,
@@ -14,7 +13,7 @@ import {
   PromptSteered,
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
-import type { TurnStartingEvent, TurnTrigger } from './core/index';
+import type { LoopEmitted, TurnStartingEvent, TurnTrigger } from '@moonshot-ai/core/loop/index';
 import type { PromptCompletion, PromptHandle, PromptState, Turn, TurnResult } from './loop';
 
 export interface PromptProjection {
@@ -30,7 +29,7 @@ export interface ActivePrompt extends PromptProjection {
 }
 
 export interface PendingTurn {
-  readonly entry: UserEntry;
+  readonly entry: UserMessage;
   readonly waiter?: PromptWaiter;
   readonly trigger: TurnTrigger;
   message: UserMessage;
@@ -41,8 +40,8 @@ export interface PromptWaiter {
   readonly launched: ReturnType<typeof createControlledPromise<Turn | undefined>>;
   readonly completion: ReturnType<typeof createControlledPromise<PromptCompletion>>;
   submitted?: boolean;
-  entry?: UserEntry;
-  failedEntry?: UserEntry;
+  entry?: UserMessage;
+  failedEntry?: UserMessage;
   launchedTurn?: Turn;
   settled?: boolean;
 }
@@ -58,7 +57,7 @@ export class AgentPromptProjection {
   private readonly steered = new Map<string, PromptProjection>();
   private readonly terminalStates = new Map<string, PromptState>();
   private readonly pendingTurns = new Map<number, PendingTurn>();
-  private readonly entriesByTurn = new Map<number, UserEntry>();
+  private readonly entriesByTurn = new Map<number, UserMessage>();
   private readonly materializedTurnIds = new Map<string, number>();
   private active: ActivePromptState | undefined;
 
@@ -68,18 +67,19 @@ export class AgentPromptProjection {
     private readonly queueLength: (includeCurrent: boolean) => number,
   ) {}
 
-  admit(input: UserEntry, queued: boolean): { readonly id: string; readonly entry: UserEntry } {
-    const meta = input.meta;
-    const id = meta?.promptId ?? newMessageId();
-    const origin = (meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
-    const entry: UserEntry = {
-      message: { role: 'user', content: [...input.message.content] },
-      meta: {
-        ...meta,
+  admit(input: UserMessage, queued: boolean): { readonly id: string; readonly entry: UserMessage } {
+    const attributes = input.attributes;
+    const id = attributes?.promptId ?? newMessageId();
+    const origin = (attributes?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
+    const entry: UserMessage = {
+      role: 'user',
+      content: [...input.content],
+      attributes: {
+        ...attributes,
         promptId: id,
         origin,
-        createdAt: meta?.createdAt ?? new Date().toISOString(),
-        userMessageId: meta?.userMessageId ?? id,
+        createdAt: attributes?.createdAt ?? new Date().toISOString(),
+        userMessageId: attributes?.userMessageId ?? id,
       },
     };
     const waiter = this.createWaiter(id);
@@ -93,15 +93,15 @@ export class AgentPromptProjection {
     return { id, entry };
   }
 
-  ensure(entry: UserEntry, queued: boolean): PromptWaiter {
-    const id = entry.meta?.promptId ?? newMessageId();
-    const normalized: UserEntry = {
+  ensure(entry: UserMessage, queued: boolean): PromptWaiter {
+    const id = entry.attributes?.promptId ?? newMessageId();
+    const normalized: UserMessage = {
       ...entry,
-      meta: {
-        ...entry.meta,
+      attributes: {
+        ...entry.attributes,
         promptId: id,
-        createdAt: entry.meta?.createdAt ?? new Date().toISOString(),
-        userMessageId: entry.meta?.userMessageId ?? id,
+        createdAt: entry.attributes?.createdAt ?? new Date().toISOString(),
+        userMessageId: entry.attributes?.userMessageId ?? id,
       },
     };
     const waiter = this.ensureWaiter(id);
@@ -147,7 +147,7 @@ export class AgentPromptProjection {
     return this.pendingTurns.size > 0;
   }
 
-  pendingEntries(): readonly UserEntry[] {
+  pendingEntries(): readonly UserMessage[] {
     return [...this.pendingTurns.values()].map((pending) => pending.entry);
   }
 
@@ -158,9 +158,9 @@ export class AgentPromptProjection {
   prepareTurn(event: TurnStartingEvent): PendingTurn | undefined {
     const normal = event.pending.find((item) => item.kind === 'normal');
     if (normal === undefined) return undefined;
-    const entry = normal.entry;
+    const entry = normal.message;
     const waiter = this.ensure(entry, false);
-    const pending: PendingTurn = { entry, waiter, trigger: event.trigger, message: entry.message };
+    const pending: PendingTurn = { entry, waiter, trigger: event.trigger, message: entry };
     this.pendingTurns.set(event.turnId, pending);
     return pending;
   }
@@ -171,16 +171,16 @@ export class AgentPromptProjection {
     return pending;
   }
 
-  activatePromptOnly(event: Extract<import('./core/index').LoopEmitted, { type: 'turn.started' }>): PendingTurn | undefined {
-    const entry = event.entry;
+  activatePromptOnly(event: Extract<LoopEmitted, { type: 'turn.started' }>): PendingTurn | undefined {
+    const entry = event.message;
     if (entry === undefined) return undefined;
     const waiter = this.ensure(entry, false);
-    const pending: PendingTurn = { entry, waiter, trigger: event.trigger, message: entry.message };
+    const pending: PendingTurn = { entry, waiter, trigger: event.trigger, message: entry };
     this.pendingTurns.set(event.turnId, pending);
     return this.activatePending(event.turnId);
   }
 
-  begin(waiter: PromptWaiter, entry: UserEntry): ActivePrompt {
+  begin(waiter: PromptWaiter, entry: UserMessage): ActivePrompt {
     waiter.entry = entry;
     const projection = projectionFromEntry(entry);
     const prompt: ActivePromptState = {
@@ -225,12 +225,12 @@ export class AgentPromptProjection {
     }
   }
 
-  projectSteered(event: { readonly entries?: readonly UserEntry[]; readonly entry?: UserEntry }): boolean {
+  projectSteered(event: { readonly messages?: readonly UserMessage[]; readonly message?: UserMessage }): boolean {
     const active = this.active;
     if (active === undefined) return false;
     let accepted = false;
-    for (const entry of event.entries ?? (event.entry === undefined ? [] : [event.entry])) {
-      const id = entry.meta?.promptId;
+    for (const entry of event.messages ?? (event.message === undefined ? [] : [event.message])) {
+      const id = entry.attributes?.promptId;
       if (id === undefined) continue;
       this.ensure(entry, true);
       const projection = projectionFromEntry(entry);
@@ -248,16 +248,16 @@ export class AgentPromptProjection {
     return accepted;
   }
 
-  appended(event: Extract<import('./core/index').LoopEmitted, { type: 'message.appended' }>): void {
+  appended(event: Extract<LoopEmitted, { type: 'message.appended' }>): void {
     if (event.source !== 'normal' && event.source !== 'notify') return;
-    const entry = event.entry as UserEntry;
+    const entry = event.message as UserMessage;
     this.entriesByTurn.set(event.turnId, entry);
     this.ensure(entry, false);
-    const id = entry.meta?.promptId;
+    const id = entry.attributes?.promptId;
     if (event.source === 'notify' && id !== undefined) this.materializedTurnIds.set(id, event.turnId);
   }
 
-  entryForTurn(turnId: number): UserEntry | undefined {
+  entryForTurn(turnId: number): UserMessage | undefined {
     return this.entriesByTurn.get(turnId);
   }
 
@@ -389,23 +389,23 @@ export class AgentPromptProjection {
   }
 }
 
-function projectionFromEntry(entry: UserEntry): ActivePrompt {
-  const origin = (entry.meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
+function projectionFromEntry(entry: UserMessage): ActivePrompt {
+  const origin = (entry.attributes?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
   return {
-    id: entry.meta?.promptId ?? newMessageId(),
-    promptId: entry.meta?.promptId,
+    id: entry.attributes?.promptId ?? newMessageId(),
+    promptId: entry.attributes?.promptId,
     origin,
     message: {
       role: 'user',
-      content: [...entry.message.content],
-      id: entry.meta?.promptId,
-      origin: entry.meta?.origin as PromptOrigin | undefined,
+      content: [...entry.content],
+      id: entry.attributes?.promptId,
+      origin: entry.attributes?.origin as PromptOrigin | undefined,
     },
-    userMessageId: entry.meta?.userMessageId ?? entry.meta?.promptId ?? '',
-    createdAt: entry.meta?.createdAt ?? new Date().toISOString(),
+    userMessageId: entry.attributes?.userMessageId ?? entry.attributes?.promptId ?? '',
+    createdAt: entry.attributes?.createdAt ?? new Date().toISOString(),
   };
 }
 
-export function promptHistoryEntry(event: { readonly entry: HistoryMessage }): UserEntry | undefined {
-  return event.entry.message.role === 'user' ? event.entry as UserEntry : undefined;
+export function promptHistoryEntry(event: { readonly message: Message }): UserMessage | undefined {
+  return event.message.role === 'user' ? event.message : undefined;
 }

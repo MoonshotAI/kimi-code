@@ -15,7 +15,7 @@ import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 import {
   isToolActive as evaluateToolActive,
   resolveActiveToolNames,
@@ -90,7 +90,7 @@ import {
   USER_INTERRUPTED_SUBAGENT_MESSAGE,
   type SubagentToolInput,
 } from './agent';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 export const PARTIAL_OUTPUT_NOTICE =
   '[partial output] The subagent did not finish this run. Below is the text it wrote before it ended; it is incomplete and unverified.';
@@ -245,7 +245,7 @@ export class SubagentTool implements ISubagentTool {
       }
     });
     if (refs.get(READ_MEDIA_FILE_TOOL_NAME)?.source !== 'user') {
-      if (this.anySubagentModelSupports((capabilities) => capabilities.image_in || capabilities.video_in)) {
+      if (this.anySubagentModelSupports((capabilities) => capabilities?.image_in === true || capabilities?.video_in === true)) {
         refs.set(READ_MEDIA_FILE_TOOL_NAME, { name: READ_MEDIA_FILE_TOOL_NAME, source: 'builtin' });
       } else {
         refs.delete(READ_MEDIA_FILE_TOOL_NAME);
@@ -254,7 +254,7 @@ export class SubagentTool implements ISubagentTool {
     if (
       !this.flags.enabled(TOOL_SELECT_FLAG_ID) ||
       !this.anySubagentModelSupports((capabilities) =>
-        capabilities.dynamically_loaded_tools === true && capabilities.tool_use,
+        capabilities?.dynamically_loaded_tools === true && capabilities.tool_use === true,
       )
     ) {
       refs.delete(SELECT_TOOLS_TOOL_NAME);
@@ -262,12 +262,14 @@ export class SubagentTool implements ISubagentTool {
     return [...refs.values()];
   }
 
-  private anySubagentModelSupports(supports: (capabilities: ModelCapability) => boolean): boolean {
+  private anySubagentModelSupports(
+    supports: (capabilities: ModelCapability | undefined) => boolean,
+  ): boolean {
     const pool = resolveSubagentModelPool(this.config);
     if (pool === undefined) return supports(this.loop.getModelCapabilities());
     for (const alias of Object.keys(pool.models)) {
       try {
-        const capabilities = this.modelCatalog.get(alias).capabilities;
+        const capabilities = this.modelCatalog.get(alias).spec.capability;
         if (supports(capabilities)) return true;
       } catch {
       }

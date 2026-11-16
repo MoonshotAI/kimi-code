@@ -1,7 +1,7 @@
 import type { Message } from '#/llm-adapter/contract/message';
 import type { ContextMessageTiming, PromptOrigin } from '#/agent/contextMemory/types';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 import {
   assertWireReaderVersion,

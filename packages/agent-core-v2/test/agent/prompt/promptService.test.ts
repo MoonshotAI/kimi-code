@@ -8,7 +8,7 @@ import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import { TurnStarted, TurnStepInterrupted } from '#/agent/loop/turnEvents';
 import { TurnPrompt } from '#/agent/loop/turnOps';
-import { emptyUsage } from '#human/llm-requester/usage';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import {
   PromptAborted,
@@ -18,11 +18,12 @@ import {
   PromptSteered,
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
-import type { ContentPart, Message } from '#human/llm/message';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
 
 import {
   appService,
   createTestAgent,
+  createMockProvider,
   sessionService,
   type TestAgentContext,
   type TestAgentOptions,
@@ -71,8 +72,9 @@ async function enqueue(
 ): Promise<PromptHandle> {
   const status = loop.snapshot();
   const { id } = loop.submit({
-    message: { role: 'user', content: [...input.message.content] },
-    meta: { promptId: input.id, origin: input.message.origin },
+    role: 'user',
+    content: [...input.message.content],
+    attributes: { promptId: input.id, origin: input.message.origin },
   });
   const handle = loop.promptHandle(id)!;
   if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
@@ -82,7 +84,7 @@ async function enqueue(
 }
 
 function pendingIds(loop: IAgentLoopService): readonly (string | undefined)[] {
-  return loop.snapshot().queue.map((item) => item.meta?.promptId);
+  return loop.snapshot().queue.map((item) => item.attributes?.promptId);
 }
 
 describe('prompt queue', () => {
@@ -411,31 +413,41 @@ describe('prompt queue', () => {
     const started = new Promise<void>((resolve) => { requestStarted = resolve; });
     let requests = 0;
     const histories: (readonly Message[])[] = [];
-    const generate: NonNullable<TestAgentOptions['generate']> = {
-      generate: async (_config, content, control) => {
-        histories.push(structuredClone(content.messages));
-        requests += 1;
-        if (requests === 1) {
-          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial answer' } });
-          requestStarted();
-          await new Promise<void>((resolve) => {
-            if (control.signal.aborted) {
-              resolve();
+    const generate = createMockProvider(async (request, signal) => {
+      const history = [...request.content.messages];
+      const options = {
+        signal,
+        cacheKey: request.model.cacheKey,
+        sampling: request.model.sampling,
+        thinking: request.model.thinking,
+        maxOutputTokens: request.model.maxOutputTokens,
+        maxContextSize: request.model.spec.maxContextSize,
+        usedTokens: request.content.usedTokens,
+      };
+      histories.push(structuredClone(history));
+      requests += 1;
+      if (requests === 1) {
+        return {
+          id: 'mock-1',
+          parts: [{ type: 'text', text: 'partial answer' }],
+          error: new Promise<unknown>((resolve) => {
+            if (options.signal.aborted) {
+              resolve(options.signal.reason);
               return;
             }
-            control.signal.addEventListener('abort', () => resolve(), { once: true });
-          });
-          control.signal.throwIfAborted();
-        }
-        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'after steer' } });
-        control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
-        control.onEvent?.({
-          type: 'llm.streaming.finish',
-          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
-        });
-        control.onEvent?.({ type: 'llm.done' });
-      },
-    };
+            options.signal.addEventListener('abort', () => resolve(options.signal.reason), { once: true });
+          }),
+          onStream: requestStarted,
+        };
+      }
+      return {
+        id: 'mock-1',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'after steer' }], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    });
     setup({ generate });
     const interrupted: TurnStepInterrupted[] = [];
     ctx.get(IEventBus).subscribe(TurnStepInterrupted, (event) => interrupted.push(event));
@@ -474,8 +486,9 @@ describe('prompt queue', () => {
     ctx.get(IEventBus).subscribe(TurnPrompt, (event) => prompts.push(event));
     ctx.get(IEventBus).subscribe(TurnStepInterrupted, (event) => interrupted.push(event));
     loop.submit({
-      message: { role: 'user', content: message('continuation').content },
-      meta: { promptId: 'continuation', origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
+      role: 'user',
+      content: message('continuation').content,
+      attributes: { promptId: 'continuation', origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
     });
     await hold.started;
     expect(loop.snapshot()).toMatchObject({ activeTurnId: 0, activePromptId: 'continuation' });
@@ -569,8 +582,9 @@ describe('prompt queue', () => {
     await enqueue(loop, { message: message('active') });
     await finishing;
     const { id } = loop.notify({
-      message: { role: 'user', content: message('stop').content },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: message('stop').content,
+      attributes: { origin: { kind: 'user' } },
     });
     loop.cancel();
     releaseFinish();
@@ -612,8 +626,9 @@ describe('prompt queue', () => {
     ctx.mockNextResponse({ type: 'text', text: 'injected' });
 
     const { id } = loop.submit({
-      message: { role: 'user', content: message('system').content },
-      meta: { origin: { kind: 'injection', variant: 'test' } as PromptOrigin },
+      role: 'user',
+      content: message('system').content,
+      attributes: { origin: { kind: 'injection', variant: 'test' } as PromptOrigin },
     });
     const turn = await loop.promptHandle(id)!.launched;
     expect(loop.snapshot().queue).toEqual([]);
@@ -680,8 +695,9 @@ describe('prompt queue', () => {
 
     const bundled = bundledMessage('review', 'launching');
     const { id } = loop.submit({
-      message: { role: 'user', content: bundled.content },
-      meta: { origin: bundled.origin as PromptOrigin },
+      role: 'user',
+      content: bundled.content,
+      attributes: { origin: bundled.origin as PromptOrigin },
     });
     await entered;
     expect(pendingIds(loop)).toEqual([id]);
@@ -1070,34 +1086,46 @@ describe('prompt queue', () => {
     const requestGate = new Promise<void>((resolve) => { releaseRequest = resolve; });
     let requests = 0;
     let aborted = false;
-    const generate: NonNullable<TestAgentOptions['generate']> = {
-      generate: async (_config, _content, control) => {
-        requests += 1;
-        if (requests === 1) {
-          control.onEvent?.({
-            type: 'llm.streaming.part',
-            part: { type: 'function', id: 'call-work', name: 'Work', arguments: '{}' },
-          });
-          control.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
-          requestStarted();
-          await requestGate;
-          control.signal.throwIfAborted();
-          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
-          control.onEvent?.({
-            type: 'llm.streaming.finish',
-            finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' },
-          });
-        } else {
-          control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'after steer' } });
-          control.onEvent?.({ type: 'llm.streaming.usage', usage: emptyUsage() });
-          control.onEvent?.({
-            type: 'llm.streaming.finish',
-            finish: { finishReason: 'completed', rawFinishReason: 'stop' },
-          });
-        }
-        control.onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const generate = createMockProvider(async (request, signal) => {
+      const options = {
+        signal,
+        cacheKey: request.model.cacheKey,
+        sampling: request.model.sampling,
+        thinking: request.model.thinking,
+        maxOutputTokens: request.model.maxOutputTokens,
+        maxContextSize: request.model.spec.maxContextSize,
+        usedTokens: request.content.usedTokens,
+      };
+      requests += 1;
+      if (requests === 1) {
+        const toolCall = { type: 'function' as const, id: 'call-work', name: 'Work', arguments: '{}' };
+        options.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+        return {
+          id: 'mock-tool-call',
+          message: { role: 'assistant', content: [], toolCalls: [toolCall] },
+          parts: [toolCall],
+          usage: emptyUsage(),
+          finishReason: 'tool_calls',
+          rawFinishReason: 'tool_calls',
+          onStream: async () => {
+            requestStarted();
+            await requestGate;
+          },
+        };
+      }
+      
+      return {
+        id: 'mock-after-steer',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'after steer' }],
+          toolCalls: [],
+        },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    });
     setup({ generate });
     const steered: PromptSteered[] = [];
     ctx.get(IEventBus).subscribe(PromptSteered, (event) => steered.push(event));
@@ -1105,8 +1133,9 @@ describe('prompt queue', () => {
     const active = await enqueue(loop, { message: message('active') });
     await started;
     const { id } = loop.sendNow({
-      message: { role: 'user', content: message('steer me').content },
-      meta: {  },
+      role: 'user',
+      content: message('steer me').content,
+      attributes: {},
     });
     const handle = loop.promptHandle(id)!;
 
@@ -1137,20 +1166,21 @@ describe('prompt queue', () => {
     await enqueue(loop, { message: message('active') });
     await hold.started;
     const { id } = loop.submit({
-      message: { role: 'user', content: message('meta').content },
-      meta: { promptId: 'meta-id' },
+      role: 'user',
+      content: message('meta').content,
+      attributes: { promptId: 'meta-id' },
     });
 
     expect(loop.snapshot().queue).toEqual([
       expect.objectContaining({
-        meta: expect.objectContaining({
+        attributes: expect.objectContaining({
           promptId: 'meta-id',
           origin: { kind: 'user' },
           userMessageId: 'meta-id',
         }),
       }),
     ]);
-    expect(loop.snapshot().queue[0]?.meta?.createdAt).not.toBe('');
+    expect(loop.snapshot().queue[0]?.attributes?.createdAt).not.toBe('');
 
     hold.release();
     await loop.settled();

@@ -378,7 +378,7 @@ export class ReadTool implements IReadTool {
         const kind = fileType.kind;
         const article = kind === 'image' ? 'an' : 'a';
         const capabilities = this.profile.getModelCapabilities();
-        const supported = kind === 'image' ? capabilities.image_in : capabilities.video_in;
+        const supported = kind === 'image' ? capabilities?.image_in === true : capabilities?.video_in === true;
         if (!supported) {
           return {
             isError: true,

@@ -295,8 +295,8 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event
   // strategy inside the service (`ISessionTokenCountingService.statusSize`).
   const context = agentContextOf(agent);
   const contextTokens = tokenCounting.statusSize(context);
-  const capabilities = profile.getModelCapabilities();
-  const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  const model = profile.getModel() === '' ? undefined : profile.resolveModelContext().model;
+  const maxContextTokens = model?.maxInputSize ?? model?.maxContextSize;
   const contextUsage =
     Number.isFinite(contextTokens) &&
     maxContextTokens !== undefined &&

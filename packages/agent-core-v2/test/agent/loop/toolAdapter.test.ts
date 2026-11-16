@@ -1,37 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LoopLlmRequester } from '#/agent/loop/core/index';
 import { createTestLoop as createLoop } from './core/factory';
-import { createUserEntry, type ToolEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '#human/llm/message';
-import type { LlmRequest } from '#human/llm/request';
-import type { LlmOutcome } from '#human/llm/response';
-import type { ToolResult } from '#human/tool/executor';
+import { createUserMessage, extractText, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
+import { createMockProviderRequester, type MockProviderResponse } from '../../harness/scripted-generate';
+import type { ToolResult } from '@moonshot-ai/core/tool/executor';
 import { executorFrom } from './core/executor';
 
 function call(id: string, name = 'Bash'): ToolCall {
   return { type: 'function', id, name, arguments: '{}' };
 }
 
-function requester(outcomes: (() => LlmOutcome)[]): LoopLlmRequester {
-  const self: LoopLlmRequester = {
-    with: () => self,
-    request: (part) => part as unknown as LlmRequest,
-    generate: async () => {
-      const next = outcomes.shift();
-      if (next === undefined) throw new Error('unexpected generate');
-      return next();
-    },
-  };
-  return self;
+function requester(responses: MockProviderResponse[]) {
+  return createMockProviderRequester(responses);
 }
 
-function done(text: string, toolCalls: ToolCall[] = []): () => LlmOutcome {
-  return () => ({ type: 'done', message: createAssistantMessage([{ type: 'text', text }], toolCalls) });
+function done(text: string, toolCalls: ToolCall[] = []): MockProviderResponse {
+  return { parts: [{ type: 'text', text }, ...toolCalls] };
 }
 
 function prompt() {
-  return createUserEntry(createUserMessage('work'));
+  return createUserMessage('work');
 }
 
 function deferred<T>() {
@@ -53,7 +41,7 @@ describe('actor handler execution', () => {
     });
     const scripted = requester([done('', [call('t1'), call('t2', 'Read')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
     const started: string[] = [];
@@ -64,17 +52,14 @@ describe('actor handler execution', () => {
     expect((await loop.runTurn(prompt())).type).toBe('done');
     expect(started).toEqual(['t1', 't2']);
     expect(executed).toEqual(['Bash', 'Read']);
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(entries.map((entry) => extractText(entry.message))).toEqual(['first', 'second failed']);
-    expect(entries.every((entry) => entry.meta?.stopTurn === undefined)).toBe(true);
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries.map((entry) => extractText(entry))).toEqual(['first', 'second failed']);
+    expect(entries.every((entry) => entry.attributes?.stopTurn === undefined)).toBe(true);
     await loop.close();
 
     const beforeExecuteError = new Error('beforeExecute blew up');
     const failedLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({
-        profile,
-        requester: requester([done('', [call('failed')])]),
-      }),
+      requester: requester([done('', [call('failed')])]),
       executor: executorFrom(['Bash'], async () => ({ content: [] }), [{
         point: 'tool.starting',
         hook: () => {
@@ -92,14 +77,11 @@ describe('actor handler execution', () => {
     });
     expect(await failedLoop.runTurn(prompt())).toMatchObject({ type: 'failed', error: beforeExecuteError });
     expect(failedProjections).toEqual([]);
-    expect(failedLoop.state.messages.some((entry) => entry.message.role === 'tool')).toBe(false);
+    expect(failedLoop.state.messages.some((entry) => entry.role === 'tool')).toBe(false);
     await failedLoop.close();
 
     const vetoedLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({
-        profile,
-        requester: requester([done('', [call('vetoed')]), done('final')]),
-      }),
+      requester: requester([done('', [call('vetoed')]), done('final')]),
       executor: executorFrom(['Bash'], async () => ({ content: [] }), [{
         point: 'tool.starting',
         hook: () => ({
@@ -109,10 +91,10 @@ describe('actor handler execution', () => {
       }]),
     });
     expect((await vetoedLoop.runTurn(prompt())).type).toBe('done');
-    const vetoed = vetoedLoop.state.messages.find((entry): entry is ToolEntry => entry.message.role === 'tool');
+    const vetoed = vetoedLoop.state.messages.find((entry): entry is ToolMessage => entry.role === 'tool');
     expect(vetoed).toBeDefined();
-    expect(extractText(vetoed!.message)).toBe('synthetic veto');
-    expect(vetoed?.meta?.isError).toBe(true);
+    expect(extractText(vetoed!)).toBe('synthetic veto');
+    expect(vetoed?.attributes?.isError).toBe(true);
     await vetoedLoop.close();
   });
 
@@ -125,20 +107,20 @@ describe('actor handler execution', () => {
     });
     const scripted = requester([done('', [call('bg')]), done('next'), done('async')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
     const detached = loop.wait('tool.ended', { match: (event) => event.detached });
     const turn = loop.runTurn(prompt());
 
     const detachedEvent = await detached;
-    expect(extractText(detachedEvent.outcome.entry.message)).toBe('background task_id=task-bg');
+    expect(extractText(detachedEvent.outcome.message)).toBe('background task_id=task-bg');
     expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 0 })).toMatchObject({ running: ['bg'] });
     expect((await turn).type).toBe('done');
     gate.resolve();
     expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 1000 })).toMatchObject({ completed: ['bg'] });
     await loop.waitForIdle();
-    expect(loop.state.messages.some((entry) => extractText(entry.message).includes('[async tool completed]'))).toBe(true);
+    expect(loop.state.messages.some((entry) => extractText(entry).includes('[async tool completed]'))).toBe(true);
     await loop.close();
 
     const toolGate = deferred<void>();
@@ -160,14 +142,14 @@ describe('actor handler execution', () => {
     });
     const closingRequester = requester([done('', [call('close-bg')]), done('next')]);
     const closingLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: closingRequester }),
+      requester: closingRequester,
       executor: closingExecutor,
     });
     const asyncEntries: string[] = [];
     const notifications: string[] = [];
     closingLoop.subscribe((event) => {
-      if (event.type === 'tool.async_ended') asyncEntries.push(extractText(event.entry.message));
-      if (event.type === 'prompt.notified') notifications.push(extractText(event.entry.message));
+      if (event.type === 'tool.async_ended') asyncEntries.push(extractText(event.message));
+      if (event.type === 'prompt.notified') notifications.push(extractText(event.message));
     });
     const started = closingLoop.wait('tool.started');
     const active = closingLoop.runTurn(prompt());
@@ -189,7 +171,7 @@ describe('actor handler execution', () => {
     });
     await Promise.resolve();
     expect(closed).toBe(false);
-    completion.resolve(createUserEntry(createUserMessage('custom closed'), {
+    completion.resolve(createUserMessage('custom closed', {
       source: 'async-tool',
       toolCallId: 'close-bg',
     }));
@@ -202,7 +184,7 @@ describe('actor handler execution', () => {
     const rejection = new Error('completion factory rejected');
     const rejectedRequester = requester([done('', [call('reject-bg')]), done('next'), done('async failed')]);
     const rejectedLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: rejectedRequester }),
+      requester: rejectedRequester,
       executor: executorFrom(['Bash'], async () => {
         await rejectionGate.promise;
         return { content: [{ type: 'text', text: 'ignored successful result' }] };
@@ -221,10 +203,10 @@ describe('actor handler execution', () => {
 
     const rejectedEvent = await asyncRejected;
     expect(rejectedEvent.outcome).toEqual({ type: 'failed', error: rejection });
-    expect(extractText(rejectedEvent.entry.message)).toContain('[async tool failed]');
-    expect(extractText(rejectedEvent.entry.message)).toContain('completion factory rejected');
-    expect(extractText(rejectedEvent.entry.message)).not.toContain('[async tool completed]');
-    expect(extractText((await notifiedRejection).entry.message)).toContain('[async tool failed]');
+    expect(extractText(rejectedEvent.message)).toContain('[async tool failed]');
+    expect(extractText(rejectedEvent.message)).toContain('completion factory rejected');
+    expect(extractText(rejectedEvent.message)).not.toContain('[async tool completed]');
+    expect(extractText((await notifiedRejection).message)).toContain('[async tool failed]');
     expect(rejectedLoop.state.calls).toEqual([]);
     await rejectedLoop.waitForIdle();
     await rejectedLoop.close();
@@ -245,14 +227,14 @@ describe('actor handler execution', () => {
       });
       const resetRequester = requester([done('', [call(`reset-${timing}`)]), done('next'), done('async')]);
       const resetLoop = createLoop({
-        createTurnExecution: ({ profile }) => ({ profile, requester: resetRequester }),
+        requester: resetRequester,
         executor: resetExecutor,
       });
       const asyncEvents: string[] = [];
       const appended: string[] = [];
       resetLoop.subscribe((event) => {
-        if (event.type === 'tool.async_ended') asyncEvents.push(extractText(event.entry.message));
-        if (event.type === 'message.appended' && event.source === 'notify') appended.push(extractText(event.entry.message));
+        if (event.type === 'tool.async_ended') asyncEvents.push(extractText(event.message));
+        if (event.type === 'message.appended' && event.source === 'notify') appended.push(extractText(event.message));
       });
       const detachedReset = resetLoop.wait('tool.ended', { match: (event) => event.detached });
       expect((await resetLoop.runTurn(prompt())).type).toBe('done');
@@ -275,7 +257,7 @@ describe('actor handler execution', () => {
         };
       });
       if (timing === 'during') {
-        resetLoop.notify(createUserEntry(createUserMessage('live before restored'), { promptId: 'live' }));
+        resetLoop.notify(createUserMessage('live before restored', { promptId: 'live' }));
         await resetLoop.wait('tool.async_ended');
         expect(resetLoop.state.turn).toBeUndefined();
         expect(resetLoop.state.resetting).toBe(true);
@@ -321,7 +303,7 @@ describe('actor handler execution', () => {
       done('second final'),
     ]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
     expect((await loop.runTurn(prompt())).type).toBe('done');
@@ -337,15 +319,15 @@ describe('actor handler execution', () => {
     gates[0]?.resolve();
     await oldCompleted;
     expect(secondSettled).toBe(false);
-    const pendingEntries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(pendingEntries.map((entry) => extractText(entry.message))).toEqual(['old background']);
+    const pendingEntries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(pendingEntries.map((entry) => extractText(entry))).toEqual(['old background']);
 
     gates[1]?.resolve();
     expect((await secondTurn).type).toBe('done');
     await loop.waitForIdle();
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(entries.map((entry) => extractText(entry.message))).toEqual(['old background', '1:same']);
-    expect(loop.state.messages.some((entry) => extractText(entry.message).includes('0:same'))).toBe(true);
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries.map((entry) => extractText(entry))).toEqual(['old background', '1:same__2']);
+    expect(loop.state.messages.some((entry) => extractText(entry).includes('0:same'))).toBe(true);
     expect(gates).toHaveLength(2);
     await loop.close();
   });
@@ -369,7 +351,7 @@ describe('actor handler execution', () => {
     });
     const scripted = requester([done('', [call('a'), call('b', 'Read')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor,
     });
     const turn = loop.runTurn(prompt());
@@ -377,20 +359,17 @@ describe('actor handler execution', () => {
     loop.abortTool('a', 'stop');
     secondRelease.resolve();
     expect((await turn).type).toBe('done');
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(entries.map((entry) => entry.meta?.isError)).toEqual([true, undefined]);
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries.map((entry) => entry.attributes?.isError)).toEqual([true, undefined]);
     await loop.close();
 
     const unknownLoop = createLoop({
-      createTurnExecution: ({ profile }) => ({
-        profile,
-        requester: requester([done('', [call('x', 'Missing')]), done('final')]),
-      }),
+      requester: requester([done('', [call('x', 'Missing')]), done('final')]),
       executor,
     });
     expect((await unknownLoop.runTurn(prompt())).type).toBe('done');
-    const unknown = unknownLoop.state.messages.find((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(unknown?.meta?.isError).toBe(true);
+    const unknown = unknownLoop.state.messages.find((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(unknown?.attributes?.isError).toBe(true);
     await unknownLoop.close();
   });
 });

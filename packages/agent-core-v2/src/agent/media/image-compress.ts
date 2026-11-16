@@ -1,7 +1,7 @@
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { ImageCompressEvent, ImageCropEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import { DEFAULT_INLINE_IMAGE_BYTE_BUDGET } from '#human/llm/protocol/kit/media';
+import { DEFAULT_INLINE_IMAGE_BYTE_BUDGET } from '@moonshot-ai/core/llm/protocol/kit/media';
 
 import { sniffImageDimensions } from './file-type';
 import {

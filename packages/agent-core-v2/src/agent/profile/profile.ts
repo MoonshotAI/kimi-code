@@ -3,9 +3,9 @@ import type {
   AgentProfileContext,
   EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type { LlmModelSpec, ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ThinkingEffort } from '#human/llm-requester/thinking';
-import type { ModelRequestParams } from '#/llm-adapter/model/generate';
+import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ErrorCode } from '#/errors';
@@ -89,7 +89,7 @@ export interface ApplyProfileOptions {
 
 export interface ProfileModelContext {
   readonly modelAlias: string;
-  readonly modelCapabilities: ModelCapability;
+  readonly model: LlmModelSpec;
   readonly maxOutputSize: number | undefined;
   readonly alwaysThinking: boolean | undefined;
   readonly thinkingLevel: ThinkingEffort;
@@ -114,7 +114,7 @@ export interface EffectiveProfileReader {
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
-  resolveRequestParams(): ModelRequestParams;
+  resolveRequestParams(): InitializedLlmRequestPart;
   getModelCapabilities(): ModelCapability;
   getModelProviderType(alias?: string): string | undefined;
   getMaxOutputSize(): number | undefined;
@@ -153,7 +153,7 @@ export interface IAgentProfileService extends EffectiveProfileReader {
   data(snapshot?: ProfileBindingSnapshot): ProfileData;
   getEffectiveThinkingLevel(snapshot?: ProfileBindingSnapshot): ThinkingEffort;
   resolveModelContext(snapshot?: ProfileBindingSnapshot): ProfileModelContext;
-  resolveRequestParams(snapshot?: ProfileBindingSnapshot): ModelRequestParams;
+  resolveRequestParams(snapshot?: ProfileBindingSnapshot): InitializedLlmRequestPart;
   getModelCapabilities(snapshot?: ProfileBindingSnapshot): ModelCapability;
   getModelProviderType(alias?: string, snapshot?: ProfileBindingSnapshot): string | undefined;
   getMaxOutputSize(snapshot?: ProfileBindingSnapshot): number | undefined;

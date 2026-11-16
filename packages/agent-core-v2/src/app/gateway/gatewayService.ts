@@ -49,8 +49,9 @@ export class RestGateway implements IRestGateway {
   ): Promise<{ readonly turn_id: number } | undefined> {
     const loop = this.agent(sessionId, agentId).accessor.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: input }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: input }],
+      attributes: { origin: { kind: 'user' } },
     });
     const turn = await loop.promptHandle(id)?.launched;
     if (turn === undefined) return undefined;

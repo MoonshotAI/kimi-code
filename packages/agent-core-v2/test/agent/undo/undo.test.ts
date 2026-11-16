@@ -1,3 +1,4 @@
+import { providerHttpError } from '../../harness/index';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appendContext, compactContext } from '../contextMemory/stubs';
 
@@ -44,7 +45,7 @@ import {
   execEnvServices,
   telemetryServices,
   InMemoryWireRecordPersistence,
-  requesterFromGenerateFn,
+  createMockProvider,
   type TestAgentOptions,
   type TestAgentContext,
 } from '../../harness';
@@ -182,8 +183,9 @@ describe('AgentConversationUndoService', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'system result' });
     const turn = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'system work' }] },
-      meta: { origin: { kind: 'system_trigger', name: 'test' } as PromptOrigin },
+      role: 'user',
+      content: [{ type: 'text', text: 'system work' }],
+      attributes: { origin: { kind: 'system_trigger', name: 'test' } as PromptOrigin },
     }).turn;
     await didStart;
     const history = ctx.context.history();
@@ -456,19 +458,20 @@ describe('AgentConversationUndoService', () => {
     async (mode) => {
       const imageCounts: number[] = [];
       await setup({
-        generate: requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
+        generate: createMockProvider(async (request, _signal) => {
+          const history = [...request.content.messages];
           const images = history
             .flatMap((message) => message.content)
             .filter((part) => part.type === 'image_url');
           imageCounts.push(images.length);
           if (mode === 'degraded' && images.length > 3) {
-            throw new APIRequestTooLargeError(413, 'Request Entity Too Large');
+            return providerHttpError(413, 'Request Entity Too Large')
           }
           if (
             mode === 'stripped' &&
             images.some((part) => part.imageUrl.url.endsWith('/1-0.png'))
           ) {
-            throw new APIStatusError(400, 'unsupported image format', false);
+            return providerHttpError(400, 'unsupported image format')
           }
           return {
             id: 'media-response',
@@ -482,24 +485,22 @@ describe('AgentConversationUndoService', () => {
       ctx.configure({
         modelCapabilities: {
           image_in: true, video_in: false, audio_in: false,
-          thinking: false, tool_use: true, max_context_tokens: 128_000,
+          thinking: false, tool_use: true, maxContextSize: 128_000,
         },
       });
       const runTurn = async (count: number) => {
         const { turn } = submitPromptTurn(ctx.get(IAgentLoopService), {
-          message: {
-            role: 'user',
-            content: [
-              { type: 'text', text: 'describe the images' },
-              ...Array.from({ length: count }, (_, index) => ({
-                type: 'image_url' as const,
-                imageUrl: {
-                  url: `https://example.test/${imageCounts.length}-${index}.png`,
-                },
-              })),
-            ],
-          },
-          meta: { origin: { kind: 'user' } },
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe the images' },
+            ...Array.from({ length: count }, (_, index) => ({
+              type: 'image_url' as const,
+              imageUrl: {
+                url: `https://example.test/${imageCounts.length}-${index}.png`,
+              },
+            })),
+          ],
+          attributes: { origin: { kind: 'user' } },
         });
         await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
         return turn.id;
@@ -530,8 +531,9 @@ describe('AgentConversationUndoService', () => {
     ): Promise<number | undefined> => {
       target.mockNextResponse({ type: 'text', text: `answer to ${text}` });
       const { turn } = submitPromptTurn(target.get(IAgentLoopService), {
-        message: { role: 'user', content: [{ type: 'text', text }] },
-        meta: { origin: { kind: 'user' } },
+        role: 'user',
+        content: [{ type: 'text', text }],
+        attributes: { origin: { kind: 'user' } },
       });
       await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
       return turn.id;
@@ -585,15 +587,17 @@ describe('AgentConversationUndoService', () => {
 
     ctx.mockNextResponse({ type: 'text', text: 'a1' });
     const userTurn = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'u1' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'u1' }],
+      attributes: { origin: { kind: 'user' } },
     }).turn;
     await expect(userTurn.result).resolves.toMatchObject({ type: 'completed' });
 
     ctx.mockNextResponse({ type: 'text', text: 'cron done' });
     const cronTurn = submitPromptTurn(loop, {
-      message: { role: 'user', content: [{ type: 'text', text: 'cron work' }] },
-      meta: { origin: {
+      role: 'user',
+      content: [{ type: 'text', text: 'cron work' }],
+      attributes: { origin: {
         kind: 'cron_job',
         jobId: 'j1',
         cron: '0 9 * * *',
@@ -833,14 +837,12 @@ describe('AgentConversationUndoService', () => {
       activePromptId: undefined,
       queue: [
         {
-          message: {
-            role: 'user',
-            content: [
-              userPromptSubmitHookPart('<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>'),
-              { type: 'text', text: 'queued prompt' },
-            ],
-          },
-          meta: {
+          role: 'user',
+          content: [
+            userPromptSubmitHookPart('<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>'),
+            { type: 'text', text: 'queued prompt' },
+          ],
+          attributes: {
             promptId: 'queued',
             origin: { kind: 'user', clientMetadata: displayText === undefined ? undefined : [{ display_text: displayText }] } as PromptOrigin,
             createdAt: new Date(0).toISOString(),

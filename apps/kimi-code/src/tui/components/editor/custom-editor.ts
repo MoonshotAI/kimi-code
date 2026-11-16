@@ -16,6 +16,7 @@ import {
   type TUI,
 } from '@moonshot-ai/pi-tui';
 
+import type { SubmitKey } from '#/tui/config';
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 import { printableChar } from '#/tui/utils/printable-key';
@@ -117,6 +118,12 @@ function stripSgr(s: string): string {
   return s.replace(ANSI_SGR, '');
 }
 
+function alternateSubmitKey(data: string): Exclude<SubmitKey, 'enter'> | undefined {
+  if (matchesKey(data, 'ctrl+enter') || matchesKey(data, 'super+enter')) return 'mod-enter';
+  if (matchesKey(data, Key.ctrl('q'))) return 'ctrl-q';
+  return undefined;
+}
+
 interface CustomEditorOptions {
   disablePasteBurst?: boolean;
 }
@@ -177,6 +184,11 @@ export class CustomEditor extends Editor {
   private argumentHints: ReadonlyMap<string, string> = new Map();
   private skillCommandNames: ReadonlySet<string> = new Set();
   private promptPrediction: string | undefined;
+  private currentSubmitKey: SubmitKey = 'enter';
+
+  get submitKey(): SubmitKey {
+    return this.currentSubmitKey;
+  }
 
   setArgumentHints(hints: ReadonlyMap<string, string>): void {
     this.argumentHints = hints;
@@ -600,7 +612,17 @@ export class CustomEditor extends Editor {
     }
 
     const emptyPromptBeforeInput = this.inputMode === 'prompt' && this.getText().length === 0;
-    super.handleInput(normalized);
+    const submitKey = alternateSubmitKey(normalized);
+    if (submitKey === undefined) {
+      super.handleInput(normalized);
+    } else {
+      this.currentSubmitKey = submitKey;
+      try {
+        super.handleInput('\r');
+      } finally {
+        this.currentSubmitKey = 'enter';
+      }
+    }
 
     // Enter bash mode when `!...` is pasted into an empty prompt. The typed path
     // above handles the single `!` keystroke; this catches bracketed / Ctrl-V
@@ -850,7 +872,7 @@ function injectPromptPrediction(line: string, prediction: string, width: number)
     : mapVisibleIdxToRaw(line, EDITOR_LEFT_PADDING);
   const trailing = line.slice(insertAt);
   const remaining = Math.max(0, visibleWidth(trailing) - visibleWidth(trimmed));
-  return line.slice(0, insertAt) + currentTheme.fg('textDim', trimmed) + ' '.repeat(remaining);
+  return line.slice(0, insertAt) + currentTheme.fg('textMuted', trimmed) + ' '.repeat(remaining);
 }
 
 /**

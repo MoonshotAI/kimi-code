@@ -11,7 +11,7 @@ import type {
   GoalSnapshot,
   GoalStatus,
 } from '#/features/goal/types';
-import { createToolMessage } from '#human/llm/message';
+import { createToolMessage } from '@moonshot-ai/core/llm/message';
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import {
   isNewerWireVersion,

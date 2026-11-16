@@ -43,8 +43,12 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
   }
 
   begin(): void {
+    this.sessionLocks.hold(this.ctx.sessionId);
+    this.checkWritable();
+  }
+
+  private checkWritable(): void {
     const sessionId = this.ctx.sessionId;
-    this.sessionLocks.hold(sessionId);
     const stale = this.agents
       .list()
       .some(
@@ -63,6 +67,12 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
 
   acquire(): SessionLockLease {
     this.begin();
+    return this.sessionLocks.lease(this.ctx.sessionId);
+  }
+
+  tryAcquire(): SessionLockLease | undefined {
+    if (!this.sessionLocks.tryHold(this.ctx.sessionId)) return undefined;
+    this.checkWritable();
     return this.sessionLocks.lease(this.ctx.sessionId);
   }
 

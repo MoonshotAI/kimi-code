@@ -1472,7 +1472,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     rows = screenRows(vt);
     expect(rows.join('\n')).toContain('Page 2/2');
-    expect(rows.join('\n')).toContain('❯ Feedback survey');
+    expect(rows.join('\n')).toContain('❯ Follow-up behavior');
 
     state.ui.setFocus(state.notifyPanel);
     state.ui.requestRender();

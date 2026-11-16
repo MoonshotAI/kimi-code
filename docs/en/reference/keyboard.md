@@ -58,11 +58,14 @@ While streaming output is active, the input box can still receive input and supp
 
 | Shortcut | Function |
 | --- | --- |
+| `Ctrl-Q` | Queue the current input |
 | `Ctrl-S` | Steer: inject the current input directly into the running turn |
 | `Esc` | Interrupt the current streaming output |
 | `Ctrl-C` | Interrupt the current streaming output |
 
 Pressing `Ctrl-S` causes the model to see your message at the next interruptible point, without waiting for the current turn to finish. The message text stays faded until the agent reads it. If an interrupted turn carries the message into a later turn, it stays faded until that turn starts.
+
+`Enter` queues the input by default; pick Steer under `/settings` → `Follow-up behavior` to inject it instead.
 
 ## Tool Output
 

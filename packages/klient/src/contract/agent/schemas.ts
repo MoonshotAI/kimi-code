@@ -70,11 +70,9 @@ export const steerResultSchema = promptWithSkillsResultSchema;
 
 /** Entry constructed by `AgentFacade.steer` before crossing the wire. */
 export const steerEntrySchema = z.object({
-  message: z.object({
-    role: z.literal('user'),
-    content: z.array(promptPartSchema),
-  }),
-  meta: z.object({
+  role: z.literal('user'),
+  content: z.array(promptPartSchema),
+  attributes: z.object({
     origin: z.object({ kind: z.literal('user') }),
   }),
 });

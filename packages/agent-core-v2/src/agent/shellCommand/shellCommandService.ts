@@ -17,7 +17,7 @@ import { createTaskCompletionEntry } from '#/agent/task/taskOutput';
 import { agentTaskInfo } from '#/agent/task/handler';
 import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import { isToolDetachAck } from '#/tool/executor';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';

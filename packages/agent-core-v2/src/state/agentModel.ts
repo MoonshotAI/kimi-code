@@ -5,7 +5,7 @@ import { collection } from '#/_base/di/collection';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import type { StateKey } from '#/_base/state/stateRegistry';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { Message } from '#human/llm/message';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import { registerEvent2Class, type Event2, type Event2Class } from '#/app/event/event2';
 
 import type { FoldContext } from './state';

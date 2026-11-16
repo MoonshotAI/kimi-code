@@ -442,7 +442,7 @@
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `id` | body | string | 必填。供应商 id，只能包含字母、数字、`-`、`_` 和空格，必须以字母或数字开头 |
-| `type` | body | string | 必填。通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | body | string | 必填。通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `api_key` | body | string | API 密钥，存储在 `config.toml` 中 |
 | `api_key_env` | body | string | 读取 API 密钥的环境变量名。服务端只存储变量名，不存储密钥 |
 | `base_url` | body | string | API 基础 URL，不能包含环境变量占位符（`${...}`） |
@@ -457,6 +457,7 @@
 | `max_context_size` | integer | 必填。上下文窗口，单位 token，≥ 1 |
 | `display_name` | string | 显示名 |
 | `capabilities` | array | 能力标志，如 `thinking` 或 `image_in` |
+| `protocol` | string | 线路协议覆盖：`anthropic`、`openai` 或 `openai_responses`；省略时按模型 ID 推断 |
 | `max_output_size` | integer | 最大输出 token 数，≥ 1 |
 | `support_efforts` | array | 支持的 Thinking 模式 effort 档位 |
 | `adaptive_thinking` | boolean | 自适应 thinking 开关 |
@@ -488,7 +489,7 @@
 | --- | --- | --- | --- |
 | `provider_id` | path | string | 必填。当前供应商 id |
 | `new_id` | body | string | 重命名供应商。providers 键、模型别名、`default_provider`、指向旧别名的 `default_model` 以及 subagent 次级模型池都随之迁移。id 规则与 `POST /api/v1/providers` 相同 |
-| `type` | body | string | 必填。通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `google-genai` / `vertexai` |
+| `type` | body | string | 必填。通信协议：`kimi` / `openai` / `openai_responses` / `anthropic` / `bedrock` / `google-genai` / `vertexai` |
 | `api_key` | body | string | API 密钥，三种写法见上文 |
 | `api_key_env` | body | string | 读取 API 密钥的环境变量名，三种写法见上文 |
 | `base_url` | body | string | API 基础 URL，不能包含环境变量占位符（`${...}`） |

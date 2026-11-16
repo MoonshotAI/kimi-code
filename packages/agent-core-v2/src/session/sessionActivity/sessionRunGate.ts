@@ -6,6 +6,7 @@ export interface ISessionRunGate {
 
   begin(): void;
   acquire(): SessionLockLease;
+  tryAcquire(): SessionLockLease | undefined;
 }
 
 export const ISessionRunGate: ServiceIdentifier<ISessionRunGate> =

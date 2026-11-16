@@ -1,6 +1,6 @@
 import { estimateTokens, estimateTokensForMessage, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import { isSkillActivationPart } from '#human/agent/origin';
-import type { ContentPart } from '#human/llm/message';
+import { isSkillActivationPart } from '@moonshot-ai/core/llm/origin';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { isUserPromptSubmitHookPart } from './hookParts';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';

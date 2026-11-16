@@ -139,6 +139,13 @@ const TOOL_BOUNDARY_ROLES: Readonly<Record<string, BoundaryRole>> = {
   ExitPlanMode: 'pinned',
 };
 
+export function isPinnedToolCallComponent(component: Component): boolean {
+  return (
+    component instanceof ToolCallComponent &&
+    TOOL_BOUNDARY_ROLES[component.toolCallView.name] === 'pinned'
+  );
+}
+
 const TOOL_PROFILES: Readonly<Record<string, ToolProfile>> = {
   Think: { foldClass: 'thinking', event: 'thought' },
   Read: { foldClass: 'explore', event: 'read' },

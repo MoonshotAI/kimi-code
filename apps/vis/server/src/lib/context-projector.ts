@@ -6,7 +6,7 @@ import { cutTurnUndo } from '@moonshot-ai/agent-core-v2/agent/undo/turnUndo';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import { createLoopEventFold } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type {
   ContextMessage,
   PermissionMode,

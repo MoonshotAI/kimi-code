@@ -54,11 +54,9 @@ const generateInputSchema = z.object({
 });
 
 const generateParamsSchema = z.object({
-  cacheKey: z.string().optional(),
-  temperature: z.number().optional(),
-  topP: z.number().optional(),
-  thinkingEffort: z.string().optional(),
-  maxCompletionTokens: z.number().optional(),
+  protocol: z.unknown().optional(),
+  model: z.unknown().optional(),
+  endpoint: z.unknown().optional(),
 }).optional();
 
 const generateEventSchema = z.object({

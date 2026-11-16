@@ -3,18 +3,19 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { abortable, abortError, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { historyFromContext } from '#/agent/loop/history';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
 import { turnKey } from '#/agent/loop/turnOps';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import { errorFromLlmOutcome, type ModelRequestTiming } from '#/llm-adapter/model/generate';
+import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
 import type { PredictionGeneratedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { createUserMessage } from '#human/llm/message';
-import type { LlmOutcome } from '#human/llm/response';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import { createUserMessage } from '@moonshot-ai/core/llm/message';
+import type { LlmOutcome, LlmTiming } from '@moonshot-ai/core/llm/response';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   ISessionActivityView,
@@ -62,7 +63,7 @@ interface ActivePrediction {
   predictionChars?: number;
   usage?: TokenUsage;
   requestId?: string;
-  timing?: ModelRequestTiming;
+  timing?: LlmTiming;
   cancelReason?: PromptPredictionCancelReason;
 }
 
@@ -153,13 +154,17 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
       const outcome = await abortable(requester.generate(
         {
           content: {
-            messages: [...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)],
+            messages: historyFromContext([...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)]),
           },
           profile: {},
         },
         { signal: active.deadline.signal },
       ), active.deadline.signal);
-      if (outcome.type !== 'done') throw errorFromLlmOutcome(outcome);
+      if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
+      if (outcome.type === 'aborted') {
+        const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
+        throw new DOMException(message, 'AbortError');
+      }
       active.usage = outcome.usage;
       active.requestId = outcome.requestId ?? trace?.requestId;
       active.timing = outcome.timing;

@@ -6,6 +6,30 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.6.2 (2026-11-14)
+
+### Features
+
+- Support optional `search_url` and `feedback_url` fields on custom registry (`api.json`) providers for `WebSearch` and `/feedback`.
+
+### Polish
+
+- Remove the text-only "No attachment" option from `/feedback` (text-only `/feedback` submissions are no longer available), show the current session's files before confirmation, and include session `request_id` metadata.
+
+### Bug Fixes
+
+- Fix multi-second loading delays when reopening long sessions with many tool calls.
+- Reject failed or unfinished Kimi media uploads instead of caching unusable file references.
+- Fix missing live subagent updates in the Swarm panel during execution.
+- web: Improved interactions and fixed known bugs.
+
+## 2.6.1 (2026-11-13)
+
+### Bug Fixes
+
+- Fix multi-second loading delays when reopening long sessions.
+- Fix long sessions stalling with empty replies instead of compacting when tool results include notes, errors, or timing headers.
+
 ## 2.6.0 (2026-11-12)
 
 We recommend switching to fullscreen mode via `/settings -> TUI mode -> Fullscreen` (takes effect after restarting) for a better experience.

@@ -270,7 +270,13 @@ export function expandedRuntimeFolds(
   undoable: boolean,
   folds: ReadonlyMap<Event2Class<any, any>, StateFold<any, any>>,
   onUndo?: (state: any, count: number) => any,
+  mutableReplay = false,
 ): ReadonlyMap<Event2Class<any, any>, StateFold<any, any>> {
+  if (mutableReplay && undoable && onUndo === undefined) {
+    throw new BugIndicatingError(
+      `Agent runtime '${owner}' requires custom onUndo for mutable replay`,
+    );
+  }
   if (!undoable) return folds;
   if (undoableProtocol === undefined) {
     throw new BugIndicatingError(

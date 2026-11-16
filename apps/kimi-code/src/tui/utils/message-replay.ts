@@ -74,7 +74,8 @@ export interface ReplayBackgroundProjection {
 }
 
 export function appStateFromResumeAgent(agent: ResumedAgentState): Partial<AppState> {
-  const maxContextTokens = agent.config.modelCapabilities?.max_context_tokens ?? 0;
+  const maxContextTokens =
+    agent.config.model?.maxInputSize ?? agent.config.model?.maxContextSize ?? 0;
   const contextTokens = agent.context.tokenCount;
   const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
   return {

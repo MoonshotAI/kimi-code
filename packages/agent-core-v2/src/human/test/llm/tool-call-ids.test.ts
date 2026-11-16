@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { openAIProtocol } from '#/llm/builtin/protocol/openai/index';
+import { openAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/openai/index';
 import {
   createAssistantMessage,
   createToolMessage,
@@ -9,10 +9,10 @@ import {
   type Message,
   type StreamedMessagePart,
   type ToolCall,
-} from '#/llm/message';
-import { sanitizeToolCallId } from '#/llm/protocol/kit/ids';
-import { createToolCallIdNormalizer } from '#/llm/protocol/rules/tool-call-ids';
-import { createRequester as createCoreRequester } from '#/llm/requester';
+} from '@moonshot-ai/core/llm/message';
+import { sanitizeToolCallId } from '@moonshot-ai/core/llm/protocol/kit/ids';
+import { createToolCallIdNormalizer } from '@moonshot-ai/core/llm/protocol/rules/tool-call-ids';
+import { createRequester as createCoreRequester } from '@moonshot-ai/core/llm/requester';
 
 function call(id: string, streamIndex?: number, rawId?: string): ToolCall {
   return { type: 'function', id, name: 'Bash', arguments: '{}', _streamIndex: streamIndex, rawId };

@@ -11,7 +11,7 @@ import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { SessionPromptPredictionService } from '#/features/promptPrediction/promptPredictionService';
-import type { LlmOutcome } from '#human/llm/response';
+import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   ISessionActivityView,

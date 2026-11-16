@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code
 
+## 2.6.1
+
+### Patch Changes
+
+- [#4888](https://github.com/MoonshotAI/kimi-code/pull/4888) [`0341ca4`](https://github.com/MoonshotAI/kimi-code/commit/0341ca4f81e11fd57df2fa7ac98f42ee8afb80ae) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix multi-second loading delays when reopening long sessions.
+
+- [#4907](https://github.com/MoonshotAI/kimi-code/pull/4907) [`397248f`](https://github.com/MoonshotAI/kimi-code/commit/397248f6de1dedf5230e5783e41636390a9fdbe3) Thanks [@sailist](https://github.com/sailist)! - Fix long sessions stalling with empty replies instead of compacting when tool results include notes, errors, or timing headers.
+
 ## 2.6.0
 
 ### Minor Changes

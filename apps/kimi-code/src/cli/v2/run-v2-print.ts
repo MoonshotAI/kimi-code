@@ -601,8 +601,9 @@ async function runNativeTurn(
   try {
     const loop = agent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: prompt }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: prompt }],
+      attributes: { origin: { kind: 'user' } },
     });
     const handle = loop.promptHandle(id)!;
     const turn = await handle.launched;
@@ -1123,7 +1124,7 @@ async function quiesceSessionAgents(
   // still surface from the launch window or a cancelled turn's settle chain.
   for (;;) {
     for (const loop of loops) {
-      for (const queueId of loop.snapshot().queue.map((item) => item.meta?.promptId)) {
+      for (const queueId of loop.snapshot().queue.map((item) => item.attributes?.promptId)) {
         if (queueId !== undefined) loop.cancel({ promptId: queueId });
       }
       loop.cancel();

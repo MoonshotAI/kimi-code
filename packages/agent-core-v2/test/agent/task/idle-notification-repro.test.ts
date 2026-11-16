@@ -5,7 +5,6 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
-import type { LlmRequester } from '#human/llm-requester/requester';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -21,8 +20,10 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   taskServices,
   createTestAgent,
+  createMockProvider,
   homeDirServices,
   type TestAgentContext,
+  type TestAgentOptions,
 } from '../../harness';
 import {
   createAgentTaskPersistence,
@@ -226,8 +227,6 @@ describe('task notification → main agent (real Agent instance)', () => {
   });
 
   describe('kill ordering vs child loop unwind', () => {
-    type GenerateFn = LlmRequester;
-
     function agentScopeHandle(ctx: TestAgentContext, id: string): IAgentScopeHandle {
       return {
         id,
@@ -242,18 +241,15 @@ describe('task notification → main agent (real Agent instance)', () => {
       const inFlight = new Promise<void>((resolve) => {
         generateStarted = resolve;
       });
-      const slowToCancelGenerate: GenerateFn = {
-        generate: (_config, _content, control) => {
-          const signal = control.signal;
-          signal.throwIfAborted();
-          generateStarted();
-          return new Promise<never>((_resolve, reject) => {
-            signal.addEventListener('abort', () => {
-              setTimeout(() => reject(signal.reason), 200);
-            }, { once: true });
-          });
-        },
-      };
+      const slowToCancelGenerate = createMockProvider((_request, signal) => {
+        signal.throwIfAborted();
+        generateStarted();
+        return new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            setTimeout(() => reject(signal.reason), 200);
+          }, { once: true });
+        });
+      });
 
       const main = createTestAgent(taskServices());
       const child = createTestAgent({ generate: slowToCancelGenerate });

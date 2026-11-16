@@ -1,8 +1,8 @@
 import { freeze, isDraft, original } from 'immer';
 
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import { createToolMessage, type ContentPart, type ToolCall } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import { createToolMessage, type ContentPart, type ToolCall } from '@moonshot-ai/core/llm/message';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage, ContextMessageTiming } from './types';

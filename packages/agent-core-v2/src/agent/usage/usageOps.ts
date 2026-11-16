@@ -2,7 +2,7 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-import { type TokenUsage } from '#human/llm-requester/usage';
+import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 export type UsageRecordScope = 'session' | 'turn' | 'prediction';
 

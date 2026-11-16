@@ -31,6 +31,7 @@ import {
   type Component,
   type Focusable,
   getCapabilities,
+  isKittyProtocolActive,
   Key,
   matchesKey,
   Spacer,
@@ -88,7 +89,7 @@ import {
   type ApprovalPreviewBlock,
 } from './components/dialogs/approval-preview';
 import { CompactionComponent } from './components/dialogs/compaction';
-import { HelpPanelComponent } from './components/dialogs/help-panel';
+import { HelpPanelComponent, keyboardShortcuts } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
@@ -121,7 +122,14 @@ import {
   type ActivityPaneMode,
   LastTurnSummary,
 } from './components/panes/activity-pane';
-import { removeLegacySurveySetting, transcriptGroupingActive, type TuiConfig, type TuiMode } from './config';
+import {
+  removeLegacySurveySetting,
+  resolveFollowUpBehavior,
+  transcriptGroupingActive,
+  type FollowUpDelivery,
+  type TuiConfig,
+  type TuiMode,
+} from './config';
 import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
@@ -177,6 +185,7 @@ import {
   type QueuedPromptMessage,
   type EnvironmentSlotState,
   type SteerInputItem,
+  type SteerOutcome,
   type StepRetryState,
   type TranscriptEntry,
   type TUIStartupOptions,
@@ -224,9 +233,12 @@ import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
 import {
   getTranscriptComponentEntry,
+  getTranscriptComponentTurnId,
   markTranscriptComponent,
+  markTranscriptComponentTurnId,
 } from './utils/transcript-component-metadata';
 import { isTurnBoundaryComponent } from './utils/transcript-turns';
+import { isPinnedToolCallComponent } from './utils/transcript-items';
 import { nextTranscriptId } from './utils/transcript-id';
 import { instant } from './utils/turn-timeline';
 import {
@@ -328,6 +340,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     cacheExpiryHint: input.tuiConfig.cacheExpiryHint,
     disableFeedbackSurvey: input.tuiConfig.disableFeedbackSurvey,
     autoSessionTitle: input.tuiConfig.autoSessionTitle,
+    followUpBehavior: input.tuiConfig.followUpBehavior,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
     statusLine: input.tuiConfig.statusLine,
@@ -359,6 +372,7 @@ interface SendMessageOptions {
 
 type EnqueueMessageOptions = SendMessageOptions & {
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
+  readonly holdUntilTurnEnds?: boolean;
 };
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -1562,7 +1576,7 @@ export class KimiTUI {
     this.updateEditorBorderHighlight();
   }
 
-  handleUserInput(text: string): void {
+  handleUserInput(text: string, delivery: FollowUpDelivery = 'default'): void {
     const wasBashMode = this.state.appState.inputMode === 'bash';
     if (wasBashMode) {
       // A submit always exits bash mode (the `!` is consumed by this command).
@@ -1591,7 +1605,7 @@ export class KimiTUI {
       void this.runShellCommandFromInput(text);
       return;
     }
-    slashCommands.dispatchInput(this, text);
+    slashCommands.dispatchInput(this, text, delivery);
   }
 
   private async runShellCommandFromInput(command: string): Promise<void> {
@@ -1727,7 +1741,11 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
-  async sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void> {
+  async sendNormalUserInput(
+    text: string,
+    preExtracted?: ExtractionResult,
+    delivery: FollowUpDelivery = 'default',
+  ): Promise<void> {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
@@ -1813,9 +1831,9 @@ export class KimiTUI {
         imageAttachmentIds: extraction.imageAttachmentIds,
         videoAttachmentIds: extraction.videoAttachmentIds,
         lease: stagingLease,
-      });
+      }, delivery);
     } else {
-      this.sendMessage(session, text);
+      this.sendMessage(session, text, undefined, delivery);
     }
     this.updateQueueDisplay();
     this.state.ui.requestRender();
@@ -1825,6 +1843,7 @@ export class KimiTUI {
     text: string,
     activations: readonly InlineSkillActivation[],
     preExtracted?: ExtractionResult,
+    delivery: FollowUpDelivery = 'default',
   ): Promise<void> {
     if (this.btwPanelController.sendUserInput(text, activations)) return;
     if (this.state.appState.model.trim().length === 0) {
@@ -1878,19 +1897,24 @@ export class KimiTUI {
         return;
       }
     }
+    const enqueueOptions: EnqueueMessageOptions = {
+      parts: extraction.hasMedia ? extraction.parts : undefined,
+      imageAttachmentIds: extraction.imageAttachmentIds,
+      videoAttachmentIds: extraction.videoAttachmentIds,
+      mediaSnapshots: extraction.mediaSnapshots,
+      inlineSkillActivations: activations,
+    };
+    if (delivery === 'steer-draft' && this.trySteerDraft(session, text, enqueueOptions)) {
+      this.state.ui.requestRender();
+      return;
+    }
     if (
       this.deferUserMessages ||
       this.steeringQueuedMessages.size > 0 ||
       this.state.appState.streamingPhase !== 'idle' ||
       this.state.appState.isCompacting
     ) {
-      this.enqueueMessage(text, {
-        parts: extraction.hasMedia ? extraction.parts : undefined,
-        imageAttachmentIds: extraction.imageAttachmentIds,
-        videoAttachmentIds: extraction.videoAttachmentIds,
-        mediaSnapshots: extraction.mediaSnapshots,
-        inlineSkillActivations: activations,
-      });
+      this.enqueueMessage(text, enqueueOptions);
       this.updateQueueDisplay();
       this.state.ui.requestRender();
       return;
@@ -2210,6 +2234,7 @@ export class KimiTUI {
       mode: undefined,
       mediaSnapshots: options?.mediaSnapshots,
       inlineSkillActivations: options?.inlineSkillActivations,
+      holdUntilTurnEnds: options?.holdUntilTurnEnds,
     };
   }
 
@@ -2701,7 +2726,13 @@ export class KimiTUI {
     );
   }
 
-  private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
+  private sendMessage(
+    session: Session,
+    input: string,
+    options?: SendMessageOptions,
+    delivery: FollowUpDelivery = 'default',
+  ): void {
+    if (delivery === 'steer-draft' && this.trySteerDraft(session, input, options)) return;
     // Submission order must survive a mid-turn compaction: objectives queued
     // while compacting stay queued when the turn outlives the compaction, so
     // steering this input ahead of them would reorder the conversation.
@@ -2709,6 +2740,7 @@ export class KimiTUI {
     // new input; a non-steerable backlog (bash, slash-skill, inline-skill
     // bundle) cannot, and then this input queues behind it instead.
     if (
+      delivery !== 'queue' &&
       this.canSteerQueueIntoRunningTurn() &&
       this.state.queuedMessages.every(isSteerableQueuedMessage)
     ) {
@@ -2730,7 +2762,7 @@ export class KimiTUI {
       // A queued message re-leases its staged media at dequeue dispatch; the
       // pre-dispatch lease defers to the queue item's raw ids.
       this.staging.defer(options?.lease);
-      this.enqueueMessage(input, options);
+      this.enqueueMessage(input, delivery === 'queue' ? { ...options, holdUntilTurnEnds: true } : options);
       return;
     }
     this.sendMessageInternal(session, input, options);
@@ -2753,6 +2785,41 @@ export class KimiTUI {
       !this.deferUserMessages &&
       !this.state.appState.isCompacting
     );
+  }
+
+  private trySteerDraft(
+    session: Session,
+    input: string,
+    options: EnqueueMessageOptions | undefined,
+  ): boolean {
+    if (this.state.queuedMessageDispatchPending || !this.canManuallySteer()) return false;
+    this.staging.defer(options?.lease);
+    const draft = this.toQueuedMessage(input, options);
+    const queuedBefore = new Set(this.state.queuedMessages);
+    this.steeringQueuedMessages.add(draft);
+    this.updateQueueDisplay();
+    this.steerMessage(session, [toSteerInputItem(draft)], (outcome) => {
+      this.steeringQueuedMessages.delete(draft);
+      if (this.session !== session) return;
+      if (outcome === 'steered') this.programStatus.markUserSteer();
+      if (outcome === 'failed') {
+        const queuedLater = this.state.queuedMessages.findIndex((message) => !queuedBefore.has(message));
+        this.state.queuedMessages.splice(
+          queuedLater === -1 ? this.state.queuedMessages.length : queuedLater,
+          0,
+          draft,
+        );
+        this.track('input_queue');
+      }
+      this.updateQueueDisplay();
+      const queuedDuringSteer = this.state.queuedMessages.some((message) => !queuedBefore.has(message));
+      if (outcome === 'steered' && queuedDuringSteer && this.canSteerQueueIntoRunningTurn()) {
+        this.steerQueuedMessagesIntoRunningTurn();
+      } else {
+        this.drainQueueIfIdle();
+      }
+    });
+    return true;
   }
 
   steerQueuedMessagesIntoRunningTurn(manual = false): void {
@@ -2809,7 +2876,8 @@ export class KimiTUI {
           ),
         };
       });
-      this.steerMessage(session, items, (steered) => {
+      this.steerMessage(session, items, (outcome) => {
+        const steered = outcome === 'steered';
         for (const message of group) this.steeringQueuedMessages.delete(message);
         if (this.session !== session) return;
         if (steered) this.programStatus.markUserSteer();
@@ -2992,13 +3060,13 @@ export class KimiTUI {
   steerMessage(
     session: Session,
     input: readonly SteerInputItem[],
-    onSettled?: (steered: boolean) => void,
+    onSettled?: (outcome: SteerOutcome) => void,
     manual = false,
     occupiedRetry = false,
   ): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
       if (onSettled !== undefined) {
-        onSettled(false);
+        onSettled('failed');
       } else {
         for (const item of input) this.enqueueMessage(item.text, item);
       }
@@ -3027,7 +3095,7 @@ export class KimiTUI {
     } catch (error) {
       if (prepared !== undefined) this.releaseSkillArgumentMedia(prepared);
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
-      onSettled?.(false);
+      onSettled?.('failed');
       return;
     }
     const startsNewTurn = this.state.appState.streamingPhase === 'idle';
@@ -3085,7 +3153,7 @@ export class KimiTUI {
     if (onSettled !== undefined) {
       void request.then(
         () => {
-          onSettled(true);
+          onSettled('steered');
         },
         () => {},
       );
@@ -3093,13 +3161,13 @@ export class KimiTUI {
     this.staging.trackDispatch(stagingLease, request, (error) => {
       this.releaseSteerEntries(steeredEntries);
       if (this.session !== session) {
-        onSettled?.(false);
+        onSettled?.('failed');
         return;
       }
       const recovered = this.handlePromptConflict({
         session,
         error,
-        entries: prepared === undefined && !manual ? steeredEntries : undefined,
+        entries: manual ? undefined : steeredEntries,
         retried: occupiedRetry,
         retry: () => {
           this.steerMessage(session, input, onSettled, manual, true);
@@ -3116,7 +3184,7 @@ export class KimiTUI {
             input.map((item) => item.text).join('\n'),
             activations.length === 0 ? undefined : activations,
           );
-          onSettled?.(false);
+          onSettled?.('restored');
         },
       });
       if (recovered) {
@@ -3132,8 +3200,8 @@ export class KimiTUI {
       if (onSettled !== undefined) {
         this.staging.defer(stagingLease);
         if (prepared !== undefined) this.releaseSkillArgumentMedia(prepared);
-        if (prepared === undefined && !manual) this.removeTranscriptEntries(steeredEntries);
-        onSettled(false);
+        if (!manual) this.removeTranscriptEntries(steeredEntries);
+        onSettled('failed');
       }
     });
   }
@@ -3175,6 +3243,7 @@ export class KimiTUI {
 
   pushTranscriptEntry(entry: TranscriptEntry): void {
     this.state.transcriptEntries.push(entry);
+    this.trimTranscriptWindow();
   }
 
   setExternalEditorRunning(running: boolean): void {
@@ -4148,12 +4217,14 @@ export class KimiTUI {
     const entries = this.state.transcriptEntries;
     const entryIndex = entries.indexOf(entry);
     if (entryIndex < 0) return false;
+    entry.turnId = this.streamingUI.getTurnContext().turnId;
     entries.splice(entryIndex, 1);
     entries.push(entry);
     const component = this.state.transcriptContainer.children.find(
       (child) => getTranscriptComponentEntry(child) === entry,
     );
     if (component !== undefined) this.state.transcriptContainer.moveChildToEnd(component);
+    this.trimTranscriptWindow();
     this.state.ui.requestRender();
     return true;
   }
@@ -4274,15 +4345,6 @@ export class KimiTUI {
     if (this.state.appState.isReplaying) return false;
 
     const children = this.state.transcriptContainer.children;
-
-    // Trim whole turns by *position* in the child list rather than by entry
-    // lookup — otherwise only the (registered) user message would be removed and
-    // the rest of the turn would be left behind.
-    const boundaries: number[] = [];
-    for (let i = 0; i < children.length; i++) {
-      if (isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
-    }
-
     const turns = groupTurns(this.state.transcriptEntries);
 
     const toRemove = turnsToTrim(turns, TRANSCRIPT_MAX_TURNS, TRANSCRIPT_HYSTERESIS);
@@ -4298,40 +4360,36 @@ export class KimiTUI {
       }
     }
 
-    let boundariesToRemove = 0;
-    for (const entry of toRemove) {
-      if (
-        (entry.kind === 'user' ||
-          entry.kind === 'skill_activation' ||
-          entry.kind === 'plugin_command') &&
-        entry.turnId === undefined
-      ) {
-        boundariesToRemove++;
+    const retainedTurnIds = new Set<string>();
+    const trimmedTurnIds = new Set<string>();
+    for (const turn of turns) {
+      if (turn.turnId === undefined) continue;
+      if (turn.entries.some((entry) => toRemove.has(entry))) {
+        trimmedTurnIds.add(turn.turnId);
+      } else {
+        retainedTurnIds.add(turn.turnId);
       }
     }
-    if (boundariesToRemove === 0) {
-      this.state.transcriptEntries = this.state.transcriptEntries.filter((e) => !toRemove.has(e));
-      return true;
-    }
+    for (const turnId of retainedTurnIds) trimmedTurnIds.delete(turnId);
 
-    let boundariesSeen = 0;
-    let cutoff = 0;
-    for (let i = 0; i < children.length; i++) {
-      if (isTurnBoundaryComponent(children[i]!)) {
-        if (boundariesSeen === boundariesToRemove) {
-          cutoff = i;
-          break;
-        }
-        boundariesSeen++;
+    const firstRetainedIndex = children.findIndex((child) => {
+      const entry = getTranscriptComponentEntry(child);
+      if (entry !== undefined) return !toRemove.has(entry);
+      const turnId = getTranscriptComponentTurnId(child);
+      return turnId !== undefined && retainedTurnIds.has(turnId);
+    });
+    const unmarkedCutoff = firstRetainedIndex < 0 ? children.length : firstRetainedIndex;
+    const componentsToRemove = children.filter((child, index) => {
+      if (child instanceof WelcomeComponent) return false;
+      const entry = getTranscriptComponentEntry(child);
+      if (entry !== undefined) return toRemove.has(entry);
+      const turnId = getTranscriptComponentTurnId(child);
+      if (turnId !== undefined) {
+        if (retainedTurnIds.has(turnId)) return false;
+        if (trimmedTurnIds.has(turnId)) return true;
       }
-    }
-
-    const componentsToRemove: Component[] = [];
-    for (let i = 0; i < cutoff; i++) {
-      const child = children[i]!;
-      if (child instanceof WelcomeComponent) continue;
-      componentsToRemove.push(child);
-    }
+      return index < unmarkedCutoff;
+    });
     for (const child of componentsToRemove) {
       // pi-tui Container.removeChild (not a DOM node); `child.remove()` does not exist.
       // oxlint-disable-next-line unicorn/prefer-dom-node-remove
@@ -4395,7 +4453,7 @@ export class KimiTUI {
         assistantIndices.push(i);
         continue;
       }
-      stepIndices.push(i);
+      if (!isPinnedToolCallComponent(child)) stepIndices.push(i);
     }
 
     // Fold the oldest steps / assistant messages beyond their respective caps;
@@ -4429,6 +4487,10 @@ export class KimiTUI {
       summary = new StepSummaryComponent();
       summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
     }
+    markTranscriptComponentTurnId(
+      summary,
+      this.streamingUI.getTurnContext().turnId ?? getTranscriptComponentTurnId(children[turnStart]!),
+    );
 
     // Rebuild children: keep everything except the merged steps, with the summary
     // sitting right after the user message.
@@ -4478,7 +4540,7 @@ export class KimiTUI {
         const child = children[i]!;
         if (child instanceof StepSummaryComponent) summaryIndex = i;
         else if (child instanceof AssistantMessageComponent) assistantIndices.push(i);
-        else stepIndices.push(i);
+        else if (!isPinnedToolCallComponent(child)) stepIndices.push(i);
       }
 
       const stepMergeCount =
@@ -4511,6 +4573,7 @@ export class KimiTUI {
           summary = new StepSummaryComponent();
           summary.addCounts(thinkingCount, toolCount, assistantMergeCount);
         }
+        markTranscriptComponentTurnId(summary, getTranscriptComponentTurnId(children[turnStart]!));
         newChildren.push(summary);
         for (const idx of toMergeIndices) toDispose.push(children[idx]!);
         const toMergeSet = new Set(toMergeIndices);
@@ -5256,6 +5319,10 @@ export class KimiTUI {
     this.mountEditorReplacement(
       new HelpPanelComponent({
         commands: this.getSlashCommands(),
+        shortcuts: keyboardShortcuts(
+          resolveFollowUpBehavior(this.state.appState.followUpBehavior),
+          isKittyProtocolActive(),
+        ),
         onClose: () => {
           this.hideHelpPanel();
         },
@@ -5606,7 +5673,11 @@ export class KimiTUI {
 }
 
 function isSteerableQueuedMessage(message: QueuedMessage): message is QueuedPromptMessage {
-  return isPromptQueuedMessage(message) && message.inlineSkillActivations === undefined;
+  return (
+    isPromptQueuedMessage(message) &&
+    message.inlineSkillActivations === undefined &&
+    message.holdUntilTurnEnds !== true
+  );
 }
 
 function toSteerInputItem(message: QueuedPromptMessage): SteerInputItem {

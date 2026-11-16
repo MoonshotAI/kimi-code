@@ -1,8 +1,8 @@
 import { daemonFileRefFromPart, parseDaemonFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
-import { stripBundledSkillBlocks, type SteerMessage } from '@moonshot-ai/agent-core-v2/human/agent/origin';
+import { stripBundledSkillBlocks, type SteerMessage } from '@moonshot-ai/core/llm/origin';
 import { fromCorePart } from '@moonshot-ai/agent-core-v2/human/message';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 

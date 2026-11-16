@@ -1,4 +1,4 @@
-import type { ContentPart, SystemMessage, ToolDescription as Tool, UserMessage } from '#human/llm/message';
+import type { ContentPart, SystemMessage, ToolDescription as Tool, UserMessage } from '@moonshot-ai/core/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 

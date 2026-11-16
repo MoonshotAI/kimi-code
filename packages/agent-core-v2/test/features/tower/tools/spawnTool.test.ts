@@ -31,7 +31,6 @@ import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -641,9 +640,12 @@ describe('TowerSpawnTool', () => {
   it('falls back to the bound model default_effort when the section declares none', async () => {
     secondaryModel = { model: 'cheap/fast' };
     modelMeta['cheap/fast'] = {
-      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
-      supportEfforts: ['low', 'high', 'max'],
-      defaultEffort: 'max',
+      spec: {
+        provider: 'test',
+        name: 'cheap/fast',
+        capability: { thinking: true },
+        thinking: { supportEfforts: ['low', 'high', 'max'], defaultEffort: 'max' },
+      },
     };
 
     const result = await execute(WORKER_ARGS);
@@ -659,9 +661,12 @@ describe('TowerSpawnTool', () => {
     secondaryModel = { model: 'cheap/fast' };
     thinkingEnabled = false;
     modelMeta['cheap/fast'] = {
-      capabilities: { ...UNKNOWN_CAPABILITY, thinking: true },
-      supportEfforts: ['low', 'high', 'max'],
-      defaultEffort: 'max',
+      spec: {
+        provider: 'test',
+        name: 'cheap/fast',
+        capability: { thinking: true },
+        thinking: { supportEfforts: ['low', 'high', 'max'], defaultEffort: 'max' },
+      },
     };
 
     const result = await execute(WORKER_ARGS);

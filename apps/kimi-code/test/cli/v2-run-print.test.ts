@@ -450,8 +450,9 @@ describe('runV2Print', () => {
 
     const promptService = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
     expect(promptService.submit).toHaveBeenCalledWith({
-      message: { role: 'user', content: [{ type: 'text', text: 'say hello' }] },
-      meta: { origin: { kind: 'user' } },
+      role: 'user',
+      content: [{ type: 'text', text: 'say hello' }],
+      attributes: { origin: { kind: 'user' } },
     });
     // Version banner is first, then the rendered assistant output.
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');

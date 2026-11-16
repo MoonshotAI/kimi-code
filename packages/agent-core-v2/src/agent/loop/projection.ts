@@ -2,7 +2,7 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { renderToolResultForModel, shouldRenderWallTime } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
-import type { ContentPart, Message } from '#human/llm/message';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
 
 export type ProjectionAnomaly =
   | { readonly kind: 'tool_result_reordered'; readonly toolCallId: string }
@@ -82,7 +82,7 @@ function sliceLayout(history: readonly ContextMessage[]): SliceLayout {
   let sizing = true;
   let lastNonToolIndex = -1;
   for (const [index, message] of history.entries()) {
-    if (message.partial === true || message.role === 'tool') continue;
+    if (message.partial === true || message.attributes?.partial === true || message.role === 'tool') continue;
     lastNonToolIndex = index;
     if (message.role === 'assistant') sizing = false;
   }
@@ -131,7 +131,7 @@ function pairBlocks(
   };
 
   for (const [index, message] of history.entries()) {
-    if (message.partial === true) continue;
+    if (message.partial === true || message.attributes?.partial === true) continue;
     if (message.role === 'assistant') {
       for (const call of message.toolCalls) toolNames.set(call.id, call.name);
     }
@@ -295,13 +295,22 @@ function projectedContent(
   const toolName = source.role === 'tool' && source.toolCallId !== undefined
     ? toolNames.get(source.toolCallId)
     : undefined;
+  const toolAttributes = source.role === 'tool' ? source.attributes : undefined;
+  const durationMs = source.durationMs ?? toolAttributes?.durationMs;
+  const rawNote = source.note ?? toolAttributes?.note;
+  const lastPart = source.content.at(-1);
+  const noteRendered =
+    rawNote !== undefined &&
+    rawNote.length > 0 &&
+    lastPart?.type === 'text' &&
+    (lastPart.text === rawNote || lastPart.text.endsWith(`\n${rawNote}`));
   const content =
     source.role === 'tool'
       ? renderToolResultForModel({
           output: outputFromToolContent(source.content),
-          isError: source.isError,
-          note: source.note,
-          durationMs: toolName !== undefined && shouldRenderWallTime(toolName) ? source.durationMs : undefined,
+          isError: source.isError ?? toolAttributes?.isError,
+          note: noteRendered ? undefined : rawNote,
+          durationMs: toolName !== undefined && shouldRenderWallTime(toolName) ? durationMs : undefined,
         })
       : source.content;
   return cleanContent(source, content, onAnomaly);
@@ -372,12 +381,37 @@ function hasDeclaredTools(message: ContextMessage): boolean {
 function toWireMessage(message: ContextMessage, content: ContentPart[]): Message {
   switch (message.role) {
     case 'system':
-      return { role: 'system', content, tools: message.tools };
+      return {
+        role: 'system',
+        content,
+        tools: message.tools,
+        ...(message.attributes === undefined ? {} : { attributes: message.attributes }),
+      };
     case 'user':
-      return { role: 'user', content };
+      return {
+        role: 'user',
+        content,
+        ...(message.attributes === undefined ? {} : { attributes: message.attributes }),
+      };
     case 'assistant':
-      return { role: 'assistant', content, toolCalls: message.toolCalls };
-    case 'tool':
-      return { role: 'tool', content, toolCallId: message.toolCallId };
+      return {
+        role: 'assistant',
+        content,
+        toolCalls: message.toolCalls,
+        ...(message.attributes === undefined ? {} : { attributes: message.attributes }),
+      };
+    case 'tool': {
+      if (message.attributes === undefined) {
+        return { role: 'tool', content, toolCallId: message.toolCallId };
+      }
+      const { isError: _isError, note: _note, durationMs: _durationMs, ...rest } = message.attributes;
+      const attributes = Object.values(rest).some((value) => value !== undefined) ? rest : undefined;
+      return {
+        role: 'tool',
+        content,
+        toolCallId: message.toolCallId,
+        ...(attributes === undefined ? {} : { attributes }),
+      };
+    }
   }
 }

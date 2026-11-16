@@ -11,7 +11,7 @@ import {
 import { isUndoAnchorTurnPrompt, isValidUndoCount } from '#/agent/undo/turnUndo';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { defineState, registerUndoableProtocol } from '#/state/state';
 
 import type { TurnEndReason, TurnInterruptReason } from './turnEvents';

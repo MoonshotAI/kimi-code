@@ -2,7 +2,7 @@ import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import type { StateKey } from '#/_base/state/stateRegistry';
 import type { IDisposable } from '#/_base/di/lifecycle';
-import type { Message } from '#human/llm/message';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import type { Event2 } from '#/app/event/event2';
 import {
   type AgentModel,

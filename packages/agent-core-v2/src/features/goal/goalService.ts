@@ -764,8 +764,9 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
   };
   const loop = context.runtime.get(IAgentLoopService);
   const { id } = loop.submit({
-    message: { role: 'user', content: message.content },
-    meta: { origin: message.origin },
+    role: 'user',
+    content: message.content,
+    attributes: { origin: message.origin },
   });
   const handle = loop.promptHandle(id)!;
   const pending: PendingContinuation = { promptId: id, goalId };
@@ -1200,7 +1201,7 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
       for (const tool of step.tools) {
         const output = typeof tool.result?.output === 'string'
           ? tool.result.output
-          : [...(tool.result?.output ?? tool.outcome.entry.message.content)];
+          : [...(tool.result?.output ?? tool.outcome.message.content)];
         const result: ExecutableToolResult = {
           output,
           isError: tool.result?.isError ?? (tool.outcome.type === 'succeeded' ? undefined : true),

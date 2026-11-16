@@ -23,9 +23,9 @@ import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { ImageUploader, VideoUploader } from '#/llm-adapter/model/media';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
-import type { LlmFiles } from '#human/llm/request';
-import { generateModel, type InitializedLlmRequester, type LlmRequestInitialization } from '#/llm-adapter/model/generate';
-import { contentsOf, createRequester } from '#human/llm/requester';
+import type { LlmFiles } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
+import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
@@ -35,9 +35,8 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '#human/llm/message';
-import type { LlmCredentialProvider } from '#human/llm-requester/requester';
+import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '@moonshot-ai/core/llm/message';
+import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -205,55 +204,53 @@ function requester(opts: {
 }): TestMediaResolution {
   const model: TestMediaResolution['model'] = {
     id: 'm',
-    name: 'stub',
     aliases: [],
     protocol: opts.protocol ?? 'openai',
-    baseUrl: opts.baseUrl,
-    headers: opts.headers ?? {},
-    capabilities: {
-      video_in: opts.videoIn ?? true,
-      image_in: opts.imageIn ?? true,
-    } as unknown as ModelCapability,
-    maxContextSize: 1000,
-    alwaysThinking: false,
+    spec: {
+      provider: opts.providerType ?? 'kimi',
+      name: 'stub',
+      capability: {
+        video_in: opts.videoIn ?? true,
+        image_in: opts.imageIn ?? true,
+      },
+      thinking: { alwaysThinking: false },
+      maxContextSize: 1000,
+    },
+    endpoint: {
+      baseUrl: opts.baseUrl,
+      headers: opts.headers ?? {},
+      credentials: opts.credentialProvider,
+    },
     providerName: 'p',
     providerType: opts.providerType ?? 'kimi',
-    credentialProvider: opts.credentialProvider,
   };
-  const files: LlmFiles | undefined =
-    opts.uploadVideo === undefined && opts.uploadImage === undefined
-      ? undefined
-      : {
-          kinds: new Set([
-            ...(opts.uploadVideo === undefined ? [] : ['video' as const]),
-            ...(opts.uploadImage === undefined ? [] : ['image' as const]),
-          ]),
-          upload: async (file, { signal }) => {
-            if (file.kind === 'video') {
-              const part = await opts.uploadVideo!(
-                { data: file.data, mimeType: file.mimeType, filename: file.filename },
-                { signal },
-              );
-              return part.videoUrl;
-            }
-            if (file.kind === 'image') {
-              const part = await opts.uploadImage!(
-                { data: file.data, mimeType: file.mimeType, filename: file.filename },
-                { signal },
-              );
-              return part.imageUrl;
-            }
-            throw new Error('unused audio upload');
-          },
-        };
+  const files: LlmFiles = {
+    kinds: new Set([
+      ...(opts.uploadVideo === undefined ? [] : ['video' as const]),
+      ...(opts.uploadImage === undefined ? [] : ['image' as const]),
+    ]),
+    upload: async (file, { signal }) => {
+      if (file.kind === 'video' && opts.uploadVideo !== undefined) {
+        const part = await opts.uploadVideo(
+          { data: file.data, mimeType: file.mimeType, filename: file.filename },
+          { signal },
+        );
+        return part.videoUrl;
+      }
+      if (file.kind === 'image' && opts.uploadImage !== undefined) {
+        const part = await opts.uploadImage(
+          { data: file.data, mimeType: file.mimeType, filename: file.filename },
+          { signal },
+        );
+        return part.imageUrl;
+      }
+      throw new Error(`unexpected ${file.kind} upload`);
+    },
+  };
   const initial = new ProtocolAdapterRegistry().request(model);
   return {
     model,
-    requester: createRequester().with({
-      protocol: contentsOf(initial).protocol as LlmRequestInitialization['protocol'],
-      model: contentsOf(initial).model as LlmRequestInitialization['model'],
-      endpoint: { ...contentsOf(initial).endpoint, files },
-    }),
+    requester: initial.with({ endpoint: { files } }),
   };
 }
 
@@ -973,19 +970,28 @@ describe('AgentMediaResolverService image upload', () => {
       baseUrl: 'https://example.test/v1',
       credentialProvider: createStaticCredentialProvider('YOUR_API_KEY'),
     });
-    const routed = new ProtocolAdapterRegistry().request(model, { stream: false }).with({ endpoint: { fetch: mockFetch } });
+    const routed = new ProtocolAdapterRegistry()
+      .request(model, { protocol: { stream: false } })
+      .with({ endpoint: { fetch: mockFetch } });
     const media = createAgentMediaPolicy(resolver(new Map(), sessionDir, mediaStore), model, routed);
     for (const history of [
       messages,
       [...messages, { role: 'assistant', content: [{ type: 'text', text: 'Done.' }], toolCalls: [] }] satisfies Message[],
     ]) {
-      const events = generateModel(routed, { systemPrompt: '', messages: history }, undefined, undefined, {
-        recoveries: [media.recovery],
-        resolvers: [media.toolResolver, media.resolver],
-      });
+      const events = streamLlmRequest(
+        routed.request({
+          profile: { systemPrompt: '' },
+          content: { messages: history },
+          policy: {
+            recoveries: [media.recovery],
+            resolvers: [media.toolResolver, media.resolver],
+          },
+        }),
+        { signal: new AbortController().signal },
+      );
       const eventTypes: string[] = [];
       for await (const event of events) eventTypes.push(event.type);
-      expect(eventTypes).toContain('finish');
+      expect(eventTypes).toContain('llm.ended');
     }
     expect(urls).toEqual(['/v1/files', '/v1/chat/completions', '/v1/chat/completions']);
     for (const body of bodies) {

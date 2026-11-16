@@ -25,6 +25,8 @@ export interface FoldedAgentReplay {
   readonly replay: readonly AgentReplayRecord[];
   readonly toolStore: Readonly<Record<string, unknown>>;
   readonly userTurnCount?: number;
+  readonly warning?: string;
+  readonly error?: string;
 }
 
 const EMPTY_FOLD: FoldedAgentReplay = { replay: [], toolStore: {} };
@@ -45,23 +47,87 @@ export async function foldAgentWireReplay(
     replay: limitAgentReplayByTurns(full.replay, turnLimit),
     toolStore: full.toolStore,
     userTurnCount: full.userTurnCount,
+    warning: full.warning,
+    error: full.error,
   };
 }
 
 async function foldAgentWireReplayFull(wirePath: string): Promise<FoldedAgentReplay> {
+  let content: string;
   try {
-    const userTurns = new SurveyTurnCounter();
-    const records = parseWireRecords(await readFile(wirePath, 'utf-8'), userTurns);
-    if (records.length === 0) return { ...EMPTY_FOLD, userTurnCount: userTurns.count };
-    const folded = foldWireRecords(records, fromPersistentWireRecord);
+    content = await readFile(wirePath, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return EMPTY_FOLD;
+    return { ...EMPTY_FOLD, error: formatReplayError(error) };
+  }
+  const userTurns = new SurveyTurnCounter();
+  const { entries, skippedLines } = parseWireRecords(content, userTurns);
+  if (entries.length === 0) {
+    if (skippedLines.length > 0) {
+      return { ...EMPTY_FOLD, error: formatSkippedRecordsWarning(skippedLines) };
+    }
+    return { ...EMPTY_FOLD, userTurnCount: userTurns.count };
+  }
+  try {
+    const folded = foldWireRecords(
+      entries.map((entry) => entry.record),
+      fromPersistentWireRecord,
+    );
     return {
       replay: folded.replay.map(mapReplayRecord),
       toolStore: folded.toolStore,
       userTurnCount: userTurns.count,
+      warning: formatSkippedRecordsWarning(skippedLines),
     };
-  } catch {
-    return EMPTY_FOLD;
+  } catch (error) {
+    return salvageFoldedReplay(entries, skippedLines, error);
   }
+}
+
+function salvageFoldedReplay(
+  entries: readonly ParsedWireEntry[],
+  initialSkippedLines: readonly number[],
+  initialError: unknown,
+): FoldedAgentReplay {
+  const header = entries[0]?.record.type === 'metadata' ? entries[0] : undefined;
+  if (header !== undefined) {
+    try {
+      foldWireRecords([header.record], fromPersistentWireRecord);
+    } catch (error) {
+      return { ...EMPTY_FOLD, error: formatReplayError(error) };
+    }
+  }
+  const kept: WireRecord[] = header === undefined ? [] : [header.record];
+  const skippedLines = [...initialSkippedLines];
+  for (const entry of header === undefined ? entries : entries.slice(1)) {
+    const probe = header === undefined ? [entry.record] : [header.record, entry.record];
+    try {
+      const probed = foldWireRecords(probe, fromPersistentWireRecord);
+      probed.replay.map(mapReplayRecord);
+      kept.push(entry.record);
+    } catch {
+      skippedLines.push(entry.lineNumber);
+    }
+  }
+  const hasContent = kept.length > (header === undefined ? 0 : 1);
+  if (!hasContent) {
+    return { ...EMPTY_FOLD, error: formatReplayError(initialError) };
+  }
+  try {
+    const folded = foldWireRecords(kept, fromPersistentWireRecord);
+    const sortedLines = skippedLines.toSorted((a, b) => a - b);
+    return {
+      replay: folded.replay.map(mapReplayRecord),
+      toolStore: folded.toolStore,
+      warning: formatSkippedRecordsWarning(sortedLines),
+    };
+  } catch (error) {
+    return { ...EMPTY_FOLD, error: formatReplayError(error) };
+  }
+}
+
+function formatReplayError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function mapReplayRecord(record: V2AgentReplayRecord): AgentReplayRecord {
@@ -91,25 +157,49 @@ function mapReplayRecord(record: V2AgentReplayRecord): AgentReplayRecord {
   return record as unknown as AgentReplayRecord;
 }
 
-function parseWireRecords(content: string, userTurns: SurveyTurnCounter): WireRecord[] {
+interface ParsedWireEntry {
+  readonly lineNumber: number;
+  readonly record: WireRecord;
+}
+
+function parseWireRecords(
+  content: string,
+  userTurns: SurveyTurnCounter,
+): { entries: ParsedWireEntry[]; skippedLines: number[] } {
   const lines = content.split('\n');
-  const records: WireRecord[] = [];
+  const entries: ParsedWireEntry[] = [];
+  const skippedLines: number[] = [];
   for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
     if (line.length === 0) continue;
     try {
-      const record = JSON.parse(line) as WireRecord;
-      userTurns.observe(record, index);
-      records.push(record);
-    } catch (error) {
-      if (index === lines.length - 1) {
-        userTurns.invalidate();
-        break;
-      }
-      throw error;
+      const parsed: unknown = JSON.parse(line);
+      if (!isWireRecordObject(parsed)) throw new SyntaxError('Malformed wire record');
+      userTurns.observe(parsed, index);
+      entries.push({ lineNumber: index + 1, record: parsed });
+    } catch {
+      userTurns.invalidate();
+      if (index === lines.length - 1) break;
+      skippedLines.push(index + 1);
     }
   }
-  return records;
+  return { entries, skippedLines };
+}
+
+function formatSkippedRecordsWarning(skippedLines: readonly number[]): string | undefined {
+  if (skippedLines.length === 0) return undefined;
+  const noun = skippedLines.length === 1 ? 'record' : 'records';
+  const label = skippedLines.length === 1 ? 'line' : 'lines';
+  return `Skipped ${skippedLines.length} corrupt ${noun} while replaying session history (${label} ${skippedLines.join(', ')}).`;
+}
+
+function isWireRecordObject(value: unknown): value is WireRecord {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>)['type'] === 'string'
+  );
 }
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -117,13 +207,6 @@ const TYPE_PREFIX = '{"type":"';
 const TYPE_MARKER = '"type"';
 const TYPE_MARKER_BYTES = Buffer.from(TYPE_MARKER);
 const CARRYOVER_TYPE_PREFIXES = ['goal.', 'tools.update_store', 'forked'];
-const FATAL_SCAN_TYPE_PREFIXES = [
-  ...CARRYOVER_TYPE_PREFIXES,
-  'context.undo',
-  'context.clear',
-  'context.apply_compaction',
-  'turn.cancel',
-];
 const HEAD_TYPE_PREFIXES = [
   ...CARRYOVER_TYPE_PREFIXES,
   'context.undo',
@@ -164,7 +247,9 @@ async function foldAgentWireReplayWindowed(
 ): Promise<FoldedAgentReplay | undefined> {
   const handle = await open(wirePath, 'r');
   try {
-    const { size } = await handle.stat();
+    const stats = await handle.stat();
+    if (stats.isDirectory()) return undefined;
+    const { size } = stats;
     if (size === 0) return { ...EMPTY_FOLD, userTurnCount: 0 };
     const scan = new WireReplayScan(turnLimit);
     let carry = Buffer.alloc(0);
@@ -260,9 +345,11 @@ class WireReplayScan {
     if (firstLine.length === 0) return undefined;
     let firstRecord: WireRecord;
     try {
-      firstRecord = JSON.parse(firstLine) as WireRecord;
+      const parsed: unknown = JSON.parse(firstLine);
+      if (!isWireRecordObject(parsed)) return undefined;
+      firstRecord = parsed;
     } catch {
-      return EMPTY_FOLD;
+      return undefined;
     }
     this.userTurns.observe(firstRecord, 0);
     const boundaryFound = this.boundaryStart >= 0;
@@ -327,18 +414,7 @@ class WireReplayScan {
       if (tolerate) observeSurveyLine(this.userTurns, joined, start);
       return;
     }
-    let record: WireRecord | undefined;
-    try {
-      record = parseJsonLine(line, tolerate);
-    } catch (error) {
-      const recoverable =
-        sniffed === undefined &&
-        hasTypeMarker(joined, 0, joined.length, HEAD_TYPE_PREFIXES) &&
-        !hasTypeMarker(joined, 0, joined.length, FATAL_SCAN_TYPE_PREFIXES);
-      if (!recoverable) throw error;
-      this.userTurns.invalidate();
-      return;
-    }
+    const record = parseJsonLine(line, tolerate);
     if (record === undefined) {
       this.userTurns.invalidate();
       return;
@@ -474,16 +550,13 @@ class WireReplayScan {
         }
         let record: WireRecord;
         try {
-          record = JSON.parse(line) as WireRecord;
+          const parsed: unknown = JSON.parse(line);
+          if (!isWireRecordObject(parsed)) throw new SyntaxError('Malformed wire record');
+          record = parsed;
         } catch (error) {
-          const fatal = startsWithTypePrefix(bytes, 0)
-            ? hasTypePrefixAt(bytes, TYPE_PREFIX.length, FATAL_SCAN_TYPE_PREFIXES)
-            : hasTypeMarker(bytes, 0, bytes.length, FATAL_SCAN_TYPE_PREFIXES);
-          if (fatal || (!selected && (!lastLine || !tolerateTailLine))) throw error;
+          if (!lastLine || !tolerateTailLine) throw error;
           this.userTurns.invalidate();
-          if (lastLine) return;
-          lineStart = lineEnd + 1;
-          continue;
+          return;
         }
         this.userTurns.observe(record, dataFileStart + lineStart);
         const recordType = record['type'];
@@ -525,7 +598,9 @@ function decodeLine(bytes: Buffer): string {
 
 function parseJsonLine(line: string, tolerate: boolean): WireRecord | undefined {
   try {
-    return JSON.parse(line) as WireRecord;
+    const parsed: unknown = JSON.parse(line);
+    if (!isWireRecordObject(parsed)) throw new SyntaxError('Malformed wire record');
+    return parsed;
   } catch (error) {
     if (tolerate) return undefined;
     throw error;

@@ -21,7 +21,7 @@
 
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
-import type { ContentPart, ToolCall } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart, ToolCall } from '@moonshot-ai/core/llm/message';
 
 import {
   assistantDeltaToSessionUpdate,

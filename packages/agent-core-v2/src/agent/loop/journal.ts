@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { freeze } from 'immer';
 
 import { toKimiErrorPayload } from '#/errors';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { IWireService } from '#/wire/wire';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 import type { PartsTransformer, WireRecord } from '#/wire/record';
@@ -22,21 +24,17 @@ import {
   foldSettle,
   type LoopRecordedEvent,
 } from '#/agent/contextMemory/loopEventFold';
-import {
-  type AssistantEntry,
-  type HistoryMessage,
-  type UserEntry,
-} from '#human/agent/turn';
+import type { AssistantMessage, Message, UserMessage } from '@moonshot-ai/core/llm/message';
 
 import { contextFromHistoryEntry, historyFromContext } from './history';
 import { TurnPrompt } from './turnOps';
 import type {
   LoopEmitted,
   LoopInput,
-  RemindEntry,
+  RemindMessage,
   StepOutcome,
   TurnOutcome,
-} from './core/index';
+} from '@moonshot-ai/core/loop/index';
 
 export interface LoopJournalSnapshot {
   readonly input: LoopInput;
@@ -50,7 +48,7 @@ interface TurnClock {
 }
 
 interface PendingTurn {
-  readonly entry?: UserEntry;
+  readonly entry?: UserMessage;
   readonly trigger: 'normal' | 'notify' | 'continue';
   prompted: boolean;
 }
@@ -59,18 +57,18 @@ interface StepJournal {
   readonly uuid: string;
   readonly streamedBlocks: Map<number, { startedAt: number; endedAt: number }>;
   started: boolean;
-  assistant?: AssistantEntry;
+  assistant?: AssistantMessage;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function entryKey(entry: RemindEntry): string {
+function entryKey(entry: RemindMessage): string {
   return JSON.stringify([
-    entry.message.role,
-    entry.message.content,
-    'toolCallId' in entry.message ? entry.message.toolCallId : undefined,
+    entry.role,
+    entry.content,
+    'toolCallId' in entry ? entry.toolCallId : undefined,
   ]);
 }
 
@@ -165,12 +163,12 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
         profile = reduceLoopActiveTools(profile ?? EMPTY_LOOP_PROFILE, undefined);
         break;
       case 'context.append_message':
-        context = foldAppendMessage(context, record['message'] as ContextMessage);
+        context = foldAppendMessage(context, record['message'] as ContextMessage, true);
         break;
       case 'context.append_loop_event': {
         const event = record['event'] as LoopRecordedEvent;
         requestingStep = event.type === 'step.begin' ? event : undefined;
-        context = foldLoopEvent(context, event);
+        context = foldLoopEvent(context, event, true);
         break;
       }
       case 'context.apply_compaction':
@@ -178,7 +176,7 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
           context,
           record as unknown as Parameters<typeof applyContextCompactionRecord>[1],
         );
-        if (requestingStep !== undefined) context = foldLoopEvent(context, requestingStep);
+        if (requestingStep !== undefined) context = foldLoopEvent(context, requestingStep, true);
         break;
       case 'context.clear':
         context = [];
@@ -186,7 +184,7 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
         break;
     }
   }
-  context = foldSettle(context);
+  context = freeze(foldSettle(context), true);
   return {
     profile,
     profileBound,
@@ -257,8 +255,8 @@ function stepKey(turnId: number, step: number): string {
   return `${turnId}:${step}`;
 }
 
-function origin(entry: UserEntry): PromptOrigin {
-  return (entry.meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
+function origin(entry: UserMessage): PromptOrigin {
+  return (entry.attributes?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
 }
 
 function normalizeFinishReason(reason: string): string {
@@ -268,7 +266,7 @@ function normalizeFinishReason(reason: string): string {
   return reason;
 }
 
-function stepFinishReason(outcome: StepOutcome, assistant: AssistantEntry | undefined): string {
+function stepFinishReason(outcome: StepOutcome, assistant: AssistantMessage | undefined): string {
   if (outcome.type === 'done' && outcome.cause?.reason === 'steered') return 'interrupted';
   switch (outcome.type) {
     case 'failed':
@@ -277,8 +275,8 @@ function stepFinishReason(outcome: StepOutcome, assistant: AssistantEntry | unde
     case 'aborted':
       return 'interrupted';
     default: {
-      const finish = assistant?.meta?.finish?.finishReason;
-      if (finish === 'tool_calls' && assistant?.message.toolCalls.length === 0) return 'other';
+      const finish = assistant?.attributes?.finish?.finishReason;
+      if (finish === 'tool_calls' && assistant?.toolCalls.length === 0) return 'other';
       if (finish !== undefined && finish !== null) return normalizeFinishReason(finish);
       return outcome.type === 'continue' ? 'tool_use' : 'end_turn';
     }
@@ -298,8 +296,8 @@ function turnReason(outcome: TurnOutcome): 'completed' | 'cancelled' | 'failed' 
   }
 }
 
-function toolArguments(entry: AssistantEntry, toolCallId: string): unknown {
-  const args = entry.message.toolCalls.find((call) => call.id === toolCallId)?.arguments;
+function toolArguments(entry: AssistantMessage, toolCallId: string): unknown {
+  const args = entry.toolCalls.find((call) => call.id === toolCallId)?.arguments;
   if (args === undefined || args === null) return undefined;
   try {
     return JSON.parse(args) as unknown;
@@ -309,8 +307,8 @@ function toolArguments(entry: AssistantEntry, toolCallId: string): unknown {
 }
 
 export class LoopJournal {
-  private readonly normal: UserEntry[] = [];
-  private readonly notify: UserEntry[] = [];
+  private readonly normal: UserMessage[] = [];
+  private readonly notify: UserMessage[] = [];
   private readonly steps = new Map<string, StepJournal>();
   private readonly toolCallUuids = new Map<string, string>();
   private turn: PendingTurn | undefined;
@@ -337,23 +335,23 @@ export class LoopJournal {
   append(event: LoopEmitted): void {
     switch (event.type) {
       case 'prompt.submitted':
-        this.normal.push(event.entry);
+        this.normal.push(event.message);
         return;
       case 'prompt.notified':
-        this.notify.push(event.entry);
+        this.notify.push(event.message);
         return;
       case 'prompt.canceled':
         if (event.canceled) {
-          const index = this.normal.findIndex((entry) => entry.meta?.promptId === event.promptId);
+          const index = this.normal.findIndex((entry) => entry.attributes?.promptId === event.promptId);
           if (index >= 0) this.normal.splice(index, 1);
         }
         return;
       case 'prompt.steered': {
-        const entries = event.entries ?? [];
+        const entries = event.messages ?? [];
         if (entries.length === 0) return;
         const ids = new Set(event.promptIds);
         for (let index = this.normal.length - 1; index >= 0; index -= 1) {
-          if (ids.has(this.normal[index]!.meta?.promptId ?? '')) this.normal.splice(index, 1);
+          if (ids.has(this.normal[index]!.attributes?.promptId ?? '')) this.normal.splice(index, 1);
         }
         this.notify.push(...entries);
         return;
@@ -362,7 +360,7 @@ export class LoopJournal {
         this.turnId = event.turnId;
         if (event.trigger === 'normal') this.normal.shift();
         this.turn = {
-          entry: event.entry,
+          entry: event.message,
           trigger: event.trigger,
           prompted: false,
         };
@@ -396,8 +394,8 @@ export class LoopJournal {
             turnId: String(requesting.turnId),
             step: requesting.step,
             finishReason: 'error',
-            usage: step.assistant?.meta?.usage,
-            messageId: step.assistant?.meta?.messageId,
+            usage: step.assistant?.attributes?.usage,
+            messageId: step.assistant?.attributes?.messageId,
           });
           this.steps.delete(key);
         }
@@ -434,22 +432,22 @@ export class LoopJournal {
           name: event.toolCall.name,
           args: toolArguments(assistant, event.toolCall.id),
           extras: event.toolCall.extras,
-          display: event.display,
+          display: event.display as ToolInputDisplay | undefined,
         });
         return;
       }
       case 'tool.ended': {
         if (!this.toolCallUuids.has(event.toolCallId)) return;
-        const entry = event.outcome.entry;
+        const entry = event.outcome.message;
         this.writeLoopEvent({
           type: 'tool.result',
           parentUuid: this.toolCallUuids.get(event.toolCallId) ?? randomUUID(),
           toolCallId: event.toolCallId,
           result: Object.fromEntries(Object.entries(event.result ?? {
-            output: entry.message.content,
-            isError: entry.meta?.isError,
-            note: entry.meta?.note,
-            durationMs: entry.meta?.durationMs,
+            output: entry.content,
+            isError: entry.attributes?.isError,
+            note: entry.attributes?.note,
+            durationMs: entry.attributes?.durationMs,
           }).filter(([, value]) => value !== undefined)) as Extract<LoopRecordedEvent, { type: 'tool.result' }>['result'],
         });
         return;
@@ -471,7 +469,7 @@ export class LoopJournal {
           turnId: String(event.turnId),
           step: event.step,
           finishReason: stepFinishReason(event.outcome, assistant),
-          usage: assistant?.meta?.usage,
+          usage: assistant?.attributes?.usage,
           llmFirstTokenLatencyMs: event.timing?.firstTokenLatencyMs ?? event.llmTiming?.llmFirstTokenLatencyMs,
           llmStreamDurationMs: event.timing?.streamDurationMs ?? event.llmTiming?.llmStreamDurationMs,
           llmRequestBuildMs: event.timing?.requestBuildMs,
@@ -479,9 +477,9 @@ export class LoopJournal {
           llmServerDecodeMs: event.timing?.serverDecodeMs,
           llmClientConsumeMs: event.timing?.clientConsumeMs,
           llmClientBlockedMs: event.timing?.clientBlockedMs,
-          messageId: assistant?.meta?.messageId,
-          providerFinishReason: assistant?.meta?.finish?.finishReason ?? undefined,
-          rawFinishReason: assistant?.meta?.finish?.rawFinishReason ?? undefined,
+          messageId: assistant?.attributes?.messageId,
+          providerFinishReason: assistant?.attributes?.finish?.finishReason ?? undefined,
+          rawFinishReason: assistant?.attributes?.finish?.rawFinishReason ?? undefined,
         });
         return;
       }
@@ -524,17 +522,17 @@ export class LoopJournal {
 
   private appendMessage(event: Extract<LoopEmitted, { type: 'message.appended' }>): void {
     if (event.source === 'normal' || event.source === 'notify') {
-      this.writeTurnPrompt(event.entry as UserEntry);
+      this.writeTurnPrompt(event.message as UserMessage);
     } else {
       this.writeTurnPrompt();
     }
     if (event.source === 'llm' || event.source === 'partial') {
-      const assistant = event.entry as AssistantEntry;
+      const assistant = event.message as AssistantMessage;
       const step = this.steps.get(stepKey(event.turnId, event.step));
       if (step === undefined) return;
       this.ensureStepStarted(event.turnId, event.step, step);
       step.assistant = assistant;
-      for (const [block, part] of assistant.message.content.entries()) {
+      for (const [block, part] of assistant.content.entries()) {
         const streamed = step.streamedBlocks.get(block);
         this.writeLoopEvent({
           type: 'content.part',
@@ -551,9 +549,9 @@ export class LoopJournal {
       return;
     }
     if (event.source === 'tool') {
-      const entry = event.entry;
-      if (entry.message.role !== 'tool') return;
-      const toolCallId = entry.message.toolCallId;
+      const entry = event.message;
+      if (entry.role !== 'tool') return;
+      const toolCallId = entry.toolCallId;
       if (this.toolCallUuids.has(toolCallId)) return;
       const step = this.steps.get(stepKey(event.turnId, event.step));
       const assistant = step?.assistant;
@@ -561,7 +559,7 @@ export class LoopJournal {
         this.ensureStepStarted(event.turnId, event.step, step);
         const uuid = randomUUID();
         this.toolCallUuids.set(toolCallId, uuid);
-        const toolCall = assistant.message.toolCalls.find((call) => call.id === toolCallId);
+        const toolCall = assistant.toolCalls.find((call) => call.id === toolCallId);
         this.writeLoopEvent({
           type: 'tool.call',
           uuid,
@@ -578,9 +576,9 @@ export class LoopJournal {
       this.appendContextMessage(entry);
       return;
     }
-    this.appendContextMessage(event.entry);
+    this.appendContextMessage(event.message);
     if (event.source !== 'notify') return;
-    const notifyIndex = this.notify.findIndex((entry) => entryKey(entry) === entryKey(event.entry));
+    const notifyIndex = this.notify.findIndex((entry) => entryKey(entry) === entryKey(event.message));
     if (notifyIndex >= 0) this.notify.splice(notifyIndex, 1);
   }
 
@@ -595,7 +593,7 @@ export class LoopJournal {
     });
   }
 
-  private appendContextMessage(entry: HistoryMessage): void {
+  private appendContextMessage(entry: Message): void {
     this.writeContextMessage(contextFromHistoryEntry(entry));
   }
 
@@ -607,11 +605,11 @@ export class LoopJournal {
     });
   }
 
-  private writeTurnPrompt(entry?: UserEntry): void {
+  private writeTurnPrompt(entry?: UserMessage): void {
     const turn = this.turn;
     if (turn === undefined || turn.prompted) return;
     const prompt = entry ?? turn.entry;
-    const input = prompt?.message.content ?? [];
+    const input = prompt?.content ?? [];
     const promptOrigin: PromptOrigin = prompt === undefined ? { kind: 'user' } : origin(prompt);
     if (this.dispatcher === undefined) {
       this.write({
@@ -619,7 +617,7 @@ export class LoopJournal {
         agentId: this.agentId,
         input,
         origin: promptOrigin,
-        promptId: prompt?.meta?.promptId,
+        promptId: prompt?.attributes?.promptId,
         turnId: this.turnId,
         trigger: turn.trigger,
       });
@@ -628,7 +626,7 @@ export class LoopJournal {
         agentId: this.agentId,
         input,
         origin: promptOrigin,
-        promptId: prompt?.meta?.promptId,
+        promptId: prompt?.attributes?.promptId,
         turnId: this.turnId,
         trigger: turn.trigger,
       }));
@@ -638,7 +636,7 @@ export class LoopJournal {
 
   private turnId = 0;
 
-  private settleContext(messages: readonly HistoryMessage[], reason: string | undefined): void {
+  private settleContext(messages: readonly Message[], reason: string | undefined): void {
     if (reason === 'compaction') return;
     if (reason === 'clear' || reason === 'context.clear') {
       this.write({ type: 'context.clear', agentId: this.agentId });

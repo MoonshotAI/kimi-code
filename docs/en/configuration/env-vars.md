@@ -5,7 +5,7 @@ Kimi Code CLI uses environment variables to control a small number of runtime be
 ::: warning Important: API keys are not configured here
 Credential variables such as `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` are **not** read automatically from shell environment variables. Running `export KIMI_API_KEY=xxx` in the terminal does not give any provider its key. They must be written in `config.toml` under `[providers.<name>]` or the `[providers.<name>.env]` sub-table.
 
-The only exceptions are the `KIMI_MODEL_*` family and a provider's `api_key_env` field, two explicit channels that *do* read credentials from the shell. See [Define a model from environment variables](#define-a-model-from-environment-variables-kimi_model_) and [Provider credential key names](#provider-credential-key-names-written-in-configtoml).
+The exceptions are the `KIMI_MODEL_*` family, a provider's `api_key_env` field, and a small set of credentials read from the shell directly by the vendor SDKs (`GOOGLE_APPLICATION_CREDENTIALS`, and the AWS credential chain for Amazon Bedrock). See [Define a model from environment variables](#define-a-model-from-environment-variables-kimi_model_) and [Provider credential key names](#provider-credential-key-names-written-in-configtoml).
 
 For background, see [Config overrides: provider credentials](./overrides.md#provider-credentials).
 :::
@@ -54,7 +54,7 @@ The format mirrors `ANTHROPIC_CUSTOM_HEADERS`: newline-separated `Name: Value` l
 
 ## Provider credential key names (written in config.toml)
 
-The key names below are not read directly from the shell. They are key names written inside the `[providers.<name>.env]` sub-table of `config.toml`, serving as fallback values for `api_key` / `base_url`. The CLI reads only from the config file, not from `process.env`.
+The key names below are written inside the `[providers.<name>.env]` sub-table of `config.toml`, serving as fallback values for `api_key` / `base_url`. Unless a row notes otherwise, the CLI reads them only from the config file, not from `process.env`.
 
 These conventional names are fixed per provider type. If you would rather keep the key in the shell environment under a name of your choosing, set [`api_key_env`](./config-files.md#providers) on the provider instead: the CLI then reads the key from that variable on every request.
 
@@ -76,13 +76,23 @@ Key names per provider:
 | `ANTHROPIC_BASE_URL` | Anthropic | Follows Anthropic SDK default |
 | `OPENAI_API_KEY` | OpenAI (`openai` and `openai_responses`) | None |
 | `OPENAI_BASE_URL` | OpenAI (`openai` and `openai_responses`) | `https://api.openai.com/v1` |
+| `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock | None |
+| `AWS_DEFAULT_REGION` | Amazon Bedrock | Shell value, if present |
+| `AWS_REGION` | Amazon Bedrock | Configured `AWS_DEFAULT_REGION` or shell value |
+| `AWS_BEDROCK_BASE_URL` | Amazon Bedrock | Derived from the region as `bedrock-runtime.<region>.amazonaws.com` |
+| `AWS_PROFILE` | Amazon Bedrock | Falls back to the shell value |
 | `GOOGLE_API_KEY` | Google GenAI, Vertex AI | None |
 | `VERTEXAI_API_KEY` | Vertex AI | None |
 | `GOOGLE_CLOUD_PROJECT` | Vertex AI | None |
 | `GOOGLE_CLOUD_LOCATION` | Vertex AI | None |
 
 ::: warning
-`GOOGLE_APPLICATION_CREDENTIALS` (path to a service account JSON file) is the only exception that goes through the system environment variable mechanism. It is read by the Google SDK directly via the standard ADC flow; the CLI does not participate. All other key names must be placed in the `[providers.<name>.env]` sub-table to take effect.
+Two credential mechanisms bypass the config table and read from the system environment directly:
+
+- `GOOGLE_APPLICATION_CREDENTIALS` (path to a service account JSON file) is read by the Google SDK via the standard ADC flow; the CLI does not participate.
+- For Amazon Bedrock, the AWS secret credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, SSO, or `~/.aws/credentials`) are read from the shell by the AWS SDK's standard credential chain. Writing them in `[providers.<name>.env]` is not supported and has no effect — the CLI only passes the region and profile to the token generator, which resolves the credentials itself.
+
+All other key names must be placed in the `[providers.<name>.env]` sub-table to take effect.
 :::
 
 For the full provider type and field reference, see [Providers and models](./providers.md).
