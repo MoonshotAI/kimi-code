@@ -22,9 +22,9 @@ import {
   rootDelegationExtras,
   subagentAllowlistFor,
   systemPromptVars,
-  TODO_LIST_GUIDANCE,
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
+import { TODO_LIST_GUIDANCE } from '#/features/todo/todoListReminder';
 import NOTIFY_USER_DESCRIPTION from '../../../src/features/notify/tools/notify-user/notify-user.md?raw';
 
 type AssertFalse<T extends false> = T;
@@ -285,7 +285,7 @@ describe('renderSystemPromptResult', () => {
     );
   });
 
-  it('renders the builtin template with no leftover placeholders', () => {
+  it('renders the builtin template without leftover placeholders or Todo guidance', () => {
     const prompt = renderSystemPromptResult(
       'ROLE_TEXT',
       {
@@ -302,6 +302,7 @@ describe('renderSystemPromptResult', () => {
     ).text;
 
     expect(prompt).not.toMatch(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/);
+    expect(prompt).not.toContain(TODO_LIST_GUIDANCE);
   });
 
   it('renders the host identity from the context, defaulting to the CLI text', () => {
@@ -567,25 +568,6 @@ describe('systemPromptVars notify_user_guidance', () => {
 
     expect(systemPromptVars({ notifyUserActive: false }, { skillActive: false })['notify_user_guidance']).toBe('');
     expect(systemPromptVars({}, { skillActive: false })['notify_user_guidance']).toBe('');
-  });
-});
-
-describe('systemPromptVars todo_list_guidance', () => {
-  it('adds the TodoList guidance paragraph only when the context marks the tool active', () => {
-    expect(systemPromptVars({ todoListActive: true }, { skillActive: false })['todo_list_guidance']).toBe(
-      `${TODO_LIST_GUIDANCE}\n\n`,
-    );
-    expect(systemPromptVars({ todoListActive: false }, { skillActive: false })['todo_list_guidance']).toBe('');
-    expect(systemPromptVars({}, { skillActive: false })['todo_list_guidance']).toBe('');
-  });
-
-  it('places the guidance as its own paragraph in the builtin template', () => {
-    const withTodo = renderSystemPromptResult('', { todoListActive: true }, { skillActive: false }).text;
-    const withoutTodo = renderSystemPromptResult('', {}, { skillActive: false }).text;
-
-    expect(withTodo).toContain(`\n\n${TODO_LIST_GUIDANCE}\n\nBefore you finalize a reply`);
-    expect(withoutTodo).not.toContain(TODO_LIST_GUIDANCE);
-    expect(withoutTodo).toMatch(/[^\n]\n\nBefore you finalize a reply/);
   });
 });
 
