@@ -274,6 +274,7 @@ describe("Webview workspace paths (selected-directory containment)", () => {
       type: "tool.call.started",
       sessionId: "session-1",
       agentId: "main",
+      origin: "loop",
       turnId: 1,
       toolCallId: "tool-1",
       name: "Write",

@@ -47,7 +47,7 @@ export function startBashTask(ctx: TestAgentContext, args: BashInput) {
     id: toolCallId,
     name: 'Bash',
     arguments: JSON.stringify(args),
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
 }
 
 export function startAgentTask(ctx: TestAgentContext, args: SubagentToolInput) {
@@ -57,7 +57,7 @@ export function startAgentTask(ctx: TestAgentContext, args: SubagentToolInput) {
     id: `agent-task-${String(++agentTaskSequence)}`,
     name: 'Agent',
     arguments: JSON.stringify(args),
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
 }
 
 let loopTaskSequence = 0;
@@ -480,7 +480,7 @@ export async function startControlledTask(
     id: toolCallId,
     name: 'ControlledTask',
     arguments: '{}',
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
   channel.handlers.set(handler.taskId, handler);
   for (let attempt = 0; attempt < 50 && handler.snapshot().fields['task'] === undefined; attempt++) {
     await Promise.resolve();
