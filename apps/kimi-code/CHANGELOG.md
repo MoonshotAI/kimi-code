@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code
 
+## 2.6.3
+
+### Patch Changes
+
+- [#4982](https://github.com/MoonshotAI/kimi-code/pull/4982) [`9d7f9af`](https://github.com/MoonshotAI/kimi-code/commit/9d7f9af9fba7d1282873a31ec8486f9ea956c591) Thanks [@sailist](https://github.com/sailist)! - Resume legacy sessions after their default model is removed, and use the selected session model for print authentication.
+
 ## 2.6.2
 
 ### Patch Changes
