@@ -67,7 +67,6 @@
         ./packages/kap-server
         ./packages/klient
         ./packages/migration-legacy
-        ./packages/minidb
         ./packages/node-sdk
         ./packages/oauth
         ./packages/pi-tui
@@ -90,7 +89,6 @@
         "@moonshot-ai/agent-core-v2"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/migration-legacy"
-        "@moonshot-ai/minidb"
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
         "@moonshot-ai/klient"
@@ -156,7 +154,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-S7kwWgHbN5ZH4xIH7W/9sbOXi7/JhaitX/ONsLmRr9E=";
+              hash = "sha256-2skZNvDrIn34hZUTz1WWNqT7/23OvAxgY+HLCxmIo+Q=";
             };
 
             nativeBuildInputs = [

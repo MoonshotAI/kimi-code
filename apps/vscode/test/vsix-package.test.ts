@@ -225,6 +225,7 @@ async function makeVsixFixture(target: string): Promise<string> {
   const resourcesDir = join(extensionDir, 'resources');
   await Promise.all([
     mkdir(distDir, { recursive: true }),
+    mkdir(join(distDir, 'better-sqlite3'), { recursive: true }),
     mkdir(resourcesDir, { recursive: true }),
   ]);
 
@@ -246,6 +247,7 @@ async function makeVsixFixture(target: string): Promise<string> {
     writeFile(join(distDir, 'kimi-banner-dark.svg'), '<svg />'),
     writeFile(join(distDir, 'kimi-banner-light.svg'), '<svg />'),
     writeFile(join(distDir, 'kimi-logo.png'), 'fixture'),
+    writeFile(join(distDir, 'better-sqlite3', `${target}.node`), 'fixture native binding'),
     writeFile(join(resourcesDir, 'kimi-icon-storefront.png'), 'fixture'),
     writeFile(join(resourcesDir, 'kimi-icon.svg'), '<svg />'),
   ]);

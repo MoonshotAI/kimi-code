@@ -66,7 +66,7 @@
 |---|---|---|
 | 旧版本写的会话 | wire 日志、turn 编号、压缩后的 transcript（#3561、#3866、#3922）；新版本能否读、回滚后能否读 | `packages/agent-core-v2/docs/wire-manifest.d.ts`、`packages/agent-core-v2/docs/state-manifest.d.ts` |
 | `kimi migrate` 迁来的会话 | 从 `~/.kimi/` 迁到 `~/.kimi-code/` | `packages/migration-legacy/` |
-| 搜索索引 | minidb 快照与 WAL | `packages/minidb/` |
+| 会话索引 | SQLite 单后端读模型；索引是可重建派生缓存，权威数据仍是 session 文件 | `packages/agent-core-v2/src/persistence/backends/sqlite/sqliteQueryStore.ts` |
 | 后台任务与 cron 持久化 | 非正常退出后的恢复（#3924） | |
 | 目录布局 | 任何读写 `~/.kimi-code/` 的代码 | `docs/en/configuration/data-locations.md` |
 
@@ -108,7 +108,7 @@ prompt 文本改动影响全体用户，且没有测试能证明"无影响"。�
 | `packages/agent-core-v2/src/features/externalHooks/` | hook 事件与载荷 | 对照 `docs/en/customization/hooks.md` 的事件参考 |
 | `packages/agent-core-v2/src/human/llm/requester/bases/` | provider 方言分支 | 枚举每种上游载荷形态改动前后各走哪条分支，尤其是多个字段并存的网关 |
 | `packages/agent-core-v2/src/app/git/`、`apps/kimi-code/src/utils/git/` | 后台 git 的调用方式、config 覆盖、超时 | 对照"git 仓库形态"人群逐行核：前置探针失败是否让整个后台 git 静默不可用；覆盖的 config 键是否有 `required`、`gpgSign`、`hooksPath` 这类会把"禁用"变成"失败"的键；Windows 用例是否全部 skip |
-| `packages/migration-legacy/`、`packages/minidb/`、任何读写 `~/.kimi-code/` 布局的代码 | 数据年代 | 老数据是否仍可读、可迁移 |
+| `packages/migration-legacy/`、任何读写 `~/.kimi-code/` 布局的代码 | 数据年代 | 老数据是否仍可读、可迁移 |
 | 任何环境变量读取点的新增、删除或语义变化，不限写法（`process.env.X`、`process.env['X']`、动态键、helper）也不限 `KIMI_` 前缀 | 环境变量 | 对照 `docs/en/configuration/env-vars.md` 的全部条目；TUI、print 模式、kap-server 三个入口是否一致 |
 | `packages/agent-core-v2/src/app/scopes.ts`、`packages/agent-core-v2/src/features/featureAssemblyService.ts`、config ready 相关 | 启动顺序与生命周期 | 谁依赖原来的顺序；#3471 在合入 34 分钟后被 #3486 整体 revert |
 | `docs/en/**`、`docs/zh/**` 的 reference、configuration、customization 页 | 公开承诺 | 改了行为没改文档，或改了文档没改行为，都要指出 |

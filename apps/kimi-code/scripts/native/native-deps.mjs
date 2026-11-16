@@ -85,6 +85,13 @@ export const nativeDeps = Object.freeze([
     parent: null,
     nativeFileRelatives: (target) => piTuiNativeFileByTarget[target] ?? [],
   },
+  {
+    id: 'better-sqlite3',
+    name: () => 'better-sqlite3',
+    collect: 'native-file-only',
+    parent: null,
+    nativeFileRelatives: (target) => [`prebuilds/${target}.node`],
+  },
 ]);
 
 /**

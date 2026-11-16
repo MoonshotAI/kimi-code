@@ -121,7 +121,7 @@ export async function auditExtractedVsix(extractionRoot, target, options = {}) {
 
   await verifyTargetManifest(extractionRoot, target);
   verifyPackageManifest(packagedManifest, sourceManifest);
-  verifyRequiredFiles(fileSet, packagedManifest);
+  verifyRequiredFiles(fileSet, packagedManifest, target);
   verifyForbiddenFiles(files);
   await verifyNoSensitiveContent(extractionRoot, files, sourceRoot, options.forbiddenText ?? []);
   await verifyRuntimeImports(extensionDir, files);
@@ -163,11 +163,12 @@ function verifyPackageManifest(packaged, source) {
   }
 }
 
-function verifyRequiredFiles(fileSet, manifest) {
+function verifyRequiredFiles(fileSet, manifest, target) {
   const required = [
     'extension/LICENSE.txt',
     `extension/${stripLeadingDotSlash(manifest.main)}`,
     ...REQUIRED_WEBVIEW_FILES.map((file) => `extension/${file}`),
+    `extension/dist/better-sqlite3/${target}.node`,
   ];
   requireOneOf(fileSet, ['extension/README.md', 'extension/readme.md'], 'marketplace README');
   if (typeof manifest.icon === 'string') required.push(`extension/${manifest.icon}`);

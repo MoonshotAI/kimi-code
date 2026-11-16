@@ -79,7 +79,7 @@ Error codes are grouped by band:
 List endpoints come in two styles:
 
 - **Cursor style**: `before_id` / `after_id` (mutually exclusive) plus `page_size` (1–100), responding with `{ items, has_more }`. Used by the session list, message list, transcript, and others.
-- **`page_token`**: an opaque token (bound to a fingerprint of the query conditions), used by `POST /api/v1/search` and `GET /api/v2/sessions`. Changing any query condition mid-pagination invalidates the token: v2 returns `40922`, search returns `40001`. `GET /api/v2/sessions` also offers a stateless `page` page-number mode as an alternative.
+- **`page_token`**: an opaque token (bound to a fingerprint of the query conditions), used by `GET /api/v2/sessions`. Changing any query condition mid-pagination invalidates the token with `40922`. `GET /api/v2/sessions` also offers a stateless `page` page-number mode as an alternative.
 
 ## Drive a session over the API
 
@@ -2193,38 +2193,16 @@ Deletes every stored value (mirrors `localStorage.clear`). No parameters.
 
 On success, `data` is `null`.
 
-### Global search and misc
+### Miscellaneous
 
 | Method and path | Description |
 | --- | --- |
-| `POST /api/v1/search` | Cross-session full-text search; `mode` is `terms` (default) or `literal` (exact substring); `page_token` pagination |
 | `GET /api/v1/connections` | List live WebSocket connections |
 | `GET /api/v2/sessions` | Next-generation session list, see below |
 | `POST /api/v2/sessions:archive` | Batch-archive sessions, see below |
 | `POST /api/v2/sessions:restore` | Batch-restore archived sessions, see below |
 | `/api/v2/mcp/*` | Unified MCP management plane, see below |
 | `/api/v1/debug/*` | Reflection debug RPC; mounted only with `--debug-endpoints` on loopback, not a stable protocol |
-
-#### `POST /api/v1/search`
-
-Cross-session full-text search over user messages, assistant replies, and session titles, backed by the server's persistent search index. When `container.session_id` names a session live in this server process, the search instead scans that session's in-memory transcript directly, and the response's `source` field (`index` or `live`) reports which path served the page.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `query` | body | string | **Required.** Search text |
-| `mode` | body | string | `terms` (default) / `literal` |
-| `op` | body | string | Term combiner in `terms` mode: `AND` (default) / `OR` |
-| `container` | body | object | Restrict the search to `{ session_id?, agent_id? }` |
-| `role` | body | string | Restrict to `user` / `assistant` / `title` hits |
-| `start_time` | body | integer | Only hits at or after this time (epoch milliseconds) |
-| `end_time` | body | integer | Only hits at or before this time (epoch milliseconds) |
-| `sort` | body | string | `score` (default) / `time_desc` / `time_asc`; ignored by `literal` mode, which always returns newest-first |
-| `page_size` | body | integer | Hits per page, 1–50. Default `20` |
-| `page_token` | body | string | Token from the previous page's response |
-
-In `terms` mode the query is tokenized (ASCII words plus CJK n-grams), deduplicated, and matched against the inverted index with at most 32 terms; `literal` mode is an exact substring search with zero false positives. On success, `data` is `{ items, has_more, page_token?, index_state, source }` where each item is `{ session_id, workspace_id, session_title, agent_id, role, snippet, time, turn?, step_id?, score }`. `index_state` is `{ state, indexed_sessions, total_sessions, documents, stale?, degraded? }` with `state` one of `building` / `ready` / `readonly`; `stale` marks a behind view still catching up, and `degraded` carries the last refresh failure. An over-budget page additionally carries `incomplete`, one of `candidate_cap` / `postings_budget` / `deadline`. Page tokens pin the index generation and the query conditions — a rebuild or a changed query invalidates them.
-
-- `40001`: body validation failure, an unusable query (empty, or more than 32 terms), or an invalid page token
 
 #### `GET /api/v1/connections`
 
