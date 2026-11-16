@@ -564,7 +564,6 @@ describe('generateModel request execution', () => {
     });
     expect(seen).toEqual(['sk-1']);
     expect(responses).toHaveLength(0);
-
   });
 
   it('reports the event-loop-busy overlap of the decode window as clientBlockedMs', async () => {
