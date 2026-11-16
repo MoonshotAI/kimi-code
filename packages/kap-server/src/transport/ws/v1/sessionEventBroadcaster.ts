@@ -483,6 +483,7 @@ export class SessionEventBroadcaster {
     frame: TaskEventMessage | AgentFeedMessage,
   ): void {
     const ended = frame.type === 'agent' && frame.status === 'ended';
+    let checkEvict = false;
     for (const [target, agents] of state.targets) {
       const subscription = agents.get(agentId);
       if (subscription === undefined) continue;
@@ -491,6 +492,10 @@ export class SessionEventBroadcaster {
         releaseConversation(subscription);
         if (agentId !== MAIN_AGENT_ID) {
           agents.delete(agentId);
+          if (agents.size === 0) {
+            state.targets.delete(target);
+            checkEvict = true;
+          }
         }
       }
       try {
@@ -498,6 +503,7 @@ export class SessionEventBroadcaster {
       } catch {
       }
     }
+    if (checkEvict) this.evictDetachedSession(state.sessionId);
   }
 
   private trackWork(sessionId: string, session: ISessionScopeHandle): void {
