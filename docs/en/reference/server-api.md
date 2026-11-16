@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted } from 'vue'
+import { withBase } from 'vitepress'
 import { redirectLegacyServerApiAnchor } from '../../.vitepress/theme/serverApiLegacyAnchors'
 
 onMounted(() => redirectLegacyServerApiAnchor('en'))
@@ -25,7 +26,7 @@ This protocol is in Beta and may evolve across releases. A running server also s
 
 When asking an AI agent to build a Kimi Code client, dashboard, or automation script:
 
-- **Send a single file**: Give the agent <a href="/kap.md" target="_blank" download="kap.md"><code>/kap.md</code></a>.
+- **Send a single file**: Give the agent <a :href="withBase('/en/kap.md')" target="_blank" download="kap.md"><code>/en/kap.md</code></a>.
 - **Send a focused subset**: When context is tight, pick the pages that match the task and include this page's conventions and error codes:
 
 | Goal | Guide sections | Reference pages |
@@ -78,7 +79,7 @@ All `/api/*` paths, `/openapi.json`, and `/asyncapi.json` require a bearer token
 
 Clients obtain `(origin, token)` either by launching `kimi web --no-open --port 0` and reading the bound URL and `Token` from its startup output, or by receiving `(origin, token)` directly from the embedding host (such as the desktop app or remote relay). Pass the token in the `Authorization: Bearer <token>` header for REST requests; WebSocket upgrade requests accept either that header or the subprotocol `kimi-code.bearer.<token>`.
 
-Missing or invalid credentials return HTTP 401 (`code: 40101`); disallowed `Host` headers or insufficient permissions return HTTP 403 (`code: 40301`). When bound to a non-loopback address, 10 failed auth attempts from the same source within 60 seconds ban that source for 60 seconds, returning HTTP 429 (`code: 42901`).
+Missing or invalid credentials return HTTP 401 (`code: 40101`); missing, malformed, or disallowed `Host` headers return HTTP 403 (`code: 40301`). When bound to a non-loopback address, 10 failed auth attempts from the same source within 60 seconds ban that source for 60 seconds, returning HTTP 429 (`code: 42901`).
 
 ## Response envelope
 
@@ -120,7 +121,7 @@ HTTP responses and WebSocket `response` frames share the same error codes:
 | `40001` | Request validation failed (`details` lists each offending field) |
 | `40003`–`40006` | Provider is OAuth-managed (`40003`), catalog entry cannot be imported (`40004`), custom registry unavailable (`40005`), duplicate workspace source folder (`40006`) |
 | `40101` | Missing or invalid credential (HTTP 401) |
-| `40301` | Insufficient permissions or disallowed `Host` header (HTTP 403) |
+| `40301` | Missing, invalid, or disallowed `Host` header (HTTP 403) |
 | `40110`–`40113` | No provider configured (`40110`), missing provider credential (`40111`), credential rejected (`40112`), model cannot be resolved (`40113`) |
 | `40401`–`40421` | Session or agent not found (`40401`), prompt not found (`40402`), interaction not found or expired (`40404`), task not found (`40406`), file not found (`40407`), MCP server not found (`40408`), path not found (`40409`), workspace not found (`40410`), skill not found (`40415`), catalog entry not found (`40417`), capability not found (`40418`), plugin not found (`40419`), environment not found (`40420`), turn not found (`40421`) |
 | `40901` / `40902` | Session or agent busy (`40901`), interaction already ended (`40902`) |
@@ -152,10 +153,10 @@ This 5-step walkthrough uses `curl` and a dependency-free Node.js script (Node.j
 
 ### 1. Set environment variables
 
-Start the server (`kimi web --no-open --port 0`) and copy the bound `Local` URL and `Token` from its startup output (or use `(origin, token)` supplied by your host):
+Start the server (`kimi web --no-open --port 0`) and set `KAP` and `TOKEN` from the bound `Local` origin (without `#token=...`) and `Token` printed in its startup output (or `http://127.0.0.1:58627` when running without `--port 0`):
 
 ```sh
-export KAP="http://127.0.0.1:58627"
+export KAP="http://127.0.0.1:<port from startup output>"
 export TOKEN="<Token from startup output>"
 ```
 

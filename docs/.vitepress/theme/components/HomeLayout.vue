@@ -9,6 +9,18 @@ import HomeQuickStart from './HomeQuickStart.vue'
 const { Layout } = DefaultTheme
 const { frontmatter } = useData()
 
+function syncWireToggleLabel(wire: Element | null | undefined) {
+  if (!wire) return
+  const toggleBtn = wire.querySelector('.wire-toggle') as HTMLButtonElement | null
+  if (!toggleBtn) return
+  const nodes = [...wire.querySelectorAll('.jn')]
+  if (nodes.length === 0) return
+  const allOpen = nodes.every((node) => node.classList.contains('open'))
+  toggleBtn.textContent = allOpen
+    ? (toggleBtn.dataset.openText ?? 'Collapse all')
+    : (toggleBtn.dataset.closedText ?? 'Expand all')
+}
+
 function handleKapWireAction(event: Event) {
   const target = event.target as HTMLElement | null
   if (!target) return
@@ -17,6 +29,7 @@ function handleKapWireAction(event: Event) {
   if (preview && preview.parentElement) {
     event.preventDefault()
     preview.parentElement.classList.add('open')
+    syncWireToggleLabel(preview.closest('.kap-wire'))
     return
   }
 
@@ -24,6 +37,7 @@ function handleKapWireAction(event: Event) {
   if (more) {
     event.preventDefault()
     more.closest('.jn')?.classList.add('open')
+    syncWireToggleLabel(more.closest('.kap-wire'))
     return
   }
 
@@ -31,6 +45,7 @@ function handleKapWireAction(event: Event) {
   if (fold) {
     event.preventDefault()
     fold.closest('.jn')?.classList.remove('open')
+    syncWireToggleLabel(fold.closest('.kap-wire'))
     return
   }
 
@@ -42,9 +57,7 @@ function handleKapWireAction(event: Event) {
     const nodes = [...wire.querySelectorAll('.jn')]
     const open = nodes.some((node) => !node.classList.contains('open'))
     for (const node of nodes) node.classList.toggle('open', open)
-    toggleBtn.textContent = open
-      ? (toggleBtn.dataset.openText ?? 'Collapse all')
-      : (toggleBtn.dataset.closedText ?? 'Expand all')
+    syncWireToggleLabel(wire)
     return
   }
 

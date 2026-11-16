@@ -489,8 +489,26 @@ const KAP_SOURCE_FILES = [
   'server-api-files.md',
 ]
 
+const KAP_PAGE_ANCHORS: Record<'zh' | 'en', Record<string, string>> = {
+  zh: {
+    'server-api.md': '#服务-api测试版',
+    'server-api-conversation.md': '#会话与对话',
+    'server-api-sessions.md': '#会话接口',
+    'server-api-service.md': '#服务与配置接口',
+    'server-api-files.md': '#文件接口',
+  },
+  en: {
+    'server-api.md': '#server-api-beta',
+    'server-api-conversation.md': '#sessions-and-conversations',
+    'server-api-sessions.md': '#session-endpoints',
+    'server-api-service.md': '#service-and-configuration-endpoints',
+    'server-api-files.md': '#file-endpoints',
+  },
+}
+
 export function buildSingleFileKapMarkdown(docsRoot: string, locale: 'zh' | 'en' = 'zh'): string {
   const refDir = path.join(docsRoot, locale, 'reference')
+  const pageAnchors = KAP_PAGE_ANCHORS[locale]
   const sections = KAP_SOURCE_FILES.map((file) => {
     let text = fs.readFileSync(path.join(refDir, file), 'utf8')
     text = text.replace(/^<script setup>[\s\S]*?<\/script>\s*/m, '')
@@ -500,6 +518,17 @@ export function buildSingleFileKapMarkdown(docsRoot: string, locale: 'zh' | 'en'
       .replaceAll(/<li>\s*<strong>(.*?)<\/strong>/g, '#### $1')
       .replaceAll('</li>', '')
       .replaceAll(/```wire(?:\s+[^\n]*)?\n/g, '```text\n')
+      .replaceAll(
+        /<a\s+href="[^"]*kap\.md"[^>]*><code>[^<]*<\/code><\/a>/g,
+        locale === 'en' ? '`kap.md`' : '`kap.md`',
+      )
+      .replaceAll(
+        /\]\(\.\/(server-api(?:-[a-z]+)?\.md)(#[^)]+)?\)/g,
+        (_match, targetFile: string, hash?: string) => {
+          const fallback = pageAnchors[targetFile] ?? '#'
+          return `](${hash ?? fallback})`
+        },
+      )
     return text.trim()
   })
   return `${sections.join('\n\n---\n\n')}\n`

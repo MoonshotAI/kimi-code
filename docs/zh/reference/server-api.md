@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted } from 'vue'
+import { withBase } from 'vitepress'
 import { redirectLegacyServerApiAnchor } from '../../.vitepress/theme/serverApiLegacyAnchors'
 
 onMounted(() => redirectLegacyServerApiAnchor('zh'))
@@ -25,7 +26,7 @@ onMounted(() => redirectLegacyServerApiAnchor('zh'))
 
 如果你希望让 AI Agent 为你实现一个 Kimi Code 客户端、看板或自动化脚本：
 
-- **发一个文件**：直接把单文件协议汇总 <a href="/kap.md" target="_blank" download="kap.md"><code>/kap.md</code></a> 发给 Agent。
+- **发一个文件**：直接把单文件协议汇总 <a :href="withBase('/zh/kap.md')" target="_blank" download="kap.md"><code>/zh/kap.md</code></a> 发给 Agent。
 - **按场景只发一部分**：上下文有限时，按要做的事挑选页面，每组都带上本页的通用约定与错误码：
 
 | 要做的事 | 必读指南 | 接口参考 |
@@ -78,7 +79,7 @@ R { "cancelled": true }
 
 客户端获取 `(origin, token)` 的标准方式有两种：由宿主启动 `kimi web --no-open --port 0` 并从进程启动输出中读取监听地址与 `Token`，或由宿主环境（如桌面端或远程网关）直接注入 `(origin, token)`。REST 请求通过 `Authorization: Bearer <token>` 请求头携带凭证；WebSocket 升级请求可使用同一请求头，或使用子协议 `kimi-code.bearer.<token>`（适合浏览器 `new WebSocket(url, [protocol])`）。
 
-凭证缺失或无效返回 HTTP 401（信封 `code` 为 `40101`）；请求头 `Host` 不在允许列表或权限不足返回 HTTP 403（`code` 为 `40301`）。服务绑定在非 loopback 地址时，同一来源 60 秒内连续鉴权失败 10 次会被封禁 60 秒，期间返回 HTTP 429（`code` 为 `42901`）。
+凭证缺失或无效返回 HTTP 401（信封 `code` 为 `40101`）；请求头 `Host` 不合法或不在允许列表返回 HTTP 403（`code` 为 `40301`）。服务绑定在非 loopback 地址时，同一来源 60 秒内连续鉴权失败 10 次会被封禁 60 秒，期间返回 HTTP 429（`code` 为 `42901`）。
 
 ## 响应信封
 
@@ -120,7 +121,7 @@ HTTP 与 WebSocket `response` 帧共用同一套错误码：
 | `40001` | 参数或字段校验失败（`details` 列出具体字段） |
 | `40003`–`40006` | 供应商由 OAuth 托管不可手改（`40003`）、目录条目无法导入（`40004`）、私有注册表不可用（`40005`）、工作区源文件夹重复（`40006`） |
 | `40101` | 凭证缺失或无效（HTTP 401） |
-| `40301` | 权限不足或请求 `Host` 未被允许（HTTP 403） |
+| `40301` | 请求 `Host` 头缺失、非法或未被允许（HTTP 403） |
 | `40110`–`40113` | 未配置供应商（`40110`）、供应商缺少凭据（`40111`）、凭据被拒（`40112`）、模型无法解析（`40113`） |
 | `40401`–`40421` | 会话或 Agent 不存在（`40401`）、提示词不存在（`40402`）、交互不存在或已过期（`40404`）、任务不存在（`40406`）、文件不存在（`40407`）、MCP 服务不存在（`40408`）、路径不存在（`40409`）、工作区不存在（`40410`）、Skill 不存在（`40415`）、目录条目不存在（`40417`）、能力不存在（`40418`）、插件不存在（`40419`）、环境不存在（`40420`）、轮次不存在（`40421`） |
 | `40901` / `40902` | 会话或 Agent 忙（`40901`）、交互已结束（`40902`） |
@@ -152,10 +153,10 @@ HTTP 与 WebSocket `response` 帧共用同一套错误码：
 
 ### 1. 准备环境变量
 
-先启动服务（`kimi web --no-open --port 0`），从终端输出的 `Local` 与 `Token` 行获取监听地址和凭证（或使用外部传入的 `(origin, token)`）：
+先启动服务（`kimi web --no-open --port 0`），把终端启动输出中 `Local` 行的基地址（不含 `#token=...`）与 `Token` 填入变量（若未传 `--port 0`，默认地址为 `http://127.0.0.1:58627`）：
 
 ```sh
-export KAP="http://127.0.0.1:58627"
+export KAP="http://127.0.0.1:<启动输出中的端口>"
 export TOKEN="<启动输出中的 Token>"
 ```
 

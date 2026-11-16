@@ -32,7 +32,7 @@ const config = withMermaid(defineConfig({
 
   srcExclude: ['AGENTS.md', 'superpowers/**'],
 
-  ignoreDeadLinks: [/^\/kap(\.md)?$/, /^\/llms(-full)?\.txt$/],
+  ignoreDeadLinks: [/^(\/(zh|en))?\/kap(\.md)?$/, /^\/llms(-full)?\.txt$/],
 
   markdown: {
     config(md) {
@@ -42,10 +42,13 @@ const config = withMermaid(defineConfig({
 
   buildEnd(siteConfig) {
     const rootDir = path.resolve(siteConfig.outDir, '../..')
-    fs.writeFileSync(
-      path.join(siteConfig.outDir, 'kap.md'),
-      buildSingleFileKapMarkdown(rootDir, 'zh'),
-    )
+    const zhMarkdown = buildSingleFileKapMarkdown(rootDir, 'zh')
+    const enMarkdown = buildSingleFileKapMarkdown(rootDir, 'en')
+    fs.writeFileSync(path.join(siteConfig.outDir, 'kap.md'), zhMarkdown)
+    fs.mkdirSync(path.join(siteConfig.outDir, 'zh'), { recursive: true })
+    fs.mkdirSync(path.join(siteConfig.outDir, 'en'), { recursive: true })
+    fs.writeFileSync(path.join(siteConfig.outDir, 'zh', 'kap.md'), zhMarkdown)
+    fs.writeFileSync(path.join(siteConfig.outDir, 'en', 'kap.md'), enMarkdown)
   },
 
   locales: {
@@ -249,9 +252,14 @@ const config = withMermaid(defineConfig({
         name: 'kap-single-file-md',
         configureServer(server) {
           server.middlewares.use((req, res, next) => {
-            if (req.url === '/kap.md' || req.url === `${base}kap.md`) {
+            const urlPath = req.url?.split('?')[0] ?? ''
+            const stripped = base !== '/' && urlPath.startsWith(base)
+              ? `/${urlPath.slice(base.length)}`
+              : urlPath
+            if (stripped === '/kap.md' || stripped === '/zh/kap.md' || stripped === '/en/kap.md') {
+              const locale = stripped === '/en/kap.md' ? 'en' : 'zh'
               res.setHeader('Content-Type', 'text/markdown; charset=utf-8')
-              res.end(buildSingleFileKapMarkdown(server.config.root, 'zh'))
+              res.end(buildSingleFileKapMarkdown(server.config.root, locale))
               return
             }
             next()
