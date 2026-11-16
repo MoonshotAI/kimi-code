@@ -38,9 +38,8 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
-import { IAgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentState';
+import { ISessionRunGate } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionRunGate';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
-import { turnKey } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { wrapSystemReminder } from '@moonshot-ai/agent-core-v2/features/reminder/systemReminder';
 import {
   legacySessionMetaScopeOf,
@@ -710,78 +709,97 @@ const CONTINUE_INTERRUPTED_REMINDER =
   'No new user message was sent. Continue the interrupted work from where it stopped; do not repeat steps that already completed.';
 
 async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
-  const { core, req, reply, id } = ctx;
-  await reloadOnStale(
-    core.accessor,
-    id,
-    async () => {
-      const session = await resumeSessionById(core.accessor, id);
-      if (session === undefined) {
-        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
-      }
-      const agent = await ensureMainAgent(session);
-      const loop = agent.accessor.get(IAgentLoopService);
-      await loop.start();
+  const { core, conversations, req, reply, id } = ctx;
+  await reloadOnStale(core.accessor, id, async () => {
+    const session = await resumeSessionById(core.accessor, id);
+    if (session === undefined) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+    }
+    const agent = await ensureMainAgent(session);
+    const loop = agent.accessor.get(IAgentLoopService);
+    await loop.start();
 
-      const assertIdle = (): void => {
-        const snap = loop.snapshot();
-        const compacting = agent.accessor.get(IAgentFullCompactionService).compacting !== null;
-        if (snap.state === 'running' || snap.paused || snap.hasPendingRequests || compacting) {
-          throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
+    const assertIdle = (): void => {
+      const snap = loop.snapshot();
+      const compacting = agent.accessor.get(IAgentFullCompactionService).compacting !== null;
+      if (snap.state === 'running' || snap.paused || snap.hasPendingRequests || compacting) {
+        throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
+      }
+    };
+
+    assertIdle();
+    session.accessor.get(ISessionRunGate).begin();
+    const feed = await conversations.feed(id, MAIN_AGENT_ID);
+
+    const resolveContinuableState = (metaReason: string | undefined): {
+      continuable: boolean;
+      ownerPromptId?: string;
+    } => {
+      const turns = feed.turns();
+      const latestTurn = turns.at(-1);
+      let ownerPromptId: string | undefined;
+      for (let i = turns.length - 1; i >= 0; i -= 1) {
+        for (let j = turns[i]!.items.length - 1; j >= 0; j -= 1) {
+          const item = turns[i]!.items[j]!;
+          if (item.type === 'user_message' && item.prompt_ids.length > 0) {
+            ownerPromptId = item.prompt_ids.at(-1);
+            break;
+          }
         }
-      };
-
-      const isContinuable = (metaReason: string | undefined): boolean => {
-        const agentStates = agent.accessor.get(IAgentStateService);
-        const lastEnded = agentStates.has(turnKey) ? agentStates.get(turnKey).lastEnded : undefined;
-        const normalizedLastEnded =
-          lastEnded?.reason === 'blocked' ? 'failed' : lastEnded?.reason;
-        const effectiveReason = normalizedLastEnded ?? metaReason;
-        if (effectiveReason === 'cancelled' || effectiveReason === 'failed') return true;
-        const nextTurnId = agentStates.has(turnKey) ? agentStates.get(turnKey).nextTurnId : 0;
-        const hasCrashSettledTurn =
-          nextTurnId > 0 && (lastEnded === undefined || lastEnded.turnId < nextTurnId - 1);
-        return hasCrashSettledTurn;
-      };
-
-      assertIdle();
-      const metaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
-      if (!isContinuable(metaReason)) {
-        throw new Error2(
-          ErrorCodes.TURN_NOT_CONTINUABLE,
-          `session ${id} has no interrupted or failed turn to continue`,
-        );
+        if (ownerPromptId !== undefined) break;
       }
-
-      const sessionModel = loop.getModel();
-      await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
-
-      assertIdle();
-      const refreshedMetaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
-      assertIdle();
-      if (!isContinuable(refreshedMetaReason)) {
-        throw new Error2(
-          ErrorCodes.TURN_NOT_CONTINUABLE,
-          `session ${id} has no interrupted or failed turn to continue`,
-        );
+      if (latestTurn !== undefined) {
+        return {
+          continuable:
+            latestTurn.status === 'ended' &&
+            (latestTurn.outcome === 'interrupted' || latestTurn.outcome === 'failed'),
+          ownerPromptId,
+        };
       }
+      return {
+        continuable: metaReason === 'cancelled' || metaReason === 'failed',
+        ownerPromptId,
+      };
+    };
 
-      loop.remind(
-        historyEntryFromContext({
-          role: 'user',
-          content: [{ type: 'text', text: wrapSystemReminder(CONTINUE_INTERRUPTED_REMINDER) }],
-          origin: {
-            kind: 'injection',
-            variant: 'turn_continue',
-          },
-        }),
+    const metaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
+    if (!resolveContinuableState(metaReason).continuable) {
+      throw new Error2(
+        ErrorCodes.TURN_NOT_CONTINUABLE,
+        `session ${id} has no interrupted or failed turn to continue`,
       );
-      loop.continueTurn();
-      requestLog(req)?.info({ session_id: id, action: 'continue' }, 'session action completed');
-      reply.send(okEnvelope({ continued: true }, req.id));
-    },
-    { retry: false },
-  );
+    }
+
+    const sessionModel = loop.getModel();
+    await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
+
+    assertIdle();
+    const refreshedMetaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
+    assertIdle();
+    session.accessor.get(ISessionRunGate).begin();
+    const finalState = resolveContinuableState(refreshedMetaReason);
+    if (!finalState.continuable) {
+      throw new Error2(
+        ErrorCodes.TURN_NOT_CONTINUABLE,
+        `session ${id} has no interrupted or failed turn to continue`,
+      );
+    }
+
+    loop.remind(
+      historyEntryFromContext({
+        role: 'user',
+        content: [{ type: 'text', text: wrapSystemReminder(CONTINUE_INTERRUPTED_REMINDER) }],
+        origin: {
+          kind: 'injection',
+          variant: 'turn_continue',
+          ownerPromptId: finalState.ownerPromptId,
+        },
+      }),
+    );
+    loop.continueTurn();
+    requestLog(req)?.info({ session_id: id, action: 'continue' }, 'session action completed');
+    reply.send(okEnvelope({ continued: true }, req.id));
+  });
 }
 
 async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {

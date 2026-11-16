@@ -1156,6 +1156,21 @@ describe('conversation contract e2e', () => {
       () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'completed',
     );
 
+    const firstTurnId = channel.turns()[0]!.turn_id;
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}:undo`, {
+      method: 'POST',
+      body: { turn_id: firstTurnId },
+    });
+    const afterUndoRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
+      {
+        method: 'POST',
+        headers: authHeaders(server!, { 'content-type': 'application/json' }),
+        body: '{}',
+      },
+    );
+    expect(((await afterUndoRes.json()) as { code: number }).code).toBe(40940);
+
     channel.close();
   });
 }, 90000);

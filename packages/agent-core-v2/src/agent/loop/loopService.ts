@@ -1338,6 +1338,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   continueTurn(): void {
     if (this.disposing) throw abortError('Agent loop disposed');
+    this.runGate.begin();
     const loop = this.loop;
     if (loop === undefined) return;
     if (this.pendingReminders.length > 0 && this.quiescenceDepth === 0) {
