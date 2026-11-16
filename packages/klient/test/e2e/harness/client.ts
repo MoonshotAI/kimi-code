@@ -425,11 +425,13 @@ export class DaemonClient {
       }, timeoutMs);
       timer.unref?.();
       const off = ws.onFrame((frame) => {
-        if (frame.type !== 'event.session.work_changed' || frame.session_id !== sid) return;
-        const busy = (frame.payload as { busy?: boolean } | undefined)?.busy;
-        if (busy === true) {
+        if (frame.type !== 'session' || frame['change'] !== 'updated') return;
+        const session = frame['session'] as { id?: string; activity?: string } | undefined;
+        if (session?.id !== sid || typeof session.activity !== 'string') return;
+        const busy = session.activity !== 'idle';
+        if (busy) {
           sawBusy = true;
-        } else if (busy === false && sawBusy) {
+        } else if (sawBusy) {
           dispose();
           resolve(frame);
         }
