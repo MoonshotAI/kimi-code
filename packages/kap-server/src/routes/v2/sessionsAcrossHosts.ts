@@ -150,7 +150,7 @@ async function fetchOrDrop(
   try {
     return await source.fetch(query);
   } catch (error) {
-    if (source.hostId === undefined) throw error;
+    if (source.hostId === undefined || (error instanceof HostSourceError && error.code !== undefined)) throw error;
     unavailable.push(source.hostId);
     return undefined;
   }

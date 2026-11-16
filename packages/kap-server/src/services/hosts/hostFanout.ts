@@ -24,11 +24,13 @@ export class HostSourceError extends Error {
 
 export function hostSources(manager: HostBridgeManager): HostSources {
   return {
-    sources: () =>
-      manager.list().map((info) => ({
+    sources: () => {
+      manager.activate();
+      return manager.list().map((info) => ({
         id: info.id,
         session: info.entry.enabled === false ? undefined : info.bridge?.session,
-      })),
+      }));
+    },
   };
 }
 

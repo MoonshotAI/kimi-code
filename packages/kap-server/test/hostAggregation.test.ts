@@ -345,7 +345,7 @@ describe('v1 sessions across hosts', () => {
       expect(requests).toContain('/api/v1/sessions?include_archive=true');
       expect((await call('/api/v1/sessions?hosts=include&page_size=10')).code).toBe(40001);
       await call('/api/v1/sessions?hosts=include&archived_only=true');
-      expect(requests).toContain('/api/v1/sessions?archived_only=true');
+      expect(requests).toContain('/api/v1/sessions?archived_only=true&page_size=100');
 
       expect((await call(`/api/v1/sessions/${remoteId}`)).code).toBe(40401);
       expect(await call(`/api/v1/sessions/${remoteId}?hosts=include`)).toMatchObject({ code: 0, data: { id: remoteId, host_id: 'dev' } });

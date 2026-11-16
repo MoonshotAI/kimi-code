@@ -195,12 +195,29 @@ function sessionsOnHosts(
   query: { busy?: boolean; include_archive?: boolean; archived_only?: boolean; exclude_empty?: boolean },
 ) {
   return collectFromHosts(hosts, async (session) => {
-    const [projects, page] = await Promise.all([
+    const [projects, sessions] = await Promise.all([
       hostProjects<{ id: string; kind: string }>(session),
-      hostGet<{ items: Session[] }>(session, '/api/v1/sessions', query),
+      (async () => {
+        if (query.archived_only !== true) {
+          return (await hostGet<{ items: Session[] }>(session, '/api/v1/sessions', query)).items;
+        }
+        const items: Session[] = [];
+        let beforeId: string | undefined;
+        for (;;) {
+          const page = await hostGet<{ items: Session[]; has_more: boolean }>(session, '/api/v1/sessions', {
+            ...query,
+            page_size: 100,
+            before_id: beforeId,
+          });
+          items.push(...page.items);
+          const last = page.items.at(-1);
+          if (!page.has_more || last === undefined) return items;
+          beforeId = last.id;
+        }
+      })(),
     ]);
     const managed = new Set(projects.map((project) => project.id));
-    return page.items.filter((item) => managed.has(item.workspace_id));
+    return sessions.filter((item) => managed.has(item.workspace_id));
   });
 }
 
