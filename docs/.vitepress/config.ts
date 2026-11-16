@@ -42,8 +42,8 @@ const config = withMermaid(defineConfig({
 
   buildEnd(siteConfig) {
     const rootDir = path.resolve(siteConfig.outDir, '../..')
-    const zhMarkdown = buildSingleFileKapMarkdown(rootDir, 'zh')
-    const enMarkdown = buildSingleFileKapMarkdown(rootDir, 'en')
+    const zhMarkdown = buildSingleFileKapMarkdown(rootDir, 'zh', siteConfig.site.base)
+    const enMarkdown = buildSingleFileKapMarkdown(rootDir, 'en', siteConfig.site.base)
     fs.writeFileSync(path.join(siteConfig.outDir, 'kap.md'), zhMarkdown)
     fs.mkdirSync(path.join(siteConfig.outDir, 'zh'), { recursive: true })
     fs.mkdirSync(path.join(siteConfig.outDir, 'en'), { recursive: true })
@@ -259,7 +259,7 @@ const config = withMermaid(defineConfig({
             if (stripped === '/kap.md' || stripped === '/zh/kap.md' || stripped === '/en/kap.md') {
               const locale = stripped === '/en/kap.md' ? 'en' : 'zh'
               res.setHeader('Content-Type', 'text/markdown; charset=utf-8')
-              res.end(buildSingleFileKapMarkdown(server.config.root, locale))
+              res.end(buildSingleFileKapMarkdown(server.config.root, locale, base))
               return
             }
             next()

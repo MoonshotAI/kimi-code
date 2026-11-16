@@ -506,8 +506,13 @@ const KAP_PAGE_ANCHORS: Record<'zh' | 'en', Record<string, string>> = {
   },
 }
 
-export function buildSingleFileKapMarkdown(docsRoot: string, locale: 'zh' | 'en' = 'zh'): string {
+export function buildSingleFileKapMarkdown(
+  docsRoot: string,
+  locale: 'zh' | 'en' = 'zh',
+  siteBase = '/',
+): string {
   const refDir = path.join(docsRoot, locale, 'reference')
+  const normalizedBase = siteBase.endsWith('/') ? siteBase : `${siteBase}/`
   const pageAnchors = KAP_PAGE_ANCHORS[locale]
   const duplicateSessionAnchors: Record<string, string> =
     locale === 'en'
@@ -540,6 +545,15 @@ export function buildSingleFileKapMarkdown(docsRoot: string, locale: 'zh' | 'en'
             return `](${duplicateSessionAnchors[hash]})`
           }
           return `](${hash ?? fallback})`
+        },
+      )
+      .replaceAll(
+        /\]\((\.\.?\/[^)#]+)\.md(#[^)]+)?\)/g,
+        (_match, relPath: string, hash?: string) => {
+          const resolved = path.posix
+            .normalize(path.posix.join('/', locale, 'reference', relPath))
+            .replace(/^\/+/, '')
+          return `](${normalizedBase}${resolved}${hash ?? ''})`
         },
       )
     return text.trim()

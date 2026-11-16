@@ -17,7 +17,7 @@ There is no handshake frame. Once connected, the client immediately receives [gl
 | Client timeout | If no frame arrives for 25 seconds (also checked immediately when a background tab becomes visible or network connectivity returns), disconnect and reconnect as described in [Reconnecting](#reconnecting) |
 
 ```wire
-S { "type": "ping" }
+S {"type": "ping"}
 C { "type": "pong" }
 ```
 
@@ -29,12 +29,12 @@ Client WebSocket commands are flat JSON frames and must include a non-empty `req
 
 ```wire focus=request_id,code,msg
 C { "type": "subscribe", "request_id": "sub-1", "session_id": "s1", "agent_ids": ["main"] }
-S { "type": "response", "request_id": "sub-1", "code": 0 }
+S {"type": "response", "request_id": "sub-1", "code": 0}
 C { "type": "subscribe", "request_id": "sub-2", "session_id": "s404" }
-S { "type": "response", "request_id": "sub-2", "code": 40401, "msg": "session not found" }
+S {"type": "response", "request_id": "sub-2", "code": 40401, "msg": "session not found"}
 ```
 
-`subscribe` and `unsubscribe` commands on the same connection run sequentially in send order; task commands (`task.*`) serialize per task without blocking subscriptions. Every server-pushed event frame (all server frames except `response` and `pong`) carries an ISO 8601 `event_created_at` timestamp.
+`subscribe` and `unsubscribe` commands on the same connection run sequentially in send order; task commands (`task.*`) serialize per task without blocking subscriptions. Conversation, interaction, task-state (`task`), agent-state (`agent`, `context`, `goal`, `todo`), and global event frames carry an ISO 8601 `event_created_at` timestamp (`response`, `ping` / `pong`, `task.list`, and `task.output` do not).
 
 | Command | Fields | Purpose |
 | --- | --- | --- |
@@ -56,14 +56,14 @@ The user opens session <code>s1</code>. Upon receiving a successful <code>respon
 
 ```wire focus=agent_ids,code,interaction_id,tasks,status,context_tokens,has_more
 C { "type": "subscribe", "request_id": "sub-1", "session_id": "s1", "agent_ids": ["main"] }
-S { "type": "response", "request_id": "sub-1", "code": 0 }
-S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "interaction_id": "i12", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": { "tool_name": "Bash", "action": "Run command", "expires_at": "2026-10-30T10:30:00.000Z" } }
-S { "type": "task.list", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "tasks": [ { "task_id": "task-7q2m", "kind": "subagent", "status": "running", "phase": "working", "detached": false, "description": "Find call sites", "child_agent_id": "sub_7", "parent_tool_call_id": "call_agent_1", "started_at": "2026-10-29T10:29:50.000Z" } ] }
-S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "running", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
-S { "type": "context", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "context_tokens": 18210, "max_context_tokens": 262144 }
-S { "type": "goal", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main" }
-S { "type": "todo", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "items": [] }
-S { "type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turns": [ { "turn_id": "t_9", "ordinal": 9, "turn_number": 9, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:29:45.000Z", "steps": [], "items": [] } ], "has_more": true }
+S {"type": "response", "request_id": "sub-1", "code": 0}
+S {"type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "interaction_id": "i12", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": {"tool_name": "Bash", "action": "Run command", "expires_at": "2026-10-30T10:30:00.000Z"}}
+S {"type": "task.list", "session_id": "s1", "agent_id": "main", "tasks": [{"task_id": "task-7q2m", "kind": "subagent", "status": "running", "phase": "working", "detached": false, "description": "Find call sites", "child_agent_id": "sub_7", "parent_tool_call_id": "call_agent_1", "started_at": "2026-10-29T10:29:50.000Z"}]}
+S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "running", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false}
+S {"type": "context", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "context_tokens": 18210, "max_context_tokens": 262144}
+S {"type": "goal", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main"}
+S {"type": "todo", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "items": []}
+S {"type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turns": [{"turn_id": "t_9", "ordinal": 9, "turn_number": 9, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:29:45.000Z", "steps": [], "items": []}], "has_more": true}
 ```
 
 Even though only `main` is in `agent_ids`, the approval `i12` requested by subagent `sub_7` still arrives (`interaction` frames are session-wide and bypass `agent_ids`), while `sub_7`'s running status and description appear on `main`'s subagent entry in `task.list`.
@@ -74,13 +74,14 @@ When the user expands <code>sub_7</code>, send an incremental <code>subscribe</c
 
 ```wire focus=agent_ids,agent_id,code
 C { "type": "subscribe", "request_id": "sub-2", "session_id": "s1", "agent_ids": ["sub_7"] }
-S { "type": "response", "request_id": "sub-2", "code": 0 }
-S { "type": "task.list", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "tasks": [] }
-S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "status": "running", "compacting": false, "model": "kimi-for-coding", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
-S { "type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "turns": [], "has_more": false }
+S {"type": "response", "request_id": "sub-2", "code": 0}
+S {"type": "task.list", "session_id": "s1", "agent_id": "sub_7", "tasks": []}
+S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "status": "running", "compacting": false, "model": "kimi-for-coding", "plan_mode": false, "swarm_mode": false, "tower_mode": false}
+S {"type": "todo", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "items": []}
+S {"type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "sub_7", "turns": [], "has_more": false}
 ... User collapses the subagent panel
 C { "type": "unsubscribe", "request_id": "unsub-1", "session_id": "s1", "agent_ids": ["sub_7"] }
-S { "type": "response", "request_id": "unsub-1", "code": 0 }
+S {"type": "response", "request_id": "unsub-1", "code": 0}
 ```
 </li>
 </ol>
@@ -124,33 +125,33 @@ An agent's conversation is an ordered list of **turns (`Turn`)**, each containin
 <strong>Turn start and user message</strong>
 
 ```wire focus=turn.turn_id,turn.kind,item.type,item.prompt_ids,item.placement
-S { "type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": [] } }
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "Does the start command in README still work?", "attachments": [], "skills": [] } }
+S {"type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": {"turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": []}}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "u_1", "type": "user_message", "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": {"kind": "user"}, "text": "Does the start command in README still work?", "attachments": [], "skills": []}}
 ```
 </li>
 <li>
 <strong>Reasoning and tool call (Step 1)</strong>
 
 ```wire focus=item.type,item.name,item.stage,field,delta,set,item.output,step.finish_reason
-S { "type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.400Z", "text": "", "started_at": "2026-10-29T10:30:00.400Z" } }
-S { "type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "r_1", "field": "text", "delta": "Let's read README.md first" }
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.400Z", "text": "Let's read README.md first to check the script.", "started_at": "2026-10-29T10:30:00.400Z", "duration_ms": 1200 } }
-S { "type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "input", "started_at": "2026-10-29T10:30:01.700Z" } }
-S { "type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "field": "input_text", "delta": "{\"path\":\"README.md\"}" }
-S { "type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "set": { "stage": "executing", "input": { "path": "README.md" } } }
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "executing", "input": { "path": "README.md" }, "output": "1\t# App\n2\tRun `pnpm dev`", "started_at": "2026-10-29T10:30:01.700Z", "ended_at": "2026-10-29T10:30:02.100Z" } }
-S { "type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 1, "outcome": "completed", "finish_reason": "tool_calls", "started_at": "2026-10-29T10:30:00.300Z", "ended_at": "2026-10-29T10:30:02.100Z", "usage": { "input_other": 5210, "output": 96, "input_cache_read": 0, "input_cache_creation": 0 } } }
+S {"type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.400Z", "text": "", "started_at": "2026-10-29T10:30:00.400Z"}}
+S {"type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "r_1", "field": "text", "delta": "Let's read README.md first"}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.400Z", "text": "Let's read README.md first to check the script.", "started_at": "2026-10-29T10:30:00.400Z", "duration_ms": 1200}}
+S {"type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "input", "started_at": "2026-10-29T10:30:01.700Z"}}
+S {"type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "field": "input_text", "delta": "{\"path\":\"README.md\"}"}
+S {"type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "set": {"stage": "executing", "input": {"path": "README.md"}}}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "executing", "input": {"path": "README.md"}, "output": "1\t# App\n2\tRun `pnpm dev`", "started_at": "2026-10-29T10:30:01.700Z", "ended_at": "2026-10-29T10:30:02.100Z"}}
+S {"type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": {"index": 1, "outcome": "completed", "finish_reason": "tool_calls", "started_at": "2026-10-29T10:30:00.300Z", "ended_at": "2026-10-29T10:30:02.100Z", "usage": {"input_other": 5210, "output": 96, "input_cache_read": 0, "input_cache_creation": 0}}}
 ```
 </li>
 <li>
 <strong>Assistant reply and turn completion (Step 2)</strong>
 
 ```wire focus=item.type,delta,item.text,turn.outcome,turn.duration_ms
-S { "type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "running", "created_at": "2026-10-29T10:30:02.400Z", "text": "" } }
-S { "type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "Yes, `pnpm dev` in README matches package.json." }
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:02.400Z", "text": "Yes, `pnpm dev` in README matches package.json." } }
-S { "type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 2, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:02.200Z", "ended_at": "2026-10-29T10:30:04.200Z" } }
-S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:04.200Z", "duration_ms": 4200, "steps": [ { "index": 1, "outcome": "completed", "finish_reason": "tool_calls" }, { "index": 2, "outcome": "completed", "finish_reason": "stop" } ] } }
+S {"type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "running", "created_at": "2026-10-29T10:30:02.400Z", "text": ""}}
+S {"type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "Yes, `pnpm dev` in README matches package.json."}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "a_1", "type": "assistant_message", "step_index": 2, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:02.400Z", "text": "Yes, `pnpm dev` in README matches package.json."}}
+S {"type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": {"index": 2, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:02.200Z", "ended_at": "2026-10-29T10:30:04.200Z"}}
+S {"type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": {"turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:04.200Z", "duration_ms": 4200, "steps": [{"index": 1, "outcome": "completed", "finish_reason": "tool_calls", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:04.200Z"}, {"index": 2, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:02.200Z", "ended_at": "2026-10-29T10:30:04.200Z"}]}}
 ```
 </li>
 <li>
@@ -158,8 +159,8 @@ S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "sessi
 When an LLM request hits a retryable error, <code>turn.updated</code> carries <code>retry</code> (and <code>item.removed</code> drops any partial reply from the failed attempt before the retry starts). If retries are exhausted, the turn ends with <code>outcome: "failed"</code>:
 
 ```wire focus=retry.attempt,retry.delay_ms,turn.outcome,turn.end_reason,turn.error
-S { "type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_2", "retry": { "attempt": 1, "next_attempt": 2, "max_attempts": 3, "delay_ms": 2000, "error": { "name": "ProviderError", "message": "upstream overloaded", "status_code": 529 } } }
-S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_2", "ordinal": 1, "turn_number": 1, "kind": "agent", "status": "ended", "outcome": "failed", "end_reason": "error", "error": { "code": "provider.overloaded", "message": "Provider overloaded, please try again later", "status_code": 529, "retryable": true }, "started_at": "2026-10-29T10:31:00.000Z", "ended_at": "2026-10-29T10:31:08.000Z", "steps": [] } }
+S {"type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_2", "retry": {"attempt": 1, "next_attempt": 2, "max_attempts": 3, "delay_ms": 2000, "error": {"name": "ProviderError", "message": "upstream overloaded", "status_code": 529}}}
+S {"type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": {"turn_id": "t_2", "ordinal": 1, "turn_number": 1, "kind": "agent", "status": "ended", "outcome": "failed", "end_reason": "error", "error": {"code": "provider.overloaded", "message": "Provider overloaded, please try again later", "status_code": 529, "retryable": true}, "started_at": "2026-10-29T10:31:00.000Z", "ended_at": "2026-10-29T10:31:08.000Z", "steps": []}}
 ```
 </li>
 </ol>
@@ -267,8 +268,8 @@ Submit user input with [`POST /api/v1/sessions/{session_id}/prompts`](./server-a
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-1", "content": [ { "type": "text", "text": "Investigate this error" } ] }
 R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "content": [ { "type": "text", "text": "Investigate this error" } ], "created_at": "2026-10-29T10:35:00.000Z" }
-S { "type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:35:00.000Z", "steps": [] } }
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "Investigate this error", "attachments": [], "skills": [] } }
+S {"type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": {"turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:35:00.000Z", "steps": []}}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "u_1", "type": "user_message", "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": {"kind": "user"}, "text": "Investigate this error", "attachments": [], "skills": []}}
 ```
 </li>
 <li>
@@ -282,7 +283,7 @@ H POST /api/v1/sessions/s1/prompts:steer
   { "prompt_ids": ["p-2"] }
 R { "steered": true, "prompt_ids": ["p-2"] }
 ... Current step finishes; steer is injected at the next boundary
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_2", "type": "user_message", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:12.000Z", "prompt_ids": ["p-2"], "placement": "steer", "origin": { "kind": "user" }, "text": "Also check lint", "attachments": [], "skills": [] } }
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "u_2", "type": "user_message", "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:35:12.000Z", "prompt_ids": ["p-2"], "placement": "steer", "origin": {"kind": "user"}, "text": "Also check lint", "attachments": [], "skills": []}}
 ```
 </li>
 <li>
@@ -331,8 +332,8 @@ H POST /api/v1/sessions/s1/prompts/p-9:abort
 R { "aborted": true }
 H POST /api/v1/sessions/s1:cancel
 R { "cancelled": true }
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item": { "item_id": "call_bash_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "interrupted", "created_at": "2026-10-29T10:36:00.000Z", "name": "Bash", "stage": "executing", "error": "partial output...\n[Command interrupted by user]" } }
-S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_3", "ordinal": 2, "turn_number": 2, "kind": "agent", "status": "ended", "outcome": "interrupted", "end_reason": "user_cancelled", "started_at": "2026-10-29T10:35:50.000Z", "ended_at": "2026-10-29T10:36:02.000Z", "steps": [] } }
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item": {"item_id": "call_bash_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "interrupted", "created_at": "2026-10-29T10:36:00.000Z", "name": "Bash", "stage": "executing", "error": "partial output...\n[Command interrupted by user]", "started_at": "2026-10-29T10:36:00.000Z", "ended_at": "2026-10-29T10:36:02.000Z"}}
+S {"type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": {"turn_id": "t_3", "ordinal": 2, "turn_number": 2, "kind": "agent", "status": "ended", "outcome": "interrupted", "end_reason": "user_cancelled", "started_at": "2026-10-29T10:35:50.000Z", "ended_at": "2026-10-29T10:36:02.000Z", "steps": []}}
 ```
 </li>
 <li>
@@ -342,7 +343,7 @@ S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "sessi
 H POST /api/v1/sessions/s1:undo
   { "turn_id": "t_5" }
 R { "removed_turn_ids": ["t_5", "t_6", "t_7"] }
-S { "type": "turns.removed", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_ids": ["t_5", "t_6", "t_7"] }
+S {"type": "turns.removed", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_ids": ["t_5", "t_6", "t_7"]}
 ```
 </li>
 <li>
@@ -352,11 +353,11 @@ S { "type": "turns.removed", "event_created_at": "2026-10-29T10:30:00.000Z", "se
 H POST /api/v1/sessions/s1:compact
   { "instruction": "Keep database migration conclusions" }
 R {}
-S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": true, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
-S { "type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_8", "item": { "item_id": "sys_1", "type": "system", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:38:00.000Z", "kind": "compaction", "trigger": "manual", "instruction": "Keep database migration conclusions", "tokens_before": 182340, "tokens_after": 8120, "summary": "…" } }
-S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": [] } }
-S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": true, "plan_mode": false, "swarm_mode": false, "tower_mode": false}
+S {"type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": {"turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": []}}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_8", "item": {"item_id": "sys_1", "type": "system", "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:38:00.000Z", "kind": "compaction", "trigger": "manual", "instruction": "Keep database migration conclusions", "tokens_before": 182340, "tokens_after": 8120, "summary": "…"}}
+S {"type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": {"turn_id": "t_8", "ordinal": 5, "turn_number": 5, "kind": "system", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:38:00.000Z", "ended_at": "2026-10-29T10:38:00.000Z", "steps": []}}
+S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "plan_mode": false, "swarm_mode": false, "tower_mode": false}
 ```
 </li>
 <li>
@@ -366,7 +367,7 @@ S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id
 H POST /api/v1/sessions/s1:btw
 R { "agent_id": "btw_1" }
 C { "type": "subscribe", "request_id": "sub-btw", "session_id": "s1", "agent_ids": ["btw_1"] }
-S { "type": "response", "request_id": "sub-btw", "code": 0 }
+S {"type": "response", "request_id": "sub-btw", "code": 0}
 ```
 </li>
 </ol>
@@ -395,24 +396,24 @@ When a tool call requires permission (`approval`) or asks the user a structured 
 <strong>Receive an approval request and approve for the session</strong>
 
 ```wire focus=set,interaction_id,kind,status,decision,scope,outcome
-S { "type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": { "stage": "awaiting_approval", "interaction_id": "i9" } }
-S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": { "tool_name": "Bash", "action": "Run command", "tool_input_display": { "command": "rm -rf dist" }, "expires_at": "2026-10-30T10:31:00.000Z" } }
+S {"type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": {"stage": "awaiting_approval", "interaction_id": "i9"}}
+S {"type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "pending", "tool_call_id": "c7", "request": {"tool_name": "Bash", "action": "Run command", "tool_input_display": {"command": "rm -rf dist"}, "expires_at": "2026-10-30T10:31:00.000Z"}}
 H POST /api/v1/sessions/s1/interactions/i9
   { "kind": "approval", "decision": "approved", "scope": "session" }
 R { "outcome": "approved", "ended_at": "2026-10-29T10:31:00.000Z" }
-S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "ended", "outcome": "approved", "ended_at": "2026-10-29T10:31:00.000Z", "response": { "decision": "approved", "scope": "session" } }
-S { "type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": { "stage": "executing" } }
+S {"type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i9", "kind": "approval", "status": "ended", "outcome": "approved", "ended_at": "2026-10-29T10:31:00.000Z", "response": {"decision": "approved", "scope": "session"}, "request": {"tool_name": "Bash", "action": "Run command", "tool_input_display": {"command": "rm -rf dist"}, "expires_at": "2026-10-30T10:31:00.000Z"}}
+S {"type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_3", "item_id": "c7", "set": {"stage": "executing"}}
 ```
 </li>
 <li>
 <strong>Receive a question and submit an answer</strong>
 
 ```wire focus=interaction_id,kind,request.questions,answers,outcome
-S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "pending", "tool_call_id": "c8", "request": { "questions": [ { "id": "q1", "question": "Which package manager?", "multi_select": false, "allow_other": true, "options": [ { "id": "a", "label": "pnpm (Recommended)" }, { "id": "b", "label": "npm" } ] } ] } }
+S {"type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "pending", "tool_call_id": "c8", "request": {"questions": [{"id": "q1", "question": "Which package manager?", "multi_select": false, "allow_other": true, "options": [{"id": "a", "label": "pnpm (Recommended)"}, {"id": "b", "label": "npm"}]}]}}
 H POST /api/v1/sessions/s1/interactions/i10
   { "kind": "question", "answers": { "q1": { "kind": "single", "option_id": "a" } }, "method": "click" }
 R { "outcome": "answered", "ended_at": "2026-10-29T10:31:20.000Z" }
-S { "type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "ended", "outcome": "answered", "ended_at": "2026-10-29T10:31:20.000Z" }
+S {"type": "interaction", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "interaction_id": "i10", "kind": "question", "status": "ended", "outcome": "answered", "ended_at": "2026-10-29T10:31:20.000Z", "request": {"questions": [{"id": "q1", "question": "Which package manager?", "multi_select": false, "allow_other": true, "options": [{"id": "a", "label": "pnpm (Recommended)"}, {"id": "b", "label": "npm"}]}]}, "response": {"answers": {"q1": "pnpm (Recommended)"}, "method": "click"}}
 ```
 </li>
 </ol>
@@ -440,11 +441,11 @@ Shell commands (foreground and background) and subagents (including AgentSwarm m
 <strong>Start a background command and watch its output (<code>task.watch</code>)</strong>
 
 ```wire focus=task_id,detached,parent_tool_call_id,offset,text
-S { "type": "task", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true, "description": "Start dev server", "command": "pnpm dev", "parent_tool_call_id": "call_bash_1", "started_at": "2026-10-29T10:33:20.100Z" }
+S {"type": "task", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true, "description": "Start dev server", "command": "pnpm dev", "parent_tool_call_id": "call_bash_1", "started_at": "2026-10-29T10:33:20.100Z"}
 C { "type": "task.watch", "request_id": "r2", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
-S { "type": "response", "request_id": "r2", "code": 0, "task": { "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true } }
-S { "type": "task.output", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 0, "text": "> dev\n> vite\n\n" }
-S { "type": "task.output", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 14, "text": "  VITE ready in 312 ms\n" }
+S {"type": "response", "request_id": "r2", "code": 0, "task": {"task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true}}
+S {"type": "task.output", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 0, "text": "> dev\n> vite\n\n"}
+S {"type": "task.output", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 14, "text": "  VITE ready in 312 ms\n"}
 ```
 </li>
 <li>
@@ -452,14 +453,14 @@ S { "type": "task.output", "event_created_at": "2026-10-29T10:30:00.000Z", "sess
 
 ```wire focus=since_offset,offset,text,status,outcome
 C { "type": "task.unwatch", "request_id": "r3", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
-S { "type": "response", "request_id": "r3", "code": 0 }
+S {"type": "response", "request_id": "r3", "code": 0}
 ... Reopen the output panel and pass the UTF-8 byte end offset 37
 C { "type": "task.watch", "request_id": "r4", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "since_offset": 37 }
-S { "type": "response", "request_id": "r4", "code": 0, "task": { "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true } }
-S { "type": "task.output", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 37, "text": "10:41:07 [vite] hmr update\n" }
+S {"type": "response", "request_id": "r4", "code": 0, "task": {"task_id": "bash-k3f9x2ab", "kind": "shell", "status": "running", "detached": true}}
+S {"type": "task.output", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "offset": 37, "text": "10:41:07 [vite] hmr update\n"}
 C { "type": "task.stop", "request_id": "r5", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
-S { "type": "task", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "ended", "outcome": "killed", "detached": true, "started_at": "2026-10-29T10:33:20.100Z", "ended_at": "2026-10-29T10:52:03.410Z" }
-S { "type": "response", "request_id": "r5", "code": 0, "task": { "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "ended", "outcome": "killed", "detached": true } }
+S {"type": "task", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab", "kind": "shell", "status": "ended", "outcome": "killed", "detached": true, "started_at": "2026-10-29T10:33:20.100Z", "ended_at": "2026-10-29T10:52:03.410Z"}
+S {"type": "response", "request_id": "r5", "code": 0, "task": {"task_id": "bash-k3f9x2ab", "kind": "shell", "status": "ended", "outcome": "killed", "detached": true}}
 ```
 </li>
 </ol>
@@ -508,8 +509,8 @@ Subscriptions and `task.watch` streams do not persist across disconnects. After 
 Global events are sent to every connected WebSocket client without subscription. Every frame is flat and starts with `type` and `event_created_at`; there is no `session_id`, `timestamp`, or `payload` envelope:
 
 ```wire focus=type,change,session,kind
-S { "type": "session", "event_created_at": "2026-10-29T10:41:30.000Z", "change": "updated", "session": { "id": "s2", "workspace_id": "wd_aaa_000000000000", "cwd": "/work/app", "title": "Fix login", "created_at": "2026-10-29T10:30:00.000Z", "updated_at": "2026-10-29T10:41:30.000Z", "activity": "idle", "pending_interaction": "none", "last_turn_outcome": "completed", "archived": false } }
-S { "type": "invalidated", "event_created_at": "2026-10-29T10:42:00.000Z", "kind": "models" }
+S {"type": "session", "event_created_at": "2026-10-29T10:41:30.000Z", "change": "updated", "session": {"id": "s2", "workspace_id": "wd_aaa_000000000000", "cwd": "/work/app", "title": "Fix login", "created_at": "2026-10-29T10:30:00.000Z", "updated_at": "2026-10-29T10:41:30.000Z", "activity": "idle", "pending_interaction": "none", "last_turn_outcome": "completed", "archived": false}}
+S {"type": "invalidated", "event_created_at": "2026-10-29T10:42:00.000Z", "kind": "models"}
 ```
 
 | `type` | Additional fields | Client rule |

@@ -55,7 +55,7 @@ Implement a Kimi Code client following the attached Kimi Agent Protocol document
 
 ```wire focus=request_id,code,cancelled
 C { "type": "task.watch", "request_id": "r2", "session_id": "s1", "agent_id": "main", "task_id": "bash-k3f9x2ab" }
-S { "type": "response", "request_id": "r2", "code": 0 }
+S {"type": "response", "request_id": "r2", "code": 0}
 H POST /api/v1/sessions/s1:cancel
 R { "cancelled": true }
 ```
@@ -218,21 +218,21 @@ Here is the complete sequence of frames from subscription through turn completio
 
 ```wire focus=code,status,turn.kind,item.type,item.prompt_ids,delta,turn.outcome
 C { "type": "subscribe", "request_id": "sub-1", "session_id": "s1", "agent_ids": ["main"] }
-S { "type": "response", "request_id": "sub-1", "code": 0 }
-S { "type": "task.list", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "tasks": [] }
-S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
-S { "type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turns": [], "has_more": false }
+S {"type": "response", "request_id": "sub-1", "code": 0}
+S {"type": "task.list", "session_id": "s1", "agent_id": "main", "tasks": []}
+S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false}
+S {"type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turns": [], "has_more": false}
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-1", "content": [ { "type": "text", "text": "Summarize this repository in one sentence" } ] }
 R { "prompt_id": "p-1", "user_message_id": "u_1", "status": "running", "content": [ { "type": "text", "text": "Summarize this repository in one sentence" } ], "created_at": "2026-10-29T10:30:00.000Z" }
-S { "type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": [] } }
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "u_1", "type": "user_message", "step_index": 0, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": { "kind": "user" }, "text": "Summarize this repository in one sentence", "attachments": [], "skills": [] } }
-S { "type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.500Z", "text": "" } }
-S { "type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "This is the core Kimi Code monorepo." }
-S { "type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": { "item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.500Z", "text": "This is the core Kimi Code monorepo." } }
-S { "type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": { "index": 1, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:00.400Z", "ended_at": "2026-10-29T10:30:01.800Z" } }
-S { "type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": { "turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:01.800Z", "duration_ms": 1800, "steps": [ { "index": 1, "outcome": "completed", "finish_reason": "stop" } ] } }
-S { "type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false }
+S {"type": "turn.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": {"turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "running", "started_at": "2026-10-29T10:30:00.000Z", "steps": []}}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "u_1", "type": "user_message", "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.000Z", "prompt_ids": ["p-1"], "placement": "opener", "origin": {"kind": "user"}, "text": "Summarize this repository in one sentence", "attachments": [], "skills": []}}
+S {"type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.500Z", "text": ""}}
+S {"type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "a_1", "field": "text", "delta": "This is the core Kimi Code monorepo."}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "a_1", "type": "assistant_message", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.500Z", "text": "This is the core Kimi Code monorepo."}}
+S {"type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": {"index": 1, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:00.400Z", "ended_at": "2026-10-29T10:30:01.800Z"}}
+S {"type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn": {"turn_id": "t_1", "ordinal": 0, "turn_number": 0, "kind": "agent", "status": "ended", "outcome": "completed", "started_at": "2026-10-29T10:30:00.000Z", "ended_at": "2026-10-29T10:30:01.800Z", "duration_ms": 1800, "steps": [{"index": 1, "outcome": "completed", "finish_reason": "stop", "started_at": "2026-10-29T10:30:00.400Z", "ended_at": "2026-10-29T10:30:01.800Z"}]}}
+S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false}
 ```
 
 ### 5. Page backward through earlier turns
