@@ -80,12 +80,28 @@ import { negotiateVersion } from './version';
  * branch key across the wire, mirrored from the klient facade's `NOT_FOUND`.
  */
 const SESSION_NOT_FOUND_CODE = 40404;
+const SESSION_OCCUPIED_RPC_CODE = 40931;
 
 function isSessionNotFound(error: unknown): boolean {
   return (
     (error instanceof RPCError && error.code === SESSION_NOT_FOUND_CODE) ||
     (isError2(error) && error.code === ErrorCodes.SESSION_NOT_FOUND)
   );
+}
+
+function isSessionOccupied(error: unknown): boolean {
+  return (
+    (error instanceof RPCError && error.code === SESSION_OCCUPIED_RPC_CODE) ||
+    (isError2(error) && error.code === ErrorCodes.SESSION_OCCUPIED)
+  );
+}
+
+function mapSessionOccupied(error: unknown, sessionId: string): RequestError {
+  const message = error instanceof Error ? error.message : String(error);
+  log.warn('acp: session lifecycle rejected because another client holds the session', {
+    sessionId,
+  });
+  return RequestError.invalidRequest({ code: 'session.occupied' }, message);
 }
 
 /** Host-provided slash commands plus optional aliases that activate engine skills. */
@@ -276,6 +292,9 @@ export class AcpServer {
     try {
       forkedId = (await this.klient.session(params.sessionId).fork()).id;
     } catch (error) {
+      if (isSessionOccupied(error)) {
+        throw mapSessionOccupied(error, params.sessionId);
+      }
       if (isSessionNotFound(error)) {
         throw RequestError.invalidParams(
           { sessionId: params.sessionId },
@@ -544,7 +563,15 @@ export class AcpServer {
   ): Promise<AcpSession> {
     // `restore` re-materializes a persisted session (a live one passes
     // through) and reports `false` only when the id no longer exists.
-    const restored = await this.klient.session(sessionId).restore({ mcpServers });
+    let restored: boolean;
+    try {
+      restored = await this.klient.session(sessionId).restore({ mcpServers });
+    } catch (error) {
+      if (isSessionOccupied(error)) {
+        throw mapSessionOccupied(error, sessionId);
+      }
+      throw error;
+    }
     if (!restored) {
       throw RequestError.invalidParams({ sessionId }, `Unknown sessionId: ${sessionId}`);
     }

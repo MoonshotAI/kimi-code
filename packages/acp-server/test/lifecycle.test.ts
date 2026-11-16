@@ -4,10 +4,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  IBootstrapService,
+  ILogService,
   IOAuthToolkit,
+  ISessionLockService,
   ISessionManager,
   ISessionMcpHandle,
   IWorkspaceInstanceManager,
+  SessionLockService,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -264,6 +268,56 @@ describe('acp-server session lifecycle', () => {
       expect(userChunks).toContain('hello from the fork');
       expect(agentChunks).toContain('first turn reply');
       expect(agentChunks).toContain('fork reply');
+    },
+    30_000,
+  );
+
+  it(
+    'session/fork on an occupied session returns a typed invalidRequest error',
+    async () => {
+      const c = await boot();
+      const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      c.server.core.accessor.get(ISessionLockService).release(created.sessionId);
+      const otherProcess = new SessionLockService(
+        c.server.core.accessor.get(IBootstrapService),
+        c.server.core.accessor.get(ILogService),
+      );
+      otherProcess.hold(created.sessionId);
+
+      const result = await c
+        .send('session/fork', { sessionId: created.sessionId, cwd: homeDir, mcpServers: [] })
+        .catch((error: unknown) => error);
+      expect(result).toBeInstanceOf(Error);
+      const payload = JSON.parse((result as Error).message);
+      expect(payload.code).toBe(-32600);
+      expect(payload.data).toMatchObject({ code: 'session.occupied' });
+    },
+    30_000,
+  );
+
+  it(
+    'session/resume on an occupied session returns a typed invalidRequest error',
+    async () => {
+      const c = await boot();
+      const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      c.server.core.accessor.get(ISessionLockService).release(created.sessionId);
+      const otherProcess = new SessionLockService(
+        c.server.core.accessor.get(IBootstrapService),
+        c.server.core.accessor.get(ILogService),
+      );
+      otherProcess.hold(created.sessionId);
+
+      const result = await c
+        .send('session/resume', { sessionId: created.sessionId, cwd: homeDir, mcpServers: [] })
+        .catch((error: unknown) => error);
+      expect(result).toBeInstanceOf(Error);
+      const payload = JSON.parse((result as Error).message);
+      expect(payload.code).toBe(-32600);
+      expect(payload.data).toMatchObject({ code: 'session.occupied' });
     },
     30_000,
   );
