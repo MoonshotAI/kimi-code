@@ -63,6 +63,7 @@ import {
   undoSessionRequestSchema,
   undoSessionResponseSchema,
   updateSessionProfileRequestSchema,
+  updateSessionProfileResponseSchema,
 } from '../protocol/rest-session';
 import {
   sessionSchema,
@@ -70,7 +71,6 @@ import {
   type SessionGit,
   type SessionPendingInteraction,
 } from '../protocol/session';
-import { agentStateSchema } from '../protocol/ws-agent';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -393,7 +393,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
       path: '/sessions/{session_id}/profile',
       params: sessionIdParamSchema,
       body: updateSessionProfileRequestSchema,
-      success: { data: z.object({ session: sessionSchema, agent: agentStateSchema }) },
+      success: { data: updateSessionProfileResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},

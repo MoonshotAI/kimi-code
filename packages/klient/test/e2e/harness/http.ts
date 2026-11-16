@@ -38,6 +38,7 @@ import type {
   SessionAbortResponse,
   UndoSessionRequest,
   UndoSessionResponse,
+  UpdateSessionProfileResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-session';
 import type {
   Session,
@@ -220,12 +221,12 @@ export class HttpClient {
   }): Promise<{ items: Session[]; has_more: boolean }> {
     return this.request('GET', `/sessions${qs(query)}`, undefined);
   }
-  updateSession(sid: string, body: SessionUpdate): Promise<Session> {
+  updateSession(sid: string, body: SessionUpdate): Promise<UpdateSessionProfileResponse> {
     // Daemon canonical route: `POST /v1/sessions/{sid}/profile` (REST.md §3.3).
     // Earlier scaffolding spoke `PATCH /v1/sessions/{sid}`, which the server
     // never wired — keep the helper name (used by existing fixtures) and just
     // dispatch to the right URL.
-    return this.request<Session>(
+    return this.request<UpdateSessionProfileResponse>(
       'POST',
       `/sessions/${encodeURIComponent(sid)}/profile`,
       body,
