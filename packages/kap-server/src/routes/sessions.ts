@@ -25,7 +25,6 @@ import {
   IWorkspaceService,
   closeSessionById,
   getLiveSessionById,
-  getOrRestoreAgent,
   programForSession,
   resolveSubagentModelPool,
   reloadOnStale,
@@ -708,9 +707,18 @@ async function cancelSessionAction(
   if (targetAgentId === MAIN_AGENT_ID) {
     agent = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
   } else {
-    agent = await getOrRestoreAgent(live, targetAgentId);
+    agent = live.accessor.get(IAgentLifecycleService).handleOf(targetAgentId);
     if (agent === undefined) {
-      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent ${targetAgentId} does not exist`);
+      const persisted = (await live.accessor.get(ISessionMetadata).read()).agents?.[targetAgentId];
+      if (persisted === undefined) {
+        throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent ${targetAgentId} does not exist`);
+      }
+      requestLog(req)?.info(
+        { session_id: id, action: 'cancel', agent_id: targetAgentId, include_background: body.include_background === true, cancelled: false },
+        'session action completed',
+      );
+      reply.send(okEnvelope({ cancelled: false }, req.id));
+      return;
     }
   }
 
