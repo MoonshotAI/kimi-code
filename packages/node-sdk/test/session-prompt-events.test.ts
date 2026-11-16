@@ -438,7 +438,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('includes persisted subagent replay only when resume explicitly requests it', async () => {
+  it('includes cancelled subagent output in persisted replay only when resume explicitly requests it', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
