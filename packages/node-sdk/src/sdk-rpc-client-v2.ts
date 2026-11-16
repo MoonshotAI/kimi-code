@@ -1332,7 +1332,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * {@link foldAgentWireReplay} over the engine's `foldWireRecords`. The main
    * agent's fold may arrive already in flight via `mainWireFold` (started by
    * `resumeSession` ahead of the restore; subagents always fold lazily here).
-   * `warning` stays undefined — v2's resume has no migration-warning channel.
+   * `warning` reports when an implicit default model was missing and the
+   * previous session model was preserved instead.
    */
   private async resumedSessionSummary(
     handle: ISessionScopeHandle,
@@ -1344,9 +1345,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   ): Promise<ResumedSessionSummary> {
     const meta = await handle.accessor.get(ISessionMetadata).read();
     const agents: Record<string, ResumedAgentState> = {};
+    let warning: string | undefined;
     // v1 resumes the main agent eagerly; materializing here cold-restores its
     // wire into the scope (create-or-get) and applies the default binding.
-    const main = await this.materializeMainAgent(handle);
+    const main = await this.materializeMainAgent(handle, undefined, (message) => {
+      warning = message;
+    });
     agents[MAIN_AGENT_ID] = await this.resumedAgentState(
       handle,
       main,
@@ -1385,7 +1389,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       ...(await this.liveSessionSummary(handle)),
       sessionMetadata: v2MetaToSessionMeta(meta),
       agents,
-      warning: undefined,
+      warning,
     };
   }
 
@@ -2087,6 +2091,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   private async materializeMainAgent(
     session: ISessionScopeHandle,
     binding?: { readonly model?: string; readonly thinking?: string },
+    onWarning?: (message: string) => void,
   ): Promise<IAgentScopeHandle> {
     await this.modelReady;
     const context = await ensureMainAgent(session);
@@ -2096,7 +2101,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
     const profile = agent.accessor.get(IAgentLoopService);
     const loop = agent.accessor.get(IAgentLoopService);
-    if (binding !== undefined || profile.data().profileName === undefined) {
+    const data = profile.data();
+    if (binding !== undefined || data.profileName === undefined) {
       try {
         await loop.bindProfile({
           profile: DEFAULT_AGENT_PROFILE_NAME,
@@ -2110,6 +2116,20 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           error.code === ProfileErrors.codes.MODEL_NOT_CONFIGURED
         ) {
           return agent;
+        }
+        if (binding === undefined && data.modelAlias !== undefined && isError2(error)) {
+          const model = error.details?.['model'];
+          if (
+            error.code === ErrorCodes.CONFIG_INVALID &&
+            typeof model === 'string' &&
+            error.message === `Model "${model}" is not configured in config.toml.`
+          ) {
+            onWarning?.(
+              `Default model "${model}" is not configured. The previous session model "${data.modelAlias}" was preserved. ` +
+              'Use /model or restart with -m to select an available model.',
+            );
+            return agent;
+          }
         }
         throw error;
       }
