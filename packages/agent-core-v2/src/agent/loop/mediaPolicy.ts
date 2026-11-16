@@ -4,14 +4,15 @@ import {
   forkMediaRecovery,
   type MediaReplacement,
 } from '#human/llm/builtin/policy/media-degrade';
-import type { Message, ToolMessage, UserMessage } from '#human/llm/message';
+import { isMediaPart, type Message, type ToolMessage, type UserMessage } from '#human/llm/message';
+import type { LlmErrorMessage } from '#human/llm/response';
 import type { LlmRecovery, LlmRecoveryLedger } from '#human/llm/policy/recovery';
 import type { LlmResolver } from '#human/llm/policy/resolver';
 import { mediaUrlOf } from '#human/llm/protocol/kit/media';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
-import { buildMediaPathTag, matchMediaPathTags, mediaKindOfPart, type MediaPathTag } from '#/agent/media/mediaRef';
+import { buildMediaPathTag, daemonFileRefFromPart, matchMediaPathTags, mediaKindOfPart, type MediaPathTag } from '#/agent/media/mediaRef';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 
 function mediaTagOf(message: ToolMessage): MediaPathTag | undefined {
@@ -86,6 +87,43 @@ export type AgentMediaPolicyFactory = (
   request: InitializedLlmRequester,
 ) => AgentMediaPolicy;
 
+function isResourceNotFoundError(error: LlmErrorMessage, rawError: unknown): boolean {
+  if (error.kind !== 'status' || error.statusCode !== 404) return false;
+  if (typeof rawError !== 'object' || rawError === null) return false;
+  const body = (rawError as { error?: unknown }).error;
+  if (typeof body !== 'object' || body === null) return false;
+  return (body as { type?: unknown }).type === 'resource_not_found_error';
+}
+
+function hasOnlyInlineMediaReplacements(
+  beforeMessages: readonly Message[],
+  afterMessages: readonly Message[],
+): boolean {
+  let replacements = 0;
+  for (const [messageIndex, message] of beforeMessages.entries()) {
+    const afterMessage = afterMessages[messageIndex];
+    if (afterMessage === undefined || afterMessage.content.length !== message.content.length) {
+      return false;
+    }
+    for (const [partIndex, beforePart] of message.content.entries()) {
+      const afterPart = afterMessage.content[partIndex];
+      if (daemonFileRefFromPart(beforePart) === undefined) {
+        if (isMediaPart(beforePart) && !mediaUrlOf(beforePart).startsWith('data:')) return false;
+        continue;
+      }
+      if (
+        (afterPart?.type !== 'image_url' && afterPart?.type !== 'video_url') ||
+        afterPart.type !== beforePart.type ||
+        !mediaUrlOf(afterPart).startsWith('data:')
+      ) {
+        return false;
+      }
+      replacements += 1;
+    }
+  }
+  return replacements > 0;
+}
+
 export function createAgentMediaPolicy(
   service: IAgentMediaResolverService,
   model: Model,
@@ -99,6 +137,7 @@ export function createAgentMediaPolicy(
     if (kind === undefined) return undefined;
     return { type: 'text', text: buildMediaPathTag(kind, path) };
   };
+  const degradeRecovery = createMediaDegradeRecovery(replacement);
   return {
     toolResolver: {
       id: 'agent-media-tools',
@@ -132,7 +171,36 @@ export function createAgentMediaPolicy(
           : { ...current, content: { ...current.content, messages } };
       },
     },
-    recovery: createMediaDegradeRecovery(replacement),
+    recovery: {
+      propose: async (ctx) => {
+        if (
+          isResourceNotFoundError(ctx.error, ctx.rawError) &&
+          !ctx.appliedRecoveries.some(
+            (recovery) =>
+              recovery.strategy === 'media-resource-not-found' && recovery.action === 'base64',
+          )
+        ) {
+          const messages = await service.resolve(
+            ctx.request.content.messages,
+            model,
+            request,
+            ctx.signal,
+            true,
+          );
+          if (hasOnlyInlineMediaReplacements(ctx.request.content.messages, messages)) {
+            return {
+              strategy: 'media-resource-not-found',
+              action: 'base64',
+              rewrite: (current) => ({
+                ...current,
+                content: { ...current.content, messages },
+              }),
+            };
+          }
+        }
+        return degradeRecovery.propose(ctx);
+      },
+    },
     refreshRecovery: async (ledger, messages) => {
       mediaPaths = await service.displayPaths(messages);
       return forkMediaRecovery(ledger, replacement);

@@ -11,6 +11,8 @@ export interface LlmRecoveryContext {
   readonly request: LlmRequest;
   readonly appliedRecoveries: readonly LlmRecoveryRecord[];
   readonly endpoint?: LlmEndpoint;
+  readonly rawError?: unknown;
+  readonly signal?: AbortSignal;
 }
 
 export type LlmRequestRewrite = (request: LlmRequest) => LlmRequest;
@@ -24,7 +26,9 @@ export interface LlmRecoveryProposal {
 export type LlmRecoveryEntry = LlmRecoveryProposal & LlmRecoveryRecord;
 
 export interface LlmRecovery {
-  propose(ctx: LlmRecoveryContext): LlmRecoveryEntry | undefined;
+  propose(
+    ctx: LlmRecoveryContext,
+  ): LlmRecoveryEntry | undefined | Promise<LlmRecoveryEntry | undefined>;
 }
 
 export interface LlmRecoveryLedger {
@@ -54,12 +58,12 @@ export function createRecoveryLedger(
   };
 }
 
-export function proposeFirst(
+export async function proposeFirst(
   recoveries: readonly LlmRecovery[],
   ctx: LlmRecoveryContext,
-): LlmRecoveryEntry | undefined {
+): Promise<LlmRecoveryEntry | undefined> {
   for (const recovery of recoveries) {
-    const proposal = recovery.propose(ctx);
+    const proposal = await recovery.propose(ctx);
     if (proposal === undefined) continue;
     if (proposal.rewrite !== undefined && proposal.rewrite(ctx.request) === ctx.request) {
       continue;
