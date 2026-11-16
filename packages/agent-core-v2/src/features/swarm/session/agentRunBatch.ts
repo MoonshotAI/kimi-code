@@ -104,6 +104,11 @@ type ActiveAttempt<T> = {
 
 export type AgentRunBatchOptions<T = unknown> = {
   readonly maxConcurrency?: number;
+  readonly initialLaunchLimit?: number;
+  readonly initialLaunchIntervalMs?: number;
+  readonly rateLimitRecoveryIntervalMs?: number;
+  readonly rateLimitRetryBaseMs?: number;
+  readonly maxRateLimitRetries?: number;
   readonly signal?: AbortSignal;
   readonly onStarted?: (task: QueuedAgentRunTask<T>, handle: AgentRunAttemptHandle) => void;
   readonly onSettled?: (result: AgentRunResult<T>) => void;
@@ -119,6 +124,11 @@ export class AgentRunBatch<T> {
   private readonly batchAbortListener: () => void;
   private readonly pendingStopUnlinks: Array<() => void> = [];
   private readonly maxConcurrency: number | undefined;
+  private readonly initialLaunchLimit: number;
+  private readonly initialLaunchIntervalMs: number;
+  private readonly rateLimitRecoveryIntervalMs: number;
+  private readonly rateLimitRetryBaseMs: number;
+  private readonly maxRateLimitRetries: number | undefined;
   private normalLaunchCount = 0;
   private normalLaunchTimer: ReturnType<typeof setTimeout> | undefined;
   private rateLimitLaunchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -132,7 +142,7 @@ export class AgentRunBatch<T> {
   private lastRateLimitAt: number | undefined;
   private lastCapacityShrinkAt: number | undefined;
   private lastCapacityRecoveryAt: number | undefined;
-  private globalRetryIntervalMs = RATE_LIMIT_RETRY_BASE_MS;
+  private globalRetryIntervalMs: number;
   private nextRateLimitLaunchAt = 0;
 
   constructor(
@@ -141,6 +151,21 @@ export class AgentRunBatch<T> {
     private readonly options: AgentRunBatchOptions<T> = {},
   ) {
     this.maxConcurrency = options.maxConcurrency;
+    this.initialLaunchLimit = Math.max(0, options.initialLaunchLimit ?? INITIAL_LAUNCH_LIMIT);
+    this.initialLaunchIntervalMs = Math.max(
+      0,
+      options.initialLaunchIntervalMs ?? INITIAL_LAUNCH_INTERVAL_MS,
+    );
+    this.rateLimitRecoveryIntervalMs = Math.max(
+      1,
+      options.rateLimitRecoveryIntervalMs ?? RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS,
+    );
+    this.rateLimitRetryBaseMs = Math.max(
+      1,
+      options.rateLimitRetryBaseMs ?? RATE_LIMIT_RETRY_BASE_MS,
+    );
+    this.maxRateLimitRetries = options.maxRateLimitRetries;
+    this.globalRetryIntervalMs = this.rateLimitRetryBaseMs;
     this.states = tasks.map((task, index) => ({
       index,
       task,
@@ -201,7 +226,7 @@ export class AgentRunBatch<T> {
 
   private scheduleNormalLaunch(): void {
     while (
-      this.normalLaunchCount < INITIAL_LAUNCH_LIMIT &&
+      this.normalLaunchCount < this.initialLaunchLimit &&
       this.pending.length > 0 &&
       !this.rateLimitMode &&
       !this.isAtConcurrencyLimit()
@@ -226,7 +251,7 @@ export class AgentRunBatch<T> {
       this.startAttempt(this.pending.shift()!);
       this.normalLaunchCount += 1;
       this.schedule();
-    }, INITIAL_LAUNCH_INTERVAL_MS);
+    }, this.initialLaunchIntervalMs);
   }
 
   private isAtConcurrencyLimit(): boolean {
@@ -236,6 +261,7 @@ export class AgentRunBatch<T> {
   private scheduleRateLimitLaunch(): void {
     this.clearRateLimitTimer();
     if (this.pending.length === 0) return;
+    if (this.isAtConcurrencyLimit()) return;
 
     const now = Date.now();
     this.recoverRateLimitCapacity(now);
@@ -368,7 +394,7 @@ export class AgentRunBatch<T> {
     }
 
     if (this.rateLimitMode) {
-      this.globalRetryIntervalMs = RATE_LIMIT_RETRY_BASE_MS;
+      this.globalRetryIntervalMs = this.rateLimitRetryBaseMs;
       this.nextRateLimitLaunchAt = Date.now() + this.globalRetryIntervalMs;
       this.schedule();
     }
@@ -380,7 +406,10 @@ export class AgentRunBatch<T> {
 
     if ('status' in outcome) {
       this.record(attempt.state.index, outcome);
-    } else if (this.isOnlyUnfinishedTask(attempt.state)) {
+    } else if (
+      this.maxRateLimitRetries !== undefined &&
+      attempt.state.retryCount >= this.maxRateLimitRetries
+    ) {
       this.launcher.abandoned?.({
         task: attempt.state.task,
         agentId: outcome.agentId,
@@ -473,7 +502,7 @@ export class AgentRunBatch<T> {
     this.lastRateLimitAt = now;
     state.retryCount += 1;
     const retryDelay = retry.createTimeout(Math.max(0, state.retryCount - 1), {
-      minTimeout: RATE_LIMIT_RETRY_BASE_MS,
+      minTimeout: this.rateLimitRetryBaseMs,
       maxTimeout: Number.POSITIVE_INFINITY,
       factor: RATE_LIMIT_RETRY_FACTOR,
       randomize: false,
@@ -491,7 +520,7 @@ export class AgentRunBatch<T> {
     } else {
       this.nextRateLimitLaunchAt = Math.max(
         this.nextRateLimitLaunchAt,
-        now + RATE_LIMIT_RETRY_BASE_MS,
+        now + this.rateLimitRetryBaseMs,
       );
     }
   }
@@ -503,7 +532,7 @@ export class AgentRunBatch<T> {
       this.rateLimitCapacity = Math.max(1, this.startedSuccessCount);
       this.nextRateLimitLaunchAt = Math.max(
         this.nextRateLimitLaunchAt,
-        now + RATE_LIMIT_RETRY_BASE_MS,
+        now + this.rateLimitRetryBaseMs,
       );
       this.shrinkRateLimitCapacity(now, true);
       return;
@@ -543,7 +572,7 @@ export class AgentRunBatch<T> {
       this.lastRateLimitAt,
       this.lastCapacityRecoveryAt ?? 0,
     );
-    return latestCapacityChangeAt + RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS;
+    return latestCapacityChangeAt + this.rateLimitRecoveryIntervalMs;
   }
 
   private scheduleRateLimitWakeup(wakeupAt: number, now: number): void {
@@ -580,10 +609,6 @@ export class AgentRunBatch<T> {
       return true;
     }
     return false;
-  }
-
-  private isOnlyUnfinishedTask(state: TaskState<T>): boolean {
-    return this.results.every((result, index) => index === state.index || result !== undefined);
   }
 
   private finishWithUserCancellation(): void {

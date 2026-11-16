@@ -342,7 +342,7 @@ describe('AgentRunBatch scheduling contract', () => {
     }
   });
 
-  it('fails the only unfinished task on provider rate limit instead of suspending forever', async () => {
+  it('retries the only unfinished task on provider rate limit instead of failing prematurely', async () => {
     vi.useFakeTimers();
     try {
       const onSuspended = vi.fn();
@@ -367,6 +367,20 @@ describe('AgentRunBatch scheduling contract', () => {
       await vi.advanceTimersByTimeAsync(0);
 
       attempts[1]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-2' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onSuspended).toHaveBeenCalledTimes(1);
+      expect(attempts).toHaveLength(2);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(attempts).toHaveLength(3);
+      expect(attempts[2]!.retryAgentId).toBe('agent-2');
+      attempts[2]!.outcome.resolve({
+        task: attempts[2]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'recovered 2',
+      });
+
       await expect(running).resolves.toMatchObject([
         {
           task: { data: 1 },
@@ -377,12 +391,10 @@ describe('AgentRunBatch scheduling contract', () => {
         {
           task: { data: 2 },
           agentId: 'agent-2',
-          status: 'failed',
-          state: 'started',
-          error: 'Rate limited',
+          status: 'completed',
+          result: 'recovered 2',
         },
       ]);
-      expect(onSuspended).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -828,11 +840,14 @@ describe('AgentRunBatch abandoned callback', () => {
     }
   });
 
-  it('abandons with a failed outcome when the final rate-limited task is terminalized instead of requeued', async () => {
+  it('abandons with a failed outcome when maxRateLimitRetries is exhausted on a rate-limited task', async () => {
     vi.useFakeTimers();
     try {
       const onAbandoned = vi.fn();
-      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onAbandoned });
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({
+        onAbandoned,
+        maxRateLimitRetries: 1,
+      });
       const running = runBatch(
         Array.from({ length: 2 }, (_, index) => queuedAgentRunTask(index + 1)),
         { signal: new AbortController().signal },
@@ -851,7 +866,14 @@ describe('AgentRunBatch abandoned callback', () => {
       attempts[1]!.outcome.resolve({
         type: 'rate_limited',
         agentId: 'agent-2',
-        error: 'Rate limited',
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(attempts).toHaveLength(3);
+      expect(onAbandoned).not.toHaveBeenCalled();
+
+      attempts[2]!.outcome.resolve({
+        type: 'rate_limited',
+        agentId: 'agent-2',
       });
 
       await expect(running).resolves.toMatchObject([
@@ -1006,6 +1028,58 @@ describe('AgentRunBatch max concurrency cap', () => {
       const results = await running;
       expect(results).toHaveLength(9);
       expect(results.every((result) => result.status === 'completed')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('respects custom initialLaunchLimit, initialLaunchIntervalMs, and rateLimitRecoveryIntervalMs options', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({
+        initialLaunchLimit: 2,
+        initialLaunchIntervalMs: 100,
+        rateLimitRecoveryIntervalMs: 5_000,
+        rateLimitRetryBaseMs: 500,
+        maxConcurrency: 4,
+      });
+      const running = runBatch(
+        Array.from({ length: 6 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(2);
+      for (const attempt of attempts.slice(0, 2)) {
+        attempt.markReady();
+      }
+
+      await vi.advanceTimersByTimeAsync(99);
+      expect(attempts).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(3);
+      attempts[2]!.markReady();
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(attempts).toHaveLength(4);
+      attempts[3]!.markReady();
+
+      // 4 active and ready; 1 rate-limited shrinks capacity to 3 while 3 remain active.
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(4);
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(attempts).toHaveLength(4);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(5);
+      expect(attempts[4]!.retryAgentId).toBe('agent-1');
+
+      controller.abort();
+      await expect(running).rejects.toThrow();
     } finally {
       vi.useRealTimers();
     }
@@ -2498,6 +2572,11 @@ type MockAgentRunBatchRunnerOptions = {
   readonly onAbandoned?: (event: AgentRunAbandonedEvent) => void;
   readonly readyDelay?: (attemptIndex: number) => number | undefined;
   readonly maxConcurrency?: number;
+  readonly initialLaunchLimit?: number;
+  readonly initialLaunchIntervalMs?: number;
+  readonly rateLimitRecoveryIntervalMs?: number;
+  readonly rateLimitRetryBaseMs?: number;
+  readonly maxRateLimitRetries?: number;
 };
 
 function createMockAgentRunBatchRunner(
@@ -2573,6 +2652,11 @@ function createMockAgentRunBatchRunner(
       }));
       return new AgentRunBatch(launcher, activeTasks as readonly QueuedAgentRunTask<T>[], {
         maxConcurrency: options.maxConcurrency,
+        initialLaunchLimit: options.initialLaunchLimit,
+        initialLaunchIntervalMs: options.initialLaunchIntervalMs,
+        rateLimitRecoveryIntervalMs: options.rateLimitRecoveryIntervalMs,
+        rateLimitRetryBaseMs: options.rateLimitRetryBaseMs,
+        maxRateLimitRetries: options.maxRateLimitRetries,
         signal: runOptions?.signal,
       }).run();
     },
