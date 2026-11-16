@@ -300,16 +300,18 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         );
       }
       stage = 'restore';
-      handle.accessor.get(IAgentPermissionRulesService);
-      await handle.accessor.get(IEventDispatcher).restore();
-      attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
-      stage = 'bootstrap';
-      const initialProfile = await this.bindBootstrap(handle, opts);
-      if (initialProfile !== undefined) await loop.setProfile(initialProfile);
-      stage = 'toolActivation';
-      await handle.accessor.get(IAgentToolActivationService).activate();
-      stage = 'start';
-      await loop.start(opts.initialTools);
+      await wire.withRestoreSnapshot(async () => {
+        handle.accessor.get(IAgentPermissionRulesService);
+        await handle.accessor.get(IEventDispatcher).restore();
+        attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
+        stage = 'bootstrap';
+        const initialProfile = await this.bindBootstrap(handle, opts);
+        if (initialProfile !== undefined) await loop.setProfile(initialProfile);
+        stage = 'toolActivation';
+        await handle.accessor.get(IAgentToolActivationService).activate();
+        stage = 'start';
+        await loop.start(opts.initialTools);
+      });
       return agent;
     } catch (error) {
       this.telemetry.track2('agent_create_failed', {

@@ -86,6 +86,9 @@ export class WireService extends Service implements IWireService, IAgentJournal 
   private treeSnapshot: WireTree | undefined;
   private writeGeneration = 0;
   private lastReadLineCount = 0;
+  private restoreSnapshot:
+    | { generation: number; lines: number; entries?: Promise<WireLine[]>; chains?: Promise<WireRestoreChains> }
+    | undefined;
   private modeTwoEntries: WireLine[] = [];
   private modeTwoProfileEntries: WireLine[] = [];
   private readonly reportedDiagnostics = new Set<string>();
@@ -212,7 +215,26 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     for (const record of normalizeLegacyTurnSteerRecords(records)) yield record;
   }
 
-  async readRestoreChains(): Promise<WireRestoreChains> {
+  readRestoreChains(): Promise<WireRestoreChains> {
+    const snapshot = this.restoreSnapshot;
+    if (snapshot === undefined || this.externallyModified()) return this.readRestoreChainsUncached();
+    const generation = this.writeGeneration;
+    const lines = this.lines;
+    if (snapshot.generation !== generation || snapshot.lines !== lines) {
+      snapshot.generation = generation;
+      snapshot.lines = lines;
+      snapshot.entries = undefined;
+      snapshot.chains = undefined;
+    }
+    snapshot.chains ??= this.readRestoreChainsUncached().then((chains) => {
+      snapshot.generation = this.writeGeneration;
+      snapshot.lines = this.lastReadLineCount;
+      return chains;
+    });
+    return snapshot.chains;
+  }
+
+  private async readRestoreChainsUncached(): Promise<WireRestoreChains> {
     const entries = await this.readStableEntries();
     const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
     this.treeSnapshot = tree;
@@ -221,6 +243,16 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       restorable: normalizeLegacyTurnSteerRecords(restorableChain(entries, tree).map(({ record }) => record)),
       journal: entries.map(({ record }) => record),
     };
+  }
+
+  async withRestoreSnapshot<T>(run: () => Promise<T>): Promise<T> {
+    if (this.restoreSnapshot !== undefined) return run();
+    this.restoreSnapshot = { generation: this.writeGeneration, lines: this.lines };
+    try {
+      return await run();
+    } finally {
+      this.restoreSnapshot = undefined;
+    }
   }
 
   async switchBranch(input: SwitchBranchInput): Promise<SwitchedBranch> {
@@ -301,7 +333,26 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     );
   }
 
-  private async readStableEntries(): Promise<WireLine[]> {
+  private readStableEntries(): Promise<WireLine[]> {
+    const snapshot = this.restoreSnapshot;
+    if (snapshot === undefined || this.externallyModified()) return this.readStableEntriesUncached();
+    const generation = this.writeGeneration;
+    const lines = this.lines;
+    if (snapshot.generation !== generation || snapshot.lines !== lines) {
+      snapshot.generation = generation;
+      snapshot.lines = lines;
+      snapshot.entries = undefined;
+      snapshot.chains = undefined;
+    }
+    snapshot.entries ??= this.readStableEntriesUncached().then((entries) => {
+      snapshot.generation = this.writeGeneration;
+      snapshot.lines = this.lastReadLineCount;
+      return entries;
+    });
+    return snapshot.entries;
+  }
+
+  private async readStableEntriesUncached(): Promise<WireLine[]> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const generation = this.writeGeneration;
       const entries: WireLine[] = [];
