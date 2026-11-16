@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Reupload cached images and videos when their Kimi files no longer exist.
+Fall back to local base64 media when cached Kimi files are unavailable.
