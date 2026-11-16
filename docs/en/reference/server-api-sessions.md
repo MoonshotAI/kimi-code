@@ -23,7 +23,7 @@ Every endpoint that returns a session uses this shape. The object contains only 
 | `pending_interaction` | string | The interaction waiting for an answer: `none` / `approval` / `question`. `approval` when an approval and a question are both pending |
 | `last_turn_outcome` | string | Outcome of the main agent's latest turn: `completed` / `interrupted` / `failed` (matches `Turn.outcome`); omitted when no turn has ended |
 | `last_prompt` | string | Text of the most recent user prompt, when present |
-| `metadata` | object | Optional custom metadata, stored exactly as supplied. The reserved keys `goal`, `parent_session_id`, and `child_session_kind` are managed by the server and are discarded when supplied at creation |
+| `metadata` | object | Optional custom metadata, stored as supplied except for reserved keys (`cwd`, `goal`, `parent_session_id`, and `child_session_kind`—`cwd` is exposed via top-level `cwd`, and the others are server-managed) |
 | `git` | object | Present only when `GET /api/v1/sessions` is called with `include=git`. Carries optional `branch` (current branch; omitted for detached HEAD or non-Git directories) and optional `pull_request` (`{ number, state: "open" \| "closed" \| "merged", url }`; omitted when none) |
 
 ### Create, read, and update sessions

@@ -135,9 +135,9 @@ S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "sessio
 ```wire focus=item.type,item.name,item.stage,field,delta,set,item.output,step.finish_reason
 S {"type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.400Z", "text": "", "started_at": "2026-10-29T10:30:00.400Z"}}
 S {"type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "r_1", "field": "text", "delta": "先读取 README.md"}
-S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.400Z", "text": "先读取 README.md 确认启动脚本。", "started_at": "2026-10-29T10:30:00.400Z", "duration_ms": 1200}}
 S {"type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "input", "started_at": "2026-10-29T10:30:01.700Z"}}
 S {"type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "field": "input_text", "delta": "{\"path\":\"README.md\"}"}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.400Z", "text": "先读取 README.md 确认启动脚本。", "started_at": "2026-10-29T10:30:00.400Z", "duration_ms": 1200}}
 S {"type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "set": {"stage": "executing", "input": {"path": "README.md"}}}
 S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "executing", "input": {"path": "README.md"}, "output": "1\t# App\n2\tRun `pnpm dev`", "started_at": "2026-10-29T10:30:01.700Z", "ended_at": "2026-10-29T10:30:02.100Z"}}
 S {"type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": {"index": 1, "outcome": "completed", "finish_reason": "tool_calls", "started_at": "2026-10-29T10:30:00.300Z", "ended_at": "2026-10-29T10:30:02.100Z", "usage": {"input_other": 5210, "output": 96, "input_cache_read": 0, "input_cache_creation": 0}}}
@@ -242,11 +242,12 @@ S {"type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "sessio
 
 ### 实时更新
 
-客户端维护对话状态的归并规则只需 6 条：
+客户端维护对话状态的归并规则如下：
 
 | 帧 | 载荷 | 客户端归并动作 |
 | --- | --- | --- |
 | `turns` | `turns: Turn[]`, `has_more: boolean` | 订阅或会话重开时到达，替换该 Agent 本地最新的这些轮次 |
+| `turns.failed` | `code: number`, `msg: string` | 初始对话加载失败（订阅仍保持有效；展示错误态，若后续到达新的 `turns` 帧则直接覆盖恢复） |
 | `turn.started`、`turn.ended` | `turn`（不含 `items`） | 按 `turn_id` 新建或更新轮次头部字段，保留该轮已有的 `items`；轮次列表按 `ordinal` 升序排列 |
 | `turn.updated` | `turn_id`, `step?`, `retry?` | 将 `step` 按 `index` 写入 `turn.steps`；用 `retry` 替换 `turn.retry`（未带 `retry` 时清除） |
 | `item.started`、`item.ended` | `turn_id`, `item` | 按 `(turn_id, item_id)` 原地替换已有条目，本地不存在则追加到该轮 `items` 末尾 |
@@ -473,7 +474,8 @@ S {"type": "response", "request_id": "r5", "code": 0, "task": {"task_id": "bash-
 | `kind` | `shell` / `subagent` / `other` |
 | `status` | `running` 或 `ended`（任务结束发送最后一帧 `status: "ended"` 的 `task`，此后不再出现在 `task.list` 中） |
 | `outcome` | 仅已结束任务：`completed` / `failed` / `timed_out` / `killed` / `lost` |
-| `phase`、`state_reason` | 仅运行中的 subagent：`working` 或 `suspended` |
+| `phase` | 仅运行中的 subagent：`working` 或 `suspended` |
+| `state_reason` | 仅挂起（`suspended`）的 subagent：挂起原因说明文本 |
 | `detached` | `false` 表示发起它的工具调用仍在等待它（前台任务）；`true` 表示已在后台运行 |
 | `description`、`command` | 任务描述与 Shell 命令文本 |
 | `child_agent_id`、`parent_tool_call_id`、`swarm_index` | 关联的子 Agent ID、发起工具调用 ID 及 Swarm 成员序号 |

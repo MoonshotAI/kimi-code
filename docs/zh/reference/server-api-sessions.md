@@ -23,7 +23,7 @@
 | `pending_interaction` | string | 正在等待答复的交互：`none` / `approval` / `question`。审批和提问同时待处理时为 `approval` |
 | `last_turn_outcome` | string | main agent 最近一轮的结局：`completed` / `interrupted` / `failed`（取值与 `Turn.outcome` 一致）；还没有结束的轮时省略 |
 | `last_prompt` | string | 最近一条用户提示词的文本（如有） |
-| `metadata` | object | 可选的自定义元数据，原样保存调用方写入的内容。保留键 `goal`、`parent_session_id`、`child_session_kind` 由服务端管理，创建时写入会被丢弃 |
+| `metadata` | object | 可选的自定义元数据，除保留键（`cwd`、`goal`、`parent_session_id`、`child_session_kind`——`cwd` 由顶层 `cwd` 字段承载，其余由服务端管理并丢弃调用方写入值）外原样保存 |
 | `git` | object | 仅在 `GET /api/v1/sessions` 传入 `include=git` 时携带。含可选的 `branch`（当前分支；分离 HEAD 或非 Git 仓库时省略）和可选的 `pull_request`（`{ number, state: "open" \| "closed" \| "merged", url }`，无关联 PR 时省略） |
 
 ### 创建、查询与修改会话

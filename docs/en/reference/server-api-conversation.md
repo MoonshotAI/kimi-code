@@ -135,9 +135,9 @@ S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "sessio
 ```wire focus=item.type,item.name,item.stage,field,delta,set,item.output,step.finish_reason
 S {"type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:00.400Z", "text": "", "started_at": "2026-10-29T10:30:00.400Z"}}
 S {"type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "r_1", "field": "text", "delta": "Let's read README.md first"}
-S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.400Z", "text": "Let's read README.md first to check the script.", "started_at": "2026-10-29T10:30:00.400Z", "duration_ms": 1200}}
 S {"type": "item.started", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "running", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "input", "started_at": "2026-10-29T10:30:01.700Z"}}
 S {"type": "item.delta", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "field": "input_text", "delta": "{\"path\":\"README.md\"}"}
+S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "r_1", "type": "reasoning", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:00.400Z", "text": "Let's read README.md first to check the script.", "started_at": "2026-10-29T10:30:00.400Z", "duration_ms": 1200}}
 S {"type": "item.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item_id": "call_read_1", "set": {"stage": "executing", "input": {"path": "README.md"}}}
 S {"type": "item.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "item": {"item_id": "call_read_1", "type": "tool_call", "step_index": 1, "status": "ended", "outcome": "completed", "created_at": "2026-10-29T10:30:01.700Z", "name": "Read", "stage": "executing", "input": {"path": "README.md"}, "output": "1\t# App\n2\tRun `pnpm dev`", "started_at": "2026-10-29T10:30:01.700Z", "ended_at": "2026-10-29T10:30:02.100Z"}}
 S {"type": "turn.updated", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turn_id": "t_1", "step": {"index": 1, "outcome": "completed", "finish_reason": "tool_calls", "started_at": "2026-10-29T10:30:00.300Z", "ended_at": "2026-10-29T10:30:02.100Z", "usage": {"input_other": 5210, "output": 96, "input_cache_read": 0, "input_cache_creation": 0}}}
@@ -247,6 +247,7 @@ Clients reduce conversation frames with these rules:
 | Frame | Payload | Client action |
 | --- | --- | --- |
 | `turns` | `turns: Turn[]`, `has_more: boolean` | Sent on subscribe or session reopen; replaces the latest turns for that agent |
+| `turns.failed` | `code: number`, `msg: string` | Initial conversation load failed (the subscription remains active; show an error state and replace it if a later `turns` frame arrives) |
 | `turn.started`, `turn.ended` | `turn` (without `items`) | Insert or update the turn header by `turn_id`, preserving its existing `items`; sort turns by `ordinal` |
 | `turn.updated` | `turn_id`, `step?`, `retry?` | Write `step` into `turn.steps` by `index`; replace `turn.retry` (or clear it when omitted) |
 | `item.started`, `item.ended` | `turn_id`, `item` | Replace the item with matching `(turn_id, item_id)` in place, or append to `turn.items` if new |
@@ -473,7 +474,8 @@ S {"type": "response", "request_id": "r5", "code": 0, "task": {"task_id": "bash-
 | `kind` | `shell` / `subagent` / `other` |
 | `status` | `running` or `ended` (an ended task emits one final `task` frame and is absent from future `task.list` frames) |
 | `outcome` | On ended tasks: `completed` / `failed` / `timed_out` / `killed` / `lost` |
-| `phase`, `state_reason` | On running subagents: `working` or `suspended` |
+| `phase` | On running subagents: `working` or `suspended` |
+| `state_reason` | On suspended subagents: human-readable suspension reason |
 | `detached` | `false` while the spawning tool call is still awaiting it (foreground); `true` when running in the background |
 | `description`, `command` | Description and shell command string |
 | `child_agent_id`, `parent_tool_call_id`, `swarm_index` | Subagent ID, spawning tool call ID, and swarm member index |
