@@ -91,6 +91,10 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
       );
     }
     await this.sessionMetadata.unregisterAgent(agentId);
+    if (this.agentLifecycle.removeById !== undefined) {
+      await this.agentLifecycle.removeById(agentId);
+      return;
+    }
     const target = this.agentLifecycle.get(agentId) ?? live;
     if (target !== undefined) {
       await this.agentLifecycle.remove(target);
