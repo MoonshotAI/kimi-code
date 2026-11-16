@@ -623,14 +623,14 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(got.body.data.agent_config).toEqual({ model: 'other' });
   });
 
-  it('supports exclude_empty when listing sessions', async () => {
+  it('supports has_prompt=true when listing sessions', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
 
     const all = await getJson<PageWire>('/api/v1/sessions');
     expect(all.body.data.items.some((s) => s.id === created.body.data.id)).toBe(true);
 
-    const filtered = await getJson<PageWire>('/api/v1/sessions?exclude_empty=true');
+    const filtered = await getJson<PageWire>('/api/v1/sessions?has_prompt=true');
     expect(filtered.body.code).toBe(0);
     expect(filtered.body.data.items.some((s) => s.id === created.body.data.id)).toBe(false);
   });
@@ -2788,17 +2788,17 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(normal.body.data.items.some((s) => s.id === liveId)).toBe(true);
     expect(normal.body.data.items.some((s) => s.id === archivedId)).toBe(false);
 
-    const onlyArchived = await getJson<PageWire>('/api/v1/sessions?archived_only=true');
+    const onlyArchived = await getJson<PageWire>('/api/v1/sessions?archived=true');
     expect(onlyArchived.body.code).toBe(0);
     expect(onlyArchived.body.data.items.some((s) => s.id === archivedId)).toBe(true);
     expect(onlyArchived.body.data.items.some((s) => s.id === liveId)).toBe(false);
 
-    const all = await getJson<PageWire>('/api/v1/sessions?include_archive=true');
+    const all = await getJson<PageWire>('/api/v1/sessions?archived=all');
     expect(all.body.data.items.some((s) => s.id === liveId)).toBe(true);
     expect(all.body.data.items.some((s) => s.id === archivedId)).toBe(true);
   });
 
-  it('paginates archived_only without returning empty filtered pages', async () => {
+  it('paginates archived=true without returning empty filtered pages', async () => {
     await restartWithFreshHome();
     const cwd = home as string;
     const archivedOlder = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -2814,7 +2814,7 @@ describe('server-v2 /api/v1/sessions', () => {
     await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
 
-    const first = await getJson<PageWire>('/api/v1/sessions?archived_only=true&page_size=1');
+    const first = await getJson<PageWire>('/api/v1/sessions?archived=true&page_size=1');
     expect(first.body.code).toBe(0);
     expect(first.body.data.items).toHaveLength(1);
     expect(first.body.data.items[0]).toMatchObject({
@@ -2824,7 +2824,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(first.body.data.has_more).toBe(true);
 
     const second = await getJson<PageWire>(
-      `/api/v1/sessions?archived_only=true&page_size=1&before_id=${archivedNewer.body.data.id}`,
+      `/api/v1/sessions?archived=true&page_size=1&before_id=${archivedNewer.body.data.id}`,
     );
     expect(second.body.code).toBe(0);
     expect(second.body.data.items).toHaveLength(1);
@@ -2835,7 +2835,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(second.body.data.has_more).toBe(false);
   });
 
-  it('keeps the after_id lower bound while a filtered drain pages for more candidates', async () => {
+  it('keeps the after_id lower bound while paging archived sessions', async () => {
     const cwd = home as string;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -2851,21 +2851,19 @@ describe('server-v2 /api/v1/sessions', () => {
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${archivedNewer.body.data.id}:archive`);
 
     const page = await getJson<PageWire>(
-      `/api/v1/sessions?archived_only=true&page_size=2&after_id=${archivedOlder.body.data.id}`,
+      `/api/v1/sessions?archived=true&page_size=2&after_id=${archivedOlder.body.data.id}`,
     );
     expect(page.body.code).toBe(0);
     expect(page.body.data.items.map((s) => s.id)).toEqual([archivedNewer.body.data.id]);
     expect(page.body.data.has_more).toBe(false);
   });
 
-  it('rejects archived_only combined with include_archive (40001)', async () => {
-    const { body } = await getJson<null>(
-      '/api/v1/sessions?archived_only=true&include_archive=true',
-    );
+  it('rejects an invalid archived filter value (40001)', async () => {
+    const { body } = await getJson<null>('/api/v1/sessions?archived=yes');
     expect(body.code).toBe(40001);
   });
 
-  it('returns a terminal empty page when archived_only busy filtering finds no match', async () => {
+  it('returns a terminal empty page when archived=true busy filtering finds no match', async () => {
     const cwd = home as string;
     const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const second = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -2874,20 +2872,16 @@ describe('server-v2 /api/v1/sessions', () => {
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${second.body.data.id}:archive`);
 
     const page = await getJson<PageWire>(
-      '/api/v1/sessions?archived_only=true&busy=true&page_size=1',
+      '/api/v1/sessions?archived=true&busy=true&page_size=1',
     );
     expect(page.body.code).toBe(0);
-    expect(page.body.data).toEqual({ items: [], has_more: false });
+    expect(page.body.data).toEqual({ items: [], total: 0, has_more: false });
   });
 
-  it('rejects a malformed workspace_id when listing (40001)', async () => {
-    const { body } = await getJson<null>('/api/v1/sessions?workspace_id=not-a-workspace-id');
-    expect(body.code).toBe(40001);
-  });
-
-  it('returns 40410 for an unknown workspace_id when listing', async () => {
-    const { body } = await getJson<null>('/api/v1/sessions?workspace_id=wd_missing_000000000000');
-    expect(body.code).toBe(40410);
+  it('returns an empty list for an unknown workspace_id filter', async () => {
+    const { body } = await getJson<PageWire>('/api/v1/sessions?workspace_id=wd_missing_000000000000');
+    expect(body.code).toBe(0);
+    expect(body.data).toEqual({ items: [], total: 0, has_more: false });
   });
 
   it('lists the union of legacy split buckets for one workspace, in recency order', async () => {
@@ -2981,7 +2975,7 @@ describe('server-v2 /api/v1/sessions', () => {
       .mockReturnValue({ ...activity.state(), busy: true });
 
     try {
-      const page = await getJson<PageWire>('/api/v1/sessions?busy=true&page_size=1&include_archive=true');
+      const page = await getJson<PageWire>('/api/v1/sessions?busy=true&page_size=1&archived=all');
       expect(page.body.code).toBe(0);
       expect(page.body.data.items.map((s) => s.id)).toEqual([busy.body.data.id]);
       expect(page.body.data.has_more).toBe(false);
@@ -3443,7 +3437,7 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     );
 
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
-    const archivedOnly = await getJson<PageWire>('/api/v1/sessions?archived_only=true');
+    const archivedOnly = await getJson<PageWire>('/api/v1/sessions?archived=true');
     expect(archivedOnly.body.data.items.map((s) => s.id)).toEqual([id]);
 
     await (server as RunningServer).close();
@@ -3456,7 +3450,7 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
       debugEndpoints: true,
     });
     base = `http://127.0.0.1:${server.port}`;
-    const relisted = await getJson<PageWire>('/api/v1/sessions?include_archive=true');
+    const relisted = await getJson<PageWire>('/api/v1/sessions?archived=all');
     expect(relisted.body.data.items.map((s) => s.id)).toEqual([id]);
   });
 
