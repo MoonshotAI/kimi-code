@@ -26,6 +26,7 @@ export const RecordCoverageInputSchema = z.object({
   outcome: z.enum(ARTEX_COVERAGE_OUTCOMES),
   evidence: z.string().optional(),
   reason: z.string().optional(),
+  intent_id: z.number().int().min(1).optional(),
 });
 
 export type RecordCoverageInput = z.infer<typeof RecordCoverageInputSchema>;
@@ -42,6 +43,7 @@ export class ArtexRecordCoverageTool implements AgentTool<RecordCoverageInput> {
   readonly parameters = PARAMETERS;
 
   private readonly worker: string;
+  private readonly defaultIntentId?: number;
 
   constructor(
     @IArtexSessionContext private readonly session: IArtexSessionContext,
@@ -49,6 +51,9 @@ export class ArtexRecordCoverageTool implements AgentTool<RecordCoverageInput> {
     @IAgentScopeContext scope: IAgentScopeContext,
   ) {
     this.worker = scope.agentId;
+    const rawIntent = Number(scope.meta?.labels?.['artexIntentId']);
+    this.defaultIntentId =
+      Number.isInteger(rawIntent) && rawIntent > 0 ? rawIntent : undefined;
   }
 
   resolveExecution(args: RecordCoverageInput): ToolExecution {
@@ -71,8 +76,13 @@ export class ArtexRecordCoverageTool implements AgentTool<RecordCoverageInput> {
       evidence: args.evidence ?? '',
       reason: args.reason ?? '',
       worker: this.worker,
+      intentId: args.intent_id ?? this.defaultIntentId,
     };
-    await handle.store.recordCoverage(handle.taskId, entry);
+    try {
+      await handle.store.recordCoverage(handle.taskId, entry);
+    } catch (error) {
+      return artexErr(error instanceof Error ? error.message : String(error));
+    }
     const ledger = buildCoverageLedger([entry], [], {
       complete: false,
       state: 'in_progress',

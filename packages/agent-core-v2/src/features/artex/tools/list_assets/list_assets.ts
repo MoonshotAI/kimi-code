@@ -16,6 +16,7 @@ import { ARTEX_INACTIVE_RESULT, artexErr, artexJson, openActiveWork } from '../t
 import DESCRIPTION from './list_assets.md?raw';
 
 export const ListAssetsInputSchema = z.object({
+  dsl: z.string().optional(),
   text: z.string().optional(),
   type: z.string().optional(),
   id: z.number().int().optional(),
@@ -54,21 +55,30 @@ export class ArtexListAssetsTool implements AgentTool<ListAssetsInput> {
     const handle = await openActiveWork(this.session, this.provider);
     if (handle === undefined) return ARTEX_INACTIVE_RESULT;
     const byId = args.id !== undefined || (args.ids !== undefined && args.ids.length > 0);
-    if (!byId && (args.text === undefined || args.text.trim() === '')) {
+    const hasDsl = args.dsl !== undefined && args.dsl.trim() !== '';
+    const hasText = args.text !== undefined && args.text.trim() !== '';
+    if (!byId && !hasDsl && !hasText) {
       return artexErr(
-        'text must not be empty when id/ids are not passed: unconditional queries over all assets are not allowed; please provide a search term',
+        'dsl or text must not be empty when id/ids are not passed: unconditional queries over all assets are not allowed; please provide a query condition',
       );
     }
     const query: ArtexAssetQuery = {
       id: args.id,
       ids: args.ids,
       type: args.type,
+      dsl: args.dsl,
       text: args.text,
       taskId: handle.taskId,
       limit: args.limit ?? 10,
       offset: args.offset,
     };
-    const assets = await handle.store.listAssets(query);
-    return { output: artexJson({ count: assets.length, assets }) };
+    try {
+      const assets = await handle.store.listAssets(query);
+      return { output: artexJson({ count: assets.length, assets }) };
+    } catch (error) {
+      return artexErr(
+        `DSL error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }

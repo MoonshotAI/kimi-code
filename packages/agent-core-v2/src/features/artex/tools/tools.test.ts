@@ -37,6 +37,12 @@ import {
 import { ArtexWorkStoreProvider } from '#/features/artex/store/artexWorkStoreProvider';
 import type { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import type { IArtexModeService } from '#/features/artex/agent/artexMode';
+import { ArtexListAssetsTool, type ListAssetsInput } from './list_assets/list_assets';
+import { ArtexListFactsTool, type ListFactsInput } from './list_facts/list_facts';
+import { ArtexNodeDetailTool, type NodeDetailInput } from './node_detail/node_detail';
+import { ArtexRecordCoverageTool, type RecordCoverageInput } from './record_coverage/record_coverage';
+import { ArtexSetConstraintsTool, type SetConstraintsInput } from './set_constraints/set_constraints';
+import { ArtexSetGoalsTool, type SetGoalsInput } from './set_goals/set_goals';
 import { stubFlag } from '../../../../test/app/flag/stubs';
 import { vi } from 'vitest';
 
@@ -462,5 +468,146 @@ describe('artex graph tools', () => {
     const pauseRes = await exec<StartArtexExplorationInput>(entryTool, { action: 'pause' });
     expect(pause).toHaveBeenCalledWith(2);
     expect(parseOutput(pauseRes)).toMatchObject({ paused: true });
+  });
+
+  it('supports upgraded parity behavior across list_assets, set_goals, graph_overview, node_detail, list_facts, set_constraints, and record_coverage', async () => {
+    const workProvider = new ArtexWorkStoreProvider();
+    const workStore = workProvider.open(dir);
+    await workStore.ensureSeeded();
+    await workStore.upsertAsset(
+      { type: 'service', url: 'https://portal.example.test:8443/login', statusCode: 200, technologies: ['React'] },
+      1,
+    );
+    await workStore.addTaskScope(1, 'root_domain', 'example.test', 'declared', 'agent');
+    await workStore.upsertTaskCredential(1, {
+      domain: 'example.test',
+      username: 'tester@example.test',
+      password: 'top-secret-value',
+      source: 'user',
+    });
+
+    const listAssets = new ArtexListAssetsTool(session, workProvider);
+    const dslRes = parseOutput<{ count: number; assets: Array<{ url?: string }> }>(
+      await exec<ListAssetsInput>(listAssets, { dsl: 'port>=8000 AND technology=react' }),
+    );
+    expect(dslRes.count).toBe(1);
+    expect(dslRes.assets[0]?.url).toContain('portal.example.test');
+    const badDsl = await exec<ListAssetsInput>(listAssets, { dsl: 'port=abc' });
+    expect(badDsl.isError).toBe(true);
+
+    const setGoals = new ArtexSetGoalsTool(session, provider);
+    const goalsOut = parseOutput<{ ids: number[] }>(
+      await exec<SetGoalsInput>(setGoals, {
+        goals: [
+          { text: 'dump admin table', category: 'sqli' },
+          { text: 'bypass auth', vulnclass: 'auth_bypass' },
+          'plain string goal',
+        ],
+      }),
+    );
+    expect(goalsOut.ids).toHaveLength(3);
+    const g1 = await store.getNode(goalsOut.ids[0]!);
+    const g2 = await store.getNode(goalsOut.ids[1]!);
+    expect((g1?.payload as { category?: string }).category).toBe('sqli');
+    expect((g2?.payload as { category?: string }).category).toBe('auth_bypass');
+
+    const longSummary = 'S'.repeat(190);
+    const f1 = await store.addNode({
+      kind: 'fact',
+      payload: { summary: `alpha ${longSummary}`, confidence: 'observed', source: 'tool_output' },
+      priority: 5,
+      state: 'confirmed',
+    });
+    const f2 = await store.addNode({
+      kind: 'fact',
+      payload: { summary: 'beta second fact', confidence: 'observed', source: 'tool_output' },
+      priority: 5,
+      state: 'confirmed',
+    });
+    const f3 = await store.addNode({
+      kind: 'fact',
+      payload: { summary: 'alpha third fact', confidence: 'observed', source: 'tool_output' },
+      priority: 5,
+      state: 'confirmed',
+    });
+    const listFacts = new ArtexListFactsTool(session, provider);
+    const page1 = parseOutput<{
+      facts: Array<{ id: number; summary: string; summary_truncated?: boolean }>;
+      total: number;
+      has_more: boolean;
+      next_before?: number;
+    }>(await exec<ListFactsInput>(listFacts, { q: 'alpha', limit: 1 }));
+    expect(page1.total).toBe(2);
+    expect(page1.has_more).toBe(true);
+    expect(page1.facts[0]?.id).toBe(f3);
+    expect(page1.next_before).toBe(f3);
+
+    const page2 = parseOutput<{
+      facts: Array<{ id: number; summary: string; summary_truncated?: boolean }>;
+      has_more: boolean;
+    }>(await exec<ListFactsInput>(listFacts, { q: 'alpha', before: page1.next_before, limit: 1 }));
+    expect(page2.has_more).toBe(false);
+    expect(page2.facts[0]?.id).toBe(f1);
+    expect(page2.facts[0]?.summary_truncated).toBe(true);
+    expect(Array.from(page2.facts[0]!.summary).length).toBe(161);
+    void f2;
+
+    const trafficProvider = new ArtexTrafficStoreProvider();
+    const traffic = trafficProvider.open(dir);
+    const tid = await recordProofExchange(traffic, '{"ok":true}');
+    const findingId = await store.addNode({
+      kind: 'finding',
+      payload: { summary: 'test finding', vulnclass: 'idor', name: 'idor' },
+      priority: 5,
+      state: 'confirmed',
+    });
+    await traffic.bindToFinding(findingId, [{ trafficId: tid, role: 'proof' }]);
+
+    const nodeDetail = new ArtexNodeDetailTool(session, provider, trafficProvider);
+    const detailById = parseOutput<{
+      node: { id: number };
+      finding_id?: number;
+      traffic_count?: number;
+    }>(await exec<NodeDetailInput>(nodeDetail, { id: findingId }));
+    expect(detailById.node.id).toBe(findingId);
+    expect(detailById.finding_id).toBe(findingId);
+    expect(detailById.traffic_count).toBe(1);
+
+    const detailByNodeId = parseOutput<{ node: { id: number } }>(
+      await exec<NodeDetailInput>(nodeDetail, { node_id: findingId }),
+    );
+    expect(detailByNodeId.node.id).toBe(findingId);
+
+    const setConstraints = new ArtexSetConstraintsTool(session, workProvider, SCOPE);
+    await exec<SetConstraintsInput>(setConstraints, { text: 'only https', type: 'allow' });
+    const firstConstraints = await workStore.listConstraints(1);
+    await exec<SetConstraintsInput>(setConstraints, { text: 'no dos', type: 'deny' });
+    const allConstraints = await workStore.listConstraints(1);
+    expect(allConstraints).toHaveLength(2);
+    expect(allConstraints[0]?.id).toBe(firstConstraints[0]?.id);
+
+    const recordCoverage = new ArtexRecordCoverageTool(session, workProvider, SCOPE);
+    const covRes = await exec<RecordCoverageInput>(recordCoverage, {
+      surface: 'https://portal.example.test:8443/login',
+      risk_area: 'sqli',
+      outcome: 'no_issue_found',
+      evidence: 'tested payload',
+      intent_id: 99,
+    });
+    expect(covRes.isError ?? false).toBe(false);
+    expect((await workStore.coverageEntries(1))[0]?.intentId).toBe(99);
+
+    const overviewTool = new ArtexGraphOverviewTool(session, provider, workProvider);
+    const overview = parseOutput<{
+      hidden_node_count: number;
+      coverage?: { denominator: number; ledger_entries: number };
+      task_credentials?: Array<{ username: string; password?: string; has_password?: boolean }>;
+    }>(await exec(overviewTool, {}));
+    expect(typeof overview.hidden_node_count).toBe('number');
+    expect(overview.coverage?.denominator).toBe(1);
+    expect(overview.coverage?.ledger_entries).toBe(1);
+    expect(overview.task_credentials?.[0]?.username).toBe('tester@example.test');
+    expect(overview.task_credentials?.[0]?.password).toBeUndefined();
+    expect(overview.task_credentials?.[0]?.has_password).toBe(true);
   });
 });

@@ -73,10 +73,6 @@ export class ArtexSetConstraintsTool implements AgentTool<SetConstraintsInput> {
       ? (args.constraints ?? [])
       : [{ text: args.text, type: args.type }];
 
-    const existing = (await store.listConstraints(taskId))
-      .filter((constraint) => constraint.origin === this.origin)
-      .map((constraint) => ({ kind: constraint.kind, text: constraint.text }));
-
     const ids: number[] = Array.from({ length: items.length }, () => 0);
     const errors: Record<string, string> = {};
     const valid: { index: number; input: ArtexConstraintInput }[] = [];
@@ -89,18 +85,16 @@ export class ArtexSetConstraintsTool implements AgentTool<SetConstraintsInput> {
       valid.push({ index, input: { kind: constraintKind(item.type), text } });
     });
 
-    const all = await store.setConstraints(
-      taskId,
-      [...existing, ...valid.map((entry) => entry.input)],
-      this.origin,
-    );
-    const mine = all
-      .filter((constraint) => constraint.origin === this.origin)
-      .toSorted((a, b) => a.id - b.id)
-      .slice(existing.length);
-    valid.forEach((entry, position) => {
-      ids[entry.index] = mine[position]?.id ?? 0;
-    });
+    if (valid.length > 0) {
+      const added = await store.appendConstraints(
+        taskId,
+        valid.map((entry) => entry.input),
+        this.origin,
+      );
+      valid.forEach((entry, position) => {
+        ids[entry.index] = added[position]?.id ?? 0;
+      });
+    }
 
     if (!batch) {
       const message = errors['0'];

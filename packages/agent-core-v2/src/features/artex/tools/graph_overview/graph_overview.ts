@@ -50,8 +50,9 @@ function nodeSummary(node: ArtexNode): string {
 }
 
 function clipSummary(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
+  const chars = Array.from(text);
+  if (chars.length <= max) return text;
+  return `${chars.slice(0, max - 1).join('')}…`;
 }
 
 function pushToMap(map: Map<number, number[]>, key: number, value: number): void {
@@ -102,17 +103,17 @@ export class ArtexGraphOverviewTool implements AgentTool<GraphOverviewInput> {
     const handle = await openActiveGraph(this.session, this.provider);
     if (handle === undefined) return ARTEX_INACTIVE_RESULT;
     const { store, explorationId } = handle;
-    const [stats, nodes, edges, root, frontier, activeDigests, coveredMap, coldData] =
+    const [stats, snapshot, root, frontier, activeDigests, coveredMap, coldData] =
       await Promise.all([
         store.stats(),
-        store.nodes(),
-        store.edges(),
+        store.load(),
         store.root(),
         store.frontier(OPEN_INTENTS_CAP),
         store.activeDigests(),
         store.coveredMemberMap(),
         loadColdGraph(store),
       ]);
+    const { nodes, edges, anchors } = snapshot;
 
     const hotAtRender = coldData.graph.hotSet();
     const isHidden = (id: number): boolean => coveredMap.has(id) && !hotAtRender.has(id);
@@ -148,8 +149,12 @@ export class ArtexGraphOverviewTool implements AgentTool<GraphOverviewInput> {
     const findingNodes: ArtexNode[] = [];
     const factNodes: ArtexNode[] = [];
     let doneIntentsTotal = 0;
+    let hiddenNodeCount = 0;
 
     for (const node of nodes) {
+      if (isHidden(node.id)) {
+        hiddenNodeCount += 1;
+      }
       switch (node.kind) {
         case 'goal':
           goalNodes.push(node);
@@ -189,11 +194,15 @@ export class ArtexGraphOverviewTool implements AgentTool<GraphOverviewInput> {
       }
     }
 
-    const goals = goalNodes.map((node) => ({
-      id: node.id,
-      state: node.state,
-      summary: nodeSummary(node),
-    }));
+    const goals = goalNodes.map((node) => {
+      const cat = (node.payload as { category?: unknown }).category;
+      return {
+        id: node.id,
+        state: node.state,
+        summary: nodeSummary(node),
+        category: typeof cat === 'string' && cat !== '' ? cat : undefined,
+      };
+    });
 
     const hints = hintNodes
       .slice(-50)
@@ -214,7 +223,7 @@ export class ArtexGraphOverviewTool implements AgentTool<GraphOverviewInput> {
 
     const recentDoneSorted = recentDoneIntents.toSorted((a, b) => b.id - a.id).slice(0, RECENT_DONE_CAP);
     const stagnation = detectStagnation(
-      allDoneForStagnation.toSorted((a, b) => b.id - a.id),
+      allDoneForStagnation.toSorted((a, b) => a.id - b.id),
       findingSorted.map((node) => ({ id: node.id })),
     );
 
@@ -272,6 +281,7 @@ export class ArtexGraphOverviewTool implements AgentTool<GraphOverviewInput> {
       finding_list: findingList,
       facts: factNodes.length,
       recent_facts: recentFacts,
+      hidden_node_count: hiddenNodeCount,
     };
 
     if (stagnation.length > 0) {
@@ -292,10 +302,47 @@ export class ArtexGraphOverviewTool implements AgentTool<GraphOverviewInput> {
       try {
         const workStore = this.workProvider.open(this.session.workspaceRoot);
         await workStore.ensureSeeded();
-        const [constraints, credentials] = await Promise.all([
+        const [constraints, credentials, denom, taskAssets, ledgerCount] = await Promise.all([
           workStore.listConstraints(explorationId),
           workStore.taskCredentials(explorationId),
+          workStore.coverageDenominator(explorationId),
+          workStore.assetsForTask(explorationId),
+          workStore.coverageEntryCount(explorationId),
         ]);
+        const factIds = new Set(factNodes.map((n) => n.id));
+        const testedIds = new Set(
+          anchors.filter((a) => factIds.has(a.nodeId)).map((a) => a.assetId),
+        );
+        const inScopeIds = new Set(denom.assetIds);
+        const assetById = new Map(taskAssets.map((a) => [a.id, a]));
+        const byType: Record<string, { total: number; tested: number }> = {};
+        let tested = 0;
+        for (const assetId of inScopeIds) {
+          const isTested = testedIds.has(assetId);
+          if (isTested) tested += 1;
+          const asset = assetById.get(assetId);
+          if (asset !== undefined) {
+            const bucket = byType[asset.type] ?? { total: 0, tested: 0 };
+            bucket.total += 1;
+            if (isTested) bucket.tested += 1;
+            byType[asset.type] = bucket;
+          }
+        }
+        const coverageSummary: Record<string, unknown> = {
+          denominator: denom.denominator,
+          tested,
+          pct:
+            denom.denominator === 0
+              ? null
+              : Math.round((tested / denom.denominator) * 1000) / 10,
+          by_type: byType,
+          ledger_entries: ledgerCount,
+        };
+        if (denom.denominator === 0) {
+          coverageSummary['status'] = 'scope not anchored';
+        }
+        payload['coverage'] = coverageSummary;
+
         if (constraints.length > 0) {
           payload['constraints'] = constraints.map((c) => ({
             id: c.id,
@@ -308,8 +355,10 @@ export class ArtexGraphOverviewTool implements AgentTool<GraphOverviewInput> {
             id: c.id,
             domain: c.domain,
             username: c.username,
+            role: c.source,
             source: c.source,
             note: c.note,
+            has_password: c.password.length > 0,
           }));
         }
       } catch {
