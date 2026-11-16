@@ -344,8 +344,8 @@ export class AcpServer {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
-    await this.klient.session(params.sessionId).close();
     await this.unbindSessionEnvironment?.(params.sessionId);
+    await this.klient.session(params.sessionId).close();
   }
 
   /**

@@ -29,6 +29,7 @@ import {
   IHostProcessService,
   ISessionContext,
   ISessionIndexMirror,
+  ISessionWorkdir,
   IEnvironmentService,
   logSeed,
   resolveConfigPath,
@@ -36,6 +37,7 @@ import {
   resolveLoggingConfig,
   type Scope,
   type ScopeSeed,
+  type EnvironmentBinding,
   sessionMediaOriginalsDir,
 } from '@moonshot-ai/agent-core-v2';
 import type { Klient } from '@moonshot-ai/klient';
@@ -147,6 +149,7 @@ export async function runAcpServerWithStream(
   // `IAcpConnection.get()`.
   acpConnection.bind(client);
   const acpEnvironmentProvider = new AcpEnvironmentProviderFactory(acpConnection, core.accessor.get(IHostEnvironment), core.accessor.get(IHostProcessService));
+  const previousBindings = new Map<string, EnvironmentBinding>();
   const acpProviderRegistration = await core.accessor
     .get(IEnvironmentService)
     .addProvider(acpEnvironmentProvider)
@@ -164,15 +167,40 @@ export async function runAcpServerWithStream(
       const handle = getLiveSessionById(core.accessor, sessionId);
       if (handle === undefined) throw new Error(`session ${sessionId} is not live`);
       const context = handle.accessor.get(ISessionContext);
-      const environmentId = acpEnvironmentProvider.bindSession(sessionId, context.cwd);
+      const environmentId = AcpEnvironmentProviderFactory.environmentId(sessionId);
       const agentContext = await ensureMainAgent(handle, { environmentId, environmentCwd: context.cwd });
-      handle.accessor
+      const binding = handle.accessor
         .get(IAgentLifecycleService)
         .handleOf(agentContext.agentId)!
-        .accessor.get(IAgentEnvironmentBindingService)
-        .bind(environmentId, context.cwd);
+        .accessor.get(IAgentEnvironmentBindingService);
+      const staleAcpBinding = !previousBindings.has(sessionId) && binding.current.environmentId === environmentId;
+      if (!previousBindings.has(sessionId)) {
+        const original = handle.accessor.get(ISessionWorkdir);
+        previousBindings.set(sessionId, staleAcpBinding
+          ? { environmentId: original.environmentId, cwd: original.cwd }
+          : binding.current);
+      }
+      if (staleAcpBinding) {
+        const original = handle.accessor.get(ISessionWorkdir);
+        binding.bind(original.environmentId, original.cwd);
+      }
+      acpEnvironmentProvider.bindSession(sessionId, context.cwd);
+      binding.bind(environmentId, context.cwd);
     },
     unbindSessionEnvironment: async (sessionId) => {
+      const previous = previousBindings.get(sessionId);
+      const handle = getLiveSessionById(core.accessor, sessionId);
+      if (previous !== undefined && handle !== undefined) {
+        const agentContext = await ensureMainAgent(handle);
+        const binding = handle.accessor
+          .get(IAgentLifecycleService)
+          .handleOf(agentContext.agentId)!
+          .accessor.get(IAgentEnvironmentBindingService);
+        if (binding.current.environmentId === AcpEnvironmentProviderFactory.environmentId(sessionId)) {
+          binding.bind(previous.environmentId, previous.cwd);
+        }
+      }
+      previousBindings.delete(sessionId);
       await acpEnvironmentProvider.unbindSession(sessionId);
     },
     // Prompt-image compression persists originals into the session's own
