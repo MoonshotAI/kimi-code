@@ -1,1 +1,1 @@
-export { AcpEnvironmentProviderFactory } from './acpTerminalRunner';
+export { AcpEnvironmentOverlay } from './acpTerminalRunner';

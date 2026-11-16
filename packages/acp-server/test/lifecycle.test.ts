@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   IOAuthToolkit,
+  IAgentEnvironmentBindingService,
+  IAgentLifecycleService,
+  ensureMainAgent,
   ISessionManager,
   ISessionMcpHandle,
   IWorkspaceInstanceManager,
@@ -218,6 +221,10 @@ describe('acp-server session lifecycle', () => {
       })) as { sessionId: string; configOptions?: unknown[]; modes?: unknown };
       expect(forked.sessionId).toMatch(/^session_/);
       expect(forked.sessionId).not.toBe(created.sessionId);
+      const forkedHandle = c.server.core.accessor.get(ISessionManager).get(forked.sessionId)!;
+      const forkedMain = await ensureMainAgent(forkedHandle);
+      expect(forkedHandle.accessor.get(IAgentLifecycleService).handleOf(forkedMain.agentId)!
+        .accessor.get(IAgentEnvironmentBindingService).current.environmentId).toBe('local');
       // Same response surface as session/new.
       expect(Array.isArray(forked.configOptions)).toBe(true);
       expect(forked.modes).toBeDefined();
