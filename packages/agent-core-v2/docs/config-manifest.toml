@@ -354,6 +354,8 @@ merge_all_available_skills = true
 # [providers."<name>"]
   # model_source: "static" | "discover" | "oauth-catalog"
   # base_url: string
+  # search_url: string
+  # feedback_url: string
   # custom_headers: record<string, string>
   # default_model: string
   # type: string

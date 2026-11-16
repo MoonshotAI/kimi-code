@@ -200,6 +200,25 @@ describe('ChoicePickerComponent', () => {
     expect(preview.dispose).toHaveBeenCalledOnce();
   });
 
+  it('keeps left and right paging the options when the preview has no file scroller', () => {
+    const options = Array.from({ length: 12 }, (_, index) => ({
+      value: String(index),
+      label: `Option ${String(index)}`,
+    }));
+    const picker = new PreviewChoicePickerComponent({
+      title: 'Pick one',
+      options,
+      preview: { render: () => ['sample'], invalidate: vi.fn(), dispose: vi.fn() },
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    picker.handleInput('\u001B[C');
+    expect(picker.render(40).map(strip).some((line) => line.includes('❯ Option 8'))).toBe(true);
+    picker.handleInput('\u001B[D');
+    expect(picker.render(40).map(strip).some((line) => line.includes('❯ Option 0'))).toBe(true);
+  });
+
   it('renders a plain picker as its list between two borders', () => {
     const picker = new ChoicePickerComponent({
       title: 'Pick one',

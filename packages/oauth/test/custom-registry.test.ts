@@ -1015,6 +1015,100 @@ describe('applyCustomRegistryEntries', () => {
     expect(config.models?.['shared/m1']).toBeDefined();
     expect(config.models?.['onlyA/m1']).toBeDefined();
   });
+
+  it('persists search_url and feedback_url on providers and drops removed ones on re-import', async () => {
+    const body = makeKokubResponseBody();
+    body['registry_chat-completions'] = {
+      ...body['registry_chat-completions']!,
+      search_url: 'https://registry.example.test/v1/search',
+      feedback_url: 'https://registry.example.test/v1/feedback',
+    };
+    body['registry_responses'] = {
+      ...body['registry_responses']!,
+      search_url: 'https://registry.example.test/v1/search',
+    };
+    const parsed = await fetchCustomRegistry(KOKUB_SOURCE, {
+      fetchImpl: (async () => makeJsonResponse(body)) as unknown as typeof fetch,
+    });
+
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyCustomRegistryEntries(config, parsed, KOKUB_SOURCE);
+
+    expect(config.providers['registry_chat-completions']).toMatchObject({
+      searchUrl: 'https://registry.example.test/v1/search',
+      feedbackUrl: 'https://registry.example.test/v1/feedback',
+    });
+    expect(config.providers['registry_responses']).toMatchObject({
+      searchUrl: 'https://registry.example.test/v1/search',
+    });
+    expect(config.providers['registry_responses']).not.toHaveProperty('feedbackUrl');
+    expect(config.providers['registry_messages']).not.toHaveProperty('searchUrl');
+
+    const updated = makeKokubResponseBody();
+    updated['registry_chat-completions'] = {
+      ...updated['registry_chat-completions']!,
+      search_url: 'https://registry.example.test/v1/search',
+    };
+    applyCustomRegistryEntries(config, updated, KOKUB_SOURCE);
+    expect(config.providers['registry_chat-completions']).toMatchObject({
+      searchUrl: 'https://registry.example.test/v1/search',
+    });
+    expect(config.providers['registry_chat-completions']).not.toHaveProperty('feedbackUrl');
+  });
+
+  it('rejects search_url or feedback_url additions/changes when api_key_env is set, but allows removal', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        'registry_chat-completions': {
+          type: 'openai',
+          baseUrl: 'https://registry.example.test/v1',
+          apiKeyEnv: 'CUSTOM_KEY',
+          searchUrl: 'https://registry.example.test/v1/search',
+          feedbackUrl: 'https://registry.example.test/v1/feedback',
+          source: KOKUB_SOURCE,
+        },
+      },
+    };
+    const baseEntry: CustomRegistryProviderEntry = {
+      id: 'registry_chat-completions',
+      name: 'Sample Registry',
+      api: 'https://registry.example.test/v1',
+      type: 'openai',
+      models: { 'gpt-5.5': { id: 'gpt-5.5' } },
+    };
+
+    expect(() =>
+      applyCustomRegistryEntries(
+        config,
+        {
+          'registry_chat-completions': {
+            ...baseEntry,
+            search_url: 'https://evil.example.test/v1/search',
+            feedback_url: 'https://registry.example.test/v1/feedback',
+          },
+        },
+        KOKUB_SOURCE,
+      ),
+    ).toThrow(/changed endpoint while api_key_env is configured/);
+
+    expect(() =>
+      applyCustomRegistryEntries(
+        config,
+        {
+          'registry_chat-completions': {
+            ...baseEntry,
+            search_url: 'https://registry.example.test/v1/search',
+          },
+        },
+        KOKUB_SOURCE,
+      ),
+    ).not.toThrow();
+    expect(config.providers['registry_chat-completions']).toMatchObject({
+      apiKeyEnv: 'CUSTOM_KEY',
+      searchUrl: 'https://registry.example.test/v1/search',
+    });
+    expect(config.providers['registry_chat-completions']).not.toHaveProperty('feedbackUrl');
+  });
 });
 
 describe('capabilitiesFromCustomEntry', () => {

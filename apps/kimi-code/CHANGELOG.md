@@ -1,5 +1,21 @@
 # @moonshot-ai/kimi-code
 
+## 2.6.2
+
+### Patch Changes
+
+- [#4875](https://github.com/MoonshotAI/kimi-code/pull/4875) [`4c72e1d`](https://github.com/MoonshotAI/kimi-code/commit/4c72e1d53b33c69c5f3e2bd293cb117577becbd7) Thanks [@7Sageer](https://github.com/7Sageer)! - Support optional `search_url` and `feedback_url` fields on custom registry (`api.json`) providers for `WebSearch` and `/feedback`.
+
+- [#4876](https://github.com/MoonshotAI/kimi-code/pull/4876) [`d532f4f`](https://github.com/MoonshotAI/kimi-code/commit/d532f4f9adf8633a515d0628bc97247dd91dcfbc) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the text-only "No attachment" option from `/feedback` (text-only `/feedback` submissions are no longer available), show the current session's files before confirmation, and include session `request_id` metadata.
+
+- [#4885](https://github.com/MoonshotAI/kimi-code/pull/4885) [`ec35f9a`](https://github.com/MoonshotAI/kimi-code/commit/ec35f9ac158c195d17b4736054e4ffc16dac3c3c) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Fix multi-second loading delays when reopening long sessions with many tool calls.
+
+- [#4905](https://github.com/MoonshotAI/kimi-code/pull/4905) [`90d8e31`](https://github.com/MoonshotAI/kimi-code/commit/90d8e31ba34eef50d25b9e8020501c4e46a59d9d) Thanks [@sailist](https://github.com/sailist)! - Reject failed or unfinished Kimi media uploads instead of caching unusable file references.
+
+- [#4922](https://github.com/MoonshotAI/kimi-code/pull/4922) [`a27bd82`](https://github.com/MoonshotAI/kimi-code/commit/a27bd82d32061d68a012ececa8d6f6dbe6ce9df8) Thanks [@sailist](https://github.com/sailist)! - Fix missing live subagent updates in the Swarm panel during execution.
+
+- [#4927](https://github.com/MoonshotAI/kimi-code/pull/4927) [`102bc1f`](https://github.com/MoonshotAI/kimi-code/commit/102bc1f96b7bbf3845f25c043c3cad30b6f539a9) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Improved interactions and fixed known bugs.
+
 ## 2.6.1
 
 ### Patch Changes

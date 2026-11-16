@@ -6,6 +6,9 @@ import {
   type ModelAlias,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
 import { capabilitiesForModel } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ManagedKimiCodeModelInfo,
@@ -13,10 +16,16 @@ import type {
 } from '@moonshot-ai/kimi-code-oauth';
 
 import { ApiKeyInputDialogComponent, type ApiKeyInputResult } from '../components/dialogs/api-key-input-dialog';
-import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/choice-picker';
+import {
+  ChoicePickerComponent,
+  PreviewChoicePickerComponent,
+  type ChoiceOption,
+} from '../components/dialogs/choice-picker';
 import { FeedbackInputDialogComponent, type FeedbackInputDialogResult } from '../components/dialogs/feedback-input-dialog';
 import { ModelSelectorComponent } from '../components/dialogs/model-selector';
 import { PlatformSelectorComponent } from '../components/dialogs/platform-selector';
+import { DOCK_PREVIEW_ROWS } from '../constant/rendering';
+import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import type { SlashCommandHost } from './dispatch';
 
 export function promptPlatformSelection(host: SlashCommandHost): Promise<string | undefined> {
@@ -74,35 +83,85 @@ export function promptFeedbackInput(host: SlashCommandHost): Promise<FeedbackPro
   });
 }
 
-export type FeedbackAttachmentLevel = 'none' | 'logs' | 'logs+codebase';
+export type FeedbackAttachmentLevel = 'logs' | 'logs+codebase';
 
 const FEEDBACK_ATTACHMENT_OPTIONS: readonly ChoiceOption[] = [
-  { value: 'none', label: 'No attachment', description: 'Text feedback only' },
   {
     value: 'logs',
-    label: 'Logs only',
-    description: 'Upload wire events and diagnostic logs from this session',
+    label: 'Current session logs',
+    description: 'Upload the files listed below with your feedback',
   },
   {
     value: 'logs+codebase',
-    label: 'Logs + codebase',
+    label: 'Session logs + project code',
     description:
-      'Include your codebase for deeper diagnosis. Sensitive files are automatically excluded — e.g. .env, config files, secret keys. We use attachments only for diagnosis and never share them.',
+      'Also upload source files from this workspace to help reproduce the issue. Secrets, dependencies, and build outputs are excluded.',
     descriptionTone: 'warning',
   },
 ];
 
+export interface FeedbackSessionPreview {
+  readonly sessionId: string;
+  readonly sessionDir: string;
+  readonly files: readonly string[];
+}
+
 export function promptFeedbackAttachment(
   host: SlashCommandHost,
   excludeCodebase = false,
+  session?: FeedbackSessionPreview,
 ): Promise<FeedbackAttachmentLevel | undefined> {
   const options = excludeCodebase
     ? FEEDBACK_ATTACHMENT_OPTIONS.filter((option) => option.value !== 'logs+codebase')
     : FEEDBACK_ATTACHMENT_OPTIONS;
+  let scroll = 0;
+  const maxScroll = session === undefined ? 0 : Math.max(0, session.files.length - 5);
   return new Promise((resolve) => {
-    const picker = new ChoicePickerComponent({
-      title: 'Share diagnostic info to help us investigate?',
+    const picker = new PreviewChoicePickerComponent({
+      title: 'Choose what to include with your feedback',
+      notice:
+        'Your note, session ID, request ID, model, CLI version, OS, and shell are always included. Choose whether to add diagnostics below.',
       options,
+      layout:
+        host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_PREVIEW_ROWS },
+      previewLabel: session === undefined ? ' Session files' : ` Current session · ${session.sessionId}`,
+      onPreviewScroll:
+        session === undefined
+          ? undefined
+          : (direction) => {
+              scroll = Math.max(0, Math.min(maxScroll, scroll + direction * 5));
+            },
+      preview: {
+        render: () => {
+          if (session === undefined) {
+            return ['  Session file list unavailable. session.zip is still uploaded on submit.'];
+          }
+          if (session.files.length === 0) {
+            return [
+              '  No session files yet.',
+              '',
+              '  session.zip also includes the application log, which may mention other sessions.',
+            ];
+          }
+          const shown = session.files.slice(scroll, scroll + 5);
+          const last = scroll + shown.length;
+          return [
+            `  ${String(session.files.length)} session files · showing ${String(scroll + 1)}–${String(last)}`,
+            ...shown.map((entry) => {
+              const absolute = join(session.sessionDir, entry);
+              return `  ${toTerminalHyperlink(absolute, pathToFileURL(absolute).href)}`;
+            }),
+            ...(last < session.files.length
+              ? [`  ${String(session.files.length - last)} more files · → next page`]
+              : []),
+            ...(scroll > 0 ? ['  ← previous page'] : []),
+            '',
+            '  session.zip also includes the application log, which may mention other sessions.',
+          ];
+        },
+        invalidate: () => {},
+        dispose: () => {},
+      },
       onSelect: (value) => {
         host.restoreEditor();
         resolve(value as FeedbackAttachmentLevel);

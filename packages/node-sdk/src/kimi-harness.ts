@@ -4,6 +4,7 @@ import type { ImageLimits } from '#/image';
 import { withTelemetryContext } from '#/telemetry';
 
 import { capabilityRpc, Session } from '#/session';
+import type { FeedbackSubmitInput } from '@moonshot-ai/agent-core-v2/app/auth/feedback';
 import type { KimiAuthFacade } from '#/auth';
 import type { ConfigSectionChange, SDKRpcClientBase } from '#/rpc';
 import type {
@@ -316,6 +317,14 @@ export class KimiHarness {
    */
   async generateSessionTitle(input: GenerateSessionTitleInput): Promise<string | undefined> {
     return this.rpc.generateSessionTitle(input);
+  }
+
+  feedbackAvailability(modelAlias?: string, sessionId?: string) {
+    return this.rpc.feedbackAvailability(modelAlias, sessionId);
+  }
+
+  submitFeedback(input: FeedbackSubmitInput, modelAlias?: string) {
+    return this.rpc.submitFeedback(input, modelAlias);
   }
 
   async exportSession(input: ExportSessionInput): Promise<ExportSessionResult> {
