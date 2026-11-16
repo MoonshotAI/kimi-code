@@ -81,7 +81,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
       querystring: listWorkspacesQuerySchema,
       success: { data: listWorkspacesResponseSchema },
       description:
-        'List registered workspaces. hosts=include adds the projects created on each SSH host, tagged with host_id; hosts that cannot answer are listed in unavailable_hosts',
+        'List registered workspaces. hosts=include adds the projects created on each SSH host, tagged with host_id',
       tags: ['workspaces'],
     },
     async (req, reply) => {
@@ -93,7 +93,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
       }
       const remote = await collectFromHosts(hosts, (session) => hostProjects<WorkspaceWire>(session));
       reply.send(
-        okEnvelope({ items: [...projected, ...remote.items], unavailable_hosts: remote.unavailable }, req.id),
+        okEnvelope({ items: [...projected, ...remote.items] }, req.id),
       );
     },
   );

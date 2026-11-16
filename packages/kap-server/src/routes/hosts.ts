@@ -113,8 +113,8 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     async (req, reply) => {
       const bridge = new SshKapBridge(req.body);
       try {
-        const probe = await bridge.probe();
-        reply.send(okEnvelope({ connected: true, remote_version: probe.version }, req.id));
+        await bridge.probe();
+        reply.send(okEnvelope({ connected: true }, req.id));
       } catch (error) {
         reply.send(
           okEnvelope(

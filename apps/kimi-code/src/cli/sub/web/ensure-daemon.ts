@@ -54,7 +54,6 @@ class EnsureDaemonError extends Error {
 export interface DaemonConnection {
   readonly stream: Duplex;
   readonly version: string;
-  readonly pid?: number;
   /** Resolves false when the instance still has live work and must not be replaced. */
   stopIfIdle(): Promise<boolean>;
   close(): void;
@@ -62,7 +61,6 @@ export interface DaemonConnection {
 
 interface EnsureDaemonResult {
   readonly version: string;
-  readonly pid?: number;
   readonly stream: Duplex;
 }
 
@@ -71,7 +69,7 @@ export interface EnsureDaemonDeps {
   readonly version: string;
   readonly sshAuthSock?: string;
   connectSocket(socketPath: string): Promise<DaemonConnection | undefined>;
-  spawnServer(socketPath: string, logPath: string, agentSocket: string): number;
+  spawnServer(socketPath: string, logPath: string, agentSocket: string): void;
   wait(ms: number): Promise<void>;
 }
 
@@ -141,7 +139,7 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
   const existing = await deps.connectSocket(socketPath);
   if (existing !== undefined) {
     if (existing.version === deps.version) {
-      return { version: deps.version, pid: existing.pid, stream: existing.stream };
+      return { version: deps.version, stream: existing.stream };
     }
     const stopped = await existing.stopIfIdle().finally(() => existing.close());
     if (!stopped) {
@@ -168,11 +166,11 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
     }
   }
   const logPath = join(deps.homeDir, 'server', LOG_FILE);
-  const pid = deps.spawnServer(socketPath, logPath, agentSocketPath(deps));
+  deps.spawnServer(socketPath, logPath, agentSocketPath(deps));
   for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
     const started = await deps.connectSocket(socketPath);
     if (started !== undefined) {
-      return { version: deps.version, pid: started.pid ?? pid, stream: started.stream };
+      return { version: deps.version, stream: started.stream };
     }
     await deps.wait(POLL_INTERVAL_MS);
   }
@@ -189,7 +187,7 @@ export async function ensureDaemon(deps: EnsureDaemonDeps): Promise<EnsureDaemon
   }
 }
 
-function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: string): number {
+function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: string): void {
   const argv = detectNativeInstall()
     ? [process.execPath]
     : [process.execPath, ...process.execArgv, process.argv[1]!];
@@ -219,7 +217,6 @@ function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: s
     if (child.pid === undefined) {
       throw new EnsureDaemonError('start_timeout', `unable to start the kimi server; see ${logPath}`);
     }
-    return child.pid;
   } finally {
     closeSync(log);
   }
@@ -378,7 +375,7 @@ export function registerEnsureDaemonCommand(web: Command): void {
       }
       try {
         const daemon = await ensureDaemon(defaultDeps());
-        report({ pid: daemon.pid });
+        report({});
         await relayStdio(process.stdin, process.stdout, daemon.stream);
       } catch (error) {
         const code = error instanceof EnsureDaemonError ? error.code : 'unknown';

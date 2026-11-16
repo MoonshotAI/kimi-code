@@ -79,7 +79,6 @@ function parseQuery(path: string): { pathname: string; query: Query } {
 
 function fakeHost(projects: FakeProject[], sessions: FakeSession[], requests: string[] = []): HostSession {
   return {
-    version: '2.0.0',
     request: async (req: HostHttpRequest) => {
       requests.push(req.path);
       const { pathname, query } = parseQuery(req.path);
@@ -152,7 +151,7 @@ describe('sessions across hosts', () => {
     } while (token !== undefined);
 
     expect(pages.flat()).toEqual(['l1', 'r1', 'l2', 'r2', 'r3', 'r4', 'l3', 'l4']);
-    expect(first).toMatchObject({ total: 8, has_more: true, unavailable_hosts: [] });
+    expect(first).toMatchObject({ total: 8, has_more: true });
     expect((first['items'] as Array<Record<string, unknown>>).map((item) => item['host_id'])).toEqual([undefined, 'dev', undefined]);
   });
 
@@ -208,9 +207,8 @@ describe('sessions across hosts', () => {
     expect(requests.filter((path) => path.startsWith('/api/v2/sessions'))).toEqual([]);
   });
 
-  it('reports hosts that are offline or failing and still answers with the rest', async () => {
+  it('answers with the rest when hosts are offline or failing', async () => {
     const failing: HostSession = {
-      version: '2.0.0',
       request: async () => {
         throw new Error('tunnel closed');
       },
@@ -227,7 +225,7 @@ describe('sessions across hosts', () => {
     const page = await list({ page_size: 50 }, hosts, local);
 
     expect(ids(page)).toHaveLength(8);
-    expect(page['unavailable_hosts']).toEqual(['off', 'broken']);
+    expect(page).not.toHaveProperty('unavailable_hosts');
   });
 
   it('collects every id for select-all across hosts', async () => {
@@ -263,7 +261,7 @@ describe('sessions across hosts', () => {
 });
 
 describe('projects across hosts', () => {
-  it('adds each host\'s app-created projects and names the hosts that cannot answer', async () => {
+  it('adds each host\'s app-created projects', async () => {
     const home = await mkdtemp(join(tmpdir(), 'kimi-host-projects-'));
     const project = {
       id: 'wm_00000000-0000-4000-8000-000000000001',
@@ -286,7 +284,7 @@ describe('projects across hosts', () => {
       expect(await get('/api/v1/workspaces')).toMatchObject({ code: 0, data: { items: [] } });
       expect(await get('/api/v1/workspaces?hosts=include')).toMatchObject({
         code: 0,
-        data: { items: [{ id: project.id, host_id: 'dev' }], unavailable_hosts: ['off'] },
+        data: { items: [{ id: project.id, host_id: 'dev' }] },
       });
     } finally {
       list.mockRestore();
@@ -299,7 +297,6 @@ describe('projects across hosts', () => {
 function sessionHost(projects: FakeProject[], sessions: Array<Record<string, unknown>>, requests: string[]): HostSession {
   const reply = (status: number, body: unknown) => ({ status, headers: {}, body: Buffer.from(JSON.stringify(body)) });
   return {
-    version: '2.0.0',
     request: async (req: HostHttpRequest) => {
       requests.push(req.path);
       const { pathname } = parseQuery(req.path);

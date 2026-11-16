@@ -1179,7 +1179,6 @@ describe('`kimi server ensure-daemon`', () => {
     return {
       stream: new PassThrough(),
       version: '1.0.0',
-      pid: 1234,
       stopIfIdle: async () => true,
       close: () => {},
       ...overrides,
@@ -1191,21 +1190,20 @@ describe('`kimi server ensure-daemon`', () => {
       homeDir,
       version: '1.0.0',
       connectSocket: async () => connection(),
-      spawnServer: vi.fn(() => 4321),
+      spawnServer: vi.fn(),
       wait: async () => {},
       ...overrides,
     };
   }
 
   it('reuses a live daemon socket of the same version without spawning', async () => {
-    const conn = connection({ pid: 2 });
+    const conn = connection();
     const deps = makeDeps({
       connectSocket: async () => conn,
     });
 
     await expect(ensureDaemon(deps)).resolves.toEqual({
       version: '1.0.0',
-      pid: 2,
       stream: conn.stream,
     });
     expect(deps.spawnServer).not.toHaveBeenCalled();
@@ -1213,7 +1211,7 @@ describe('`kimi server ensure-daemon`', () => {
 
   it('spawns a new server when the socket is absent and waits until it connects', async () => {
     let attempts = 0;
-    const spawned = connection({ pid: 4321 });
+    const spawned = connection();
     const deps = makeDeps({
       connectSocket: async () => {
         attempts += 1;
@@ -1223,7 +1221,6 @@ describe('`kimi server ensure-daemon`', () => {
 
     await expect(ensureDaemon(deps)).resolves.toEqual({
       version: '1.0.0',
-      pid: 4321,
       stream: spawned.stream,
     });
     expect(deps.spawnServer).toHaveBeenCalledWith(
@@ -1239,24 +1236,23 @@ describe('`kimi server ensure-daemon`', () => {
       state = 'draining';
       return true;
     });
-    const spawned = connection({ pid: 4321 });
+    const spawned = connection();
     const deps = makeDeps({
       connectSocket: async () => {
-        if (state === 'old') return connection({ pid: 1, version: '0.9.0', stopIfIdle });
+        if (state === 'old') return connection({ version: '0.9.0', stopIfIdle });
         if (state === 'draining') {
           state = 'closed';
-          return connection({ pid: 1, version: '0.9.0' });
+          return connection({ version: '0.9.0' });
         }
         if (state === 'closed') return undefined;
         return spawned;
       },
       spawnServer: vi.fn(() => {
         state = 'new';
-        return 4321;
       }),
     });
 
-    await expect(ensureDaemon(deps)).resolves.toMatchObject({ pid: 4321, version: '1.0.0' });
+    await expect(ensureDaemon(deps)).resolves.toMatchObject({ version: '1.0.0' });
     expect(stopIfIdle).toHaveBeenCalledTimes(1);
     expect(deps.spawnServer).toHaveBeenCalledTimes(1);
   });
@@ -1264,7 +1260,7 @@ describe('`kimi server ensure-daemon`', () => {
   it('refuses to replace a daemon of another version that still has live work', async () => {
     const deps = makeDeps({
       connectSocket: async () =>
-        connection({ pid: 1, version: '0.9.0', stopIfIdle: async () => false }),
+        connection({ version: '0.9.0', stopIfIdle: async () => false }),
     });
 
     await expect(ensureDaemon(deps)).rejects.toMatchObject({ code: 'version_mismatch_busy' });
@@ -1299,11 +1295,11 @@ describe('`kimi server ensure-daemon`', () => {
     expect(existsSync(lockPath)).toBe(false);
 
     writeFileSync(lockPath, '999999999');
-    await expect(ensureDaemon(makeDeps())).resolves.toMatchObject({ pid: 1234 });
+    await expect(ensureDaemon(makeDeps())).resolves.toMatchObject({ version: '1.0.0' });
     expect(existsSync(lockPath)).toBe(false);
 
     writeFileSync(lockPath, '');
-    await expect(ensureDaemon(makeDeps())).resolves.toMatchObject({ pid: 1234 });
+    await expect(ensureDaemon(makeDeps())).resolves.toMatchObject({ version: '1.0.0' });
     expect(existsSync(lockPath)).toBe(false);
   });
 });

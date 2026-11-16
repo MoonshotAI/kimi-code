@@ -23,23 +23,12 @@ export type HostConnectFailure =
   | 'remote_start_failed'
   | 'unknown';
 
-interface BootstrapResult {
-  readonly version: string;
-  readonly pid?: number;
-}
-
 interface BootstrapMarker {
   readonly protocol: number | undefined;
   readonly api_level?: number;
   readonly version?: string;
-  readonly pid?: number;
   readonly error?: string;
   readonly message?: string;
-}
-
-interface RemoteProbe {
-  readonly version: string;
-  readonly protocol: number;
 }
 
 export class HostConnectError extends Error {
@@ -139,9 +128,9 @@ function outdatedError(version: string | undefined): HostConnectError {
   );
 }
 
-function checkedMarker(stdout: string): { readonly marker: BootstrapMarker & { readonly protocol: number }; readonly version?: string } | undefined {
+export function checkBootstrapOutput(stdout: string): boolean {
   const marker = readMarker(stdout);
-  if (marker === undefined) return undefined;
+  if (marker === undefined) return false;
   const version = marker.version ?? readVersionLine(stdout);
   if (marker.protocol === undefined || marker.protocol < HOST_PROTOCOL_VERSION) throw outdatedError(version);
   if (marker.api_level === undefined || marker.api_level < HOST_API_LEVEL) throw outdatedError(version);
@@ -152,23 +141,7 @@ function checkedMarker(stdout: string): { readonly marker: BootstrapMarker & { r
       version,
     );
   }
-  return { marker: { ...marker, protocol: marker.protocol }, version };
-}
-
-export function parseBootstrapOutput(stdout: string): BootstrapResult | undefined {
-  const checked = checkedMarker(stdout);
-  if (checked === undefined) return undefined;
-  const { marker, version } = checked;
-  return {
-    version: version ?? 'unknown',
-    pid: typeof marker.pid === 'number' ? marker.pid : undefined,
-  };
-}
-
-export function parseProbeOutput(stdout: string): RemoteProbe | undefined {
-  const checked = checkedMarker(stdout);
-  if (checked === undefined) return undefined;
-  return { version: checked.version ?? 'unknown', protocol: checked.marker.protocol };
+  return true;
 }
 
 interface SshResult {
@@ -322,7 +295,7 @@ export class SshKapBridge {
     for (const child of this.children) child.kill();
   }
 
-  async probe(): Promise<RemoteProbe> {
+  async probe(): Promise<void> {
     const result = await this.collect(
       [
         '-T',
@@ -333,8 +306,7 @@ export class SshKapBridge {
       ],
       VERSION_TIMEOUT_MS,
     );
-    const parsed = parseProbeOutput(result.stdout);
-    if (parsed !== undefined) return parsed;
+    if (checkBootstrapOutput(result.stdout)) return;
     throw sshFailure(result);
   }
 
@@ -354,7 +326,6 @@ export class SshKapBridge {
         active.child.kill();
         throw new HostConnectError('unknown', 'host bridge disposed');
       }
-      this.remoteVersionValue = active.session.version;
       this.sessionValue = active;
       this.reconnectGeneration += 1;
       this.reconnecting = false;
@@ -430,13 +401,12 @@ export class SshKapBridge {
         if (typeof marker !== 'object' || marker === null) return;
         preMarkerStdout = bootstrap.toString('utf8', 0, lineEnd + 1);
         try {
-          const parsed = parseBootstrapOutput(preMarkerStdout);
-          if (parsed === undefined) return;
+          if (!checkBootstrapOutput(preMarkerStdout)) return;
 
           clearTimeout(timer);
           child.stdout?.off('data', onStdout);
           const stream = createProcessStream(child, bootstrap.subarray(lineEnd + 1));
-          const session = new StdioHostSession(parsed.version, stream);
+          const session = new StdioHostSession(stream);
           activeSession = { session, child };
           settled = true;
           resolve(activeSession);
@@ -450,7 +420,7 @@ export class SshKapBridge {
         if (bootstrap.length > 0) {
           preMarkerStdout = bootstrap.toString('utf8');
           try {
-            parseBootstrapOutput(preMarkerStdout);
+            checkBootstrapOutput(preMarkerStdout);
           } catch (error) {
             finishReject(error instanceof HostConnectError ? error : new HostConnectError('unknown', String(error)));
           }

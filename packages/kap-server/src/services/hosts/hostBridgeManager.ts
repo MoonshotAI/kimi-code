@@ -91,7 +91,7 @@ export class HostBridgeManager {
   async copyProviders(id: string): Promise<ProviderCopyResult> {
     const session = await this.connect(id);
     const shared = await collectSharedProviders(this.core);
-    if (Object.keys(shared.providers).length === 0) return { copied: [], updated: [] };
+    if (Object.keys(shared.providers).length === 0) return { providers: [] };
     return sendSharedProviders(session, shared);
   }
 

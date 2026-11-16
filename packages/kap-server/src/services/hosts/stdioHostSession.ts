@@ -31,10 +31,7 @@ export class StdioHostSession implements HostSession {
   private readonly wsChannels = new Map<string, HostWsHandlers>();
   private readonly rpc: JsonlRpcStream<RpcFrame>;
 
-  constructor(
-    readonly version: string,
-    stream: Duplex,
-  ) {
+  constructor(stream: Duplex) {
     this.rpc = new JsonlRpcStream(
       stream,
       (frame) => {

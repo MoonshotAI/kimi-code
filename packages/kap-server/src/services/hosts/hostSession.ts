@@ -38,7 +38,6 @@ export interface HostWsSession {
 }
 
 export interface HostSession {
-  readonly version: string;
   request(req: HostHttpRequest): Promise<HostHttpResponse>;
   openWebSocket(path: string, handlers: HostWsHandlers): HostWsSession;
 }

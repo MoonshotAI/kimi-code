@@ -22,13 +22,11 @@ const sharedProvidersSchema = z.object({
 export type SharedProviders = z.infer<typeof sharedProvidersSchema>;
 
 export interface ProviderCopyResult {
-  readonly copied: readonly string[];
-  readonly updated: readonly string[];
+  readonly providers: readonly string[];
 }
 
 export const providerCopyResultSchema = z.object({
-  copied: z.array(z.string()),
-  updated: z.array(z.string()).default([]),
+  providers: z.array(z.string()),
 });
 
 const LOOPBACK_HOSTS = new Set(['localhost', '0.0.0.0', '[::1]', '[::]']);
@@ -75,19 +73,14 @@ function importSharedProviders(core: Scope, incoming: SharedProviders): Promise<
     await core.accessor.get(IKosongConfigService).ready;
     const providers = config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
     const models = config.inspect<Record<string, ModelRecord>>(MODELS_SECTION).userValue ?? {};
-    const copied: string[] = [];
-    const updated: string[] = [];
-    for (const id of Object.keys(incoming.providers)) {
-      if (providers[id] === undefined) copied.push(id);
-      else updated.push(id);
-    }
-    const replaced = new Set(updated);
+    const copied = Object.keys(incoming.providers);
+    const replaced = new Set(copied.filter((id) => providers[id] !== undefined));
     const staleAliases = Object.entries(models)
       .filter(([alias, model]) => model.provider !== undefined && replaced.has(model.provider) && incoming.models[alias] === undefined)
       .map(([alias]) => alias);
     const kept = Object.fromEntries(Object.entries(models).filter(([alias]) => !staleAliases.includes(alias)));
     const incomingAliases = Object.keys(incoming.models);
-    if (copied.length + updated.length > 0) await config.replace(PROVIDERS_SECTION, { ...providers, ...incoming.providers });
+    if (copied.length > 0) await config.replace(PROVIDERS_SECTION, { ...providers, ...incoming.providers });
     if (incomingAliases.length + staleAliases.length > 0) await config.replace(MODELS_SECTION, { ...kept, ...incoming.models });
     const currentDefault = config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
     const firstAlias = incomingAliases[0];
@@ -95,7 +88,7 @@ function importSharedProviders(core: Scope, incoming: SharedProviders): Promise<
     if (defaultMissing && firstAlias !== undefined) {
       await config.replace(DEFAULT_MODEL_SECTION, firstAlias);
     }
-    return { copied, updated };
+    return { providers: copied };
   });
 }
 

@@ -253,7 +253,6 @@ const v2SessionPageSchema = z.object({
   total: z.number().int(),
   has_more: z.boolean(),
   next_page_token: z.string().nullable(),
-  unavailable_hosts: z.array(z.string()).optional(),
 });
 
 const v2SessionGroupSchema = z.object({
@@ -268,7 +267,6 @@ const v2SessionGroupPageSchema = z.object({
   total: z.number().int(),
   has_more: z.boolean(),
   next_page_token: z.string().nullable(),
-  unavailable_hosts: z.array(z.string()).optional(),
 });
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));

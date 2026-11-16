@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
 import { FileTokenStorage, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
-import { IConfigService, IOAuthService, hostsSectionSchema, isValidHostId } from '@moonshot-ai/agent-core-v2';
+import { IConfigService, IOAuthService, hostIdSchema, hostsSectionSchema } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
 
@@ -27,8 +27,7 @@ import {
   HostConnectError,
   SshKapBridge,
   classifySshFailure,
-  parseBootstrapOutput,
-  parseProbeOutput,
+  checkBootstrapOutput,
   remoteBinCommand,
   remoteKimiCommand,
 } from '../src/services/hosts/sshKapBridge';
@@ -114,9 +113,9 @@ describe('host configuration', () => {
   });
 
   it('keeps host ids safe for URL path segments', () => {
-    expect(isValidHostId('dev_box-1.example')).toBe(true);
-    expect(isValidHostId('a/b')).toBe(false);
-    expect(isValidHostId('')).toBe(false);
+    expect(hostIdSchema.safeParse('dev_box-1.example').success).toBe(true);
+    expect(hostIdSchema.safeParse('a/b').success).toBe(false);
+    expect(hostIdSchema.safeParse('').success).toBe(false);
   });
 });
 
@@ -129,31 +128,31 @@ describe('ssh bootstrap', () => {
   });
 
   it('finds the marker line among shell startup noise', () => {
-    const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":42,"version":"1.0.0"}\n`;
-    expect(parseBootstrapOutput(stdout)).toEqual({ pid: 42, version: '1.0.0' });
-    expect(parseBootstrapOutput('command output without a marker\n')).toBeUndefined();
+    const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.0.0"}\n`;
+    expect(checkBootstrapOutput(stdout)).toBe(true);
+    expect(checkBootstrapOutput('command output without a marker\n')).toBe(false);
   });
 
   it('reports a remote below the host protocol as outdated with its version', () => {
     const error = thrown(() =>
-      parseBootstrapOutput('__KIMI_ENSURE_DAEMON__{"version":"0.40.0"}\n'),
+      checkBootstrapOutput('__KIMI_ENSURE_DAEMON__{"version":"0.40.0"}\n'),
     );
     expect(error.failure).toBe('executor_outdated');
     expect(error.remoteVersion).toBe('0.40.0');
     expect(error.message).toContain('kimi upgrade');
-    expect(thrown(() => parseProbeOutput('0.40.0\n__KIMI_ENSURE_DAEMON__{"protocol":0}\n')).remoteVersion).toBe('0.40.0');
+    expect(thrown(() => checkBootstrapOutput('0.40.0\n__KIMI_ENSURE_DAEMON__{"protocol":0}\n')).remoteVersion).toBe('0.40.0');
   });
 
   it('reports a remote below the host API level as outdated and accepts a newer one', () => {
     const marker = (apiLevel: number | undefined): string =>
       `__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: apiLevel, version: '2.5.2' })}\n`;
     for (const apiLevel of [undefined, HOST_API_LEVEL - 1]) {
-      const error = thrown(() => parseBootstrapOutput(marker(apiLevel)));
+      const error = thrown(() => checkBootstrapOutput(marker(apiLevel)));
       expect(error.failure).toBe('executor_outdated');
       expect(error.remoteVersion).toBe('2.5.2');
       expect(error.message).toContain('kimi upgrade');
     }
-    expect(parseBootstrapOutput(marker(HOST_API_LEVEL + 1))).toEqual({ version: '2.5.2', pid: undefined });
+    expect(checkBootstrapOutput(marker(HOST_API_LEVEL + 1))).toBe(true);
   });
 
   it.each([
@@ -163,16 +162,13 @@ describe('ssh bootstrap', () => {
     ['something_new', 'unknown'],
   ] as const)('maps the ensure-daemon error %s to %s', (code, failure) => {
     const stdout = `__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0","error":"${code}","message":"m"}\n`;
-    const error = thrown(() => parseBootstrapOutput(stdout));
+    const error = thrown(() => checkBootstrapOutput(stdout));
     expect(error.failure).toBe(failure);
     expect(error.remoteVersion).toBe('2.0.0');
   });
 
-  it('reads the protocol and version from a probe', () => {
-    expect(parseProbeOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0"}\n`)).toEqual({
-      protocol: HOST_PROTOCOL_VERSION,
-      version: '2.0.0',
-    });
+  it('accepts a probe with a supported protocol and API level', () => {
+    expect(checkBootstrapOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0"}\n`)).toBe(true);
   });
 
   it.skipIf(process.platform === 'win32')('reports an older kimi without the probe as outdated with its version', () =>
@@ -259,7 +255,7 @@ process.stdin.resume();
         const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
           const session = await bridge.connect();
-          expect(session.version).toBe('版本1.2.3');
+          expect(session).toBeDefined();
           const message = new Promise<string>((resolve) => {
             session.openWebSocket('/api/v1/ws', {
               onMessage: resolve,
@@ -279,7 +275,7 @@ process.stdin.resume();
     withFakeSsh(
       (dir) => `#!/bin/sh
 echo x >> '${join(dir, 'count')}'
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":100,"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
 while IFS= read -r line; do
   case "$line" in
     *'"type":"http.req"'*)
@@ -298,7 +294,7 @@ done
         try {
           const session = await bridge.connect();
           expect(bridge.status).toBe('ready');
-          expect(bridge.remoteVersion).toBe('1.2.3');
+          expect(bridge.remoteVersion).toBeUndefined();
           const res = await session.request({ method: 'GET', path: '/api/v1/healthz', headers: {} });
           expect(res.status).toBe(200);
           expect(JSON.parse(res.body.toString('utf8'))).toEqual({ ok: true });
@@ -319,7 +315,7 @@ done
             expect(bridge.status).toBe('ready');
           });
           const reconnected = await bridge.connect();
-          expect(reconnected.version).toBe('1.2.3');
+          expect(reconnected).toBeDefined();
           expect(readFileSync(join(dir, 'count'), 'utf8').trim().split('\n').length).toBeGreaterThanOrEqual(2);
         } finally {
           bridge.dispose();
@@ -337,7 +333,7 @@ if [ "$attempt" = 2 ]; then
   echo 'ssh: connect to host dev port 22: Connection refused' >&2
   exit 255
 fi
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":100,"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
 if [ "$attempt" = 1 ]; then exit 1; fi
 while IFS= read -r line; do :; done
 `,
@@ -367,7 +363,7 @@ if [ -e '${join(dir, 'down')}' ]; then
   echo 'ssh: connect to host dev port 22: Connection refused' >&2
   exit 255
 fi
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"pid":100,"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
 while IFS= read -r line; do :; done
 `,
       async (ssh, dir) => {
@@ -480,7 +476,7 @@ describe('host HTTP session', () => {
         Duplex.prototype.write.call(stream, chunk, encoding, callback);
       },
     });
-    const session = new StdioHostSession('1.0.0', stream);
+    const session = new StdioHostSession(stream);
     const pending = session.request({ method: 'GET', path: '/held', headers: {} });
     stream.destroy();
     await expect(pending).rejects.toMatchObject({ failure: 'unavailable' });
@@ -528,7 +524,6 @@ describe('host WebSocket backpressure', () => {
     let release!: () => void;
     const drain = new Promise<void>((resolve) => { release = resolve; });
     const session = {
-      version: '1.0.0',
       request: async () => { throw new Error('unexpected HTTP request'); },
       openWebSocket: (_path: string, handlers: { onMessage(data: string): void; onBackpressure(blocked: boolean): void }) => ({
         send: (data: string) => {
@@ -590,10 +585,7 @@ describe('host management routes', () => {
       homeDir: home,
       logLevel: 'silent',
     });
-    const probe = vi.spyOn(SshKapBridge.prototype, 'probe').mockResolvedValue({
-      version: '2.0.0',
-      protocol: HOST_PROTOCOL_VERSION,
-    });
+    const probe = vi.spyOn(SshKapBridge.prototype, 'probe').mockResolvedValue(undefined);
     const request = (method: string, path: string, body?: unknown) => fetch(`http://127.0.0.1:${server.port}${path}`, {
       method,
       headers: { authorization: `Bearer ${server.authTokenService.getToken()}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
@@ -602,7 +594,7 @@ describe('host management routes', () => {
     try {
       const tested = await request('POST', '/api/v1/hosts:test', { host: 'dev@example.test' });
       expect(tested.status).toBe(200);
-      expect(await tested.json()).toMatchObject({ code: 0, data: { connected: true, remote_version: '2.0.0' } });
+      expect(await tested.json()).toMatchObject({ code: 0, data: { connected: true } });
       expect(probe).toHaveBeenCalledOnce();
       const created = await request('PUT', '/api/v1/hosts/dev', { host: 'dev@example.test', name: 'Dev' });
       expect(created.status).toBe(200);
@@ -632,7 +624,6 @@ describe('host HTTP proxy', () => {
     const app = Fastify();
     registerHostProxyRoutes(app, {
       session: () => ({
-        version: '1.0.0',
         request: async () => { throw new HostRequestError('timeout', 'host request timed out'); },
         openWebSocket: () => { throw new Error('unexpected websocket'); },
       }),
@@ -655,7 +646,6 @@ describe('host HTTP proxy', () => {
     let sessionRequest!: { signal?: AbortSignal };
     registerHostProxyRoutes(app, {
       session: () => ({
-        version: '1.0.0',
         request: (input: typeof sessionRequest) => {
           sessionRequest = input;
           return new Promise(() => {});
@@ -714,7 +704,6 @@ async function withManagedHostPair(
   const paths: string[] = [];
   let requestId = 0;
   const session: HostSession = {
-    version: 'test',
     request: (input: HostHttpRequest) => new Promise<HostHttpResponse>((resolve) => {
       const id = `req-${String(++requestId)}`;
       paths.push(input.path);
@@ -838,7 +827,7 @@ describe('host model providers', () => {
         const manager = local.hostBridges;
 
         const result = await manager.copyProviders('dev');
-        expect(result).toEqual({ copied: ['gateway'], updated: ['taken'] });
+        expect(result).toEqual({ providers: ['gateway', 'taken'] });
         const providers = remoteConfig.inspect<Record<string, Record<string, unknown>>>('providers').userValue ?? {};
         expect(providers['gateway']).toMatchObject({ apiKey: 'sk-gateway', customHeaders: { 'x-team': 'core' } });
         expect(providers['taken']).toEqual({ type: 'openai', baseUrl: 'https://taken.example.test/v1', apiKey: 'sk-local' });
@@ -852,7 +841,7 @@ describe('host model providers', () => {
         expect(models).not.toHaveProperty('taken/remote-only');
         expect(models).not.toHaveProperty('ollama/local');
 
-        await expect(manager.copyProviders('dev')).resolves.toEqual({ copied: [], updated: ['gateway', 'taken'] });
+        await expect(manager.copyProviders('dev')).resolves.toEqual({ providers: ['gateway', 'taken'] });
         await expect(manager.copyProviders('missing')).rejects.toThrow(/not configured/);
       },
     );

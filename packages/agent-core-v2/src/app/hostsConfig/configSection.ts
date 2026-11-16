@@ -31,10 +31,6 @@ export const hostsSectionSchema: z.ZodType<HostsSection> = z.record(
   hostEntrySchema,
 );
 
-export function isValidHostId(id: string): boolean {
-  return HOST_ID_PATTERN.test(id);
-}
-
 const TOML_FIELDS = [
   ['identity_file', 'identityFile'],
   ['remote_bin', 'remoteBin'],
