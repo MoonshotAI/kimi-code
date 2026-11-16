@@ -776,13 +776,23 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
     assertIdle();
     const refreshedMetaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
     assertIdle();
-    session.accessor.get(ISessionRunGate).begin();
-    const finalState = resolveContinuableState(refreshedMetaReason);
-    if (!finalState.continuable) {
-      throw new Error2(
-        ErrorCodes.TURN_NOT_CONTINUABLE,
-        `session ${id} has no interrupted or failed turn to continue`,
-      );
+    const quiescence = loop.tryAcquireQuiescence();
+    if (quiescence === undefined) {
+      throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
+    }
+    let ownerPromptId: string | undefined;
+    try {
+      session.accessor.get(ISessionRunGate).begin();
+      const finalState = resolveContinuableState(refreshedMetaReason);
+      if (!finalState.continuable) {
+        throw new Error2(
+          ErrorCodes.TURN_NOT_CONTINUABLE,
+          `session ${id} has no interrupted or failed turn to continue`,
+        );
+      }
+      ownerPromptId = finalState.ownerPromptId;
+    } finally {
+      quiescence.dispose();
     }
 
     loop.remind(
@@ -792,7 +802,7 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
         origin: {
           kind: 'injection',
           variant: 'turn_continue',
-          ownerPromptId: finalState.ownerPromptId,
+          ownerPromptId,
         },
       }),
     );

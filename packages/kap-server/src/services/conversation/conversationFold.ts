@@ -148,6 +148,7 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
   }
   switch (record.type) {
     case 'turn.prompt':
+      if (typeof record['trigger'] === 'string') state.recordsTurnEnds = true;
       state.pendingPrompt = {
         turnNumber: numberField(record['turnId']),
         promptId: stringField(record['promptId']),

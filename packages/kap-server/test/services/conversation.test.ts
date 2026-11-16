@@ -900,6 +900,17 @@ describe('orphan turns', () => {
 
     expect(settled.turns[0]).toMatchObject({ status: 'ended', outcome: 'completed' });
   });
+
+  it('ends a crashed first turn from the modern engine (carrying trigger) as interrupted', () => {
+    const modernFirstTurn: WireRecord[] = [
+      record('turn.prompt', { turnId: 0, promptId: 'p1', origin: { kind: 'user' }, input: [], trigger: 'normal' }),
+      userMessage('p1', 'first turn crash'),
+      stepBegin(0, 1, 's0'),
+    ];
+    const settled = settleOrphanTurns(fold(modernFirstTurn));
+
+    expect(settled.turns[0]).toMatchObject({ status: 'ended', outcome: 'interrupted', end_reason: 'aborted' });
+  });
 });
 
 const passThroughBlobs = {
