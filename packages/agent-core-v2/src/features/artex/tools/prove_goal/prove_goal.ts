@@ -8,6 +8,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
+import { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 import type { ArtexFactConfidence, ArtexFactSource } from '#/features/artex/protocol/index';
@@ -42,6 +43,7 @@ export class ArtexProveGoalTool implements AgentTool<ProveGoalInput> {
   constructor(
     @IArtexSessionContext private readonly session: IArtexSessionContext,
     @IArtexGraphStoreProvider private readonly provider: IArtexGraphStoreProvider,
+    @IArtexOrchestrator private readonly orchestrator?: IArtexOrchestrator,
   ) {}
 
   resolveExecution(args: ProveGoalInput): ToolExecution {
@@ -97,10 +99,13 @@ export class ArtexProveGoalTool implements AgentTool<ProveGoalInput> {
     const goals = await store.listByKind('goal');
     const allMet = goals.length > 0 && goals.every((node) => node.state === 'met');
     if (allMet) {
+      await store.markExplorationAchieved(args.reason);
+      this.orchestrator?.notifyGoalMet(handle.explorationId, args.reason);
       return {
         output: `goal ${String(args.goal_id)} marked met; all goals of this task are met — the task is automatically judged complete`,
       };
     }
+    this.orchestrator?.notifyGraphChanged(handle.explorationId, 'prove_goal');
     return { output: `goal ${String(args.goal_id)} marked met` };
   }
 }

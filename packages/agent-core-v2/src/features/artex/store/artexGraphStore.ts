@@ -19,6 +19,10 @@ export interface ArtexActivityEntry {
   readonly nodeId?: number;
   readonly actor: string;
   readonly kind: string;
+  readonly tool?: string;
+  readonly isError?: boolean;
+  readonly summary?: string;
+  readonly text?: string;
   readonly detail?: Record<string, unknown>;
   readonly at: string;
 }
@@ -27,6 +31,10 @@ export interface ArtexActivityInput {
   readonly nodeId?: number;
   readonly actor: string;
   readonly kind: string;
+  readonly tool?: string;
+  readonly isError?: boolean;
+  readonly summary?: string;
+  readonly text?: string;
   readonly detail?: Record<string, unknown>;
 }
 
@@ -68,6 +76,9 @@ export interface IArtexGraphStore {
   init(description: string, goal: string): Promise<ArtexExploration>;
   isInitialized(): Promise<boolean>;
   load(): Promise<ArtexGraphSnapshot>;
+  exploration(): Promise<ArtexExploration>;
+  markExplorationAchieved(reason?: string): Promise<ArtexExploration>;
+  reopenExploration(): Promise<ArtexExploration>;
   root(): Promise<ArtexExplorationRoot>;
 
   addNode(input: ArtexAddNodeInput): Promise<number>;
@@ -82,6 +93,9 @@ export interface IArtexGraphStore {
   nodes(): Promise<readonly ArtexNode[]>;
   listByKind(kind: ArtexNodeKind, limit?: number): Promise<readonly ArtexNode[]>;
   frontier(limit?: number): Promise<readonly ArtexIntentNode[]>;
+  countOpenIntents(): Promise<number>;
+  countFinishedIntents(): Promise<number>;
+  listRecentTerminalIntents(limit?: number): Promise<readonly ArtexIntentNode[]>;
   setNodeState(id: number, state: ArtexNodeState): Promise<void>;
   mergeNodePayload(id: number, patch: Record<string, unknown>): Promise<void>;
 
@@ -114,4 +128,25 @@ export interface IArtexGraphStore {
   tokenRollup(): Promise<ArtexTokenRollup>;
 
   appendActivity(entry: ArtexActivityInput): Promise<number>;
+  readActivity(): Promise<readonly ArtexActivityEntry[]>;
+  readActivityByNode(nodeId: number): Promise<readonly ArtexActivityEntry[]>;
+  readActivityByIds(ids: readonly number[]): Promise<readonly ArtexActivityEntry[]>;
+
+  roundNo(): Promise<number>;
+  bumpRound(): Promise<number>;
+  coldStamps(): Promise<Map<number, number | undefined>>;
+  contentVersions(): Promise<Map<number, number>>;
+  applyColdStamps(ops: readonly ArtexColdStampOp[]): Promise<void>;
+  addDigest(payload: Record<string, unknown>, memberIds: readonly number[]): Promise<number>;
+  activeDigests(): Promise<readonly ArtexNode[]>;
+  digestMembers(digestId: number): Promise<readonly number[]>;
+  coveredMembers(): Promise<ReadonlySet<number>>;
+  coveredMemberMap(): Promise<Map<number, number>>;
+  supersedeDigests(digestIds: readonly number[]): Promise<void>;
+}
+
+export interface ArtexColdStampOp {
+  readonly id: number;
+  readonly set: boolean;
+  readonly round: number;
 }

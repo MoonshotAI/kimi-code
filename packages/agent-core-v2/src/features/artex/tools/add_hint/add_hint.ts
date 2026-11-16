@@ -8,6 +8,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
+import { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
@@ -35,6 +36,7 @@ export class ArtexAddHintTool implements AgentTool<AddHintInput> {
   constructor(
     @IArtexSessionContext private readonly session: IArtexSessionContext,
     @IArtexGraphStoreProvider private readonly provider: IArtexGraphStoreProvider,
+    @IArtexOrchestrator private readonly orchestrator?: IArtexOrchestrator,
   ) {}
 
   resolveExecution(args: AddHintInput): ToolExecution {
@@ -58,6 +60,7 @@ export class ArtexAddHintTool implements AgentTool<AddHintInput> {
       origin: 'main',
       anchors: args.asset_ids,
     });
+    this.orchestrator?.notifyGraphChanged(handle.explorationId, 'add_hint');
     return { output: `hint created: ${String(id)}` };
   }
 }

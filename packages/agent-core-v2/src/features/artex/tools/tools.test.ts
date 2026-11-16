@@ -17,6 +17,28 @@ import type { IArtexTrafficRecorder } from '#/features/artex/traffic/artexTraffi
 import { ArtexRecordFactTool, type RecordFactInput } from './record_fact/record_fact';
 import { ArtexReportFindingTool, type ReportFindingInput } from './report_finding/report_finding';
 import { ArtexProveGoalTool, type ProveGoalInput } from './prove_goal/prove_goal';
+import { ArtexGoalMetTool, type GoalMetInput } from './goal_met/goal_met';
+import { ArtexGraphOverviewTool } from './graph_overview/graph_overview';
+import { ArtexGetWorkerOutputTool, type GetWorkerOutputInput } from './get_worker_output/get_worker_output';
+import { ArtexGetWorkerTraceTool, type GetWorkerTraceInput } from './get_worker_trace/get_worker_trace';
+import {
+  ArtexSearchAllWorkerTracesTool,
+  type SearchAllWorkerTracesInput,
+} from './search_all_worker_traces/search_all_worker_traces';
+import {
+  ArtexListWorkerTracesTool,
+  type ListWorkerTracesInput,
+} from './list_worker_traces/list_worker_traces';
+import { ArtexExpandDigestTool, type ExpandDigestInput } from './expand_digest/expand_digest';
+import {
+  ArtexStartExplorationTool,
+  type StartArtexExplorationInput,
+} from './start_artex_exploration/start_artex_exploration';
+import { ArtexWorkStoreProvider } from '#/features/artex/store/artexWorkStoreProvider';
+import type { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
+import type { IArtexModeService } from '#/features/artex/agent/artexMode';
+import { stubFlag } from '../../../../test/app/flag/stubs';
+import { vi } from 'vitest';
 
 function recordingRecorderFor(store: FileArtexTrafficStore): IArtexTrafficRecorder {
   return {
@@ -60,6 +82,10 @@ function sessionContextFor(root: string): IArtexSessionContext {
 
 async function run(result: Promise<ExecutableToolResult>): Promise<ExecutableToolResult> {
   return result;
+}
+
+function parseOutput<T>(result: ExecutableToolResult): T {
+  return JSON.parse(typeof result.output === 'string' ? result.output : '{}') as T;
 }
 
 describe('artex graph tools', () => {
@@ -227,5 +253,214 @@ describe('artex graph tools', () => {
     });
     expect(result.isError).toBe(true);
     expect(await store.listByKind('finding')).toHaveLength(before);
+  });
+
+  it('goal_met persists achieved status and notifies orchestrator once all goals are met', async () => {
+    const notifyGoalMet = vi.fn();
+    const goalMet = new ArtexGoalMetTool(session, provider, {
+      notifyGoalMet,
+    } as unknown as IArtexOrchestrator);
+
+    const refused = await exec<GoalMetInput>(goalMet, { reason: 'done' });
+    expect(refused.isError).toBe(true);
+
+    const goals = await store.listByKind('goal');
+    for (const g of goals) await store.setNodeState(g.id, 'met');
+
+    const accepted = await exec<GoalMetInput>(goalMet, { reason: 'all objectives verified' });
+    expect(accepted.isError ?? false).toBe(false);
+    const exp = await store.exploration();
+    expect(exp.status).toBe('achieved');
+    expect(exp.goalMetAt).toBeDefined();
+    expect(exp.goalMetReason).toBe('all objectives verified');
+    expect(notifyGoalMet).toHaveBeenCalledWith(1, 'all objectives verified');
+  });
+
+  it('get_worker_output, get_worker_trace, search_all_worker_traces, and list_worker_traces read live activity.log', async () => {
+    const intent1 = await store.addIntent({ summary: 'scan auth endpoints' }, 8);
+    const intent2 = await store.addIntent({ summary: 'check upload handler' }, 6);
+    await store.setIntentState(intent1, 'running');
+    await store.setIntentState(intent2, 'done');
+
+    await store.appendActivity({
+      nodeId: intent1,
+      actor: 'worker-1',
+      kind: 'thinking',
+      summary: 'internal secret thought',
+      text: 'internal secret thought',
+    });
+    const s1 = await store.appendActivity({
+      nodeId: intent1,
+      actor: 'worker-1',
+      kind: 'tool_use',
+      tool: 'Bash',
+      summary: 'Bash curl http://target.example.com/admin',
+      text: 'curl http://target.example.com/admin',
+      detail: { command: 'curl http://target.example.com/admin' },
+    });
+    const s2 = await store.appendActivity({
+      nodeId: intent1,
+      actor: 'worker-1',
+      kind: 'tool_result',
+      tool: 'Bash',
+      summary: '200 OK admin_token=xyz',
+      text: 'HTTP/1.1 200 OK\nadmin_token=xyz',
+    });
+    await store.appendActivity({
+      nodeId: intent2,
+      actor: 'worker-2',
+      kind: 'tool_result',
+      tool: 'FetchURL',
+      summary: 'upload returned 403',
+      text: 'upload returned 403',
+    });
+
+    const workerOutput = new ArtexGetWorkerOutputTool(session, provider);
+    const liveOut = await exec<GetWorkerOutputInput>(workerOutput, { intent_id: intent1 });
+    expect(liveOut.isError ?? false).toBe(false);
+    const parsedLive = parseOutput<{
+      state: string;
+      live_steps: Array<{ step_id: number }>;
+    }>(liveOut);
+    expect(parsedLive.state).toBe('running');
+    expect(parsedLive.live_steps.map((s) => s.step_id)).toEqual([s1, s2]);
+
+    const workerTrace = new ArtexGetWorkerTraceTool(session, provider);
+    const listSteps = await exec<GetWorkerTraceInput>(workerTrace, { intent_id: intent1 });
+    const traceSummary = parseOutput<{
+      steps: Array<{ step_id: number; kind: string }>;
+    }>(listSteps);
+    expect(traceSummary.steps.map((s) => s.step_id)).toEqual([s1, s2]);
+
+    const detail = await exec<GetWorkerTraceInput>(workerTrace, {
+      intent_id: intent1,
+      step_ids: [s1, s2, 9001, 9002, 9003, 9004],
+    });
+    const parsedDetail = parseOutput<{
+      returned_step_ids: number[];
+      omitted_step_ids: number[];
+      steps: Array<{ step_id: number; text?: string }>;
+    }>(detail);
+    expect(parsedDetail.returned_step_ids).toHaveLength(5);
+    expect(parsedDetail.omitted_step_ids).toEqual([9004]);
+    expect(parsedDetail.steps.find((s) => s.step_id === s2)?.text).toContain('admin_token=xyz');
+
+    const searchAll = new ArtexSearchAllWorkerTracesTool(session, provider, {
+      agentId: 'worker-2',
+      meta: { labels: { artexIntentId: String(intent2) } },
+    } as unknown as IAgentScopeContext);
+    const hitsRes = await exec<SearchAllWorkerTracesInput>(searchAll, { q: 'admin_token' });
+    const hits = parseOutput<{
+      hits: Array<{ intent_id: number; step_id: number }>;
+    }>(hitsRes);
+    expect(hits.hits).toHaveLength(1);
+    expect(hits.hits[0]?.intent_id).toBe(intent1);
+
+    const listTraces = new ArtexListWorkerTracesTool(session, provider);
+    const listed = parseOutput<{ works: Array<{ intent_id: number; state: string }> }>(
+      await exec<ListWorkerTracesInput>(listTraces, { q: 'upload' }),
+    );
+    expect(listed.works).toEqual([{ intent_id: intent2, summary: 'check upload handler', state: 'done' }]);
+  });
+
+  it('expand_digest and graph_overview surface cold digests, revival check, and stagnation warnings', async () => {
+    const d1 = await store.addIntent({ summary: 'probe /api/v1/user/1' }, 5);
+    const d2 = await store.addIntent({ summary: 'probe /api/v1/user/2' }, 5);
+    const d3 = await store.addIntent({ summary: 'probe /api/v1/user/3' }, 5);
+    await store.setIntentState(d1, 'done');
+    await store.setIntentState(d2, 'done');
+    await store.setIntentState(d3, 'done');
+
+    const digestId = await store.addDigest(
+      { body: 'Probed user endpoints (#1,#2) with no findings.' },
+      [d1, d2],
+    );
+
+    const expand = new ArtexExpandDigestTool(session, provider);
+    const expanded = parseOutput<{ id: number; body: string; members: Array<{ id: number }> }>(
+      await exec<ExpandDigestInput>(expand, { id: digestId }),
+    );
+    expect(expanded.id).toBe(digestId);
+    expect(expanded.members.map((m) => m.id)).toEqual([d1, d2]);
+
+    const workProvider = new ArtexWorkStoreProvider();
+    const overviewTool = new ArtexGraphOverviewTool(session, provider, workProvider);
+    const overview = parseOutput<{
+      cold_digests?: Array<{ id: number }>;
+      recent_done_intents: Array<{ id: number }>;
+      stagnation_warning?: { directions: Array<{ repeats: number }> };
+    }>(await exec(overviewTool, {}));
+    expect(overview.cold_digests?.map((d) => d.id)).toEqual([digestId]);
+    expect(overview.recent_done_intents.map((i) => i.id)).toEqual([d3]);
+    expect(overview.stagnation_warning?.directions[0]?.repeats).toBe(3);
+
+    const revivedIntent = await store.addIntent({ summary: 'recheck user/1' }, 9);
+    await store.link(d1, 'derived_from', revivedIntent);
+    const revivedOverview = parseOutput<{ recent_done_intents: Array<{ id: number }> }>(
+      await exec(overviewTool, {}),
+    );
+    expect(revivedOverview.recent_done_intents.some((i) => i.id === d1)).toBe(true);
+  });
+
+  it('start_artex_exploration initializes exploration, enters mode, and drives orchestrator start/pause/status', async () => {
+    const localSession = sessionContextFor(dir);
+    localSession.setActiveExplorationId(undefined);
+    const start = vi.fn(() => ({
+      explorationId: 1,
+      completion: Promise.resolve({
+        waves: 0,
+        dispatched: 0,
+        settled: { done: 0, exhausted: 0, blocked: 0, stopped: 0, paused: 0 },
+        goalMet: false,
+        stalled: false,
+        stopped: false,
+      }),
+      stop: () => {},
+    }));
+    const pause = vi.fn(async () => true);
+    const getStatus = vi.fn((id: number) => ({
+      explorationId: id,
+      running: true,
+      paused: false,
+      activeWorkers: 12,
+      waves: 1,
+      dispatched: 12,
+      settled: { done: 0, exhausted: 0, blocked: 0, stopped: 0, paused: 0 },
+      goalMet: false,
+      stalled: false,
+      stopped: false,
+    }));
+    const enter = vi.fn();
+    const entryTool = new ArtexStartExplorationTool(
+      localSession,
+      provider,
+      { start, pause, getStatus } as unknown as IArtexOrchestrator,
+      { enter } as unknown as IArtexModeService,
+      { agentId: 'main' } as unknown as IAgentScopeContext,
+      stubFlag(true),
+    );
+
+    const started = await exec<StartArtexExplorationInput>(entryTool, {
+      goal: 'find SQL injection',
+      description: 'https://target.example.com',
+      target_concurrency: 120,
+    });
+    expect(started.isError ?? false).toBe(false);
+    expect(localSession.getActiveExplorationId()).toBe(2);
+    expect(enter).toHaveBeenCalledWith(2);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ explorationId: 2, targetConcurrency: 120 }),
+    );
+
+    const statusRes = await exec<StartArtexExplorationInput>(entryTool, { action: 'status' });
+    expect(parseOutput(statusRes)).toMatchObject({
+      exploration_id: 2,
+      initialized: true,
+      status: { running: true, activeWorkers: 12 },
+    });
+
+    const pauseRes = await exec<StartArtexExplorationInput>(entryTool, { action: 'pause' });
+    expect(pause).toHaveBeenCalledWith(2);
+    expect(parseOutput(pauseRes)).toMatchObject({ paused: true });
   });
 });

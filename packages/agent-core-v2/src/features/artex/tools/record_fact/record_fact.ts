@@ -9,6 +9,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
+import { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import type { IArtexGraphStore } from '#/features/artex/store/artexGraphStore';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
@@ -103,6 +104,7 @@ export class ArtexRecordFactTool implements AgentTool<RecordFactInput> {
     @IArtexSessionContext private readonly session: IArtexSessionContext,
     @IArtexGraphStoreProvider private readonly provider: IArtexGraphStoreProvider,
     @IAgentScopeContext scope: IAgentScopeContext,
+    @IArtexOrchestrator private readonly orchestrator?: IArtexOrchestrator,
   ) {
     this.worker = scope.agentId;
   }
@@ -145,7 +147,11 @@ export class ArtexRecordFactTool implements AgentTool<RecordFactInput> {
     if (!batch) {
       const message = errors['0'];
       if (message !== undefined) return artexErr(message);
+      this.orchestrator?.notifyGraphChanged(handle.explorationId, 'record_fact');
       return { output: `fact recorded: ${String(ids[0])}` };
+    }
+    if (ids.some((id) => id > 0)) {
+      this.orchestrator?.notifyGraphChanged(handle.explorationId, 'record_fact');
     }
     const out: Record<string, unknown> = { ids };
     if (Object.keys(errors).length > 0) out['errors'] = errors;

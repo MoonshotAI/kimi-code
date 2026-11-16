@@ -1,0 +1,1 @@
+Keyword-search across the execution processes of all other works (intents) in this exploration to recover paths, tokens, or errors that a worker saw without recording as a fact. Excludes your own intent's steps. Returns matching step summaries (`<= 100 chars`), each with its `intent_id` and `step_id` for follow-up via `get_worker_trace`.

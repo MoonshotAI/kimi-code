@@ -2,6 +2,7 @@ import type { ArtexExplorationRoot, IArtexGraphStore } from '#/features/artex/st
 import type {
   ArtexIntentNode,
   ArtexIntentSettleState,
+  ArtexTaskConstraint,
 } from '#/features/artex/protocol/index';
 import {
   isArtexBudgetCapReason,
@@ -96,13 +97,21 @@ function intentText(intent: ArtexIntentNode): string {
 export function buildWorkerBrief(input: {
   readonly intent: ArtexIntentNode;
   readonly root: ArtexExplorationRoot;
+  readonly constraints?: readonly ArtexTaskConstraint[];
 }): string {
-  const { intent, root } = input;
+  const { intent, root, constraints } = input;
   const lines: string[] = [];
   lines.push('<worker_task>');
   lines.push(`<exploration_goal>${root.goal}</exploration_goal>`);
   if (root.description.trim().length > 0) {
     lines.push(`<scope>${root.description}</scope>`);
+  }
+  if (constraints !== undefined && constraints.length > 0) {
+    lines.push('<operation_constraints>');
+    for (const c of constraints) {
+      lines.push(`- [${c.kind}] ${c.text}`);
+    }
+    lines.push('</operation_constraints>');
   }
   lines.push(`<intent id="${String(intent.id)}" priority="${String(intent.priority)}">`);
   lines.push(intentText(intent));

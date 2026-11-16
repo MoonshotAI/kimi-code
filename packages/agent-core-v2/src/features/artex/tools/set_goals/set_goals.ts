@@ -8,6 +8,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
+import { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
@@ -35,6 +36,7 @@ export class ArtexSetGoalsTool implements AgentTool<SetGoalsInput> {
   constructor(
     @IArtexSessionContext private readonly session: IArtexSessionContext,
     @IArtexGraphStoreProvider private readonly provider: IArtexGraphStoreProvider,
+    @IArtexOrchestrator private readonly orchestrator?: IArtexOrchestrator,
   ) {}
 
   resolveExecution(args: SetGoalsInput): ToolExecution {
@@ -53,10 +55,15 @@ export class ArtexSetGoalsTool implements AgentTool<SetGoalsInput> {
     if (statements.length === 0) return artexErr('provide at least one goal statement');
     const handle = await openActiveGraph(this.session, this.provider);
     if (handle === undefined) return ARTEX_INACTIVE_RESULT;
+    const originId = (await handle.store.listByKind('fact')).find((n) => n.state === 'origin')?.id;
     const ids: number[] = [];
     for (const statement of statements) {
-      ids.push(await handle.store.addGoal({ text: statement, summary: statement }, 'main'));
+      const id = await handle.store.addGoal({ text: statement, summary: statement }, 'main');
+      if (originId !== undefined) await handle.store.link(originId, 'spawns', id);
+      ids.push(id);
     }
+    await handle.store.reopenExploration();
+    this.orchestrator?.notifyGraphChanged(handle.explorationId, 'set_goals');
     return { output: artexJson({ ids }) };
   }
 }

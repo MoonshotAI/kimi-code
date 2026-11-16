@@ -8,6 +8,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
+import { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 import { isTerminalArtexIntentState } from '#/features/artex/protocol/index';
@@ -36,6 +37,7 @@ export class ArtexKillWorkTool implements AgentTool<KillWorkInput> {
   constructor(
     @IArtexSessionContext private readonly session: IArtexSessionContext,
     @IArtexGraphStoreProvider private readonly provider: IArtexGraphStoreProvider,
+    @IArtexOrchestrator private readonly orchestrator?: IArtexOrchestrator,
   ) {}
 
   resolveExecution(args: KillWorkInput): ToolExecution {
@@ -56,10 +58,21 @@ export class ArtexKillWorkTool implements AgentTool<KillWorkInput> {
     if (isTerminalArtexIntentState(node.state)) {
       return artexErr(`intent ${String(args.intent_id)} is already ${node.state}`);
     }
-    if (args.reason !== undefined && args.reason.trim().length > 0) {
-      await handle.store.mergeNodePayload(args.intent_id, { kill_reason: args.reason.trim() });
+    const reason = args.reason?.trim();
+    if (reason !== undefined && reason.length > 0) {
+      await handle.store.mergeNodePayload(args.intent_id, { kill_reason: reason });
     }
     await handle.store.setIntentState(args.intent_id, 'stopped');
-    return { output: `intent ${String(args.intent_id)} stopped` };
+    const aborted =
+      this.orchestrator?.abortIntent(
+        args.intent_id,
+        reason !== undefined && reason.length > 0 ? new Error(reason) : undefined,
+      ) ?? false;
+    this.orchestrator?.notifyGraphChanged(handle.explorationId, 'kill_work');
+    return {
+      output: aborted
+        ? `intent ${String(args.intent_id)} stopped and running worker aborted`
+        : `intent ${String(args.intent_id)} stopped`,
+    };
   }
 }

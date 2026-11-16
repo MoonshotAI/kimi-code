@@ -8,6 +8,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
+import { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
@@ -34,6 +35,7 @@ export class ArtexGoalMetTool implements AgentTool<GoalMetInput> {
   constructor(
     @IArtexSessionContext private readonly session: IArtexSessionContext,
     @IArtexGraphStoreProvider private readonly provider: IArtexGraphStoreProvider,
+    @IArtexOrchestrator private readonly orchestrator?: IArtexOrchestrator,
   ) {}
 
   resolveExecution(args: GoalMetInput): ToolExecution {
@@ -45,7 +47,6 @@ export class ArtexGoalMetTool implements AgentTool<GoalMetInput> {
   }
 
   private async execute(args: GoalMetInput): Promise<ExecutableToolResult> {
-    void args;
     const handle = await openActiveGraph(this.session, this.provider);
     if (handle === undefined) return ARTEX_INACTIVE_RESULT;
     const goals = await handle.store.listByKind('goal');
@@ -57,6 +58,8 @@ export class ArtexGoalMetTool implements AgentTool<GoalMetInput> {
         )} goals of this task are still open; the task stays open. Prove each one with prove_goal(goal_id, evidence_id, reason): the task completes automatically when its last goal is marked met.`,
       );
     }
+    await handle.store.markExplorationAchieved(args.reason);
+    this.orchestrator?.notifyGoalMet(handle.explorationId, args.reason);
     return { output: 'acknowledged: goal marked met' };
   }
 }

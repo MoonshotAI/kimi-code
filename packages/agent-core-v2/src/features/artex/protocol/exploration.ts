@@ -12,6 +12,8 @@ export interface ArtexExploration {
   goal: string;
   status: ArtexExplorationStatus;
   roundNo: number;
+  goalMetAt?: string;
+  goalMetReason?: string;
   readonly createdAt: string;
   updatedAt: string;
 }

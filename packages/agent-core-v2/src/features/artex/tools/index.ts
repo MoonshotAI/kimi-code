@@ -1,6 +1,10 @@
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import type { AgentToolCtor, AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
 
+import {
+  ArtexStartExplorationTool,
+  IArtexStartExplorationTool,
+} from './start_artex_exploration/start_artex_exploration';
 import { ArtexAddIntentTool, IArtexAddIntentTool } from './add_intent/add_intent';
 import { ArtexRecordFactTool, IArtexRecordFactTool } from './record_fact/record_fact';
 import { ArtexReportFindingTool, IArtexReportFindingTool } from './report_finding/report_finding';
@@ -8,6 +12,7 @@ import { ArtexProveGoalTool, IArtexProveGoalTool } from './prove_goal/prove_goal
 import { ArtexGoalMetTool, IArtexGoalMetTool } from './goal_met/goal_met';
 import { ArtexGraphOverviewTool, IArtexGraphOverviewTool } from './graph_overview/graph_overview';
 import { ArtexNodeDetailTool, IArtexNodeDetailTool } from './node_detail/node_detail';
+import { ArtexExpandDigestTool, IArtexExpandDigestTool } from './expand_digest/expand_digest';
 import { ArtexListFindingsTool, IArtexListFindingsTool } from './list_findings/list_findings';
 import { ArtexListFactsTool, IArtexListFactsTool } from './list_facts/list_facts';
 import { ArtexListGoalsTool, IArtexListGoalsTool } from './list_goals/list_goals';
@@ -19,6 +24,18 @@ import {
   ArtexGetWorkerOutputTool,
   IArtexGetWorkerOutputTool,
 } from './get_worker_output/get_worker_output';
+import {
+  ArtexGetWorkerTraceTool,
+  IArtexGetWorkerTraceTool,
+} from './get_worker_trace/get_worker_trace';
+import {
+  ArtexSearchAllWorkerTracesTool,
+  IArtexSearchAllWorkerTracesTool,
+} from './search_all_worker_traces/search_all_worker_traces';
+import {
+  ArtexListWorkerTracesTool,
+  IArtexListWorkerTracesTool,
+} from './list_worker_traces/list_worker_traces';
 import { ArtexInsertAssetsTool, IArtexInsertAssetsTool } from './insert_assets/insert_assets';
 import { ArtexListAssetsTool, IArtexListAssetsTool } from './list_assets/list_assets';
 import { ArtexListCompaniesTool, IArtexListCompaniesTool } from './list_companies/list_companies';
@@ -54,13 +71,18 @@ import {
 
 export interface ArtexToolRegistration {
   readonly id: ServiceIdentifier<AnyAgentTool>;
-  readonly ctor: AgentToolCtor<AnyAgentTool>;
+  readonly ctor: AgentToolCtor;
   readonly name: string;
 }
 
 export const ARTEX_TOOL_DOMAIN = 'artex';
 
 export const ARTEX_TOOLS: readonly ArtexToolRegistration[] = [
+  {
+    id: IArtexStartExplorationTool,
+    ctor: ArtexStartExplorationTool,
+    name: 'start_artex_exploration',
+  },
   { id: IArtexAddIntentTool, ctor: ArtexAddIntentTool, name: 'add_intent' },
   { id: IArtexRecordFactTool, ctor: ArtexRecordFactTool, name: 'record_fact' },
   { id: IArtexReportFindingTool, ctor: ArtexReportFindingTool, name: 'report_finding' },
@@ -68,6 +90,7 @@ export const ARTEX_TOOLS: readonly ArtexToolRegistration[] = [
   { id: IArtexGoalMetTool, ctor: ArtexGoalMetTool, name: 'goal_met' },
   { id: IArtexGraphOverviewTool, ctor: ArtexGraphOverviewTool, name: 'graph_overview' },
   { id: IArtexNodeDetailTool, ctor: ArtexNodeDetailTool, name: 'node_detail' },
+  { id: IArtexExpandDigestTool, ctor: ArtexExpandDigestTool, name: 'expand_digest' },
   { id: IArtexListFindingsTool, ctor: ArtexListFindingsTool, name: 'list_findings' },
   { id: IArtexListFactsTool, ctor: ArtexListFactsTool, name: 'list_facts' },
   { id: IArtexListGoalsTool, ctor: ArtexListGoalsTool, name: 'list_goals' },
@@ -76,6 +99,13 @@ export const ARTEX_TOOLS: readonly ArtexToolRegistration[] = [
   { id: IArtexSteerWorkTool, ctor: ArtexSteerWorkTool, name: 'steer_work' },
   { id: IArtexKillWorkTool, ctor: ArtexKillWorkTool, name: 'kill_work' },
   { id: IArtexGetWorkerOutputTool, ctor: ArtexGetWorkerOutputTool, name: 'get_worker_output' },
+  { id: IArtexGetWorkerTraceTool, ctor: ArtexGetWorkerTraceTool, name: 'get_worker_trace' },
+  {
+    id: IArtexSearchAllWorkerTracesTool,
+    ctor: ArtexSearchAllWorkerTracesTool,
+    name: 'search_all_worker_traces',
+  },
+  { id: IArtexListWorkerTracesTool, ctor: ArtexListWorkerTracesTool, name: 'list_worker_traces' },
   { id: IArtexInsertAssetsTool, ctor: ArtexInsertAssetsTool, name: 'insert_assets' },
   { id: IArtexListAssetsTool, ctor: ArtexListAssetsTool, name: 'list_assets' },
   { id: IArtexListCompaniesTool, ctor: ArtexListCompaniesTool, name: 'list_companies' },

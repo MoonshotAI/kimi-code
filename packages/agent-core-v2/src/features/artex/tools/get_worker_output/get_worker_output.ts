@@ -25,6 +25,8 @@ const PARAMETERS = toInputJsonSchema(GetWorkerOutputInputSchema);
 export const IArtexGetWorkerOutputTool: ServiceIdentifier<AgentTool<GetWorkerOutputInput>> =
   createDecorator<AgentTool<GetWorkerOutputInput>>('artexGetWorkerOutputTool');
 
+const LIVE_STEPS_PREVIEW = 10;
+
 export class ArtexGetWorkerOutputTool implements AgentTool<GetWorkerOutputInput> {
   declare readonly _serviceBrand: undefined;
   readonly name = 'get_worker_output' as const;
@@ -52,18 +54,42 @@ export class ArtexGetWorkerOutputTool implements AgentTool<GetWorkerOutputInput>
     if (node === undefined || node.kind !== 'intent') {
       return artexErr(`intent_id ${String(args.intent_id)} does not belong to this exploration`);
     }
-    const payload = node.payload as Record<string, unknown>;
-    const output = payload['worker_output'];
-    if (output === undefined || output === '') {
+    const payload = node.payload;
+    const storedOutput =
+      typeof payload['worker_output'] === 'string' ? payload['worker_output'] : undefined;
+
+    const activities = (await store.readActivityByNode(args.intent_id)).filter(
+      (entry) => entry.kind !== 'thinking' && entry.kind !== 'usage',
+    );
+    const reversed = activities.toReversed();
+    const resultEntry = reversed.find((entry) => entry.kind === 'result');
+    const lastTextEntry = reversed.find((entry) => entry.kind === 'text');
+    const liveSteps = activities.slice(-LIVE_STEPS_PREVIEW).map((entry) => ({
+      step_id: entry.id,
+      kind: entry.kind,
+      tool: entry.tool,
+      is_error: entry.isError,
+      summary: entry.summary,
+      at: entry.at,
+    }));
+
+    const finalText =
+      storedOutput !== undefined && storedOutput.length > 0
+        ? storedOutput
+        : (resultEntry?.text ?? resultEntry?.summary ?? lastTextEntry?.text ?? lastTextEntry?.summary);
+
+    if ((finalText === undefined || finalText === '') && liveSteps.length === 0) {
       return { output: '(this work has no output yet)' };
     }
+
     return {
       output: artexJson({
         intent_id: args.intent_id,
         state: node.state,
-        final_text: output,
+        final_text: finalText ?? '',
+        live_steps: liveSteps,
         terminal_reason: payload['terminal_reason'],
-        worker_agent_id: payload['worker_agent_id'],
+        worker_agent_id: payload['worker_agent_id'] ?? node.owner,
       }),
     };
   }

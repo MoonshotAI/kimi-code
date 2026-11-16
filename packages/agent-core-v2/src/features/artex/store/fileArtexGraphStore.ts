@@ -9,11 +9,13 @@ import {
   isValidArtexNodeState,
   newArtexUnclaimToken,
   type ArtexClaimResult,
+  type ArtexDigestNode,
   type ArtexEdge,
   type ArtexEdgeRelation,
   type ArtexExploration,
   type ArtexExplorationAnchor,
   type ArtexFactNode,
+  type ArtexGoalNode,
   type ArtexIntentNode,
   type ArtexIntentSettleState,
   type ArtexIntentState,
@@ -29,6 +31,7 @@ import type {
   ArtexActivityEntry,
   ArtexActivityInput,
   ArtexAddNodeInput,
+  ArtexColdStampOp,
   ArtexExplorationRoot,
   ArtexGraphSnapshot,
   ArtexResetRunningOptions,
@@ -63,6 +66,8 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+const inProcessLockChains = new Map<string, Promise<void>>();
+
 export class FileArtexGraphStore implements IArtexGraphStore {
   readonly explorationId: number;
   private readonly dir: string;
@@ -80,8 +85,7 @@ export class FileArtexGraphStore implements IArtexGraphStore {
 
   async init(description: string, goal: string): Promise<ArtexExploration> {
     await mkdir(this.dir, { recursive: true });
-    const token = await this.acquireLock();
-    try {
+    return this.withLock(async () => {
       if (await this.isInitialized()) {
         throw new Error(
           `artex exploration ${String(this.explorationId)} is already initialized at ${this.stateFile}`,
@@ -107,8 +111,9 @@ export class FileArtexGraphStore implements IArtexGraphStore {
         anchors: [],
         tokenUsage: [],
       };
+      const originId = state.nextNodeId++;
       const origin: ArtexFactNode = {
-        id: state.nextNodeId++,
+        id: originId,
         explorationId: this.explorationId,
         kind: 'fact',
         state: 'origin',
@@ -120,12 +125,34 @@ export class FileArtexGraphStore implements IArtexGraphStore {
         contentVersion: 1,
       };
       state.nodes.push(origin);
+      const trimmedGoal = goal.trim();
+      if (trimmedGoal.length > 0) {
+        const goalId = state.nextNodeId++;
+        const initialGoal: ArtexGoalNode = {
+          id: goalId,
+          explorationId: this.explorationId,
+          kind: 'goal',
+          state: 'open',
+          payload: { text: trimmedGoal, summary: trimmedGoal },
+          priority: 0,
+          origin: 'system',
+          createdAt: now,
+          updatedAt: now,
+          contentVersion: 1,
+        };
+        state.nodes.push(initialGoal);
+        state.edges.push({
+          explorationId: this.explorationId,
+          srcId: originId,
+          rel: 'spawns',
+          dstId: goalId,
+          createdAt: now,
+        });
+      }
       await this.writeState(state);
       await writeFile(this.activityLogPath, '', 'utf8');
       return exploration;
-    } finally {
-      await this.releaseLock(token);
-    }
+    });
   }
 
   async isInitialized(): Promise<boolean> {
@@ -145,6 +172,35 @@ export class FileArtexGraphStore implements IArtexGraphStore {
       edges: state.edges,
       anchors: state.anchors,
     };
+  }
+
+  async exploration(): Promise<ArtexExploration> {
+    const state = await this.readState();
+    return state.exploration;
+  }
+
+  markExplorationAchieved(reason?: string): Promise<ArtexExploration> {
+    return this.mutate((state) => {
+      const now = this.now();
+      state.exploration.status = 'achieved';
+      state.exploration.goalMetAt = state.exploration.goalMetAt ?? now;
+      if (reason !== undefined && reason.trim().length > 0) {
+        state.exploration.goalMetReason = reason.trim();
+      }
+      state.exploration.updatedAt = now;
+      return { ...state.exploration };
+    });
+  }
+
+  reopenExploration(): Promise<ArtexExploration> {
+    return this.mutate((state) => {
+      const now = this.now();
+      state.exploration.status = 'open';
+      delete state.exploration.goalMetAt;
+      delete state.exploration.goalMetReason;
+      state.exploration.updatedAt = now;
+      return { ...state.exploration };
+    });
   }
 
   async root(): Promise<ArtexExplorationRoot> {
@@ -223,6 +279,45 @@ export class FileArtexGraphStore implements IArtexGraphStore {
     return state.nodes
       .filter((node): node is ArtexIntentNode => node.kind === 'intent' && node.state === 'open')
       .toSorted((a, b) => b.priority - a.priority || a.id - b.id)
+      .slice(0, effectiveLimit);
+  }
+
+  async countOpenIntents(): Promise<number> {
+    const state = await this.readState();
+    let count = 0;
+    for (const node of state.nodes) {
+      if (node.kind === 'intent' && node.state === 'open') count += 1;
+    }
+    return count;
+  }
+
+  async countFinishedIntents(): Promise<number> {
+    const state = await this.readState();
+    let count = 0;
+    for (const node of state.nodes) {
+      if (
+        node.kind === 'intent' &&
+        (node.state === 'done' || node.state === 'blocked' || node.state === 'exhausted')
+      ) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  async listRecentTerminalIntents(limit = 50): Promise<readonly ArtexIntentNode[]> {
+    const effectiveLimit = limit <= 0 ? 50 : limit;
+    const state = await this.readState();
+    return state.nodes
+      .filter(
+        (node): node is ArtexIntentNode =>
+          node.kind === 'intent' &&
+          (node.state === 'done' ||
+            node.state === 'blocked' ||
+            node.state === 'exhausted' ||
+            node.state === 'stopped'),
+      )
+      .toSorted((a, b) => b.id - a.id)
       .slice(0, effectiveLimit);
   }
 
@@ -388,6 +483,7 @@ export class FileArtexGraphStore implements IArtexGraphStore {
       node.blockedReason = undefined;
       node.contentVersion += 1;
       node.completedAt = terminal ? this.now() : undefined;
+      node.unclaimToken = undefined;
       node.updatedAt = this.now();
     });
   }
@@ -509,9 +605,8 @@ export class FileArtexGraphStore implements IArtexGraphStore {
     };
   }
 
-  async appendActivity(entry: ArtexActivityInput): Promise<number> {
-    const token = await this.acquireLock();
-    try {
+  appendActivity(entry: ArtexActivityInput): Promise<number> {
+    return this.withLock(async () => {
       const state = await this.readState();
       const id = state.nextActivityId++;
       const record: ArtexActivityEntry = {
@@ -519,15 +614,175 @@ export class FileArtexGraphStore implements IArtexGraphStore {
         nodeId: entry.nodeId,
         actor: entry.actor,
         kind: entry.kind,
+        tool: entry.tool,
+        isError: entry.isError,
+        summary: entry.summary,
+        text: entry.text,
         detail: entry.detail,
         at: this.now(),
       };
       await this.writeState(state);
       await appendFile(this.activityLogPath, `${JSON.stringify(record)}\n`, 'utf8');
       return id;
-    } finally {
-      await this.releaseLock(token);
+    });
+  }
+
+  async readActivity(): Promise<readonly ArtexActivityEntry[]> {
+    let raw: string;
+    try {
+      raw = await readFile(this.activityLogPath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
     }
+    const entries: ArtexActivityEntry[] = [];
+    for (const line of raw.split('\n')) {
+      if (line.trim() === '') continue;
+      entries.push(JSON.parse(line) as ArtexActivityEntry);
+    }
+    return entries;
+  }
+
+  async readActivityByNode(nodeId: number): Promise<readonly ArtexActivityEntry[]> {
+    const all = await this.readActivity();
+    return all.filter((entry) => entry.nodeId === nodeId);
+  }
+
+  async readActivityByIds(ids: readonly number[]): Promise<readonly ArtexActivityEntry[]> {
+    if (ids.length === 0) return [];
+    const targetIds = new Set(ids);
+    const all = await this.readActivity();
+    return all.filter((entry) => targetIds.has(entry.id));
+  }
+
+  async roundNo(): Promise<number> {
+    const state = await this.readState();
+    return state.exploration.roundNo;
+  }
+
+  bumpRound(): Promise<number> {
+    return this.mutate((state) => {
+      state.exploration.roundNo += 1;
+      state.exploration.updatedAt = this.now();
+      return state.exploration.roundNo;
+    });
+  }
+
+  async coldStamps(): Promise<Map<number, number | undefined>> {
+    const state = await this.readState();
+    const out = new Map<number, number | undefined>();
+    for (const node of state.nodes) {
+      if (node.coldSinceRound !== undefined) {
+        out.set(node.id, node.coldSinceRound);
+      }
+    }
+    return out;
+  }
+
+  async contentVersions(): Promise<Map<number, number>> {
+    const state = await this.readState();
+    const out = new Map<number, number>();
+    for (const node of state.nodes) {
+      out.set(node.id, node.contentVersion);
+    }
+    return out;
+  }
+
+  applyColdStamps(ops: readonly ArtexColdStampOp[]): Promise<void> {
+    if (ops.length === 0) return Promise.resolve();
+    return this.mutate((state) => {
+      const byId = new Map<number, ArtexNode>();
+      for (const node of state.nodes) byId.set(node.id, node);
+      for (const op of ops) {
+        const node = byId.get(op.id);
+        if (!node) continue;
+        node.coldSinceRound = op.set ? op.round : undefined;
+      }
+    });
+  }
+
+  addDigest(payload: Record<string, unknown>, memberIds: readonly number[]): Promise<number> {
+    return this.mutate((state) => {
+      const now = this.now();
+      const id = state.nextNodeId++;
+      const digest: ArtexDigestNode = {
+        id,
+        explorationId: this.explorationId,
+        kind: 'digest',
+        state: 'active',
+        payload,
+        priority: 0,
+        origin: 'compactor',
+        createdAt: now,
+        updatedAt: now,
+        contentVersion: 1,
+      };
+      state.nodes.push(digest);
+      for (const memberId of new Set(memberIds)) {
+        if (memberId === id) continue;
+        state.edges.push({
+          explorationId: this.explorationId,
+          srcId: id,
+          rel: 'covers',
+          dstId: memberId,
+          createdAt: now,
+        });
+      }
+      return id;
+    });
+  }
+
+  async activeDigests(): Promise<readonly ArtexNode[]> {
+    const state = await this.readState();
+    return state.nodes
+      .filter((node) => node.kind === 'digest' && node.state === 'active')
+      .toSorted((a, b) => a.id - b.id);
+  }
+
+  async digestMembers(digestId: number): Promise<readonly number[]> {
+    const state = await this.readState();
+    return state.edges
+      .filter((edge) => edge.srcId === digestId && edge.rel === 'covers')
+      .map((edge) => edge.dstId)
+      .toSorted((a, b) => a - b);
+  }
+
+  async coveredMembers(): Promise<ReadonlySet<number>> {
+    const map = await this.coveredMemberMap();
+    return new Set(map.keys());
+  }
+
+  async coveredMemberMap(): Promise<Map<number, number>> {
+    const state = await this.readState();
+    const active = new Set(
+      state.nodes
+        .filter((node) => node.kind === 'digest' && node.state === 'active')
+        .map((node) => node.id),
+    );
+    const covered = new Map<number, number>();
+    for (const edge of state.edges) {
+      if (edge.rel === 'covers' && active.has(edge.srcId)) {
+        covered.set(edge.dstId, edge.srcId);
+      }
+    }
+    return covered;
+  }
+
+  supersedeDigests(digestIds: readonly number[]): Promise<void> {
+    if (digestIds.length === 0) return Promise.resolve();
+    return this.mutate((state) => {
+      const targets = new Set(digestIds);
+      state.edges = state.edges.filter(
+        (edge) => !(edge.rel === 'covers' && targets.has(edge.srcId)),
+      );
+      const now = this.now();
+      for (const node of state.nodes) {
+        if (node.kind !== 'digest' || !targets.has(node.id)) continue;
+        node.state = 'superseded';
+        node.contentVersion += 1;
+        node.updatedAt = now;
+      }
+    });
   }
 
   private settleRejection(
@@ -560,16 +815,36 @@ export class FileArtexGraphStore implements IArtexGraphStore {
     return new Date().toISOString();
   }
 
-  private async mutate<T>(fn: (state: ArtexPersistedState) => T): Promise<T> {
-    const token = await this.acquireLock();
-    try {
+  private mutate<T>(fn: (state: ArtexPersistedState) => T): Promise<T> {
+    return this.withLock(async () => {
       const state = await this.readState();
       const result = fn(state);
       await this.writeState(state);
       return result;
-    } finally {
-      await this.releaseLock(token);
-    }
+    });
+  }
+
+  private withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = inProcessLockChains.get(this.lockPath) ?? Promise.resolve();
+    const run = previous.then(async () => {
+      const token = await this.acquireLock();
+      try {
+        return await fn();
+      } finally {
+        await this.releaseLock(token);
+      }
+    });
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    inProcessLockChains.set(this.lockPath, tail);
+    void tail.finally(() => {
+      if (inProcessLockChains.get(this.lockPath) === tail) {
+        inProcessLockChains.delete(this.lockPath);
+      }
+    });
+    return run;
   }
 
   private async readState(): Promise<ArtexPersistedState> {
@@ -579,7 +854,8 @@ export class FileArtexGraphStore implements IArtexGraphStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         throw new Error(
-          `artex exploration ${String(this.explorationId)} is not initialized (${this.stateFile} missing)`, { cause: error },
+          `artex exploration ${String(this.explorationId)} is not initialized (${this.stateFile} missing)`,
+          { cause: error },
         );
       }
       throw error;

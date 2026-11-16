@@ -146,6 +146,8 @@ function emptyState(): ArtexWorkState {
   };
 }
 
+const inProcessWorkLockChains = new Map<string, Promise<void>>();
+
 export class FileArtexWorkStore implements IArtexWorkStore {
   readonly workspaceRoot: string;
   private readonly dir: string;
@@ -746,16 +748,30 @@ export class FileArtexWorkStore implements IArtexWorkStore {
     return new Date().toISOString();
   }
 
-  private async mutate<T>(fn: (state: ArtexWorkState) => T): Promise<T> {
-    const token = await this.acquireLock();
-    try {
-      const state = await this.readState();
-      const result = fn(state);
-      await this.writeState(state);
-      return result;
-    } finally {
-      await this.releaseLock(token);
-    }
+  private mutate<T>(fn: (state: ArtexWorkState) => T): Promise<T> {
+    const previous = inProcessWorkLockChains.get(this.lockPath) ?? Promise.resolve();
+    const run = previous.then(async () => {
+      const token = await this.acquireLock();
+      try {
+        const state = await this.readState();
+        const result = fn(state);
+        await this.writeState(state);
+        return result;
+      } finally {
+        await this.releaseLock(token);
+      }
+    });
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    inProcessWorkLockChains.set(this.lockPath, tail);
+    void tail.finally(() => {
+      if (inProcessWorkLockChains.get(this.lockPath) === tail) {
+        inProcessWorkLockChains.delete(this.lockPath);
+      }
+    });
+    return run;
   }
 
   private async readState(): Promise<ArtexWorkState> {

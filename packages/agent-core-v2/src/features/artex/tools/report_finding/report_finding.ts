@@ -9,6 +9,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
+import { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 import { ARTEX_FINDING_SEVERITIES } from '#/features/artex/protocol/index';
@@ -81,6 +82,7 @@ export class ArtexReportFindingTool implements AgentTool<ReportFindingInput> {
     @IArtexGraphStoreProvider private readonly provider: IArtexGraphStoreProvider,
     @IAgentScopeContext scope: IAgentScopeContext,
     @IArtexTrafficRecorder private readonly recorder: IArtexTrafficRecorder,
+    @IArtexOrchestrator private readonly orchestrator?: IArtexOrchestrator,
   ) {
     this.worker = scope.agentId;
   }
@@ -171,6 +173,8 @@ export class ArtexReportFindingTool implements AgentTool<ReportFindingInput> {
       verification_note: verification.note,
       evidence_quotes: args.evidence_quotes ?? [],
     });
+
+    this.orchestrator?.notifyGraphChanged(handle.explorationId, 'report_finding');
 
     return {
       output: artexJson({

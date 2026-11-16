@@ -8,6 +8,7 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
+import { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
@@ -35,6 +36,7 @@ export class ArtexSteerWorkTool implements AgentTool<SteerWorkInput> {
   constructor(
     @IArtexSessionContext private readonly session: IArtexSessionContext,
     @IArtexGraphStoreProvider private readonly provider: IArtexGraphStoreProvider,
+    @IArtexOrchestrator private readonly orchestrator?: IArtexOrchestrator,
   ) {}
 
   resolveExecution(args: SteerWorkInput): ToolExecution {
@@ -60,11 +62,13 @@ export class ArtexSteerWorkTool implements AgentTool<SteerWorkInput> {
       );
     }
     const existing = Array.isArray((node.payload as { steers?: unknown }).steers)
-      ? ((node.payload as { steers: unknown[] }).steers as unknown[])
+      ? (node.payload as { steers: unknown[] }).steers
       : [];
     await handle.store.mergeNodePayload(args.intent_id, {
       steers: [...existing, { instruction, at: new Date().toISOString() }],
     });
+    this.orchestrator?.enqueueSteer(args.intent_id, instruction);
+    this.orchestrator?.notifyGraphChanged(handle.explorationId, 'steer_work');
     return { output: `steer queued for intent ${String(args.intent_id)}` };
   }
 }
