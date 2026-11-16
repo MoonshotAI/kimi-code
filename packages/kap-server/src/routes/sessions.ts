@@ -26,6 +26,7 @@ import {
   closeSessionById,
   ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
+  getOrRestoreAgent,
   programForSession,
   resolveSubagentModelPool,
   reloadOnStale,
@@ -413,16 +414,22 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           await applySessionAgentConfig(core, session_id, agent_config);
         }
         const session = toWireSession(fields, fields.root, resolveSessionFacts(core, fields.id));
-        const main = await resolveMainAgent(core, session_id);
+        const main =
+          agent_config !== undefined
+            ? await resolveMainAgent(core, session_id)
+            : await resolveExistingMainAgent(core, session_id);
         const agent = readAgentState(main, session.activity === 'turn');
-        if (typeof req.body.title === 'string' && req.body.title.trim().length > 0) {
+        if (
+          (typeof req.body.title === 'string' && req.body.title.trim().length > 0) ||
+          (req.body.metadata !== undefined && Object.keys(req.body.metadata).length > 0)
+        ) {
           core.accessor.get(IEventService).publish(
             new SessionMetaUpdated({
               payload: {
                 agentId: 'main',
                 sessionId: session_id,
                 title: session.title,
-                patch: { title: session.title, isCustomTitle: true },
+                patch: { title: session.title, isCustomTitle: Boolean(session.title) },
               },
             }),
           );
@@ -1213,6 +1220,17 @@ async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentS
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
   return ensureMainAgent(session);
+}
+
+async function resolveExistingMainAgent(
+  core: Scope,
+  sessionId: string,
+): Promise<IAgentScopeHandle | undefined> {
+  const session = await resumeSessionById(core.accessor, sessionId);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+  }
+  return getOrRestoreAgent(session, MAIN_AGENT_ID);
 }
 
 function normalizeOptional(value: string | undefined): string | undefined {

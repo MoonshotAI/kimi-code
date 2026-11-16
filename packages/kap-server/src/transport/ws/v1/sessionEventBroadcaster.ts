@@ -20,8 +20,10 @@ import {
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   ISessionActivityView,
+  ISessionContext,
   ISessionIndex,
   ISessionManager,
+  ISessionMetadata,
   IWorkspaceService,
   followSessionLifecycles,
   getLiveSessionById,
@@ -559,7 +561,31 @@ export class SessionEventBroadcaster {
     const parsed = sessionSchema.safeParse(candidate);
     let session: Session | undefined = parsed.success ? parsed.data : undefined;
     if (session === undefined) {
-      const summary = (candidate ?? await this.opts.core.accessor.get(ISessionIndex).get(sessionId)) as
+      let summary = candidate as (SessionWireFields & { cwd?: string }) | undefined;
+      if (summary === undefined) {
+        const live = getLiveSessionById(this.opts.core.accessor, sessionId);
+        if (live !== undefined) {
+          try {
+            const meta = await live.accessor.get(ISessionMetadata).read();
+            const ctx = live.accessor.get(ISessionContext);
+            summary = {
+              id: meta.id,
+              workspaceId: ctx.workspaceId,
+              cwd: ctx.cwd,
+              title: meta.title,
+              lastPrompt: meta.lastPrompt,
+              createdAt: meta.createdAt,
+              updatedAt: meta.updatedAt,
+              archived: meta.archived,
+              archivedAt: meta.archivedAt,
+              custom: meta.custom,
+            };
+          } catch {
+            summary = undefined;
+          }
+        }
+      }
+      summary ??= (await this.opts.core.accessor.get(ISessionIndex).get(sessionId)) as
         | (SessionWireFields & { cwd?: string })
         | undefined;
       if (summary === undefined) return undefined;
