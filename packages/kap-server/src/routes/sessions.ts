@@ -711,23 +711,23 @@ async function cancelSessionAction(
     return;
   }
 
-  let agent: IAgentScopeHandle | undefined;
-  if (targetAgentId === MAIN_AGENT_ID) {
-    agent = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
-  } else {
-    agent = live.accessor.get(IAgentLifecycleService).handleOf(targetAgentId);
-    if (agent === undefined) {
-      const persisted = (await live.accessor.get(ISessionMetadata).read()).agents?.[targetAgentId];
-      if (persisted === undefined) {
-        throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent ${targetAgentId} does not exist`);
-      }
-      requestLog(req)?.info(
-        { session_id: id, action: 'cancel', agent_id: targetAgentId, include_background: body.include_background === true, cancelled: false },
-        'session action completed',
-      );
-      reply.send(okEnvelope({ cancelled: false }, req.id));
-      return;
+  const lifecycle = live.accessor.get(IAgentLifecycleService);
+  let agent = lifecycle.handleOf(targetAgentId);
+  if (agent === undefined) {
+    await lifecycle.whenCreateSettled?.(targetAgentId);
+    agent = lifecycle.handleOf(targetAgentId);
+  }
+  if (targetAgentId !== MAIN_AGENT_ID && agent === undefined) {
+    const persisted = (await live.accessor.get(ISessionMetadata).read()).agents?.[targetAgentId];
+    if (persisted === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent ${targetAgentId} does not exist`);
     }
+    requestLog(req)?.info(
+      { session_id: id, action: 'cancel', agent_id: targetAgentId, include_background: body.include_background === true, cancelled: false },
+      'session action completed',
+    );
+    reply.send(okEnvelope({ cancelled: false }, req.id));
+    return;
   }
 
   let cancelled = agent !== undefined ? agent.accessor.get(IAgentLoopService).cancel() : false;
@@ -736,7 +736,7 @@ async function cancelSessionAction(
     if (body.agent_id !== undefined) {
       if (agent !== undefined) handles.push(agent);
     } else {
-      const lifecycle = live.accessor.get(IAgentLifecycleService);
+      await lifecycle.whenCreateSettled?.();
       for (const entry of lifecycle.list()) {
         const handle = lifecycle.handleOf(entry.agentId);
         if (handle !== undefined) handles.push(handle);
