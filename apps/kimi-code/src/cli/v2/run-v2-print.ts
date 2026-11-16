@@ -523,7 +523,8 @@ async function runNativeTurn(
       ? new PromptJsonWriter(stdout)
       : new PromptTranscriptWriter(stdout, stderr);
 
-  await agent.accessor.get(IAuthSummaryService).ensureReady();
+  const sessionModel = agent.accessor.get(IAgentLoopService).getModel();
+  await agent.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
 
   const turnEndings = createPrintTurnEndings();
   const toolStatuses = new Map<string, string>();

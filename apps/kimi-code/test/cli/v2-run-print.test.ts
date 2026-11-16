@@ -972,6 +972,8 @@ describe('runV2Print', () => {
       expect.objectContaining({ model: 'k2' }),
     );
     expect(mocks.setTelemetryModel).toHaveBeenCalledWith('resumed-model');
+    const auth = agentServices.get(IAuthSummaryService) as { ensureReady: ReturnType<typeof vi.fn> };
+    expect(auth.ensureReady).toHaveBeenCalledWith('resumed-model');
     const initOrder = mocks.initializeTelemetry.mock.invocationCallOrder[0];
     const reconcileOrder = mocks.setTelemetryModel.mock.invocationCallOrder[0];
     expect(initOrder).toBeDefined();
