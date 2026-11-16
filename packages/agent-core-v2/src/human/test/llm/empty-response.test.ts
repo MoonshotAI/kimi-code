@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
 import { NO_FINISH } from '#/llm-requester/finish-reason';
+import { openAIProtocol } from '#/llm/builtin/protocol/openai/index';
+import { createUserMessage } from '#/llm/message';
+import { createRequester as createCoreRequester } from '#/llm/requester';
 import {
   createMessageAccumulator,
   type AssistantMessage,
@@ -18,6 +21,19 @@ function accumulatedMessage(parts: readonly StreamedMessagePart[]): AssistantMes
     accumulator.push(part);
   }
   return accumulator.finish();
+}
+
+function withResponseStream(chunks: readonly Record<string, unknown>[]) {
+  return {
+    withResponse: async () => ({
+      data: {
+        async *[Symbol.asyncIterator]() {
+          for (const chunk of chunks) yield chunk;
+        },
+      },
+      response: new Response(null),
+    }),
+  };
 }
 
 describe('emptyResponseError', () => {
@@ -64,10 +80,12 @@ describe('emptyResponseError', () => {
     );
   });
 
-  it('returns null when the stream produced text or tool calls', () => {
-    expect(
-      emptyResponseError(accumulatedMessage([{ type: 'text', text: 'hi' }]), model, NO_FINISH),
-    ).toBeNull();
+  it('accepts text or tool calls unless the provider stopped for repeated output', async () => {
+    const text = accumulatedMessage([{ type: 'text', text: 'hi' }]);
+    const toolCall = accumulatedMessage([
+      { type: 'function', id: 'call_1', name: 'tool', arguments: '{}' },
+    ]);
+    expect(emptyResponseError(text, model, NO_FINISH)).toBeNull();
     expect(
       emptyResponseError(
         accumulatedMessage([
@@ -78,12 +96,50 @@ describe('emptyResponseError', () => {
         NO_FINISH,
       ),
     ).toBeNull();
-    expect(
-      emptyResponseError(
-        accumulatedMessage([{ type: 'function', id: 'call_1', name: 'tool', arguments: '{}' }]),
-        model,
-        NO_FINISH,
-      ),
-    ).toBeNull();
+    expect(emptyResponseError(toolCall, model, NO_FINISH)).toBeNull();
+
+    for (const message of [text, toolCall]) {
+      expect(
+        emptyResponseError(message, model, {
+          finishReason: 'other',
+          rawFinishReason: 'repeat',
+        }),
+      ).toMatchObject({
+        kind: 'empty_response',
+        rawFinishReason: 'repeat',
+        retryable: true,
+        message: expect.stringContaining('repeated output'),
+      });
+    }
+
+    const chunks = [
+      { choices: [{ delta: { content: 'repeated text' }, finish_reason: 'repeat' }] },
+    ];
+    const requester = createCoreRequester().with({
+      protocol: { base: openAIProtocol },
+      endpoint: {
+        baseUrl: 'https://example.test/v1',
+        clientFactory: () => ({
+          chat: { completions: { create: () => withResponseStream(chunks) } },
+        }),
+      },
+    });
+    const outcome = await requester.generate(
+      {
+        model: { spec: { provider: 'openai', name: 'test-model' } },
+        content: { messages: [createUserMessage('hi')] },
+        policy: { retry: { maxAttemptsPerStep: 1 } },
+      },
+      { signal: new AbortController().signal },
+    );
+    expect(outcome).toMatchObject({
+      type: 'failed',
+      error: {
+        kind: 'empty_response',
+        rawFinishReason: 'repeat',
+        retryable: true,
+        message: expect.stringContaining('repeated output'),
+      },
+    });
   });
 });

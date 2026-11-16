@@ -19,9 +19,11 @@ export function createEmptyResponseError(
   finish: FinishInfo,
   thinkOnly: boolean,
 ): LlmErrorMessage<'empty_response'> {
-  const detail = thinkOnly
-    ? 'The API returned a response containing only thinking content without any text or tool calls. This usually indicates the stream was interrupted or the output token budget was exhausted during reasoning.'
-    : 'The API returned an empty response (no content, no tool calls).';
+  const detail = finish.rawFinishReason === 'repeat'
+    ? 'The API stopped the response because it detected repeated output.'
+    : thinkOnly
+      ? 'The API returned a response containing only thinking content without any text or tool calls. This usually indicates the stream was interrupted or the output token budget was exhausted during reasoning.'
+      : 'The API returned an empty response (no content, no tool calls).';
   return {
     kind: 'empty_response',
     message: `${detail}${formatFinishReasonHint(finish)} Provider: ${model.provider}, model: ${model.model}`,
@@ -36,6 +38,9 @@ export function emptyResponseError(
   model: LlmModel,
   finish: FinishInfo,
 ): LlmErrorMessage<'empty_response'> | null {
+  if (finish.rawFinishReason === 'repeat') {
+    return createEmptyResponseError(model, finish, false);
+  }
   const hasToolCalls = message.toolCalls.length > 0;
   if (message.content.length === 0 && !hasToolCalls) {
     return createEmptyResponseError(model, finish, false);

@@ -231,7 +231,7 @@ describe('generateModel request execution', () => {
     expect(requester.calls[0]?.config.model.apiKey).toBeUndefined();
   });
 
-  it('streams part, usage, finish and timing events exactly once', async () => {
+  it('streams successful events and rejects repeated output', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) =>
       emitAll(emit, [
@@ -291,6 +291,25 @@ describe('generateModel request execution', () => {
       streamDurationMs: expect.any(Number),
     });
     expect(requestIds).toEqual(['trace-1']);
+
+    const repeated = new FakeLlmRequester();
+    repeated.handler = (_i, emit) =>
+      emitAll(emit, [
+        { type: 'llm.sent' },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'repeated text' } },
+        { type: 'llm.streaming.finish', finish: { finishReason: 'other', rawFinishReason: 'repeat' } },
+        { type: 'llm.done' },
+      ]);
+    const repeatedImpl = modelEventRequester(
+      modelWith(createStaticCredentialProvider()),
+      repeated,
+    );
+    await expect(collect(repeatedImpl.request(INPUT))).rejects.toMatchObject({
+      name: 'APIEmptyResponseError',
+      rawFinishReason: 'repeat',
+      retryable: true,
+      message: expect.stringContaining('repeated output'),
+    });
   });
 
   it('surfaces a 401 as provider.auth_error without replaying', async () => {
