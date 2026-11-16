@@ -139,7 +139,7 @@ function sessionEnvironment(
   environmentId: string | undefined,
   cwd: string | undefined,
 ): (EnvironmentBinding & { readonly cwd: string }) | undefined {
-  if (environmentId === undefined || environmentId === LOCAL_ENVIRONMENT_ID || environmentId.startsWith('acp:')) {
+  if (environmentId === undefined || environmentId === LOCAL_ENVIRONMENT_ID) {
     return cwd === undefined ? undefined : { environmentId: LOCAL_ENVIRONMENT_ID, cwd };
   }
   if (cwd === undefined) {

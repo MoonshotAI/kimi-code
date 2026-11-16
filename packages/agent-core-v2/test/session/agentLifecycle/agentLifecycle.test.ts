@@ -32,7 +32,7 @@ import {
   permissionModeKey,
 } from '#/agent/permissionMode/permissionModeOps';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentOverlay, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { AgentReminderService, IAgentReminderService } from '#/features/reminder/reminderService';
@@ -239,6 +239,10 @@ describe('AgentLifecycleService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
+    ix.stub(IAgentEnvironmentOverlay, {
+      _serviceBrand: undefined,
+      decorate: (lease) => lease,
+    });
     ix.set(ISessionEventBus, new SyncDescriptor(EventBusService));
     ix.get(IAgentStateService).contributeState(permissionModeKey);
     ix.get(IAgentStateService).contributeState(permissionModeConfiguredKey);
@@ -270,6 +274,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IEnvironmentService, {
       onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
+      current: () => undefined,
       inspect: (binding) => new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
       acquire: (binding) => ({
         environment: new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
