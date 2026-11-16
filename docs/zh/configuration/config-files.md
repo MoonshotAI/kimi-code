@@ -539,6 +539,8 @@ api_key = "sk-xxx"
 
 用户规则在会话启动时从用户 `config.toml` 加载。为兼容旧配置，用户 `config.toml` 中的 `turn-override` 和 `session-runtime` 规则会静默忽略，不产生警告。
 
+如果用户 `config.toml` 无法读取、TOML 解析失败或配置节校验失败，会话会使用默认值或最后一份有效的校验后配置继续运行，error 和 warning 诊断仍会显示在配置诊断及非交互输出中。文件无法读取或解析期间，配置写回仍会被阻止。
+
 项目规则仅在本地环境且 workspace 已信任时从 `.kimi-code/local.toml` 读取，省略 `scope` 时默认为 `project`。远程环境不支持项目规则。项目规则修改后需要新建会话生效，不会热重载。
 
 也可以在 `[permission]` 下设置 `dangerous_command_guard = false` 完全关闭所有内置 guard 确认策略：危险命令、敏感文件（如 `.env`、`id_rsa`）访问、git 控制路径访问在 "Always Ask" 和 "Ask When Needed" 模式下不再触发审批（"Never Ask" 模式本就不启用这些策略），默认 `true`。环境变量 `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` 会覆盖文件设置。全部内置 guard 关闭后，"Ask When Needed" 模式下只有你自己配置的 `ask` 规则仍会要求确认；"Always Ask" 模式下未被自动放行的工具照旧逐个询问。`Read`/`Write`/`Edit` 对秘密文件的硬阻断保持不变。此开关只适用于已经在 Agent 之外统一命令限权的环境。
@@ -583,6 +585,8 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 远端工作目录必须是 POSIX 绝对路径或 Windows 驱动器路径，相对路径和 `~` 不会展开。Git Bash 和启动器的要求见 [Windows 目标](../guides/remote-environment.md#windows-目标)。
 
 可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，这些会话从 `local` 开始。TUI 的 `/new` 不用这个 default，而是保留当前环境。详见 [远程环境](../guides/remote-environment.md)。
+
+环境配置节非法时，隐式会话创建不会直接失败：有历史有效声明时沿用历史声明，否则回退到本地环境并给出警告。这可能改变命令的执行位置；依赖配置的远程环境前，请先查看配置诊断。
 
 ### SSH 条目
 

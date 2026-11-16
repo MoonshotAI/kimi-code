@@ -327,7 +327,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     config.permission = {
       rules: [{ ...runtimeRule, scope: 'invalid' }],
     } as unknown as PermissionConfig;
-    expect(() => readUserPermissionRules(config.asService())).toThrow();
+    expect(readUserPermissionRules(config.asService())).toEqual([]);
   });
 
   it('only persists approval records (permission.rules.add is live-only)', async () => {

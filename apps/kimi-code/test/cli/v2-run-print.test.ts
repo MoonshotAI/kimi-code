@@ -429,7 +429,12 @@ describe('runV2Print', () => {
   it('submits a prompt, renders native events, awaits completion, and drains', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, agentServices } = makeFakeHarness(true);
+    const { app, agent, agentServices, appServices } = makeFakeHarness(true);
+    const config = appServices.get(IConfigService) as { diagnostics: ReturnType<typeof vi.fn> };
+    config.diagnostics.mockReturnValue([
+      { severity: 'warning', message: 'deprecated setting' },
+      { severity: 'error', message: 'config could not be read' },
+    ]);
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
@@ -443,6 +448,8 @@ describe('runV2Print', () => {
       attributes: { origin: { kind: 'user' } },
     });
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
+    expect(stderr.text()).toContain('Warning: deprecated setting\n');
+    expect(stderr.text()).toContain('Error: config could not be read\n');
     expect(stderr.text().match(/working/g)).toHaveLength(1);
     expect(stderr.text()).toContain('chunk\n');
     expect(stdout.text()).toContain('hello world');
