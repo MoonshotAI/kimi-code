@@ -53,7 +53,6 @@ export interface AgentActivitySnapshot {
 
 export interface LoopSnapshot {
   readonly state: 'idle' | 'running';
-  readonly hasUnfinishedTurn?: boolean;
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
   readonly queue: readonly UserMessage[];

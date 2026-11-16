@@ -722,37 +722,60 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
       const agent = await ensureMainAgent(session);
       const loop = agent.accessor.get(IAgentLoopService);
       await loop.start();
-      const snap = loop.snapshot();
-      const compacting = agent.accessor.get(IAgentFullCompactionService).compacting !== null;
-      if (snap.state === 'running' || snap.paused || compacting) {
-        throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
-      }
-      const hasUnfinished = snap.hasUnfinishedTurn === true;
-      const agentStates = agent.accessor.get(IAgentStateService);
-      const lastEndedReason = agentStates.has(turnKey) ? agentStates.get(turnKey).lastEnded?.reason : undefined;
+
+      const assertIdle = (): void => {
+        const snap = loop.snapshot();
+        const compacting = agent.accessor.get(IAgentFullCompactionService).compacting !== null;
+        if (snap.state === 'running' || snap.paused || snap.hasPendingRequests || compacting) {
+          throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
+        }
+      };
+
+      const isContinuable = (metaReason: string | undefined): boolean => {
+        const agentStates = agent.accessor.get(IAgentStateService);
+        const lastEnded = agentStates.has(turnKey) ? agentStates.get(turnKey).lastEnded : undefined;
+        const normalizedLastEnded =
+          lastEnded?.reason === 'blocked' ? 'failed' : lastEnded?.reason;
+        const effectiveReason = normalizedLastEnded ?? metaReason;
+        if (effectiveReason === 'cancelled' || effectiveReason === 'failed') return true;
+        const nextTurnId = agentStates.has(turnKey) ? agentStates.get(turnKey).nextTurnId : 0;
+        const hasCrashSettledTurn =
+          nextTurnId > 0 && (lastEnded === undefined || lastEnded.turnId < nextTurnId - 1);
+        return hasCrashSettledTurn;
+      };
+
+      assertIdle();
       const metaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
-      const effectiveReason = lastEndedReason ?? metaReason;
-      const isContinuableEnded = effectiveReason === 'cancelled' || effectiveReason === 'failed';
-      if (!hasUnfinished && !isContinuableEnded) {
+      if (!isContinuable(metaReason)) {
         throw new Error2(
           ErrorCodes.TURN_NOT_CONTINUABLE,
-          `session ${id} has no interrupted, failed, or unfinished turn to continue`,
+          `session ${id} has no interrupted or failed turn to continue`,
         );
       }
+
       const sessionModel = loop.getModel();
       await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
-      if (!hasUnfinished) {
-        loop.remind(
-          historyEntryFromContext({
-            role: 'user',
-            content: [{ type: 'text', text: wrapSystemReminder(CONTINUE_INTERRUPTED_REMINDER) }],
-            origin: {
-              kind: 'injection',
-              variant: 'turn_continue',
-            },
-          }),
+
+      assertIdle();
+      const refreshedMetaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
+      assertIdle();
+      if (!isContinuable(refreshedMetaReason)) {
+        throw new Error2(
+          ErrorCodes.TURN_NOT_CONTINUABLE,
+          `session ${id} has no interrupted or failed turn to continue`,
         );
       }
+
+      loop.remind(
+        historyEntryFromContext({
+          role: 'user',
+          content: [{ type: 'text', text: wrapSystemReminder(CONTINUE_INTERRUPTED_REMINDER) }],
+          origin: {
+            kind: 'injection',
+            variant: 'turn_continue',
+          },
+        }),
+      );
       loop.continueTurn();
       requestLog(req)?.info({ session_id: id, action: 'continue' }, 'session action completed');
       reply.send(okEnvelope({ continued: true }, req.id));
