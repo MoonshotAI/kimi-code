@@ -554,6 +554,7 @@ export class SessionEventBroadcaster {
     candidate?: unknown,
     patch?: { title?: string; lastPrompt?: string },
     factsOverride?: SessionFacts,
+    eventTime?: number,
   ): Promise<Event | undefined> {
     const parsed = sessionSchema.safeParse(candidate);
     let session: Session | undefined = parsed.success ? parsed.data : undefined;
@@ -565,6 +566,19 @@ export class SessionEventBroadcaster {
       const cwd = summary.cwd ?? (await this.opts.core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) return undefined;
       session = toWireSession(summary, cwd, factsOverride ?? resolveSessionFacts(this.opts.core, sessionId));
+    }
+    if (change === 'archived') {
+      session = {
+        ...session,
+        archived: true,
+        archived_at:
+          session.archived_at ?? new Date(eventTime ?? Date.now()).toISOString(),
+        activity: 'idle',
+        pending_interaction: undefined,
+      };
+    } else if (change === 'restored') {
+      const { archived_at: _archivedAt, ...rest } = session;
+      session = { ...rest, archived: false };
     }
     if (patch?.title !== undefined) session = { ...session, title: patch.title };
     if (patch?.lastPrompt !== undefined) session = { ...session, last_prompt: patch.lastPrompt };
@@ -594,7 +608,12 @@ export class SessionEventBroadcaster {
       const payload = sessionLifecyclePayload(corePayload);
       if (payload === undefined) return;
       const change = event.type === 'event.session.archived' ? 'archived' : 'restored';
-      this.enqueueGlobal(event.type, () => this.sessionEvent(change, payload.sessionId, payload.session));
+      const eventTime = typeof (event as { readonly time?: unknown }).time === 'number'
+        ? ((event as { readonly time: number }).time)
+        : undefined;
+      this.enqueueGlobal(event.type, () =>
+        this.sessionEvent(change, payload.sessionId, payload.session, undefined, undefined, eventTime),
+      );
       return;
     }
     if (event.type === 'event.session.deleted') {
