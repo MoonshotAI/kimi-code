@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { configResponseSchema } from './rest-config';
+import { guiStoreEntrySchema } from './rest-guiStore';
 import { sessionPendingInteractionSchema, sessionSchema } from './session';
 import { workspaceSchema } from './workspace';
 
@@ -121,6 +122,12 @@ export const capabilityChangedEventSchema = z.object({
   }),
 });
 
+export const guiStoreUpdatedEventSchema = z.object({
+  type: z.literal('event.gui_store.updated'),
+  revision: z.number().int().min(1),
+  entries: z.record(z.string(), guiStoreEntrySchema.nullable()),
+});
+
 export const pushEventSchema = z.discriminatedUnion('type', [
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
@@ -136,6 +143,7 @@ export const pushEventSchema = z.discriminatedUnion('type', [
   modelCatalogChangedEventSchema,
   pluginChangedEventSchema,
   capabilityChangedEventSchema,
+  guiStoreUpdatedEventSchema,
 ]).and(
   z.object({
     agentId: z.string(),

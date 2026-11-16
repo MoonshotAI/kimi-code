@@ -364,6 +364,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     await app.close();
     conversations.dispose();
     sessionRating.dispose();
+    guiStoreSubscription.dispose();
+    await guiStore.close();
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
     capabilityInstallSubscription.dispose();
@@ -410,6 +412,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     core,
     logger,
     conversations,
+  });
+  const guiStoreSubscription = guiStore.onDidChange((change) => {
+    broadcaster.publishGuiStoreUpdated(change);
   });
 
   const configService = core.accessor.get(IConfigService);
@@ -473,6 +478,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'tasks', description: 'Task management' },
           { name: 'fs', description: 'Filesystem operations' },
           { name: 'files', description: 'File upload & download' },
+          { name: 'gui-store', description: 'Persistent GUI key-value store' },
           { name: 'remote-control', description: 'Remote Control tunnel' },
         ],
       },

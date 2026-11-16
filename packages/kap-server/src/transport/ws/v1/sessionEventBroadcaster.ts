@@ -55,6 +55,7 @@ import type {
   ConversationFeedCreated,
   ConversationService,
 } from '../../../services/conversation/conversationService';
+import type { GuiStoreChangeEvent } from '../../../services/guiStore/guiStore';
 import { mapError } from '../../errors';
 import { ensureMainAgent } from '../../mainAgent';
 import { SessionAgentFeed } from './sessionAgentFeed';
@@ -192,6 +193,16 @@ export class SessionEventBroadcaster {
 
   removeGlobalTarget(target: BroadcastTarget): void {
     this.globalTargets.delete(target);
+  }
+
+  publishGuiStoreUpdated(change: GuiStoreChangeEvent): void {
+    this.enqueueGlobal('event.gui_store.updated', () => ({
+      type: 'event.gui_store.updated',
+      revision: change.revision,
+      entries: change.entries,
+      agentId: 'main',
+      sessionId: GLOBAL_SESSION_ID,
+    }));
   }
 
   async subscribe(

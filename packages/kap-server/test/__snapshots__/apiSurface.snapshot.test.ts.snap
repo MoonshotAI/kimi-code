@@ -122,11 +122,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/gui/store/getItem",
-    ],
-    [
-      "GET",
-      "/api/v1/gui/store/length",
+      "/api/v1/gui/store",
     ],
     [
       "GET",
@@ -302,6 +298,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "PATCH",
+      "/api/v1/gui/store",
+    ],
+    [
+      "PATCH",
       "/api/v1/remote-control/devices/{id}",
     ],
     [
@@ -347,18 +347,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/fs:suggest",
-    ],
-    [
-      "POST",
-      "/api/v1/gui/store/clear",
-    ],
-    [
-      "POST",
-      "/api/v1/gui/store/removeItem",
-    ],
-    [
-      "POST",
-      "/api/v1/gui/store/setItem",
     ],
     [
       "POST",
