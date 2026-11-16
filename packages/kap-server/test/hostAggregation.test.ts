@@ -9,7 +9,7 @@ import { ErrorCode } from '../src/protocol/error-codes';
 import { listSessionsAcrossHosts } from '../src/routes/v2/sessionsAcrossHosts';
 import type { V2SessionsListOutcome, V2SessionsListQuery } from '../src/routes/v2/sessions';
 import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
-import type { HostSources } from '../src/services/hosts/hostFanout';
+import { HostSourceError, type HostSources } from '../src/services/hosts/hostFanout';
 import type { HostHttpRequest, HostSession } from '../src/services/hosts/hostSession';
 import { startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -37,7 +37,10 @@ function serve(sessions: readonly FakeSession[], query: Query): Record<string, u
     .filter((session) => filter === undefined || filter.includes(session.workspace))
     .toSorted((a, b) => (after([a.updated, a.id], [b.updated, b.id]) ? 1 : -1));
   const pageSize = Number(query['page_size'] ?? 50);
-  if (query['sort'] === 'meta.updated_at_desc') sorted.reverse();
+  if (query['fields'] === undefined && (pageSize > 100 || Number(query['group.page_size'] ?? 5) > 100)) {
+    throw new HostSourceError(ErrorCode.VALIDATION_FAILED, 'full session pages are limited to 100');
+  }
+  if (query['sort'] === 'meta.updated_at_asc') sorted.reverse();
   let start = 0;
   if (query['page'] !== undefined) start = (Number(query['page']) - 1) * pageSize;
   else if (query['page_token']) {
@@ -47,16 +50,18 @@ function serve(sessions: readonly FakeSession[], query: Query): Record<string, u
   }
   const window = sorted.slice(start, start + pageSize);
   const hasMore = start + pageSize < sorted.length;
-  const toItem = (session: FakeSession) => ({
-    id: session.id,
-    workspace: { id: session.workspace, cwd: null },
-    meta: { updated_at: session.updated, created_at: 0 },
-  });
+  const toItem = (session: FakeSession) => query['fields'] !== undefined
+    ? { id: session.id, archived: false }
+    : {
+      id: session.id,
+      workspace: { id: session.workspace, cwd: null },
+      meta: { updated_at: session.updated, created_at: 0, archived: false },
+    };
   if (query['view'] === 'by_workspace') {
     const groups = new Map<string, FakeSession[]>();
     for (const session of sorted) groups.set(session.workspace, [...(groups.get(session.workspace) ?? []), session]);
     const list = [...groups].map(([workspace, members]) => {
-        return { workspace: { id: workspace, cwd: null }, sessions: members.slice(0, 1).map(toItem), total: members.length, updated: members[0]!.updated };
+        return { workspace: { id: workspace, cwd: null }, sessions: members.slice(0, Number(query['group.page_size'] ?? 5)).map(toItem), total: members.length, updated: members[0]!.updated };
     });
     if (query['sort'] !== 'meta.updated_at_asc') list.reverse();
     let groupStart = 0;
@@ -236,6 +241,47 @@ describe('sessions across hosts', () => {
     expect((groups['groups'] as Array<{ workspace: { id: string } }>).map((group) => group.workspace.id)).toEqual(['wm_a']);
 
     expect((await collectIds({ fields: 'id,archived', page_size: 2 }, hosts, local)).flat()).toEqual(['l1', 's2', 'l2', 'l3', 'l4']);
+  });
+
+  it.each([3, 150, 10000])('collects projected ids with page_size=%i through bounded source pages', async (pageSize) => {
+    const local = Array.from({ length: 125 }, (_, index) => ({ id: `local-${index}`, workspace: 'wd_local', updated: index * 2 + 1 }));
+    const remote = Array.from({ length: 225 }, (_, index) => ({ id: `remote-${index}`, workspace: 'wm_example', updated: index * 2 + 2 }));
+    const requests: string[] = [];
+    const hosts = sourcesOf([{ id: 'example', session: fakeHost([{ id: 'wm_example', kind: 'managed' }], remote, requests) }]);
+    const query = { fields: 'id,archived', sort: 'meta.updated_at_desc' as const, page_size: pageSize };
+    const pages = await collectIds(query, hosts, local);
+
+    expect(pages.flat()).toEqual([...local, ...remote].toSorted((a, b) => b.updated - a.updated).map((session) => session.id));
+    expect(pages).toHaveLength(Math.ceil((local.length + remote.length) / pageSize));
+    const first = await list(query, hosts, local);
+    expect((first['items'] as unknown[])[0]).toEqual({ id: 'remote-224', archived: false, host_id: 'example' });
+    const sessionQueries = requests.map((path) => new URL(path, 'http://example.test')).filter((url) => url.pathname === '/api/v2/sessions');
+    expect(sessionQueries.some((url) => url.searchParams.has('page_token'))).toBe(true);
+    for (const url of sessionQueries) {
+      expect(url.searchParams.has('fields')).toBe(false);
+      expect(Number(url.searchParams.get('page_size'))).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it.each([5, 150, 10000])('preserves group.page_size=%i in projected workspace groups', async (groupSize) => {
+    const local = Array.from({ length: 125 }, (_, index) => ({ id: `local-${index}`, workspace: 'wd_local', updated: index * 2 + 1 }));
+    const remote = Array.from({ length: 225 }, (_, index) => ({ id: `remote-${index}`, workspace: 'wm_example', updated: index * 2 + 2 }));
+    const requests: string[] = [];
+    const hosts = sourcesOf([{ id: 'example', session: fakeHost([{ id: 'wm_example', kind: 'managed' }], remote, requests) }]);
+    const page = await list({ fields: 'id,archived', view: 'by_workspace', page_size: 10000, 'group.page_size': groupSize }, hosts, local);
+    const groups = page['groups'] as Array<{ workspace: { id: string }; sessions: Array<{ id: string; archived: boolean; host_id?: string }>; total: number }>;
+
+    expect(groups.map((group) => [group.workspace.id, group.sessions.length, group.total])).toEqual([
+      ['wm_example', Math.min(remote.length, groupSize), remote.length],
+      ['wd_local', Math.min(local.length, groupSize), local.length],
+    ]);
+    expect(groups[0]!.sessions).toEqual(remote.toReversed().slice(0, groupSize).map((session) => ({ id: session.id, archived: false, host_id: 'example' })));
+    expect(groups[1]!.sessions).toEqual(local.toReversed().slice(0, groupSize).map((session) => ({ id: session.id, archived: false })));
+    if (groupSize > 100) {
+      expect(requests.map((path) => new URL(path, 'http://example.test')).some((url) =>
+        url.searchParams.get('view') === 'flat' && url.searchParams.get('workspace.id') === 'wm_example' && url.searchParams.get('fields') === 'id,archived',
+      )).toBe(true);
+    }
   });
 
   it('rejects stale tokens and reports an unavailable source during a continuation', async () => {

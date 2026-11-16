@@ -29,6 +29,7 @@ type Query = Omit<V2SessionsListQuery, 'hosts'>;
 interface Source {
   readonly key: string;
   readonly hostId?: string;
+  readonly workspaceIds?: string[];
   fetch(query: Query): Promise<Page>;
   total?: number;
 }
@@ -58,6 +59,8 @@ const mergeTokenSchema = z.object({
 }).strict();
 
 type MergeToken = z.infer<typeof mergeTokenSchema>;
+
+const SOURCE_PAGE_SIZE_MAX = 100;
 
 class TokenMismatchError extends Error {}
 
@@ -109,12 +112,13 @@ function collectSources(
     return {
       key: host.id,
       hostId: host.id,
-      fetch: (next) => hostGet<Page>(session, '/api/v2/sessions', { ...next, 'workspace.id': allowed }),
+      workspaceIds: allowed,
+      fetch: (next) => hostGet<Page>(session, '/api/v2/sessions', next),
     };
   })).then((remote) => ({
     sources: [{
       key: '',
-      fetch: (next) => local({ ...next, fields: undefined }).then((outcome) => outcome.ok ? outcome.data : Promise.reject(new HostSourceError(outcome.code, outcome.message))),
+      fetch: (nextQuery) => local(nextQuery).then((outcome) => outcome.ok ? outcome.data : Promise.reject(new HostSourceError(outcome.code, outcome.message))),
     }, ...remote.filter((source): source is Source => source !== undefined)],
     hostIds: ['', ...configured.map((host) => host.id)],
   }));
@@ -132,8 +136,23 @@ function project(entry: Entry, groups: boolean, hostId: string | undefined): Ent
   return groups ? { ...entry, sessions: ids } : ids[0]!;
 }
 
-function stamp(entry: Entry, context: Context, hostId: string | undefined): Entry {
-  if (context.projection) return project(entry, context.groups, hostId);
+async function stamp(entry: Entry, context: Context, source: Source): Promise<Entry> {
+  const hostId = source.hostId;
+  if (context.projection) {
+    if (context.groups && (context.query['group.page_size'] ?? 5) > SOURCE_PAGE_SIZE_MAX) {
+      const page = await source.fetch({
+        ...context.query,
+        view: 'flat',
+        'workspace.id': (entry['workspace'] as { id: string }).id,
+        'group.page_size': undefined,
+        page: undefined,
+        page_token: undefined,
+        page_size: context.query['group.page_size'],
+      }) as V2SessionsPageData;
+      entry = { ...entry, sessions: page.items };
+    }
+    return project(entry, context.groups, hostId);
+  }
   if (hostId === undefined) return entry;
   if (!context.groups) return { ...entry, host_id: hostId };
   return {
@@ -145,10 +164,19 @@ function stamp(entry: Entry, context: Context, hostId: string | undefined): Entr
 
 async function load(source: Source, context: Context, token?: string, after?: SessionPosition): Promise<Buffer> {
   const seen = new Set<string>();
+  const groupPageSize = context.query['group.page_size'];
   for (;;) {
     let page: Page;
     try {
-      page = await source.fetch({ ...context.query, page: undefined, page_token: token });
+      page = await source.fetch({
+        ...context.query,
+        fields: undefined,
+        page: undefined,
+        page_token: token,
+        page_size: Math.min(context.query.page_size ?? 50, SOURCE_PAGE_SIZE_MAX),
+        'group.page_size': groupPageSize !== undefined && groupPageSize > SOURCE_PAGE_SIZE_MAX ? 1 : groupPageSize,
+        'workspace.id': source.workspaceIds ?? context.query['workspace.id'],
+      });
     } catch (error) {
       if (source.hostId !== undefined && !(error instanceof HostSourceError && error.code !== undefined)) {
         if (context.query.page_token === undefined) return { source, token, queue: [], next: null };
@@ -196,7 +224,7 @@ async function mergePage(
     const entry = best.queue.shift()!;
     after = context.position(entry);
     emitted.set(best.source.key, after);
-    entries.push(stamp(entry, context, best.source.hostId));
+    entries.push(await stamp(entry, context, best.source));
   }
   const cursors = Object.fromEntries(buffers.flatMap((buffer) =>
     buffer.queue.length > 0 || buffer.next !== null
