@@ -4,6 +4,7 @@ export const ARTEX_ROOT_DIR = '.artex';
 export const ARTEX_EXPLORATIONS_DIR = 'explorations';
 export const ARTEX_STATE_FILE = 'state.json';
 export const ARTEX_ACTIVITY_LOG = 'activity.log';
+export const ARTEX_ACTIVITY_SEQ_FILE = 'activity.seq';
 export const ARTEX_STATE_LOCK_SUFFIX = '.lock';
 export const ARTEX_WORK_STORE_FILE = 'work-store.json';
 
@@ -40,6 +41,14 @@ export function artexStateFile(workspaceRoot: string, explorationId: number): st
 
 export function artexActivityLog(workspaceRoot: string, explorationId: number): string {
   return join(artexExplorationDir(workspaceRoot, explorationId), ARTEX_ACTIVITY_LOG);
+}
+
+export function artexActivitySeqFile(workspaceRoot: string, explorationId: number): string {
+  return join(artexExplorationDir(workspaceRoot, explorationId), ARTEX_ACTIVITY_SEQ_FILE);
+}
+
+export function artexActivityLockPath(workspaceRoot: string, explorationId: number): string {
+  return `${artexActivityLog(workspaceRoot, explorationId)}${ARTEX_STATE_LOCK_SUFFIX}`;
 }
 
 export function artexStateLockPath(workspaceRoot: string, explorationId: number): string {

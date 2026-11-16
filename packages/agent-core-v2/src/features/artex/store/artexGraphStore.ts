@@ -4,6 +4,10 @@ import type {
   ArtexEdgeRelation,
   ArtexExploration,
   ArtexExplorationAnchor,
+  ArtexFindingNode,
+  ArtexFindingNodeState,
+  ArtexGoalNode,
+  ArtexGoalState,
   ArtexIntentNode,
   ArtexIntentSettleState,
   ArtexIntentState,
@@ -64,6 +68,27 @@ export interface ArtexExplorationRoot {
   readonly goal: string;
 }
 
+export interface ArtexIntentClaimHeartbeat {
+  readonly id: number;
+  readonly token: string;
+}
+
+export interface ArtexHeartbeatBatchResult {
+  readonly updated: readonly number[];
+  readonly lost: readonly number[];
+}
+
+export interface ArtexEditGoalPatch {
+  readonly text?: string;
+  readonly category?: string;
+  readonly state?: ArtexGoalState;
+}
+
+export interface ArtexPatchFindingInput {
+  readonly state?: ArtexFindingNodeState;
+  readonly payload?: Record<string, unknown>;
+}
+
 /**
  * The exploration graph store for one ARTEX exploration. A single backend owns
  * one exploration; the claim/heartbeat/settle trio plus the sweep is the fencing
@@ -89,6 +114,9 @@ export interface IArtexGraphStore {
     origin?: string,
   ): Promise<number>;
   addGoal(payload: Record<string, unknown>, origin?: string): Promise<number>;
+  editGoal(id: number, patch: ArtexEditGoalPatch): Promise<ArtexGoalNode | undefined>;
+  deleteGoal(id: number): Promise<boolean>;
+  patchFinding(id: number, patch: ArtexPatchFindingInput): Promise<ArtexFindingNode | undefined>;
   getNode(id: number): Promise<ArtexNode | undefined>;
   nodes(): Promise<readonly ArtexNode[]>;
   listByKind(kind: ArtexNodeKind, limit?: number): Promise<readonly ArtexNode[]>;
@@ -107,6 +135,9 @@ export interface IArtexGraphStore {
   claimIntentToken(id: number, owner: string): Promise<ArtexClaimResult>;
   claimPausedIntentToken(id: number): Promise<ArtexClaimResult>;
   heartbeatIntentClaim(id: number, token: string): Promise<void>;
+  heartbeatIntentClaimsBatch(
+    claims: readonly ArtexIntentClaimHeartbeat[],
+  ): Promise<ArtexHeartbeatBatchResult>;
   settleIntentClaim(id: number, token: string, state: ArtexIntentSettleState): Promise<void>;
   settleIntentClaimBlocked(id: number, token: string, reason: string): Promise<void>;
   compareAndSetIntentState(
@@ -115,6 +146,7 @@ export interface IArtexGraphStore {
     state: ArtexIntentState,
   ): Promise<boolean>;
   setIntentState(id: number, state: ArtexIntentState): Promise<void>;
+  softDeleteIntent(id: number, reason: string): Promise<boolean>;
   reopenIntent(id: number): Promise<boolean>;
   reopenBlockedIntents(): Promise<number>;
   resetRunningIntents(options?: ArtexResetRunningOptions): Promise<number>;

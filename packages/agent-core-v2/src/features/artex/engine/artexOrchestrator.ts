@@ -35,6 +35,7 @@ import { ARTEX_PLANNER_PROFILE, ARTEX_WORKER_PROFILE } from '#/features/artex/pr
 import {
   ARTEX_INTENT_CLAIM_HEARTBEAT_INTERVAL_MS,
   ARTEX_INTENT_CLAIM_TTL_MS,
+  ArtexIntentClaimLostError,
   type ArtexIntentSettleState,
   type ArtexTaskConstraint,
 } from '#/features/artex/protocol/index';
@@ -42,6 +43,7 @@ import {
   ARTEX_UNTRUSTED_CONTENT_RULES,
   ARTEX_UNTRUSTED_DATA_RULES,
   renderArtexNoiseProfile,
+  renderConstraintBlock,
 } from '#/features/artex/prompts/index';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 import type { ArtexExplorationRoot, IArtexGraphStore } from '#/features/artex/store/artexGraphStore';
@@ -141,6 +143,7 @@ export interface IArtexOrchestrator {
   getStatus(explorationId: number): ArtexOrchestratorStatus | undefined;
   notifyGraphChanged(explorationId: number, reason?: ArtexWakeReason): void;
   notifyGoalMet(explorationId: number, reason?: string): void;
+  pauseIntent(intentId: number): boolean;
   abortIntent(intentId: number, reason?: unknown): boolean;
   enqueueSteer(intentId: number, instruction: string): void;
   drainSteers(intentId: number): readonly string[];
@@ -323,6 +326,13 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
     run.wake();
   }
 
+  pauseIntent(intentId: number): boolean {
+    const controller = this.activeIntentControllers.get(intentId);
+    if (controller === undefined) return false;
+    controller.abort(PAUSE_ABORT_REASON);
+    return true;
+  }
+
   abortIntent(intentId: number, reason?: unknown): boolean {
     const controller = this.activeIntentControllers.get(intentId);
     if (controller === undefined) return false;
@@ -447,6 +457,42 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
         });
       };
 
+      const activeClaims = new Map<
+        number,
+        { readonly token: string; readonly controller: AbortController }
+      >();
+      let heartbeatInFlight = false;
+      const heartbeatTimer = setInterval(() => {
+        if (heartbeatInFlight || activeClaims.size === 0) return;
+        const batch = [...activeClaims.entries()].map(([id, item]) => ({
+          id,
+          token: item.token,
+        }));
+        heartbeatInFlight = true;
+        void store
+          .heartbeatIntentClaimsBatch(batch)
+          .then((result) => {
+            for (const lostId of result.lost) {
+              const target = activeClaims.get(lostId);
+              if (target !== undefined && !target.controller.signal.aborted) {
+                target.controller.abort(new ArtexIntentClaimLostError(lostId, 'heartbeat'));
+              }
+            }
+          })
+          .catch((error) => {
+            for (const item of batch) {
+              const target = activeClaims.get(item.id);
+              if (target !== undefined && !target.controller.signal.aborted) {
+                target.controller.abort(error);
+              }
+            }
+          })
+          .finally(() => {
+            heartbeatInFlight = false;
+          });
+      }, heartbeatIntervalMs);
+      heartbeatTimer.unref?.();
+
       const sweepTimer = setInterval(() => {
         void store
           .resetRunningIntents({ ttlMs: ARTEX_INTENT_CLAIM_TTL_MS })
@@ -513,7 +559,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
           options.explorationId,
           claim,
           options.workerTimeoutMs ?? swarmTimeoutMs,
-          heartbeatIntervalMs,
+          activeClaims,
           taskDeadlineUnixSec,
           budgetLedger,
           runController.signal,
@@ -643,6 +689,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
           await waitForWake(nextWakeMs);
         }
       } finally {
+        clearInterval(heartbeatTimer);
         clearInterval(sweepTimer);
         if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
         if (entry.activeWorkers.size > 0) {
@@ -817,7 +864,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
     explorationId: number,
     claim: ArtexClaimedIntent,
     timeoutMs: number,
-    heartbeatIntervalMs: number,
+    activeClaims: Map<number, { readonly token: string; readonly controller: AbortController }>,
     taskDeadlineUnixSec: number,
     budgetLedger: ArtexBudgetLedger | undefined,
     parentSignal?: AbortSignal,
@@ -825,6 +872,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
     const workerController = new AbortController();
     const unlink = parentSignal === undefined ? () => {} : linkAbortSignal(parentSignal, workerController);
     this.activeIntentControllers.set(claim.intentId, workerController);
+    activeClaims.set(claim.intentId, { token: claim.token, controller: workerController });
 
     const effectiveTimeout = clampMaxDuration(taskDeadlineUnixSec, timeoutMs);
     let timedOut = false;
@@ -836,15 +884,6 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
           }, effectiveTimeout.effMs)
         : undefined;
     timeoutTimer?.unref?.();
-
-    const heartbeat = setInterval(() => {
-      void store.heartbeatIntentClaim(claim.intentId, claim.token).catch((error) => {
-        if (!workerController.signal.aborted) {
-          workerController.abort(error);
-        }
-      });
-    }, heartbeatIntervalMs);
-    heartbeat.unref?.();
 
     const meter: ArtexIntentMeter | undefined = budgetLedger?.startIntent();
     let agentId: string | undefined;
@@ -973,7 +1012,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
         errorText = classified.errorText;
       }
     } finally {
-      clearInterval(heartbeat);
+      activeClaims.delete(claim.intentId);
       if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
       unlink();
       if (this.activeIntentControllers.get(claim.intentId) === workerController) {
@@ -1029,10 +1068,9 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
     });
     if (noiseBlock.length > 0) parts.push(noiseBlock);
     if (goal.trim().length > 0) parts.push(`Goal: ${goal.trim()}`);
-    if (constraints.length > 0) {
-      parts.push(
-        `Operation constraints:\n${constraints.map((c) => `- [${c.kind}] ${c.text}`).join('\n')}`,
-      );
+    const constraintText = renderConstraintBlock(constraints);
+    if (constraintText.length > 0) {
+      parts.push(constraintText);
     }
     return parts.join('\n\n');
   }

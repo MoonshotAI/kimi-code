@@ -586,14 +586,14 @@ describe('ArtexOrchestrator continuous sliding-window execution', () => {
   it('aborts a running worker when heartbeat fails (claim lost)', async () => {
     const intentId = await store.addIntent({ summary: 'heartbeat failure test' }, 10);
     let aborted = false;
-    const origHeartbeat = FileArtexGraphStore.prototype.heartbeatIntentClaim;
+    const origBatch = FileArtexGraphStore.prototype.heartbeatIntentClaimsBatch;
     const heartbeatSpy = vi
-      .spyOn(FileArtexGraphStore.prototype, 'heartbeatIntentClaim')
-      .mockImplementation(async function (this: FileArtexGraphStore, id, token) {
-        if (id === intentId) {
-          throw new Error('claim lost');
+      .spyOn(FileArtexGraphStore.prototype, 'heartbeatIntentClaimsBatch')
+      .mockImplementation(async function (this: FileArtexGraphStore, claims) {
+        if (claims.some((c) => c.id === intentId)) {
+          return { updated: [], lost: [intentId] };
         }
-        return origHeartbeat.call(this, id, token);
+        return origBatch.call(this, claims);
       });
 
     const { orchestrator } = makeOrchestrator({
@@ -629,5 +629,49 @@ describe('ArtexOrchestrator continuous sliding-window execution', () => {
     } finally {
       heartbeatSpy.mockRestore();
     }
+  });
+
+  it('commits 120 claim heartbeats in a single atomic batch and decouples appendActivity from state.json', async () => {
+    const claims: Array<{ id: number; token: string }> = [];
+    for (let i = 0; i < 120; i += 1) {
+      const id = await store.addIntent({ summary: `intent-${String(i)}` }, 5);
+      const claimed = await store.claimIntentToken(id, `worker-${String(i)}`);
+      expect(claimed.claimed).toBe(true);
+      claims.push({ id, token: claimed.token! });
+    }
+
+    const withLockSpy = vi.spyOn(
+      store as unknown as { withLock: (fn: () => Promise<unknown>) => Promise<unknown> },
+      'withLock',
+    );
+    const result = await store.heartbeatIntentClaimsBatch([
+      ...claims,
+      { id: claims[0]!.id + 9999, token: 'missing' },
+    ]);
+    expect(withLockSpy).toHaveBeenCalledTimes(1);
+    expect(result.updated).toHaveLength(120);
+    expect(result.lost).toEqual([claims[0]!.id + 9999]);
+    withLockSpy.mockRestore();
+
+    const statePath = join(dir, '.artex', 'explorations', '1', 'state.json');
+    const stateBefore = await readFile(statePath, 'utf8');
+    const activityIds = await Promise.all(
+      Array.from({ length: 120 }, (_, index) =>
+        store.appendActivity({
+          nodeId: claims[index]!.id,
+          actor: `worker-${String(index)}`,
+          kind: 'tool_use',
+          tool: 'Bash',
+          summary: `step-${String(index)}`,
+        }),
+      ),
+    );
+    const stateAfter = await readFile(statePath, 'utf8');
+    expect(stateAfter).toBe(stateBefore);
+    expect(stateBefore.includes('\n  ')).toBe(false);
+    expect(new Set(activityIds).size).toBe(120);
+    expect(activityIds.toSorted((a, b) => a - b)).toEqual(
+      Array.from({ length: 120 }, (_, i) => i + 1),
+    );
   });
 });

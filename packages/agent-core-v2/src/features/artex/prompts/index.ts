@@ -33,3 +33,4 @@ export const ARTEX_PLANNER_BUDGET_WRAPUP = plannerBudgetWrapup;
 export * from './noiseProfile';
 export * from './dataEnvelope';
 export * from './platformControl';
+export * from './constraintBlock';

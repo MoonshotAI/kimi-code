@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 
 import type {
   ArtexAsset,
@@ -15,7 +15,10 @@ import type {
   ArtexTaskScopeKind,
   ArtexTaskScopeSource,
 } from '#/features/artex/protocol/index';
-import { normalizeCoverageField, normalizeRiskArea } from '#/features/artex/logic/coverageLedger';
+import {
+  ARTEX_COVERAGE_MAX_ROWS_PER_TASK,
+  validateAndNormalizeCoverageEntry,
+} from '#/features/artex/logic/coverageLedger';
 
 import {
   cidrContainsIp,
@@ -30,6 +33,8 @@ import {
   rootDomain,
   stripHostPort,
 } from '#/features/artex/safety/net';
+import { compileAssetDsl } from './assetDsl';
+import { reapStaleFileLock, withFileLock } from './fileLock';
 import type {
   ArtexAssetInput,
   ArtexAssetInterceptRule,
@@ -108,12 +113,6 @@ interface ArtexWorkState {
   exemptions: string[];
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 function emptyState(): ArtexWorkState {
   return {
     schemaVersion: ARTEX_WORK_STORE_SCHEMA_VERSION,
@@ -145,8 +144,6 @@ function emptyState(): ArtexWorkState {
     exemptions: [],
   };
 }
-
-const inProcessWorkLockChains = new Map<string, Promise<void>>();
 
 export class FileArtexWorkStore implements IArtexWorkStore {
   readonly workspaceRoot: string;
@@ -223,21 +220,23 @@ export class FileArtexWorkStore implements IArtexWorkStore {
       let added = 0;
       let skipped = 0;
       let invalid = 0;
+      let needsAttribution = false;
       const errors: string[] = [];
       for (const raw of lines) {
         const parsed = parseCompanyScopeLine(raw);
-        if (parsed === undefined) {
+        if ('error' in parsed) {
           invalid += 1;
-          errors.push(`cannot classify scope line: ${raw}`);
+          errors.push(parsed.error);
           continue;
         }
+        const fields = parsed.fields;
         const dup = state.companyScope.some(
           (scope) =>
             scope.companyId === companyId &&
-            scope.kind === parsed.kind &&
-            (scope.domain ?? '') === (parsed.domain ?? '') &&
-            (scope.net ?? '') === (parsed.net ?? '') &&
-            (scope.value ?? '') === (parsed.value ?? ''),
+            scope.kind === fields.kind &&
+            (scope.domain ?? '') === (fields.domain ?? '') &&
+            (scope.net ?? '') === (fields.net ?? '') &&
+            (scope.value ?? '') === (fields.value ?? ''),
         );
         if (dup) {
           skipped += 1;
@@ -246,17 +245,37 @@ export class FileArtexWorkStore implements IArtexWorkStore {
         state.companyScope.push({
           id: state.counters.companyScope++,
           companyId,
-          kind: parsed.kind,
-          domain: parsed.domain,
-          net: parsed.net,
-          value: parsed.value,
+          kind: fields.kind,
+          domain: fields.domain,
+          net: fields.net,
+          value: fields.value,
           raw: raw.trim(),
           reason: reason || undefined,
           createdAt: this.now(),
         });
         added += 1;
+        if (fields.kind !== 'keyword') {
+          needsAttribution = true;
+        }
+      }
+      if (needsAttribution) {
+        this.recomputeAttribution(state);
       }
       return { companyId, added, skipped, invalid, errors };
+    });
+  }
+
+  async deleteCompanyScope(companyId: number, scopeId: number): Promise<boolean> {
+    return this.mutate((state) => {
+      const index = state.companyScope.findIndex(
+        (scope) => scope.companyId === companyId && scope.id === scopeId,
+      );
+      if (index < 0) return false;
+      const [removed] = state.companyScope.splice(index, 1);
+      if (removed !== undefined && removed.kind !== 'keyword') {
+        this.recomputeAttribution(state);
+      }
+      return true;
     });
   }
 
@@ -318,6 +337,10 @@ export class FileArtexWorkStore implements IArtexWorkStore {
   }
 
   async listAssets(query: ArtexAssetQuery): Promise<readonly ArtexAsset[]> {
+    const predicate =
+      query.dsl !== undefined && query.dsl.trim() !== ''
+        ? compileAssetDsl(query.dsl)
+        : undefined;
     const state = await this.readState();
     let assets = state.assets;
     if (query.id !== undefined) assets = assets.filter((asset) => asset.id === query.id);
@@ -331,7 +354,9 @@ export class FileArtexWorkStore implements IArtexWorkStore {
     if (query.taskId !== undefined) {
       assets = assets.filter((asset) => asset.taskIds.includes(query.taskId as number));
     }
-    if (query.text !== undefined && query.text.trim() !== '') {
+    if (predicate !== undefined) {
+      assets = assets.filter(predicate);
+    } else if (query.text !== undefined && query.text.trim() !== '') {
       const needle = query.text.trim().toLowerCase();
       assets = assets.filter((asset) => assetHaystack(asset).includes(needle));
     }
@@ -357,6 +382,16 @@ export class FileArtexWorkStore implements IArtexWorkStore {
     return this.mutate((state) => {
       const fields = this.resolveTaskScopeFields(state, kind, value);
       return this.insertTaskScope(state, taskId, kind, fields, reason, source);
+    });
+  }
+
+  async deleteTaskScope(taskId: number, scopeId: number): Promise<boolean> {
+    return this.mutate((state) => {
+      const before = state.taskScope.length;
+      state.taskScope = state.taskScope.filter(
+        (scope) => !(scope.taskId === taskId && scope.id === scopeId),
+      );
+      return state.taskScope.length !== before;
     });
   }
 
@@ -450,18 +485,33 @@ export class FileArtexWorkStore implements IArtexWorkStore {
     return state.credentials.filter((cred) => cred.taskId === taskId);
   }
 
+  async deleteTaskCredential(taskId: number, credentialId: number): Promise<boolean> {
+    return this.mutate((state) => {
+      const before = state.credentials.length;
+      state.credentials = state.credentials.filter(
+        (cred) => !(cred.taskId === taskId && cred.id === credentialId),
+      );
+      return state.credentials.length !== before;
+    });
+  }
+
   async recordCoverage(taskId: number, entry: ArtexCoverageEntry): Promise<void> {
+    if (taskId <= 0) {
+      throw new Error('task, surface and risk_area are required');
+    }
+    const normalized = validateAndNormalizeCoverageEntry(entry);
     await this.mutate((state) => {
+      const now = this.now();
       const row: CoverageRow = {
         taskId,
-        surface: normalizeCoverageField(entry.surface),
-        riskArea: normalizeRiskArea(entry.riskArea),
-        outcome: entry.outcome,
-        evidence: entry.evidence,
-        reason: entry.reason,
-        worker: entry.worker,
-        intentId: entry.intentId,
-        updatedAt: this.now(),
+        surface: normalized.surface,
+        riskArea: normalized.riskArea,
+        outcome: normalized.outcome,
+        evidence: normalized.evidence,
+        reason: normalized.reason,
+        worker: normalized.worker,
+        intentId: normalized.intentId,
+        updatedAt: now,
       };
       const index = state.coverage.findIndex(
         (existing) =>
@@ -469,12 +519,24 @@ export class FileArtexWorkStore implements IArtexWorkStore {
           existing.surface === row.surface &&
           existing.riskArea === row.riskArea,
       );
-      if (index >= 0) state.coverage[index] = row;
-      else state.coverage.push(row);
+      if (index < 0) {
+        let current = 0;
+        for (const existing of state.coverage) {
+          if (existing.taskId === taskId) current += 1;
+        }
+        if (current >= ARTEX_COVERAGE_MAX_ROWS_PER_TASK) {
+          throw new Error(
+            `coverage ledger full for this task (max ${String(ARTEX_COVERAGE_MAX_ROWS_PER_TASK)} entries): update an existing surface and risk_area instead`,
+          );
+        }
+        state.coverage.push(row);
+      } else {
+        state.coverage[index] = row;
+      }
       state.coverageHistory.push({
         ...row,
         historyId: state.counters.coverageHistory++,
-        recordedAt: row.updatedAt ?? this.now(),
+        recordedAt: now,
       });
     });
   }
@@ -500,14 +562,57 @@ export class FileArtexWorkStore implements IArtexWorkStore {
     origin: string,
   ): Promise<readonly ArtexTaskConstraint[]> {
     return this.mutate((state) => {
-      state.constraints = state.constraints.filter(
-        (constraint) => !(constraint.explorationId === taskId && constraint.origin === origin),
-      );
+      const priorByKey = new Map<string, ArtexTaskConstraint[]>();
+      const kept: ArtexTaskConstraint[] = [];
+      for (const constraint of state.constraints) {
+        if (constraint.explorationId === taskId && (constraint.origin ?? '') === origin) {
+          const key = `${constraint.kind}\0${constraint.text}`;
+          const bucket = priorByKey.get(key) ?? [];
+          bucket.push(constraint);
+          priorByKey.set(key, bucket);
+        } else {
+          kept.push(constraint);
+        }
+      }
       const now = this.now();
       for (const entry of entries) {
         const text = entry.text.trim();
         if (text === '') continue;
-        state.constraints.push({
+        const key = `${entry.kind}\0${text}`;
+        const reused = priorByKey.get(key)?.shift();
+        if (reused !== undefined) {
+          kept.push(reused);
+        } else {
+          kept.push({
+            id: state.counters.constraint++,
+            explorationId: taskId,
+            kind: entry.kind,
+            text,
+            origin: origin || undefined,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      }
+      state.constraints = kept;
+      return state.constraints
+        .filter((constraint) => constraint.explorationId === taskId)
+        .toSorted((a, b) => a.id - b.id);
+    });
+  }
+
+  async appendConstraints(
+    taskId: number,
+    entries: readonly ArtexConstraintInput[],
+    origin: string,
+  ): Promise<readonly ArtexTaskConstraint[]> {
+    return this.mutate((state) => {
+      const now = this.now();
+      const added: ArtexTaskConstraint[] = [];
+      for (const entry of entries) {
+        const text = entry.text.trim();
+        if (text === '') continue;
+        const created: ArtexTaskConstraint = {
           id: state.counters.constraint++,
           explorationId: taskId,
           kind: entry.kind,
@@ -515,9 +620,11 @@ export class FileArtexWorkStore implements IArtexWorkStore {
           origin: origin || undefined,
           createdAt: now,
           updatedAt: now,
-        });
+        };
+        state.constraints.push(created);
+        added.push(created);
       }
-      return state.constraints.filter((constraint) => constraint.explorationId === taskId);
+      return added;
     });
   }
 
@@ -561,6 +668,23 @@ export class FileArtexWorkStore implements IArtexWorkStore {
     );
   }
 
+  async listTargetPins(
+    taskId: number,
+    host?: string,
+    port?: number,
+  ): Promise<readonly ArtexTargetPin[]> {
+    const state = await this.readState();
+    const normalizedHost = host !== undefined && host.trim() !== '' ? domainKey(host) : undefined;
+    return state.targetPins
+      .filter(
+        (pin) =>
+          pin.taskId === taskId &&
+          (normalizedHost === undefined || domainKey(pin.host) === normalizedHost) &&
+          (port === undefined || pin.port === port),
+      )
+      .toSorted((a, b) => a.id - b.id);
+  }
+
   async createTargetPin(input: ArtexTargetPinInput): Promise<ArtexTargetPin> {
     return this.mutate((state) => {
       const normalizedHost = domainKey(input.host);
@@ -600,6 +724,17 @@ export class FileArtexWorkStore implements IArtexWorkStore {
     });
   }
 
+  async revokeTargetPin(taskId: number, pinId: number): Promise<boolean> {
+    return this.mutate((state) => {
+      const pin = state.targetPins.find(
+        (candidate) => candidate.taskId === taskId && candidate.id === pinId,
+      );
+      if (!pin || pin.status === 'revoked') return false;
+      (pin as { status: ArtexTargetPin['status'] }).status = 'revoked';
+      return true;
+    });
+  }
+
   async targetExemptions(): Promise<readonly string[]> {
     const state = await this.readState();
     return state.exemptions;
@@ -634,7 +769,7 @@ export class FileArtexWorkStore implements IArtexWorkStore {
       id: 0,
       type: input.type,
       companyId: input.companyId,
-      companySource: 'explicit',
+      companySource: input.companyId !== undefined ? 'explicit' : 'scope',
       taskIds: [],
       boundDomains: dedupeStrings(input.boundDomains),
       openPorts: input.openPorts ?? [],
@@ -654,13 +789,59 @@ export class FileArtexWorkStore implements IArtexWorkStore {
 
   private attributeCompany(state: ArtexWorkState, asset: ArtexAsset): void {
     if (asset.companyId !== undefined) return;
-    for (const scope of state.companyScope) {
-      if (companyScopeMatchesAsset(scope, asset)) {
-        asset.companyId = scope.companyId;
+    const companyId = this.resolveCompanyForAsset(state, asset);
+    if (companyId !== undefined) {
+      asset.companyId = companyId;
+      asset.companySource = 'scope';
+    }
+  }
+
+  private recomputeAttribution(state: ArtexWorkState): void {
+    for (const asset of state.assets) {
+      if (asset.companySource === 'scope' || asset.companyId === undefined) {
+        asset.companyId = undefined;
         asset.companySource = 'scope';
-        return;
       }
     }
+    for (const asset of state.assets) {
+      if (asset.companyId !== undefined) continue;
+      const companyId = this.resolveCompanyForAsset(state, asset);
+      if (companyId !== undefined) {
+        asset.companyId = companyId;
+        asset.companySource = 'scope';
+      }
+    }
+  }
+
+  private resolveCompanyForAsset(state: ArtexWorkState, asset: ArtexAsset): number | undefined {
+    const domainScopes = state.companyScope
+      .filter((scope) => scope.kind === 'domain' && scope.domain !== undefined)
+      .toSorted(
+        (a, b) =>
+          (b.domain?.length ?? 0) - (a.domain?.length ?? 0) || a.companyId - b.companyId,
+      );
+    for (const scope of domainScopes) {
+      if (companyScopeMatchesAsset(scope, asset)) return scope.companyId;
+    }
+
+    const netScopes = state.companyScope
+      .filter((scope) => (scope.kind === 'ip' || scope.kind === 'cidr') && scope.net !== undefined)
+      .toSorted((a, b) => {
+        const pa = parseCidr(a.net ?? '')?.prefix ?? 0;
+        const pb = parseCidr(b.net ?? '')?.prefix ?? 0;
+        return pb - pa || a.companyId - b.companyId;
+      });
+    for (const scope of netScopes) {
+      if (companyScopeMatchesAsset(scope, asset)) return scope.companyId;
+    }
+
+    const icpScopes = state.companyScope
+      .filter((scope) => scope.kind === 'icp' && scope.value !== undefined)
+      .toSorted((a, b) => a.companyId - b.companyId);
+    for (const scope of icpScopes) {
+      if (companyScopeMatchesAsset(scope, asset)) return scope.companyId;
+    }
+    return undefined;
   }
 
   private resolveTaskScopeFields(
@@ -749,29 +930,21 @@ export class FileArtexWorkStore implements IArtexWorkStore {
   }
 
   private mutate<T>(fn: (state: ArtexWorkState) => T): Promise<T> {
-    const previous = inProcessWorkLockChains.get(this.lockPath) ?? Promise.resolve();
-    const run = previous.then(async () => {
-      const token = await this.acquireLock();
-      try {
+    return withFileLock(
+      this.lockPath,
+      {
+        acquireTimeoutMs: ARTEX_WORK_LOCK_ACQUIRE_TIMEOUT_MS,
+        retryIntervalMs: ARTEX_WORK_LOCK_RETRY_INTERVAL_MS,
+        staleMs: ARTEX_WORK_LOCK_STALE_MS,
+        label: 'artex work-store',
+      },
+      async () => {
         const state = await this.readState();
         const result = fn(state);
         await this.writeState(state);
         return result;
-      } finally {
-        await this.releaseLock(token);
-      }
-    });
-    const tail = run.then(
-      () => undefined,
-      () => undefined,
+      },
     );
-    inProcessWorkLockChains.set(this.lockPath, tail);
-    void tail.finally(() => {
-      if (inProcessWorkLockChains.get(this.lockPath) === tail) {
-        inProcessWorkLockChains.delete(this.lockPath);
-      }
-    });
-    return run;
   }
 
   private async readState(): Promise<ArtexWorkState> {
@@ -793,70 +966,8 @@ export class FileArtexWorkStore implements IArtexWorkStore {
     await rename(tmp, this.stateFile);
   }
 
-  private async acquireLock(): Promise<string> {
-    await mkdir(this.dir, { recursive: true });
-    const token = randomUUID();
-    const deadline = Date.now() + ARTEX_WORK_LOCK_ACQUIRE_TIMEOUT_MS;
-    for (;;) {
-      try {
-        const handle = await open(this.lockPath, 'wx');
-        try {
-          await handle.writeFile(
-            `pid=${String(process.pid)} since=${this.now()} token=${token}`,
-            'utf8',
-          );
-        } finally {
-          await handle.close();
-        }
-        return token;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        await this.reapStaleLock();
-        if (Date.now() >= deadline) {
-          throw new Error(`timed out acquiring artex work-store lock at ${this.lockPath}`, {
-            cause: error,
-          });
-        }
-        await delay(ARTEX_WORK_LOCK_RETRY_INTERVAL_MS);
-      }
-    }
-  }
-
-  private async reapStaleLock(): Promise<void> {
-    let content: string;
-    try {
-      content = await readFile(this.lockPath, 'utf8');
-    } catch {
-      return;
-    }
-    const pid = Number(/pid=(\d+)/.exec(content)?.[1]);
-    const since = Date.parse(/since=(\S+)/.exec(content)?.[1] ?? '');
-    const dead =
-      Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid && this.pidIsDead(pid);
-    const expired = Number.isFinite(since) && Date.now() - since > ARTEX_WORK_LOCK_STALE_MS;
-    if (dead || expired) {
-      await rm(this.lockPath, { force: true });
-    }
-  }
-
-  private pidIsDead(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === 'ESRCH';
-    }
-  }
-
-  private async releaseLock(token: string): Promise<void> {
-    let content: string;
-    try {
-      content = await readFile(this.lockPath, 'utf8');
-    } catch {
-      return;
-    }
-    if (!content.includes(`token=${token}`)) return;
-    await rm(this.lockPath, { force: true });
+  private reapStaleLock(): Promise<boolean> {
+    return reapStaleFileLock(this.lockPath, ARTEX_WORK_LOCK_STALE_MS);
   }
 }
 
@@ -1246,23 +1357,194 @@ function companyScopeMatchesAsset(scope: ArtexCompanyScope, asset: ArtexAsset): 
   }
 }
 
-function parseCompanyScopeLine(raw: string): CompanyScopeFields | undefined {
-  const value = raw.trim();
-  if (value === '') return undefined;
-  if (value.includes('/') && parseCidr(value) !== undefined) {
-    return { kind: 'cidr', net: maskedCidr(value) };
+const COMMON_BARE_TLDS: ReadonlySet<string> = new Set([
+  'com',
+  'net',
+  'org',
+  'edu',
+  'gov',
+  'mil',
+  'int',
+  'cn',
+  'uk',
+  'jp',
+  'de',
+  'fr',
+  'ru',
+  'au',
+  'br',
+  'hk',
+  'tw',
+  'kr',
+  'in',
+  'sg',
+  'io',
+  'ai',
+  'co',
+  'me',
+  'tv',
+  'cc',
+  'info',
+  'biz',
+  'xyz',
+  'top',
+  'app',
+  'dev',
+  'club',
+  'online',
+  'site',
+  'shop',
+  'vip',
+]);
+
+const PUBLIC_SECOND_LEVEL_SUFFIXES: ReadonlySet<string> = new Set([
+  'com.cn',
+  'net.cn',
+  'org.cn',
+  'gov.cn',
+  'edu.cn',
+  'co.uk',
+  'org.uk',
+  'gov.uk',
+  'ac.uk',
+  'co.jp',
+  'ne.jp',
+  'or.jp',
+  'com.au',
+  'org.au',
+  'net.au',
+  'edu.au',
+  'gov.au',
+  'com.br',
+  'com.hk',
+  'com.tw',
+  'co.kr',
+  'co.in',
+  'co.nz',
+  'com.sg',
+  'com.my',
+  'com.vn',
+  'com.ph',
+  'com.mx',
+]);
+
+type ParsedScopeLineResult =
+  | { readonly fields: CompanyScopeFields }
+  | { readonly error: string };
+
+function looksLikeIpAddress(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.includes('://') || /\s/.test(trimmed)) return false;
+  if (trimmed.includes(':')) {
+    const colonCount = trimmed.match(/:/g)?.length ?? 0;
+    if (colonCount >= 2 && /^[0-9a-fA-F:]+$/.test(trimmed)) return true;
   }
+  return trimmed.includes('.') && /^[0-9.]+$/.test(trimmed);
+}
+
+function validateDomainScope(raw: string): ParsedScopeLineResult {
+  let candidate = raw.trim();
+  if (candidate.startsWith('//')) candidate = `http:${candidate}`;
+  else if (!candidate.includes('://')) candidate = `http://${candidate}`;
+  let host: string;
+  try {
+    const url = new URL(candidate);
+    host = url.hostname;
+  } catch {
+    return { error: `not recognizable as a valid domain/IP/CIDR: ${raw}` };
+  }
+  if (host.startsWith('[') && host.endsWith(']')) {
+    host = host.slice(1, -1);
+  }
+  host = domainKey(host);
+  if (host === '') {
+    return { error: `not recognizable as a valid domain/IP/CIDR: ${raw}` };
+  }
+  if (isIpLiteral(host)) {
+    return { fields: { kind: 'ip', net: ipToHostCidr(host) } };
+  }
+  if (looksLikeIpAddress(host)) {
+    return { error: `invalid IP: ${raw}` };
+  }
+  if (raw.includes('-') && (raw.match(/\./g)?.length ?? 0) >= 6) {
+    return { error: `express IP ranges as CIDR (e.g. 1.2.3.0/24): ${raw}` };
+  }
+  if (host.length > 253) {
+    return { error: `domain exceeds 253 characters: ${raw}` };
+  }
+  const labels = host.split('.');
+  if (labels.length < 2) {
+    return { error: `a bare TLD cannot be used as a scope: ${raw}` };
+  }
+  for (const label of labels) {
+    if (
+      label === '' ||
+      label.length > 63 ||
+      label.startsWith('-') ||
+      label.endsWith('-') ||
+      !/^[a-z0-9-]+$/.test(label)
+    ) {
+      return { error: `not recognizable as a valid domain/IP/CIDR: ${raw}` };
+    }
+  }
+  if (PUBLIC_SECOND_LEVEL_SUFFIXES.has(host)) {
+    return { error: `a bare TLD cannot be used as a scope: ${raw}` };
+  }
+  return { fields: { kind: 'domain', domain: rootDomain(host) } };
+}
+
+function parseCompanyScopeLine(raw: string): ParsedScopeLineResult {
+  const value = raw.trim();
+  if (value === '') return { error: 'empty scope line' };
+
+  const cidr = value.includes('/') ? parseCidr(value) : undefined;
+  if (cidr !== undefined) {
+    if (cidr.family === 4 && cidr.prefix < 16) {
+      return { error: `network too broad (IPv4 requires >= /16): ${value}` };
+    }
+    if (cidr.family === 6 && cidr.prefix < 32) {
+      return { error: `network too broad (IPv6 requires >= /32): ${value}` };
+    }
+    return { fields: { kind: 'cidr', net: maskedCidr(value) } };
+  }
+
+  const slash = value.lastIndexOf('/');
+  if (slash > 0 && !value.includes('://')) {
+    const addr = value.slice(0, slash).trim();
+    if (isIpLiteral(addr) || looksLikeIpAddress(addr)) {
+      return { error: `invalid CIDR: ${value}` };
+    }
+  }
+
   const host = stripHostPort(value);
   if (isIpLiteral(host)) {
-    return { kind: 'ip', net: ipToHostCidr(host) };
+    return { fields: { kind: 'ip', net: ipToHostCidr(host) } };
   }
-  if (/^[0-9a-z\u4E00-\u9FA5]+icp[\u5907\w-]*\d/i.test(value.replaceAll(/\s+/g, ''))) {
-    return { kind: 'icp', value: normalizeIcp(value) };
+  if (looksLikeIpAddress(host)) {
+    return { error: `invalid IP: ${value}` };
   }
-  if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host)) {
-    return { kind: 'domain', domain: rootDomain(host) };
+
+  const looksLikeDomain =
+    value.includes('://') ||
+    (value.includes('.') && !/\s/.test(value)) ||
+    /^\.[a-z0-9-]+$/i.test(value);
+  if (looksLikeDomain) {
+    return validateDomainScope(value);
   }
-  return { kind: 'keyword', value };
+  if (COMMON_BARE_TLDS.has(value.toLowerCase())) {
+    return { error: `a bare TLD cannot be used as a scope: ${value}` };
+  }
+
+  const compact = value.replaceAll(/\s+/g, '');
+  if (
+    !value.includes('.') &&
+    (/^[0-9a-z\u4E00-\u9FA5]+icp[\u5907\w-]*\d/i.test(compact) ||
+      value.toLowerCase().includes('icp') ||
+      value.toLowerCase().includes('filing'))
+  ) {
+    return { fields: { kind: 'icp', value: normalizeIcp(value) } };
+  }
+  return { fields: { kind: 'keyword', value: value.toLowerCase().split(/\s+/).join(' ') } };
 }
 
 interface CompanyScopeFields {

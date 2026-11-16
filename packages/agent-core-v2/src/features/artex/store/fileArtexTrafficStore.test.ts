@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ArtexExchangeInput } from './artexTrafficStore';
 import { FileArtexTrafficStore } from './fileArtexTrafficStore';
+import { reapStaleFileLock } from './fileLock';
+import { artexTrafficStoreFile, artexTrafficStoreLockPath } from './paths';
 
 function exchange(overrides: Partial<ArtexExchangeInput> = {}): ArtexExchangeInput {
   return {
@@ -109,5 +111,79 @@ describe('FileArtexTrafficStore', () => {
 
     const miss = await store.verbatimInRecord(id, '"token":"not-the-real-value"');
     expect(miss.found).toBe(false);
+  });
+
+  it('keeps traffic-index.json lean without inline base64 bodies or unbounded index strings', async () => {
+    const reqBody = Buffer.from('A'.repeat(128 * 1024));
+    const respBody = Buffer.from('B'.repeat(200 * 1024));
+    const id = await store.record(exchange({ reqBody, respBody, contentType: 'text/plain' }));
+
+    const rawIndex = await readFile(artexTrafficStoreFile(dir), 'utf8');
+    expect(rawIndex.length).toBeLessThan(16 * 1024);
+    expect(rawIndex).not.toContain('reqInline');
+    expect(rawIndex).not.toContain('respInline');
+    const parsed = JSON.parse(rawIndex) as { exchanges: Array<Record<string, unknown>> };
+    expect(parsed.exchanges[0]?.['index']).toBeUndefined();
+    expect(typeof parsed.exchanges[0]?.['reqBlob']).toBe('string');
+    expect(typeof parsed.exchanges[0]?.['respBlob']).toBe('string');
+    expect((await store.get(id))?.response).toContain('B'.repeat(100));
+  });
+
+  it('ingests external traffic, lists hosts, and handles 120 concurrent writers safely', async () => {
+    const ids = await store.ingestExternalTraffic([
+      {
+        method: 'POST',
+        url: 'https://api.example.test/v1/auth',
+        status: 200,
+        respHead: 'HTTP/1.1 200 OK\nContent-Type: application/json\n',
+        respBody: '{"ok":true}',
+      },
+      {
+        method: 'GET',
+        url: 'https://cdn.example.test/app.js',
+        status: 200,
+        respBody: 'console.log(1)',
+      },
+    ]);
+    expect(ids).toHaveLength(2);
+    const hosts = await store.listHosts();
+    expect(hosts.map((h) => h.host).toSorted()).toEqual(['api.example.test', 'cdn.example.test']);
+
+    const concurrentIds = await Promise.all(
+      Array.from({ length: 120 }, (_, index) =>
+        store.record(
+          exchange({
+            url: `https://load.example.test/item/${String(index)}`,
+            host: 'load.example.test',
+            respBody: Buffer.from(`payload-${String(index)}`),
+          }),
+        ),
+      ),
+    );
+    expect(new Set(concurrentIds).size).toBe(120);
+    expect(await store.count()).toBe(122);
+  });
+
+  it('reaps stale locks atomically with token verification without stealing replacement locks', async () => {
+    const lockPath = artexTrafficStoreLockPath(dir);
+    await store.record(exchange());
+    await writeFile(
+      lockPath,
+      'pid=999999 since=2020-01-01T00:00:00.000Z token=stale-token',
+      'utf8',
+    );
+    const outcomes = await Promise.all(
+      Array.from({ length: 12 }, () => reapStaleFileLock(lockPath, 30_000)),
+    );
+    expect(outcomes.filter(Boolean)).toHaveLength(1);
+
+    await writeFile(
+      lockPath,
+      `pid=${String(process.pid)} since=${new Date().toISOString()} token=live-token`,
+      'utf8',
+    );
+    expect(await reapStaleFileLock(lockPath, 30_000)).toBe(false);
+    expect(await readFile(lockPath, 'utf8')).toContain('token=live-token');
+    await rm(lockPath, { force: true });
   });
 });

@@ -82,3 +82,22 @@ export interface ArtexVerbatimResult {
   readonly trafficId: string;
   readonly side?: 'request' | 'response';
 }
+
+export interface ArtexTrafficHostSummary {
+  readonly host: string;
+  readonly count: number;
+  readonly latestTs: number;
+}
+
+export interface ArtexExternalTrafficInput {
+  readonly host?: string;
+  readonly method: string;
+  readonly url: string;
+  readonly status: number;
+  readonly contentType?: string;
+  readonly reqHead?: string;
+  readonly respHead?: string;
+  readonly reqBody?: Buffer | string;
+  readonly respBody?: Buffer | string;
+  readonly ts?: number;
+}

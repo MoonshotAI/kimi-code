@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 
+import { Emitter, type Event } from '#/_base/event';
 import {
   ARTEX_INTENT_CLAIM_TTL_MS,
   ArtexIntentClaimLostError,
@@ -15,6 +16,7 @@ import {
   type ArtexExploration,
   type ArtexExplorationAnchor,
   type ArtexFactNode,
+  type ArtexFindingNode,
   type ArtexGoalNode,
   type ArtexIntentNode,
   type ArtexIntentSettleState,
@@ -32,14 +34,21 @@ import type {
   ArtexActivityInput,
   ArtexAddNodeInput,
   ArtexColdStampOp,
+  ArtexEditGoalPatch,
   ArtexExplorationRoot,
   ArtexGraphSnapshot,
+  ArtexHeartbeatBatchResult,
+  ArtexIntentClaimHeartbeat,
+  ArtexPatchFindingInput,
   ArtexResetRunningOptions,
   IArtexGraphStore,
 } from './artexGraphStore';
+import { reapStaleFileLock, withFileLock } from './fileLock';
 import {
   ARTEX_STATE_SCHEMA_VERSION,
+  artexActivityLockPath,
   artexActivityLog,
+  artexActivitySeqFile,
   artexExplorationDir,
   artexStateFile,
   artexStateLockPath,
@@ -60,20 +69,18 @@ interface ArtexPersistedState {
   tokenUsage: ArtexTokenUsageEntry[];
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-const inProcessLockChains = new Map<string, Promise<void>>();
-
 export class FileArtexGraphStore implements IArtexGraphStore {
   readonly explorationId: number;
   private readonly dir: string;
   private readonly stateFile: string;
   private readonly lockPath: string;
   private readonly activityLogPath: string;
+  private readonly activitySeqPath: string;
+  private readonly activityLockPath: string;
+  private readonly activityEmitter = new Emitter<ArtexActivityEntry>();
+  private readonly findingEmitter = new Emitter<ArtexFindingNode>();
+  readonly onDidAppendActivity: Event<ArtexActivityEntry> = this.activityEmitter.event;
+  readonly onDidMutateFinding: Event<ArtexFindingNode> = this.findingEmitter.event;
 
   constructor(workspaceRoot: string, explorationId: number) {
     this.explorationId = explorationId;
@@ -81,6 +88,8 @@ export class FileArtexGraphStore implements IArtexGraphStore {
     this.stateFile = artexStateFile(workspaceRoot, explorationId);
     this.lockPath = artexStateLockPath(workspaceRoot, explorationId);
     this.activityLogPath = artexActivityLog(workspaceRoot, explorationId);
+    this.activitySeqPath = artexActivitySeqFile(workspaceRoot, explorationId);
+    this.activityLockPath = artexActivityLockPath(workspaceRoot, explorationId);
   }
 
   async init(description: string, goal: string): Promise<ArtexExploration> {
@@ -151,6 +160,7 @@ export class FileArtexGraphStore implements IArtexGraphStore {
       }
       await this.writeState(state);
       await writeFile(this.activityLogPath, '', 'utf8');
+      await writeFile(this.activitySeqPath, '1', 'utf8');
       return exploration;
     });
   }
@@ -212,7 +222,7 @@ export class FileArtexGraphStore implements IArtexGraphStore {
     if (!isValidArtexNodeState(input.kind, input.state)) {
       throw new Error(`invalid state '${input.state}' for ${input.kind} node`);
     }
-    return this.mutate((state) => {
+    const created = await this.mutate((state) => {
       const now = this.now();
       const id = state.nextNodeId++;
       const node = {
@@ -231,8 +241,12 @@ export class FileArtexGraphStore implements IArtexGraphStore {
       for (const assetId of input.anchors ?? []) {
         this.addAnchor(state, id, assetId);
       }
-      return id;
+      return node;
     });
+    if (created.kind === 'finding') {
+      this.findingEmitter.fire(created);
+    }
+    return created.id;
   }
 
   addIntent(
@@ -253,6 +267,73 @@ export class FileArtexGraphStore implements IArtexGraphStore {
 
   addGoal(payload: Record<string, unknown>, origin?: string): Promise<number> {
     return this.addNode({ kind: 'goal', payload, priority: 0, state: 'open', origin });
+  }
+
+  editGoal(id: number, patch: ArtexEditGoalPatch): Promise<ArtexGoalNode | undefined> {
+    return this.mutate((state) => {
+      const node = state.nodes.find((candidate) => candidate.id === id && candidate.kind === 'goal');
+      if (!node || node.kind !== 'goal') return undefined;
+      const nextPayload = { ...node.payload };
+      if (patch.text !== undefined) {
+        const trimmed = patch.text.trim();
+        nextPayload['text'] = trimmed;
+        nextPayload['summary'] = trimmed;
+      }
+      if (patch.category !== undefined) {
+        const trimmedCategory = patch.category.trim();
+        if (trimmedCategory === '') delete nextPayload['category'];
+        else nextPayload['category'] = trimmedCategory;
+      }
+      node.payload = nextPayload;
+      if (patch.state !== undefined) {
+        if (!isValidArtexNodeState('goal', patch.state)) {
+          throw new Error(`invalid state '${patch.state}' for goal node ${String(id)}`);
+        }
+        node.state = patch.state;
+      }
+      node.contentVersion += 1;
+      node.updatedAt = this.now();
+      return { ...node, payload: { ...node.payload } };
+    });
+  }
+
+  deleteGoal(id: number): Promise<boolean> {
+    return this.mutate((state) => {
+      const before = state.nodes.length;
+      state.nodes = state.nodes.filter((candidate) => !(candidate.id === id && candidate.kind === 'goal'));
+      if (state.nodes.length === before) return false;
+      state.edges = state.edges.filter((edge) => edge.srcId !== id && edge.dstId !== id);
+      state.anchors = state.anchors.filter((anchor) => anchor.nodeId !== id);
+      return true;
+    });
+  }
+
+  async patchFinding(
+    id: number,
+    patch: ArtexPatchFindingInput,
+  ): Promise<ArtexFindingNode | undefined> {
+    const updated = await this.mutate((state) => {
+      const node = state.nodes.find(
+        (candidate) => candidate.id === id && candidate.kind === 'finding',
+      );
+      if (!node || node.kind !== 'finding') return undefined;
+      if (patch.state !== undefined) {
+        if (!isValidArtexNodeState('finding', patch.state)) {
+          throw new Error(`invalid state '${patch.state}' for finding node ${String(id)}`);
+        }
+        node.state = patch.state;
+      }
+      if (patch.payload !== undefined) {
+        node.payload = { ...node.payload, ...patch.payload };
+      }
+      node.contentVersion += 1;
+      node.updatedAt = this.now();
+      return { ...node, payload: { ...node.payload } };
+    });
+    if (updated !== undefined) {
+      this.findingEmitter.fire(updated);
+    }
+    return updated;
   }
 
   async getNode(id: number): Promise<ArtexNode | undefined> {
@@ -424,6 +505,37 @@ export class FileArtexGraphStore implements IArtexGraphStore {
     });
   }
 
+  heartbeatIntentClaimsBatch(
+    claims: readonly ArtexIntentClaimHeartbeat[],
+  ): Promise<ArtexHeartbeatBatchResult> {
+    if (claims.length === 0) {
+      return Promise.resolve({ updated: [], lost: [] });
+    }
+    return this.withLock(async () => {
+      const state = await this.readState();
+      const byId = new Map<number, ArtexIntentNode>();
+      for (const node of state.nodes) {
+        if (node.kind === 'intent') byId.set(node.id, node);
+      }
+      const now = this.now();
+      const updated: number[] = [];
+      const lost: number[] = [];
+      for (const claim of claims) {
+        const node = byId.get(claim.id);
+        if (node && node.state === 'running' && node.unclaimToken === claim.token) {
+          node.lastHeartbeatAt = now;
+          updated.push(claim.id);
+        } else {
+          lost.push(claim.id);
+        }
+      }
+      if (updated.length > 0) {
+        await this.writeState(state);
+      }
+      return { updated, lost };
+    });
+  }
+
   settleIntentClaim(id: number, token: string, settle: ArtexIntentSettleState): Promise<void> {
     return this.mutate((state) => {
       const node = this.findIntent(state, id);
@@ -485,6 +597,21 @@ export class FileArtexGraphStore implements IArtexGraphStore {
       node.completedAt = terminal ? this.now() : undefined;
       node.unclaimToken = undefined;
       node.updatedAt = this.now();
+    });
+  }
+
+  softDeleteIntent(id: number, reason: string): Promise<boolean> {
+    return this.mutate((state) => {
+      const node = this.findIntent(state, id);
+      if (!node) return false;
+      node.state = 'deleted';
+      node.deleteReason = reason.trim() || undefined;
+      node.blockedReason = undefined;
+      node.unclaimToken = undefined;
+      node.completedAt = this.now();
+      node.contentVersion += 1;
+      node.updatedAt = this.now();
+      return true;
     });
   }
 
@@ -605,26 +732,67 @@ export class FileArtexGraphStore implements IArtexGraphStore {
     };
   }
 
-  appendActivity(entry: ArtexActivityInput): Promise<number> {
-    return this.withLock(async () => {
-      const state = await this.readState();
-      const id = state.nextActivityId++;
-      const record: ArtexActivityEntry = {
-        id,
-        nodeId: entry.nodeId,
-        actor: entry.actor,
-        kind: entry.kind,
-        tool: entry.tool,
-        isError: entry.isError,
-        summary: entry.summary,
-        text: entry.text,
-        detail: entry.detail,
-        at: this.now(),
-      };
-      await this.writeState(state);
-      await appendFile(this.activityLogPath, `${JSON.stringify(record)}\n`, 'utf8');
-      return id;
-    });
+  async appendActivity(entry: ArtexActivityInput): Promise<number> {
+    const record = await withFileLock(
+      this.activityLockPath,
+      {
+        acquireTimeoutMs: ARTEX_LOCK_ACQUIRE_TIMEOUT_MS,
+        retryIntervalMs: ARTEX_LOCK_RETRY_INTERVAL_MS,
+        staleMs: ARTEX_LOCK_STALE_MS,
+        label: 'artex activity',
+      },
+      async () => {
+        await mkdir(this.dir, { recursive: true });
+        const id = await this.nextActivitySequence();
+        const nextRecord: ArtexActivityEntry = {
+          id,
+          nodeId: entry.nodeId,
+          actor: entry.actor,
+          kind: entry.kind,
+          tool: entry.tool,
+          isError: entry.isError,
+          summary: entry.summary,
+          text: entry.text,
+          detail: entry.detail,
+          at: this.now(),
+        };
+        const tmpSeq = `${this.activitySeqPath}.tmp-${String(process.pid)}-${randomUUID()}`;
+        await writeFile(tmpSeq, String(id + 1), 'utf8');
+        await rename(tmpSeq, this.activitySeqPath);
+        await appendFile(this.activityLogPath, `${JSON.stringify(nextRecord)}\n`, 'utf8');
+        return nextRecord;
+      },
+    );
+    this.activityEmitter.fire(record);
+    return record.id;
+  }
+
+  private async nextActivitySequence(): Promise<number> {
+    try {
+      const raw = (await readFile(this.activitySeqPath, 'utf8')).trim();
+      const parsed = Number(raw);
+      if (Number.isSafeInteger(parsed) && parsed >= 1) return parsed;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    let next = 1;
+    const existing = await this.readActivity();
+    for (const item of existing) {
+      if (item.id >= next) next = item.id + 1;
+    }
+    try {
+      const stateRaw = await readFile(this.stateFile, 'utf8');
+      const stateParsed = JSON.parse(stateRaw) as Partial<ArtexPersistedState>;
+      if (
+        typeof stateParsed.nextActivityId === 'number' &&
+        Number.isSafeInteger(stateParsed.nextActivityId) &&
+        stateParsed.nextActivityId > next
+      ) {
+        next = stateParsed.nextActivityId;
+      }
+    } catch {
+    }
+    return next;
   }
 
   async readActivity(): Promise<readonly ArtexActivityEntry[]> {
@@ -825,26 +993,16 @@ export class FileArtexGraphStore implements IArtexGraphStore {
   }
 
   private withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const previous = inProcessLockChains.get(this.lockPath) ?? Promise.resolve();
-    const run = previous.then(async () => {
-      const token = await this.acquireLock();
-      try {
-        return await fn();
-      } finally {
-        await this.releaseLock(token);
-      }
-    });
-    const tail = run.then(
-      () => undefined,
-      () => undefined,
+    return withFileLock(
+      this.lockPath,
+      {
+        acquireTimeoutMs: ARTEX_LOCK_ACQUIRE_TIMEOUT_MS,
+        retryIntervalMs: ARTEX_LOCK_RETRY_INTERVAL_MS,
+        staleMs: ARTEX_LOCK_STALE_MS,
+        label: 'artex state',
+      },
+      fn,
     );
-    inProcessLockChains.set(this.lockPath, tail);
-    void tail.finally(() => {
-      if (inProcessLockChains.get(this.lockPath) === tail) {
-        inProcessLockChains.delete(this.lockPath);
-      }
-    });
-    return run;
   }
 
   private async readState(): Promise<ArtexPersistedState> {
@@ -866,71 +1024,12 @@ export class FileArtexGraphStore implements IArtexGraphStore {
   private async writeState(state: ArtexPersistedState): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     const tmp = `${this.stateFile}.tmp-${String(process.pid)}-${randomUUID()}`;
-    await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    await writeFile(tmp, `${JSON.stringify(state)}\n`, 'utf8');
     await rename(tmp, this.stateFile);
   }
 
-  private async acquireLock(): Promise<string> {
-    const token = randomUUID();
-    const deadline = Date.now() + ARTEX_LOCK_ACQUIRE_TIMEOUT_MS;
-    for (;;) {
-      try {
-        const handle = await open(this.lockPath, 'wx');
-        try {
-          await handle.writeFile(
-            `pid=${String(process.pid)} since=${this.now()} token=${token}`,
-            'utf8',
-          );
-        } finally {
-          await handle.close();
-        }
-        return token;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        await this.reapStaleLock();
-        if (Date.now() >= deadline) {
-          throw new Error(`timed out acquiring artex state lock at ${this.lockPath}`, { cause: error });
-        }
-        await delay(ARTEX_LOCK_RETRY_INTERVAL_MS);
-      }
-    }
-  }
-
-  private async reapStaleLock(): Promise<void> {
-    let content: string;
-    try {
-      content = await readFile(this.lockPath, 'utf8');
-    } catch {
-      return;
-    }
-    const pid = Number(/pid=(\d+)/.exec(content)?.[1]);
-    const since = Date.parse(/since=(\S+)/.exec(content)?.[1] ?? '');
-    const dead =
-      Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid && this.pidIsDead(pid);
-    const expired = Number.isFinite(since) && Date.now() - since > ARTEX_LOCK_STALE_MS;
-    if (dead || expired) {
-      await rm(this.lockPath, { force: true });
-    }
-  }
-
-  private pidIsDead(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === 'ESRCH';
-    }
-  }
-
-  private async releaseLock(token: string): Promise<void> {
-    let content: string;
-    try {
-      content = await readFile(this.lockPath, 'utf8');
-    } catch {
-      return;
-    }
-    if (!content.includes(`token=${token}`)) return;
-    await rm(this.lockPath, { force: true });
+  private reapStaleLock(): Promise<boolean> {
+    return reapStaleFileLock(this.lockPath, ARTEX_LOCK_STALE_MS);
   }
 }
 

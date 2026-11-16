@@ -68,6 +68,7 @@ export interface ArtexAssetQuery {
   readonly id?: number;
   readonly ids?: readonly number[];
   readonly type?: string;
+  readonly dsl?: string;
   readonly text?: string;
   readonly taskId?: number;
   readonly limit?: number;
@@ -197,6 +198,7 @@ export interface IArtexWorkStore {
     lines: readonly string[],
     reason: string,
   ): Promise<ArtexCompanyScopeResult>;
+  deleteCompanyScope(companyId: number, scopeId: number): Promise<boolean>;
   listCompanies(): Promise<readonly ArtexCompanySummary[]>;
   companyScopeOf(companyId: number): Promise<readonly ArtexCompanyScope[]>;
 
@@ -212,6 +214,7 @@ export interface IArtexWorkStore {
     reason: string,
     source: ArtexTaskScopeSource,
   ): Promise<ArtexTaskScope>;
+  deleteTaskScope(taskId: number, scopeId: number): Promise<boolean>;
   addAutoScope(
     taskId: number,
     assetType: ArtexAssetType,
@@ -233,6 +236,7 @@ export interface IArtexWorkStore {
     taskId: number,
     input: ArtexTaskCredentialInput,
   ): Promise<ArtexTaskCredential>;
+  deleteTaskCredential(taskId: number, credentialId: number): Promise<boolean>;
   taskCredentials(taskId: number): Promise<readonly ArtexTaskCredential[]>;
 
   recordCoverage(taskId: number, entry: ArtexCoverageEntry): Promise<void>;
@@ -241,6 +245,11 @@ export interface IArtexWorkStore {
   coverageEntryCount(taskId: number): Promise<number>;
 
   setConstraints(
+    taskId: number,
+    entries: readonly ArtexConstraintInput[],
+    origin: string,
+  ): Promise<readonly ArtexTaskConstraint[]>;
+  appendConstraints(
     taskId: number,
     entries: readonly ArtexConstraintInput[],
     origin: string,
@@ -256,6 +265,12 @@ export interface IArtexWorkStore {
     host: string,
     port: number,
   ): Promise<readonly ArtexTargetPin[]>;
+  listTargetPins(
+    taskId: number,
+    host?: string,
+    port?: number,
+  ): Promise<readonly ArtexTargetPin[]>;
   createTargetPin(input: ArtexTargetPinInput): Promise<ArtexTargetPin>;
+  revokeTargetPin(taskId: number, pinId: number): Promise<boolean>;
   targetExemptions(): Promise<readonly string[]>;
 }

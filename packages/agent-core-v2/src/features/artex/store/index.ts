@@ -1,4 +1,6 @@
 export * from './paths';
+export * from './fileLock';
+export * from './assetDsl';
 export * from './artexGraphStore';
 export * from './fileArtexGraphStore';
 export * from './artexGraphStoreProvider';

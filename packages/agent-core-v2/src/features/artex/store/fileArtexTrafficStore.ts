@@ -1,13 +1,19 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+
+import { Emitter, type Event } from '#/_base/event';
 
 import { FileArtexArtifactStore } from './fileArtexArtifactStore';
+import { reapStaleFileLock, withFileLock } from './fileLock';
 import {
   isArtexTrafficRole,
   type ArtexExchangeInput,
   type ArtexExchangeMeta,
   type ArtexExchangeRaw,
+  type ArtexExternalTrafficInput,
   type ArtexTrafficBinding,
+  type ArtexTrafficHostSummary,
   type ArtexTrafficRef,
   type ArtexTrafficRole,
   type ArtexTrafficSearchQuery,
@@ -29,6 +35,7 @@ export const ARTEX_TRAFFIC_MAX_INLINE_BODY = 256 * 1024;
 export const ARTEX_TRAFFIC_BLOB_PREVIEW = 8 * 1024;
 export const ARTEX_TRAFFIC_MIN_SEARCH_TERM = 3;
 export const ARTEX_TRAFFIC_SNAPSHOT_GRACE_MS = 24 * 60 * 60 * 1000;
+export const ARTEX_TRAFFIC_MAX_SEARCH_EXCERPT = 4096;
 
 interface ExchangeRow {
   id: string;
@@ -43,11 +50,12 @@ interface ExchangeRow {
   respLen: number;
   reqHead: string;
   respHead: string;
-  reqInline: string;
   reqBlob?: string;
-  respInline: string;
   respBlob?: string;
-  index: string;
+  searchExcerpt?: string;
+  reqInline?: string;
+  respInline?: string;
+  index?: string;
 }
 
 interface SnapshotRow extends ArtexTrafficSnapshot {
@@ -74,12 +82,6 @@ interface TrafficState {
   bindings: BindingRow[];
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 function emptyState(): TrafficState {
   return {
     schemaVersion: ARTEX_TRAFFIC_STORE_SCHEMA_VERSION,
@@ -93,11 +95,9 @@ function emptyState(): TrafficState {
 
 /**
  * The file-backed record store for the recording proxy: an exchange index with
- * inline heads/bodies (large bodies spilled to the content-addressed artifact
- * store), plus the relational layer linking a produced finding to the exchanges
- * that support it (role + position + a lightweight snapshot). Evidence bodies are
- * copied into the artifact store when bound, so clearing disposable traffic never
- * takes proof with it.
+ * compact metadata, bounded search excerpts, and content-addressed body blobs
+ * in FileArtexArtifactStore, plus the relational layer linking a produced finding
+ * to the exchanges that support it (role + position + a lightweight snapshot).
  */
 export class FileArtexTrafficStore {
   readonly workspaceRoot: string;
@@ -105,6 +105,8 @@ export class FileArtexTrafficStore {
   private readonly dir: string;
   private readonly stateFile: string;
   private readonly lockPath: string;
+  private readonly captureEmitter = new Emitter<ArtexExchangeMeta>();
+  readonly onDidRecord: Event<ArtexExchangeMeta> = this.captureEmitter.event;
 
   constructor(workspaceRoot: string) {
     this.workspaceRoot = workspaceRoot;
@@ -115,43 +117,124 @@ export class FileArtexTrafficStore {
   }
 
   async record(input: ArtexExchangeInput): Promise<string> {
-    const req = await this.spill(input.reqBody, headContentType(input.reqHead));
-    const resp = await this.spill(input.respBody, input.contentType);
-    return this.mutate((state) => {
+    const [reqBlob, respBlob] = await Promise.all([
+      this.storeBody(input.reqBody),
+      this.storeBody(input.respBody),
+    ]);
+    const searchExcerpt = buildSearchExcerpt(
+      input.url,
+      input.reqHead,
+      input.reqBody,
+      headContentType(input.reqHead),
+      input.respHead,
+      input.respBody,
+      input.contentType,
+    );
+    const meta = await this.mutate((state) => {
       const seq = (state.seq += 1);
       const now = Date.now();
       const id = `${Math.floor(now / 1000)}-${String(seq % 10000).padStart(4, '0')}`;
-      const url = input.url;
-      let host = input.host;
-      try {
-        host = new URL(url).hostname || input.host;
-      } catch {
-        host = input.host;
-      }
-      const index = [url, input.reqHead, req.indexText, input.respHead, resp.indexText]
-        .join('\n')
-        .toLowerCase();
-      state.exchanges.push({
+      const row = buildExchangeRow({
         id,
         ts: Math.floor(now / 1000),
-        host,
-        method: input.method,
-        urlTemplate: templatePath(url),
-        url,
-        status: input.status,
-        contentType: input.contentType,
-        reqLen: input.reqBody.length,
-        respLen: input.respBody.length,
-        reqHead: input.reqHead,
-        respHead: input.respHead,
-        reqInline: req.inline.toString('base64'),
-        reqBlob: req.blob,
-        respInline: resp.inline.toString('base64'),
-        respBlob: resp.blob,
-        index,
+        input,
+        reqBlob,
+        respBlob,
+        searchExcerpt,
       });
-      return id;
+      state.exchanges.push(row);
+      return toMeta(row);
     });
+    this.captureEmitter.fire(meta);
+    return meta.id;
+  }
+
+  async ingestExternalTraffic(
+    entries: ArtexExternalTrafficInput | readonly ArtexExternalTrafficInput[],
+  ): Promise<readonly string[]> {
+    const list = Array.isArray(entries) ? entries : [entries];
+    if (list.length === 0) return [];
+    const prepared = await Promise.all(
+      list.map(async (entry) => {
+        const url = entry.url.trim();
+        if (url === '') throw new Error('traffic url must not be empty');
+        const method = entry.method.trim().toUpperCase();
+        if (method === '') throw new Error('traffic method must not be empty');
+        const reqHead = entry.reqHead ?? '';
+        const respHead = entry.respHead ?? '';
+        const reqBody = toBuffer(entry.reqBody);
+        const respBody = toBuffer(entry.respBody);
+        const contentType = entry.contentType ?? headContentType(respHead);
+        const host = deriveHost(url, entry.host ?? '');
+        if (host === '') throw new Error(`cannot resolve host for traffic url: ${url}`);
+        const input: ArtexExchangeInput = {
+          host,
+          method,
+          url,
+          status: entry.status,
+          contentType,
+          reqHead,
+          respHead,
+          reqBody,
+          respBody,
+        };
+        const [reqBlob, respBlob] = await Promise.all([
+          this.storeBody(reqBody),
+          this.storeBody(respBody),
+        ]);
+        const searchExcerpt = buildSearchExcerpt(
+          url,
+          reqHead,
+          reqBody,
+          headContentType(reqHead),
+          respHead,
+          respBody,
+          contentType,
+        );
+        return { input, reqBlob, respBlob, searchExcerpt, ts: entry.ts };
+      }),
+    );
+    const metas = await this.mutate((state) => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const created: ArtexExchangeMeta[] = [];
+      for (const item of prepared) {
+        const seq = (state.seq += 1);
+        const ts = item.ts !== undefined && item.ts > 0 ? Math.floor(item.ts) : nowSec;
+        const id = `${String(ts)}-${String(seq % 10000).padStart(4, '0')}`;
+        const row = buildExchangeRow({
+          id,
+          ts,
+          input: item.input,
+          reqBlob: item.reqBlob,
+          respBlob: item.respBlob,
+          searchExcerpt: item.searchExcerpt,
+        });
+        state.exchanges.push(row);
+        created.push(toMeta(row));
+      }
+      return created;
+    });
+    for (const meta of metas) {
+      this.captureEmitter.fire(meta);
+    }
+    return metas.map((meta) => meta.id);
+  }
+
+  async listHosts(): Promise<readonly ArtexTrafficHostSummary[]> {
+    const state = await this.readState();
+    const map = new Map<string, { count: number; latestTs: number }>();
+    for (const row of state.exchanges) {
+      const existing = map.get(row.host);
+      if (existing === undefined) {
+        map.set(row.host, { count: 1, latestTs: row.ts });
+      } else {
+        existing.count += 1;
+        if (row.ts > existing.latestTs) existing.latestTs = row.ts;
+      }
+    }
+    return [...map.entries()]
+      .map(([host, info]) => ({ host, count: info.count, latestTs: info.latestTs }))
+      .toSorted((a, b) => b.latestTs - a.latestTs || a.host.localeCompare(b.host));
   }
 
   async search(query: ArtexTrafficSearchQuery): Promise<readonly ArtexExchangeMeta[]> {
@@ -166,12 +249,24 @@ export class FileArtexTrafficStore {
         `body search keyword needs at least ${String(ARTEX_TRAFFIC_MIN_SEARCH_TERM)} characters (currently ${String(bodyContains.length)})`,
       );
     }
-    const matches = state.exchanges
+    const candidates = state.exchanges
       .filter((row) => row.host === host)
       .filter((row) => (port === '' ? true : urlAuthorityMatches(row.url, host, port)))
       .filter((row) => (contains === '' ? true : matchesContains(row, contains)))
-      .filter((row) => (bodyContains === '' ? true : row.index.includes(bodyContains)))
       .toSorted((a, b) => b.ts - a.ts || (a.id < b.id ? 1 : -1));
+
+    if (bodyContains === '') {
+      return candidates.slice(page * limit, page * limit + limit).map(toMeta);
+    }
+
+    const needed = (page + 1) * limit;
+    const matches: ExchangeRow[] = [];
+    for (const row of candidates) {
+      if (await this.rowMatchesBodyKeyword(row, bodyContains)) {
+        matches.push(row);
+        if (matches.length >= needed) break;
+      }
+    }
     return matches.slice(page * limit, page * limit + limit).map(toMeta);
   }
 
@@ -179,10 +274,11 @@ export class FileArtexTrafficStore {
     const state = await this.readState();
     const row = state.exchanges.find((entry) => entry.id === id);
     if (row === undefined) return undefined;
-    return {
-      request: assembleRaw(row.reqHead, row.reqInline, row.reqBlob, row.reqLen),
-      response: assembleRaw(row.respHead, row.respInline, row.respBlob, row.respLen),
-    };
+    const [request, response] = await Promise.all([
+      this.assembleRaw(row.reqHead, headContentType(row.reqHead), row.reqBlob, row.reqLen, row.reqInline),
+      this.assembleRaw(row.respHead, row.contentType, row.respBlob, row.respLen, row.respInline),
+    ]);
+    return { request, response };
   }
 
   async blobRange(hash: string, offset: number, length: number) {
@@ -336,33 +432,80 @@ export class FileArtexTrafficStore {
     return this.artifacts.collect(live, now);
   }
 
-  private async spill(
-    body: Buffer,
-    contentType: string,
-  ): Promise<{ inline: Buffer; blob?: string; indexText: string }> {
-    if (body.length === 0) return { inline: Buffer.alloc(0), indexText: '' };
-    const text = !isBinaryBody(contentType, body);
-    const indexText = text ? body.toString('utf8') : '';
-    if (body.length <= ARTEX_TRAFFIC_MAX_INLINE_BODY) {
-      return { inline: body, indexText };
-    }
+  private async storeBody(body: Buffer): Promise<string | undefined> {
+    if (body.length === 0) return undefined;
     const { hash } = await this.artifacts.writeBody(body);
-    const inline = text
-      ? Buffer.from(body.subarray(0, ARTEX_TRAFFIC_BLOB_PREVIEW))
-      : Buffer.from(binaryTag(contentType, body));
-    return { inline, blob: hash, indexText };
+    return hash;
   }
 
-  private async fullSide(head: string, inline: string, blob?: string): Promise<string> {
+  private async rowMatchesBodyKeyword(row: ExchangeRow, needle: string): Promise<boolean> {
+    if (row.index !== undefined && row.index.includes(needle)) return true;
+    if (row.searchExcerpt !== undefined && row.searchExcerpt.includes(needle)) return true;
+    if (row.reqBlob !== undefined) {
+      const body = await this.artifacts.readBody(row.reqBlob);
+      if (
+        body !== undefined &&
+        !isBinaryBody(headContentType(row.reqHead), body) &&
+        body.toString('utf8').toLowerCase().includes(needle)
+      ) {
+        return true;
+      }
+    }
+    if (row.respBlob !== undefined) {
+      const body = await this.artifacts.readBody(row.respBlob);
+      if (
+        body !== undefined &&
+        !isBinaryBody(row.contentType, body) &&
+        body.toString('utf8').toLowerCase().includes(needle)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async assembleRaw(
+    head: string,
+    contentType: string,
+    blob: string | undefined,
+    total: number,
+    legacyInline: string | undefined,
+  ): Promise<string> {
+    if (blob === undefined || blob === '') {
+      if (legacyInline !== undefined && legacyInline !== '') {
+        return `${head}\n${Buffer.from(legacyInline, 'base64').toString('utf8')}`;
+      }
+      return `${head}\n`;
+    }
+    if (total > ARTEX_TRAFFIC_MAX_INLINE_BODY) {
+      const range = await this.artifacts.blobRange(blob, 0, ARTEX_TRAFFIC_BLOB_PREVIEW);
+      const sample = range?.data ?? Buffer.alloc(0);
+      const preview = isBinaryBody(contentType, sample)
+        ? binaryTag(contentType, sample, total)
+        : sample.toString('utf8');
+      return `${head}\n${preview}\n…[truncated] @blob sha256:${blob} (len=${String(total)})`;
+    }
+    const body = await this.artifacts.readBody(blob);
+    if (body === undefined) {
+      return `${head}\n…[missing blob] @blob sha256:${blob} (len=${String(total)})`;
+    }
+    const text = isBinaryBody(contentType, body)
+      ? binaryTag(contentType, body, body.length)
+      : body.toString('utf8');
+    return `${head}\n${text}`;
+  }
+
+  private async fullSide(head: string, inline: string | undefined, blob?: string): Promise<string> {
     const body = await this.fullBodyBytes(inline, blob);
     return `${head}\n${body.toString('utf8')}`;
   }
 
-  private async fullBodyBytes(inline: string, blob?: string): Promise<Buffer> {
+  private async fullBodyBytes(inline: string | undefined, blob?: string): Promise<Buffer> {
     if (blob !== undefined) {
       const full = await this.artifacts.readBody(blob);
       if (full !== undefined) return full;
     }
+    if (inline === undefined || inline === '') return Buffer.alloc(0);
     return Buffer.from(inline, 'base64');
   }
 
@@ -370,16 +513,22 @@ export class FileArtexTrafficStore {
     return new Date().toISOString();
   }
 
-  private async mutate<T>(fn: (state: TrafficState) => T): Promise<T> {
-    const token = await this.acquireLock();
-    try {
-      const state = await this.readState();
-      const result = fn(state);
-      await this.writeState(state);
-      return result;
-    } finally {
-      await this.releaseLock(token);
-    }
+  private mutate<T>(fn: (state: TrafficState) => T): Promise<T> {
+    return withFileLock(
+      this.lockPath,
+      {
+        acquireTimeoutMs: ARTEX_TRAFFIC_LOCK_ACQUIRE_TIMEOUT_MS,
+        retryIntervalMs: ARTEX_TRAFFIC_LOCK_RETRY_INTERVAL_MS,
+        staleMs: ARTEX_TRAFFIC_LOCK_STALE_MS,
+        label: 'artex traffic-store',
+      },
+      async () => {
+        const state = await this.readState();
+        const result = fn(state);
+        await this.writeState(state);
+        return result;
+      },
+    );
   }
 
   private async readState(): Promise<TrafficState> {
@@ -397,71 +546,78 @@ export class FileArtexTrafficStore {
   private async writeState(state: TrafficState): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     const tmp = `${this.stateFile}.tmp-${String(process.pid)}-${randomUUID()}`;
-    await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    await writeFile(tmp, `${JSON.stringify(state)}\n`, 'utf8');
     await rename(tmp, this.stateFile);
   }
 
-  private async acquireLock(): Promise<string> {
-    await mkdir(this.dir, { recursive: true });
-    const token = randomUUID();
-    const deadline = Date.now() + ARTEX_TRAFFIC_LOCK_ACQUIRE_TIMEOUT_MS;
-    for (;;) {
-      try {
-        const handle = await open(this.lockPath, 'wx');
-        try {
-          await handle.writeFile(`pid=${String(process.pid)} since=${this.now()} token=${token}`, 'utf8');
-        } finally {
-          await handle.close();
-        }
-        return token;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        await this.reapStaleLock();
-        if (Date.now() >= deadline) {
-          throw new Error(`timed out acquiring artex traffic-store lock at ${this.lockPath}`, {
-            cause: error,
-          });
-        }
-        await delay(ARTEX_TRAFFIC_LOCK_RETRY_INTERVAL_MS);
-      }
-    }
+  private reapStaleLock(): Promise<boolean> {
+    return reapStaleFileLock(this.lockPath, ARTEX_TRAFFIC_LOCK_STALE_MS);
   }
+}
 
-  private async reapStaleLock(): Promise<void> {
-    let content: string;
-    try {
-      content = await readFile(this.lockPath, 'utf8');
-    } catch {
-      return;
-    }
-    const pid = Number(/pid=(\d+)/.exec(content)?.[1]);
-    const since = Date.parse(/since=(\S+)/.exec(content)?.[1] ?? '');
-    const dead = Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid && this.pidIsDead(pid);
-    const expired = Number.isFinite(since) && Date.now() - since > ARTEX_TRAFFIC_LOCK_STALE_MS;
-    if (dead || expired) {
-      await rm(this.lockPath, { force: true });
-    }
-  }
+function buildExchangeRow(input: {
+  readonly id: string;
+  readonly ts: number;
+  readonly input: ArtexExchangeInput;
+  readonly reqBlob: string | undefined;
+  readonly respBlob: string | undefined;
+  readonly searchExcerpt: string;
+}): ExchangeRow {
+  const host = deriveHost(input.input.url, input.input.host);
+  return {
+    id: input.id,
+    ts: input.ts,
+    host,
+    method: input.input.method,
+    urlTemplate: templatePath(input.input.url),
+    url: input.input.url,
+    status: input.input.status,
+    contentType: input.input.contentType,
+    reqLen: input.input.reqBody.length,
+    respLen: input.input.respBody.length,
+    reqHead: input.input.reqHead,
+    respHead: input.input.respHead,
+    reqBlob: input.reqBlob,
+    respBlob: input.respBlob,
+    searchExcerpt: input.searchExcerpt,
+  };
+}
 
-  private pidIsDead(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === 'ESRCH';
-    }
+function deriveHost(url: string, fallback: string): string {
+  try {
+    return (new URL(url).hostname || fallback).toLowerCase();
+  } catch {
+    return fallback.toLowerCase();
   }
+}
 
-  private async releaseLock(token: string): Promise<void> {
-    let content: string;
-    try {
-      content = await readFile(this.lockPath, 'utf8');
-    } catch {
-      return;
-    }
-    if (!content.includes(`token=${token}`)) return;
-    await rm(this.lockPath, { force: true });
-  }
+function toBuffer(value: Buffer | string | undefined): Buffer {
+  if (value === undefined) return Buffer.alloc(0);
+  return Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
+}
+
+function buildSearchExcerpt(
+  url: string,
+  reqHead: string,
+  reqBody: Buffer,
+  reqContentType: string,
+  respHead: string,
+  respBody: Buffer,
+  respContentType: string,
+): string {
+  const halfBodyBudget = Math.floor(ARTEX_TRAFFIC_MAX_SEARCH_EXCERPT / 4);
+  const reqText =
+    reqBody.length > 0 && !isBinaryBody(reqContentType, reqBody)
+      ? reqBody.subarray(0, halfBodyBudget).toString('utf8')
+      : '';
+  const respText =
+    respBody.length > 0 && !isBinaryBody(respContentType, respBody)
+      ? respBody.subarray(0, halfBodyBudget).toString('utf8')
+      : '';
+  const combined = [url, reqHead, reqText, respHead, respText].join('\n').toLowerCase();
+  return combined.length <= ARTEX_TRAFFIC_MAX_SEARCH_EXCERPT
+    ? combined
+    : combined.slice(0, ARTEX_TRAFFIC_MAX_SEARCH_EXCERPT);
 }
 
 function toMeta(row: ExchangeRow): ArtexExchangeMeta {
@@ -479,15 +635,6 @@ function toMeta(row: ExchangeRow): ArtexExchangeMeta {
 
 function matchesContains(row: ExchangeRow, contains: string): boolean {
   return row.url.toLowerCase().includes(contains) || row.urlTemplate.toLowerCase().includes(contains);
-}
-
-function assembleRaw(head: string, inline: string, blob: string | undefined, total: number): string {
-  const body = Buffer.from(inline, 'base64').toString('utf8');
-  let out = `${head}\n${body}`;
-  if (blob !== undefined && blob !== '') {
-    out += `\n…[truncated] @blob sha256:${blob} (len=${String(total)})`;
-  }
-  return out;
 }
 
 function normalizeRefs(refs: readonly ArtexTrafficRef[]): (ArtexTrafficRef & { role: ArtexTrafficRole })[] {
@@ -554,10 +701,10 @@ function headContentType(head: string): string {
   return match ? (match[1] ?? '').trim() : '';
 }
 
-function binaryTag(contentType: string, body: Buffer): string {
+function binaryTag(contentType: string, body: Buffer, totalLen: number): string {
   const ct = contentType.trim() === '' ? 'application/octet-stream' : contentType.trim();
   const magic = body.subarray(0, 4).toString('hex');
-  return `[binary ${ct}, ${String(body.length)} bytes, magic=${magic}]`;
+  return `[binary ${ct}, ${String(totalLen)} bytes, magic=${magic}]`;
 }
 
 function templatePath(url: string): string {
