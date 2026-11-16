@@ -92,7 +92,7 @@ function decisionContextOf(context: ResolvedToolExecutionHookContext): LegacyDec
     ...context,
     call: context.toolCall,
     taskId: 'stub-task',
-    context: { turnId: context.turnId, trace: context.trace },
+    context: { origin: 'loop', turnId: context.turnId, trace: context.trace },
     prepared: {
       kind: 'execute',
       execution: context.execution,

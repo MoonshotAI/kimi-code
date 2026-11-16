@@ -15,6 +15,7 @@ import type { WaitForTasks } from './tool/tasks';
 import type { ToolCompletionFactory } from './tool/outcome';
 
 export interface LoopToolContext {
+  readonly origin: 'loop';
   readonly turnId: number;
   readonly step?: number;
   readonly requestId?: string;
@@ -31,7 +32,7 @@ export interface LoopToolExecutor {
 export interface CreateLoopOptions {
   readonly requester?: LoopLlmRequester;
   readonly executor: LoopToolExecutor;
-  readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'turnId'>;
+  readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'origin' | 'turnId'>;
   readonly hooks?: readonly HookRegistration[];
   readonly input?: LoopInput;
   readonly abortGraceMs?: number;

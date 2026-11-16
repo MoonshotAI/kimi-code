@@ -752,7 +752,7 @@ describe('conversation contract e2e', () => {
       id: 'call_s9_watch',
       name: 'Bash',
       arguments: JSON.stringify({ command: "printf '  VITE ready\\n'", description: 'npm run dev', run_in_background: true }),
-    }, { turnId: 0 });
+    }, { origin: 'loop', turnId: 0 });
     await handler;
     await until('background output', () => handler.output().preview.includes('VITE ready'));
     const taskId = handler.taskId;
@@ -799,7 +799,7 @@ describe('conversation contract e2e', () => {
       id: 'call_s9_child_watch',
       name: 'Bash',
       arguments: JSON.stringify({ command: "printf ' RUN  v3.2.4\\n'", description: 'pnpm test --watch', run_in_background: true }),
-    }, { turnId: 0 });
+    }, { origin: 'loop', turnId: 0 });
     await childHandler;
     await until('child output', () => childHandler.output().preview.includes('RUN  v3.2.4'));
     const childTaskId = childHandler.taskId;

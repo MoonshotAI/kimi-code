@@ -884,7 +884,7 @@ describe('event hub', () => {
     await tick();
 
     expect(seen.delta).toEqual([delta]);
-    expect(seen.progress).toEqual([progress]);
+    expect(seen.progress).toEqual([{ ...progress, origin: 'loop' }]);
     expect(seen.started).toEqual([started]);
     expect(seen.blocked).toEqual([blocked]);
     expect(seen.cancelled).toEqual([cancelled]);

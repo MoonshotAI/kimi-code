@@ -460,7 +460,7 @@ describe('session rating lifecycle', () => {
     const id = await client.createSession(home);
     await client.openRating(id, (bus) => {
       const turn = { agentId: MAIN_AGENT_ID, turnId: 1 };
-      bus.publish(new ToolCallStarted({ ...turn, toolCallId: 'call-agent', name: 'Agent', args: {} }));
+      bus.publish(new ToolCallStarted({ origin: 'loop', ...turn, toolCallId: 'call-agent', name: 'Agent', args: {} }));
       bus.publish(
         new SubagentSpawned({
           subagentId: 'sub-1',
@@ -470,8 +470,8 @@ describe('session rating lifecycle', () => {
           model: 'model-a',
         }),
       );
-      bus.publish(new ToolResultEvent({ ...turn, toolCallId: 'call-agent', output: 'done' }));
-      bus.publish(new ToolCallStarted({ ...turn, toolCallId: 'call-read', name: 'Read', args: {} }));
+      bus.publish(new ToolResultEvent({ origin: 'loop', ...turn, toolCallId: 'call-agent', output: 'done' }));
+      bus.publish(new ToolCallStarted({ origin: 'loop', ...turn, toolCallId: 'call-read', name: 'Read', args: {} }));
       bus.publish(
         new CompactionCompleted({
           agentId: MAIN_AGENT_ID,
