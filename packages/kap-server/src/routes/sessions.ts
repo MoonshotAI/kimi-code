@@ -773,37 +773,26 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
     await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
 
     assertIdle();
-    const quiescence = loop.tryAcquireQuiescence();
-    if (quiescence === undefined) {
-      throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
-    }
-    let ownerPromptId: string | undefined;
-    try {
-      session.accessor.get(ISessionRunGate).begin();
-      const finalState = resolveContinuableState();
-      if (!finalState.continuable) {
-        throw new Error2(
-          ErrorCodes.TURN_NOT_CONTINUABLE,
-          `session ${id} has no interrupted or failed turn to continue`,
-        );
-      }
-      ownerPromptId = finalState.ownerPromptId;
-    } finally {
-      quiescence.dispose();
+    session.accessor.get(ISessionRunGate).begin();
+    const finalState = resolveContinuableState();
+    if (!finalState.continuable) {
+      throw new Error2(
+        ErrorCodes.TURN_NOT_CONTINUABLE,
+        `session ${id} has no interrupted or failed turn to continue`,
+      );
     }
 
-    loop.remind(
+    loop.continueTurn([
       historyEntryFromContext({
         role: 'user',
         content: [{ type: 'text', text: wrapSystemReminder(CONTINUE_INTERRUPTED_REMINDER) }],
         origin: {
           kind: 'injection',
           variant: 'turn_continue',
-          ownerPromptId,
+          ownerPromptId: finalState.ownerPromptId,
         },
       }),
-    );
-    loop.continueTurn();
+    ]);
     requestLog(req)?.info({ session_id: id, action: 'continue' }, 'session action completed');
     reply.send(okEnvelope({ continued: true }, req.id));
   });
