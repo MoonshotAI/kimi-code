@@ -731,12 +731,15 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
     session.accessor.get(ISessionRunGate).begin();
     const feed = await conversations.feed(id, MAIN_AGENT_ID);
 
-    const resolveContinuableState = (metaReason: string | undefined): {
+    const resolveContinuableState = (): {
       continuable: boolean;
       ownerPromptId?: string;
     } => {
       const turns = feed.turns();
       const latestTurn = turns.at(-1);
+      if (latestTurn === undefined) {
+        return { continuable: false };
+      }
       let ownerPromptId: string | undefined;
       for (let i = turns.length - 1; i >= 0; i -= 1) {
         for (let j = turns[i]!.items.length - 1; j >= 0; j -= 1) {
@@ -748,22 +751,15 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
         }
         if (ownerPromptId !== undefined) break;
       }
-      if (latestTurn !== undefined) {
-        return {
-          continuable:
-            latestTurn.status === 'ended' &&
-            (latestTurn.outcome === 'interrupted' || latestTurn.outcome === 'failed'),
-          ownerPromptId,
-        };
-      }
       return {
-        continuable: metaReason === 'cancelled' || metaReason === 'failed',
+        continuable:
+          latestTurn.status === 'ended' &&
+          (latestTurn.outcome === 'interrupted' || latestTurn.outcome === 'failed'),
         ownerPromptId,
       };
     };
 
-    const metaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
-    if (!resolveContinuableState(metaReason).continuable) {
+    if (!resolveContinuableState().continuable) {
       throw new Error2(
         ErrorCodes.TURN_NOT_CONTINUABLE,
         `session ${id} has no interrupted or failed turn to continue`,
@@ -774,8 +770,6 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
     await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
 
     assertIdle();
-    const refreshedMetaReason = (await session.accessor.get(ISessionMetadata).read()).lastTurnReason;
-    assertIdle();
     const quiescence = loop.tryAcquireQuiescence();
     if (quiescence === undefined) {
       throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
@@ -783,7 +777,7 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
     let ownerPromptId: string | undefined;
     try {
       session.accessor.get(ISessionRunGate).begin();
-      const finalState = resolveContinuableState(refreshedMetaReason);
+      const finalState = resolveContinuableState();
       if (!finalState.continuable) {
         throw new Error2(
           ErrorCodes.TURN_NOT_CONTINUABLE,
