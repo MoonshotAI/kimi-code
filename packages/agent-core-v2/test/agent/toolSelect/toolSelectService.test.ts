@@ -1052,8 +1052,10 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(h.sut.requestTools(frozen, true, false)).toBe(frozen);
     expect(h.sut.requestTools(frozen, true, true)).toBe(frozen);
     const staticTools = h.sut.requestTools(shaped, false, true, messages);
-    expect(staticTools.map((tool) => tool.name)).toEqual(['Echo', MCP_ALPHA]);
+    expect(staticTools.map((tool) => tool.name)).toEqual(['Echo', MCP_ALPHA, MCP_BETA]);
     expect(staticTools.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBeUndefined();
+    expect(staticTools.find((tool) => tool.name === MCP_BETA)?.deferred).toBeUndefined();
+    expect(staticTools.find((tool) => tool.name === SELECT_TOOLS_TOOL_NAME)).toBeUndefined();
     expect(h.sut.requestTools(shaped, true, true, messages)).toBe(shaped);
     expect(shaped.find((tool) => tool.name === SELECT_TOOLS_TOOL_NAME)).toBeDefined();
   });
