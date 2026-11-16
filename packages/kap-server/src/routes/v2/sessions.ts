@@ -25,6 +25,12 @@ import { withTimeout } from '../../transport/errors';
 import { resolveSessionFacts, type SessionFacts } from '../sessions';
 import type { HostSources } from '../../services/hosts/hostFanout';
 import { listSessionsAcrossHosts } from './sessionsAcrossHosts';
+import {
+  compareSessionGroups,
+  compareSessionPositions,
+  sessionKey,
+  type SessionSort,
+} from './sessionOrder';
 
 interface V2SessionsRouteHost {
   get(
@@ -59,7 +65,7 @@ const v2SortSchema = z.enum([
   'meta.updated_at_asc',
   'meta.created_at_desc',
 ]);
-type V2Sort = z.infer<typeof v2SortSchema>;
+type V2Sort = SessionSort;
 
 const v2ViewSchema = z.enum(['flat', 'by_workspace']);
 type V2View = z.infer<typeof v2ViewSchema>;
@@ -324,22 +330,12 @@ export function mapActivityStatus(
   return 'idle';
 }
 
-function sortKeyOf(sort: V2Sort): (summary: SessionSummary) => number {
-  return sort === 'meta.created_at_desc'
-    ? (summary) => summary.createdAt
-    : (summary) => summary.updatedAt;
-}
-
 function makeComparator(sort: V2Sort): (a: SessionSummary, b: SessionSummary) => number {
-  const keyOf = sortKeyOf(sort);
-  const ascending = sort === 'meta.updated_at_asc';
-  return (a, b) => {
-    const ka = keyOf(a);
-    const kb = keyOf(b);
-    if (ka !== kb) return ascending ? ka - kb : kb - ka;
-    const order = a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-    return ascending ? order : -order;
-  };
+  return (a, b) => compareSessionPositions(
+    sort,
+    { key: sessionKey(sort, a), id: a.id },
+    { key: sessionKey(sort, b), id: b.id },
+  );
 }
 
 const PAGE_TOKEN_VERSION = 1;
@@ -616,8 +612,7 @@ async function listSessionsHere(
 
   const comparator = makeComparator(query.sort);
   const sorted = filtered.toSorted(comparator);
-  const keyOf = sortKeyOf(query.sort);
-  const ascending = query.sort === 'meta.updated_at_asc';
+  const keyOf = (summary: SessionSummary) => sessionKey(query.sort, summary);
   const cwdOf = (summary: SessionSummary): string | null =>
     summary.cwd ?? roots.get(summary.workspaceId) ?? null;
 
@@ -687,12 +682,8 @@ async function listSessionsHere(
       }
     }
     const groupList = [...byWorkspace.values()];
-    const groupComparator = (a: SessionGroup, b: SessionGroup): number => {
-      const ka = keyOf(a.rep);
-      const kb = keyOf(b.rep);
-      if (ka !== kb) return ascending ? ka - kb : kb - ka;
-      return a.workspaceId < b.workspaceId ? -1 : a.workspaceId > b.workspaceId ? 1 : 0;
-    };
+    const groupComparator = (a: SessionGroup, b: SessionGroup): number =>
+      compareSessionGroups(query.sort, { key: keyOf(a.rep), id: a.workspaceId }, { key: keyOf(b.rep), id: b.workspaceId });
     groupList.sort(groupComparator);
 
     let start = 0;
@@ -790,6 +781,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope, 
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.PAGE_TOKEN_MISMATCH]: {},
+        [ErrorCode.HOST_UNAVAILABLE]: {},
       },
       description:
         "List sessions with domain-grouped metadata (workspace / meta / activity; git via include=git). activity.model carries the live session's bound model alias (null while the session is cold). Paginate with the opaque page_token (binds the first page’s query conditions) or with the stateless 1-based page parameter; every page carries total. fields=id,archived trims each item to the lightweight ids projection (select-all-matching flows; page_size ceiling relaxed to 10000). meta.has_prompt=true|false filters sessions by whether they carry a prompt. view=by_workspace groups the matching set per workspace — each group carries that workspace's first group.page_size sessions (default 5) under the requested sort plus the group's full matching total; page/page_token then page over groups.",

@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
+
+import { z } from 'zod';
+
 import { ErrorCode } from '../../protocol/error-codes';
 import {
   HostSourceError,
   hostGet,
   hostProjects,
-  type HostQuery,
   type HostSources,
 } from '../../services/hosts/hostFanout';
 import type {
@@ -12,273 +15,202 @@ import type {
   V2SessionsListQuery,
   V2SessionsPageData,
 } from './sessions';
+import {
+  compareSessionGroups,
+  compareSessionPositions,
+  sessionPositionOf,
+  type SessionPosition,
+} from './sessionOrder';
 
 type Page = V2SessionsPageData | V2SessionGroupsPageData;
 type Entry = Record<string, unknown>;
+type Query = Omit<V2SessionsListQuery, 'hosts'>;
 
 interface Source {
   readonly key: string;
   readonly hostId?: string;
-  fetch(query: V2SessionsListQuery): Promise<Page>;
+  fetch(query: Query): Promise<Page>;
+  total?: number;
 }
 
-interface Cursor {
-  readonly t?: string;
-  readonly k?: readonly [number, string];
+interface Buffer {
+  readonly source: Source;
+  token?: string;
+  queue: Entry[];
+  next: string | null;
 }
 
-interface MergeToken {
-  readonly v: 1;
-  readonly c: Readonly<Record<string, Cursor>>;
-  readonly n: Readonly<Record<string, number>>;
+interface Context {
+  readonly query: Query;
+  readonly groups: boolean;
+  readonly projection: boolean;
+  readonly position: (entry: Entry) => SessionPosition;
+  readonly compare: (a: SessionPosition, b: SessionPosition) => number;
 }
 
-const TOKEN_VERSION = 1;
+const positionSchema = z.object({ key: z.number().finite(), id: z.string() });
+const mergeTokenSchema = z.object({
+  v: z.literal(2),
+  q: z.string().length(16),
+  h: z.array(z.string()),
+  a: positionSchema,
+  c: z.record(z.string(), z.object({ t: z.string().optional(), k: positionSchema.optional() }).strict()),
+}).strict();
+
+type MergeToken = z.infer<typeof mergeTokenSchema>;
 
 class TokenMismatchError extends Error {}
 
-function encodeToken(token: Omit<MergeToken, 'v'>): string {
-  return Buffer.from(JSON.stringify({ v: TOKEN_VERSION, ...token })).toString('base64url');
+function fingerprint(query: Query): string {
+  const normalized = Object.fromEntries(
+    Object.entries({ ...query, page: undefined, page_token: undefined })
+      .filter(([, value]) => value !== undefined),
+  );
+  return createHash('sha256').update(JSON.stringify(normalized, Object.keys(normalized).toSorted())).digest('base64url').slice(0, 16);
 }
 
-function decodeToken(raw: string): MergeToken {
+function decodeToken(raw: string, context: Context, hostIds: readonly string[]): MergeToken {
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
   } catch {
     throw new TokenMismatchError('page_token is corrupted; discard it and restart from the first page');
   }
-  const token = parsed as Partial<MergeToken>;
-  if (token.v !== TOKEN_VERSION || typeof token.c !== 'object' || token.c === null || typeof token.n !== 'object' || token.n === null) {
-    throw new TokenMismatchError('page_token was not issued for a listing across hosts; discard it and restart from the first page');
+  const result = mergeTokenSchema.safeParse(parsed);
+  if (!result.success || result.data.q !== fingerprint(context.query) || result.data.h.join('\0') !== hostIds.join('\0')) {
+    throw new TokenMismatchError('page_token does not match this query and host set; discard it and restart from the first page');
   }
-  return token as MergeToken;
+  return result.data;
 }
 
 function isGroups(page: Page): page is V2SessionGroupsPageData {
   return 'groups' in page;
 }
 
-function entriesOf(page: Page): Entry[] {
-  return (isGroups(page) ? page.groups : page.items) as Entry[];
-}
-
-function toHostQuery(query: V2SessionsListQuery): HostQuery {
-  const { hosts: _hosts, ...rest } = query;
-  return rest as HostQuery;
-}
-
-function stamp(entry: Entry, hostId: string | undefined, groups: boolean): Entry {
-  if (hostId === undefined) return entry;
-  if (!groups) return { ...entry, host_id: hostId };
-  const sessions = (entry['sessions'] as Entry[]).map((session) => ({ ...session, host_id: hostId }));
-  return { ...entry, sessions, host_id: hostId };
-}
-
-function positionOf(groups: boolean, sort: V2SessionsListQuery['sort']): (entry: Entry) => readonly [number, string] {
-  const field = sort === 'meta.created_at_desc' ? 'created_at' : 'updated_at';
-  return (entry) => {
-    const session = groups ? (entry['sessions'] as Entry[])[0]! : entry;
-    const meta = session['meta'] as Record<string, number>;
-    const id = groups ? (entry['workspace'] as { id: string }).id : (entry['id'] as string);
-    return [meta[field]!, id];
-  };
-}
-
-function comparePositions(sort: V2SessionsListQuery['sort']): (a: readonly [number, string], b: readonly [number, string]) => number {
-  const ascending = sort === 'meta.updated_at_asc';
-  return (a, b) => {
-    if (a[0] !== b[0]) return ascending ? a[0] - b[0] : b[0] - a[0];
-    const order = a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
-    return ascending ? order : -order;
-  };
-}
-
-function buildPage(groups: boolean, entries: Entry[], total: number, hasMore: boolean, token: string | null): Page {
-  const base = { total, has_more: hasMore, next_page_token: token };
-  return (groups ? { ...base, groups: entries } : { ...base, items: entries }) as Page;
-}
-
-async function collectSources(
-  query: V2SessionsListQuery,
+function collectSources(
+  query: Query,
   hosts: HostSources,
   local: (query: V2SessionsListQuery) => Promise<V2SessionsListOutcome>,
-): Promise<Source[]> {
+): Promise<{ sources: Source[]; hostIds: string[] }> {
   const filter = query['workspace.id'] === undefined ? undefined : new Set([query['workspace.id']].flat());
-  const remote = await Promise.all(
-    hosts.sources().map(async (host): Promise<Source | undefined> => {
-      const session = host.session;
-      if (session === undefined) return undefined;
-      let projectIds: string[];
-      try {
-        projectIds = (await hostProjects<{ id: string; kind: string }>(session)).map((project) => project.id);
-      } catch (error) {
-        if (error instanceof HostSourceError && error.code !== undefined) throw error;
-        return undefined;
-      }
-      const allowed = filter === undefined ? projectIds : projectIds.filter((id) => filter.has(id));
-      if (allowed.length === 0) return undefined;
-      return {
-        key: host.id,
-        hostId: host.id,
-        fetch: (next) => hostGet<Page>(session, '/api/v2/sessions', toHostQuery({ ...next, 'workspace.id': allowed })),
-      };
-    }),
-  );
-  const localSource: Source = {
-    key: '',
-    fetch: async (next) => {
-      const outcome = await local(next);
-      if (!outcome.ok) throw new HostSourceError(outcome.code, outcome.message);
-      return outcome.data;
-    },
+  const configured = hosts.sources();
+  return Promise.all(configured.map(async (host): Promise<Source | undefined> => {
+    const session = host.session;
+    if (session === undefined) return undefined;
+    let projectIds: string[];
+    try {
+      projectIds = (await hostProjects<{ id: string; kind: string }>(session)).map((project) => project.id);
+    } catch (error) {
+      if (error instanceof HostSourceError && error.code !== undefined) throw error;
+      return undefined;
+    }
+    const allowed = filter === undefined ? projectIds : projectIds.filter((id) => filter.has(id));
+    if (allowed.length === 0) return undefined;
+    return {
+      key: host.id,
+      hostId: host.id,
+      fetch: (next) => hostGet<Page>(session, '/api/v2/sessions', { ...next, 'workspace.id': allowed }),
+    };
+  })).then((remote) => ({
+    sources: [{
+      key: '',
+      fetch: (next) => local({ ...next, fields: undefined }).then((outcome) => outcome.ok ? outcome.data : Promise.reject(new HostSourceError(outcome.code, outcome.message))),
+    }, ...remote.filter((source): source is Source => source !== undefined)],
+    hostIds: ['', ...configured.map((host) => host.id)],
+  }));
+}
+
+function project(entry: Entry, groups: boolean, hostId: string | undefined): Entry {
+  const sessions = groups ? (entry['sessions'] as Entry[]) : [entry];
+  const ids = sessions.map((session) => ({
+    id: session['id'],
+    archived: session['meta'] === undefined
+      ? session['archived']
+      : (session['meta'] as Record<string, unknown>)['archived'],
+    ...(hostId === undefined ? {} : { host_id: hostId }),
+  }));
+  return groups ? { ...entry, sessions: ids } : ids[0]!;
+}
+
+function stamp(entry: Entry, context: Context, hostId: string | undefined): Entry {
+  if (context.projection) return project(entry, context.groups, hostId);
+  if (hostId === undefined) return entry;
+  if (!context.groups) return { ...entry, host_id: hostId };
+  return {
+    ...entry,
+    sessions: (entry['sessions'] as Entry[]).map((session) => ({ ...session, host_id: hostId })),
+    host_id: hostId,
   };
-  return [localSource, ...remote.filter((source): source is Source => source !== undefined)];
 }
 
-async function fetchOrDrop(source: Source, query: V2SessionsListQuery): Promise<Page | undefined> {
-  try {
-    return await source.fetch(query);
-  } catch (error) {
-    if (source.hostId === undefined || (error instanceof HostSourceError && error.code !== undefined)) throw error;
-    return undefined;
+async function load(source: Source, context: Context, token?: string, after?: SessionPosition): Promise<Buffer> {
+  const seen = new Set<string>();
+  for (;;) {
+    let page: Page;
+    try {
+      page = await source.fetch({ ...context.query, page: undefined, page_token: token });
+    } catch (error) {
+      if (source.hostId !== undefined && !(error instanceof HostSourceError && error.code !== undefined)) {
+        if (context.query.page_token === undefined) return { source, token, queue: [], next: null };
+        throw new HostSourceError(ErrorCode.HOST_UNAVAILABLE, `host "${source.hostId}" is unavailable`);
+      }
+      throw error;
+    }
+    const queue = (isGroups(page) ? page.groups : page.items).filter((entry) =>
+      after === undefined || context.compare(context.position(entry), after) > 0,
+    );
+    source.total = page.total;
+    if (queue.length > 0 || page.next_page_token === null) return { source, token, queue, next: page.next_page_token };
+    if (page.next_page_token === token || seen.has(page.next_page_token)) {
+      throw new Error(`session listing returned a repeated cursor for host "${source.hostId ?? 'local'}"`);
+    }
+    seen.add(page.next_page_token);
+    token = page.next_page_token;
   }
-}
-
-async function concatenate(
-  query: V2SessionsListQuery,
-  sources: Source[],
-  groups: boolean,
-): Promise<Page> {
-  const token = query.page_token === undefined ? undefined : decodeToken(query.page_token);
-  const active = token === undefined ? sources : sources.filter((source) => token.c[source.key] !== undefined);
-  const totals: Record<string, number> = { ...token?.n };
-  const cursors: Record<string, Cursor> = {};
-  const entries: Entry[] = [];
-  const pages = await Promise.all(
-    active.map(async (source) => ({
-      source,
-      page: await fetchOrDrop(source, { ...query, page_token: token?.c[source.key]?.t }),
-    })),
-  );
-  for (const { source, page } of pages) {
-    if (page === undefined) continue;
-    totals[source.key] = page.total;
-    entries.push(...entriesOf(page).map((entry) => stamp(entry, source.hostId, groups)));
-    if (page.next_page_token !== null) cursors[source.key] = { t: page.next_page_token };
-  }
-  const hasMore = Object.keys(cursors).length > 0;
-  const total = Object.values(totals).reduce((sum, value) => sum + value, 0);
-  return buildPage(groups, entries, total, hasMore, hasMore ? encodeToken({ c: cursors, n: totals }) : null);
-}
-
-async function topPage(
-  query: V2SessionsListQuery,
-  sources: Source[],
-  groups: boolean,
-): Promise<Page> {
-  const page = query.page!;
-  const pageSize = query.page_size ?? 50;
-  const position = positionOf(groups, query.sort);
-  const compare = comparePositions(query.sort);
-  const collected = await Promise.all(
-    sources.map(async (source) => {
-      const pages = await Promise.all(
-        Array.from({ length: page }, (_, index) => fetchOrDrop(source, { ...query, page: index + 1 })),
-      );
-      if (pages.some((candidate) => candidate === undefined)) return { total: 0, entries: [] as Entry[] };
-      const fetched = pages as Page[];
-      return {
-        total: fetched[0]!.total,
-        entries: fetched.flatMap((candidate) => entriesOf(candidate).map((entry) => stamp(entry, source.hostId, groups))),
-      };
-    }),
-  );
-  const total = collected.reduce((sum, source) => sum + source.total, 0);
-  const merged = collected
-    .flatMap((source) => source.entries)
-    .toSorted((a, b) => compare(position(a), position(b)))
-    .slice((page - 1) * pageSize, page * pageSize);
-  return buildPage(groups, merged, total, page * pageSize < total, null);
-}
-
-interface SourceBuffer {
-  readonly source: Source;
-  readonly cursor: Cursor;
-  readonly queue: Entry[];
-  readonly hasMore: boolean;
-  readonly next: string | null;
-  consumed?: readonly [number, string];
 }
 
 async function mergePage(
-  query: V2SessionsListQuery,
+  context: Context,
   sources: Source[],
-  groups: boolean,
+  hostIds: readonly string[],
 ): Promise<Page> {
-  const token = query.page_token === undefined ? undefined : decodeToken(query.page_token);
-  const pageSize = query.page_size ?? 50;
-  const position = positionOf(groups, query.sort);
-  const compare = comparePositions(query.sort);
-  const totals: Record<string, number> = { ...token?.n };
+  const token = context.query.page_token ? decodeToken(context.query.page_token, context, hostIds) : undefined;
   const active = token === undefined ? sources : sources.filter((source) => token.c[source.key] !== undefined);
-
-  const load = async (source: Source, start: Cursor): Promise<SourceBuffer | undefined> => {
-    let cursor = start;
-    for (;;) {
-      const page = await fetchOrDrop(source, { ...query, page_token: cursor.t });
-      if (page === undefined) return undefined;
-      totals[source.key] = page.total;
-      const after = cursor.k;
-      const queue = entriesOf(page).filter((entry) => after === undefined || compare(position(entry), after) > 0);
-      if (queue.length > 0 || !page.has_more || page.next_page_token === null) {
-        return { source, cursor, queue, hasMore: page.has_more && page.next_page_token !== null, next: page.next_page_token };
-      }
-      cursor = { t: page.next_page_token };
-    }
-  };
-
-  let buffers = (await Promise.all(active.map((source) => load(source, token?.c[source.key] ?? {})))).filter(
-    (buffer): buffer is SourceBuffer => buffer !== undefined,
-  );
+  const buffers = await Promise.all(active.map((source) => load(source, context, token?.c[source.key]?.t, token?.a ?? token?.c[source.key]?.k)));
   const entries: Entry[] = [];
-  while (entries.length < pageSize) {
-    const drained = buffers.filter((buffer) => buffer.queue.length === 0 && buffer.hasMore);
-    if (drained.length > 0) {
-      const refilled = await Promise.all(drained.map((buffer) => load(buffer.source, { t: buffer.next ?? undefined })));
-      buffers = buffers.flatMap((buffer) => {
-        const index = drained.indexOf(buffer);
-        if (index === -1) return [buffer];
-        const next = refilled[index];
-        return next === undefined ? [] : [next];
-      });
-    }
-    let best: SourceBuffer | undefined;
+  const emitted = new Map<string, SessionPosition>();
+  let after: SessionPosition | undefined;
+  while (entries.length < (context.query.page_size ?? 50)) {
+    await Promise.all(buffers.filter((buffer) => buffer.queue.length === 0 && buffer.next !== null)
+      .map(async (buffer) => {
+        const next = await load(buffer.source, context, buffer.next ?? undefined, token?.a ?? emitted.get(buffer.source.key));
+        buffer.queue = next.queue;
+        buffer.next = next.next;
+      }));
+    let best: Buffer | undefined;
     for (const buffer of buffers) {
-      const head = buffer.queue[0];
-      if (head === undefined) continue;
-      if (best === undefined || compare(position(head), position(best.queue[0]!)) < 0) best = buffer;
+      if (buffer.queue.length === 0) continue;
+      if (best === undefined || context.compare(context.position(buffer.queue[0]!), context.position(best.queue[0]!)) < 0) best = buffer;
     }
     if (best === undefined) break;
     const entry = best.queue.shift()!;
-    best.consumed = position(entry);
-    entries.push(stamp(entry, best.source.hostId, groups));
+    after = context.position(entry);
+    emitted.set(best.source.key, after);
+    entries.push(stamp(entry, context, best.source.hostId));
   }
-
-  const cursors: Record<string, Cursor> = {};
-  for (const buffer of buffers) {
-    if (buffer.queue.length > 0 || buffer.consumed !== undefined) {
-      cursors[buffer.source.key] = {
-        t: buffer.cursor.t,
-        k: buffer.consumed ?? buffer.cursor.k,
-      };
-    } else if (buffer.hasMore) {
-      cursors[buffer.source.key] = { t: buffer.next ?? undefined };
-    }
-  }
-  const hasMore = Object.keys(cursors).length > 0;
-  const total = Object.values(totals).reduce((sum, value) => sum + value, 0);
-  return buildPage(groups, entries, total, hasMore, hasMore ? encodeToken({ c: cursors, n: totals }) : null);
+  const cursors = Object.fromEntries(buffers.flatMap((buffer) =>
+    buffer.queue.length > 0 || buffer.next !== null
+      ? [[buffer.source.key, { t: buffer.token, k: emitted.get(buffer.source.key) }]]
+      : emitted.has(buffer.source.key)
+        ? [[buffer.source.key, { k: emitted.get(buffer.source.key) }]]
+        : [],
+  ));
+  const hasMore = buffers.some((buffer) => buffer.queue.length > 0 || buffer.next !== null);
+  const total = sources.reduce((sum, source) => sum + (source.total ?? 0), 0);
+  for (const buffer of buffers) buffer.queue = [];
+  const nextToken = hasMore ? Buffer.from(JSON.stringify({ v: 2, q: fingerprint(context.query), h: [...hostIds], a: after as SessionPosition, c: cursors } satisfies MergeToken)).toString('base64url') : null;
+  const base = { total, has_more: hasMore, next_page_token: nextToken };
+  return (context.groups ? { ...base, groups: entries } : { ...base, items: entries }) as Page;
 }
 
 export async function listSessionsAcrossHosts(
@@ -286,17 +218,34 @@ export async function listSessionsAcrossHosts(
   hosts: HostSources,
   local: (query: V2SessionsListQuery) => Promise<V2SessionsListOutcome>,
 ): Promise<V2SessionsListOutcome> {
-  const { hosts: _hosts, ...rest } = query;
-  const base: V2SessionsListQuery = rest;
+  const { hosts: _hosts, ...base } = query;
   const groups = base.view === 'by_workspace';
-  const projection = (base.fields ?? '').trim().length > 0;
+  const sort = base.sort ?? 'meta.updated_at_desc';
+  const context: Context = {
+    query: base,
+    groups,
+    projection: (base.fields ?? '').trim().length > 0,
+    position: (entry) => sessionPositionOf(groups, sort, entry),
+    compare: groups
+      ? (a, b) => compareSessionGroups(sort, a, b)
+      : (a, b) => compareSessionPositions(sort, a, b),
+  };
   try {
-    const sources = await collectSources(base, hosts, local);
-    const data = projection
-      ? await concatenate(base, sources, groups)
-      : base.page !== undefined
-        ? await topPage(base, sources, groups)
-        : await mergePage(base, sources, groups);
+    const { sources, hostIds } = await collectSources(base, hosts, local);
+    let data: Page;
+    if (context.query.page === undefined || context.query.page === 1) {
+      data = await mergePage(context, sources, hostIds);
+    } else {
+      const page = context.query.page;
+      let token: string | undefined;
+      for (let index = 1; index < page; index++) {
+        const previous = await mergePage({ ...context, query: { ...context.query, page_token: token } }, sources, hostIds);
+        token = previous.next_page_token ?? undefined;
+        if (token === undefined) return { ok: true, data: { ...previous, has_more: false, next_page_token: null } };
+      }
+      data = await mergePage({ ...context, query: { ...context.query, page_token: token } }, sources, hostIds);
+      data.next_page_token = null;
+    }
     return { ok: true, data };
   } catch (error) {
     if (error instanceof TokenMismatchError) return { ok: false, code: ErrorCode.PAGE_TOKEN_MISMATCH, message: error.message };
