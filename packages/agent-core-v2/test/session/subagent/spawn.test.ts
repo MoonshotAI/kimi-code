@@ -617,6 +617,39 @@ describe('SessionSubagentService planSpawn and spawn', () => {
     });
   });
 
+  it('allows feature:artex profiles when allowFeatureProfiles is true and sets auto permission mode on spawn', async () => {
+    profiles = [
+      ...profiles,
+      normalizeAgentProfile({
+        name: 'artex-worker',
+        description: 'ARTEX worker',
+        systemPrompt: () => 'worker',
+      }),
+    ];
+    callerData = { ...callerData, subagents: ['coder', 'explore'] };
+    const svc = service();
+
+    await expect(
+      planSpawnError(svc, { callerAgentId: CALLER_ID, profileName: 'artex-worker' }),
+    ).resolves.toMatchObject({ code: ErrorCodes.AGENT_TYPE_NOT_ALLOWED });
+
+    const plan = await svc.planSpawn({
+      callerAgentId: CALLER_ID,
+      profileName: 'artex-worker',
+      allowFeatureProfiles: true,
+    });
+    expect(plan.profileName).toBe('artex-worker');
+
+    callerPermissionMode.mode = 'manual';
+    await svc.spawn({
+      callerAgentId: CALLER_ID,
+      plan,
+      labels: { parentAgentId: 'main' },
+      prompt: 'probe',
+    });
+    expect(createdPermissionMode.setMode).toHaveBeenCalledWith('auto');
+  });
+
   it('releases the environment lease after spawn', async () => {
     const svc = service();
 

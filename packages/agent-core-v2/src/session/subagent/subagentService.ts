@@ -27,6 +27,7 @@ import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { createHooks } from '#/hooks';
+import { isArtexAgentProfile } from '#/features/artex/safety/agentPredicate';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
@@ -84,7 +85,11 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         details: { agentId: agent.agentId },
       });
     }
-    return runAgentTurn(handle, request, { signal: opts.signal, onReady: opts.onReady });
+    return runAgentTurn(handle, request, {
+      signal: opts.signal,
+      onReady: opts.onReady,
+      allowEmptyFinalMessage: opts.allowEmptyFinalMessage,
+    });
   }
 
   async planSpawn(input: SubagentSpawnPlanInput): Promise<SubagentSpawnPlan> {
@@ -97,11 +102,15 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       : undefined;
     const requestedProfileName =
       requested ?? (fork ? (own.profileName ?? DEFAULT_PROFILE_NAME) : DEFAULT_PROFILE_NAME);
+    const allowFeature =
+      input.allowFeatureProfiles === true ||
+      (isArtexAgentProfile(own.profileName) &&
+        this.catalog.inspect(requestedProfileName)?.sourceId === 'feature:artex');
     let allowlist = subagentAllowlistFor(this.catalog, own);
     if (allowlist !== undefined && own.subagents === undefined) {
       allowlist = withoutDelegatingTargets(this.catalog, allowlist);
     }
-    if (!fork && allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
+    if (!fork && !allowFeature && allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
       throw new Error2(
         ErrorCodes.AGENT_TYPE_NOT_ALLOWED,
         subagentTypeNotAllowedMessage(requestedProfileName, allowlist),
@@ -181,7 +190,11 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       }
       created.accessor
         .get(IAgentPermissionModeService)
-        .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
+        .setMode(
+          isArtexAgentProfile(plan.profileName)
+            ? 'auto'
+            : caller.accessor.get(IAgentPermissionModeService).mode,
+        );
       const createdUserTools = created.accessor.get(IAgentUserToolService);
       const callerUserTools = caller.accessor.get(IAgentUserToolService);
       if (plan.fork) {

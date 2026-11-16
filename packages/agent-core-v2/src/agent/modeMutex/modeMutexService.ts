@@ -1,9 +1,12 @@
+import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { LifecycleScope } from '#/app/scopes';
+import { IArtexModeService } from '#/features/artex/agent/artexMode';
+import { ArtexModeEnter } from '#/features/artex/agent/artexOps';
 import { GoalUpdated } from '#/features/goal/goalOps';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -27,30 +30,45 @@ export class AgentModeMutexService extends Disposable implements IAgentModeMutex
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IEventBus eventBus: IEventBus,
+    @ref(IArtexModeService) private readonly artex: LiveRef<IArtexModeService>,
   ) {
     super();
     this._register(
       eventBus.subscribe(PlanModeEnter, () => {
         if (this.tower.isActive) void this.tower.exit('mode-mutex');
+        if (this.artex.current?.isActive) this.artex.current.exit('mode-mutex');
       }),
     );
     this._register(
       eventBus.subscribe(SwarmModeEnter, () => {
         if (this.tower.isActive) void this.tower.exit('mode-mutex');
+        if (this.artex.current?.isActive) this.artex.current.exit('mode-mutex');
       }),
     );
     this._register(
       eventBus.subscribe(TowerModeEnter, () => {
         if (this.agentState.get(planKey).active) this.plan.exit();
         if (this.swarm.isActive) this.swarm.exit();
+        if (this.artex.current?.isActive) this.artex.current.exit('mode-mutex');
         if (this.goal?.getGoal().goal?.status === 'active') {
           void this.goal.pauseGoal({ reason: 'Paused after tower mode entered' }, 'system');
         }
       }),
     );
     this._register(
+      eventBus.subscribe(ArtexModeEnter, () => {
+        if (this.agentState.get(planKey).active) this.plan.exit();
+        if (this.swarm.isActive) this.swarm.exit();
+        if (this.tower.isActive) void this.tower.exit('mode-mutex');
+        if (this.goal?.getGoal().goal?.status === 'active') {
+          void this.goal.pauseGoal({ reason: 'Paused after artex mode entered' }, 'system');
+        }
+      }),
+    );
+    this._register(
       eventBus.subscribe(GoalUpdated, (event) => {
         if (event.snapshot?.status !== 'active') return;
+        if (this.artex.current?.isActive) this.artex.current.exit('mode-mutex');
         if (!this.tower.isActive) return;
         void this.dispatcher.dispatch(
           new AgentStatusUpdated({

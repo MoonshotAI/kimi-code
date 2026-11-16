@@ -8,6 +8,7 @@ import { normalizeHost, normalizeTarget, targetName, validHostname, type ArtexTa
  * intercept.noTargetTools, adapted to the kimi-code tool set.
  */
 export const ARTEX_NO_TARGET_TOOLS: ReadonlySet<string> = new Set([
+  'WebSearch',
   'web_search',
   'Read',
   'Write',
@@ -21,6 +22,7 @@ export const ARTEX_NO_TARGET_TOOLS: ReadonlySet<string> = new Set([
   'TaskOutput',
   'TaskStop',
   'TaskList',
+  'start_artex_exploration',
   'graph_overview',
   'list_findings',
   'list_facts',
@@ -29,6 +31,7 @@ export const ARTEX_NO_TARGET_TOOLS: ReadonlySet<string> = new Set([
   'get_worker_output',
   'get_worker_trace',
   'search_all_worker_traces',
+  'list_worker_traces',
   'add_hint',
   'add_intent',
   'steer_work',
@@ -49,6 +52,10 @@ export const ARTEX_NO_TARGET_TOOLS: ReadonlySet<string> = new Set([
   'save_task_credential',
   'list_task_credentials',
   'record_coverage',
+  'traffic_search',
+  'traffic_get',
+  'traffic_blob',
+  'bind_finding_traffic',
 ]);
 
 export interface ArtexDeclaredTargets {
@@ -65,6 +72,7 @@ export function extractDeclaredTargets(toolName: string, args: unknown): ArtexDe
   if (ARTEX_NO_TARGET_TOOLS.has(toolName)) return { targets: [], urls: [] };
   const list = new TargetList();
   switch (toolName) {
+    case 'FetchURL':
     case 'WebFetch': {
       const url = stringField(args, 'url');
       if (url !== undefined) {

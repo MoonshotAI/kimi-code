@@ -20,6 +20,8 @@ import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import { SwarmModeEnter } from '#/features/swarm/swarmOps';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { TowerModeEnter } from '#/features/tower/towerOps';
+import { IArtexModeService } from '#/features/artex/agent/artexMode';
+import { ArtexModeEnter } from '#/features/artex/agent/artexOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { registerTestAgentWire, testWireScope } from '../../wire/stubs';
@@ -30,10 +32,12 @@ describe('AgentModeMutexService', () => {
   let planExit: ReturnType<typeof vi.fn>;
   let swarmExit: ReturnType<typeof vi.fn>;
   let towerExit: ReturnType<typeof vi.fn>;
+  let artexExit: ReturnType<typeof vi.fn>;
   let goalPause: ReturnType<typeof vi.fn>;
   let dispatch: ReturnType<typeof vi.fn>;
   let swarmActive: boolean;
   let towerActive: boolean;
+  let artexActive: boolean;
   let goalStatus: string | undefined;
 
   beforeEach(() => {
@@ -47,10 +51,12 @@ describe('AgentModeMutexService', () => {
     planExit = vi.fn();
     swarmExit = vi.fn();
     towerExit = vi.fn();
+    artexExit = vi.fn();
     goalPause = vi.fn();
     dispatch = vi.fn();
     swarmActive = false;
     towerActive = false;
+    artexActive = false;
     goalStatus = undefined;
     ix.stub(IAgentPlanService, { exit: planExit } as unknown as IAgentPlanService);
     ix.stub(IAgentSwarmService, {
@@ -65,6 +71,12 @@ describe('AgentModeMutexService', () => {
         return towerActive;
       },
     } as unknown as IAgentTowerService);
+    ix.stub(IArtexModeService, {
+      exit: artexExit,
+      get isActive() {
+        return artexActive;
+      },
+    } as unknown as IArtexModeService);
     ix.stub(IAgentGoalService, {
       pauseGoal: goalPause,
       getGoal: () => ({ goal: goalStatus === undefined ? null : { status: goalStatus } }),
@@ -76,7 +88,9 @@ describe('AgentModeMutexService', () => {
   });
   afterEach(() => disposables.dispose());
 
-  function publish(event: PlanModeEnter | SwarmModeEnter | TowerModeEnter | GoalUpdated): void {
+  function publish(
+    event: PlanModeEnter | SwarmModeEnter | TowerModeEnter | ArtexModeEnter | GoalUpdated,
+  ): void {
     const agentContext = ix.get(IAgentScopeContext).agentContext;
     ix.get(IEventBus).publish(event, agentContext);
   }
@@ -173,5 +187,32 @@ describe('AgentModeMutexService', () => {
     );
     expect(towerExit).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('artex mode entry exits active plan, swarm, and tower modes and pauses active goal', () => {
+    ix.get(IAgentStateService).set(planKey, { active: true, id: 'plan_1' });
+    swarmActive = true;
+    towerActive = true;
+    goalStatus = 'active';
+    publish(new ArtexModeEnter({ agentId: 'test-agent', explorationId: 1 }));
+    expect(planExit).toHaveBeenCalledTimes(1);
+    expect(swarmExit).toHaveBeenCalledTimes(1);
+    expect(towerExit).toHaveBeenCalledWith('mode-mutex');
+    expect(goalPause).toHaveBeenCalledTimes(1);
+  });
+
+  it('entering plan, swarm, tower, or activating a goal exits active artex mode', () => {
+    artexActive = true;
+    publish(new PlanModeEnter({ agentId: 'test-agent', id: 'plan_1' }));
+    publish(new SwarmModeEnter({ agentId: 'test-agent', trigger: 'manual' }));
+    publish(new TowerModeEnter({ agentId: 'test-agent' }));
+    publish(
+      new GoalUpdated({
+        agentId: 'test-agent',
+        snapshot: { status: 'active' } as GoalSnapshot,
+      }),
+    );
+    expect(artexExit).toHaveBeenCalledTimes(4);
+    expect(artexExit).toHaveBeenCalledWith('mode-mutex');
   });
 });

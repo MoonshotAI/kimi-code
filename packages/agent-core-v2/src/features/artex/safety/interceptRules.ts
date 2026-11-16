@@ -8,6 +8,8 @@ import { argvRuleMatches, checkArgvAllow, parseArgvPattern, type ArtexBashParse 
  */
 export const ARTEX_RULE_ENABLED_TOOLS: ReadonlySet<string> = new Set([
   'Bash',
+  'FetchURL',
+  'WebSearch',
   'WebFetch',
   'web_search',
   'Write',

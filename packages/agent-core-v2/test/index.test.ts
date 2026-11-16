@@ -80,6 +80,9 @@ const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'artex_mode.enter',
+  'artex_mode.exit',
+  'artex.exploration.updated',
   'tower_mode.enter',
   'tower_mode.exit',
   'task.started',

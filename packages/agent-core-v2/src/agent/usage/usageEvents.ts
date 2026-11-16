@@ -12,6 +12,7 @@ export interface AgentStatusUpdatedPayload {
   swarmMode?: boolean;
   towerMode?: boolean;
   towerExitReason?: TowerExitReason;
+  artexMode?: boolean;
   planMode?: boolean;
   model?: string;
   thinkingEffort?: string;
@@ -90,6 +91,7 @@ export interface AgentStatusUpdatedEvent {
   readonly swarmMode?: boolean;
   readonly towerMode?: boolean;
   readonly towerExitReason?: TowerExitReason;
+  readonly artexMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;

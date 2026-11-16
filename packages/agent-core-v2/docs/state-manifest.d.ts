@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 62 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 63 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -53,6 +53,7 @@
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     artex                                           src/features/artex/agent/artexOps.ts
 //     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextProjector.lastRepairSignature            src/agent/loop/requestObservation.ts
 //     environmentBinding                              src/agent/environmentBinding/environmentBindingOps.ts
@@ -1207,6 +1208,12 @@ export interface AgentStateSnapshot {
     readonly parameters: Record<string, unknown>;
     readonly disclosure?: 'inline' | 'deferred';
   }>;
+  // src/features/artex/agent/artexOps.ts
+  // replayable · durable · undoable — folds: ArtexModeEnter, ArtexModeExit, ArtexExplorationUpdated
+  'artex': /* ArtexModeState — packages/agent-core-v2/src/features/artex/agent/artexOps.ts */ {
+    readonly active: boolean;
+    readonly explorationId?: number;
+  };
   // src/features/externalHooks/agent/agentExternalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;
   // src/features/fileHistory/fileHistoryOps.ts

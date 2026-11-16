@@ -15,6 +15,7 @@ import {
 } from '#/agent/loop/loop';
 import { AssistantDelta, TurnStepRetrying, TurnStepStarted } from '#/agent/loop/turnEvents';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { isArtexAgentProfile } from '#/features/artex/safety/agentPredicate';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
 import type { AgentRunCompletion, AgentRunHandle, AgentRunRequest } from './subagent';
@@ -35,6 +36,7 @@ type CompletedTurnResult = Extract<TurnResult, { readonly type: 'completed' }>;
 export interface RunAgentTurnOptions {
   readonly signal: AbortSignal;
   readonly onReady?: () => void;
+  readonly allowEmptyFinalMessage?: boolean;
 }
 
 export async function runAgentTurn(
@@ -93,7 +95,12 @@ async function awaitRetry(
     const classified = classifyTurnResult(result);
     const summary = latestAssistantText(loop.history());
     const stopReason = classified.stopReason;
-    if (summary.trim().length === 0) {
+    const profileName = typeof loop.data === 'function' ? loop.data().profileName : undefined;
+    if (
+      summary.trim().length === 0 &&
+      options.allowEmptyFinalMessage !== true &&
+      !isArtexAgentProfile(profileName)
+    ) {
       throw new Error2(
         ErrorCodes.AGENT_NO_FINAL_MESSAGE,
         noFinalMessageError(stopReason),
@@ -121,9 +128,15 @@ async function awaitRun(
   };
   try {
     const result = classifyTurnResult(await awaitTurn(turn, controller, cancelTurn));
-    const summary = latestAssistantText(target.accessor.get(IAgentLoopService).history());
+    const loop = target.accessor.get(IAgentLoopService);
+    const summary = latestAssistantText(loop.history());
     const stopReason = result.stopReason;
-    if (summary.trim().length === 0) {
+    const profileName = typeof loop.data === 'function' ? loop.data().profileName : undefined;
+    if (
+      summary.trim().length === 0 &&
+      options.allowEmptyFinalMessage !== true &&
+      !isArtexAgentProfile(profileName)
+    ) {
       throw new Error2(
         ErrorCodes.AGENT_NO_FINAL_MESSAGE,
         noFinalMessageError(stopReason),

@@ -1,4 +1,5 @@
 import { createDecorator } from "#/_base/di/instantiation";
+import { isArtexAgentProfile } from '#/features/artex/safety/agentPredicate';
 
 export const TOWER_TOOL_NAMES = [
   'TowerPlan',
@@ -17,7 +18,7 @@ export const TOWER_TOOL_NAMES = [
 export const TOWER_WORKER_PROFILE = 'tower-worker';
 
 export function hasPinnedPermissionMode(profileName: string | undefined): boolean {
-  return profileName === TOWER_WORKER_PROFILE;
+  return profileName === TOWER_WORKER_PROFILE || isArtexAgentProfile(profileName);
 }
 
 export const TOWER_FLAG_ID = 'tower';

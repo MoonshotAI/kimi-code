@@ -18,6 +18,7 @@ import { taskKey } from '#/agent/task/taskOps';
 import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { userToolKey } from '#/agent/userTool/userToolOps';
 import { fileHistoryKey } from '#/features/fileHistory/fileHistoryOps';
+import { artexKey } from '#/features/artex/agent/artexOps';
 import { planKey } from '#/features/plan/planOps';
 import { swarmKey, swarmReminderDeliveredKey } from '#/features/swarm/swarmOps';
 import { towerKey, towerOwnerKey } from '#/features/tower/towerOps';
@@ -40,6 +41,7 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   toolSelectKey,
   userToolKey,
   fileHistoryKey,
+  artexKey,
   planKey,
   swarmKey, swarmReminderDeliveredKey,
   towerKey,

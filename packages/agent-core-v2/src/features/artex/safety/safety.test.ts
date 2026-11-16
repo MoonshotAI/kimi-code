@@ -18,6 +18,13 @@ import { evaluateArtexGate } from './guard';
 import { matchInterceptRules } from './interceptRules';
 import { checkArtexTargets } from './targetGate';
 import type { ArtexResolveResult, IArtexTargetResolver } from './targetResolver';
+import { ArtexTargetGatePermissionPolicyService } from './artexTargetGatePolicy';
+import { stubFlag } from '../../../../test/app/flag/stubs';
+import type { IArtexModeService } from '#/features/artex/agent/artexMode';
+import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
+import { ArtexWorkStoreProvider } from '#/features/artex/store/artexWorkStoreProvider';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 
 const parser = new BashParserService();
 const parse: ArtexBashParse = (source) => parser.parse(source, { timeoutMs: 500, maxNodes: 10_000 });
@@ -230,5 +237,111 @@ describe('argv intercept rules', () => {
     ];
     expect(matchInterceptRules(rules, 'Bash', '', 'git push origin main', parse)?.action).toBe('deny');
     expect(matchInterceptRules(rules, 'Bash', '', 'git status', parse)).toBeUndefined();
+  });
+
+  it('extracts FetchURL targets and applies intercept rules to FetchURL and WebSearch', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'artex-fetchurl-'));
+    try {
+      const workStore = new FileArtexWorkStore(dir);
+      await workStore.ensureSeeded();
+      const resolver = fakeResolver({ 'target.example.com': ['203.0.113.5'] });
+
+      const decision = await evaluateArtexGate({
+        store: workStore,
+        resolver,
+        taskId: 1,
+        toolName: 'FetchURL',
+        args: { url: 'https://target.example.com/admin' },
+        parse,
+      });
+      expect(decision.kind).toBe('ask-target');
+
+      const searchDecision = await evaluateArtexGate({
+        store: workStore,
+        resolver,
+        taskId: 1,
+        toolName: 'WebSearch',
+        args: { query: 'target.example.com' },
+        parse,
+      });
+      expect(searchDecision.kind).toBe('pass');
+
+      const rules = [
+        interceptRule({
+          matchType: 'regex',
+          pattern: 'secret\\.example\\.com',
+          action: 'deny',
+          name: 'block secret',
+        }),
+      ];
+      expect(
+        matchInterceptRules(rules, 'FetchURL', 'https://secret.example.com/a', undefined, parse)?.action,
+      ).toBe('deny');
+      expect(
+        matchInterceptRules(rules, 'WebSearch', 'site:secret.example.com', undefined, parse)?.action,
+      ).toBe('deny');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('approves internal ARTEX domain tools while strictly gating FetchURL via ArtexTargetGatePermissionPolicyService', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'artex-policy-'));
+    try {
+      const provider = new ArtexWorkStoreProvider();
+      const resolver = fakeResolver({ 'target.example.com': ['203.0.113.5'] });
+      const mode: IArtexModeService = {
+        _serviceBrand: undefined,
+        isActive: true,
+        enter: () => {},
+        exit: () => {},
+      };
+      const profile = {
+        data: () => ({ profileName: 'artex-worker' }),
+      } as unknown as IAgentProfileService;
+      const session: IArtexSessionContext = {
+        _serviceBrand: undefined,
+        workspaceRoot: dir,
+        getActiveExplorationId: () => 1,
+        setActiveExplorationId: () => {},
+      };
+      const policy = new ArtexTargetGatePermissionPolicyService(
+        stubFlag(true),
+        mode,
+        profile,
+        session,
+        provider,
+        resolver,
+        parser,
+      );
+
+      const hookCtx = (toolName: string, args: Record<string, unknown>) =>
+        ({
+          turnId: 0,
+          signal: new AbortController().signal,
+          toolCall: { type: 'function', id: 'c1', name: toolName, arguments: JSON.stringify(args) },
+          toolCalls: [],
+          args,
+          execution: {
+            description: toolName,
+            display: { kind: 'generic', summary: toolName, detail: args },
+            accesses: [],
+            approvalRule: toolName,
+            execute: async () => ({ output: '' }),
+          },
+        }) as unknown as ResolvedToolExecutionHookContext;
+
+      await expect(policy.evaluate(hookCtx('graph_overview', {}))).resolves.toEqual({
+        kind: 'approve',
+      });
+      await expect(policy.evaluate(hookCtx('record_fact', { summary: 'x' }))).resolves.toEqual({
+        kind: 'approve',
+      });
+      await expect(
+        policy.evaluate(hookCtx('FetchURL', { url: 'http://target.example.com' })),
+      ).resolves.toMatchObject({ kind: 'ask' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

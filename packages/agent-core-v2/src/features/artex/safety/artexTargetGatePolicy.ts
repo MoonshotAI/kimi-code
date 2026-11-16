@@ -6,6 +6,7 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 
 import { ARTEX_FLAG_ID } from '#/features/artex/artex';
 import { IArtexModeService } from '#/features/artex/agent/artexMode';
+import { ARTEX_ALL_TOOL_NAMES } from '#/features/artex/profiles/artexProfiles';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 import {
   IArtexWorkStoreProvider,
@@ -20,6 +21,7 @@ import type { ArtexTargetRequest } from './targetGate';
 import { IArtexTargetResolver } from './targetResolver';
 
 const PARSE_OPTIONS = { timeoutMs: 500, maxNodes: 10_000 } as const;
+const ARTEX_INTERNAL_APPROVE_TOOLS: ReadonlySet<string> = new Set(ARTEX_ALL_TOOL_NAMES);
 
 /**
  * The named ARTEX permission policy. Active only when the ARTEX flag is on and the
@@ -48,11 +50,13 @@ export class ArtexTargetGatePermissionPolicyService implements PermissionPolicy 
     if (!this.flags.enabled(ARTEX_FLAG_ID)) return undefined;
     const artexAgent = isArtexAgentProfile(this.profile.data().profileName) || this.mode.isActive;
     if (!artexAgent) return undefined;
+    const toolName = context.toolCall.name;
     const taskId = this.session.getActiveExplorationId();
-    if (taskId === undefined) return undefined;
+    if (taskId === undefined) {
+      return ARTEX_INTERNAL_APPROVE_TOOLS.has(toolName) ? { kind: 'approve' } : undefined;
+    }
 
     const store = this.provider.open(this.session.workspaceRoot);
-    const toolName = context.toolCall.name;
     const decision = await evaluateArtexGate({
       store,
       resolver: this.resolver,
@@ -65,7 +69,7 @@ export class ArtexTargetGatePermissionPolicyService implements PermissionPolicy 
 
     switch (decision.kind) {
       case 'pass':
-        return undefined;
+        return ARTEX_INTERNAL_APPROVE_TOOLS.has(toolName) ? { kind: 'approve' } : undefined;
       case 'deny':
         return { kind: 'deny', message: decision.message, reason: { artex_target_gate: 'block' } };
       case 'ask-rule':

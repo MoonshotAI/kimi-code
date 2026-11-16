@@ -1,7 +1,7 @@
 import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/flagRegistry';
 
 import { ARTEX_FLAG_ENV, ARTEX_FLAG_ID } from './artex';
-import { isArtexFeatureAssembled } from './artexFeature';
+import { isArtexFeatureAssembled } from './artex';
 
 export const artexFlag: FlagDefinitionInput = {
   id: ARTEX_FLAG_ID,

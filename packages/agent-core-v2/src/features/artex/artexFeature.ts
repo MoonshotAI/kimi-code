@@ -4,16 +4,15 @@ import { LifecycleScope } from '#/app/scopes';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 
-import { ARTEX_FLAG_ID } from './artex';
+import { ARTEX_FLAG_ID, markArtexFeatureAssembled } from './artex';
 import { ArtexGraphStoreProvider, IArtexGraphStoreProvider } from './store/artexGraphStoreProvider';
 import { ArtexWorkStoreProvider, IArtexWorkStoreProvider } from './store/artexWorkStoreProvider';
 import { ArtexTrafficStoreProvider, IArtexTrafficStoreProvider } from './store/artexTrafficStoreProvider';
 import { ArtexTrafficRecorder, IArtexTrafficRecorder } from './traffic/artexTrafficRecorder';
 import { ArtexProxyEnvContributor, IArtexProxyEnvContributor } from './traffic/artexProxyEnvContributor';
-import { ARTEX_CONFIG_DEFAULTS, ARTEX_SECTION, ArtexConfigSchema, artexEnvBindings, stripArtexEnv } from './config/configSection';
+import './config/configSection';
 import { ArtexOrchestrator, IArtexOrchestrator } from './engine/artexOrchestrator';
-import { ArtexModeService } from './agent/artexModeService';
-import { IArtexModeService } from './agent/artexMode';
+import './agent/artexModeService';
 import { ARTEX_PROFILES } from './profiles/artexProfiles';
 import { ArtexSessionContext, IArtexSessionContext } from './session/artexSessionContext';
 import { ArtexEgressPacer, IArtexEgressPacer } from './safety/egressPacer';
@@ -27,15 +26,7 @@ export class ArtexFeature extends Feature {
   constructor(@IFlagService flags: IFlagService) {
     super();
     if (!flags.enabled(ARTEX_FLAG_ID)) return;
-    assembledFlagServices.add(flags);
-    this.onDispose(() => {
-      assembledFlagServices.delete(flags);
-    });
-    this.contributeConfig(ARTEX_SECTION, ArtexConfigSchema, {
-      defaultValue: ARTEX_CONFIG_DEFAULTS,
-      env: artexEnvBindings,
-      stripEnv: stripArtexEnv,
-    });
+    this.onDispose(markArtexFeatureAssembled(flags));
     this.contributeService(LifecycleScope.App, IArtexGraphStoreProvider, ArtexGraphStoreProvider, {
       activation: ScopeActivation.OnDemand,
     });
@@ -49,7 +40,7 @@ export class ArtexFeature extends Feature {
       activation: ScopeActivation.OnDemand,
     });
     this.contributeService(LifecycleScope.Session, IArtexSessionContext, ArtexSessionContext, {
-      activation: ScopeActivation.OnDemand,
+      activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeService(LifecycleScope.Session, IArtexOrchestrator, ArtexOrchestrator, {
       activation: ScopeActivation.OnDemand,
@@ -59,9 +50,6 @@ export class ArtexFeature extends Feature {
     });
     this.contributeService(LifecycleScope.Session, IArtexTrafficRecorder, ArtexTrafficRecorder, {
       activation: ScopeActivation.OnDemand,
-    });
-    this.contributeAgentService(IArtexModeService, ArtexModeService, {
-      activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeAgentService(IArtexToolHooksService, ArtexToolHooksService, {
       activation: ScopeActivation.OnScopeCreated,
@@ -74,17 +62,6 @@ export class ArtexFeature extends Feature {
       this.contributeTool(tool.id, tool.ctor, { name: tool.name, domain: ARTEX_TOOL_DOMAIN });
     }
   }
-}
-
-const assembledFlagServices = new WeakSet<IFlagService>();
-let assembledOverrideForTests: boolean | undefined;
-
-export function isArtexFeatureAssembled(flags: IFlagService): boolean {
-  return assembledOverrideForTests ?? assembledFlagServices.has(flags);
-}
-
-export function _setArtexFeatureAssembledForTests(value: boolean | undefined): void {
-  assembledOverrideForTests = value;
 }
 
 registerFeature(ArtexFeature);

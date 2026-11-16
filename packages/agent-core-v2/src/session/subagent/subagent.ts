@@ -19,6 +19,7 @@ export type AgentRunRequest =
 export interface RunAgentOptions {
   readonly signal: AbortSignal;
   readonly onReady?: () => void;
+  readonly allowEmptyFinalMessage?: boolean;
 }
 
 export interface AgentRunCompletion {

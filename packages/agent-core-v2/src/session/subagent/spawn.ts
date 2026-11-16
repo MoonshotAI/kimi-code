@@ -45,6 +45,7 @@ export interface SubagentSpawnPlanInput {
   readonly profileName?: string;
   readonly model?: string;
   readonly fork?: boolean;
+  readonly allowFeatureProfiles?: boolean;
 }
 
 export interface SubagentSpawnPlan {
