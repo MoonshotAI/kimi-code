@@ -134,7 +134,6 @@ export interface AcpServerOptions {
    * not the klient facade) — `start.ts` builds it from the bootstrapped App
    * scope. Absent → `persistOriginalImage`'s shared temp-dir fallback.
    */
-  readonly repairSessionEnvironment?: (sessionId: string) => Promise<void>;
   readonly resolveOriginalsDir?: (sessionId: string) => string | undefined;
   /** Static or per-session host command palette. */
   readonly slashCommands?: SlashCommandsResolver;
@@ -146,7 +145,6 @@ export class AcpServer {
   private readonly disableAuth: boolean;
   private readonly terminalAuthEnv: Readonly<Record<string, string>> | undefined;
   private readonly terminalAuthLegacyCommand: string | undefined;
-  private readonly repairSessionEnvironment: ((sessionId: string) => Promise<void>) | undefined;
   private readonly resolveOriginalsDir: ((sessionId: string) => string | undefined) | undefined;
   private readonly resolveSlashCommands: (
     session: SessionHandle,
@@ -168,7 +166,6 @@ export class AcpServer {
     this.disableAuth = opts.disableAuth ?? false;
     this.terminalAuthEnv = opts.terminalAuthEnv;
     this.terminalAuthLegacyCommand = opts.terminalAuthLegacyCommand;
-    this.repairSessionEnvironment = opts.repairSessionEnvironment;
     this.resolveOriginalsDir = opts.resolveOriginalsDir;
     const slashCommands = opts.slashCommands;
     this.resolveSlashCommands =
@@ -558,7 +555,6 @@ export class AcpServer {
   private async wireSession(sessionId: string): Promise<AcpSession> {
     const session = this.klient.session(sessionId);
     await this.bindDefaultModel(session.agent('main'));
-    await this.repairSessionEnvironment?.(sessionId);
     const hostCommands = await this.resolveSlashCommands(session);
     const acpSession = new AcpSession(
       this.conn,

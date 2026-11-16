@@ -110,7 +110,7 @@ describe('acp-server session/close', () => {
     expect(JSON.stringify(result.output)).toContain('local_shell_ok');
   }, 30_000);
 
-  it('repairs a persisted ACP binding from the original workdir when loading', async () => {
+  it('repairs a persisted ACP binding and reactivates tools when loading', async () => {
     const c = await boot();
     const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as { sessionId: string };
     await c.server.klient.session(created.sessionId).close();
@@ -118,14 +118,19 @@ describe('acp-server session/close', () => {
     const files = await readdir(homeDir!, { recursive: true });
     const wirePath = files.find((path) => path.endsWith('wire.jsonl'))!;
     const records = (await readFile(join(homeDir!, wirePath), 'utf8')).trim().split('\n')
-      .map((line) => JSON.parse(line) as { type?: string });
+      .map((line) => JSON.parse(line) as { type?: string; environmentId?: string });
     const index = records.findIndex((record) => record.type === 'environment.set_binding');
     expect(index).toBeGreaterThanOrEqual(0);
-    records.splice(index, 1);
+    records[index]!.environmentId = `acp:${created.sessionId}`;
     await writeFile(join(homeDir!, wirePath), `${records.map((record) => JSON.stringify(record)).join('\n')}\n`);
 
     await c.send('session/load', { sessionId: created.sessionId, cwd: homeDir, mcpServers: [] });
     expect((await mainBinding(created.sessionId)).current.environmentId).toBe('local');
+    const session = getLiveSessionById(c.server.core.accessor, created.sessionId)!;
+    const main = await ensureMainAgent(session);
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(main.agentId)!;
+    const tool = agent.accessor.get(IAgentToolRegistryService).resolve('Bash');
+    expect(tool, 'Tool "Bash" not found after legacy repair').toBeDefined();
     await c.send('session/close', { sessionId: created.sessionId });
     expect(await c.server.klient.session(created.sessionId).restore()).toBe(true);
     expect((await mainBinding(created.sessionId)).current.environmentId).toBe('local');

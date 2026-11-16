@@ -20,14 +20,10 @@ import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
   drainSessionMetadataWrites,
-  ensureMainAgent,
   getLiveSessionById,
-  IAgentLifecycleService,
   ISessionContext,
-  IAgentEnvironmentBindingService,
   IAppendLogStore,
   ISessionIndexMirror,
-  ISessionWorkdir,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
@@ -149,18 +145,6 @@ export async function runAcpServerWithStream(
     terminalAuthEnv: opts.terminalAuthEnv,
     terminalAuthLegacyCommand: opts.terminalAuthLegacyCommand,
     slashCommands: opts.slashCommands,
-    repairSessionEnvironment: async (sessionId) => {
-      const handle = getLiveSessionById(core.accessor, sessionId);
-      if (handle === undefined) throw new Error(`session ${sessionId} is not live`);
-      const agentContext = await ensureMainAgent(handle);
-      const binding = handle.accessor
-        .get(IAgentLifecycleService)
-        .handleOf(agentContext.agentId)!
-        .accessor.get(IAgentEnvironmentBindingService);
-      if (!binding.current.environmentId.startsWith('acp:')) return;
-      const original = handle.accessor.get(ISessionWorkdir);
-      binding.bind(original.environmentId, original.cwd);
-    },
     // Prompt-image compression persists originals into the session's own
     // media-originals dir (same resolution as kap-server's prompt route):
     // live session scope → `ISessionContext.sessionDir`. A session that is

@@ -302,6 +302,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       stage = 'restore';
       handle.accessor.get(IAgentPermissionRulesService);
       await handle.accessor.get(IEventDispatcher).restore();
+      const binding = handle.accessor.get(IAgentEnvironmentBindingService);
+      if (binding.current.environmentId.startsWith('acp:')) {
+        binding.bind(this.workdir.environmentId, this.workdir.cwd);
+      }
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
       stage = 'bootstrap';
       const initialProfile = await this.bindBootstrap(handle, opts);
