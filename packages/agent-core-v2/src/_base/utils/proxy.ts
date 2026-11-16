@@ -45,7 +45,7 @@ function hasHttpProxy(env: Env): boolean {
   ].some((value) => httpSchemeValue(value) !== undefined);
 }
 
-function resolveHttpProxyUrls(env: Env): { httpProxy?: string; httpsProxy?: string } {
+export function resolveHttpProxyUrls(env: Env): { httpProxy?: string; httpsProxy?: string } {
   const allProxy = httpSchemeValue(firstNonBlank(env, ['all_proxy', 'ALL_PROXY']));
   return {
     httpProxy: httpSchemeValue(firstNonBlank(env, ['http_proxy', 'HTTP_PROXY'])) ?? allProxy,

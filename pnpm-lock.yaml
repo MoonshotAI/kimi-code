@@ -810,6 +810,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      https-proxy-agent:
+        specifier: ^7.0.6
+        version: 7.0.6
       ws:
         specifier: ^8.18.0
         version: 8.20.0
