@@ -20,7 +20,14 @@ import {
   buildCoverageLedger,
   coverageCompletenessFor,
 } from '#/features/artex/logic/coverageLedger';
+import {
+  buildFindingsExportManifest,
+  renderFindingsCsv,
+  renderFindingsMarkdown,
+  renderMarkdownReport,
+} from '#/features/artex/report/index';
 import { renderConstraintBlock } from '#/features/artex/prompts/index';
+import type { ArtexExportFinding } from '#/features/artex/report/types';
 import type {
   ArtexCoverageLedger,
   ArtexEdge,
@@ -64,6 +71,7 @@ import { IArtexWorkStoreProvider } from '#/features/artex/store/artexWorkStorePr
 import type { ArtexArtifactRange } from '#/features/artex/store/fileArtexArtifactStore';
 import { artexRootDir } from '#/features/artex/store/paths';
 
+import { IArtexNotificationHub } from './artexNotificationHub';
 import { IArtexSessionContext } from './artexSessionContext';
 
 export interface ArtexSessionExplorationUpdatedPayload {
@@ -366,6 +374,19 @@ export interface ArtexSessionRevokePinInput {
   readonly pinId: number;
 }
 
+export type ArtexSessionExportReportFormat = 'markdown' | 'json' | 'csv';
+
+export interface ArtexSessionExportReportInput {
+  readonly explorationId?: number;
+  readonly format: ArtexSessionExportReportFormat;
+}
+
+export interface ArtexSessionExportReportResult {
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly content: string;
+}
+
 export interface IArtexSessionService {
   readonly _serviceBrand: undefined;
 
@@ -415,6 +436,8 @@ export interface IArtexSessionService {
 
   targetPins(input?: ArtexSessionTargetPinsInput): Promise<readonly ArtexTargetPin[]>;
   revokeTargetPin(input: ArtexSessionRevokePinInput): Promise<{ readonly revoked: boolean }>;
+
+  exportReport(input: ArtexSessionExportReportInput): Promise<ArtexSessionExportReportResult>;
 }
 
 export const IArtexSessionService: ServiceIdentifier<IArtexSessionService> =
@@ -449,6 +472,7 @@ export class ArtexSessionService extends Disposable implements IArtexSessionServ
     @IArtexOrchestrator private readonly orchestrator: IArtexOrchestrator,
     @ISessionEventBus private readonly sessionBus: ISessionEventBus,
     @IAgentLifecycleService private readonly agentLifecycle?: IAgentLifecycleService,
+    @IArtexNotificationHub private readonly notifications?: IArtexNotificationHub,
   ) {
     super();
 
@@ -476,6 +500,9 @@ export class ArtexSessionService extends Disposable implements IArtexSessionServ
               finding: ev.finding,
             }),
           );
+          if (ev.finding.kind === 'finding') {
+            this.notifications?.onFindingCreated(ev.explorationId, ev.finding);
+          }
         }),
       );
     }
@@ -762,6 +789,9 @@ export class ArtexSessionService extends Disposable implements IArtexSessionServ
   async patchFinding(input: ArtexSessionPatchFindingInput): Promise<ArtexFindingNode> {
     const id = this.requireExplorationId(input.explorationId);
     const store = await this.requireInitializedStore(id);
+    const existing = await store.getNode(input.nodeId);
+    const previousState =
+      existing !== undefined && existing.kind === 'finding' ? existing.state : undefined;
     const payloadPatch: Record<string, unknown> = { ...input.payloadPatch };
     if (input.summary !== undefined) payloadPatch['summary'] = input.summary;
     if (input.severity !== undefined) payloadPatch['severity'] = input.severity;
@@ -774,6 +804,13 @@ export class ArtexSessionService extends Disposable implements IArtexSessionServ
     });
     if (updated === undefined) {
       throw new Error(`finding node ${String(input.nodeId)} does not exist`);
+    }
+    if (
+      previousState !== undefined &&
+      input.state !== undefined &&
+      input.state !== previousState
+    ) {
+      this.notifications?.onFindingStatusChanged(id, updated, previousState, input.state);
     }
     await this.emitExplorationUpdated(id, 'finding_patched', store);
     return updated;
@@ -1193,6 +1230,153 @@ export class ArtexSessionService extends Disposable implements IArtexSessionServ
     const work = await this.openWorkStore();
     const revoked = await work.revokeTargetPin(id, input.pinId);
     return { revoked };
+  }
+
+  async exportReport(
+    input: ArtexSessionExportReportInput,
+  ): Promise<ArtexSessionExportReportResult> {
+    const id = this.requireExplorationId(input.explorationId);
+    const [graph, coverage, activity, findings, work] = await Promise.all([
+      this.graph(id),
+      this.coverage(id),
+      this.activity({ explorationId: id, limit: 200 }),
+      this.findings(id),
+      this.openWorkStore(),
+    ]);
+    const [scopes, taskAssets] = await Promise.all([
+      work.listTaskScope(id),
+      work.assetsForTask(id),
+    ]);
+    const title =
+      (graph.exploration.description ?? '').trim() || `Exploration ${String(id)}`;
+    const assetCounts: Record<string, number> = {};
+    for (const asset of taskAssets) {
+      assetCounts[asset.type] = (assetCounts[asset.type] ?? 0) + 1;
+    }
+    const exportFindings = await this.buildExportFindings(id, findings, title);
+    const stamp = new Date().toISOString().replaceAll(':', '').replace(/\.\d{3}Z$/, 'Z');
+
+    switch (input.format) {
+      case 'markdown': {
+        const content = renderMarkdownReport({
+          title,
+          goal: graph.exploration.goal,
+          assetCounts,
+          findings: graph.nodes.filter((node): node is ArtexFindingNode => node.kind === 'finding'),
+          coverage: coverage.ledger,
+          exploration: graph.exploration,
+          scopes,
+          assets: taskAssets,
+          timeline: activity.entries,
+        });
+        return {
+          filename: `artex-report-${String(id)}-${stamp}.md`,
+          mediaType: 'text/markdown; charset=utf-8',
+          content,
+        };
+      }
+      case 'csv': {
+        const content = renderFindingsCsv(exportFindings);
+        return {
+          filename: `artex-findings-${String(id)}-${stamp}.csv`,
+          mediaType: 'text/csv; charset=utf-8',
+          content,
+        };
+      }
+      case 'json': {
+        const manifest = buildFindingsExportManifest(exportFindings);
+        const content = JSON.stringify(
+          {
+            report: renderMarkdownReport({
+              title,
+              goal: graph.exploration.goal,
+              assetCounts,
+              findings: graph.nodes.filter((node): node is ArtexFindingNode => node.kind === 'finding'),
+              coverage: coverage.ledger,
+              exploration: graph.exploration,
+              scopes,
+              assets: taskAssets,
+              timeline: activity.entries,
+            }),
+            findings_summary_markdown: renderFindingsMarkdown(exportFindings),
+            manifest,
+          },
+          null,
+          2,
+        );
+        return {
+          filename: `artex-findings-${String(id)}-${stamp}.json`,
+          mediaType: 'application/json; charset=utf-8',
+          content,
+        };
+      }
+      default: {
+        const exhaustive: never = input.format;
+        return exhaustive;
+      }
+    }
+  }
+
+  private async buildExportFindings(
+    explorationId: number,
+    items: readonly ArtexSessionFindingItem[],
+    taskDescription: string,
+  ): Promise<ArtexExportFinding[]> {
+    const traffic = this.trafficStore();
+    return Promise.all(
+      items.map(async (item) => {
+        const payload = item.node.payload as Record<string, unknown>;
+        const evidence = payload['evidence'];
+        const evidenceText =
+          typeof evidence === 'string'
+            ? evidence
+            : typeof evidence === 'object' && evidence !== null
+              ? JSON.stringify(evidence)
+              : '';
+        const bindings = await traffic.findingBindings(item.node.id);
+        return {
+          id: item.findingId,
+          taskId: explorationId,
+          nodeId: item.node.id,
+          vulnclass: typeof payload['vulnclass'] === 'string' ? payload['vulnclass'] : '',
+          name: typeof payload['name'] === 'string' ? payload['name'] : '',
+          severity:
+            typeof payload['severity'] === 'string'
+              ? (payload['severity'] as ArtexExportFinding['severity'])
+              : '',
+          summary: typeof payload['summary'] === 'string' ? payload['summary'] : '',
+          evidence: evidenceText,
+          worker: typeof payload['worker_agent_id'] === 'string' ? payload['worker_agent_id'] : '',
+          assetIds: Array.isArray(payload['asset_ids'])
+            ? payload['asset_ids'].filter((v): v is number => typeof v === 'number')
+            : [],
+          status: item.node.state as ArtexExportFinding['status'],
+          report: typeof payload['report'] === 'string' ? payload['report'] : '',
+          poeLevel: typeof payload['poe_level'] === 'number' ? payload['poe_level'] : 0,
+          verificationStatus:
+            typeof payload['verification_status'] === 'string'
+              ? (payload['verification_status'] as ArtexExportFinding['verificationStatus'])
+              : 'not_assessed',
+          verificationNote:
+            typeof payload['verification_note'] === 'string' ? payload['verification_note'] : '',
+          counterevidence:
+            typeof payload['counterevidence'] === 'string' ? payload['counterevidence'] : '',
+          confidenceRationale:
+            typeof payload['confidence_rationale'] === 'string'
+              ? payload['confidence_rationale']
+              : '',
+          evidenceVersion:
+            typeof payload['evidence_version'] === 'number' ? payload['evidence_version'] : 0,
+          reportEvidenceVersion:
+            typeof payload['report_evidence_version'] === 'number'
+              ? payload['report_evidence_version']
+              : 0,
+          createdAt: item.node.updatedAt ?? new Date().toISOString(),
+          taskDescription,
+          trafficBindings: bindings,
+        };
+      }),
+    );
   }
 
   private get workspaceRoot(): string {

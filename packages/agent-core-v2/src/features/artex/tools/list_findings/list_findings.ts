@@ -11,7 +11,8 @@ import type {
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
-import { ARTEX_INACTIVE_RESULT, artexJson, openActiveGraph } from '../toolSupport';
+import { ARTEX_INACTIVE_RESULT, openActiveGraph } from '../toolSupport';
+import { artexEnvelopedJson } from '../envelopeOutput';
 import DESCRIPTION from './list_findings.md?raw';
 
 export const ListFindingsInputSchema = z.object({
@@ -48,22 +49,19 @@ export class ArtexListFindingsTool implements AgentTool<ListFindingsInput> {
     const handle = await openActiveGraph(this.session, this.provider);
     if (handle === undefined) return ARTEX_INACTIVE_RESULT;
     const findings = await handle.store.listByKind('finding', args.limit);
-    return {
-      output: artexJson(
-        findings.map((node) => {
-          const payload = node.payload as Record<string, unknown>;
-          return {
-            node_id: node.id,
-            state: node.state,
-            vulnclass: payload['vulnclass'],
-            name: payload['name'],
-            severity: payload['severity'],
-            summary: payload['summary'],
-            asset_ids: payload['asset_ids'] ?? [],
-            evidence_status: payload['evidence_status'],
-          };
-        }),
-      ),
-    };
+    const rows = findings.map((node) => {
+      const payload = node.payload as Record<string, unknown>;
+      return {
+        node_id: node.id,
+        state: node.state,
+        vulnclass: payload['vulnclass'],
+        name: payload['name'],
+        severity: payload['severity'],
+        summary: payload['summary'],
+        asset_ids: payload['asset_ids'] ?? [],
+        evidence_status: payload['evidence_status'],
+      };
+    });
+    return { output: artexEnvelopedJson('findings', rows) };
   }
 }

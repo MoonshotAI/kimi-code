@@ -33,6 +33,10 @@ export type SessionSwarmTask<T = unknown> = SessionSwarmSpawnTask<T> | SessionSw
 export interface SessionSwarmRunArgs<T = unknown> {
   readonly callerAgentId: string;
   readonly tasks: readonly SessionSwarmTask<T>[];
+  readonly batchInitialLaunchLimit?: number;
+  readonly batchLaunchIntervalMs?: number;
+  readonly batchRateLimitRecoveryMs?: number;
+  readonly batchRateLimitRetryBaseMs?: number;
 }
 
 export interface SessionSwarmRunResult<T = unknown> {

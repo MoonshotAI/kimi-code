@@ -8,7 +8,10 @@ import {
   ARTEX_PLANNER_PROMPT,
   ARTEX_UNTRUSTED_DATA_RULES,
   ARTEX_WORKER_PROMPT,
+  substituteArtexGoal,
 } from '#/features/artex/prompts/index';
+
+export { substituteArtexGoal };
 
 export const ARTEX_PLANNER_PROFILE = 'artex-planner';
 export const ARTEX_WORKER_PROFILE = 'artex-worker';

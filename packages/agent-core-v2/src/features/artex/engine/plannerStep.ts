@@ -1,6 +1,7 @@
 import type { ArtexExplorationRoot, IArtexGraphStore } from '#/features/artex/store/artexGraphStore';
 import type { ArtexIntentState, ArtexTaskConstraint } from '#/features/artex/protocol/index';
 import { artexBudgetStateLine, type ArtexBudgetState } from '#/features/artex/logic/budget';
+import { ARTEX_PLANNER_PROMPT, substituteArtexGoal } from '#/features/artex/prompts/index';
 
 export interface ArtexFrontierSummary {
   readonly goalMet: boolean;
@@ -69,6 +70,10 @@ export async function buildFrontierSummary(
     pausedIntents: counts.paused,
     blockedIntents: counts.blocked,
   };
+}
+
+export function buildPlannerSystemPrompt(goal: string): string {
+  return substituteArtexGoal(ARTEX_PLANNER_PROMPT, goal);
 }
 
 export function buildPlannerBrief(input: {

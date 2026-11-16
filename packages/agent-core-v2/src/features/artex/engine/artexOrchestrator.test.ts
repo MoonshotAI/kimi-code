@@ -42,6 +42,10 @@ import {
 import { artexSettleForOutcome, claimOpenFrontier, normalizeArtexTerminalReason } from './workerDispatch';
 import { stubFlag } from '../../../../test/app/flag/stubs';
 import { StubConfigService } from '../../../../test/stubs';
+import {
+  resolveArtexAgentRunBatchOptions,
+  ARTEX_DEFAULT_BATCH_RATE_LIMIT_RETRY_BASE_MS,
+} from '../config/configSection';
 
 describe('planner hard-floor rule', () => {
   it('forces an intent when the goal is unmet and the frontier is empty', () => {
@@ -673,5 +677,66 @@ describe('ArtexOrchestrator continuous sliding-window execution', () => {
     expect(activityIds.toSorted((a, b) => a - b)).toEqual(
       Array.from({ length: 120 }, (_, i) => i + 1),
     );
+  });
+});
+
+describe('artex swarm batch config wiring', () => {
+  it('reads AgentRunBatch scheduling fields from the artex config section', () => {
+    const config = new StubConfigService({
+      artex: {
+        batchInitialLaunchLimit: 9,
+        batchLaunchIntervalMs: 1200,
+        batchRateLimitRecoveryMs: 90_000,
+        batchRateLimitRetryBaseMs: 4500,
+      },
+    });
+    expect(resolveArtexAgentRunBatchOptions(config)).toEqual({
+      batchInitialLaunchLimit: 9,
+      batchLaunchIntervalMs: 1200,
+      batchRateLimitRecoveryMs: 90_000,
+      batchRateLimitRetryBaseMs: 4500,
+    });
+    expect(
+      resolveArtexAgentRunBatchOptions(new StubConfigService({})).batchRateLimitRetryBaseMs,
+    ).toBe(ARTEX_DEFAULT_BATCH_RATE_LIMIT_RETRY_BASE_MS);
+  });
+
+  it('forwards batch options into swarm.run via runSwarmWithArtexBatchOptions', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'artex-swarm-opts-'));
+    const store = new FileArtexGraphStore(dir, 1);
+    await store.init('scope', 'goal');
+    const config = new StubConfigService({
+      artex: { batchInitialLaunchLimit: 2, batchLaunchIntervalMs: 10 },
+    });
+    const swarm: ISessionSwarmService = {
+      _serviceBrand: undefined,
+      getSwarmItem: async () => undefined,
+      run: vi.fn(async () => []),
+      cancel: () => {},
+    };
+    const orchestrator = new ArtexOrchestrator(
+      new ArtexGraphStoreProvider(),
+      swarm,
+      { _serviceBrand: undefined } as ISessionSubagentService,
+      config,
+      { sessionId: 's', sessionDir: dir } as ISessionContext,
+      new ArtexSessionContext({ sessionDir: dir } as ISessionContext),
+      { ensureStarted: async () => ({ status: 'off' }) } as IArtexTrafficRecorder,
+    );
+    const handle = orchestrator.start({
+      explorationId: 1,
+      callerAgentId: 'main',
+      workspaceRoot: dir,
+    });
+    await orchestrator.runSwarmWithArtexBatchOptions('main', 1, []);
+    expect(swarm.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callerAgentId: 'main',
+        batchInitialLaunchLimit: 2,
+        batchLaunchIntervalMs: 10,
+      }),
+    );
+    handle.stop();
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   });
 });

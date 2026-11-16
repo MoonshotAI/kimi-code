@@ -11,7 +11,8 @@ import type {
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
-import { ARTEX_INACTIVE_RESULT, artexErr, artexJson, openActiveGraph } from '../toolSupport';
+import { ARTEX_INACTIVE_RESULT, artexErr, openActiveGraph } from '../toolSupport';
+import { artexEnvelopedJson } from '../envelopeOutput';
 import DESCRIPTION from './get_worker_output.md?raw';
 
 export const GetWorkerOutputInputSchema = z.object({
@@ -83,7 +84,7 @@ export class ArtexGetWorkerOutputTool implements AgentTool<GetWorkerOutputInput>
     }
 
     return {
-      output: artexJson({
+      output: artexEnvelopedJson('worker_output', {
         intent_id: args.intent_id,
         state: node.state,
         final_text: finalText ?? '',

@@ -19,7 +19,10 @@ import { IArtexSessionContext } from '#/features/artex/session/artexSessionConte
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexWorkStoreProvider } from '#/features/artex/store/artexWorkStoreProvider';
 
-import { ARTEX_INACTIVE_RESULT, artexJson, openActiveGraph } from '../toolSupport';
+import { ArtexDataEnvelope } from '#/features/artex/prompts/dataEnvelope';
+
+import { ARTEX_INACTIVE_RESULT, openActiveGraph } from '../toolSupport';
+import { renderOverviewSections } from '../envelopeOutput';
 import DESCRIPTION from './graph_overview.md?raw';
 
 export const GraphOverviewInputSchema = z.object({});
@@ -264,6 +267,7 @@ export class ArtexGraphOverviewTool implements AgentTool<GraphOverviewInput> {
     const coldDigestsMore = digestEntries.slice(COLD_DIGESTS_CAP).map((item) => item.id);
 
     const payload: Record<string, unknown> = {
+      task: { goal: root.goal, description: root.description },
       exploration_id: explorationId,
       goal: root.goal,
       scope: root.description,
@@ -365,8 +369,13 @@ export class ArtexGraphOverviewTool implements AgentTool<GraphOverviewInput> {
       }
     }
 
+    const envelope = new ArtexDataEnvelope();
+    const sections = renderOverviewSections(payload, envelope);
     return {
-      output: artexJson(payload),
+      output:
+        sections.length > 0
+          ? `${envelope.intro()}${sections}`
+          : `${envelope.intro()}\n\n[Counters, intents and coverage]:\n${JSON.stringify(payload, null, 2)}`,
     };
   }
 }

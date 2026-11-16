@@ -12,7 +12,8 @@ import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStore
 import { IArtexTrafficStoreProvider } from '#/features/artex/store/artexTrafficStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
-import { ARTEX_INACTIVE_RESULT, artexErr, artexJson, openActiveGraph } from '../toolSupport';
+import { ARTEX_INACTIVE_RESULT, artexErr, openActiveGraph } from '../toolSupport';
+import { artexEnvelopedJson } from '../envelopeOutput';
 import DESCRIPTION from './node_detail.md?raw';
 
 export const NodeDetailInputSchema = z.object({
@@ -80,7 +81,7 @@ export class ArtexNodeDetailTool implements AgentTool<NodeDetailInput> {
     }
 
     return {
-      output: artexJson({
+      output: artexEnvelopedJson('node_detail', {
         node,
         edges_out: outgoing.map((edge) => ({ rel: edge.rel, to: edge.dstId })),
         edges_in: incoming.map((edge) => ({ rel: edge.rel, from: edge.srcId })),

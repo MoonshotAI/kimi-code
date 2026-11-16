@@ -13,10 +13,13 @@ import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAg
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import {
   ISessionSwarmService,
+  type SessionSwarmRunArgs,
   type SessionSwarmRunResult,
+  type SessionSwarmTask,
 } from '#/features/swarm/session/sessionSwarm';
 
 import {
+  resolveArtexAgentRunBatchOptions,
   resolveArtexClaimSweepIntervalMs,
   resolveArtexNoiseProfile,
   resolveArtexPlannerDebounceMs,
@@ -44,7 +47,9 @@ import {
   ARTEX_UNTRUSTED_DATA_RULES,
   renderArtexNoiseProfile,
   renderConstraintBlock,
+  substituteArtexGoal,
 } from '#/features/artex/prompts/index';
+import { IArtexNotificationHub } from '#/features/artex/session/artexNotificationHub';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 import type { ArtexExplorationRoot, IArtexGraphStore } from '#/features/artex/store/artexGraphStore';
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
@@ -155,7 +160,6 @@ export const IArtexOrchestrator: ServiceIdentifier<IArtexOrchestrator> =
   createDecorator<IArtexOrchestrator>('artexOrchestrator');
 
 const RATE_LIMIT_MAX_RETRIES = 3;
-const RATE_LIMIT_RETRY_BASE_MS = 1_500;
 const PAUSE_ABORT_REASON = Symbol('artex-pause');
 const GOAL_MET_ABORT_REASON = Symbol('artex-goal-met');
 
@@ -176,6 +180,13 @@ interface ActiveRunEntry {
   stopped: boolean;
   running: boolean;
   budgetLedger?: ArtexBudgetLedger;
+  rateLimitRetryBaseMs: number;
+  swarmBatchOptions: {
+    readonly batchInitialLaunchLimit: number;
+    readonly batchLaunchIntervalMs: number;
+    readonly batchRateLimitRecoveryMs: number;
+    readonly batchRateLimitRetryBaseMs: number;
+  };
   wake: () => void;
 }
 
@@ -240,7 +251,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
 
   constructor(
     @IArtexGraphStoreProvider private readonly storeProvider: IArtexGraphStoreProvider,
-    @ISessionSwarmService _swarm: ISessionSwarmService,
+    @ISessionSwarmService private readonly swarm: ISessionSwarmService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IConfigService private readonly config: IConfigService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -248,6 +259,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
     @IArtexTrafficRecorder private readonly recorder: IArtexTrafficRecorder,
     @IAgentLifecycleService private readonly agentLifecycle?: IAgentLifecycleService,
     @IArtexWorkStoreProvider private readonly workStoreProvider?: IArtexWorkStoreProvider,
+    @IArtexNotificationHub private readonly notifications?: IArtexNotificationHub,
   ) {
     super();
   }
@@ -378,6 +390,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
       options.claimSweepIntervalMs ?? resolveArtexClaimSweepIntervalMs(this.config);
     const heartbeatIntervalMs =
       options.heartbeatIntervalMs ?? ARTEX_INTENT_CLAIM_HEARTBEAT_INTERVAL_MS;
+    const swarmBatchOptions = resolveArtexAgentRunBatchOptions(this.config);
 
     const taskDeadlineUnixSec =
       options.deadlineMs !== undefined
@@ -428,6 +441,8 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
       stopped: false,
       running: true,
       budgetLedger,
+      rateLimitRetryBaseMs: swarmBatchOptions.batchRateLimitRetryBaseMs,
+      swarmBatchOptions,
       wake: () => {
         wakeResolver?.();
         wakeResolver = undefined;
@@ -624,7 +639,18 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
                 store.root(),
                 this.loadConstraints(root, options.explorationId),
               ]);
-              for (const claim of claims) {
+              for (let claimIndex = 0; claimIndex < claims.length; claimIndex += 1) {
+                const claim = claims[claimIndex]!;
+                if (
+                  claimIndex > 0 &&
+                  claimIndex < entry.swarmBatchOptions.batchInitialLaunchLimit &&
+                  entry.swarmBatchOptions.batchLaunchIntervalMs > 0
+                ) {
+                  await waitUntil(
+                    entry.swarmBatchOptions.batchLaunchIntervalMs,
+                    runController.signal,
+                  );
+                }
                 launchWorker(claim, { root: batchRoot, constraints: batchConstraints });
                 entry.dispatched += 1;
               }
@@ -801,11 +827,10 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
 
     const childLoop = child?.accessor.get(IAgentLoopService);
     const childBus = child?.accessor.get(IEventBus);
-    if (childLoop !== undefined && systemTail.length > 0) {
-      const currentSys = childLoop.getSystemPrompt();
-      if (currentSys.includes('{{.Goal}}')) {
-        childLoop.update({ systemPrompt: currentSys.replaceAll('{{.Goal}}', root.goal) });
-      }
+    if (childLoop !== undefined) {
+      childLoop.update({
+        systemPrompt: substituteArtexGoal(childLoop.getSystemPrompt(), root.goal),
+      });
     }
 
     const capture = attachArtexActivityCapture(
@@ -902,7 +927,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
         allowFeatureProfiles: true,
       });
       const brief = buildWorkerBrief({ intent: claim.intent, root, constraints });
-      const workerTail = this.renderWorkerTail();
+      const workerTail = this.renderWorkerTail(constraints);
       const prompt = workerTail.length > 0 ? `${workerTail}\n\n${brief}` : brief;
 
       const spawned = await this.subagents.spawn({
@@ -920,6 +945,12 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
 
       const requester = this.agentLifecycle?.handleOf(callerAgentId);
       const child = this.agentLifecycle?.handleOf(spawned.agentId);
+      const childLoop = child?.accessor.get(IAgentLoopService);
+      if (childLoop !== undefined) {
+        childLoop.update({
+          systemPrompt: substituteArtexGoal(childLoop.getSystemPrompt(), root.goal),
+        });
+      }
       if (requester !== undefined) {
         emitAgentRunSpawned(requester, spawned.agentId, {
           profileName: plan.profileName,
@@ -950,6 +981,10 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
       agentContext =
         this.agentLifecycle?.get(spawned.agentId) ??
         ({ agentId: spawned.agentId, generation: 0, space: undefined as never } as const);
+
+      const rateLimitRetryBaseMs =
+        this.runs.get(explorationId)?.rateLimitRetryBaseMs ??
+        resolveArtexAgentRunBatchOptions(this.config).batchRateLimitRetryBaseMs;
 
       let attempt = 0;
       let promptKind: 'prompt' | 'retry' = 'prompt';
@@ -984,7 +1019,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
           ) {
             attempt += 1;
             promptKind = 'retry';
-            await waitUntil(RATE_LIMIT_RETRY_BASE_MS * 2 ** (attempt - 1), workerController.signal);
+            await waitUntil(rateLimitRetryBaseMs * 2 ** (attempt - 1), workerController.signal);
             continue;
           }
           if (timedOut) {
@@ -1075,7 +1110,7 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
     return parts.join('\n\n');
   }
 
-  private renderWorkerTail(): string {
+  private renderWorkerTail(constraints: readonly ArtexTaskConstraint[]): string {
     const parts: string[] = [ARTEX_UNTRUSTED_CONTENT_RULES];
     const noise = resolveArtexNoiseProfile(this.config);
     const noiseBlock = renderArtexNoiseProfile({
@@ -1084,7 +1119,38 @@ export class ArtexOrchestrator extends Disposable implements IArtexOrchestrator 
       maxPerHost: noise.maxPerHost,
     });
     if (noiseBlock.length > 0) parts.push(noiseBlock);
+    const constraintText = renderConstraintBlock(constraints);
+    if (constraintText.length > 0) parts.push(constraintText);
     return parts.join('\n\n');
+  }
+
+  runSwarmWithArtexBatchOptions<T>(
+    callerAgentId: string,
+    explorationId: number,
+    tasks: readonly SessionSwarmTask<T>[],
+  ): Promise<readonly SessionSwarmRunResult<T>[]> {
+    const batch = this.swarmRunBatchOptions(explorationId);
+    const args: SessionSwarmRunArgs<T> = {
+      callerAgentId,
+      tasks,
+      batchInitialLaunchLimit: batch.batchInitialLaunchLimit,
+      batchLaunchIntervalMs: batch.batchLaunchIntervalMs,
+      batchRateLimitRecoveryMs: batch.batchRateLimitRecoveryMs,
+      batchRateLimitRetryBaseMs: batch.batchRateLimitRetryBaseMs,
+    };
+    return this.swarm.run(args);
+  }
+
+  swarmRunBatchOptions(explorationId: number): {
+    readonly batchInitialLaunchLimit: number;
+    readonly batchLaunchIntervalMs: number;
+    readonly batchRateLimitRecoveryMs: number;
+    readonly batchRateLimitRetryBaseMs: number;
+  } {
+    return (
+      this.runs.get(explorationId)?.swarmBatchOptions ??
+      resolveArtexAgentRunBatchOptions(this.config)
+    );
   }
 
   private async settle(

@@ -11,7 +11,8 @@ import type {
 import { IArtexGraphStoreProvider } from '#/features/artex/store/artexGraphStoreProvider';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
-import { ARTEX_INACTIVE_RESULT, artexJson, openActiveGraph } from '../toolSupport';
+import { ARTEX_INACTIVE_RESULT, openActiveGraph } from '../toolSupport';
+import { artexEnvelopedJson } from '../envelopeOutput';
 import DESCRIPTION from './list_facts.md?raw';
 
 const DEFAULT_FACTS_PAGE_SIZE = 20;
@@ -111,6 +112,6 @@ export class ArtexListFactsTool implements AgentTool<ListFactsInput> {
     if (hasMore && page.length > 0) {
       out['next_before'] = page.at(-1)!.id;
     }
-    return { output: artexJson(out) };
+    return { output: artexEnvelopedJson('facts', out) };
   }
 }

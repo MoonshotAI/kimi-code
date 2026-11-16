@@ -140,6 +140,10 @@ export class SessionSwarmService implements ISessionSwarmService {
     const promise = new AgentRunBatch(launcher, linkedTasks, {
       maxConcurrency,
       signal: controller.signal,
+      initialLaunchLimit: args.batchInitialLaunchLimit,
+      initialLaunchIntervalMs: args.batchLaunchIntervalMs,
+      rateLimitRecoveryIntervalMs: args.batchRateLimitRecoveryMs,
+      rateLimitRetryBaseMs: args.batchRateLimitRetryBaseMs,
       onStarted: (task, handle) => members.started(task, handle),
       onSettled: (result) => members.settled(result),
     }).run();

@@ -1,3 +1,4 @@
+import { ARTEX_WORKER_PROMPT, substituteArtexGoal } from '#/features/artex/prompts/index';
 import type { ArtexExplorationRoot, IArtexGraphStore } from '#/features/artex/store/artexGraphStore';
 import type {
   ArtexIntentNode,
@@ -92,6 +93,10 @@ function intentText(intent: ArtexIntentNode): string {
     if (typeof value === 'string' && value.trim().length > 0) return value.trim();
   }
   return JSON.stringify(payload);
+}
+
+export function buildWorkerSystemPrompt(goal: string): string {
+  return substituteArtexGoal(ARTEX_WORKER_PROMPT, goal);
 }
 
 export function buildWorkerBrief(input: {

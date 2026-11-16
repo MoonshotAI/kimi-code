@@ -16,6 +16,10 @@ export const ARTEX_SECTION = 'artex';
 export const ARTEX_DEFAULT_TARGET_CONCURRENCY = 120;
 export const ARTEX_DEFAULT_PLANNER_DEBOUNCE_MS = 800;
 export const ARTEX_DEFAULT_CLAIM_SWEEP_INTERVAL_MS = 15_000;
+export const ARTEX_DEFAULT_BATCH_INITIAL_LAUNCH_LIMIT = 5;
+export const ARTEX_DEFAULT_BATCH_LAUNCH_INTERVAL_MS = 700;
+export const ARTEX_DEFAULT_BATCH_RATE_LIMIT_RECOVERY_MS = 3 * 60 * 1000;
+export const ARTEX_DEFAULT_BATCH_RATE_LIMIT_RETRY_BASE_MS = 3_000;
 
 export const ARTEX_NOISE_PROFILE_NAMES = ['off', 'quiet', 'balanced', 'aggressive'] as const;
 export type ArtexNoiseProfileName = (typeof ARTEX_NOISE_PROFILE_NAMES)[number];
@@ -28,6 +32,10 @@ export const ArtexConfigSchema = z.object({
   noiseProfile: z.enum(ARTEX_NOISE_PROFILE_NAMES).optional(),
   noiseRps: z.number().min(0).optional(),
   noiseMaxPerHost: z.number().int().min(1).optional(),
+  batchInitialLaunchLimit: z.number().int().min(0).optional(),
+  batchLaunchIntervalMs: z.number().int().min(0).optional(),
+  batchRateLimitRecoveryMs: z.number().int().min(1).optional(),
+  batchRateLimitRetryBaseMs: z.number().int().min(1).optional(),
 });
 
 export type ArtexConfig = z.infer<typeof ArtexConfigSchema>;
@@ -39,6 +47,10 @@ export const ARTEX_CLAIM_SWEEP_ENV = 'KIMI_CODE_ARTEX_CLAIM_SWEEP_INTERVAL_MS';
 export const ARTEX_NOISE_PROFILE_ENV = 'KIMI_CODE_ARTEX_NOISE_PROFILE';
 export const ARTEX_NOISE_RPS_ENV = 'KIMI_CODE_ARTEX_NOISE_RPS';
 export const ARTEX_NOISE_MAX_PER_HOST_ENV = 'KIMI_CODE_ARTEX_NOISE_MAX_PER_HOST';
+export const ARTEX_BATCH_INITIAL_LAUNCH_LIMIT_ENV = 'KIMI_CODE_ARTEX_BATCH_INITIAL_LAUNCH_LIMIT';
+export const ARTEX_BATCH_LAUNCH_INTERVAL_MS_ENV = 'KIMI_CODE_ARTEX_BATCH_LAUNCH_INTERVAL_MS';
+export const ARTEX_BATCH_RATE_LIMIT_RECOVERY_MS_ENV = 'KIMI_CODE_ARTEX_BATCH_RATE_LIMIT_RECOVERY_MS';
+export const ARTEX_BATCH_RATE_LIMIT_RETRY_BASE_MS_ENV = 'KIMI_CODE_ARTEX_BATCH_RATE_LIMIT_RETRY_BASE_MS';
 
 export const ARTEX_DEFAULT_NOISE_PROFILE: ArtexNoiseProfileName = 'off';
 export const ARTEX_DEFAULT_NOISE_RPS = 5;
@@ -74,6 +86,10 @@ export const artexEnvBindings: EnvBindings<ArtexConfig> = envBindings(ArtexConfi
   noiseProfile: { env: ARTEX_NOISE_PROFILE_ENV, parse: parseNoiseProfileName },
   noiseRps: { env: ARTEX_NOISE_RPS_ENV, parse: parseNonNegativeNumber },
   noiseMaxPerHost: { env: ARTEX_NOISE_MAX_PER_HOST_ENV, parse: parsePositiveInt },
+  batchInitialLaunchLimit: { env: ARTEX_BATCH_INITIAL_LAUNCH_LIMIT_ENV, parse: parseNonNegativeInt },
+  batchLaunchIntervalMs: { env: ARTEX_BATCH_LAUNCH_INTERVAL_MS_ENV, parse: parseNonNegativeInt },
+  batchRateLimitRecoveryMs: { env: ARTEX_BATCH_RATE_LIMIT_RECOVERY_MS_ENV, parse: parsePositiveInt },
+  batchRateLimitRetryBaseMs: { env: ARTEX_BATCH_RATE_LIMIT_RETRY_BASE_MS_ENV, parse: parsePositiveInt },
 });
 
 export const stripArtexEnv = stripEnvBoundFields(artexEnvBindings);
@@ -82,6 +98,10 @@ export const ARTEX_CONFIG_DEFAULTS: ArtexConfig = {
   targetConcurrency: ARTEX_DEFAULT_TARGET_CONCURRENCY,
   plannerDebounceMs: ARTEX_DEFAULT_PLANNER_DEBOUNCE_MS,
   claimSweepIntervalMs: ARTEX_DEFAULT_CLAIM_SWEEP_INTERVAL_MS,
+  batchInitialLaunchLimit: ARTEX_DEFAULT_BATCH_INITIAL_LAUNCH_LIMIT,
+  batchLaunchIntervalMs: ARTEX_DEFAULT_BATCH_LAUNCH_INTERVAL_MS,
+  batchRateLimitRecoveryMs: ARTEX_DEFAULT_BATCH_RATE_LIMIT_RECOVERY_MS,
+  batchRateLimitRetryBaseMs: ARTEX_DEFAULT_BATCH_RATE_LIMIT_RETRY_BASE_MS,
 };
 
 registerConfigSection(ARTEX_SECTION, ArtexConfigSchema, {
@@ -122,5 +142,24 @@ export function resolveArtexNoiseProfile(config: IConfigService): {
     name: section?.noiseProfile ?? ARTEX_DEFAULT_NOISE_PROFILE,
     rps: section?.noiseRps ?? ARTEX_DEFAULT_NOISE_RPS,
     maxPerHost: section?.noiseMaxPerHost ?? ARTEX_DEFAULT_NOISE_MAX_PER_HOST,
+  };
+}
+
+export function resolveArtexAgentRunBatchOptions(config: IConfigService): {
+  readonly batchInitialLaunchLimit: number;
+  readonly batchLaunchIntervalMs: number;
+  readonly batchRateLimitRecoveryMs: number;
+  readonly batchRateLimitRetryBaseMs: number;
+} {
+  const section = artexConfig(config);
+  return {
+    batchInitialLaunchLimit:
+      section?.batchInitialLaunchLimit ?? ARTEX_DEFAULT_BATCH_INITIAL_LAUNCH_LIMIT,
+    batchLaunchIntervalMs:
+      section?.batchLaunchIntervalMs ?? ARTEX_DEFAULT_BATCH_LAUNCH_INTERVAL_MS,
+    batchRateLimitRecoveryMs:
+      section?.batchRateLimitRecoveryMs ?? ARTEX_DEFAULT_BATCH_RATE_LIMIT_RECOVERY_MS,
+    batchRateLimitRetryBaseMs:
+      section?.batchRateLimitRetryBaseMs ?? ARTEX_DEFAULT_BATCH_RATE_LIMIT_RETRY_BASE_MS,
   };
 }

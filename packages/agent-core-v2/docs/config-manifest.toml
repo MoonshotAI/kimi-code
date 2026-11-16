@@ -57,6 +57,10 @@
 #     noise_profile <- KIMI_CODE_ARTEX_NOISE_PROFILE (custom parse)
 #     noise_rps <- KIMI_CODE_ARTEX_NOISE_RPS (custom parse)
 #     noise_max_per_host <- KIMI_CODE_ARTEX_NOISE_MAX_PER_HOST (custom parse)
+#     batch_initial_launch_limit <- KIMI_CODE_ARTEX_BATCH_INITIAL_LAUNCH_LIMIT (custom parse)
+#     batch_launch_interval_ms <- KIMI_CODE_ARTEX_BATCH_LAUNCH_INTERVAL_MS (custom parse)
+#     batch_rate_limit_recovery_ms <- KIMI_CODE_ARTEX_BATCH_RATE_LIMIT_RECOVERY_MS (custom parse)
+#     batch_rate_limit_retry_base_ms <- KIMI_CODE_ARTEX_BATCH_RATE_LIMIT_RETRY_BASE_MS (custom parse)
 # ##########################################################################
 
 [artex]
@@ -67,6 +71,10 @@ claim_sweep_interval_ms = 15000
 # noise_profile: "off" | "quiet" | "balanced" | "aggressive"
 # noise_rps: number
 # noise_max_per_host: integer
+batch_initial_launch_limit = 5
+batch_launch_interval_ms = 700
+batch_rate_limit_recovery_ms = 180000
+batch_rate_limit_retry_base_ms = 3000
 
 # ##########################################################################
 # background

@@ -14,6 +14,7 @@ import './config/configSection';
 import { ArtexOrchestrator, IArtexOrchestrator } from './engine/artexOrchestrator';
 import './agent/artexModeService';
 import { ARTEX_PROFILES } from './profiles/artexProfiles';
+import { ArtexNotificationHub, IArtexNotificationHub } from './session/artexNotificationHub';
 import { ArtexSessionContext, IArtexSessionContext } from './session/artexSessionContext';
 import { ArtexSessionService, IArtexSessionService } from './session/artexSessionService';
 import { ArtexEgressPacer, IArtexEgressPacer } from './safety/egressPacer';
@@ -48,6 +49,9 @@ export class ArtexFeature extends Feature {
     });
     this.contributeService(LifecycleScope.Session, IArtexSessionService, ArtexSessionService, {
       activation: ScopeActivation.OnDemand,
+    });
+    this.contributeService(LifecycleScope.Session, IArtexNotificationHub, ArtexNotificationHub, {
+      activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeService(LifecycleScope.Session, IArtexEgressPacer, ArtexEgressPacer, {
       activation: ScopeActivation.OnDemand,

@@ -39,6 +39,7 @@ import type { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrat
 import type { IArtexModeService } from '#/features/artex/agent/artexMode';
 import { ArtexListAssetsTool, type ListAssetsInput } from './list_assets/list_assets';
 import { ArtexListFactsTool, type ListFactsInput } from './list_facts/list_facts';
+import { ArtexListFindingsTool } from './list_findings/list_findings';
 import { ArtexNodeDetailTool, type NodeDetailInput } from './node_detail/node_detail';
 import { ArtexRecordCoverageTool, type RecordCoverageInput } from './record_coverage/record_coverage';
 import { ArtexSetConstraintsTool, type SetConstraintsInput } from './set_constraints/set_constraints';
@@ -92,6 +93,29 @@ async function run(result: Promise<ExecutableToolResult>): Promise<ExecutableToo
 
 function parseOutput<T>(result: ExecutableToolResult): T {
   return JSON.parse(typeof result.output === 'string' ? result.output : '{}') as T;
+}
+
+function parseEnvelopedField<T>(output: string, field: string): T {
+  const marker = `field=${field}]]`;
+  const start = output.indexOf(marker);
+  if (start < 0) {
+    throw new Error(`missing envelope field ${field}`);
+  }
+  const after = output.slice(start + marker.length).trimStart();
+  const endMarker = '[[END_ARTEX_DATA';
+  const end = after.indexOf(endMarker);
+  const jsonText = end >= 0 ? after.slice(0, end).trim() : after;
+  return JSON.parse(jsonText) as T;
+}
+
+function parseOverviewCounters(output: string): Record<string, unknown> {
+  const header = '[Counters, intents and coverage]:\n';
+  const start = output.indexOf(header);
+  if (start < 0) return {};
+  const rest = output.slice(start + header.length);
+  const nextSection = rest.indexOf('\n\n[[');
+  const jsonText = (nextSection >= 0 ? rest.slice(0, nextSection) : rest).trim();
+  return JSON.parse(jsonText) as Record<string, unknown>;
 }
 
 describe('artex graph tools', () => {
@@ -324,10 +348,10 @@ describe('artex graph tools', () => {
     const workerOutput = new ArtexGetWorkerOutputTool(session, provider);
     const liveOut = await exec<GetWorkerOutputInput>(workerOutput, { intent_id: intent1 });
     expect(liveOut.isError ?? false).toBe(false);
-    const parsedLive = parseOutput<{
+    const parsedLive = parseEnvelopedField<{
       state: string;
       live_steps: Array<{ step_id: number }>;
-    }>(liveOut);
+    }>(typeof liveOut.output === 'string' ? liveOut.output : '', 'worker_output');
     expect(parsedLive.state).toBe('running');
     expect(parsedLive.live_steps.map((s) => s.step_id)).toEqual([s1, s2]);
 
@@ -391,21 +415,26 @@ describe('artex graph tools', () => {
 
     const workProvider = new ArtexWorkStoreProvider();
     const overviewTool = new ArtexGraphOverviewTool(session, provider, workProvider);
-    const overview = parseOutput<{
-      cold_digests?: Array<{ id: number }>;
-      recent_done_intents: Array<{ id: number }>;
-      stagnation_warning?: { directions: Array<{ repeats: number }> };
-    }>(await exec(overviewTool, {}));
-    expect(overview.cold_digests?.map((d) => d.id)).toEqual([digestId]);
-    expect(overview.recent_done_intents.map((i) => i.id)).toEqual([d3]);
-    expect(overview.stagnation_warning?.directions[0]?.repeats).toBe(3);
+    const overviewRaw = (await exec(overviewTool, {})).output;
+    const overviewText = typeof overviewRaw === 'string' ? overviewRaw : '';
+    const overview = parseOverviewCounters(overviewText);
+    const coldDigests = parseEnvelopedField<Array<{ id: number }>>(overviewText, 'cold_digests');
+    expect(coldDigests.map((d) => d.id)).toEqual([digestId]);
+    expect(
+      (overview['recent_done_intents'] as Array<{ id: number }>).map((i) => i.id),
+    ).toEqual([d3]);
+    expect(
+      (overview['stagnation_warning'] as { directions: Array<{ repeats: number }> }).directions[0]
+        ?.repeats,
+    ).toBe(3);
 
     const revivedIntent = await store.addIntent({ summary: 'recheck user/1' }, 9);
     await store.link(d1, 'derived_from', revivedIntent);
-    const revivedOverview = parseOutput<{ recent_done_intents: Array<{ id: number }> }>(
-      await exec(overviewTool, {}),
-    );
-    expect(revivedOverview.recent_done_intents.some((i) => i.id === d1)).toBe(true);
+    const revivedOverviewText = (await exec(overviewTool, {})).output as string;
+    const revivedCounters = parseOverviewCounters(revivedOverviewText);
+    expect(
+      (revivedCounters['recent_done_intents'] as Array<{ id: number }>).some((i) => i.id === d1),
+    ).toBe(true);
   });
 
   it('start_artex_exploration initializes exploration, enters mode, and drives orchestrator start/pause/status', async () => {
@@ -531,21 +560,28 @@ describe('artex graph tools', () => {
       state: 'confirmed',
     });
     const listFacts = new ArtexListFactsTool(session, provider);
-    const page1 = parseOutput<{
+    const page1 = parseEnvelopedField<{
       facts: Array<{ id: number; summary: string; summary_truncated?: boolean }>;
       total: number;
       has_more: boolean;
       next_before?: number;
-    }>(await exec<ListFactsInput>(listFacts, { q: 'alpha', limit: 1 }));
+    }>(
+      (await exec<ListFactsInput>(listFacts, { q: 'alpha', limit: 1 })).output as string,
+      'facts',
+    );
     expect(page1.total).toBe(2);
     expect(page1.has_more).toBe(true);
     expect(page1.facts[0]?.id).toBe(f3);
     expect(page1.next_before).toBe(f3);
 
-    const page2 = parseOutput<{
+    const page2 = parseEnvelopedField<{
       facts: Array<{ id: number; summary: string; summary_truncated?: boolean }>;
       has_more: boolean;
-    }>(await exec<ListFactsInput>(listFacts, { q: 'alpha', before: page1.next_before, limit: 1 }));
+    }>(
+      (await exec<ListFactsInput>(listFacts, { q: 'alpha', before: page1.next_before, limit: 1 }))
+        .output as string,
+      'facts',
+    );
     expect(page2.has_more).toBe(false);
     expect(page2.facts[0]?.id).toBe(f1);
     expect(page2.facts[0]?.summary_truncated).toBe(true);
@@ -564,19 +600,14 @@ describe('artex graph tools', () => {
     await traffic.bindToFinding(findingId, [{ trafficId: tid, role: 'proof' }]);
 
     const nodeDetail = new ArtexNodeDetailTool(session, provider, trafficProvider);
-    const detailById = parseOutput<{
-      node: { id: number };
-      finding_id?: number;
-      traffic_count?: number;
-    }>(await exec<NodeDetailInput>(nodeDetail, { id: findingId }));
-    expect(detailById.node.id).toBe(findingId);
-    expect(detailById.finding_id).toBe(findingId);
-    expect(detailById.traffic_count).toBe(1);
+    const detailById = (await exec<NodeDetailInput>(nodeDetail, { id: findingId })).output;
+    expect(detailById).toContain('field=node_detail]]');
+    expect(detailById).toContain(`"id": ${String(findingId)}`);
+    expect(detailById).toContain(`"finding_id": ${String(findingId)}`);
+    expect(detailById).toContain('"traffic_count": 1');
 
-    const detailByNodeId = parseOutput<{ node: { id: number } }>(
-      await exec<NodeDetailInput>(nodeDetail, { node_id: findingId }),
-    );
-    expect(detailByNodeId.node.id).toBe(findingId);
+    const detailByNodeId = (await exec<NodeDetailInput>(nodeDetail, { node_id: findingId })).output;
+    expect(detailByNodeId).toContain(`"id": ${String(findingId)}`);
 
     const setConstraints = new ArtexSetConstraintsTool(session, workProvider, SCOPE);
     await exec<SetConstraintsInput>(setConstraints, { text: 'only https', type: 'allow' });
@@ -598,16 +629,44 @@ describe('artex graph tools', () => {
     expect((await workStore.coverageEntries(1))[0]?.intentId).toBe(99);
 
     const overviewTool = new ArtexGraphOverviewTool(session, provider, workProvider);
-    const overview = parseOutput<{
-      hidden_node_count: number;
-      coverage?: { denominator: number; ledger_entries: number };
-      task_credentials?: Array<{ username: string; password?: string; has_password?: boolean }>;
-    }>(await exec(overviewTool, {}));
-    expect(typeof overview.hidden_node_count).toBe('number');
-    expect(overview.coverage?.denominator).toBe(1);
-    expect(overview.coverage?.ledger_entries).toBe(1);
-    expect(overview.task_credentials?.[0]?.username).toBe('tester@example.test');
-    expect(overview.task_credentials?.[0]?.password).toBeUndefined();
-    expect(overview.task_credentials?.[0]?.has_password).toBe(true);
+    const overviewOutput = (await exec(overviewTool, {})).output;
+    expect(typeof overviewOutput).toBe('string');
+    expect(overviewOutput).toContain('[[ARTEX_DATA nonce=');
+    expect(overviewOutput).toContain('field=recent_facts]]');
+    expect(overviewOutput).toContain('[Counters, intents and coverage]:');
+
+    const listFactsOut = (await exec<ListFactsInput>(new ArtexListFactsTool(session, provider), {}))
+      .output;
+    expect(listFactsOut).toContain('field=facts]]');
+
+    const listFindingsOut = (
+      await exec(new ArtexListFindingsTool(session, provider), {})
+    ).output;
+    expect(listFindingsOut).toContain('field=findings]]');
+
+    const openIntent = await store.addIntent({ summary: 'parity intent' }, 5);
+    await store.appendActivity({
+      nodeId: openIntent,
+      actor: 'worker-parity',
+      kind: 'text',
+      summary: 'parity worker summary',
+      text: 'parity worker body',
+    });
+    const getWorkerOut = (
+      await exec<GetWorkerOutputInput>(
+        new ArtexGetWorkerOutputTool(session, provider),
+        { intent_id: openIntent },
+      )
+    ).output;
+    expect(getWorkerOut).toContain('field=worker_output]]');
+  });
+});
+
+describe('artex goal substitution helpers', () => {
+  it('replaces the planner goal placeholder', async () => {
+    const { substituteArtexGoal } = await import('../profiles/artexProfiles');
+    const { buildPlannerSystemPrompt } = await import('../engine/plannerStep');
+    expect(substituteArtexGoal('Goal: {{.Goal}}', 'capture flag')).toBe('Goal: capture flag');
+    expect(buildPlannerSystemPrompt('probe auth')).toContain('Task goal: probe auth');
   });
 });
