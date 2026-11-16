@@ -221,6 +221,8 @@ C { "type": "subscribe", "request_id": "sub-1", "session_id": "s1", "agent_ids":
 S {"type": "response", "request_id": "sub-1", "code": 0}
 S {"type": "task.list", "session_id": "s1", "agent_id": "main", "tasks": []}
 S {"type": "agent", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "status": "idle", "compacting": false, "model": "kimi-for-coding", "thinking": "high", "permission_mode": "manual", "plan_mode": false, "swarm_mode": false, "tower_mode": false}
+S {"type": "goal", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main"}
+S {"type": "todo", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "items": []}
 S {"type": "turns", "event_created_at": "2026-10-29T10:30:00.000Z", "session_id": "s1", "agent_id": "main", "turns": [], "has_more": false}
 H POST /api/v1/sessions/s1/prompts
   { "prompt_id": "p-1", "content": [ { "type": "text", "text": "用一句话介绍这个仓库" } ] }
