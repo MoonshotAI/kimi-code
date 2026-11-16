@@ -9,11 +9,15 @@ import {
   resolveKimiRegion,
 } from '@moonshot-ai/kimi-code-oauth';
 
+import { Error2 } from '#/errors';
+
 import { installResolvedMarketplacePlugin } from '../../plugin/pluginService';
+import { CapabilityErrors } from '../errors';
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
   CapabilityEntry,
+  CapabilityInstallOptions,
   CapabilityInstallReporter,
   CapabilityStep,
 } from '../types';
@@ -196,7 +200,24 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     throw new Error(`WebBridge daemon did not come up on ${baseUrl} — check ~/.kimi-webbridge/logs`);
   }
 
-  async function install(report: CapabilityInstallReporter): Promise<string | undefined> {
+  async function waitForDaemonStopped(): Promise<void> {
+    for (let attempt = 0; attempt < START_POLL_ATTEMPTS; attempt += 1) {
+      const status = await fetchDaemonStatus();
+      if (status?.running !== true) return;
+      await new Promise((resolve) => {
+        setTimeout(resolve, START_POLL_INTERVAL_MS);
+      });
+    }
+    throw new Error2(
+      CapabilityErrors.codes.CAPABILITY_PROCESS_CONTROL_FAILED,
+      'WebBridge daemon did not stop; retry the update',
+    );
+  }
+
+  async function install(
+    report: CapabilityInstallReporter,
+    options: CapabilityInstallOptions = {},
+  ): Promise<string | undefined> {
     const asset = binaryAssetName(ctx.platform, ctx.arch);
     if (asset === undefined) {
       throw new Error(`kimi-webbridge is not supported on ${ctx.platform}/${ctx.arch}`);
@@ -234,7 +255,29 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       .every((step) => step.state === 'ok');
     const standaloneSkillMigrationPending =
       stepStates.get('standalone-skill-migration') === 'missing';
-    if (stepStates.get('daemon-binary') !== 'ok' || readyBefore) {
+    const installNewBinary = stepStates.get('daemon-binary') !== 'ok' || readyBefore;
+    const stopRunningDaemon =
+      ctx.platform === 'win32' && installNewBinary && stepStates.get('daemon') === 'ok';
+    if (stopRunningDaemon && options.stopRunningProcesses !== true) {
+      throw new Error2(
+        CapabilityErrors.codes.CAPABILITY_PROCESSES_RUNNING,
+        'WebBridge daemon must be stopped before updating its binary',
+      );
+    }
+    if (stopRunningDaemon) {
+      report('stop-processes');
+      const stopped = await runCommand(ctx.hostProcess, binPath, ['stop'], {
+        timeout: START_TIMEOUT_MS,
+      });
+      if (stopped.code !== 0) {
+        throw new Error2(
+          CapabilityErrors.codes.CAPABILITY_PROCESS_CONTROL_FAILED,
+          `kimi-webbridge stop failed: ${stopped.stderr || stopped.stdout}`,
+        );
+      }
+      await waitForDaemonStopped();
+    }
+    if (installNewBinary) {
       await installBinary(report, asset);
     }
 

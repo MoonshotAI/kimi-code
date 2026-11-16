@@ -18,6 +18,7 @@ import {
   createKimiWebbridgeEntry,
 } from '#/app/capability/entries/kimiWebbridge';
 import type { CapabilityEntryContext } from '#/app/capability/entries/context';
+import { CapabilityErrors } from '#/app/capability/errors';
 
 const DAEMON_BASE = 'http://127.0.0.1:10086';
 
@@ -491,6 +492,83 @@ describe('kimi-webbridge entry', () => {
       },
     ]);
     expect(await readFile(binPath, 'utf8')).toBe('latest-bin');
+  });
+
+  it('asks before replacing a running Windows daemon binary', async () => {
+    const userHome = path.join(root, 'user-home');
+    await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge.exe');
+    await writeFile(binPath, 'old-bin');
+    const plugins = fakePlugins([
+      { id: 'kimi-browser-extension', enabled: true, state: 'ok', version: '1.11.3' },
+    ]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({ platform: 'win32', arch: 'x64', plugins: plugins.service, hostProcess: host.service, fetchImpl }),
+    );
+
+    await expect(entry.install(() => {})).rejects.toMatchObject({
+      code: CapabilityErrors.codes.CAPABILITY_PROCESSES_RUNNING,
+    });
+    expect(host.calls).toEqual([]);
+    expect(await readFile(binPath, 'utf8')).toBe('old-bin');
+  });
+
+  it('stops and restarts a running Windows daemon around a confirmed binary update', async () => {
+    const userHome = path.join(root, 'user-home');
+    await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge.exe');
+    await writeFile(binPath, 'old-bin');
+    const plugins = fakePlugins([
+      { id: 'kimi-browser-extension', enabled: true, state: 'ok', version: '1.11.3' },
+    ]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [
+        { running: true, version: 'v1.11.3', extension_connected: true },
+        { running: false },
+        { running: false },
+        { running: true, version: 'v1.11.4', extension_connected: true },
+      ],
+      binary: new TextEncoder().encode('latest-bin'),
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({ platform: 'win32', arch: 'x64', plugins: plugins.service, hostProcess: host.service, fetchImpl }),
+    );
+    const reports: string[] = [];
+
+    await entry.install((step) => reports.push(step), { stopRunningProcesses: true });
+
+    expect(host.calls.map((call) => `${call.command} ${call.args.join(' ')}`)).toEqual([
+      `${binPath} stop`,
+      `${binPath} start`,
+    ]);
+    expect(reports[0]).toBe('stop-processes');
+    expect(reports).toContain('download');
+    expect(await readFile(binPath, 'utf8')).toBe('latest-bin');
+  });
+
+  it('does not require process confirmation for a Windows plugin-only repair', async () => {
+    const userHome = path.join(root, 'user-home');
+    await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge.exe');
+    await writeFile(binPath, 'bin');
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({ platform: 'win32', arch: 'x64', plugins: plugins.service, hostProcess: host.service, fetchImpl }),
+    );
+
+    await entry.install(() => {});
+
+    expect(host.calls).toEqual([]);
+    expect(plugins.installs).toHaveLength(1);
   });
 
   it('resumes partial setup without repeating completed runtime layers', async () => {
