@@ -175,12 +175,19 @@ describe('prompt queue', () => {
     await loop.settled();
   });
 
-  it('publishes prompt.submitted for every user prompt and prompt.started on launch', async () => {
+  it('publishes prompt.submitted with its origin and prompt.started on launch', async () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'waiting' });
-    const submitted: Array<{ promptId: string; userMessageId: string; status: string; content: readonly ContentPart[] }> = [];
+    ctx.mockNextResponse({ type: 'text', text: 'task done' });
+    const submitted: Array<{
+      promptId: string;
+      userMessageId: string;
+      status: string;
+      content: readonly ContentPart[];
+      origin: PromptSubmitted['origin'];
+    }> = [];
     const started: string[] = [];
     ctx.get(IEventBus).subscribe(PromptSubmitted, (event) => {
       submitted.push({
@@ -188,6 +195,7 @@ describe('prompt queue', () => {
         userMessageId: event.userMessageId,
         status: event.status,
         content: event.content,
+        origin: event.origin,
       });
     });
     ctx.get(IEventBus).subscribe(PromptStarted, (event) => {
@@ -196,20 +204,44 @@ describe('prompt queue', () => {
 
     const active = await enqueue(loop, { id: 'active', message: message('active') });
     expect(submitted).toEqual([
-      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }] },
+      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }], origin: { kind: 'user' } },
     ]);
     await active.launched;
     expect(started).toEqual(['active']);
 
     await enqueue(loop, { id: 'waiting', message: message('waiting') });
     expect(submitted).toEqual([
-      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }] },
-      { promptId: 'waiting', userMessageId: 'waiting', status: 'queued', content: [{ type: 'text', text: 'waiting' }] },
+      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }], origin: { kind: 'user' } },
+      { promptId: 'waiting', userMessageId: 'waiting', status: 'queued', content: [{ type: 'text', text: 'waiting' }], origin: { kind: 'user' } },
+    ]);
+    expect(started).toEqual(['active']);
+
+    const taskOrigin = {
+      kind: 'task',
+      taskId: 'task-1',
+      status: 'completed',
+      notificationId: 'task:task-1:completed',
+    } as const;
+    loop.notify({
+      message: {
+        id: 'task-notification',
+        role: 'user',
+        content: [{ type: 'text', text: 'task completed' }],
+        origin: taskOrigin,
+      },
+    });
+    expect(submitted).toEqual([
+      { promptId: 'active', userMessageId: 'active', status: 'running', content: [{ type: 'text', text: 'active' }], origin: { kind: 'user' } },
+      { promptId: 'waiting', userMessageId: 'waiting', status: 'queued', content: [{ type: 'text', text: 'waiting' }], origin: { kind: 'user' } },
+      { promptId: 'task-notification', userMessageId: 'task-notification', status: 'queued', content: [{ type: 'text', text: 'task completed' }], origin: taskOrigin },
     ]);
     expect(started).toEqual(['active']);
 
     hold.release();
     await loop.settled();
+    expect(started).toHaveLength(3);
+    expect(started).toContain('waiting');
+    expect(started).toContain('task-notification');
   });
 
   it('atomically rejects steer when any id is not pending', async () => {
