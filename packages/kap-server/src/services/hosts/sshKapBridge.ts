@@ -2,8 +2,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import type { HostEntry } from '@moonshot-ai/agent-core-v2';
+
 import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './hostProtocol';
-import type { HostEntry } from './hostsConfig';
 import type { HostSession } from './hostSession';
 import { StdioHostSession } from './stdioHostSession';
 

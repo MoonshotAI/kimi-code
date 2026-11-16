@@ -6,6 +6,7 @@ export * from '#/_base/di/instantiationService';
 export * from '#/_base/di/lifecycle';
 export * from '#/_base/di/scope';
 export * from './app/scopes';
+export * from '#/app/hostsConfig/configSection';
 export * from '#/_base/di/serviceCollection';
 export * from '#/_base/di/cascadeEngine';
 export * from '#/_base/di/dependencyGraph';

@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { okEnvelope } from '../../envelope';
 import { defineRoute } from '../../middleware/defineRoute';
 import { ErrorCode } from '../../protocol/error-codes';
+import { enqueueProviderWrite } from '../providerWrites';
 import type { HostSession } from './hostSession';
 
 const sharedProvidersSchema = z.object({
@@ -67,16 +68,8 @@ export async function collectSharedProviders(core: Scope): Promise<SharedProvide
   return shared;
 }
 
-let providerWrites: Promise<unknown> = Promise.resolve();
-
-function queueProviderWrite<T>(write: () => Promise<T>): Promise<T> {
-  const run = providerWrites.then(write);
-  providerWrites = run.catch(() => undefined);
-  return run;
-}
-
 function importSharedProviders(core: Scope, incoming: SharedProviders): Promise<ProviderCopyResult> {
-  return queueProviderWrite(async () => {
+  return enqueueProviderWrite(async () => {
     const config = core.accessor.get(IConfigService);
     await config.ready;
     await core.accessor.get(IKosongConfigService).ready;

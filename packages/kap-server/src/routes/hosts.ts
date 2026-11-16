@@ -1,4 +1,11 @@
-import { IBootstrapService, IConfigService, IHostFileSystem, type Scope } from '@moonshot-ai/agent-core-v2';
+import {
+  HOSTS_SECTION,
+  IBootstrapService,
+  IConfigService,
+  IHostFileSystem,
+  hostIdSchema,
+  type Scope,
+} from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -6,11 +13,7 @@ import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { hostSnapshotSchema } from '../protocol/events-zod';
 import { hostSnapshots, toHostSnapshot, type HostBridgeManager } from '../services/hosts/hostBridgeManager';
-import {
-  HOSTS_SECTION,
-  hostIdSchema,
-  hostWireSchema,
-} from '../services/hosts/hostsConfig';
+import { hostWireSchema } from '../services/hosts/hostsConfig';
 import { providerCopyResultSchema } from '../services/hosts/hostProviders';
 import { readSshConfigHosts } from '../services/hosts/sshConfigHosts';
 import { HostConnectError, SshKapBridge } from '../services/hosts/sshKapBridge';

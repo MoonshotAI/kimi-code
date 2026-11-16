@@ -1,4 +1,10 @@
-import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
+import {
+  HOSTS_SECTION,
+  IConfigService,
+  type HostEntry,
+  type HostsSection,
+  type Scope,
+} from '@moonshot-ai/agent-core-v2';
 
 import type { HostSnapshot } from '../../protocol/events-zod';
 import {
@@ -6,7 +12,6 @@ import {
   sendSharedProviders,
   type ProviderCopyResult,
 } from './hostProviders';
-import { HOSTS_SECTION, type HostEntry, type HostsSection } from './hostsConfig';
 import { HostConnectError, SshKapBridge } from './sshKapBridge';
 import type { HostSession } from './hostSession';
 
