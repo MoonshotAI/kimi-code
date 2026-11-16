@@ -2173,6 +2173,31 @@ describe('SessionEventBroadcaster', () => {
       await bc.subscribe('s1', view.target, ['main']);
       expect(agentFrames()).toEqual(['main', 'agent-0', 'agent-0', 'main']);
     });
+
+    it('preserves main subscription across session close and reopen while dropping closed side agents', async () => {
+      const lc = openSession('s1');
+      lc.addAgent('main');
+      lc.addAgent('btw-1');
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main', 'btw-1']);
+
+      lc.removeAgent('btw-1');
+      lc.removeAgent('main');
+      managerEvents.fireDidClose('s1');
+
+      const reopened = openSession('s1');
+      const reopenedMain = reopened.addAgent('main');
+      managerEvents.fireDidCreate('s1', sessionHandle(core, 's1'));
+      await settle();
+
+      reopenedMain.bus.emit(agentEvent('turn.started', { turnId: 5, origin: { kind: 'user' } }));
+      await settle();
+
+      const afterEnded = stateFramesOf(view).filter(
+        (frame) => frame.type === 'agent' && frame.agent_id === 'main' && frame['status'] === 'running',
+      );
+      expect(afterEnded.length).toBeGreaterThan(0);
+    });
   });
 });
 

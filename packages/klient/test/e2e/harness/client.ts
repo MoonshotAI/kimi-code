@@ -48,6 +48,7 @@ import type {
   SessionAbortResponse,
   UndoSessionRequest,
   UndoSessionResponse,
+  UpdateSessionProfileResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-session';
 import type {
   Session,
@@ -191,7 +192,7 @@ export class DaemonClient {
   ): Promise<{ items: Session[]; has_more: boolean }> {
     return this.http.listSessions(query);
   }
-  updateSession(sid: string, body: SessionUpdate): Promise<Session> {
+  updateSession(sid: string, body: SessionUpdate): Promise<UpdateSessionProfileResponse> {
     return this.http.updateSession(sid, body);
   }
   forkSession(sid: string, body: ForkSessionRequest = {}): Promise<Session> {

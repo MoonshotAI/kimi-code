@@ -56,7 +56,7 @@ import { toWireQuestion } from '../../../protocol/question-wire';
 import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toConfigResponse } from '../../../routes/config';
-import { resolveSessionFacts, toWireSession, type SessionWireFields } from '../../../routes/sessions';
+import { resolveSessionFacts, toWireSession, type SessionFacts, type SessionWireFields } from '../../../routes/sessions';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
 import type {
@@ -64,7 +64,7 @@ import type {
   ConversationService,
 } from '../../../services/conversation/conversationService';
 import { mapError } from '../../errors';
-import { ensureMainAgent } from '../../mainAgent';
+import { ensureMainAgent, MAIN_AGENT_ID } from '../../mainAgent';
 import { SessionAgentFeed } from './sessionAgentFeed';
 import { SessionTaskFeed } from './sessionTaskFeed';
 import { toTaskMessage } from './taskState';
@@ -489,7 +489,9 @@ export class SessionEventBroadcaster {
       if (ended) {
         subscription.conversation?.feed.flushPending();
         releaseConversation(subscription);
-        agents.delete(agentId);
+        if (agentId !== MAIN_AGENT_ID) {
+          agents.delete(agentId);
+        }
       }
       try {
         target.send(frame);
@@ -520,7 +522,7 @@ export class SessionEventBroadcaster {
           return;
         }
         this.flushDeferredWork(sessionId, tracker);
-        this.enqueueWorkChanged(sessionId);
+        this.enqueueWorkChanged(sessionId, work);
       }),
     };
     this.workTrackers.set(sessionId, tracker);
@@ -537,7 +539,7 @@ export class SessionEventBroadcaster {
     const deferred = tracker.deferred;
     if (deferred === undefined) return;
     tracker.deferred = undefined;
-    this.enqueueWorkChanged(sessionId);
+    this.enqueueWorkChanged(sessionId, deferred);
   }
 
   private async sessionEvent(
@@ -545,6 +547,7 @@ export class SessionEventBroadcaster {
     sessionId: string,
     candidate?: unknown,
     patch?: { title?: string; lastPrompt?: string },
+    factsOverride?: SessionFacts,
   ): Promise<Event | undefined> {
     const parsed = sessionSchema.safeParse(candidate);
     let session: Session | undefined = parsed.success ? parsed.data : undefined;
@@ -555,7 +558,7 @@ export class SessionEventBroadcaster {
       if (summary === undefined) return undefined;
       const cwd = summary.cwd ?? (await this.opts.core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) return undefined;
-      session = toWireSession(summary, cwd, resolveSessionFacts(this.opts.core, sessionId));
+      session = toWireSession(summary, cwd, factsOverride ?? resolveSessionFacts(this.opts.core, sessionId));
     }
     if (patch?.title !== undefined) session = { ...session, title: patch.title };
     if (patch?.lastPrompt !== undefined) session = { ...session, last_prompt: patch.lastPrompt };
@@ -568,8 +571,9 @@ export class SessionEventBroadcaster {
     return toConfigResponse(config.getAll());
   }
 
-  private enqueueWorkChanged(sessionId: string): void {
-    this.enqueueGlobal('session', () => this.sessionEvent('updated', sessionId));
+  private enqueueWorkChanged(sessionId: string, work: SessionActivityState): void {
+    const snapshotFacts: SessionFacts = { ...work, live: true };
+    this.enqueueGlobal('session', () => this.sessionEvent('updated', sessionId, undefined, undefined, snapshotFacts));
   }
 
   private onCoreEvent(event: Event2<any>): void {
