@@ -57,6 +57,7 @@ import {
 
 const RECONCILE_INTERVAL_MS = 60_000;
 const DEGRADED_RETRY_MS = 5_000;
+const SCHEMA_MISMATCH_REASON = 'schema mismatch';
 const TIE_REPAIR_LIMIT = 1_000;
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 
@@ -139,7 +140,12 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     this.state = 'preparing';
     try {
       const manifest = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-      if (manifest === undefined || manifest.schemaVersion !== SESSION_INDEX_SCHEMA_VERSION) {
+      if (
+        manifest !== undefined &&
+        manifest.schemaVersion !== SESSION_INDEX_SCHEMA_VERSION
+      ) {
+        this.markSchemaMismatch();
+      } else if (manifest === undefined) {
         const projection = this.ensureProjection();
         if (deadlineMs === undefined) {
           await projection;
@@ -150,6 +156,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
               setTimeout(resolve, deadlineMs);
             }),
           ]);
+        }
+        const published = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+        if (published !== undefined) {
+          this.generation = published.seq;
+          this.markReady();
         }
       } else {
         this.generation = manifest.seq;
@@ -177,11 +188,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
             });
           }
         }
-      }
-      const published = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-      if (published !== undefined) {
-        this.generation = published.seq;
-        this.markReady();
+        const published = await this.queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+        if (published !== undefined && published.schemaVersion === SESSION_INDEX_SCHEMA_VERSION) {
+          this.generation = published.seq;
+          this.markReady();
+        }
       }
     } catch (error) {
       this.markDegraded('prepare failed', error);
@@ -270,6 +281,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   private async tick(): Promise<void> {
     if (!this.readModelEnabled()) return;
+    if (this.statusReason === SCHEMA_MISMATCH_REASON) return;
     if (this.state === 'degraded') {
       void this.prepare();
       return;
@@ -298,6 +310,12 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     this.statusReason = undefined;
     this.lastDegradedKey = undefined;
     this.ensureReconcileTimer();
+  }
+
+  private markSchemaMismatch(): void {
+    this.markDegraded(SCHEMA_MISMATCH_REASON);
+    this.nextPrepareRetryAt = Number.POSITIVE_INFINITY;
+    this.reconcileTimer.cancel();
   }
 
   private markDegraded(reason: string, error?: unknown): void {
@@ -385,7 +403,9 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     }
     if (this.state === 'preparing') return legacy();
     if (this.state === 'degraded') {
-      if (Date.now() >= this.nextPrepareRetryAt) void this.prepare();
+      if (this.statusReason !== SCHEMA_MISMATCH_REASON && Date.now() >= this.nextPrepareRetryAt) {
+        void this.prepare();
+      }
       return legacy();
     }
     let manifest: Checkpoint | undefined;
@@ -734,10 +754,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     workspaceIds: readonly string[] | undefined,
   ): Promise<SessionSummary[]> {
     let collected: SessionSummary[];
-    if (
-      this.readModelEnabled() &&
-      (this.state === 'uninitialized' || this.state === 'preparing')
-    ) {
+    if (this.readModelEnabled()) {
       const { summaries } = await this.projector.sharedScanForRead();
       collected =
         workspaceIds === undefined
