@@ -231,7 +231,7 @@ Every item shares these base fields:
 
 #### `notification`
 
-Background task notification delivered into the conversation: `{ notification_id, title, body, severity: "info" \| "warning" \| "error", notification_type, source: { kind, id }, task_id?, agent_id?, output?: { file?, preview?, bytes?, truncated? }, answer? }`.
+Background task notification delivered into the conversation: `{ notification_id, title, body, severity: "info" \| "warning" \| "error", notification_type, source: { kind, id }, task_id?, agent_id?, output?: { file?, preview?, bytes?, truncated? }, answer?: { answers: Record<string, string \| true>, note?: string } }`.
 
 #### `system`
 

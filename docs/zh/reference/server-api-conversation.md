@@ -231,7 +231,7 @@ S {"type": "turn.ended", "event_created_at": "2026-10-29T10:30:00.000Z", "sessio
 
 #### `notification`
 
-投递进对话的后台任务通知卡片：`{ notification_id, title, body, severity: "info" \| "warning" \| "error", notification_type, source: { kind, id }, task_id?, agent_id?, output?: { file?, preview?, bytes?, truncated? }, answer? }`。
+投递进对话的后台任务通知卡片：`{ notification_id, title, body, severity: "info" \| "warning" \| "error", notification_type, source: { kind, id }, task_id?, agent_id?, output?: { file?, preview?, bytes?, truncated? }, answer?: { answers: Record<string, string \| true>, note?: string } }`。
 
 #### `system`
 

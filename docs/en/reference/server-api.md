@@ -11,7 +11,7 @@ onMounted(() => redirectLegacyServerApiAnchor('en'))
 The local server started by `kimi web` (as well as the server embedded in the desktop app) exposes the **Kimi Agent Protocol (KAP)**: a pair of HTTP REST endpoints (`/api/v1`) and a WebSocket event stream (`/api/v1/ws`). Clients and scripts can use them to create sessions, submit prompts, stream live conversation turns and agent state, respond to approvals, and manage workspaces, models, plugins, and MCP servers. For startup flags and CLI options, see [kimi Command](./kimi-command.md#kimi-web).
 
 ::: warning Note
-This protocol is in Beta and may evolve across releases. A running server also serves machine-readable schemas generated directly from its live validation definitions at [`GET /openapi.json`](#online-schemas) and [`GET /asyncapi.json`](#online-schemas).
+This protocol is in Beta and may evolve across releases. A running server also serves machine-readable schemas generated directly from its live validation definitions at [`GET /openapi.json`](#address-and-online-schemas) and [`GET /asyncapi.json`](#address-and-online-schemas).
 :::
 
 ## Document map
@@ -42,7 +42,7 @@ Include this brief with the files:
 Implement a Kimi Code client following the attached Kimi Agent Protocol documentation.
 - Server URL: http://127.0.0.1:58627/api/v1; WebSocket: ws://127.0.0.1:58627/api/v1/ws; credential: YOUR_TOKEN.
 - Use only the messages, endpoints, and fields defined in the spec; skip unknown event types, item types, or fields without failing.
-- Check the envelope `code` field on every HTTP response; see "Error codes" for meanings.
+- Check the envelope `code` field on JSON responses (excluding 204 empty responses and binary download/export streams); see "Error codes" for meanings.
 - Generate a session-unique `prompt_id` on the client when submitting input, and resend with the same `prompt_id` on network errors or timeouts.
 ```
 

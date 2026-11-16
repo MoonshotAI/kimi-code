@@ -79,6 +79,8 @@ function handleKapWireAction(event: Event) {
 
 function handleKapWireKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' || event.key === ' ') {
+    const target = event.target as HTMLElement | null
+    if (target?.closest('button')) return
     handleKapWireAction(event)
   }
 }

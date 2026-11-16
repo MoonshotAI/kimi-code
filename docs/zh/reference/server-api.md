@@ -11,7 +11,7 @@ onMounted(() => redirectLegacyServerApiAnchor('zh'))
 `kimi web` 启动的本地服务（以及桌面端内嵌服务）对外提供 **Kimi Agent Protocol（KAP）**：由 HTTP REST 接口（`/api/v1`）与 WebSocket 事件流（`/api/v1/ws`）组成。任何客户端或脚本都可以用它创建会话、提交输入、实时接收流式对话与状态、回应审批，以及管理工作区、模型、插件和 MCP。启动服务的方式与命令行选项见 [kimi 命令](./kimi-command.md#kimi-web)。
 
 ::: warning 注意
-本协议处于 Beta 阶段，接口与字段可能随版本演进。运行中的服务同时提供由校验 schema 实时生成的 [`GET /openapi.json`](#在线-schema) 与 [`GET /asyncapi.json`](#在线-schema)。
+本协议处于 Beta 阶段，接口与字段可能随版本演进。运行中的服务同时提供由校验 schema 实时生成的 [`GET /openapi.json`](#地址与在线-schema) 与 [`GET /asyncapi.json`](#地址与在线-schema)。
 :::
 
 ## 文档结构
@@ -42,7 +42,7 @@ onMounted(() => redirectLegacyServerApiAnchor('zh'))
 按所附的 Kimi Agent Protocol 文档实现一个 Kimi Code 客户端。
 - 服务地址：http://127.0.0.1:58627/api/v1；WebSocket：ws://127.0.0.1:58627/api/v1/ws；凭证：YOUR_TOKEN。
 - 只使用文档写明的消息、接口和字段；遇到不认识的事件类型、条目类型或字段时跳过，不报错。
-- HTTP 出错时以响应信封里的 code 判断，含义见「错误码」。
+- 对 JSON 响应（除 204 空响应与二进制下载/导出流外）检查信封里的 code 字段，含义见「错误码」。
 - 提交输入时由客户端生成会话内唯一的 prompt_id，网络出错或超时时用同一个 prompt_id 原样重发。
 ```
 
