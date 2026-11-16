@@ -1515,7 +1515,7 @@ key = "${titleOAuthRef.key}"
     }
   });
 
-  it('folds the resumed main agent replay from the persisted wire on cold and live resumes', async () => {
+  it('resumes persisted wire state and recovers a legacy session with a missing default model', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-resume-fold-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(homeDir, workDir);
@@ -1571,6 +1571,74 @@ key = "${titleOAuthRef.key}"
         expect.objectContaining({ role: 'user', toolCalls: [] }),
         expect.objectContaining({ role: 'user', toolCalls: [] }),
       ]);
+      await client.closeSession({ sessionId: 'ses_resume_fold' });
+
+      await client.setConfig({
+        providers: {
+          acme: { type: 'openai', baseUrl: 'https://acme.example.test/v1' },
+        },
+        models: {
+          'acme/old': { provider: 'acme', model: 'old-wire', maxContextSize: 100_000 },
+          'acme/new': { provider: 'acme', model: 'new-wire', maxContextSize: 100_000 },
+        },
+        defaultModel: 'acme/old',
+      });
+      await client.createSession({ id: 'ses_resume_missing_default', workDir, model: 'acme/old' });
+      await client.closeSession({ sessionId: 'ses_resume_missing_default' });
+      const legacyDir = await findSessionDir(homeDir, 'ses_resume_missing_default');
+      const legacyWirePath = join(legacyDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
+      const legacyRecords = (await readFile(legacyWirePath, 'utf-8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      for (const record of legacyRecords) delete record['profileName'];
+      await writeFile(legacyWirePath, `${legacyRecords.map((record) => JSON.stringify(record)).join('\n')}\n`);
+      await writeFile(
+        join(homeDir, 'config.toml'),
+        `default_model = "acme/old"\n\n[providers.acme]\ntype = "openai"\nbase_url = "https://acme.example.test/v1"\n\n[models."acme/new"]\nprovider = "acme"\nmodel = "new-wire"\nmax_context_size = 100000\n`,
+      );
+      await client.getConfig({ reload: true });
+
+      const legacy = await client.resumeSession({ id: 'ses_resume_missing_default' });
+      expect(legacy.agents[MAIN_AGENT_ID]?.config.modelAlias).toBe('acme/old');
+      expect(legacy.warning).toContain('acme/old');
+      expect(legacy.warning).toContain('/model');
+      await client.setModel({ sessionId: 'ses_resume_missing_default', model: 'acme/new' });
+      await expect(client.getStatus({ sessionId: 'ses_resume_missing_default' })).resolves.toMatchObject({
+        model: 'acme/new',
+      });
+      const requestModels: string[] = [];
+      const fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+        const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { model?: string };
+        requestModels.push(body.model ?? '');
+        const chunks = [
+          { delta: { role: 'assistant', content: 'ok' }, finish_reason: null },
+          { delta: {}, finish_reason: 'stop' },
+        ].map((choice) => `data: ${JSON.stringify({
+          id: 'chatcmpl-stub',
+          object: 'chat.completion.chunk',
+          created: 0,
+          model: 'new-wire',
+          choices: [{ index: 0, ...choice }],
+        })}`);
+        return new Response([...chunks, 'data: [DONE]'].map((line) => `${line}\n\n`).join(''), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      });
+      try {
+        await client.prompt({ sessionId: 'ses_resume_missing_default', input: [{ type: 'text', text: 'hello' }] });
+        await vi.waitFor(() => {
+          expect(requestModels).toEqual(['new-wire']);
+        });
+      } finally {
+        fetchStub.mockRestore();
+      }
+      await expect(client.createSession({
+        id: 'ses_resume_invalid_explicit',
+        workDir,
+        model: 'acme/missing',
+      })).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
     } finally {
       await client.close();
     }
