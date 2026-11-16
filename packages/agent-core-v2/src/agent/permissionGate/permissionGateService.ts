@@ -2,7 +2,10 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
+import {
+  IAgentPermissionPolicyService,
+  type PermissionPolicyEvaluation,
+} from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionData } from '#/agent/permissionPolicy/types';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -43,18 +46,25 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     };
   }
 
-  private async adjudicate(event: BeforeToolExecuteEvent): Promise<void> {
-    const evaluation = await this.policyService.evaluate(event);
-    if (evaluation === undefined) return;
+  private trackPolicyDecision(
+    context: ResolvedToolExecutionHookContext,
+    evaluation: PermissionPolicyEvaluation,
+  ) {
     this.telemetry.track2('permission_policy_decision', {
-      turn_id: event.turnId,
-      tool_call_id: event.toolCall.id,
+      turn_id: context.turnId,
+      tool_call_id: context.toolCall.id,
       policy_name: evaluation.policyName,
-      tool_name: event.toolCall.name,
+      tool_name: context.toolCall.name,
       permission_mode: this.modeService.mode,
       decision: evaluation.result.kind,
       ...evaluation.result.reason,
     });
+  }
+
+  private async adjudicate(event: BeforeToolExecuteEvent): Promise<void> {
+    const evaluation = await this.policyService.evaluate(event);
+    if (evaluation === undefined) return;
+    this.trackPolicyDecision(event, evaluation);
     const { result, policyName } = evaluation;
     if (result.kind === 'ask') {
       event.waitUntil(() => this.toolApproval.requestToolApproval(event, result, policyName));
@@ -75,15 +85,6 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
   ): Promise<BeforeExecuteDecision | undefined> {
     const evaluation = await this.policyService.evaluate(context);
     if (evaluation === undefined) return undefined;
-    this.telemetry.track2('permission_policy_decision', {
-      turn_id: context.turnId,
-      tool_call_id: context.toolCall.id,
-      policy_name: evaluation.policyName,
-      tool_name: context.toolCall.name,
-      permission_mode: this.modeService.mode,
-      decision: evaluation.result.kind,
-      ...evaluation.result.reason,
-    });
     return this.toolApproval.resolvePermissionResolution(
       evaluation.result,
       context,

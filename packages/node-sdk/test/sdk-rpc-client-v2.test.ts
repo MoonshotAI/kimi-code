@@ -1818,6 +1818,9 @@ key = "${titleOAuthRef.key}"
     await writeFile(join(workDir, 'README.md'), 'readme');
     await writeFile(join(workDir, '.gitignore'), 'ignored-app.ts\n');
     await writeFile(join(workDir, 'ignored-app.ts'), 'ignored');
+    // fd honors .gitignore only inside a git work tree; init one so the fd
+    // and fallback scanners see the same ignore semantics.
+    await promisify(execFile)('git', ['init'], { cwd: workDir });
     try {
       const matched = await harness.suggestFiles(workDir, { query: 'app', limit: 20 });
       expect(matched?.items).toContainEqual(

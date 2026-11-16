@@ -45,6 +45,7 @@ import { applyTranscriptConfigChoice } from '#/tui/commands/config';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import type { FollowUpBehavior, FollowUpDelivery, TranscriptConfig } from '#/tui/config';
 import { isReadonlyBash } from '#/utils/readonly-bash';
+import { resetKimiRegionCache } from '#/utils/region';
 import {
   AgentSwarmProgressComponent,
   agentSwarmGridHeightForTerminalRows,
@@ -3194,23 +3195,31 @@ command = "vim"
   });
 
   it('prints the sign-up page and GitHub Issues links when not signed in', async () => {
-    const { driver, harness } = await makeDriver(makeSession());
-    harness.auth.status.mockResolvedValueOnce({
-      providers: [{ providerName: 'managed:kimi-code', hasToken: false }],
-    });
-    const feedbackDriver = driver as unknown as FeedbackDriver;
-    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
-    vi.mocked(openUrl).mockClear();
+    // Pin the mainland region so the sign-up URL is deterministic regardless
+    // of the machine's install-channel marker or persisted login region.
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
+    resetKimiRegionCache();
+    try {
+      const { driver, harness } = await makeDriver(makeSession());
+      harness.auth.status.mockResolvedValueOnce({
+        providers: [{ providerName: 'managed:kimi-code', hasToken: false }],
+      });
+      const feedbackDriver = driver as unknown as FeedbackDriver;
+      vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+      vi.mocked(openUrl).mockClear();
 
-    await handleFeedbackCommand(feedbackDriver as any);
+      await handleFeedbackCommand(feedbackDriver as any);
 
-    expect(openUrl).not.toHaveBeenCalled();
-    expect(promptFeedbackInput).not.toHaveBeenCalled();
-    expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
-    const transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain("You're not signed in");
-    expect(transcript).toContain('https://www.kimi.com/code');
-    expect(transcript).toContain('https://github.com/MoonshotAI/kimi-code/issues');
+      expect(openUrl).not.toHaveBeenCalled();
+      expect(promptFeedbackInput).not.toHaveBeenCalled();
+      expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain("You're not signed in");
+      expect(transcript).toContain('https://www.kimi.com/code');
+      expect(transcript).toContain('https://github.com/MoonshotAI/kimi-code/issues');
+    } finally {
+      resetKimiRegionCache();
+    }
   });
 
   it('falls back to GitHub Issues when the sign-in status cannot be read', async () => {

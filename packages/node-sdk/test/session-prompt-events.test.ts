@@ -104,6 +104,9 @@ describe('Session.prompt events', () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_NOTIFY_USER', '');
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
+    // Isolate the OS home as well, or user-scope agent discovery
+    // (~/.agents/agents) leaks machine-local agents into the tool list.
+    vi.stubEnv('HOME', homeDir);
     const requests: Array<{ tools: unknown; messages: Array<{ role: string; content: unknown }> }> =
       [];
     fetchStub!.mockImplementation(
