@@ -7,6 +7,7 @@ import {
   IAgentPluginService,
   IAgentTaskService,
   IAuthSummaryService,
+  IBootstrapService,
   IConfigService,
   IPluginService,
   ISessionAgentProfileCatalog,
@@ -15,6 +16,7 @@ import {
   ISessionContext,
   ISessionIndex,
   ISessionMetadata,
+  type SessionMeta,
   ISessionTitleService,
   IEventService,
   SessionCreated,
@@ -35,6 +37,12 @@ import {
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
+import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
+import {
+  legacySessionMetaScopeOf,
+  sessionScopeOf,
+  workspacePersistenceScope,
+} from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/addressing';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
 import type { ConversationService } from '../services/conversation/conversationService';
@@ -624,17 +632,23 @@ async function cancelSessionAction(
   const targetAgentId = body.agent_id ?? MAIN_AGENT_ID;
   const live = getLiveSessionById(core.accessor, id);
   if (live === undefined) {
-    const exists = (await core.accessor.get(ISessionIndex).get(id)) !== undefined;
-    if (!exists) {
+    const summary = await core.accessor.get(ISessionIndex).get(id);
+    if (summary === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
     }
     if (targetAgentId !== MAIN_AGENT_ID) {
-      const session = await resumeSessionById(core.accessor, id);
-      if (session === undefined) {
-        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
-      }
-      const agent = await getOrRestoreAgent(session, targetAgentId);
-      if (agent === undefined) {
+      const docs = core.accessor.get(IAtomicDocumentStore);
+      const metaScope = sessionScopeOf(
+        workspacePersistenceScope(
+          core.accessor.get(IBootstrapService).scope('sessions'),
+          summary.workspaceId,
+        ),
+        id,
+      );
+      const raw =
+        (await docs.get<SessionMeta>(metaScope, 'state.json')) ??
+        (await docs.get<SessionMeta>(legacySessionMetaScopeOf(metaScope), 'state.json'));
+      if (raw?.agents?.[targetAgentId] === undefined) {
         throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent ${targetAgentId} does not exist`);
       }
     }
