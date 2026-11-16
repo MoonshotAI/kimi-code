@@ -86,7 +86,7 @@ export {
   questionRequestToElicitationParams,
 } from './question';
 export { projectHistoryToSessionUpdates } from './replay';
-export { AcpEnvironmentProviderFactory } from './acp-terminal';
+export { AcpEnvironmentOverlay } from './acp-terminal';
 export type {
   AcpTerminalCreatedEvent,
   AcpTerminalCreatedListener,

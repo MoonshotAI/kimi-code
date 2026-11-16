@@ -135,8 +135,6 @@ export interface AcpServerOptions {
    * scope. Absent → `persistOriginalImage`'s shared temp-dir fallback.
    */
   readonly resolveOriginalsDir?: (sessionId: string) => string | undefined;
-  readonly bindSessionEnvironment?: (sessionId: string) => Promise<void>;
-  readonly unbindSessionEnvironment?: (sessionId: string) => Promise<void>;
   /** Static or per-session host command palette. */
   readonly slashCommands?: SlashCommandsResolver;
 }
@@ -148,8 +146,6 @@ export class AcpServer {
   private readonly terminalAuthEnv: Readonly<Record<string, string>> | undefined;
   private readonly terminalAuthLegacyCommand: string | undefined;
   private readonly resolveOriginalsDir: ((sessionId: string) => string | undefined) | undefined;
-  private readonly bindSessionEnvironment: ((sessionId: string) => Promise<void>) | undefined;
-  private readonly unbindSessionEnvironment: ((sessionId: string) => Promise<void>) | undefined;
   private readonly resolveSlashCommands: (
     session: SessionHandle,
   ) => Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>;
@@ -171,8 +167,6 @@ export class AcpServer {
     this.terminalAuthEnv = opts.terminalAuthEnv;
     this.terminalAuthLegacyCommand = opts.terminalAuthLegacyCommand;
     this.resolveOriginalsDir = opts.resolveOriginalsDir;
-    this.bindSessionEnvironment = opts.bindSessionEnvironment;
-    this.unbindSessionEnvironment = opts.unbindSessionEnvironment;
     const slashCommands = opts.slashCommands;
     this.resolveSlashCommands =
       typeof slashCommands === 'function'
@@ -345,7 +339,6 @@ export class AcpServer {
       this.sessions.delete(params.sessionId);
     }
     await this.klient.session(params.sessionId).close();
-    await this.unbindSessionEnvironment?.(params.sessionId);
   }
 
   /**
@@ -373,7 +366,6 @@ export class AcpServer {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
-    await this.unbindSessionEnvironment?.(params.sessionId);
     return {};
   }
 
@@ -563,7 +555,6 @@ export class AcpServer {
   private async wireSession(sessionId: string): Promise<AcpSession> {
     const session = this.klient.session(sessionId);
     await this.bindDefaultModel(session.agent('main'));
-    await this.bindSessionEnvironment?.(sessionId);
     const hostCommands = await this.resolveSlashCommands(session);
     const acpSession = new AcpSession(
       this.conn,

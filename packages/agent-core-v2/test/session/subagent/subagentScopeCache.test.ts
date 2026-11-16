@@ -311,6 +311,7 @@ describe('SessionSubagentScopeCacheService', () => {
     ix.stub(IEnvironmentService, {
       onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
+      current: () => undefined,
       inspect: (binding) => new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
       acquire: (binding) => ({
         environment: new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
