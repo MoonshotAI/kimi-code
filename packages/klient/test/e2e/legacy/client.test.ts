@@ -590,22 +590,8 @@ function okEnvelope<T>(data: T): { code: 0; msg: string; data: T; request_id: st
   return { code: 0, msg: 'success', data, request_id: 'req_test' };
 }
 
-function frameForLog(frame: {
-  type: string;
-  session_id?: string;
-  request_id?: string;
-  code?: number;
-  msg?: string;
-  payload?: unknown;
-}): Record<string, unknown> {
-  return {
-    type: frame.type,
-    session_id: frame.session_id,
-    request_id: frame.request_id,
-    code: frame.code,
-    msg: frame.msg,
-    payload: frame.payload,
-  };
+function frameForLog(frame: Record<string, unknown> & { type: string }): Record<string, unknown> {
+  return { ...frame };
 }
 
 function testSession(overrides: Partial<Session> = {}): Session {
