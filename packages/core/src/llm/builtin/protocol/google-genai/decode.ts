@@ -5,6 +5,7 @@
 import { ApiError as RawGoogleGenAISDKApiError } from '@google/genai';
 
 import {
+  isQuotaExhaustedMessage,
   isTransientHttpStatus,
   isUnreachableConnection,
   toLlmStatusErrorMessage,
@@ -191,7 +192,19 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
           ? body.error.request_id
           : null;
     const headers = requestId === null ? null : { 'x-request-id': requestId };
-    if (code === 429 || status === 'RESOURCE_EXHAUSTED') {
+    if (code === 429 || status === 'RESOURCE_EXHAUSTED' || error.status === 429) {
+      const quotaProbe = message.length > 0 ? message : body === undefined ? error.message : '';
+      if (isQuotaExhaustedMessage(quotaProbe)) {
+        return {
+          kind: 'quota_exhausted',
+          message,
+          statusCode,
+          requestId,
+          retryAfterMs,
+          headers,
+          retryable: false,
+        };
+      }
       return {
         kind: 'rate_limit',
         message,

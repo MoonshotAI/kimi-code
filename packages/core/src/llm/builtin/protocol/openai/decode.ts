@@ -13,6 +13,7 @@ import {
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import {
+  isQuotaExhaustedMessage,
   isTransientHttpStatus,
   toLlmStatusErrorMessage,
   toLlmStreamErrorMessage,
@@ -430,7 +431,11 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       retryAfterMs: parseRetryAfterMs(error.headers),
       headers: headersToRecord(error.headers),
     };
-    if (isOpenAIInsufficientQuotaError(error)) {
+    if (
+      isOpenAIInsufficientQuotaError(error) ||
+      ((error.status === 429 || error.status === undefined) &&
+        isQuotaExhaustedMessage(message.length > 0 ? message : error.message))
+    ) {
       return { kind: 'quota_exhausted', message, statusCode, retryable: false, ...statusInfo };
     }
     if (isOpenAIOverloadedErrorCode(code) || isOpenAIOverloadedErrorCode(type)) {

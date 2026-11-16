@@ -2,6 +2,7 @@
  * Recognizes Kimi quota-exhausted errors from nested error codes and classifies them as remote errors.
  */
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
+import { isQuotaExhaustedMessage } from '#/llm/protocol/rules/status';
 import type { LlmRemoteErrorMessage } from '#/llm/response';
 
 const KIMI_QUOTA_EXHAUSTED_ERROR_CODES = new Set(['exceeded_current_quota_error']);
@@ -34,17 +35,18 @@ export function classifyKimiQuotaError(error: unknown): LlmRemoteErrorMessage | 
   const status = (error as Record<string, unknown>)['status'];
   if (status !== 429 && status !== undefined) return undefined;
 
-  const structuredHit = collectErrorCodes(error).some((code) =>
-    KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(code),
-  );
-  if (!structuredHit) return undefined;
-
   const nestedError = readErrorObjectProp(error);
   const nestedMessage = nestedError === undefined ? undefined : readStringProp(nestedError, 'message');
   const anthropicError = nestedError === undefined ? undefined : readErrorObjectProp(nestedError);
   const message =
     nestedMessage ??
     (anthropicError === undefined ? '' : (readStringProp(anthropicError, 'message') ?? ''));
+  const quotaProbe = message.length > 0 ? message : (readStringProp(error, 'message') ?? '');
+
+  const structuredHit = collectErrorCodes(error).some((code) =>
+    KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(code),
+  );
+  if (!structuredHit && !isQuotaExhaustedMessage(quotaProbe)) return undefined;
   const requestId = readStringProp(error, 'requestID') ?? null;
   const headers = (error as Record<string, unknown>)['headers'];
   return {

@@ -10,6 +10,7 @@ import {
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import {
+  isQuotaExhaustedMessage,
   isTransientHttpStatus,
   toLlmStatusErrorMessage,
   toLlmStreamErrorMessage,
@@ -241,18 +242,30 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
   }
   if (error instanceof RawAnthropicSDKAPIError) {
     const body = error.error as
-      | { error?: { type?: unknown; message?: unknown } }
+      | { error?: { type?: unknown; message?: unknown }; message?: unknown; type?: unknown }
       | undefined;
-    const message = typeof body?.error?.message === 'string' ? body.error.message : '';
+    const message =
+      typeof body?.error?.message === 'string'
+        ? body.error.message
+        : typeof body?.message === 'string'
+          ? body.message
+          : '';
     const type =
-      (typeof body?.error?.type === 'string' ? body.error.type : undefined) ?? error.type;
+      (typeof body?.error?.type === 'string' ? body.error.type : undefined) ??
+      (typeof body?.type === 'string' ? body.type : undefined) ??
+      error.type;
     const statusCode = source === 'stream' ? undefined : error.status;
     const statusInfo = {
       requestId: error.requestID ?? null,
       retryAfterMs: parseRetryAfterMs(error.headers),
       headers: headersToRecord(error.headers),
     };
-    if (type === 'insufficient_quota' || type === 'exceeded_current_quota_error') {
+    const quotaProbe = message.length > 0 ? message : error.message;
+    if (
+      type === 'insufficient_quota' ||
+      type === 'exceeded_current_quota_error' ||
+      ((error.status === 429 || error.status === undefined) && isQuotaExhaustedMessage(quotaProbe))
+    ) {
       return { kind: 'quota_exhausted', message, statusCode, retryable: false, ...statusInfo };
     }
     if (type === 'overloaded_error' || type === 'engine_overloaded_error') {

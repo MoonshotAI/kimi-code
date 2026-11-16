@@ -7,7 +7,7 @@ import { NO_FINISH, type FinishInfo } from '#/llm/response';
 import type { StreamedMessagePart } from '#/llm/message';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import type { TokenUsage } from '#/llm/response';
-import { toLlmStreamErrorMessage } from '#/llm/protocol/rules/status';
+import { isQuotaExhaustedMessage, toLlmStreamErrorMessage } from '#/llm/protocol/rules/status';
 
 import {
   isContextOverflowErrorCode,
@@ -179,7 +179,7 @@ function errorFromOpenAIResponsesEvent(
   if (isContextOverflowErrorCode(code)) {
     return { kind: 'context_overflow', message, retryable: false, ...statusInfo };
   }
-  if (isOpenAIInsufficientQuotaCode(code)) {
+  if (isOpenAIInsufficientQuotaCode(code) || isQuotaExhaustedMessage(message)) {
     return { kind: 'quota_exhausted', message, retryable: false, ...statusInfo };
   }
   if (isOpenAIRateLimitErrorCode(code)) {

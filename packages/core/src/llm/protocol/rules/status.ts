@@ -150,6 +150,55 @@ export interface LlmStatusErrorInput {
   readonly retryable: boolean;
 }
 
+const NON_FAILOVER_HTTP_STATUS_RE =
+  /(?:status(?:\s+code)?|http(?:\s+status)?)\s*[=:]?\s*(?:401|403|5\d\d)\b/;
+
+const TRANSIENT_QUOTA_LIMIT_RE =
+  /(?:\b(?:rpm|tpm|rpd|qps)\b|quota[_\s-]*metric|rate[_\s-]*limit|too many requests|(?:requests?|tokens?)\s+(?:per|\/)\s*(?:second|minute)|(?:per|\/)\s*(?:second|minute)\s+(?:requests?|tokens?)|generate[_\s-]*requests[_\s-]*per[_\s-]*(?:minute|second)|tokens?[_\s-]*per[_\s-]*(?:minute|second))/i;
+
+const QUOTA_EXHAUSTED_MARKERS = [
+  'insufficient_quota',
+  'exceeded_current_quota_error',
+  'quota_exceeded',
+  'quota exceeded',
+  'quota exhausted',
+  'exceeded your current quota',
+  'billing_hard_limit_reached',
+  'billing hard limit',
+  'billing_not_active',
+  'billing',
+  'credit balance',
+  'insufficient credit',
+  'insufficient balance',
+  'balance is too low',
+  'payment required',
+  'status 402',
+  'insufficient funds',
+  'out of credit',
+  'credit used up',
+  'in arrears',
+] as const;
+
+export function isQuotaExhaustedMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  if (NON_FAILOVER_HTTP_STATUS_RE.test(lower)) {
+    return false;
+  }
+  if (TRANSIENT_QUOTA_LIMIT_RE.test(lower)) {
+    return false;
+  }
+  for (const marker of QUOTA_EXHAUSTED_MARKERS) {
+    if (lower.includes(marker)) {
+      return true;
+    }
+  }
+  return (
+    lower.includes('resource_exhausted') &&
+    !lower.includes('rate limit') &&
+    !lower.includes('too many requests')
+  );
+}
+
 export function isTransientHttpStatus(statusCode: number | undefined): boolean {
   switch (statusCode) {
     case 408:
@@ -178,6 +227,9 @@ export function toLlmStreamErrorMessage(
     retryable: input.retryable,
   };
   if (input.businessCode === 429) {
+    if (isQuotaExhaustedMessage(input.message)) {
+      return { kind: 'quota_exhausted', message: input.message, ...info, retryable: false };
+    }
     return { kind: 'rate_limit', message: input.message, ...info };
   }
   if (input.businessCode === 401 || input.businessCode === 403) {
@@ -214,6 +266,9 @@ export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteEr
     retryable: input.retryable,
   };
   if (input.statusCode === 429) {
+    if (isQuotaExhaustedMessage(input.message)) {
+      return { kind: 'quota_exhausted', message: input.message, ...info, retryable: false };
+    }
     return { kind: 'rate_limit', message: input.message, ...info };
   }
   if (input.statusCode === 401 || input.statusCode === 403) {
