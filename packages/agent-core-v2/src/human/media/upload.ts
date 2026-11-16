@@ -1,6 +1,8 @@
 import type { ImageURLPart, VideoURLPart } from '#/llm/message';
 import type { LlmModel } from '#/llm-requester/model';
 
+export class MediaUploadFailedError extends Error {}
+
 export interface VideoUploadInput {
   readonly data: Uint8Array;
   readonly mimeType: string;

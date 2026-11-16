@@ -12,6 +12,11 @@ export interface IAgentMediaResolverService {
     requester: InitializedLlmRequester,
     signal?: AbortSignal,
   ): Promise<readonly Message[]>;
+  recoverFailedImageUploads(
+    messages: readonly Message[],
+    requester: InitializedLlmRequester,
+    signal?: AbortSignal,
+  ): Promise<boolean>;
   displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>>;
 }
 

@@ -111,6 +111,10 @@ export interface LlmFiles {
     file: LlmFileInput,
     ctx: { readonly endpoint: ResolvedEndpoint; readonly signal: AbortSignal },
   ) => Promise<UploadedMedia>;
+  readonly hasFailed?: (
+    id: string,
+    ctx: { readonly endpoint: ResolvedEndpoint; readonly signal: AbortSignal },
+  ) => Promise<boolean>;
 }
 
 export interface LlmEndpoint {

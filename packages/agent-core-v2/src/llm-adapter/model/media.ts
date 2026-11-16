@@ -39,6 +39,20 @@ export function imageUploaderFor(
   return (input, options) => uploadImage(model, request, input, options?.signal);
 }
 
+export function imageUploadFailureCheckFor(
+  request: InitializedLlmRequester,
+): ((id: string, signal: AbortSignal) => Promise<boolean>) | undefined {
+  const endpoint = contentsOf(request).endpoint;
+  const hasFailed = endpoint?.files?.hasFailed;
+  if (hasFailed === undefined) return undefined;
+  let resolvedEndpoint: ReturnType<typeof resolveEndpoint> | undefined;
+  return async (id, signal) => {
+    const resolved = await (resolvedEndpoint ??= resolveEndpoint(endpoint));
+    signal.throwIfAborted();
+    return hasFailed(id, { endpoint: resolved, signal });
+  };
+}
+
 export function videoUploaderFor(
   model: Model,
   request: InitializedLlmRequester,

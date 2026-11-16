@@ -5,6 +5,7 @@ import {
   type MediaReplacement,
 } from '#human/llm/builtin/policy/media-degrade';
 import type { Message, ToolMessage, UserMessage } from '#human/llm/message';
+import type { LlmErrorMessage } from '#human/llm/response';
 import type { LlmRecovery, LlmRecoveryLedger } from '#human/llm/policy/recovery';
 import type { LlmResolver } from '#human/llm/policy/resolver';
 import { mediaUrlOf } from '#human/llm/protocol/kit/media';
@@ -86,12 +87,28 @@ export type AgentMediaPolicyFactory = (
   request: InitializedLlmRequester,
 ) => AgentMediaPolicy;
 
+const MEDIA_UPLOAD_FAILED = 'media-upload-failed';
+
+function isUploadedImageRequestError(error: LlmErrorMessage, rawError: unknown): boolean {
+  if (error.kind !== 'status' || error.statusCode !== 400) return false;
+  if (/failed to validate image_url content:\s*blob ID \S+ does not exist\b/i.test(error.message)) {
+    return true;
+  }
+  if (error.message.trim() !== 'Invalid request Error') return false;
+  if (typeof rawError !== 'object' || rawError === null) return false;
+  const body = (rawError as { error?: unknown }).error;
+  if (typeof body !== 'object' || body === null) return false;
+  const { type, error: nested } = body as { type?: unknown; error?: { type?: unknown } };
+  return (nested?.type ?? type) === 'invalid_request_error';
+}
+
 export function createAgentMediaPolicy(
   service: IAgentMediaResolverService,
   model: Model,
   request: InitializedLlmRequester,
 ): AgentMediaPolicy {
   let mediaPaths: ReadonlyMap<string, string> = new Map();
+  let checkedImageUploads = false;
   const replacement: MediaReplacement = (part) => {
     const path = mediaPaths.get(mediaUrlOf(part));
     if (path === undefined) return undefined;
@@ -99,6 +116,7 @@ export function createAgentMediaPolicy(
     if (kind === undefined) return undefined;
     return { type: 'text', text: buildMediaPathTag(kind, path) };
   };
+  const degradeRecovery = createMediaDegradeRecovery(replacement);
   return {
     toolResolver: {
       id: 'agent-media-tools',
@@ -132,7 +150,22 @@ export function createAgentMediaPolicy(
           : { ...current, content: { ...current.content, messages } };
       },
     },
-    recovery: createMediaDegradeRecovery(replacement),
+    recovery: {
+      propose: async (ctx) => {
+        if (
+          !checkedImageUploads &&
+          !ctx.appliedRecoveries.some(({ strategy }) => strategy === MEDIA_UPLOAD_FAILED) &&
+          ctx.resolvedRequest !== undefined &&
+          isUploadedImageRequestError(ctx.error, ctx.rawError)
+        ) {
+          checkedImageUploads = true;
+          if (await service.recoverFailedImageUploads(ctx.resolvedRequest.content.messages, request, ctx.signal)) {
+            return { strategy: MEDIA_UPLOAD_FAILED, action: 'retry' };
+          }
+        }
+        return degradeRecovery.propose(ctx);
+      },
+    },
     refreshRecovery: async (ledger, messages) => {
       mediaPaths = await service.displayPaths(messages);
       return forkMediaRecovery(ledger, replacement);
