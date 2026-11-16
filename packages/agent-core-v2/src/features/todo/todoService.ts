@@ -56,7 +56,7 @@ const todoReminder = fromCallback(({
   const memory = runtime.get(IAgentLoopService);
   const toolPolicy = runtime.get(IAgentToolPolicyService);
   const reminders = runtime.get(IAgentReminderService);
-  const guidanceHook = memory.hooks.onWillBeginStep.register('todo-list-guidance', async (context, next) => {
+  const guidanceHook = memory?.hooks?.onWillBeginStep?.register('todo-list-guidance', async (context, next) => {
     if (
       context.turnId === 0 &&
       context.firstStepOfTurn &&
@@ -66,7 +66,7 @@ const todoReminder = fromCallback(({
     }
     await next();
   });
-  if (runtime.agent.agentId !== MAIN_AGENT_ID) return () => { guidanceHook.dispose(); };
+  if (runtime.agent.agentId !== MAIN_AGENT_ID) return () => { guidanceHook?.dispose(); };
   const telemetry = runtime.get(ITelemetryService);
   const bus = runtime.get(IEventBus);
   let updatedInTurn = false;
@@ -102,7 +102,7 @@ const todoReminder = fromCallback(({
     });
   });
   return () => {
-    guidanceHook.dispose();
+    guidanceHook?.dispose();
     ended.dispose();
     started.dispose();
     change.dispose();
