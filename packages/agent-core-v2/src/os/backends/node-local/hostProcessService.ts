@@ -35,11 +35,30 @@ function buildSpawnOptions(options: HostProcessOptions): SpawnOptions {
   return spawnOptions;
 }
 
+const ARTEX_SCRUB_SECRETS_ENV = 'ARTEX_SCRUB_SECRETS';
+const ARTEX_SECRET_ENV_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'KIMI_API_KEY',
+  'MOONSHOT_API_KEY',
+  'ARTEX_PG_DSN',
+  'ARTEX_SECRET_KEY',
+  'GITHUB_TOKEN',
+  'GITLAB_TOKEN',
+] as const;
+
 function buildEnv(overrides: Record<string, string> | undefined): Record<string, string> | undefined {
   if (overrides === undefined) {
     return undefined;
   }
-  return { ...(process.env as Record<string, string>), ...overrides };
+  const env = { ...(process.env as Record<string, string>), ...overrides };
+  if (overrides[ARTEX_SCRUB_SECRETS_ENV] === '1') {
+    for (const key of ARTEX_SECRET_ENV_KEYS) {
+      delete env[key];
+    }
+    delete env[ARTEX_SCRUB_SECRETS_ENV];
+  }
+  return env;
 }
 
 function waitForSpawn(child: ChildProcess, mergeStderr: boolean): Promise<IHostProcess> {

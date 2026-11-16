@@ -22,17 +22,20 @@ import { IArtexOrchestrator } from '#/features/artex/engine/artexOrchestrator';
 import { ARTEX_WORKER_BUDGET_WRAPUP, ArtexDataEnvelope } from '#/features/artex/prompts/index';
 import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
-import { isArtexAgentProfile } from './agentPredicate';
+import { artexSafetyActive } from './artexSafetyScope';
 import { IArtexEgressPacer } from './egressPacer';
 import { normalizeTarget } from './target';
 
-const EGRESS_PACED_TOOLS: ReadonlySet<string> = new Set(['FetchURL', 'WebFetch']);
+const EGRESS_PACED_TOOLS: ReadonlySet<string> = new Set(['FetchURL']);
 const UNTRUSTED_OUTPUT_TOOLS: ReadonlySet<string> = new Set([
   'Bash',
   'FetchURL',
   'WebSearch',
-  'WebFetch',
-  'web_search',
+  'Read',
+  'traffic_search',
+  'traffic_get',
+  'traffic_blob',
+  'get_finding_traffic',
 ]);
 
 export interface IArtexToolHooksService {
@@ -89,7 +92,9 @@ export class ArtexToolHooksService extends Service implements IArtexToolHooksSer
         if (!this.isArtexAgent()) return undefined;
         let content = context.result.content;
         let modified = false;
-        if (UNTRUSTED_OUTPUT_TOOLS.has(context.call.name)) {
+        const untrusted =
+          UNTRUSTED_OUTPUT_TOOLS.has(context.call.name) || context.call.name.startsWith('mcp__');
+        if (untrusted) {
           const framed = frameUntrustedContent(content);
           if (framed !== undefined) {
             content = framed;
@@ -116,7 +121,7 @@ export class ArtexToolHooksService extends Service implements IArtexToolHooksSer
 
   private isArtexAgent(): boolean {
     if (!this.flags.enabled(ARTEX_FLAG_ID)) return false;
-    return isArtexAgentProfile(this.profile.data().profileName) || this.mode.isActive;
+    return artexSafetyActive(this.profile.data().profileName, this.mode, this.artexSession);
   }
 
   private activeIntentId(): number | undefined {

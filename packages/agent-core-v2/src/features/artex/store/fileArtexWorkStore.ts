@@ -56,6 +56,7 @@ import type {
 import {
   ARTEX_BUILTIN_ASSET_INTERCEPT_RULE_SEEDS,
   ARTEX_BUILTIN_INTERCEPT_RULE_SEEDS,
+  ARTEX_TARGET_GATE_EXEMPTION_SEEDS,
 } from './seeds';
 import {
   ARTEX_WORK_STORE_SCHEMA_VERSION,
@@ -185,6 +186,9 @@ export class FileArtexWorkStore implements IArtexWorkStore {
           note: seed.note,
           builtin: true,
         });
+      }
+      if (state.exemptions.length === 0) {
+        state.exemptions.push(...ARTEX_TARGET_GATE_EXEMPTION_SEEDS);
       }
       state.seeded = true;
     });
@@ -664,7 +668,7 @@ export class FileArtexWorkStore implements IArtexWorkStore {
         pin.taskId === taskId &&
         pin.status === 'active' &&
         domainKey(pin.host) === normalizedHost &&
-        pin.port === port,
+        (pin.port === port || pin.port === 0),
     );
   }
 

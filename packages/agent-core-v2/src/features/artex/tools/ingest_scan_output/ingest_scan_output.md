@@ -1,0 +1,1 @@
+Ingest scanner output files (httpx/nuclei JSONL) into assets without reading the raw output into the model context. `path` is relative to the agent working directory.

@@ -1,0 +1,1 @@
+Ask the human operator for input you cannot obtain yourself (captcha, OTP, 2FA, decisions). Only valid inside an ARTEX worker intent with an active exploration.

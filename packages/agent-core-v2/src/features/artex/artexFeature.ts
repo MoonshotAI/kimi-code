@@ -10,6 +10,9 @@ import { ArtexWorkStoreProvider, IArtexWorkStoreProvider } from './store/artexWo
 import { ArtexTrafficStoreProvider, IArtexTrafficStoreProvider } from './store/artexTrafficStoreProvider';
 import { ArtexTrafficRecorder, IArtexTrafficRecorder } from './traffic/artexTrafficRecorder';
 import { ArtexProxyEnvContributor, IArtexProxyEnvContributor } from './traffic/artexProxyEnvContributor';
+import './traffic/artexTrafficWarmup';
+import { ArtexEnvScrubContributor, IArtexEnvScrubContributor } from './safety/artexEnvScrub';
+import './safety/artexTargetPinCache';
 import './config/configSection';
 import { ArtexOrchestrator, IArtexOrchestrator } from './engine/artexOrchestrator';
 import './agent/artexModeService';
@@ -63,6 +66,9 @@ export class ArtexFeature extends Feature {
       activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeAgentService(IArtexProxyEnvContributor, ArtexProxyEnvContributor, {
+      activation: ScopeActivation.OnScopeCreated,
+    });
+    this.contributeAgentService(IArtexEnvScrubContributor, ArtexEnvScrubContributor, {
       activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeProfiles(ARTEX_PROFILES);

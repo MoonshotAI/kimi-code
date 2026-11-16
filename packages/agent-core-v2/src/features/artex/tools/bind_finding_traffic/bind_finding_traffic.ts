@@ -83,7 +83,9 @@ export class ArtexBindFindingTrafficTool implements AgentTool<BindFindingTraffic
     } catch (error) {
       return artexErr(error instanceof Error ? error.message : String(error));
     }
-    const bindings = await this.recorder.store().findingBindings(args.finding_node_id);
+    const trafficStore = this.recorder.store();
+    trafficStore.scheduleArtifactCollection();
+    const bindings = await trafficStore.findingBindings(args.finding_node_id);
     await store.mergeNodePayload(args.finding_node_id, {
       evidence_status: 'bound',
       report_status: 'pending_update',

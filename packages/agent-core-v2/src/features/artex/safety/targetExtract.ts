@@ -56,6 +56,16 @@ export const ARTEX_NO_TARGET_TOOLS: ReadonlySet<string> = new Set([
   'traffic_get',
   'traffic_blob',
   'bind_finding_traffic',
+  'get_finding_traffic',
+  'update_finding_report',
+  'ask_operator',
+  'ingest_scan_output',
+  'ingest_bbot',
+  'Agent',
+  'AgentSwarm',
+  'NotifyUser',
+  'AskUserQuestion',
+  'Skill',
 ]);
 
 export interface ArtexDeclaredTargets {
@@ -169,8 +179,6 @@ class TargetList {
       const full = match[0];
       const scheme = match[1] ?? '';
       const authority = match[2] ?? '';
-      const authStart = start + scheme.length;
-      const authEnd = authStart + authority.length;
       const end = start + full.length;
       let found = false;
       for (const host of urlHosts(authority)) {
@@ -181,8 +189,7 @@ class TargetList {
         }
       }
       if (found) this.urls.push(source.slice(start, end));
-      blank(start, authStart);
-      blank(authEnd, end);
+      blank(start, end);
     }
   }
 

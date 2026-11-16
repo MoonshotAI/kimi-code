@@ -32,6 +32,7 @@ export const ARTEX_STANDARD_TOOLS: readonly string[] = [
 ];
 
 export const ARTEX_PLANNER_TOOL_NAMES: readonly string[] = [
+  ...ARTEX_STANDARD_TOOLS,
   'graph_overview',
   'list_findings',
   'list_facts',
@@ -60,8 +61,14 @@ export const ARTEX_PLANNER_TOOL_NAMES: readonly string[] = [
 ];
 
 export const ARTEX_WORKER_TOOL_NAMES: readonly string[] = [
+  ...ARTEX_STANDARD_TOOLS,
   'list_findings',
   'report_finding',
+  'update_finding_report',
+  'get_finding_traffic',
+  'ask_operator',
+  'ingest_scan_output',
+  'ingest_bbot',
   'record_fact',
   'record_coverage',
   'insert_assets',

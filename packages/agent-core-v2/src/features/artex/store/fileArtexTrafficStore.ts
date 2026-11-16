@@ -7,6 +7,12 @@ import { Emitter, type Event } from '#/_base/event';
 import { FileArtexArtifactStore } from './fileArtexArtifactStore';
 import { reapStaleFileLock, withFileLock } from './fileLock';
 import {
+  decodeEvidenceBody,
+  isBinaryBody as isEvidenceBinaryBody,
+  quoteInResponseText,
+  quoteMeetsMinRunes,
+} from './evidenceVerification';
+import {
   isArtexTrafficRole,
   type ArtexExchangeInput,
   type ArtexExchangeMeta,
@@ -301,11 +307,57 @@ export class FileArtexTrafficStore {
    * verbatim-quote guard a produced item must pass before a quote counts.
    */
   async verbatimInRecord(trafficId: string, quote: string): Promise<ArtexVerbatimResult> {
-    const bodies = await this.rawBodies(trafficId);
-    if (bodies === undefined) return { found: false, trafficId };
-    if (bodies.request.includes(quote)) return { found: true, trafficId, side: 'request' };
-    if (bodies.response.includes(quote)) return { found: true, trafficId, side: 'response' };
-    return { found: false, trafficId };
+    const state = await this.readState();
+    const binding = state.bindings
+      .map((row) => {
+        const snapshot = state.snapshots.find((entry) => entry.id === row.snapshotId);
+        return snapshot === undefined ? undefined : { snapshot, row };
+      })
+      .find((entry) => entry?.snapshot.sourceTrafficId === trafficId);
+    if (binding !== undefined) {
+      return this.verbatimInSnapshot(binding.snapshot, quote);
+    }
+    const row = state.exchanges.find((entry) => entry.id === trafficId);
+    if (row === undefined) return { found: false, trafficId };
+    const raw = await this.fullBodyBytes(row.respInline, row.respBlob);
+    return this.verbatimInResponseBody(raw, row.respHead, quote, trafficId);
+  }
+
+  async verbatimInSnapshot(
+    snapshot: Pick<ArtexTrafficSnapshot, 'respHash' | 'respHead' | 'sourceTrafficId'>,
+    quote: string,
+  ): Promise<ArtexVerbatimResult> {
+    const raw = await this.artifacts.readBody(snapshot.respHash);
+    if (raw === undefined) return { found: false, trafficId: snapshot.sourceTrafficId };
+    return this.verbatimInResponseBody(raw, snapshot.respHead, quote, snapshot.sourceTrafficId);
+  }
+
+  private async verbatimInResponseBody(
+    raw: Buffer,
+    respHead: string,
+    quote: string,
+    trafficId: string,
+  ): Promise<ArtexVerbatimResult> {
+    if (!quoteMeetsMinRunes(quote)) {
+      return { found: false, trafficId, side: 'response' };
+    }
+    let decoded: Buffer;
+    try {
+      const result = await decodeEvidenceBody(respHead, raw);
+      decoded = result.body;
+    } catch {
+      return { found: false, trafficId, side: 'response' };
+    }
+    if (isEvidenceBinaryBody(decoded)) {
+      return { found: false, trafficId, side: 'response' };
+    }
+    const text = decoded.toString('utf8');
+    if (!quoteInResponseText(text, quote)) return { found: false, trafficId, side: 'response' };
+    return { found: true, trafficId, side: 'response' };
+  }
+
+  scheduleArtifactCollection(): void {
+    void this.collectArtifacts().catch(() => undefined);
   }
 
   /**

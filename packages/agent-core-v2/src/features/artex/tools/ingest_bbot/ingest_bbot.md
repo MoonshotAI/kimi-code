@@ -1,0 +1,1 @@
+Ingest BBOT JSONL output into ARTEX assets without loading the full file into the model context. `path` is relative to the working directory.

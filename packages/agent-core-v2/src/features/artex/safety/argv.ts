@@ -53,6 +53,15 @@ const DISALLOWED_ARGV_NODES: ReadonlySet<string> = new Set([
   'command_substitution',
   'process_substitution',
   'subshell',
+  'compound_statement',
+  'negated_command',
+  'for_statement',
+  'while_statement',
+  'if_statement',
+  'case_statement',
+  'function_definition',
+  'brace_expression',
+  'ansi_c_string',
   'expansion',
   'simple_expansion',
   'arithmetic_expansion',
@@ -121,6 +130,9 @@ function extractSimpleCommand(command: string, parse: ArtexBashParse): Extracted
   if (commands.length !== 1) return undefined;
   const node = commands[0];
   if (node === undefined) return undefined;
+  if (node.children.some((child) => child.type === 'background' || child.text === '&')) {
+    return undefined;
+  }
   const tokens = commandTokens(node);
   if (tokens.length === 0) return undefined;
   const program = tokens[0];
@@ -193,9 +205,9 @@ function literalText(node: BashSyntaxNode): string | undefined {
   switch (node.type) {
     case 'word': {
       const raw = node.text;
+      if (raw.includes('\\')) return undefined;
       if (UNSAFE_OPERAND.test(raw)) return undefined;
-      const unescaped = raw.replaceAll(/\\(.)/gs, '$1');
-      return UNSAFE_OPERAND.test(unescaped) ? undefined : unescaped;
+      return raw;
     }
     case 'number':
       return node.text;

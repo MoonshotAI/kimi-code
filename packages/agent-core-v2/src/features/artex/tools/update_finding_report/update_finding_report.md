@@ -1,0 +1,1 @@
+Write or replace the detailed Markdown report on a registered finding. Pass `finding_id` from `report_finding`. Optionally pass `evidence_version` from `get_finding_traffic` and exact `evidence_quotes` copied from bound response bodies for verification.

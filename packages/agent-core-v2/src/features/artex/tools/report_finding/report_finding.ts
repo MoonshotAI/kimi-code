@@ -247,7 +247,7 @@ export class ArtexReportFindingTool implements AgentTool<ReportFindingInput> {
     for (const quote of checkable) {
       let matched = false;
       for (const proof of proofs) {
-        const result = await store.verbatimInRecord(proof.snapshot.sourceTrafficId, quote);
+        const result = await store.verbatimInSnapshot(proof.snapshot, quote);
         if (result.found) {
           matched = true;
           break;

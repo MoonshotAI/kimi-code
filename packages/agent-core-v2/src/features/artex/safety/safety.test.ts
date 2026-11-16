@@ -19,6 +19,8 @@ import { matchInterceptRules } from './interceptRules';
 import { checkArtexTargets } from './targetGate';
 import type { ArtexResolveResult, IArtexTargetResolver } from './targetResolver';
 import { ArtexTargetGatePermissionPolicyService } from './artexTargetGatePolicy';
+import { ArtexTargetPinCache } from './artexTargetPinCache';
+import type { ILogService } from '#/_base/log/log';
 import { stubFlag } from '../../../../test/app/flag/stubs';
 import type { IArtexModeService } from '#/features/artex/agent/artexMode';
 import type { IAgentProfileService } from '#/agent/profile/profile';
@@ -305,6 +307,18 @@ describe('argv intercept rules', () => {
         getActiveExplorationId: () => 1,
         setActiveExplorationId: () => {},
       };
+      const pinCache = new ArtexTargetPinCache();
+      const log = {
+        _serviceBrand: undefined,
+        level: 'info',
+        setLevel: () => {},
+        flush: async () => {},
+        warn: () => {},
+        error: () => {},
+        info: () => {},
+        debug: () => {},
+        child: () => log,
+      } as ILogService;
       const policy = new ArtexTargetGatePermissionPolicyService(
         stubFlag(true),
         mode,
@@ -312,7 +326,9 @@ describe('argv intercept rules', () => {
         session,
         provider,
         resolver,
+        pinCache,
         parser,
+        log,
       );
 
       const hookCtx = (toolName: string, args: Record<string, unknown>) =>

@@ -68,6 +68,20 @@ import {
   ArtexBindFindingTrafficTool,
   IArtexBindFindingTrafficTool,
 } from './bind_finding_traffic/bind_finding_traffic';
+import {
+  ArtexUpdateFindingReportTool,
+  IArtexUpdateFindingReportTool,
+} from './update_finding_report/update_finding_report';
+import {
+  ArtexGetFindingTrafficTool,
+  IArtexGetFindingTrafficTool,
+} from './get_finding_traffic/get_finding_traffic';
+import { ArtexAskOperatorTool, IArtexAskOperatorTool } from './ask_operator/ask_operator';
+import {
+  ArtexIngestScanOutputTool,
+  IArtexIngestScanOutputTool,
+} from './ingest_scan_output/ingest_scan_output';
+import { ArtexIngestBbotTool, IArtexIngestBbotTool } from './ingest_bbot/ingest_bbot';
 
 export interface ArtexToolRegistration {
   readonly id: ServiceIdentifier<AnyAgentTool>;
@@ -128,4 +142,9 @@ export const ARTEX_TOOLS: readonly ArtexToolRegistration[] = [
   { id: IArtexTrafficGetTool, ctor: ArtexTrafficGetTool, name: 'traffic_get' },
   { id: IArtexTrafficBlobTool, ctor: ArtexTrafficBlobTool, name: 'traffic_blob' },
   { id: IArtexBindFindingTrafficTool, ctor: ArtexBindFindingTrafficTool, name: 'bind_finding_traffic' },
+  { id: IArtexUpdateFindingReportTool, ctor: ArtexUpdateFindingReportTool, name: 'update_finding_report' },
+  { id: IArtexGetFindingTrafficTool, ctor: ArtexGetFindingTrafficTool, name: 'get_finding_traffic' },
+  { id: IArtexAskOperatorTool, ctor: ArtexAskOperatorTool, name: 'ask_operator' },
+  { id: IArtexIngestScanOutputTool, ctor: ArtexIngestScanOutputTool, name: 'ingest_scan_output' },
+  { id: IArtexIngestBbotTool, ctor: ArtexIngestBbotTool, name: 'ingest_bbot' },
 ];

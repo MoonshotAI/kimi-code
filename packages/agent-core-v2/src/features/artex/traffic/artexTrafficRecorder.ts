@@ -21,6 +21,7 @@ export const ARTEX_RECORDING_STATUSES = ['off', 'recording', 'unavailable'] as c
 export type ArtexRecordingStatus = (typeof ARTEX_RECORDING_STATUSES)[number];
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
+const UPSTREAM_TIMEOUT_MS = 120_000;
 
 export interface ArtexRecordingState {
   readonly status: ArtexRecordingStatus;
@@ -151,12 +152,16 @@ export class ArtexTrafficRecorder extends Disposable implements IArtexTrafficRec
   private buildProxyServer(): http.Server {
     const server = http.createServer((req, res) => void this.handleHttp(req, res));
     server.on('connect', (req, socket, head) => this.handleConnect(req, socket, head));
+    server.on('upgrade', (req, socket, head) => this.handleUpgrade(req, socket, head));
     server.on('clientError', (_err, socket) => socket.destroy());
     return server;
   }
 
   private buildMitmServer(): http.Server {
     const server = http.createServer((req, res) => void this.handleMitm(req, res));
+    server.on('upgrade', (req, socket, head) => {
+      this.handleMitmUpgrade(req, socket, head);
+    });
     server.on('clientError', (_err, socket) => socket.destroy());
     return server;
   }
@@ -169,7 +174,7 @@ export class ArtexTrafficRecorder extends Disposable implements IArtexTrafficRec
       res.writeHead(400).end('bad proxy request');
       return;
     }
-    const reqBody = await drain(req, MAX_CAPTURE_BYTES);
+    const { body: reqBody, full: reqFull } = await readBody(req, MAX_CAPTURE_BYTES);
     const upstream = http.request(
       {
         protocol: target.protocol,
@@ -178,6 +183,7 @@ export class ArtexTrafficRecorder extends Disposable implements IArtexTrafficRec
         method: req.method,
         path: `${target.pathname}${target.search}`,
         headers: req.headers,
+        timeout: UPSTREAM_TIMEOUT_MS,
       },
       (upRes) => void this.relay(req, res, upRes, target, reqBody),
     );
@@ -185,7 +191,8 @@ export class ArtexTrafficRecorder extends Disposable implements IArtexTrafficRec
       if (!res.headersSent) res.writeHead(502);
       res.end();
     });
-    upstream.end(reqBody);
+    upstream.on('timeout', () => upstream.destroy());
+    upstream.end(reqFull);
   }
 
   private handleConnect(req: http.IncomingMessage, clientSocket: Duplex, head: Buffer): void {
@@ -215,8 +222,8 @@ export class ArtexTrafficRecorder extends Disposable implements IArtexTrafficRec
     const socket = req.socket as net.Socket & { artexHost?: string; artexPort?: number };
     const host = socket.artexHost ?? req.headers.host?.split(':')[0] ?? '';
     const port = socket.artexPort ?? 443;
-    const reqBody = await drain(req, MAX_CAPTURE_BYTES);
-    const target = new URL(`https://${host}:${String(port)}${req.url ?? '/'}`);
+    const { body: reqBody, full: reqFull } = await readBody(req, MAX_CAPTURE_BYTES);
+    const target = httpsTargetUrl(host, port, req.url ?? '/');
     const upstream = https.request(
       {
         hostname: host,
@@ -229,6 +236,7 @@ export class ArtexTrafficRecorder extends Disposable implements IArtexTrafficRec
         // proxy dials the real target without verifying its cert (mirrors the
         // reference's SslInsecure upstream) so recording never breaks TLS.
         rejectUnauthorized: false,
+        timeout: UPSTREAM_TIMEOUT_MS,
       },
       (upRes) => void this.relay(req, res, upRes, target, reqBody),
     );
@@ -236,7 +244,8 @@ export class ArtexTrafficRecorder extends Disposable implements IArtexTrafficRec
       if (!res.headersSent) res.writeHead(502);
       res.end();
     });
-    upstream.end(reqBody);
+    upstream.on('timeout', () => upstream.destroy());
+    upstream.end(reqFull);
   }
 
   private async relay(
@@ -246,9 +255,8 @@ export class ArtexTrafficRecorder extends Disposable implements IArtexTrafficRec
     target: URL,
     reqBody: Buffer,
   ): Promise<void> {
-    const respBody = await drain(upRes, MAX_CAPTURE_BYTES);
-    // Persist the exchange before completing the client response, so a crash
-    // between the two never drops a captured request/response silently.
+    const respCapture = await streamThrough(upRes, res, MAX_CAPTURE_BYTES);
+    const respBody = respCapture.body;
     try {
       await this.trafficStore.record({
         host: target.hostname,
@@ -265,8 +273,56 @@ export class ArtexTrafficRecorder extends Disposable implements IArtexTrafficRec
       const reason = error instanceof Error ? error.message : String(error);
       this.log.warn(`[artex] failed to record ${target.toString()}: ${reason}`);
     }
-    res.writeHead(upRes.statusCode ?? 200, upRes.headers);
-    res.end(respBody);
+    if (!respCapture.headersSent) {
+      res.writeHead(upRes.statusCode ?? 200, upRes.headers);
+    }
+    if (!res.writableEnded) res.end();
+  }
+
+  private handleUpgrade(req: http.IncomingMessage, clientSocket: Duplex, head: Buffer): void {
+    const [host, portText] = (req.url ?? '').split(':');
+    if (host === undefined || host === '') {
+      clientSocket.destroy();
+      return;
+    }
+    const port = Number(portText) || 443;
+    const upstream = net.connect({ host, port, timeout: UPSTREAM_TIMEOUT_MS }, () => {
+      clientSocket.write(`HTTP/1.1 101 Switching Protocols\r\n\r\n`);
+      if (head.length > 0) upstream.write(head);
+      upstream.pipe(clientSocket);
+      clientSocket.pipe(upstream);
+    });
+    upstream.on('error', () => clientSocket.destroy());
+    clientSocket.on('error', () => upstream.destroy());
+    upstream.on('timeout', () => {
+      upstream.destroy();
+      clientSocket.destroy();
+    });
+  }
+
+  private handleMitmUpgrade(req: http.IncomingMessage, clientSocket: Duplex, head: Buffer): void {
+    const socket = req.socket as net.Socket & { artexHost?: string; artexPort?: number };
+    const host = socket.artexHost ?? req.headers.host?.split(':')[0] ?? '';
+    const port = socket.artexPort ?? 443;
+    if (host === '') {
+      clientSocket.destroy();
+      return;
+    }
+    const upstream = tls.connect(
+      { host, port, servername: net.isIP(host) === 0 ? host : undefined, rejectUnauthorized: false },
+      () => {
+        const lines = [`${req.method ?? 'GET'} ${req.url ?? '/'} HTTP/${req.httpVersion}`];
+        for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) {
+          lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+        }
+        upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
+        if (head.length > 0) upstream.write(head);
+        upstream.pipe(clientSocket);
+        clientSocket.pipe(upstream);
+      },
+    );
+    upstream.on('error', () => clientSocket.destroy());
+    clientSocket.on('error', () => upstream.destroy());
   }
 
   private secureContextFor(host: string): tls.SecureContext {
@@ -308,17 +364,71 @@ function proxyEnv(proxyUrl: string, caCertPath: string | undefined): Record<stri
   return overlay;
 }
 
-function drain(stream: NodeJS.ReadableStream, cap: number): Promise<Buffer> {
+async function readBody(
+  stream: NodeJS.ReadableStream,
+  cap: number,
+): Promise<{ readonly body: Buffer; readonly full: Buffer }> {
   return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    stream.on('data', (chunk: Buffer) => {
-      total += chunk.length;
-      if (total <= cap) chunks.push(chunk);
-    });
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', () => resolve(Buffer.concat(chunks)));
+    const capture: Buffer[] = [];
+    const full: Buffer[] = [];
+    let captured = 0;
+    const onData = (chunk: Buffer): void => {
+      full.push(chunk);
+      if (captured < cap) {
+        const room = cap - captured;
+        const slice = chunk.length > room ? chunk.subarray(0, room) : chunk;
+        capture.push(slice);
+        captured += slice.length;
+      }
+    };
+    const finish = (): void => {
+      stream.off('data', onData);
+      resolve({ body: Buffer.concat(capture), full: Buffer.concat(full) });
+    };
+    stream.on('data', onData);
+    stream.on('end', finish);
+    stream.on('close', finish);
+    stream.on('error', finish);
+    stream.on('aborted', finish);
   });
+}
+
+async function streamThrough(
+  upstream: http.IncomingMessage,
+  downstream: http.ServerResponse,
+  cap: number,
+): Promise<{ readonly body: Buffer; readonly headersSent: boolean }> {
+  downstream.writeHead(upstream.statusCode ?? 200, upstream.headers);
+  const chunks: Buffer[] = [];
+  let captured = 0;
+  await new Promise<void>((resolve) => {
+    const onData = (chunk: Buffer): void => {
+      downstream.write(chunk);
+      if (captured < cap) {
+        const room = cap - captured;
+        const slice = chunk.length > room ? chunk.subarray(0, room) : chunk;
+        chunks.push(slice);
+        captured += slice.length;
+      }
+    };
+    const finish = (): void => {
+      upstream.off('data', onData);
+      resolve();
+    };
+    upstream.on('data', onData);
+    upstream.on('end', finish);
+    upstream.on('close', finish);
+    upstream.on('error', finish);
+    upstream.on('aborted', finish);
+  });
+  return { body: Buffer.concat(chunks), headersSent: true };
+}
+
+function httpsTargetUrl(host: string, port: number, path: string): URL {
+  if (net.isIP(host) === 6) {
+    return new URL(`https://[${host}]:${String(port)}${path}`);
+  }
+  return new URL(`https://${host}:${String(port)}${path}`);
 }
 
 function headerValue(value: string | string[] | undefined): string {

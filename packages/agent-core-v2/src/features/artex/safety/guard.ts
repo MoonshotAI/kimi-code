@@ -9,6 +9,7 @@ import {
 } from './interceptRules';
 import { checkArtexTargets, type ArtexTargetRequest } from './targetGate';
 import type { IArtexTargetResolver } from './targetResolver';
+import type { IArtexTargetPinCache } from './artexTargetPinCache';
 
 export type ArtexGateDecision =
   | { readonly kind: 'pass' }
@@ -29,6 +30,7 @@ export interface ArtexGateInput {
   readonly parse: ArtexBashParse;
   readonly signal?: AbortSignal;
   readonly ruleOptions?: ArtexInterceptMatchOptions;
+  readonly pinCache?: IArtexTargetPinCache;
 }
 
 /**
@@ -54,7 +56,15 @@ export async function evaluateArtexGate(input: ArtexGateInput): Promise<ArtexGat
   }
   const ruleAsk = ruleDecision !== undefined && ruleDecision.action === 'ask' ? ruleDecision : undefined;
 
-  const target = await checkArtexTargets({ store, resolver, taskId, toolName, args, signal });
+  const target = await checkArtexTargets({
+    store,
+    resolver,
+    taskId,
+    toolName,
+    args,
+    signal,
+    pinCache: input.pinCache,
+  });
   if (target.block !== undefined) {
     return { kind: 'deny', message: artexTargetBlockMessage(target.block) };
   }

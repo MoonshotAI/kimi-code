@@ -22,6 +22,16 @@ export interface ArtexAssetInterceptRuleSeed {
   readonly note: string;
 }
 
+/** Platform endpoints that do not require per-target pins (LLM, search, package mirrors). */
+export const ARTEX_TARGET_GATE_EXEMPTION_SEEDS: readonly string[] = [
+  'api.moonshot.cn',
+  'api.openai.com',
+  'api.anthropic.com',
+  'generativelanguage.googleapis.com',
+  'pypi.org',
+  'registry.npmjs.org',
+];
+
 /**
  * The built-in deletable intercept rules, ported from ARTEX
  * db.seedDefaultInterceptRules (+ v2/v3). They match the tool-call input and deny

@@ -76,6 +76,15 @@ export interface ParsedCidr {
   readonly base: string;
 }
 
+export function unmapIPv4Mapped(ip: string): string {
+  const lower = ip.trim().toLowerCase();
+  if (lower.startsWith('::ffff:')) {
+    const mapped = ip.slice(7);
+    if (isIPv4(mapped)) return mapped;
+  }
+  return ip;
+}
+
 export function parseCidr(value: string): ParsedCidr | undefined {
   const [addr, lenRaw, ...rest] = value.trim().split('/');
   if (addr === undefined || lenRaw === undefined || rest.length > 0) return undefined;
@@ -85,11 +94,10 @@ export function parseCidr(value: string): ParsedCidr | undefined {
     if (prefix > 32) return undefined;
     return { family: 4, prefix, base: maskedIPv4(addr, prefix) };
   }
-  if (isIPv6(addr)) {
-    if (prefix > 128) return undefined;
-    return { family: 6, prefix, base: addr.trim().toLowerCase() };
-  }
-  return undefined;
+  const v6 = expandIPv6(addr);
+  if (v6 === undefined) return undefined;
+  if (prefix > 128) return undefined;
+  return { family: 6, prefix, base: maskedIPv6(v6, prefix) };
 }
 
 function maskedIPv4(addr: string, prefix: number): string {
@@ -108,14 +116,18 @@ export function maskedCidr(value: string): string {
 export function cidrContainsIp(cidr: string, ip: string): boolean {
   const parsed = parseCidr(cidr);
   if (parsed === undefined) return false;
+  const normalizedIp = unmapIPv4Mapped(ip);
   if (parsed.family === 4) {
-    const value = parseIPv4(ip);
+    const value = parseIPv4(normalizedIp);
     if (value === undefined) return false;
     const mask = parsed.prefix === 0 ? 0 : (0xffffffff << (32 - parsed.prefix)) >>> 0;
     const base = parseIPv4(parsed.base) ?? 0;
     return ((value & mask) >>> 0) === base;
   }
-  return isIPv6(ip) && ip.trim().toLowerCase() === parsed.base && parsed.prefix === 128;
+  const addr = expandIPv6(normalizedIp);
+  const base = expandIPv6(parsed.base);
+  if (addr === undefined || base === undefined) return false;
+  return sameIpv6Prefix(addr, base, parsed.prefix);
 }
 
 export function cidrSubsetOf(inner: string, outer: string): boolean {
@@ -130,7 +142,52 @@ export function cidrSubsetOf(inner: string, outer: string): boolean {
     const outerBase = parseIPv4(outerCidr.base) ?? 0;
     return ((innerBase & mask) >>> 0) === outerBase;
   }
+  if (innerCidr.family === 6) {
+    const inner = expandIPv6(innerCidr.base);
+    const outer = expandIPv6(outerCidr.base);
+    if (inner === undefined || outer === undefined) return false;
+    return sameIpv6Prefix(inner, outer, outerCidr.prefix);
+  }
   return innerCidr.base === outerCidr.base;
+}
+
+function expandIPv6(ip: string): string | undefined {
+  if (!isIPv6(ip)) return undefined;
+  const zoneless = unmapIPv4Mapped(ip.trim().toLowerCase()).split('%')[0] ?? '';
+  if (zoneless === '::') return '0000:0000:0000:0000:0000:0000:0000:0000';
+  const parts = zoneless.split('::');
+  if (parts.length > 2) return undefined;
+  const head = (parts[0] ?? '').split(':').filter((segment) => segment.length > 0);
+  const tail = (parts[1] ?? '').split(':').filter((segment) => segment.length > 0);
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0) return undefined;
+  const zeroFill = Array.from({ length: missing }, () => '0000');
+  return [...head, ...zeroFill, ...tail]
+    .map((segment) => segment.padStart(4, '0').slice(-4))
+    .join(':');
+}
+
+function ipv6ToBigInt(expanded: string): bigint {
+  return expanded.split(':').reduce((acc, part) => (acc << 16n) + BigInt(Number.parseInt(part, 16)), 0n);
+}
+
+function maskedIPv6(expanded: string, prefix: number): string {
+  const value = ipv6ToBigInt(expanded);
+  const mask = prefix === 0 ? 0n : ((1n << 128n) - 1n) << BigInt(128 - prefix);
+  const masked = value & mask;
+  const segments: string[] = [];
+  for (let i = 7; i >= 0; i -= 1) {
+    const shift = BigInt(i * 16);
+    segments.push(((masked >> shift) & 0xffffn).toString(16).padStart(4, '0'));
+  }
+  return segments.join(':');
+}
+
+function sameIpv6Prefix(ip: string, base: string, prefix: number): boolean {
+  const ipValue = ipv6ToBigInt(ip);
+  const baseValue = ipv6ToBigInt(base);
+  const mask = prefix === 0 ? 0n : ((1n << 128n) - 1n) << BigInt(128 - prefix);
+  return (ipValue & mask) === (baseValue & mask);
 }
 
 export function stripHostPort(value: string): string {

@@ -4,6 +4,8 @@ import type {
   IArtexWorkStore,
 } from '#/features/artex/store/artexWorkStore';
 
+import type { IArtexTargetPinCache } from './artexTargetPinCache';
+
 import { matchAssetInterceptRules } from './assetGate';
 import { cidrContainsIp, parseCidr } from './net';
 import { extractDeclaredTargets } from './targetExtract';
@@ -75,6 +77,7 @@ export interface ArtexTargetGateInput {
   readonly toolName: string;
   readonly args: unknown;
   readonly signal?: AbortSignal;
+  readonly pinCache?: IArtexTargetPinCache;
 }
 
 interface CheckedTarget {
@@ -94,7 +97,7 @@ interface CheckedTarget {
  * may run. Ported from ARTEX intercept.CheckTargets.
  */
 export async function checkArtexTargets(input: ArtexTargetGateInput): Promise<ArtexTargetGateResult> {
-  const { store, resolver, taskId, toolName, args, signal } = input;
+  const { store, resolver, taskId, toolName, args, signal, pinCache } = input;
   const declared = extractDeclaredTargets(toolName, args);
   if (declared.targets.length === 0) return { unpinned: [] };
 
@@ -176,7 +179,9 @@ export async function checkArtexTargets(input: ArtexTargetGateInput): Promise<Ar
     }
     let pins: readonly ArtexTargetPin[];
     try {
-      pins = await store.activeTargetPins(taskId, ct.target.host, ct.target.port);
+      const durable = await store.activeTargetPins(taskId, ct.target.host, ct.target.port);
+      const cached = pinCache?.activePins(taskId, ct.target.host, ct.target.port) ?? [];
+      pins = [...durable, ...cached];
     } catch (error) {
       return {
         unpinned: [],
@@ -285,18 +290,28 @@ function exemptionHolds(ct: CheckedTarget): boolean {
 }
 
 function isLocalOrPrivateIp(ip: string): boolean {
+  if (ip === '100.100.100.200') return true;
   if (
     cidrContainsIp('127.0.0.0/8', ip) ||
     cidrContainsIp('10.0.0.0/8', ip) ||
     cidrContainsIp('172.16.0.0/12', ip) ||
     cidrContainsIp('192.168.0.0/16', ip) ||
     cidrContainsIp('169.254.0.0/16', ip) ||
-    cidrContainsIp('0.0.0.0/8', ip)
+    cidrContainsIp('0.0.0.0/8', ip) ||
+    cidrContainsIp('224.0.0.0/4', ip)
   ) {
     return true;
   }
   const lower = ip.toLowerCase();
-  return lower === '::1' || lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd');
+  if (
+    lower === '::' ||
+    lower === '::1' ||
+    cidrContainsIp('fe80::/10', ip) ||
+    cidrContainsIp('ff00::/8', ip)
+  ) {
+    return true;
+  }
+  return lower.startsWith('fc') || lower.startsWith('fd');
 }
 
 function gateBlock(

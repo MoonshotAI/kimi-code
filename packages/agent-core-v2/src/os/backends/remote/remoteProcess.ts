@@ -268,6 +268,16 @@ export class RemoteProcessService implements IHostProcessService {
     args: readonly string[] = [],
     options: HostProcessOptions = {},
   ): Promise<IHostProcess> {
+    const proxyEnv = options.env?.['HTTP_PROXY'] ?? options.env?.['http_proxy'];
+    if (
+      proxyEnv !== undefined &&
+      (proxyUrlTargetsLoopback(proxyEnv) || proxyUrlTargetsLoopback(options.env?.['HTTPS_PROXY'] ?? ''))
+    ) {
+      throw new HostProcessError(
+        HostProcessErrorCode.SpawnFailed,
+        `ARTEX recording proxy (${proxyEnv}) is bound to local loopback and is unreachable from the remote execution environment; traffic recording status is unavailable`,
+      );
+    }
     const argv =
       options.shell === undefined
         ? [command, ...args]
@@ -299,5 +309,16 @@ export class RemoteProcessService implements IHostProcessService {
       }
       throw toRemoteProcessError(error);
     }
+  }
+}
+
+function proxyUrlTargetsLoopback(proxyUrl: string): boolean {
+  if (proxyUrl.trim() === '') return false;
+  try {
+    const url = new URL(proxyUrl);
+    const host = url.hostname.toLowerCase();
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  } catch {
+    return proxyUrl.includes('127.0.0.1') || proxyUrl.includes('localhost');
   }
 }

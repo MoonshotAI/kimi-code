@@ -6,7 +6,8 @@ import { AgentSubprocessEnvContributions } from '#/agent/subprocessEnv/subproces
 
 import { ARTEX_FLAG_ID } from '#/features/artex/artex';
 import { IArtexModeService } from '#/features/artex/agent/artexMode';
-import { isArtexAgentProfile } from '#/features/artex/safety/agentPredicate';
+import { artexSafetyActive } from '#/features/artex/safety/artexSafetyScope';
+import { IArtexSessionContext } from '#/features/artex/session/artexSessionContext';
 
 import { IArtexTrafficRecorder } from './artexTrafficRecorder';
 
@@ -27,24 +28,40 @@ export const IArtexProxyEnvContributor: ServiceIdentifier<IArtexProxyEnvContribu
 export class ArtexProxyEnvContributor extends Service implements IArtexProxyEnvContributor {
   declare readonly _serviceBrand: undefined;
 
+  private cachedOverlay: Record<string, string> | undefined;
+
   constructor(
     @IFlagService private readonly flags: IFlagService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IArtexModeService private readonly mode: IArtexModeService,
+    @IArtexSessionContext private readonly session: IArtexSessionContext,
     @IArtexTrafficRecorder private readonly recorder: IArtexTrafficRecorder,
   ) {
     super();
+    void this.recorder.ensureStarted().then((state) => {
+      if (state.status === 'recording') {
+        this.cachedOverlay = this.recorder.proxyEnvOverlay();
+      }
+    });
     this.provide(AgentSubprocessEnvContributions, { overlay: () => this.overlay() });
   }
 
   private overlay(): Record<string, string> | undefined {
     if (!this.isArtexAgent()) return undefined;
-    void this.recorder.ensureStarted();
-    return this.recorder.proxyEnvOverlay();
+    if (this.recorder.isRecording) {
+      this.cachedOverlay = this.recorder.proxyEnvOverlay();
+    } else {
+      void this.recorder.ensureStarted().then((state) => {
+        if (state.status === 'recording') {
+          this.cachedOverlay = this.recorder.proxyEnvOverlay();
+        }
+      });
+    }
+    return this.cachedOverlay ?? this.recorder.proxyEnvOverlay();
   }
 
   private isArtexAgent(): boolean {
     if (!this.flags.enabled(ARTEX_FLAG_ID)) return false;
-    return isArtexAgentProfile(this.profile.data().profileName) || this.mode.isActive;
+    return artexSafetyActive(this.profile.data().profileName, this.mode, this.session);
   }
 }

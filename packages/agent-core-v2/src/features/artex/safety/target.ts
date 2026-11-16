@@ -1,4 +1,4 @@
-import { isIPv4, isIPv6, maskedCidr, parseCidr } from './net';
+import { isIPv4, isIPv6, maskedCidr, parseCidr, unmapIPv4Mapped } from './net';
 
 export type ArtexTargetKind = 'domain' | 'ip' | 'cidr';
 
@@ -99,9 +99,10 @@ export function normalizeHost(raw: string, numeric: boolean): NormalizedHost | u
     if (cidr === undefined) return undefined;
     return { kind: 'cidr', host: maskedCidr(host) };
   }
-  if (isIPv4(host)) return { kind: 'ip', host };
-  if (isIPv6(host)) {
-    return { kind: 'ip', host: canonicalIPv6(host) };
+  const unmapped = unmapIPv4Mapped(host);
+  if (isIPv4(unmapped)) return { kind: 'ip', host: unmapped };
+  if (isIPv6(unmapped)) {
+    return { kind: 'ip', host: canonicalIPv6(unmapped) };
   }
   if (numeric) {
     const addr = parseIPv4Forms(host);

@@ -1,0 +1,1 @@
+Read traffic evidence bound to a finding. Omit `binding_id` to list bindings and `evidence_version`; pass `binding_id` plus optional `side`, `offset`, and `length` to read a body segment from immutable CAS evidence.
