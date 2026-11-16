@@ -153,6 +153,10 @@ export class ConversationFeed implements IDisposable {
     return this.state.turns;
   }
 
+  hasTrailingRejectedPrompt(): boolean {
+    return this.state.trailingRejectedPrompt;
+  }
+
   undo(turnId: string): Promise<readonly string[]> {
     const run = this.undoQueue.then(() => this.undoNow(turnId));
     this.undoQueue = run.catch(() => undefined);

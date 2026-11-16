@@ -735,6 +735,9 @@ async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
       continuable: boolean;
       ownerPromptId?: string;
     } => {
+      if (feed.hasTrailingRejectedPrompt()) {
+        return { continuable: false };
+      }
       const turns = feed.turns();
       const latestTurn = turns.at(-1);
       if (latestTurn === undefined) {
