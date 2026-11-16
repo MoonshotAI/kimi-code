@@ -22,6 +22,7 @@ import {
   IAgentLifecycleService,
   type AgentScopeCreatedEvent,
 } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -104,12 +105,19 @@ describe('SessionBtwService', () => {
       _serviceBrand: undefined,
       fork,
       onDidCreateScope: onDidCreateScope.event,
+      get: (id: string) => (id === 'agent-btw-1' ? childContext : undefined),
+      remove: vi.fn(async () => {}),
       handleOf: (id: string) => {
         if (id === 'main') return main;
         if (id === 'agent-btw-1') return child;
         return undefined;
       },
     } as unknown as IAgentLifecycleService);
+    ix.stub(ISessionMetadata, {
+      _serviceBrand: undefined,
+      read: async () => ({ id: 's1', createdAt: 0, updatedAt: 0, archived: false, agents: {} }),
+      unregisterAgent: vi.fn(async () => {}),
+    } as unknown as ISessionMetadata);
     ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
   });
   afterEach(() => disposables.dispose());
@@ -186,5 +194,46 @@ describe('SessionBtwService', () => {
     fireScopeCreated(child, { parentAgentId: 'main' });
 
     expect(await bashDecision(executorEvents, 'Bash')).toBeUndefined();
+  });
+
+  it('closes a live btw agent even when persisted metadata omitted registration, unregistering before removal', async () => {
+    const order: string[] = [];
+    const liveBtwHandle = {
+      id: 'agent-btw-1',
+      accessor: {
+        get: (id: unknown) => {
+          if (id === IAgentScopeContext) {
+            return {
+              _serviceBrand: undefined,
+              agentId: 'agent-btw-1',
+              agentContext: childContext,
+              meta: { type: 'sub', labels: { [BTW_AGENT_LABEL]: 'true' } },
+              scope: (subKey?: string) => subKey ?? '',
+            };
+          }
+          return undefined;
+        },
+      },
+    } as unknown as AgentScopeCreatedEvent['handle'];
+    ix.stub(IAgentLifecycleService, {
+      _serviceBrand: undefined,
+      onDidCreateScope: onDidCreateScope.event,
+      get: (id: string) => (id === 'agent-btw-1' ? childContext : undefined),
+      handleOf: (id: string) => (id === 'agent-btw-1' ? liveBtwHandle : undefined),
+      remove: vi.fn(async () => {
+        order.push('remove');
+      }),
+    } as unknown as IAgentLifecycleService);
+    ix.stub(ISessionMetadata, {
+      _serviceBrand: undefined,
+      read: async () => ({ id: 's1', createdAt: 0, updatedAt: 0, archived: false, agents: {} }),
+      unregisterAgent: vi.fn(async () => {
+        order.push('unregister');
+      }),
+    } as unknown as ISessionMetadata);
+    ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
+
+    await ix.get(ISessionBtwService).close('agent-btw-1');
+    expect(order).toEqual(['unregister', 'remove']);
   });
 });

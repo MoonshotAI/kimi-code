@@ -164,6 +164,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     for (const id of this.roster.keys()) consider(id);
     const persisted = (await this.sessionMetadata.read()).agents ?? {};
     for (const id of Object.keys(persisted)) consider(id);
+    const onDisk = await this.storage.list(this.ctx.scope('agents')).catch(() => []);
+    for (const id of onDisk) consider(id);
     const candidate = Math.max(maxSuffix + 1, nextAgentId);
     nextAgentId = candidate + 1;
     return `agent-${String(candidate)}`;

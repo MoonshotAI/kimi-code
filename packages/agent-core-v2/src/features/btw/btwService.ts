@@ -69,19 +69,31 @@ export class SessionBtwService extends Disposable implements ISessionBtwService 
     }
     const persisted = (await this.sessionMetadata.read()).agents?.[agentId];
     const live = this.agentLifecycle.get(agentId);
+    const liveHandle = this.agentLifecycle.handleOf(agentId);
     if (persisted === undefined && live === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" was not found`);
     }
-    const isBtw = persisted?.labels?.[BTW_AGENT_LABEL] === 'true';
+    let liveMeta: { readonly labels?: Readonly<Record<string, string>> } | undefined;
+    if (liveHandle !== undefined) {
+      try {
+        liveMeta = liveHandle.accessor.get(IAgentScopeContext).meta;
+      } catch {
+        liveMeta = undefined;
+      }
+    }
+    const isBtw =
+      persisted?.labels?.[BTW_AGENT_LABEL] === 'true' ||
+      liveMeta?.labels?.[BTW_AGENT_LABEL] === 'true';
     if (!isBtw) {
       throw new Error2(
         ErrorCodes.AGENT_NOT_CLOSABLE,
         `Agent "${agentId}" is not a side-channel agent and cannot be closed`,
       );
     }
-    if (live !== undefined) {
-      await this.agentLifecycle.remove(live);
-    }
     await this.sessionMetadata.unregisterAgent(agentId);
+    const target = this.agentLifecycle.get(agentId) ?? live;
+    if (target !== undefined) {
+      await this.agentLifecycle.remove(target);
+    }
   }
 }
