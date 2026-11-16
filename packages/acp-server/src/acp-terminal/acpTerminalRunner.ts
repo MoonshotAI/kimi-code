@@ -41,6 +41,7 @@ class AcpProcessService implements IHostProcessService {
     private readonly sessionId: string,
     private readonly cwd: string,
     private readonly connection: IAcpConnection,
+    private readonly local: IHostProcessService,
   ) {}
 
   async spawn(
@@ -48,7 +49,9 @@ class AcpProcessService implements IHostProcessService {
     args: readonly string[] = [],
     options?: HostProcessOptions,
   ): Promise<IHostProcess> {
-    if (!isBashToolInvocation(args, options)) throw new Error('ACP terminal only accepts Bash tool invocations');
+    if (!isBashToolInvocation(args, options)) {
+      return this.local.spawn(command, args, options);
+    }
 
     const handle = await this.connection.get().createTerminal({
       sessionId: this.sessionId,
@@ -158,13 +161,17 @@ export class AcpEnvironmentOverlay implements IAgentEnvironmentOverlay {
 
   decorate(lease: EnvironmentLease): EnvironmentLease {
     if (lease.environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID) return lease;
-    const environment = {
-      ...lease.environment,
-      fs: new AcpHostFileSystem(this.session, this.connection),
-      process: this.connection.terminalEnabled
-        ? new AcpProcessService(this.session.sessionId, this.session.cwd, this.connection)
-        : lease.environment.process,
-    };
+    const process = this.connection.terminalEnabled
+      ? new AcpProcessService(this.session.sessionId, this.session.cwd, this.connection, lease.environment.process!)
+      : lease.environment.process;
+    const fs = new AcpHostFileSystem(this.session, this.connection);
+    const environment = new Proxy(lease.environment, {
+      get: (target, property) => {
+        if (property === 'fs') return fs;
+        if (property === 'process') return process;
+        return Reflect.get(target, property, target);
+      },
+    });
     return { ...lease, environment };
   }
 }

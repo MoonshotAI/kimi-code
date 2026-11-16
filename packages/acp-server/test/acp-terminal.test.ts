@@ -71,6 +71,35 @@ describe('AcpEnvironmentOverlay', () => {
     expect(created).toBe(1);
   });
 
+  it('delegates non-Bash spawns to the original process service', async () => {
+    let created = 0;
+    const calls: string[] = [];
+    const local = {
+      _serviceBrand: undefined,
+      spawn: async (command: string) => {
+        calls.push(command);
+        return {} as IHostProcess;
+      },
+    };
+    const decorated = new AcpEnvironmentOverlay(session, makeConnection({
+      createTerminal: () => {
+        created += 1;
+        return makeTerminalHandle();
+      },
+    })).decorate(lease('local', local));
+
+    await decorated.environment.process!.spawn('rg', ['--files']);
+    expect(calls).toEqual(['rg']);
+    expect(created).toBe(0);
+  });
+
+  it('preserves the local environment status getter', () => {
+    const original = lease('local', { _serviceBrand: undefined, spawn: async () => ({}) as IHostProcess });
+    const decorated = new AcpEnvironmentOverlay(session, makeConnection()).decorate(original);
+    expect(decorated.environment.status).toBe('ready');
+    expect(Object.getPrototypeOf(decorated.environment)).toBe(Object.getPrototypeOf(original.environment));
+  });
+
   it('keeps the original process without the terminal capability', async () => {
     const process = { _serviceBrand: undefined, spawn: async () => ({}) as IHostProcess };
     const decorated = new AcpEnvironmentOverlay(session, makeConnection({ terminalEnabled: false }))

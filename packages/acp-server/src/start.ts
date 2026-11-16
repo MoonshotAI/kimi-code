@@ -157,7 +157,7 @@ export async function runAcpServerWithStream(
         .get(IAgentLifecycleService)
         .handleOf(agentContext.agentId)!
         .accessor.get(IAgentEnvironmentBindingService);
-      if (binding.current.environmentId !== `acp:${sessionId}`) return;
+      if (!binding.current.environmentId.startsWith('acp:')) return;
       const original = handle.accessor.get(ISessionWorkdir);
       binding.bind(original.environmentId, original.cwd);
     },
