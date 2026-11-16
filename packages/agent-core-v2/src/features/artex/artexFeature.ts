@@ -15,6 +15,7 @@ import { ArtexOrchestrator, IArtexOrchestrator } from './engine/artexOrchestrato
 import './agent/artexModeService';
 import { ARTEX_PROFILES } from './profiles/artexProfiles';
 import { ArtexSessionContext, IArtexSessionContext } from './session/artexSessionContext';
+import { ArtexSessionService, IArtexSessionService } from './session/artexSessionService';
 import { ArtexEgressPacer, IArtexEgressPacer } from './safety/egressPacer';
 import { ArtexToolHooksService, IArtexToolHooksService } from './safety/artexToolHooks';
 import { IArtexTargetResolver, SystemArtexTargetResolver } from './safety/targetResolver';
@@ -43,6 +44,9 @@ export class ArtexFeature extends Feature {
       activation: ScopeActivation.OnScopeCreated,
     });
     this.contributeService(LifecycleScope.Session, IArtexOrchestrator, ArtexOrchestrator, {
+      activation: ScopeActivation.OnDemand,
+    });
+    this.contributeService(LifecycleScope.Session, IArtexSessionService, ArtexSessionService, {
       activation: ScopeActivation.OnDemand,
     });
     this.contributeService(LifecycleScope.Session, IArtexEgressPacer, ArtexEgressPacer, {

@@ -126,7 +126,11 @@ export class ArtexModeService extends Service implements IArtexModeService {
     }
     this.activateMainTools();
     void this.dispatcher.dispatch(
-      new AgentStatusUpdated({ agentId: this.agentCtx.agentId, artexMode: true }),
+      new AgentStatusUpdated({
+        agentId: this.agentCtx.agentId,
+        artexMode: true,
+        artexExplorationId: state.explorationId,
+      }),
     );
   }
 
@@ -136,7 +140,11 @@ export class ArtexModeService extends Service implements IArtexModeService {
     if (ARTEX_MAIN_AGENT_TOOL_NAMES.every((name) => active.includes(name))) return;
     this.activateMainTools();
     void this.dispatcher.dispatch(
-      new AgentStatusUpdated({ agentId: this.agentCtx.agentId, artexMode: true }),
+      new AgentStatusUpdated({
+        agentId: this.agentCtx.agentId,
+        artexMode: true,
+        artexExplorationId: this.agentState.get(artexKey).explorationId,
+      }),
     );
   }
 

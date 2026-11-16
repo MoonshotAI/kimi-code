@@ -13,6 +13,7 @@ export interface AgentStatusUpdatedPayload {
   towerMode?: boolean;
   towerExitReason?: TowerExitReason;
   artexMode?: boolean;
+  artexExplorationId?: number;
   planMode?: boolean;
   model?: string;
   thinkingEffort?: string;
@@ -92,6 +93,7 @@ export interface AgentStatusUpdatedEvent {
   readonly towerMode?: boolean;
   readonly towerExitReason?: TowerExitReason;
   readonly artexMode?: boolean;
+  readonly artexExplorationId?: number;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;

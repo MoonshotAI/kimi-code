@@ -59,6 +59,8 @@ export interface ArtexExplorationUpdated {
   readonly explorationId?: number;
 }
 
+export const ARTEX_EXPLORATION_UPDATED_EVENT_TYPE = 'artex.exploration.updated' as const;
+
 export const artexKey = defineState('artex', (): ArtexModeState => ({ active: false }))
   .replayable({ schema: z.custom<ArtexModeState>() })
   .undoable()
@@ -66,16 +68,37 @@ export const artexKey = defineState('artex', (): ArtexModeState => ({ active: fa
     if (e.agentId !== MAIN_AGENT_ID) return;
     s.active = true;
     if (e.explorationId !== undefined) s.explorationId = e.explorationId;
-    ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, artexMode: true }));
+    ctx.emit(
+      new AgentStatusUpdated({
+        agentId: e.agentId,
+        artexMode: true,
+        artexExplorationId: s.explorationId,
+      }),
+    );
   })
   .on(ArtexModeExit, (s, e, ctx) => {
     if (s.active) {
       s.active = false;
     }
-    ctx.emit(new AgentStatusUpdated({ agentId: e.agentId, artexMode: false }));
+    ctx.emit(
+      new AgentStatusUpdated({
+        agentId: e.agentId,
+        artexMode: false,
+        artexExplorationId: undefined,
+      }),
+    );
   })
-  .on(ArtexExplorationUpdated, (s, e) => {
+  .on(ArtexExplorationUpdated, (s, e, ctx) => {
     if (e.agentId !== MAIN_AGENT_ID) return;
     if (e.explorationId === undefined) delete s.explorationId;
     else s.explorationId = e.explorationId;
+    if (s.active) {
+      ctx.emit(
+        new AgentStatusUpdated({
+          agentId: e.agentId,
+          artexMode: true,
+          artexExplorationId: s.explorationId,
+        }),
+      );
+    }
   });

@@ -411,6 +411,8 @@ export * from '#/features/artex/protocol/index';
 export * from '#/features/artex/logic/index';
 export * from '#/features/artex/store/index';
 export * from '#/features/artex/prompts/index';
+export * from '#/features/artex/session/artexSessionContext';
+export * from '#/features/artex/session/artexSessionService';
 import '#/features/artex/flag';
 import '#/features/artex/artexFeature';
 export * from '#/agent/usage/usage';

@@ -36,6 +36,8 @@ export const sessionAgentConfigSchema = z.object({
   swarm_mode: z.boolean().optional(),
   tower_mode: z.boolean().optional(),
   tower_base: z.string().min(1).optional(),
+  artex_mode: z.boolean().optional(),
+  artex_exploration_id: z.number().int().positive().optional(),
   goal_objective: z.string().optional(),
   goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
 });

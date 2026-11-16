@@ -19,10 +19,12 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
-import { IEventBus } from '#/app/event/eventBus';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { sessionAgentConfigPartialSchema } from '#/app/sessionLegacy/sessionProtocol';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { IFlagService } from '#/app/flag/flag';
@@ -51,7 +53,12 @@ import { IArtexModeService } from './agent/artexMode';
 import { ArtexModeService } from './agent/artexModeService';
 import { artexKey } from './agent/artexOps';
 import { ARTEX_MAIN_AGENT_TOOL_NAMES, ARTEX_PROFILES } from './profiles/artexProfiles';
+import { IArtexOrchestrator } from './engine/artexOrchestrator';
 import { ArtexSessionContext, IArtexSessionContext } from './session/artexSessionContext';
+import { ArtexSessionService, IArtexSessionService } from './session/artexSessionService';
+import { ArtexGraphStoreProvider, IArtexGraphStoreProvider } from './store/artexGraphStoreProvider';
+import { ArtexTrafficStoreProvider, IArtexTrafficStoreProvider } from './store/artexTrafficStoreProvider';
+import { ArtexWorkStoreProvider, IArtexWorkStoreProvider } from './store/artexWorkStoreProvider';
 import { ARTEX_TOOLS } from './tools/index';
 
 import { stubFlag } from '../../../test/app/flag/stubs';
@@ -206,6 +213,16 @@ describe('ArtexModeService — persistence, tool activation, and restore', () =>
     const { ix, service, dispatcher } = createServiceHost();
     await dispatcher.restore();
 
+    const statusEvents: Array<{ artexMode?: boolean; artexExplorationId?: number }> = [];
+    ix.get(IEventBus).subscribe(AgentStatusUpdated, (ev) => {
+      if (ev.artexMode !== undefined) {
+        statusEvents.push({
+          artexMode: ev.artexMode,
+          artexExplorationId: ev.artexExplorationId,
+        });
+      }
+    });
+
     service.enter(42);
     expect(service.isActive).toBe(true);
     expect(ix.get(IAgentStateService).get(artexKey)).toEqual({
@@ -226,6 +243,21 @@ describe('ArtexModeService — persistence, tool activation, and restore', () =>
     for (const name of ARTEX_MAIN_AGENT_TOOL_NAMES) {
       expect(activeTools.has(name)).toBe(false);
     }
+    expect(statusEvents).toEqual([
+      { artexMode: true, artexExplorationId: 42 },
+      { artexMode: false, artexExplorationId: undefined },
+    ]);
+  });
+
+  it('validates artex_mode and artex_exploration_id in SessionAgentConfigPartial', () => {
+    const parsed = sessionAgentConfigPartialSchema.parse({
+      artex_mode: true,
+      artex_exploration_id: 7,
+    });
+    expect(parsed).toEqual({ artex_mode: true, artex_exploration_id: 7 });
+    expect(() =>
+      sessionAgentConfigPartialSchema.parse({ artex_exploration_id: 0 }),
+    ).toThrow();
   });
 
   it('restores active mode, activeExplorationId, and main tools across session reload', async () => {
@@ -283,5 +315,219 @@ describe('ArtexModeService — persistence, tool activation, and restore', () =>
     await sub.dispatcher.restore();
     sub.service.enter(1);
     expect(sub.service.isActive).toBe(false);
+  });
+});
+
+describe('IArtexSessionService — lifecycle, store facade, and events', () => {
+  let disposables: DisposableStore;
+  let workspaceDir: string;
+
+  beforeEach(async () => {
+    disposables = new DisposableStore();
+    workspaceDir = await mkdtemp(join(tmpdir(), 'artex-session-svc-'));
+  });
+
+  afterEach(async () => {
+    disposables.dispose();
+    await rm(workspaceDir, { recursive: true, force: true });
+  });
+
+  it('registers IArtexSessionService in LifecycleScope.Session when artex flag is on', () => {
+    _clearScopedRegistryForTests();
+    _clearFeatureRecipesForTests();
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureManager,
+      FeatureManagerService,
+      ScopeActivation.OnScopeCreated,
+      'feature',
+    );
+    registerScopedService(
+      LifecycleScope.App,
+      IFeatureAssemblyService,
+      FeatureAssemblyService,
+      ScopeActivation.OnScopeCreated,
+      'features',
+    );
+    registerFeature(ArtexFeature);
+    const flags = stubFlag((id) => id === ARTEX_FLAG_ID);
+    const host = createScopedTestHost([[IFlagService, flags]]);
+    const sessionScope = host.child(LifecycleScope.Session, 'sess-1');
+    const services = host.app.accessor
+      .get(IFeatureManager)
+      .contributedServices()
+      .filter((entry) => entry.scope === LifecycleScope.Session)
+      .map((entry) => entry.id);
+    expect(services).toContain(IArtexSessionService);
+    expect(sessionScope).toBeDefined();
+    host.dispose();
+  });
+
+  it('exposes exploration lifecycle, graph/work/traffic operations, and emits domain events', async () => {
+    const ix = disposables.add(new TestInstantiationService());
+    const bus = disposables.add(new EventBusService());
+    ix.stub(ISessionEventBus, bus);
+    ix.stub(ISessionContext, { sessionDir: workspaceDir, sessionId: 's1' } as unknown as ISessionContext);
+    ix.set(IArtexGraphStoreProvider, new SyncDescriptor(ArtexGraphStoreProvider));
+    ix.set(IArtexWorkStoreProvider, new SyncDescriptor(ArtexWorkStoreProvider));
+    ix.set(IArtexTrafficStoreProvider, new SyncDescriptor(ArtexTrafficStoreProvider));
+    ix.set(IArtexSessionContext, new SyncDescriptor(ArtexSessionContext));
+
+    const startMock = vi.fn(() => ({
+      explorationId: 1,
+      completion: Promise.resolve({
+        waves: 0,
+        dispatched: 0,
+        settled: { done: 0, exhausted: 0, blocked: 0, stopped: 0, paused: 0 },
+        goalMet: false,
+        stalled: false,
+        stopped: false,
+      }),
+      stop: () => {},
+    }));
+    const pauseMock = vi.fn(async () => true);
+    const stopMock = vi.fn(() => true);
+    const pauseIntentMock = vi.fn(() => false);
+    const abortIntentMock = vi.fn(() => false);
+    const notifyMock = vi.fn();
+    ix.stub(IArtexOrchestrator, {
+      start: startMock,
+      pause: pauseMock,
+      stop: stopMock,
+      pauseIntent: pauseIntentMock,
+      abortIntent: abortIntentMock,
+      notifyGraphChanged: notifyMock,
+      getStatus: (id: number) => ({
+        explorationId: id,
+        running: true,
+        paused: false,
+        activeWorkers: 0,
+        waves: 0,
+        dispatched: 0,
+        settled: { done: 0, exhausted: 0, blocked: 0, stopped: 0, paused: 0 },
+        goalMet: false,
+        stalled: false,
+        stopped: false,
+      }),
+    } as unknown as IArtexOrchestrator);
+
+    ix.set(IArtexSessionService, new SyncDescriptor(ArtexSessionService));
+    const svc = ix.get(IArtexSessionService);
+
+    const emitted: string[] = [];
+    bus.subscribe((ev) => {
+      emitted.push(ev.type);
+    });
+
+    expect((await svc.status()).active).toBe(false);
+
+    const started = await svc.start({ goal: 'audit api', description: 'https://api.example.test' });
+    expect(started.explorationId).toBe(1);
+    expect(startMock).toHaveBeenCalledTimes(1);
+
+    await svc.control({ action: 'pause' });
+    expect(pauseMock).toHaveBeenCalledWith(1);
+    await svc.control({ action: 'resume' });
+    expect(startMock).toHaveBeenCalledTimes(2);
+    await svc.control({ action: 'stop' });
+    expect(stopMock).toHaveBeenCalledWith(1);
+
+    const graphStore = ix.get(IArtexGraphStoreProvider).open(workspaceDir, 1);
+    const workStore = ix.get(IArtexWorkStoreProvider).open(workspaceDir);
+
+    const blockedIntent = await graphStore.addIntent({ summary: 'blocked probe' }, 5);
+    await graphStore.setIntentState(blockedIntent, 'blocked');
+    const rerun = await svc.control({ action: 'rerun_blocked' });
+    expect(rerun.reopened).toBe(1);
+    expect((await graphStore.getNode(blockedIntent))?.state).toBe('open');
+
+    await graphStore.setIntentState(blockedIntent, 'running');
+    await svc.intentControl({ intentId: blockedIntent, action: 'pause' });
+    expect((await graphStore.getNode(blockedIntent))?.state).toBe('paused');
+    await svc.intentControl({ intentId: blockedIntent, action: 'resume' });
+    expect((await graphStore.getNode(blockedIntent))?.state).toBe('open');
+    await svc.intentControl({ intentId: blockedIntent, action: 'cancel', reason: 'out of scope' });
+    expect((await graphStore.getNode(blockedIntent))?.state).toBe('deleted');
+
+    await graphStore.appendActivity({ nodeId: blockedIntent, actor: 'worker-1', kind: 'tool_use', summary: 'curl /api' });
+    const act = await svc.activity({ nodeId: blockedIntent });
+    expect(act.total).toBe(1);
+
+    const addedGoal = await svc.addGoal({ text: 'check admin', category: 'auth' });
+    expect((await svc.goals()).some((g) => g.id === addedGoal.id)).toBe(true);
+    const editedGoal = await svc.editGoal({ goalId: addedGoal.id, text: 'check admin panel', state: 'met' });
+    expect(editedGoal.state).toBe('met');
+    expect((await svc.deleteGoal({ goalId: addedGoal.id })).deleted).toBe(true);
+
+    const cons = await svc.setConstraints({ entries: [{ kind: 'deny', text: 'no DoS' }] });
+    expect(cons.constraints).toHaveLength(1);
+    expect(cons.rendered).toContain('no DoS');
+    expect((await svc.constraints()).constraints).toHaveLength(1);
+
+    const addedScope = await svc.addScope({ kind: 'root_domain', value: 'example.test' });
+    expect('taskScope' in addedScope).toBe(true);
+    const scopeList = await svc.scope();
+    expect(scopeList.taskScope).toHaveLength(1);
+    if ('taskScope' in addedScope) {
+      expect((await svc.deleteScope({ scopeId: addedScope.taskScope.id })).deleted).toBe(true);
+    }
+
+    const savedCred = await svc.saveCredential({
+      domain: 'example.test',
+      username: 'alice',
+      password: 'secret',
+    });
+    expect(savedCred.password).not.toBe('secret');
+    expect(savedCred.hasPassword).toBe(true);
+    expect(await svc.credentials()).toHaveLength(1);
+    expect((await svc.deleteCredential({ credentialId: savedCred.id })).deleted).toBe(true);
+
+    await workStore.upsertAsset({ type: 'subdomain', domain: 'a.example.test' }, 1);
+    await workStore.addTaskScope(1, 'root_domain', 'example.test', 'declared', 'manual');
+    const cov = await svc.coverage();
+    expect(cov.denominator).toBe(1);
+    const untested = await svc.untestedAssets();
+    expect(untested.total).toBe(1);
+
+    const ingested = await svc.ingestTraffic({
+      entries: {
+        method: 'GET',
+        url: 'https://api.example.test/users',
+        status: 200,
+        respHead: 'HTTP/1.1 200 OK\nContent-Type: application/json\n',
+        respBody: '{"users":["root"]}',
+      },
+    });
+    expect(ingested.count).toBe(1);
+    expect(await svc.trafficHosts()).toHaveLength(1);
+    expect(await svc.trafficSearch({ host: 'api.example.test' })).toHaveLength(1);
+    expect((await svc.trafficExchange(ingested.ids[0]!))?.response).toContain('"root"');
+
+    const findingId = await graphStore.addNode({
+      kind: 'finding',
+      payload: { vulnclass: 'idor', name: 'user dump', summary: 'unauthenticated dump' },
+      priority: 5,
+      state: 'confirmed',
+    });
+    expect(await svc.findings()).toHaveLength(1);
+    const patched = await svc.patchFinding({ nodeId: findingId, severity: 'high' });
+    expect((patched.payload as { severity?: string }).severity).toBe('high');
+    expect((await svc.nodeDetail(findingId)).findingId).toBe(findingId);
+    expect((await svc.graph()).nodes.length).toBeGreaterThan(0);
+
+    const pin = await workStore.createTargetPin({
+      taskId: 1,
+      host: 'api.example.test',
+      port: 443,
+      pinnedIps: ['93.184.216.34'],
+      resolver: 'system',
+    });
+    expect(await svc.targetPins()).toHaveLength(1);
+    expect((await svc.revokeTargetPin({ pinId: pin.id })).revoked).toBe(true);
+
+    expect(emitted).toContain('artex.exploration.updated');
+    expect(emitted).toContain('artex.activity.appended');
+    expect(emitted).toContain('artex.traffic.captured');
+    expect(emitted).toContain('artex.finding.reported');
   });
 });
