@@ -201,7 +201,6 @@ function requester(opts: {
   headers?: Record<string, string>;
   uploadVideo?: VideoUploader;
   uploadImage?: ImageUploader;
-  fileExists?: (id: string) => Promise<boolean>;
   credentialProvider?: LlmCredentialProvider;
 }): TestMediaResolution {
   const model: TestMediaResolution['model'] = {
@@ -229,7 +228,6 @@ function requester(opts: {
             ...(opts.uploadVideo === undefined ? [] : ['video' as const]),
             ...(opts.uploadImage === undefined ? [] : ['image' as const]),
           ]),
-          exists: opts.fileExists,
           upload: async (file, { signal }) => {
             if (file.kind === 'video') {
               const part = await opts.uploadVideo!(
@@ -367,7 +365,7 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(upload).toHaveBeenCalledTimes(1);
   });
 
-  it('re-uploads a persisted video when the remote file no longer exists', async () => {
+  it('reuses a persisted upload across resolver instances without re-uploading', async () => {
     const files = new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]);
     const blobs = blobStore();
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
@@ -378,17 +376,15 @@ describe('AgentMediaResolverService video strategy', () => {
       requester({ uploadVideo: upload1 }),
     );
 
-    const fileExists = vi.fn(async () => false);
     const upload2 = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-2'));
     const out = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
       [message],
-      requester({ uploadVideo: upload2, fileExists }),
+      requester({ uploadVideo: upload2 }),
     );
 
-    expect(firstPart(out)).toEqual(msPart('prov-2'));
-    expect(fileExists).toHaveBeenCalledWith('prov-1', expect.anything());
+    expect(firstPart(out)).toEqual(msPart('prov-1'));
     expect(upload1).toHaveBeenCalledTimes(1);
-    expect(upload2).toHaveBeenCalledTimes(1);
+    expect(upload2).not.toHaveBeenCalled();
   });
 
   type TagCase = {
@@ -928,7 +924,7 @@ describe('AgentMediaResolverService image strategy', () => {
 });
 
 describe('AgentMediaResolverService image upload', () => {
-  it('uploads an MCP screenshot once and sends its ms reference in both Kimi requests', async () => {
+  it('retries a missing uploaded screenshot with inline base64 and preserves later cache reuse', async () => {
     const storage = new InMemoryStorageService();
     const mediaStore = new SessionMediaStoreService(
       makeSessionContext({ sessionId: 's1', workspaceId: 'w1', sessionDir, sessionScope: 's1', cwd: sessionDir }),
@@ -948,14 +944,10 @@ describe('AgentMediaResolverService image upload', () => {
     ];
     const urls: string[] = [];
     const bodies: string[] = [];
+    const recoveryEvents: Array<{ strategy: string; action: string }> = [];
     const mockFetch: typeof fetch = async (input, init) => {
       const httpRequest = new Request(input, init);
       const path = new URL(httpRequest.url).pathname;
-      if (httpRequest.method === 'GET') {
-        expect(path).toBe('/v1/files/uploaded-screenshot');
-        urls.push(path);
-        return Response.json({ id: 'uploaded-screenshot' });
-      }
       expect(httpRequest.method).toBe('POST');
       urls.push(path);
       if (path === '/v1/files') {
@@ -970,6 +962,12 @@ describe('AgentMediaResolverService image upload', () => {
       }
       expect(path).toBe('/v1/chat/completions');
       bodies.push(await httpRequest.text());
+      if (bodies.length === 1 || bodies.at(-1)!.includes('ms://unrecoverable')) {
+        return Response.json(
+          { error: { message: 'The requested resource was not found', type: 'resource_not_found_error' } },
+          { status: 404 },
+        );
+      }
       return Response.json({
         id: 'completion_1',
         model: 'stub',
@@ -991,6 +989,9 @@ describe('AgentMediaResolverService image upload', () => {
       const events = generateModel(routed, { systemPrompt: '', messages: history }, undefined, undefined, {
         recoveries: [media.recovery],
         resolvers: [media.toolResolver, media.resolver],
+        onRecovery: (event) => {
+          recoveryEvents.push({ strategy: event.strategy, action: event.action });
+        },
       });
       const eventTypes: string[] = [];
       for await (const event of events) eventTypes.push(event.type);
@@ -999,47 +1000,61 @@ describe('AgentMediaResolverService image upload', () => {
     expect(urls).toEqual([
       '/v1/files',
       '/v1/chat/completions',
-      '/v1/files/uploaded-screenshot',
+      '/v1/chat/completions',
       '/v1/chat/completions',
     ]);
-    for (const body of bodies) {
-      const { messages: wireMessages } = JSON.parse(body) as { messages: unknown[] };
-      expect(wireMessages).toContainEqual(expect.objectContaining({
-        role: 'tool',
-        tool_call_id: 'call_1',
-        content: expect.arrayContaining([{
-          type: 'image_url',
-          image_url: { url: 'ms://uploaded-screenshot', id: 'uploaded-screenshot' },
-        }]),
-      }));
-      expect(body).not.toContain('data:image/');
-      expect(body).not.toContain(screenshot.toString('base64'));
-    }
+    expect(bodies).toHaveLength(3);
+    expect(bodies[0]).toContain('ms://uploaded-screenshot');
+    expect(bodies[0]).not.toContain('data:image/');
+    expect(bodies[1]).toContain(`data:image/png;base64,${screenshot.toString('base64')}`);
+    expect(bodies[1]).not.toContain('ms://uploaded-screenshot');
+    expect(bodies[2]).toContain('ms://uploaded-screenshot');
+    expect(bodies[2]).not.toContain('data:image/');
+    expect(recoveryEvents).toEqual([{ strategy: 'media-resource-not-found', action: 'base64' }]);
+
+    await expect(
+      (async () => {
+        const events = generateModel(routed, {
+          systemPrompt: '',
+          messages: [{
+            role: 'user',
+            content: [{
+              type: 'image_url',
+              imageUrl: { url: 'ms://unrecoverable', id: 'unrecoverable' },
+            }],
+          }],
+        }, undefined, undefined, {
+          recoveries: [media.recovery],
+          resolvers: [media.toolResolver, media.resolver],
+        });
+        for await (const _event of events) {}
+      })(),
+    ).rejects.toThrow('The requested resource was not found');
+    expect(bodies).toHaveLength(4);
+    expect(bodies[3]).toContain('ms://unrecoverable');
+    expect(bodies[3]).not.toContain('data:image/');
+    expect(recoveryEvents).toHaveLength(1);
   });
 
-  it('re-uploads an image when its memoized remote file no longer exists', async () => {
-    const upload = vi.fn()
-      .mockResolvedValueOnce(msImagePart('img-1'))
-      .mockResolvedValueOnce(msImagePart('img-2'));
-    const fileExists = vi.fn(async () => false);
+  it('uploads an image once and serves later resolves from the cached reference', async () => {
+    const upload = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-1'));
     const res = resolver(new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]));
-    const req = requester({ uploadImage: upload, fileExists });
+    const req = requester({ uploadImage: upload });
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
 
     const first = await resolveMedia(res, [message], req);
     const second = await resolveMedia(res, [message], req);
 
     expect(firstPart(first)).toEqual(msImagePart('img-1'));
-    expect(firstPart(second)).toEqual(msImagePart('img-2'));
-    expect(fileExists).toHaveBeenCalledWith('img-1', expect.anything());
-    expect(upload).toHaveBeenCalledTimes(2);
+    expect(firstPart(second)).toEqual(msImagePart('img-1'));
+    expect(upload).toHaveBeenCalledTimes(1);
     expect(upload).toHaveBeenCalledWith(
       { data: PNG_BYTES, mimeType: 'image/png', filename: 'pic.png' },
       expect.anything(),
     );
   });
 
-  it('validates a persisted image upload across resolver instances and re-uploads only when missing', async () => {
+  it('reuses a persisted image upload across resolver instances without re-uploading', async () => {
     const files = new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]);
     const blobs = blobStore();
     const message = imageMessage(buildKimiFileUrl(FILE_ID));
@@ -1050,28 +1065,15 @@ describe('AgentMediaResolverService image upload', () => {
       requester({ uploadImage: upload1 }),
     );
 
-    const available = vi.fn(async () => true);
     const upload2 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-2'));
-    const cached = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
+    const out = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
       [message],
-      requester({ uploadImage: upload2, fileExists: available }),
+      requester({ uploadImage: upload2 }),
     );
 
-    expect(firstPart(cached)).toEqual(msImagePart('img-1'));
-    expect(available).toHaveBeenCalledWith('img-1', expect.anything());
-    expect(upload2).not.toHaveBeenCalled();
-
-    const missing = vi.fn(async () => false);
-    const upload3 = vi.fn(async (): Promise<ImageURLPart> => msImagePart('img-3'));
-    const refreshed = await resolveMedia(new AgentMediaResolverService(fileService(files), blobs, telemetry, new AgentStateService(), stubMediaStore(), stubDispatcher, stubScopeContext),
-      [message],
-      requester({ uploadImage: upload3, fileExists: missing }),
-    );
-
-    expect(firstPart(refreshed)).toEqual(msImagePart('img-3'));
-    expect(missing).toHaveBeenCalledWith('img-1', expect.anything());
+    expect(firstPart(out)).toEqual(msImagePart('img-1'));
     expect(upload1).toHaveBeenCalledTimes(1);
-    expect(upload3).toHaveBeenCalledTimes(1);
+    expect(upload2).not.toHaveBeenCalled();
   });
 
   it('falls back to the inline base64 part when the upload fails for a non-auth reason', async () => {

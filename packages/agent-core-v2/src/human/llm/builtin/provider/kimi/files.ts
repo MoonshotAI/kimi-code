@@ -77,32 +77,9 @@ function parseUploadedKimiFile(uploaded: unknown): UploadedMedia {
   return { url: `ms://${id}`, id };
 }
 
-function isMissingKimiFileError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const record = error as Record<string, unknown>;
-  const status = record['status'] ?? record['statusCode'];
-  if (status === 404) return true;
-  if (status !== 400) return false;
-  const message = error instanceof Error ? error.message : (readNonEmptyString(record['message']) ?? '');
-  return /(?:blob|file).*(?:does not exist|not found)/i.test(message);
-}
-
 function createKimiFiles(filesBaseUrl: (baseUrl: string | undefined) => string | undefined): LlmFiles {
   return {
     kinds: new Set(['image', 'video']),
-    exists: async (id, { endpoint, signal }) => {
-      const client = kimiOpenAIProtocol.client(
-        { ...endpoint, baseUrl: filesBaseUrl(endpoint.baseUrl) },
-        undefined,
-      );
-      try {
-        await client.files.retrieve(id, { signal });
-        return true;
-      } catch (error) {
-        if (isMissingKimiFileError(error)) return false;
-        throw error;
-      }
-    },
     upload: async (file, { endpoint, signal }) => {
       if (!file.mimeType.startsWith(`${file.kind}/`)) {
         throw new Error(`Expected a ${file.kind} mime type, got ${file.mimeType}`);

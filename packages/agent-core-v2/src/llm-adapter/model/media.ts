@@ -31,20 +31,6 @@ export function supportsLlmUpload(
   return contentsOf(request).endpoint?.files?.kinds.has(kind) === true;
 }
 
-export async function uploadedMediaExists(
-  request: InitializedLlmRequester,
-  id: string,
-  signal?: AbortSignal,
-): Promise<boolean> {
-  const endpoint = contentsOf(request).endpoint;
-  const exists = endpoint?.files?.exists;
-  if (exists === undefined) return true;
-  return exists(id, {
-    endpoint: await resolveEndpoint(endpoint),
-    signal: signal ?? new AbortController().signal,
-  });
-}
-
 export function imageUploaderFor(
   model: Model,
   request: InitializedLlmRequester,

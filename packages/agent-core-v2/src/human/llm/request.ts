@@ -107,10 +107,6 @@ export interface UploadedMedia {
 
 export interface LlmFiles {
   readonly kinds: ReadonlySet<MediaKind>;
-  readonly exists?: (
-    id: string,
-    ctx: { readonly endpoint: ResolvedEndpoint; readonly signal: AbortSignal },
-  ) => Promise<boolean>;
   readonly upload: (
     file: LlmFileInput,
     ctx: { readonly endpoint: ResolvedEndpoint; readonly signal: AbortSignal },
