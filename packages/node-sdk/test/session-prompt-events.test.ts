@@ -443,13 +443,19 @@ describe('Session.prompt events', () => {
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     const childPrompt = 'Find why the parser never terminates.';
+    const bgWorkerPrompt = 'Keep streaming in background across fork and close.';
     const finding = 'Found the loop at src/parser.ts:42; not verified yet.';
     const draft = 'Drafting the report: the loop never advances.';
     let parentRequests = 0;
     let childRequests = 0;
+    let bgParentRequests = 0;
     let signalChildStreaming!: () => void;
     const childStreaming = new Promise<void>((resolve) => {
       signalChildStreaming = resolve;
+    });
+    let signalBgWorkerStreaming!: () => void;
+    const bgWorkerStreaming = new Promise<void>((resolve) => {
+      signalBgWorkerStreaming = resolve;
     });
     const parentAfterChild = Promise.withResolvers<void>();
     const toolResponse = (id: string, name: string, args: Record<string, unknown>, text?: string) =>
@@ -482,6 +488,50 @@ describe('Session.prompt events', () => {
           readonly messages?: ReadonlyArray<{ readonly role: string; readonly content: unknown }>;
         };
         const messages = body.messages ?? [];
+        const isBgWorker = messages.some(
+          (message) => message.role === 'user' && JSON.stringify(message.content).includes(bgWorkerPrompt),
+        );
+        if (isBgWorker) {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(`${sseChunk({ role: 'assistant', content: 'working' })}\n\n`),
+              );
+              signalBgWorkerStreaming();
+              const abort = () => {
+                controller.error(init?.signal?.reason);
+              };
+              if (init?.signal?.aborted === true) abort();
+              else init?.signal?.addEventListener('abort', abort, { once: true });
+            },
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        }
+        const isBgParent = messages.some(
+          (message) =>
+            message.role === 'user' &&
+            JSON.stringify(message.content).includes('Start background worker and finish turn'),
+        );
+        if (isBgParent) {
+          bgParentRequests += 1;
+          if (bgParentRequests === 1) {
+            return new Response(
+              toolResponse('call_bg_worker', 'Agent', {
+                description: 'bg worker',
+                prompt: bgWorkerPrompt,
+                run_in_background: true,
+              }),
+              { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+            );
+          }
+          return new Response(sseBody('Worker running in background.'), {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        }
         const isChild = messages.some(
           (message) => message.role === 'user' && JSON.stringify(message.content).includes(childPrompt),
         );
@@ -644,6 +694,44 @@ describe('Session.prompt events', () => {
           }),
         }),
       );
+      await fullResume.close();
+
+      const bgSession = await harness.createSession({ id: 'ses_bg_reconcile', workDir });
+      await bgSession.setPermission('yolo');
+      const bgTurnEnded = waitForEvent(
+        bgSession,
+        (event) => event.type === 'turn.ended' && event.agentId === 'main',
+      );
+      await bgSession.prompt('Start background worker and finish turn');
+      await bgTurnEnded;
+      await bgWorkerStreaming;
+      expect(bgParentRequests).toBe(2);
+
+      const idleFork = await harness.forkSession({ id: bgSession.id });
+      expect(bgParentRequests).toBe(2);
+      await vi.waitFor(async () => {
+        expect(await idleFork.listBackgroundTasks({ activeOnly: false })).toEqual([
+          expect.objectContaining({ status: 'lost' }),
+        ]);
+        expect((await idleFork.getContext()).history).toContainEqual(
+          expect.objectContaining({
+            origin: expect.objectContaining({ kind: 'task', status: 'lost' }),
+          }),
+        );
+      });
+      await idleFork.close();
+
+      await bgSession.close();
+      const coldBgResume = await harness.resumeSession({ id: bgSession.id });
+      expect(bgParentRequests).toBe(2);
+      await vi.waitFor(async () => {
+        expect((await coldBgResume.getContext()).history).toContainEqual(
+          expect.objectContaining({
+            origin: expect.objectContaining({ kind: 'task', status: 'killed' }),
+          }),
+        );
+      });
+      await coldBgResume.close();
     } finally {
       parentAfterChild.resolve();
       await harness.close();

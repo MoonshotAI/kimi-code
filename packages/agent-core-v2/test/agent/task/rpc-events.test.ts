@@ -592,7 +592,6 @@ describe('AgentTaskService — notification delivery', () => {
     const info = agentInfo();
     const notificationId = `task:${info.taskId}:${info.status}`;
     const crashCtx = track(createTestAgent(taskServices()));
-    crashCtx.mockNextResponse({ type: 'text', text: 'restored agent ack' });
     await restoreTaskHistory(crashCtx, [info], 'main', [{
       type: 'turn.prompt',
       agentId: 'main',
@@ -605,6 +604,7 @@ describe('AgentTaskService — notification delivery', () => {
       input: [{ type: 'text', text: 'notification prompt' }],
     } as unknown as WireRecord]);
     await crashCtx.get(IAgentLoopService).settled();
+    expect(crashCtx.llmCalls).toEqual([]);
     expect(taskNotifications(crashCtx, info.taskId)).toHaveLength(1);
     expect(JSON.stringify(taskNotifications(crashCtx, info.taskId))).toContain('<notification');
 
@@ -637,7 +637,6 @@ describe('AgentTaskService — notification delivery', () => {
     ));
     const loop = ctx.get(IAgentLoopService);
     const createCompletion = vi.spyOn(ctx.get(IAgentTaskOutputService), 'createCompletion');
-    ctx.mockNextResponse({ type: 'text', text: 'restored agent ack' });
 
     await expect(ctx.restorePersisted()).rejects.toMatchObject({ code: ErrorCodes.SESSION_OCCUPIED });
     expect((loop as unknown as { loop?: unknown }).loop).toBeUndefined();
@@ -656,11 +655,19 @@ describe('AgentTaskService — notification delivery', () => {
     expect(createCompletion).toHaveBeenCalledTimes(2);
     expect(release).toHaveBeenCalledTimes(1);
     expect(release.mock.invocationCallOrder[0]).toBeGreaterThan(createCompletion.mock.invocationCallOrder[0]!);
+    expect(ctx.llmCalls).toEqual([]);
     expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
     expect(JSON.stringify(taskNotifications(ctx, info.taskId))).toContain('<notification');
     expect((await ctx.persistedWireRecords()).filter((record) =>
       record.type === 'turn.prompt' &&
       (record['origin'] as { kind?: string } | undefined)?.kind === 'task'
+    )).toHaveLength(1);
+    expect((await ctx.persistedWireRecords()).filter((record) =>
+      record.type === 'turn.ended' && record['stopReason'] === 'prompt_only'
+    )).toHaveLength(1);
+    expect((await ctx.persistedWireRecords()).filter((record) =>
+      record.type === 'context.append_message' &&
+      ((record['message'] as { origin?: { kind?: string } } | undefined)?.origin?.kind === 'task')
     )).toHaveLength(1);
   });
 
@@ -675,9 +682,9 @@ describe('AgentTaskService — notification delivery', () => {
       'output.log',
     );
     await ctx.get(IAgentTaskOutputService).appendTaskOutput('bash-done0000', 'restored shell output');
-    ctx.mockNextResponse({ type: 'text', text: 'restored process ack' });
     await restoreTaskHistory(ctx, [processInfo()]);
     await ctx.get(IAgentLoopService).settled();
+    expect(ctx.llmCalls).toEqual([]);
     const text = JSON.stringify(taskNotifications(ctx, 'bash-done0000'));
     expect(taskNotifications(ctx, 'bash-done0000')).toHaveLength(1);
     expect(text).toContain('Background process completed');
@@ -689,9 +696,9 @@ describe('AgentTaskService — notification delivery', () => {
   it('references persisted output without inlining a restored process output tail', async () => {
     const ctx = track(createTestAgent(taskServices()));
     await ctx.get(IAgentTaskOutputService).appendTaskOutput('bash-done0000', 'secret full output');
-    ctx.mockNextResponse({ type: 'text', text: 'restored output ack' });
     await restoreTaskHistory(ctx, [processInfo()]);
     await ctx.get(IAgentLoopService).settled();
+    expect(ctx.llmCalls).toEqual([]);
     const text = JSON.stringify(taskNotifications(ctx, 'bash-done0000'));
     expect(text).toContain('output-file');
     expect(text).not.toContain('secret full output');
@@ -776,11 +783,11 @@ describe('AgentTaskService — notification delivery', () => {
   it('does not double-notify newly lost restored agent tasks', async () => {
     const ctx = track(createTestAgent(taskServices()));
     const running = agentInfo({ status: 'running', endedAt: null });
-    ctx.mockNextResponse({ type: 'text', text: 'lost task acknowledged' });
     await restoreTaskHistory(ctx, [running]);
     await drain(ctx, running.taskId);
     await ctx.restore(await ctx.persistedWireRecords());
     await drain(ctx, running.taskId);
+    expect(ctx.llmCalls).toEqual([]);
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
 
@@ -799,6 +806,7 @@ describe('AgentTaskService — notification delivery', () => {
       },
     } as unknown as WireRecord];
     await restoreTaskHistory(ctx, [info], 'main', preceding);
+    await ctx.get(IAgentLoopService).settled();
     await restoreTaskHistory(ctx, [info], 'main', preceding);
     expect(taskNotifications(ctx, info.taskId)).toHaveLength(1);
   });
@@ -824,9 +832,9 @@ describe('AgentTaskService — notification delivery', () => {
   it('restores a lost notification without synthesizing task termination', async () => {
     const ctx = track(createTestAgent(taskServices()));
     const running = agentInfo({ status: 'running', endedAt: null });
-    ctx.mockNextResponse({ type: 'text', text: 'lost task acknowledged' });
     await restoreTaskHistory(ctx, [running]);
     await drain(ctx, running.taskId);
+    expect(ctx.llmCalls).toEqual([]);
     expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
   });
 

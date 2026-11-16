@@ -220,7 +220,9 @@ class LoopMailbox {
     if (head === undefined) return undefined;
     const kind = normalHead === undefined ? 'notify' as const : 'normal' as const;
     const remainingNotify = normalHead === undefined ? this.notifyEntries.slice(1) : this.notifyEntries;
-    const promptOnly = remainingNotify.length > 0;
+    const promptOnly =
+      head.meta?.promptOnly === true ||
+      remainingNotify.some((entry) => entry.meta?.promptOnly !== true);
     this.normal = normalHead === undefined ? this.normal : this.normal.slice(1);
     this.notifyEntries = remainingNotify;
     const reminders = promptOnly ? [] : this.drainReminders();
@@ -735,6 +737,16 @@ class LoopActor implements Loop {
     this.releaseIntake();
     this.kick();
     return ack;
+  }
+
+  recordNotification(message: UserMessage): LoopAck<'prompt.notified'> | undefined {
+    const normalized = normalizeUserMessage({
+      ...message,
+      meta: { ...message.meta, promptOnly: true },
+    });
+    this.check({ type: 'input.notify', message: normalized });
+    if (!this.open()) return undefined;
+    return this.mailbox.notify(normalized);
   }
 
   remind(...messages: readonly RemindMessage[]): LoopAck<'prompt.reminded'> | undefined {
@@ -1273,7 +1285,13 @@ class LoopActor implements Loop {
     turn.step += 1;
     turn.phase = 'stepStarting';
     this.step = step;
-    if (turn.promptOnly !== true) this.record({ type: 'step.started', turnId: turn.id, step: turn.step });
+    if (turn.promptOnly === true) {
+      step.outcome = { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } };
+      turn.outcome = step.outcome;
+      this.post({ type: 'step.finish', turn, step });
+      return;
+    }
+    this.record({ type: 'step.started', turnId: turn.id, step: turn.step });
     this.post({ type: 'step.hooks', turn, step });
   }
 
