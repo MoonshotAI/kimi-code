@@ -1067,6 +1067,7 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
     setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},
     registerAgent: async () => {},
+    unregisterAgent: async () => {},
   };
 }
 

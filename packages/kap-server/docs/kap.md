@@ -67,7 +67,7 @@ Stop the child process with `SIGTERM` / `SIGINT` (or `POST /api/v1/shutdown`) wh
   ```json
   { "code": 0, "msg": "success", "data": {}, "request_id": "01JZX..." }
   ```
-  Always check `code === 0` first. Domain errors normally return HTTP `200` with a non-zero `code` (`40001` validation failed with `details`, `40401` session/agent not found, `40404` interaction not found, `40901` session busy, `40902` interaction already ended, `40927` `prompt_id` conflict, `40931` session occupied by another OS process, `41001`/`41002` interaction expired); HTTP `401` (`40101`), `403` (`40301`), and `429` (`42901`) signal transport/auth rejections.
+  Always check `code === 0` first. Domain errors normally return HTTP `200` with a non-zero `code` (`40001` validation failed with `details`, `40401` session/agent not found, `40404` interaction not found, `40901` session busy, `40902` interaction already ended, `40927` `prompt_id` conflict, `40931` session occupied by another OS process, `40939` agent not closable, `41001`/`41002` interaction expired); HTTP `401` (`40101`), `403` (`40301`), and `429` (`42901`) signal transport/auth rejections.
 - **Opaque IDs & `snake_case`**: Treat `session_id`, `turn_id`, `item_id`, `interaction_id`, `task_id`, and `workspace_id` as opaque strings. In `zsh` / `bash`, **always brace variables before `:action` suffixes** (write `"${ORIGIN}/api/v1/sessions/${SID}:wait"`, never `"$SID:wait"`, because `zsh` expands `$SID:w` / `:a` / `:r` / `:c` / `:t` as history modifiers and corrupts the URL). Wire fields use `snake_case`; timestamps are ISO 8601 strings; durations end with `_ms` (`expires_in_sec` on `/files` and OAuth `expires_in`/`interval` are in seconds).
 
 ---
@@ -264,6 +264,7 @@ Inspect `GET /openapi.json` and `GET /asyncapi.json` on a running server for exa
 | `POST /api/v1/sessions/{session_id}:wait` | `session_wait` | Block until `activity !== "turn"`, a pending interaction appears, or `timeout_ms` (`0..60000`, default `15000`); returns `{ session, pending_interactions, timed_out }` |
 | `POST /api/v1/sessions/{session_id}:cancel` | `baseline` | Cancel running turn (`agent_id?`, `include_background?`) |
 | `POST /api/v1/sessions/{session_id}:fork` / `:undo` / `:compact` / `:btw` | `baseline` | Fork session (`turn_index?`), undo from `turn_id`, compact context (`instruction?`), or spawn side-chat (`{ agent_id }`) |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close` | `agent_close` | Close and remove a `btw` side-chat agent (`40939` if not a closable `btw` agent) |
 | `POST /api/v1/sessions/{session_id}:archive` / `:restore` / `:delete` / `:reload` / `:takeover` | `baseline` | Lifecycle actions on one session (also batch `POST /api/v1/sessions:archive` & `:restore` by `ids`) |
 | `POST /api/v1/sessions/{session_id}/profile` & `/title/generate` | `baseline` | Update `title`, `metadata`, or `agent_config`, or generate a title from conversation context |
 | `GET /api/v1/sessions/{session_id}/agents/{agent_id}/turns` | `baseline` | Read turns backward via `before_ordinal` (`page_size` ≤ 200; flushes live streaming items on read) |
