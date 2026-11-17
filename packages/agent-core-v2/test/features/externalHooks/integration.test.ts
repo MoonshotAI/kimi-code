@@ -340,7 +340,6 @@ describe('IExternalHooksRunnerService integration', () => {
     const loop = ctx.get(IAgentLoopService);
     const settle = async (): Promise<void> => {
       await loop.settled();
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     };
     try {
       ctx.mockNextProviderResponse({
@@ -444,6 +443,47 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(stopInputs[2]).toMatchObject({ turnId: 5, step: 1 });
       expect(stopStates).toEqual(['idle', 'idle', 'idle']);
     } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('waits for a slow Stop hook before closing the agent', async () => {
+    let releaseStop: (() => void) | undefined;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    let stopCalls = 0;
+    const ctx = createTestAgent({
+      hookEngine: {
+        trigger: async () => [],
+        fireAndForgetTrigger: async () => [],
+        triggerBlock: async (event: string) => {
+          if (event !== 'Stop') return undefined;
+          stopCalls += 1;
+          await stopGate;
+          return undefined;
+        },
+      },
+    });
+    const loop = ctx.get(IAgentLoopService);
+    try {
+      ctx.mockNextResponse({ type: 'text', text: 'answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'ordinary turn' }] });
+      await vi.waitFor(() => {
+        expect(stopCalls).toBe(1);
+      });
+      let closed = false;
+      const closing = loop.close().then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(closed).toBe(false);
+      releaseStop?.();
+      await closing;
+      expect(closed).toBe(true);
+    } finally {
+      releaseStop?.();
+      await loop.close();
       await ctx.dispose();
     }
   });

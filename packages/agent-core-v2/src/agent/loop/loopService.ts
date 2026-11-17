@@ -188,6 +188,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private quiescenceDepth = 0;
   private historySnapshotDepth = 0;
   private taskReconciliation: Promise<void> | undefined;
+  private readonly settlementTasks = new Set<Promise<void>>();
   private loop: Loop | undefined;
   private initialized = false;
   private startPromise: Promise<void> | undefined;
@@ -567,7 +568,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     for (let attempt = 0; ; attempt += 1) {
       try {
         const snapshot = this.journal.snapshot();
-        this.profileAdapter.restore(snapshot);
         const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
         await taskHistory.reconcile();
         completions = await restoreTaskCompletions({
@@ -929,6 +929,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.closePromise = (async () => {
       try {
         await this.taskReconciliation;
+        await this.settleTrackedTasks();
       } finally {
         this.loop?.flushReminders();
         await this.loop?.close();
@@ -1374,19 +1375,36 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
+  trackSettlement(task: Promise<void>): void {
+    this.settlementTasks.add(task);
+    void task.then(
+      () => this.settlementTasks.delete(task),
+      () => this.settlementTasks.delete(task),
+    );
+  }
+
+  private async settleTrackedTasks(): Promise<void> {
+    while (this.settlementTasks.size > 0) await Promise.all(this.settlementTasks);
+  }
+
   async settled(): Promise<TurnResult | undefined> {
     await this.startPromise;
-    await this.taskReconciliation;
-    const loop = this.loop;
-    if (loop === undefined) {
-      if (!this.hasPendingRequests()) return this.turns.lastResult;
-      await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
+    while (true) {
+      await this.taskReconciliation;
+      const loop = this.loop;
+      if (loop === undefined) {
+        await this.settleTrackedTasks();
+        if (!this.hasPendingRequests()) return this.turns.lastResult;
+        await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
+        continue;
+      }
+      await loop.waitForIdle();
+      await this.turns.drain();
+      await this.settleTrackedTasks();
+      if (this.loop !== loop || this.hasPendingRequests()) continue;
+      await this.wire.flush();
       return this.turns.lastResult;
     }
-    await loop.waitForIdle();
-    await this.turns.drain();
-    await this.wire.flush();
-    return this.turns.lastResult;
   }
 
   async retry(): Promise<TurnResult | undefined> {
@@ -1398,7 +1416,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private maybeSettle(): void {
-    if (this.hasPendingRequests() || this.settleWaiters.length === 0) return;
+    if (this.hasPendingRequests() || this.settlementTasks.size > 0 || this.settleWaiters.length === 0) return;
     const waiters = this.settleWaiters.splice(0);
     for (const resolve of waiters) resolve();
   }

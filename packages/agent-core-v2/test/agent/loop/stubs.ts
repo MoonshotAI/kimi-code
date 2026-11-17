@@ -280,6 +280,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     resetLoop: () => Promise.resolve(),
     registerLoopErrorHandler: errorHandlers.register,
     settled: () => Promise.resolve(undefined),
+    trackSettlement: () => {},
     retry: async () => { throw new Error('retry is not supported by this stub'); },
     close: () => Promise.resolve(),
     drainNextBatch(context, kinds) {
