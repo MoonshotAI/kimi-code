@@ -761,7 +761,7 @@ export class Session {
 
   async activateSkill(
     name: string,
-    args?: string | undefined,
+    args?: string,
     options?: { readonly path?: string },
   ): Promise<void> {
     this.ensureOpen();
@@ -782,7 +782,7 @@ export class Session {
   async activatePluginCommand(
     pluginId: string,
     commandName: string,
-    args?: string | undefined,
+    args?: string,
   ): Promise<void> {
     this.ensureOpen();
     const normalizedPluginId = pluginId.trim();

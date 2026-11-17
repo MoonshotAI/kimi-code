@@ -59,7 +59,7 @@ const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 async function postForm(
   url: string,
   params: Record<string, string>,
-  deviceHeaders?: OAuthRequestHeaders | undefined,
+  deviceHeaders?: OAuthRequestHeaders,
   options?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<{ status: number; data: Record<string, unknown> }> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;

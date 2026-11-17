@@ -100,6 +100,7 @@
     "typescript/no-base-to-string": "error",
     "typescript/no-confusing-non-null-assertion": "error",
     "typescript/no-duplicate-enum-values": "error",
+    "typescript/no-duplicate-type-constituents": "error",
     "typescript/no-extra-non-null-assertion": "error",
     "typescript/no-extraneous-class": "error",
     "typescript/no-floating-promises": "error",

@@ -145,7 +145,7 @@ export class ImageAttachmentStore {
     return attachment;
   }
 
-  addVideo(mime: string, sourcePath: string, filename?: string | undefined): VideoAttachment {
+  addVideo(mime: string, sourcePath: string, filename?: string): VideoAttachment {
     const id = this.nextId;
     this.nextId += 1;
     const normalizedFilename = basenameLike(

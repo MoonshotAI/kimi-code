@@ -1832,7 +1832,7 @@ export class AgentTestContext {
 
   configureRuntimeModel(
     provider: TestProviderConfig,
-    modelCapabilities?: TestModelCapabilities | undefined,
+    modelCapabilities?: TestModelCapabilities,
     preserveProfile = false,
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);

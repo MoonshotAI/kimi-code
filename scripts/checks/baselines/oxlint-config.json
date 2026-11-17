@@ -277,6 +277,7 @@
     "typescript/no-confusing-void-expression": "allow",
     "typescript/no-deprecated": "allow",
     "typescript/no-duplicate-enum-values": "deny",
+    "typescript/no-duplicate-type-constituents": "deny",
     "typescript/no-dynamic-delete": "allow",
     "typescript/no-empty-object-type": "allow",
     "typescript/no-extra-non-null-assertion": "deny",
