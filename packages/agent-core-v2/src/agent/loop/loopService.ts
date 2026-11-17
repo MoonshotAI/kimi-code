@@ -1420,6 +1420,30 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.turns.lastResult;
   }
 
+  continueTurn(reminders: readonly Message[] = []): void {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    if (
+      this.quiescenceDepth > 0 ||
+      this.historySnapshotDepth > 0 ||
+      this.hasPendingRequests() ||
+      this.snapshot().paused
+    ) {
+      throw new Error2(ErrorCodes.SESSION_BUSY, 'Agent loop is currently busy');
+    }
+    this.runGate.begin();
+    const loop = this.loop;
+    if (loop === undefined) return;
+    const allReminders =
+      this.pendingReminders.length > 0
+        ? [...this.pendingReminders.splice(0), ...reminders]
+        : reminders;
+    if (allReminders.length > 0) {
+      loop.remind(...allReminders);
+    }
+    loop.continue({ force: true });
+    this.maybeSettle();
+  }
+
   async retry(): Promise<TurnResult | undefined> {
     const previous = this.turns.lastResult;
     this.loop?.continue({ force: true });
