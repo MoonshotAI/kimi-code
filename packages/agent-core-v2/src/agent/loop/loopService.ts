@@ -587,7 +587,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     capabilities: LlmModelCapability | undefined,
   ): readonly Tool[] {
     const disclosure = this.toolSelect.enabled(capabilities);
-    return this.toolSelect.requestTools(baseline, disclosure, true, this.history());
+    const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
+    return this.toolSelect.requestTools(
+      baseline.filter((tool) => active.has(tool.name)),
+      disclosure,
+      true,
+      this.history(),
+    );
   }
 
   private async prepareTools(

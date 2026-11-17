@@ -4852,6 +4852,18 @@ describe('FullCompaction prompt-cache prefix', () => {
     );
   }
 
+  it('filters the frozen operation baseline through the current tool policy', async () => {
+    const ctx = await runFirstTurn(false, false, 'none');
+    ctx.get(IAgentLoopService).update({ activeToolNames: ['Read'] });
+    ctx.mockNextResponse({ type: 'text', text: 'Filtered summary.' });
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(ctx.llmCalls.at(-1)?.tools.map((tool) => tool.name)).toEqual(['Read']);
+  });
+
   it.each(CASES)(
     'keeps the $trigger compaction request a prefix extension with $label and $media',
     async ({ trigger, toolSelect, loadSchema, media }) => {
