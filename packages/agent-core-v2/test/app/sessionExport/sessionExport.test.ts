@@ -39,6 +39,7 @@ import {
   ISessionExportService,
 } from '#/app/sessionExport/sessionExport';
 import {
+  exportFeedbackSessionDirectory,
   exportSessionDirectory,
   SessionExportService,
 } from '#/app/sessionExport/sessionExportService';
@@ -142,6 +143,62 @@ describe('sessionExport', () => {
       sessionLogPath: 'logs/kimi-code.log',
       globalLogPath: 'logs/global/kimi-code.log',
     });
+  });
+
+  it('exports only conversation, tool, file-history, and metadata entries for feedback', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-feedback-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_demo', 'ses_feedback');
+    await mkdir(join(sessionDir, 'agents', 'main', 'file-history'), { recursive: true });
+    await mkdir(join(sessionDir, 'agents', 'sub-1'), { recursive: true });
+    await mkdir(join(sessionDir, 'agents', 'main', 'logs'), { recursive: true });
+    await mkdir(join(sessionDir, 'logs', 'global'), { recursive: true });
+    await mkdir(join(sessionDir, 'diagnostics'), { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{"id":"ses_feedback"}\n', 'utf-8');
+    await writeFile(
+      join(sessionDir, 'agents', 'main', 'wire.jsonl'),
+      [
+        JSON.stringify({ type: 'metadata', time: 1_700_000_000_000 }),
+        JSON.stringify({ type: 'context.append_message', role: 'user', text: 'hello' }),
+        JSON.stringify({ type: 'tool.call', name: 'Edit', path: 'src/demo.ts' }),
+        JSON.stringify({ type: 'file_history.tracked', path: 'src/demo.ts' }),
+      ].join('\n'),
+      'utf-8',
+    );
+    await writeFile(
+      join(sessionDir, 'agents', 'sub-1', 'wire.jsonl'),
+      `${JSON.stringify({ type: 'context.append_message', role: 'assistant', text: 'done' })}\n`,
+      'utf-8',
+    );
+    await writeFile(join(sessionDir, 'agents', 'main', 'file-history', 'hash@v1'), 'before edit\n', 'utf-8');
+    await writeFile(join(sessionDir, 'logs', 'kimi-code.log'), 'session log\n', 'utf-8');
+    await writeFile(join(sessionDir, 'logs', 'global', 'kimi-code.log'), 'global log\n', 'utf-8');
+    await writeFile(join(sessionDir, 'logs', 'kimi-desktop.log'), 'desktop log\n', 'utf-8');
+    await writeFile(join(sessionDir, 'logs', 'kimi-web.jsonl'), 'web log\n', 'utf-8');
+    await writeFile(join(sessionDir, 'agents', 'main', 'logs', 'agent.log'), 'agent log\n', 'utf-8');
+    await writeFile(join(sessionDir, 'diagnostics', 'snapshot.json'), '{}\n', 'utf-8');
+    await writeFile(join(sessionDir, 'crash.dump'), 'crash\n', 'utf-8');
+    const outputPath = join(tmp, 'feedback.zip');
+
+    const result = await exportFeedbackSessionDirectory({
+      request: { sessionId: 'ses_feedback', outputPath, version: '1.0.0-test' },
+      summary: { id: 'ses_feedback', title: 'Feedback', sessionDir },
+    });
+
+    expect(result.entries).toEqual([
+      'manifest.json',
+      'agents/main/file-history/hash@v1',
+      'agents/main/wire.jsonl',
+      'agents/sub-1/wire.jsonl',
+      'state.json',
+    ]);
+    expect(result.entries.some((entry) => entry.startsWith('logs/'))).toBe(false);
+    expect(result.manifest.sessionLogPath).toBeUndefined();
+    expect(result.manifest.globalLogPath).toBeUndefined();
+    expect(result.manifest.desktopLogPath).toBeUndefined();
+    expect(result.manifest.webLogPath).toBeUndefined();
+    await expect(readZipEntry(outputPath, 'agents/main/file-history/hash@v1')).resolves.toEqual(
+      Buffer.from('before edit\n', 'utf8'),
+    );
   });
 
   it('uses a timestamped default output path when outputPath is omitted', async () => {

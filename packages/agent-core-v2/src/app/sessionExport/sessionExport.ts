@@ -26,6 +26,12 @@ export interface ExportSessionPreview {
   readonly requestId?: string;
 }
 
+export interface ExportFeedbackSessionPayload {
+  readonly sessionId: string;
+  readonly outputPath?: string;
+  readonly version: string;
+}
+
 export interface ExportSessionManifest {
   readonly sessionId: string;
   readonly exportedAt: string;
@@ -66,6 +72,11 @@ export interface ISessionExportService {
     options?: ExportSessionOptions,
   ): Promise<ExportSessionResult>;
   preview?(sessionId: string): Promise<ExportSessionPreview | undefined>;
+
+  exportFeedback(
+    input: ExportFeedbackSessionPayload,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<ExportSessionResult>;
 }
 
 export const ISessionExportService: ServiceIdentifier<ISessionExportService> =

@@ -494,6 +494,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/sessions/{session_id}/feedback_package",
+    ],
+    [
+      "POST",
       "/api/v1/sessions/{session_id}/interactions/{interaction_id}",
     ],
     [

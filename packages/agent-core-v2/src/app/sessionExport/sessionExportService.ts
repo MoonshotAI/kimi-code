@@ -20,6 +20,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { buildExportManifest, type ExportSessionManifestSummary } from './manifest';
 import {
+  type ExportFeedbackSessionPayload,
   type ExportSessionPayload,
   type ExportSessionPreview,
   type ExportSessionResult,
@@ -115,6 +116,35 @@ export class SessionExportService implements ISessionExportService {
       files: files.map((file) => relative(liveSummary.sessionDir, file).split(/[\\/]/).join('/')),
       requestId: liveSummary.lastRequestId,
     };
+  }
+
+  async exportFeedback(
+    input: ExportFeedbackSessionPayload,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<ExportSessionResult> {
+    options.signal?.throwIfAborted();
+    if (input.version.trim().length === 0) {
+      throw new Error2(
+        ErrorCodes.SESSION_EXPORT_MISSING_VERSION,
+        'Session export requires a host version.',
+        { details: { sessionId: input.sessionId } },
+      );
+    }
+    const summary = await this.index.get(input.sessionId);
+    if (summary === undefined) {
+      throw new Error2(
+        ErrorCodes.SESSION_NOT_FOUND,
+        `Session "${input.sessionId}" does not exist`,
+        { details: { sessionId: input.sessionId } },
+      );
+    }
+    const liveSummary = await this.flushLiveSession(summary);
+    options.signal?.throwIfAborted();
+    return exportFeedbackSessionDirectory({
+      request: input,
+      summary: liveSummary,
+      signal: options.signal,
+    });
   }
 
   private async flushLiveSession(summary: SessionSummary): Promise<ExportSessionDirectorySummary> {
@@ -313,6 +343,53 @@ export async function exportSessionDirectory(input: {
       await desktopSource.close().catch(() => {});
     }
   }
+}
+
+export async function exportFeedbackSessionDirectory(input: {
+  readonly request: ExportFeedbackSessionPayload;
+  readonly summary: ExportSessionDirectorySummary;
+  readonly signal?: AbortSignal;
+}): Promise<ExportSessionResult> {
+  input.signal?.throwIfAborted();
+  const sessionDir = input.summary.sessionDir;
+  const collected = await collectFilesRecursive(sessionDir);
+  const sessionFiles = collected.filter((file) => isFeedbackSessionFile(sessionDir, file));
+  if (sessionFiles.length === 0) {
+    throw new Error2(
+      ErrorCodes.SESSION_EXPORT_NOT_FOUND,
+      `Session "${input.summary.id}" has no exportable directory at "${sessionDir}"`,
+      { details: { sessionId: input.summary.id, sessionDir } },
+    );
+  }
+  const sessionScan = await scanSessionWire(sessionDir, input.signal);
+  const now = new Date();
+  const manifest = buildExportManifest({
+    summary: input.summary,
+    now,
+    version: input.request.version,
+    sessionScan,
+  });
+  const outputPath =
+    input.request.outputPath !== undefined
+      ? resolve(input.request.outputPath)
+      : resolve(defaultExportZipName(input.summary.id, now));
+  const entries = await writeExportZip({
+    outputPath,
+    manifest,
+    sessionDir,
+    sessionFiles,
+    signal: input.signal,
+  });
+  return { zipPath: outputPath, entries, sessionDir, manifest };
+}
+
+function isFeedbackSessionFile(sessionDir: string, file: string): boolean {
+  const path = relative(sessionDir, file).split(/[\\/]/).join('/');
+  if (path === 'state.json') return true;
+  const segments = path.split('/');
+  if (segments[0] !== 'agents' || segments[1] === undefined) return false;
+  if (segments.length === 3 && segments[2] === 'wire.jsonl') return true;
+  return segments.length > 3 && segments[2] === FILE_HISTORY_BLOB_PREFIX;
 }
 
 function defaultExportZipName(sessionId: string, now: Date): string {

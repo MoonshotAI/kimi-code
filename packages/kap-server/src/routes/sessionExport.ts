@@ -42,7 +42,6 @@ export function registerSessionExportRoute(
   core: Scope,
   options: { readonly hostIdentity: KimiHostIdentity },
 ): void {
-  const log = core.accessor.get(ILogService);
   const route = defineRoute(
     {
       method: 'POST',
@@ -61,117 +60,168 @@ export function registerSessionExportRoute(
       tags: ['sessions'],
     },
     async (req, reply) => {
-      const response = reply as unknown as SessionExportReply;
-      let aborted = false;
-      let responseStream: ReadStream | undefined;
-      let streaming = false;
-      let tempDir: string | undefined;
-      let cleanupPromise: Promise<void> | undefined;
-      const exportAbort = new AbortController();
-
-      const onResponseClose = (): void => {
-        if (response.raw.writableFinished) return;
-        aborted = true;
-        exportAbort.abort();
-        responseStream?.destroy();
-      };
-      response.raw.once('close', onResponseClose);
-
-      const cleanup = async (): Promise<void> => {
-        if (tempDir === undefined) return;
-        cleanupPromise ??= rm(tempDir, {
-          recursive: true,
-          force: true,
-          maxRetries: 3,
-          retryDelay: 50,
-        }).catch((error: unknown) => {
-          log.warn('session export temporary directory cleanup failed', {
-            error,
-            requestId: req.id,
-            tempDir,
-          });
-        });
-        await cleanupPromise;
-      };
-
-      try {
-        if (aborted) return;
-
-        const safeSessionId = sanitizeSessionId(req.params.session_id);
-        tempDir = await mkdtemp(join(tmpdir(), `kimi-session-export-${safeSessionId}-`));
-        if (aborted) {
-          await cleanup();
-          return;
-        }
-
-        const outputPath = join(tempDir, 'session.zip');
-        await core.accessor.get(ISessionExportService).export(
-          {
-            sessionId: req.params.session_id,
-            outputPath,
-            includeGlobalLog: true,
-            includeDesktopLog: req.body.desktop === true,
-            version: options.hostIdentity.version,
-            desktopVersion:
-              req.body.desktop === true ? options.hostIdentity.version : undefined,
-          },
-          {
-            webLog: req.body.web_log,
-            signal: exportAbort.signal,
-          },
-        );
-        if (aborted) {
-          await cleanup();
-          return;
-        }
-
-        const archive = await stat(outputPath);
-        if (aborted) {
-          await cleanup();
-          return;
-        }
-
-        responseStream = createReadStream(outputPath);
-        responseStream.once('close', () => {
-          response.raw.off('close', onResponseClose);
-          void cleanup();
-        });
-
-        const sent = response
-          .type('application/zip')
-          .header(
-            'content-disposition',
-            `attachment; filename="kimi-session-${safeSessionId}.zip"`,
-          )
-          .header('content-length', archive.size)
-          .header('cache-control', 'no-store')
-          .send(responseStream);
-        streaming = true;
-        return sent as void;
-      } catch (error) {
-        const stream = responseStream;
-        if (stream !== undefined && !stream.closed) {
-          const closed = new Promise<void>((resolve) => {
-            stream.once('close', resolve);
-          });
-          stream.destroy();
-          await closed;
-        } else {
-          stream?.destroy();
-        }
-        await cleanup();
-        if (!aborted) sendMappedError(response, req, error);
-      } finally {
-        if (!streaming) response.raw.off('close', onResponseClose);
-      }
+      const sessionId = req.params.session_id;
+      await streamSessionArchive(req, reply as unknown as SessionExportReply, core, {
+        sessionId,
+        downloadName: `kimi-session-${sanitizeSessionId(sessionId)}.zip`,
+        produce: (outputPath, signal) =>
+          core.accessor.get(ISessionExportService).export(
+            {
+              sessionId,
+              outputPath,
+              includeGlobalLog: true,
+              includeDesktopLog: req.body.desktop === true,
+              version: options.hostIdentity.version,
+              desktopVersion:
+                req.body.desktop === true ? options.hostIdentity.version : undefined,
+            },
+            { webLog: req.body.web_log, signal },
+          ),
+      });
     },
   );
-
   app.post(
     route.path,
     route.options,
     route.handler as unknown as Parameters<SessionExportRouteHost['post']>[2],
   );
+
+  const feedbackRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/feedback_package',
+      params: exportSessionParamsSchema,
+      rawResponse: {
+        200: { type: 'string', format: 'binary' },
+      },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.INTERNAL_ERROR]: {},
+      },
+      description: 'Export a feedback session package without logs or diagnostics',
+      tags: ['sessions', 'feedback'],
+    },
+    async (req, reply) => {
+      const sessionId = req.params.session_id;
+      await streamSessionArchive(req, reply as unknown as SessionExportReply, core, {
+        sessionId,
+        downloadName: 'session.zip',
+        produce: (outputPath, signal) =>
+          core.accessor.get(ISessionExportService).exportFeedback(
+            {
+              sessionId,
+              outputPath,
+              version: options.hostIdentity.version,
+            },
+            { signal },
+          ),
+      });
+    },
+  );
+  app.post(
+    feedbackRoute.path,
+    feedbackRoute.options,
+    feedbackRoute.handler as unknown as Parameters<SessionExportRouteHost['post']>[2],
+  );
+}
+
+async function streamSessionArchive(
+  req: { readonly id: string },
+  response: SessionExportReply,
+  core: Scope,
+  options: {
+    readonly sessionId: string;
+    readonly downloadName: string;
+    readonly produce: (outputPath: string, signal: AbortSignal) => Promise<unknown>;
+  },
+): Promise<void> {
+  const log = core.accessor.get(ILogService);
+  let aborted = false;
+  let responseStream: ReadStream | undefined;
+  let streaming = false;
+  let tempDir: string | undefined;
+  let cleanupPromise: Promise<void> | undefined;
+  const exportAbort = new AbortController();
+
+  const onResponseClose = (): void => {
+    if (response.raw.writableFinished) return;
+    aborted = true;
+    exportAbort.abort();
+    responseStream?.destroy();
+  };
+  response.raw.once('close', onResponseClose);
+
+  const cleanup = async (): Promise<void> => {
+    if (tempDir === undefined) return;
+    cleanupPromise ??= rm(tempDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 50,
+    }).catch((error: unknown) => {
+      log.warn('session export temporary directory cleanup failed', {
+        error,
+        requestId: req.id,
+        tempDir,
+      });
+    });
+    await cleanupPromise;
+  };
+
+  try {
+    if (aborted) return;
+
+    const safeSessionId = sanitizeSessionId(options.sessionId);
+    tempDir = await mkdtemp(join(tmpdir(), `kimi-session-export-${safeSessionId}-`));
+    if (aborted) {
+      await cleanup();
+      return;
+    }
+
+    const outputPath = join(tempDir, 'session.zip');
+    await options.produce(outputPath, exportAbort.signal);
+    if (aborted) {
+      await cleanup();
+      return;
+    }
+
+    const archive = await stat(outputPath);
+    if (aborted) {
+      await cleanup();
+      return;
+    }
+
+    responseStream = createReadStream(outputPath);
+    responseStream.once('close', () => {
+      response.raw.off('close', onResponseClose);
+      void cleanup();
+    });
+
+    const sent = response
+      .type('application/zip')
+      .header('content-disposition', `attachment; filename="${options.downloadName}"`)
+      .header('content-length', archive.size)
+      .header('cache-control', 'no-store')
+      .send(responseStream);
+    streaming = true;
+    return sent as void;
+  } catch (error) {
+    const stream = responseStream;
+    if (stream !== undefined && !stream.closed) {
+      const closed = new Promise<void>((resolve) => {
+        stream.once('close', resolve);
+      });
+      stream.destroy();
+      await closed;
+    } else {
+      stream?.destroy();
+    }
+    await cleanup();
+    if (!aborted) sendMappedError(response, req, error);
+  } finally {
+    if (!streaming) response.raw.off('close', onResponseClose);
+  }
 }
 
 function sanitizeSessionId(sessionId: string): string {

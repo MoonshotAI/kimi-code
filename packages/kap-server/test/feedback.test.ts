@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 
 import {
   closeSessionById,
@@ -11,6 +12,7 @@ import {
   IEventBus,
   IEventDispatcher,
   IOAuthService,
+  ISessionContext,
   MAIN_AGENT_ID,
 } from '@moonshot-ai/agent-core-v2';
 import { ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
@@ -123,8 +125,16 @@ describe('feedback routes', () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     await server.close();
-    await new Promise<void>((resolve) => kfc.close(() => resolve()));
-    await new Promise<void>((resolve) => storage.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      kfc.close(() => {
+        resolve();
+      });
+    });
+    await new Promise<void>((resolve) => {
+      storage.close(() => {
+        resolve();
+      });
+    });
     await rm(home, { recursive: true, force: true });
   });
 
@@ -352,6 +362,59 @@ describe('feedback routes', () => {
     expect(await unauthorized.json()).toMatchObject({ msg: 'kfc unauthorized' });
   });
 
+  it('downloads a feedback session package with allowlisted ZIP entries and a real size', async () => {
+    const createdResponse = await post('/api/v1/sessions', { metadata: { cwd: home } });
+    const created = (await createdResponse.json()) as { readonly data: { readonly id: string } };
+    const sessionId = created.data.id;
+    const session = getLiveSessionById(server.core.accessor, sessionId);
+    if (session === undefined) throw new Error('expected a live session');
+    const sessionDir = session.accessor.get(ISessionContext).sessionDir;
+    await mkdir(join(sessionDir, 'agents', 'main', 'file-history'), { recursive: true });
+    await mkdir(join(sessionDir, 'agents', 'sub-1'), { recursive: true });
+    await mkdir(join(sessionDir, 'logs', 'global'), { recursive: true });
+    await mkdir(join(sessionDir, 'diagnostics'), { recursive: true });
+    await writeFile(
+      join(sessionDir, 'agents', 'main', 'wire.jsonl'),
+      [
+        JSON.stringify({ type: 'metadata', time: 1_700_000_000_000 }),
+        JSON.stringify({ type: 'context.append_message', role: 'user', text: 'hello' }),
+        JSON.stringify({ type: 'tool.call', name: 'Edit', path: 'src/demo.ts' }),
+        JSON.stringify({ type: 'file_history.tracked', path: 'src/demo.ts' }),
+      ].join('\n'),
+    );
+    await writeFile(join(sessionDir, 'agents', 'main', 'file-history', 'hash@v1'), 'before edit\n');
+    await writeFile(
+      join(sessionDir, 'agents', 'sub-1', 'wire.jsonl'),
+      `${JSON.stringify({ type: 'context.append_message', role: 'assistant', text: 'done' })}\n`,
+    );
+    await writeFile(join(sessionDir, 'logs', 'kimi-code.log'), 'session log\n');
+    await writeFile(join(sessionDir, 'logs', 'global', 'kimi-code.log'), 'global log\n');
+    await writeFile(join(sessionDir, 'logs', 'kimi-desktop.log'), 'desktop log\n');
+    await writeFile(join(sessionDir, 'logs', 'kimi-web.jsonl'), 'web log\n');
+    await writeFile(join(sessionDir, 'diagnostics', 'snapshot.json'), '{}\n');
+    await writeFile(join(sessionDir, 'crash.dump'), 'crash\n');
+
+    const response = await fetch(`${baseUrl}/api/v1/sessions/${sessionId}/feedback_package`, {
+      method: 'POST',
+      headers: authHeaders(server),
+    });
+    const archive = Buffer.from(await response.arrayBuffer());
+    const entries = readZipEntries(archive);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/zip');
+    expect(response.headers.get('content-disposition')).toBe('attachment; filename="session.zip"');
+    expect(response.headers.get('content-length')).toBe(String(archive.length));
+    expect([...entries.keys()].toSorted()).toEqual([
+      'agents/main/file-history/hash@v1',
+      'agents/main/wire.jsonl',
+      'agents/sub-1/wire.jsonl',
+      'manifest.json',
+      'state.json',
+    ]);
+    expect(entries.get('agents/main/file-history/hash@v1')?.toString('utf8')).toBe('before edit\n');
+  });
+
   it('streams attachments without exposing either token and tries each part once', async () => {
     const upload = async (): Promise<Response> => fetch(`${baseUrl}/api/v1/feedback/42/attachments`, {
       method: 'POST',
@@ -395,3 +458,36 @@ describe('feedback routes', () => {
     expect(storageRequests).toHaveLength(2);
   });
 });
+
+function readZipEntries(archive: Buffer): Map<string, Buffer> {
+  const endSignature = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+  const endOffset = archive.lastIndexOf(endSignature);
+  if (endOffset < 0) throw new Error('ZIP end record not found');
+  const entryCount = archive.readUInt16LE(endOffset + 10);
+  let centralOffset = archive.readUInt32LE(endOffset + 16);
+  const entries = new Map<string, Buffer>();
+  for (let index = 0; index < entryCount; index += 1) {
+    if (archive.readUInt32LE(centralOffset) !== 0x02014b50) {
+      throw new Error('Invalid ZIP central directory entry');
+    }
+    const method = archive.readUInt16LE(centralOffset + 10);
+    const compressedSize = archive.readUInt32LE(centralOffset + 20);
+    const nameLength = archive.readUInt16LE(centralOffset + 28);
+    const extraLength = archive.readUInt16LE(centralOffset + 30);
+    const commentLength = archive.readUInt16LE(centralOffset + 32);
+    const localOffset = archive.readUInt32LE(centralOffset + 42);
+    const name = archive.subarray(centralOffset + 46, centralOffset + 46 + nameLength).toString('utf8');
+    if (archive.readUInt32LE(localOffset) !== 0x04034b50) {
+      throw new Error('Invalid ZIP local entry');
+    }
+    const localNameLength = archive.readUInt16LE(localOffset + 26);
+    const localExtraLength = archive.readUInt16LE(localOffset + 28);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = archive.subarray(dataOffset, dataOffset + compressedSize);
+    if (method === 0) entries.set(name, Buffer.from(compressed));
+    else if (method === 8) entries.set(name, inflateRawSync(compressed));
+    else throw new Error(`Unsupported ZIP compression method: ${method}`);
+    centralOffset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
