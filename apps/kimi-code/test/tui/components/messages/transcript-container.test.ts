@@ -2125,6 +2125,23 @@ describe('TranscriptContainer dense segments', () => {
 });
 
 describe('TranscriptContainer interaction', () => {
+  it('opens a completed solo agent from its summary without loading it on render', () => {
+    const { container } = makeContainer();
+    const openAgentHistory = vi.fn();
+    container.setHost({ ...host(), openAgentHistory });
+    container.addChild(tool('Agent', { description: 'Saved agent' }, {
+      tool_call_id: 'saved-agent-call',
+      output: 'agent_id: agent-0\nstatus: completed\nsaved answer',
+      is_error: false,
+    }));
+    const rendered = plain(container.render(100)).split('\n');
+    expect(openAgentHistory).not.toHaveBeenCalled();
+    const row = rendered.findIndex((line) => line.includes('Saved agent'));
+    expect(row).toBeGreaterThanOrEqual(0);
+    click(container, row);
+    expect(openAgentHistory).toHaveBeenCalledWith('agent-0');
+  });
+
   it('toggles a group from any summary column with anchoring and telemetry', () => {
     const { container } = makeContainer();
     const thinking = thought();

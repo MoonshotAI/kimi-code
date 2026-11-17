@@ -761,6 +761,120 @@ describe('TasksBrowserController — opening an agent task', () => {
     controller.close();
   });
 
+  it('loads persisted history only when a cold agent is opened', async () => {
+    const store = new SubagentActivityStore();
+    const { host, state } = makeControllerHost([agentTaskInfo(null)], store);
+    const readAgentHistory = vi.fn().mockResolvedValue({
+      replay: [
+        {
+          type: 'message',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'saved child detail' }] },
+        },
+      ],
+    });
+    Object.assign(host.session, { readAgentHistory });
+    const controller = new TasksBrowserController(host as never);
+    await controller.show();
+    expect(readAgentHistory).not.toHaveBeenCalled();
+    try {
+      await openSelectedViewer(controller, 'agent-task-1');
+      expect(readAgentHistory).toHaveBeenCalledWith('agent-1');
+      expect(
+        state.ui.children
+          .map((child) => (child as TaskOutputViewer).render(120).join('\n'))
+          .join('\n'),
+      ).toContain('saved child detail');
+    } finally {
+      controller.close();
+    }
+  });
+
+  it('prepends older pages once and restores the editor on close', async () => {
+    const { host, state } = makeControllerHost([], new SubagentActivityStore());
+    let resolveOlder!: (page: unknown) => void;
+    const message = (text: string) => ({
+      type: 'message',
+      message: { role: 'assistant', content: [{ type: 'text', text }] },
+    });
+    const readAgentHistory = vi
+      .fn()
+      .mockResolvedValueOnce({ replay: [message('newer answer')], before: 3 })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOlder = resolve;
+          }),
+      );
+    Object.assign(host.session, { readAgentHistory });
+    const controller = new TasksBrowserController(host as never);
+    await controller.openAgentHistory('agent-1');
+    const viewer = state.ui.children[0] as TaskOutputViewer;
+    viewer.handleInput('P');
+    viewer.handleInput('p');
+    expect(readAgentHistory).toHaveBeenCalledTimes(2);
+    expect(readAgentHistory).toHaveBeenLastCalledWith('agent-1', { before: 3 });
+    resolveOlder({ replay: [message('older answer')], before: undefined });
+    await vi.waitFor(() => {
+      expect(viewer.render(120).join('\n')).toContain('older answer');
+    });
+    const output = viewer.render(120).join('\n');
+    expect(output.indexOf('older answer')).toBeLessThan(output.indexOf('newer answer'));
+    viewer.handleInput('P');
+    expect(readAgentHistory).toHaveBeenCalledTimes(2);
+    viewer.handleInput('q');
+    expect(state.ui.children).toEqual([]);
+    controller.close();
+  });
+
+  it('ignores a history response after closing or switching sessions', async () => {
+    const { host, state } = makeControllerHost([], new SubagentActivityStore());
+    let resolveHistory!: (page: unknown) => void;
+    Object.assign(host.session, {
+      readAgentHistory: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveHistory = resolve;
+          }),
+      ),
+    });
+    const controller = new TasksBrowserController(host as never);
+    const pending = controller.openAgentHistory('agent-1');
+    controller.close();
+    host.session = { ...host.session };
+    resolveHistory({ replay: [] });
+    expect(await pending).toBe(false);
+    expect(state.ui.children).toEqual([]);
+    expect(host.showError).not.toHaveBeenCalled();
+  });
+
+  it('keeps the loaded page visible when an older page fails', async () => {
+    const { host, state } = makeControllerHost([], new SubagentActivityStore());
+    const readAgentHistory = vi
+      .fn()
+      .mockResolvedValueOnce({
+        replay: [
+          {
+            type: 'message',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'retained answer' }] },
+          },
+        ],
+        before: 2,
+      })
+      .mockRejectedValueOnce(new Error('read failed'));
+    Object.assign(host.session, { readAgentHistory });
+    const controller = new TasksBrowserController(host as never);
+    try {
+      await controller.openAgentHistory('agent-1');
+      const viewer = state.ui.children[0] as TaskOutputViewer;
+      viewer.handleInput('p');
+      await vi.waitFor(() => {
+        expect(host.showError).toHaveBeenCalledWith('Cannot load older agent history: read failed');
+      });
+      expect(viewer.render(120).join('\n')).toContain('retained answer');
+    } finally {
+      controller.close();
+    }
+  });
   it('feeds the preview pane from the activity store for agent tasks', async () => {
     const store = new SubagentActivityStore();
     store.ensureRecord({ agentId: 'agent-1', agentName: 'explore', parentToolCallId: 'tc-1' });
