@@ -1,9 +1,3 @@
-/**
- * `sessionMetadata` — typed session metadata. Mirrors
- * `agent-core-v2/session/sessionMetadata/sessionMetadata.ts`. The `ready`
- * promise property is excluded (not a wire method).
- */
-
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';
@@ -37,7 +31,6 @@ export const sessionMetaSchema = z.object({
   lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 });
 
-/** `Partial<Omit<SessionMeta, 'id' | 'createdAt'>>` — every key optional. */
 export const sessionMetaPatchSchema = z.object({
   version: z.number().optional(),
   title: z.string().optional(),
@@ -55,7 +48,6 @@ export const sessionMetaPatchSchema = z.object({
   lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 });
 
-/** `keyof SessionMeta` — keep in sync with `sessionMetaSchema`. */
 export const sessionMetaKeySchema = z.enum([
   'id',
   'version',

@@ -13,8 +13,6 @@ interface InsertMentionResult {
 
 export function computeMentionInsert(params: InsertMentionParams): InsertMentionResult {
   const { text, cursorPos, filePath, activeToken, isAppend } = params;
-  // Quote paths containing spaces, as the CLI/TUI mention completers do, so
-  // whitespace cannot split the mention.
   const target = filePath.includes(" ") ? `"${filePath}"` : filePath;
 
   if (isAppend || !activeToken) {

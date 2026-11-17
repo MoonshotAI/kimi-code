@@ -91,7 +91,6 @@ export function validateMediaFile(file: File, currentCount: number): MediaValida
   return null;
 }
 
-// ============ Processing Helpers ============
 export function validateTotalSize(existingDataUris: string[], newDataUri: string): MediaValidationError | null {
   const existingSize = existingDataUris.reduce((sum, uri) => sum + getDataUriByteSize(uri), 0);
   const newSize = getDataUriByteSize(newDataUri);
@@ -142,13 +141,10 @@ function dataUriSize(dataUri: string): number {
   return Math.round((base64.length * 3) / 4);
 }
 
-// ============ Processing ============
-
 async function processImage(file: File): Promise<string> {
   let blob: Blob = file;
   let mime = file.type;
 
-  // Convert HEIC to JPEG
   if (isHeicFile(file)) {
     blob = await heicTo({ blob: file, type: "image/jpeg", quality: 0.92 });
     mime = "image/jpeg";
@@ -160,15 +156,12 @@ async function processImage(file: File): Promise<string> {
   const needsResize = width !== img.width || height !== img.height;
   const isCompressible = mime === "image/jpeg" || mime === "image/webp";
 
-  // No processing needed
   if (!needsResize && blob.size <= IMAGE_CONFIG.compressThresholdBytes) {
     return dataUri;
   }
 
-  // Resize if needed
   let result = needsResize ? canvasToDataUri(img, mime, width, height, 1) : dataUri;
 
-  // Compress if still too large
   if (isCompressible && dataUriSize(result) > IMAGE_CONFIG.compressThresholdBytes) {
     for (let q = 0.85; q >= 0.5; q -= 0.1) {
       result = canvasToDataUri(img, mime, width, height, q);

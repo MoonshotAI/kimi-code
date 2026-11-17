@@ -53,9 +53,7 @@ export function parseStreamingArgs(argumentsText: string): Record<string, unknow
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>;
       }
-    } catch {
-      // fall through to partial scan
-    }
+    } catch {}
   }
   const result: Record<string, unknown> = {};
   for (const match of previewText.matchAll(STREAMING_ARGS_FIELD_RE)) {

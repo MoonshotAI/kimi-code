@@ -11,7 +11,6 @@ interface InlineErrorProps {
 export function InlineError({ error }: InlineErrorProps) {
   const { retryLastMessage, isStreaming } = useChatStore();
 
-  // 如果 detail 和 message 不同，则显示详细错误信息
   const showDetail = error.detail && error.detail !== error.message;
 
   return (

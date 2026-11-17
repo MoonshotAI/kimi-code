@@ -49,9 +49,6 @@ describe('clipboardHasImage', () => {
     expect(clip.hasImage).not.toHaveBeenCalled();
   });
 
-  // The focus-driven hint must not probe the clipboard on Linux: spawning
-  // wl-paste / xclip on Wayland perturbs seat focus and re-triggers the
-  // terminal focus event, creating a focus feedback loop (issue #1090).
   it('returns false on Linux without reading the clipboard', async () => {
     const clip = fakeClipboard({ hasImage: vi.fn(() => true) });
     const result = await clipboardHasImage({

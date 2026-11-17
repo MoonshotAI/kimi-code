@@ -1,25 +1,3 @@
-/**
- * Build the per-release native artifact set and `manifest.json` from the
- * matrix runners' zip archives.
- *
- * Usage:
- *   node produce-manifest.mjs <input-dir> <release-tag>
- *
- * Input dir must contain files matching: kimi-code-<target>.zip(.sha256)
- * (produced by package.mjs across the 6 native-build matrix runners). The
- * zip is the only form in which binaries leave the matrix runners, so this
- * script extracts each bare executable and emits next to it:
- *   kimi-code-<target>.zst       zstd -19, consumed by the staged updater
- *   kimi-code-<target>.tar.gz    consumed by install.sh / install.ps1
- *   <artifact>.sha256            sidecars in `<hex>  <name>` format
- *   manifest.json                platform entries pair the bare binary with
- *                                its compressed variant (`checksum` is always
- *                                the hash of what `compressed` inflates to)
- *
- * Requires `unzip`, `zstd`, and `tar` on PATH (preinstalled on
- * GitHub-hosted runners).
- */
-
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -38,7 +16,6 @@ if (!inputDir || !tag) {
   process.exit(1);
 }
 
-// Tag 格式 `@moonshot-ai/kimi-code@x.y.z` 或 `vx.y.z` 或 `x.y.z`，都归一化到 x.y.z
 const version = tag.replace(/^@moonshot-ai\/kimi-code@/, '').replace(/^v/, '');
 
 for (const tool of ['unzip', 'zstd', 'tar']) {
@@ -67,12 +44,9 @@ if (sumFiles.length === 0) {
 
 const platforms = {};
 for (const sumFile of sumFiles.sort()) {
-  // kimi-code-darwin-arm64.zip.sha256 → darwin-arm64
   const target = basename(sumFile, '.sha256').replace(/^kimi-code-/, '').replace(/\.zip$/, '');
   const zipName = `kimi-code-${target}.zip`;
   const exeName = target.startsWith('win32') ? 'kimi.exe' : 'kimi';
-  // The CDN bare-binary layout carries the .exe suffix on Windows
-  // (src/constant/app.ts); the updater's fallback downloads this filename.
   const binaryName = target.startsWith('win32') ? `kimi-code-${target}.exe` : `kimi-code-${target}`;
   const artifactBase = `kimi-code-${target}`;
   const zstName = `${artifactBase}.zst`;

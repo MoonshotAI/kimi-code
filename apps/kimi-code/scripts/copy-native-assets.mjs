@@ -7,7 +7,6 @@ const repoRoot = resolve(appRoot, '../..');
 const source = resolve(repoRoot, 'packages/pi-tui/native');
 const target = resolve(appRoot, 'native');
 
-// pi-tui ships platform-specific native helpers for darwin/linux/win32.
 const PLATFORMS = ['darwin', 'linux', 'win32'];
 
 async function assertPrebuilds(platform) {

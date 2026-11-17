@@ -1,7 +1,3 @@
-/**
- * User-cancellation detection and the tool output text shown to the model when a tool call is aborted.
- */
-
 export function isUserCancellation(value: unknown): boolean {
   return typeof value === 'object' && value !== null && 'userCancelled' in value && value.userCancelled === true;
 }

@@ -24,19 +24,10 @@ export interface ImportedSessionInput {
   readonly custom: Readonly<Record<string, unknown>>;
 }
 
-/** Directory of an imported session; conversion attachments belong in its `attachments` child. */
 export function importedSessionDir(targetHome: string, workDir: string, sessionId: string): string {
   return join(targetSessionsDir(targetHome), computeWorkdirBucket(workDir), sessionId);
 }
 
-/**
- * Write a session converted from another tool as an ordinary kimi-code session.
- *
- * The main agent wire gets the same synthesized turn records as migrated
- * kimi-cli sessions. `state.json` is written last, so a directory without it
- * is an interrupted write the caller can remove and retry. The generated
- * title kind keeps the imported title when the session is continued.
- */
 export async function writeImportedSession(input: ImportedSessionInput): Promise<string> {
   const sessionDir = importedSessionDir(input.targetHome, input.workDir, input.sessionId);
   await writeMainAgentWire(sessionDir, {

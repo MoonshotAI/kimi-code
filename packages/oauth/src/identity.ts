@@ -1,12 +1,3 @@
-/**
- * Kimi host and device identity header factories.
- *
- * The caller owns the host identity (product name + host app version)
- * and the `homeDir` where the stable device id is stored. This module
- * intentionally keeps no global CLI version or environment-derived
- * production state.
- */
-
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { arch, hostname, release, type } from 'node:os';
@@ -19,12 +10,6 @@ export const KIMI_CODE_PLATFORM = 'kimi_code_cli';
 export interface KimiHostIdentity {
   readonly productName: string;
   readonly version: string;
-  /**
-   * `X-Msh-Platform` value reported to the OAuth host and managed endpoints
-   * (e.g. `kimi_code_cli`, `kimi_code_desktop`). Every host must state its own
-   * explicitly — `KIMI_CODE_PLATFORM` is the CLI's value, not a default to
-   * inherit silently.
-   */
   readonly platform: string;
   readonly userAgentSuffix?: string | undefined;
 }
@@ -34,7 +19,6 @@ export interface KimiIdentityOptions extends KimiHostIdentity {
 }
 
 export interface CreateKimiDeviceIdOptions {
-  /** Invoked synchronously the first time a device id is minted on this machine. */
   readonly onFirstLaunch?: ((id: string) => void) | undefined;
 }
 
@@ -60,15 +44,11 @@ export function createKimiDeviceId(
   try {
     mkdirSync(homeDir, { recursive: true, mode: 0o700 });
     writeFileSync(join(homeDir, 'device_id'), id, { encoding: 'utf-8', mode: 0o600 });
-  } catch {
-    // Best-effort: requests can still use the in-memory id.
-  }
+  } catch {}
   if (options.onFirstLaunch !== undefined) {
     try {
       options.onFirstLaunch(id);
-    } catch {
-      // Telemetry callback must not affect device id creation.
-    }
+    } catch {}
   }
   return id;
 }
@@ -76,8 +56,6 @@ export function createKimiDeviceId(
 export function createKimiDeviceHeaders(options: {
   readonly homeDir: string;
   readonly version: string;
-  /** Required and validated like the version: non-empty ASCII, no fallback —
-      a blank or fabricated platform would silently misreport the host. */
   readonly platform: string;
 }): DeviceHeaders {
   return {
@@ -104,20 +82,6 @@ export function createKimiUserAgent(options: {
     : `${product}/${version} (${suffix})`;
 }
 
-/**
- * Swap the product token of a User-Agent produced by
- * {@link createKimiUserAgent}, keeping the version and optional suffix intact
- * (`kimi-code-cli/1.2.3 (web)` → `acme/1.2.3 (web)`).
- *
- * Lives next to the builder on purpose: the format knowledge — product token,
- * `/`, version, parenthesized suffix — must exist in exactly one place, so a
- * change to the builder cannot silently desynchronize the rewriter. Callers
- * pass an already-normalized ASCII token; a blank or non-ASCII product still
- * throws rather than emitting an invalid header.
- *
- * A value that does not carry a `/` is treated as a bare product token and
- * replaced wholesale.
- */
 export function replaceUserAgentProduct(userAgent: string, product: string): string {
   const cleaned = requiredAsciiHeader(product, 'Kimi identity product');
   const separator = userAgent.indexOf('/');
@@ -135,20 +99,6 @@ export function createKimiDefaultHeaders(options: KimiIdentityOptions): Record<s
   };
 }
 
-/**
- * Env var carrying extra headers applied to every outbound provider request
- * (LLM chat and `/models` listing). Mirrors `ANTHROPIC_CUSTOM_HEADERS`:
- * newline-separated `Name: Value` lines; lines without a colon are skipped;
- * names and values are trimmed.
- *
- * These headers form the lowest-precedence layer — the Kimi identity headers
- * (User-Agent, X-Msh-*), per-provider `customHeaders`, and request auth
- * (Authorization) all override them.
- *
- * Unlike the device identity headers above, this is intentionally
- * environment-derived and stateless (re-read on every call) so callers can
- * apply it uniformly without plumbing the value through every host layer.
- */
 export const KIMI_CODE_CUSTOM_HEADERS_ENV = 'KIMI_CODE_CUSTOM_HEADERS';
 
 export function parseKimiCodeCustomHeaders(
@@ -185,10 +135,6 @@ function deviceModel(): string {
   return `${os} ${version} ${osArch}`.trim();
 }
 
-/**
- * The file `sw_vers -productVersion` reads. Parsing it directly avoids spawning
- * a child process on every startup.
- */
 const MACOS_SYSTEM_VERSION_PLIST = '/System/Library/CoreServices/SystemVersion.plist';
 
 function macOsProductVersion(): string | undefined {

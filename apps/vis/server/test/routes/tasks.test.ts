@@ -10,8 +10,6 @@ describe('tasks route', () => {
   let cleanup: (() => Promise<void>) | null = null;
   afterEach(async () => { if (cleanup) await cleanup(); cleanup = null; });
 
-  // Tasks live under the spawning agent's homedir (<session>/agents/main/tasks),
-  // NOT the session root — seed there so the test mirrors real on-disk layout.
   async function seed(sessionDir: string): Promise<void> {
     const dir = join(sessionDir, 'agents', 'main', 'tasks');
     await mkdir(join(dir, 'bash-12345678'), { recursive: true });

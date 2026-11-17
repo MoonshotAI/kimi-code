@@ -1,7 +1,3 @@
-/**
- * Request error helpers: local syntax errors (`SyntaxRequestFormatError`, `ThinkingConfigError`), abort
- * detection, error text, and conversion of unknown errors into `LlmErrorMessage`.
- */
 import type { LlmErrorMessage, LlmRemoteErrorMessage } from '#/llm/response';
 
 export function sanitizeStatusErrorMessage(message: string): string {

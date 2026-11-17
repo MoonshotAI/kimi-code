@@ -25,7 +25,6 @@ function mockFetchStatus(status: number): typeof fetch {
 
 type Route = { readonly status?: number; readonly body?: string } | Error;
 
-/** URL-routed fetch mock: unrouted URLs return 404. */
 function mockRoutedFetch(routes: Record<string, Route>): typeof fetch {
   return vi.fn(async (input: string | URL) => {
     const route = routes[String(input)];

@@ -63,20 +63,17 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
 
   const isProcessing = hasProcessingMedia();
   const thinkingMode = getCurrentThinkingMode();
-  // A switch from a non-empty conversation resends the accumulated context,
-  // losing the prompt cache — surface the cost note in the switcher dropdowns.
   const hasConversationHistory = messages.some((message) => message.role === "user");
 
   const [showPlanModeConfirm, setShowPlanModeConfirm] = useState(false);
 
   const handleTogglePlanMode = () => {
-    // Turning OFF during streaming needs confirmation — user may want next turn, not current
     if (planMode && isStreaming) {
       setShowPlanModeConfirm(true);
       return;
     }
     const newState = !planMode;
-    useChatStore.setState({ planMode: newState }); // optimistic
+    useChatStore.setState({ planMode: newState });
     void bridge.setPlanMode(newState);
   };
 
@@ -101,7 +98,6 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
       ? `${currentModelConfig.name} · ${providerDisplayName(currentModelConfig.provider)}`
       : currentModelConfig.name;
 
-  // Auto-switch model if current model doesn't support required media
   useEffect(() => {
     if (!mediaReq.image && !mediaReq.video) {
       return;
@@ -116,13 +112,11 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
     }
   }, [mediaReq.image, mediaReq.video, currentModel, currentModelConfig, availableModels, updateModel]);
 
-  // Restore pending input
   useEffect(() => {
     if (!pendingInput || isStreaming) {
       return;
     }
 
-    // 只在输入框为空时恢复
     if (text.trim()) {
       return;
     }
@@ -392,12 +386,6 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
                         className="gap-0.5 text-accent-foreground border-0! h-6 px-1.5 min-w-0 max-w-[calc(100%-4rem)]"
                         disabled={isStreaming || !hasModels}
                       >
-                        {/* Name stays readable longest: the dimmed provider
-                            suffix carries a higher shrink factor so space
-                            pressure truncates it before the model name, and
-                            below 520px it drops out entirely (still shown in
-                            the tooltip and the dropdown) — a narrow sidebar
-                            has no room for both. */}
                         <span className="flex min-w-0 items-center text-xs">
                           <span className="truncate">{currentModelConfig?.name ?? "No models available"}</span>
                           {currentModelConfig !== undefined && showProviderGroups && (

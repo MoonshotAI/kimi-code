@@ -177,8 +177,6 @@ describe('parseGoalCommand', () => {
   });
 
   it('keeps option-looking tokens as part of the objective (no goal flags)', () => {
-    // Goal command flags are not parsed after `/goal`; stop conditions go in the
-    // objective as natural language, so option-looking text stays objective text.
     expect(parseGoalCommand('--retry-strategy Ship feature X')).toMatchObject({
       kind: 'create',
       objective: '--retry-strategy Ship feature X',
@@ -463,13 +461,10 @@ describe('handleGoalCommand', () => {
     picker.handleInput(ENTER);
 
     await vi.waitFor(() => {
-      // Switched to YOLO to run the goal, then restored to Manual on failure.
       expect(s.setPermission).toHaveBeenLastCalledWith('manual');
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenLastCalledWith({ permissionMode: 'manual' });
-    // The permissive-mode notice is deferred until the goal starts, so a failed
-    // start leaves no stale notice behind.
     expect(manualHost.showNotice).not.toHaveBeenCalled();
     expect(manualHost.showStatus).not.toHaveBeenCalledWith(PERMISSION_MODE_DESCRIPTIONS.yolo, 'warning');
   });
@@ -777,7 +772,6 @@ describe('handleGoalCommand', () => {
     expect(s.cancel).toHaveBeenCalledOnce();
   });
 
-  // No-goal control commands all read as calm status messages, never red errors.
   it('pausing with no goal shows a friendly status, not an error', async () => {
     session.pauseGoal.mockRejectedValueOnce(new KimiError(ErrorCodes.GOAL_NOT_FOUND, 'No current goal'));
     await handleGoalCommand(host, 'pause');
@@ -868,7 +862,6 @@ describe('dispatchInput /goal integration', () => {
   it('restores the input when the post-creation busy re-check rejects /goal', async () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
-      // A first prompt starts a turn while the lazy session creation awaits.
       ensureSession: vi.fn(async () => {
         host.state.appState.streamingPhase = 'thinking';
         return session;
@@ -891,7 +884,6 @@ describe('dispatchInput /goal integration', () => {
     Object.assign(host, {
       ensureSession: vi.fn(async () => {
         host.state.appState.streamingPhase = 'thinking';
-        // The user kept typing after submitting /goal.
         vi.mocked(host.state.editor.getText).mockReturnValue('a newer draft');
         return session;
       }),
@@ -926,7 +918,6 @@ describe('dispatchInput /goal integration', () => {
     const { host, session } = makeHost({ hasSession: false });
     Object.assign(host, {
       ensureSession: vi.fn(async () => {
-        // The user opened a panel (e.g. /help) while creation was pending.
         Object.assign(host.state, { editorReplacementMounted: true });
         return undefined;
       }),
@@ -937,7 +928,6 @@ describe('dispatchInput /goal integration', () => {
     await vi.waitFor(() => {
       expect(host.state.editorReplacementMounted).toBe(true);
     });
-    // Allow the post-creation branch to run before asserting.
     await new Promise((resolve) => setImmediate(resolve));
     expect(session.createGoal).not.toHaveBeenCalled();
     expect(host.restoreInputText).not.toHaveBeenCalled();
@@ -972,12 +962,8 @@ describe('goalArgumentCompletions', () => {
   });
 
   it('suppresses the menu once a token is fully typed and unambiguous', () => {
-    // `status` is the sole match and equals the prefix exactly, so there is
-    // nothing left to complete: the menu hides and Enter submits `/goal status`
-    // instead of confirming a no-op completion.
     expect(values('status')).toBeNull();
     expect(values('pause')).toBeNull();
-    // `re` still has two completions, so the menu stays open.
     expect(values('re')).toEqual(['resume', 'replace']);
   });
 

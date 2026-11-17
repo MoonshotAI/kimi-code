@@ -118,11 +118,9 @@ export function useWelcomeHint(): WelcomeHint {
   }, []);
 
   return useMemo(() => {
-    // First time user: show shortcut guide
     if (hasHistory === false) {
       return HINT_FIRST_TIME;
     }
-    // 30% chance to show AGENT.md hint if missing
     if (hasAgentMd === false && withProbability(0.3)) {
       return HINT_AGENT_MD;
     }

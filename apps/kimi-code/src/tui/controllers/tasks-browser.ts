@@ -147,7 +147,6 @@ export class TasksBrowserController {
     const browser = state.tasksBrowser;
     const viewer = browser?.viewer;
     if (browser === undefined || viewer === undefined) return;
-    // The agent activity viewer refreshes from the local store, not the RPC.
     if (viewer.component instanceof AgentActivityViewer) return;
 
     const session = this.host.session;
@@ -181,8 +180,6 @@ export class TasksBrowserController {
     });
     state.ui.requestRender();
   }
-
-  // ---------------------------------------------------------------------------
 
   private pickInitialSelection(
     tasks: readonly BackgroundTaskInfo[],
@@ -227,8 +224,6 @@ export class TasksBrowserController {
     this.pushProps(tasks);
   }
 
-  /** Agent tasks capture output only on completion, so while one is selected
-   *  the Preview frame is fed from the in-memory activity store instead. */
   private syncAgentPreview(): void {
     const browser = this.host.state.tasksBrowser;
     const selectedTaskId = browser?.selectedTaskId;
@@ -344,9 +339,6 @@ export class TasksBrowserController {
     if (browser === undefined) return;
     if (browser.viewer !== undefined) return;
 
-    // Agent tasks get the activity detail view when this process holds a
-    // record for the agent; otherwise (e.g. a `lost` task after resume) fall
-    // through to the captured-output viewer.
     const info = this.host.backgroundTasks.get(taskId);
     if (info !== undefined && info.kind === 'agent' && info.agentId !== undefined) {
       const record = this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(
@@ -430,7 +422,6 @@ export class TasksBrowserController {
     state.ui.setFocus(viewer);
     state.ui.requestRender(true);
 
-    // The activity store is in-memory — refreshing is a local read, no RPC.
     const pollTimer = setInterval(() => {
       this.refreshAgentActivityViewer();
     }, 1000);
@@ -472,8 +463,6 @@ export class TasksBrowserController {
     const browser = state.tasksBrowser;
     if (browser === undefined) return;
 
-    // Agent tasks capture output only on completion — serve the preview from
-    // the in-memory activity store instead of the RPC when a record exists.
     const info = this.host.backgroundTasks.get(taskId);
     if (info !== undefined && info.kind === 'agent' && info.agentId !== undefined) {
       const record = this.host.sessionEventHandler.subAgentEventHandler.activityStore.get(

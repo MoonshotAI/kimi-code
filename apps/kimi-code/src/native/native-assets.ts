@@ -465,17 +465,6 @@ export interface CleanupResult {
   readonly errors: Array<{ path: string; error: unknown }>;
 }
 
-/**
- * Remove stale native asset cache directories for the current (version, target).
- *
- * Keeps:
- *   - the currentRoot (passed in by caller)
- *   - the most recently modified sibling (defensive: in case currentRoot calc changed)
- *
- * Deletes all other sibling <manifest-hash> directories. Other versions and
- * other targets are never touched. Errors per-entry are collected and returned
- * (never throw — this is fire-and-forget background work).
- */
 export function cleanupStaleNativeCache(options: CleanupOptions): CleanupResult {
   const { cacheBase, version, target, currentRoot } = options;
   const targetDir = join(cacheBase, 'native', version, target);
@@ -502,10 +491,7 @@ export function cleanupStaleNativeCache(options: CleanupOptions): CleanupResult 
 
   if (siblings.length === 0) return result;
 
-  // sort newest first
   siblings.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  // Defensive: keep the most recently modified sibling that is not currentRoot
-  // so a previously-written cache survives in case currentRoot calc changed.
   const mostRecentOther = siblings.find((entry) => entry.path !== currentRoot)?.path;
   const keepSet = new Set<string>(
     mostRecentOther === undefined ? [currentRoot] : [currentRoot, mostRecentOther],
@@ -527,10 +513,6 @@ export function cleanupStaleNativeCache(options: CleanupOptions): CleanupResult 
   return result;
 }
 
-/**
- * Convenience: discover currentRoot from embedded manifest + run cleanup.
- * Safe to call without args from main.ts startup. Returns null if not in SEA mode.
- */
 export function cleanupStaleNativeCacheForCurrent(
   options: NativeAssetOptions = {},
 ): CleanupResult | null {

@@ -1,13 +1,3 @@
-/**
- * Scenario: App-level view routing after init, across login state transitions.
- * Responsibilities: the sign-in screen must stay reachable from every state — in
- * particular the no-models state (a managed OAuth token exists but config.toml
- * has no models, e.g. a first login whose model provisioning failed after the
- * device flow already persisted the token), where Reload alone can never change
- * the on-disk state and the user would otherwise be stranded.
- * Wiring: resolveAppView is pure; the bridge and toast boundaries are mocked away.
- * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts test/app-init.test.ts
- */
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/services", () => ({
@@ -52,8 +42,6 @@ describe("resolveAppView", () => {
   });
 
   it("keeps a sign-in path in the no-models trap (token without model config)", () => {
-    // Regression: this state previously rendered "Model setup required" with only
-    // a Reload button, making the login screen unreachable for affected users.
     expect(resolve("no-models")).toEqual({
       view: "status",
       status: "no-models",

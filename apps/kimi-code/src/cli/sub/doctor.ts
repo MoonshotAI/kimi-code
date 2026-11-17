@@ -35,7 +35,6 @@ interface CheckSpec {
   readonly label: 'config.toml' | 'tui.toml';
   readonly path: string;
   readonly explicit: boolean;
-  /** Throws on invalid content; may return a non-fatal warning message. */
   readonly parse: (text: string, path: string) => MaybePromise<string | void>;
 }
 

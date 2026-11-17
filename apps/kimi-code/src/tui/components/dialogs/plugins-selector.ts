@@ -211,16 +211,10 @@ export type PluginInstallTrustConfirmResult =
   | { readonly kind: 'cancel' };
 
 export interface PluginInstallTrustConfirmOptions {
-  /** Plugin display name or source, shown in the title for identification. */
   readonly label: string;
   readonly onDone: (result: PluginInstallTrustConfirmResult) => void;
 }
 
-/**
- * Confirmation shown before installing a third-party (unofficial) plugin.
- * Defaults to "Exit" so the user must explicitly switch to "Trust and install"
- * to proceed with a plugin that Kimi has not reviewed.
- */
 export class PluginInstallTrustConfirmComponent extends ChoicePickerComponent {
   constructor(opts: PluginInstallTrustConfirmOptions) {
     super({
@@ -298,10 +292,6 @@ function pluginStatus(plugin: PluginSummary): string | undefined {
 }
 
 function marketplaceStatusStyle(status: string, colors: ColorPalette): (text: string) => string {
-  // States recede, actions pop: "installed …" is a quiet fact (dim), while
-  // "install …" (the available action) stays primary and "update …" stays a
-  // warning — the two used to share near-identical green-ish treatments in
-  // the same column and read as interchangeable.
   if (status.startsWith('update')) return chalk.hex(colors.warning);
   if (status.startsWith('installed') || status === 'cloud only') {
     return chalk.hex(colors.textDim);
@@ -309,8 +299,6 @@ function marketplaceStatusStyle(status: string, colors: ColorPalette): (text: st
   return chalk.hex(colors.primary);
 }
 
-/** Rounded single-line URL input box (DESIGN §9), shared by the marketplace
- * Custom tab and the unified plugins panel. */
 function renderUrlInputBox(
   input: Input,
   focused: boolean,
@@ -329,10 +317,6 @@ function renderUrlInputBox(
     ' ' + border('╰' + '─'.repeat(boxWidth - 2) + '╯'),
   ];
 }
-
-// ===========================================================================
-// Unified /plugins panel: Installed / Official / Curated / Custom tabs.
-// ===========================================================================
 
 export type PluginsPanelTabId = 'installed' | 'official' | 'third-party' | 'custom';
 
@@ -354,8 +338,6 @@ export interface PluginsPanelOptions {
   readonly pluginHint?: { readonly id: string; readonly text: string };
   readonly onSelect: (selection: PluginsPanelSelection) => void;
   readonly onCancel: () => void;
-  /** Called the first time the Official or Curated tab needs its catalog.
-   * The host fetches the marketplace and calls setMarketplace / setMarketplaceError. */
   readonly onRequestMarketplace?: () => void;
 }
 
@@ -497,15 +479,10 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private get thirdPartyEntries(): readonly PluginMarketplaceEntry[] {
-    // Anything not explicitly marked official lands here: `curated` entries plus
-    // entries that omit `tier` (custom marketplaces often do). Without this,
-    // untiered entries would be invisible in both marketplace tabs.
     return this.marketplaceEntries.filter((entry) => entry.tier !== 'official');
   }
 
   private requestMarketplaceIfNeeded(): void {
-    // The Installed tab also needs the catalog to render update badges; only the
-    // Custom tab (manual URL entry) can skip the fetch entirely.
     if (this.market.status === 'idle' && this.activeTab.id !== 'custom') {
       this.market = { status: 'loading' };
       this.opts.onRequestMarketplace?.();
@@ -556,9 +533,6 @@ export class PluginsPanelComponent extends Container implements Focusable {
     }
     const plugin = plugins[this.selectedIndex];
     const ch = printableChar(data);
-    // Decode Space for terminals that send printable keys via Kitty/CSI-u
-    // sequences (e.g. VS Code's integrated terminal); `matchesKey(Key.space)`
-    // alone misses those and the toggle silently stops working.
     if (matchesKey(data, Key.space) || ch === ' ') {
       if (plugin !== undefined) {
         this.opts.onSelect({ kind: 'toggle', id: plugin.id, enabled: !plugin.enabled });

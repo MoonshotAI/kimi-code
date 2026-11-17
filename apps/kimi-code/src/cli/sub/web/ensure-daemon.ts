@@ -1,11 +1,3 @@
-/**
- * `kimi server ensure-daemon` — internal bootstrap and stdio bridge for SSH Full-Remote.
- *
- * Run over `ssh` by the local bridge: reuses a healthy background server on this
- * machine's Unix domain socket or starts a detached one, prints one marker-prefixed
- * JSON line on stdout, and relays stdin/stdout to the Unix domain socket until EOF.
- */
-
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
@@ -54,7 +46,6 @@ class EnsureDaemonError extends Error {
 export interface DaemonConnection {
   readonly stream: Duplex;
   readonly version: string;
-  /** Resolves false when the instance still has live work and must not be replaced. */
   stopIfIdle(): Promise<boolean>;
   close(): void;
 }

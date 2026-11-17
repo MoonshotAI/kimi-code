@@ -1,7 +1,3 @@
-/**
- * OpenAI Chat Completions wire types: content parts, tool calls, messages, usage, and raw stream chunks.
- */
-
 export type OpenAIContentPart = {
   type: 'text' | 'image_url' | 'audio_url' | 'video_url';
   text?: string | undefined;

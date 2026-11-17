@@ -1,7 +1,3 @@
-/**
- * Tool call id legalization: maps history ids onto the protocol's id policy while keeping them unique
- * and consistent between calls and results, and normalizes the ids of streamed tool calls.
- */
 import {
   type AssistantMessage,
   type Message,
@@ -93,35 +89,6 @@ function makeUniqueToolCallId(
   }
 }
 
-/**
- * Normalizes assistant tool-call ids and their tool-result ids through one shared map, adding numeric
- * suffixes when normalization causes collisions and leaving other message data unchanged.
- *
- * @example
- * // With `policy.normalize = (id) => id.replaceAll(' ', '_')`:
- * // Input:
- * [
- *   {
- *     role: 'assistant',
- *     content: [],
- *     toolCalls: [
- *       { type: 'function', id: 'call 1', name: 'read', arguments: '{}' }, // ←
- *     ],
- *   },
- *   { role: 'tool', toolCallId: 'call 1', content: [{ type: 'text', text: 'done' }] }, // ←
- * ]
- * // Output:
- * [
- *   {
- *     role: 'assistant',
- *     content: [],
- *     toolCalls: [
- *       { type: 'function', id: 'call_1', name: 'read', arguments: '{}' }, // ←
- *     ],
- *   },
- *   { role: 'tool', toolCallId: 'call_1', content: [{ type: 'text', text: 'done' }] }, // ←
- * ]
- */
 export function legalizeToolCallIds(
   messages: readonly Message[],
   policy: ToolCallIdPolicy | undefined,

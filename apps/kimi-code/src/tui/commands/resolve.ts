@@ -23,7 +23,6 @@ export type SlashCommandIntent =
       readonly command: BuiltinSlashCommand;
       readonly name: BuiltinSlashCommandName;
       readonly args: string;
-      /** Queue instead of executing now (/compact while streaming). */
       readonly enqueue?: boolean;
     }
   | {
@@ -65,7 +64,6 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
   if (parsed === null) return { kind: 'not-command' };
 
   const command = findBuiltInSlashCommand(parsed.name);
-  // `command` is a literal union where only some members carry `experimentalFlag`; widen to read it.
   if (
     command !== undefined &&
     isExperimentalFlagEnabled((command as KimiSlashCommand).experimentalFlag)
@@ -75,8 +73,6 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
       busyReason !== undefined &&
       resolveSlashCommandAvailability(command, parsed.args) === 'idle-only'
     ) {
-      // A live compaction also sets streamingPhase, and busyReason reports
-      // 'streaming' first — compacting must stay blocked, not enqueue.
       if (command.name === 'compact' && busyReason === 'streaming' && !options.isCompacting) {
         return {
           kind: 'builtin',
@@ -100,19 +96,11 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
     };
   }
 
-  // Skill activations are never blocked by a busy session: the TUI queues
-  // them behind the running turn exactly like normal messages (see
-  // sendSkillActivation), and Ctrl-S steers them as real activations, so
-  // skill commands can be issued any time.
   const exactSkillName = options.skillCommandMap.get(parsed.name) ?? options.skillCommandMap.get(parsed.name.toLowerCase());
   if (exactSkillName !== undefined) {
     return skillCommandIntent(parsed, exactSkillName);
   }
 
-  // A plugin command wins over the skill shorthand for the same
-  // `<pluginId>:<name>` input: the skill stays reachable through its explicit
-  // `skill:<pluginId>:<name>` command, while the plugin command has no
-  // alternative form.
   if (options.pluginCommandMap.has(parsed.name)) {
     const busyReason = slashCommandBusyReason(options);
     if (busyReason !== undefined) {
@@ -251,11 +239,6 @@ export function slashBusyMessage(
   return `Cannot /${commandName} while compacting — wait for compaction to finish first.`;
 }
 
-/**
- * Whether a delayed input restore is still safe: the editor must be empty
- * (no newer draft) and still mounted (no editor-replacement panel opened
- * meanwhile). Restores that run synchronously with submit do not need this.
- */
 export function canRestoreSubmittedInput(host: { state: TUIState }): boolean {
   return host.state.editor.getText().length === 0 && !host.state.editorReplacementMounted;
 }

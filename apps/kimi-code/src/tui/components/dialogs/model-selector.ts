@@ -21,19 +21,13 @@ type ThinkingAvailability = 'toggle' | 'always-on' | 'unsupported';
 interface ModelChoice {
   readonly alias: string;
   readonly model: ModelAlias;
-  /** Model display name (left column). */
   readonly name: string;
-  /** Provider display name (right column). */
   readonly provider: string;
-  /** Combined text the fuzzy filter matches against (name + provider). */
   readonly label: string;
 }
 
 export interface ModelSelection {
   readonly alias: string;
-  /** Chosen thinking effort: 'off', or a concrete effort such as 'low' /
-   * 'high' / 'max'. Boolean 'on' is normalized to the model's default effort
-   * before the selection is committed (see commitEffort). */
   readonly thinking: ThinkingEffort;
 }
 
@@ -64,29 +58,15 @@ export interface ModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
   readonly currentValue: string;
   readonly selectedValue?: string;
-  /** Live thinking effort of the currently active model (e.g. 'off', 'on',
-   * 'high'). Used to highlight the active segment for the current model. */
   readonly currentThinkingEffort: ThinkingEffort;
-  /** Overrides the default ' Select a model' title line. */
   readonly title?: string;
-  /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
-  /** Items per page. Lists longer than this paginate (PgUp/PgDn). */
   readonly pageSize?: number;
-  /** When true, the hint line mentions the Tab provider switch — set by
-   * TabbedModelSelectorComponent so the inner list advertises the tab keys. */
   readonly providerSwitchHint?: boolean;
-  /** When set, rendered as warning-colored lines directly below the key-hint
-   * line; wraps instead of truncating when it exceeds the width (e.g. the
-   * mid-conversation switch cost notice). */
   readonly warning?: string;
-  /** Set to false to hide the Thinking footer and disable ←/→ effort
-   * switching — for pickers whose selection carries no thinking level. */
   readonly thinkingControl?: boolean;
   readonly effortDescriptions?: Readonly<Record<string, string>>;
   readonly onSelect: (selection: ModelSelection) => void;
-  /** When provided, Alt+S invokes this instead of onSelect — used to apply the
-   * choice to the current session only, without persisting it as the default. */
   readonly onSessionOnlySelect?: (selection: ModelSelection) => void;
   readonly onCancel: () => void;
 }
@@ -111,12 +91,6 @@ export function effortsOf(model: ModelAlias): readonly string[] {
   return model.supportEfforts ?? [];
 }
 
-/**
- * Ordered list of selectable thinking efforts for a model. Effort-capable models
- * expose their declared efforts (with an 'off' entry when the model is not
- * always-on); legacy boolean models expose 'on'/'off'; single-segment lists
- * mean the control is effectively locked.
- */
 export function segmentsFor(model: ModelAlias): readonly string[] {
   const efforts = effortsOf(model);
   const availability = thinkingAvailability(model);
@@ -133,11 +107,6 @@ export function effortLabel(effort: string): string {
   return effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
-/**
- * Default thinking effort for a model: declared `default_effort`, else the
- * middle `support_efforts` entry, else `'on'` for boolean models, `'off'` when
- * thinking is unsupported.
- */
 export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
   if (thinkingAvailability(model) === 'unsupported') return 'off';
   const efforts = effortsOf(model);
@@ -147,30 +116,15 @@ export function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
   return 'on';
 }
 
-/**
- * Normalize a draft effort before committing a selection. A boolean `'on'`
- * never leaks past the UI boundary — it becomes the model's default effort
- * (a concrete effort for effort-capable models, `'on'` only for genuine
- * boolean models).
- */
 function commitEffort(choice: ModelChoice, draft: ThinkingEffort): ThinkingEffort {
   if (draft === 'on') return defaultThinkingEffortFor(choice.model);
   return draft;
 }
 
-/**
- * Flat, searchable single-list model picker.
- *
- * One navigation axis: ↑/↓ move the cursor (PgUp/PgDn page), typing fuzzy-filters
- * across every provider (provider name included), and ←/→ toggle the thinking
- * draft for models that support it. There are no provider tabs — filtering by
- * typing a provider name replaces them. See .agents/skills/write-tui/DESIGN.md.
- */
 export class ModelSelectorComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ModelSelectorOptions;
   private readonly list: SearchableList<ModelChoice>;
-  /** Per-model thinking-effort override set by ←/→; absent → the default. */
   private readonly thinkingOverrides = new Map<string, string>();
 
   constructor(opts: ModelSelectorOptions) {
@@ -188,19 +142,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
     });
   }
 
-  /**
-   * Thinking effort for a model: an explicit ←/→ override when set, otherwise
-   * the live effort for the active model, otherwise the model's default effort
-   * (effort-capable) or 'on' (other thinking-capable models).
-   */
   private draftFor(choice: ModelChoice): string {
     const override = this.thinkingOverrides.get(choice.alias);
     if (override !== undefined) return override;
     if (choice.alias === this.opts.currentValue) return this.opts.currentThinkingEffort;
     const efforts = effortsOf(choice.model);
     if (efforts.length > 0) {
-      // A model with support_efforts but no default_effort defaults to the
-      // middle entry of its supported efforts.
       const def = choice.model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)];
       if (def !== undefined && efforts.includes(def)) return def;
       return efforts[0]!;
@@ -208,8 +155,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
     return thinkingAvailability(choice.model) !== 'unsupported' ? 'on' : 'off';
   }
 
-  /** Draft coerced onto the model's segment list so rendering/selection never
-   * reference a effort the model cannot actually select. */
   private effectiveEffort(choice: ModelChoice): string {
     const draft = this.draftFor(choice);
     const segments = segmentsFor(choice.model);
@@ -223,12 +168,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
       return;
     }
 
-    // ↑/↓, PgUp/PgDn, and — when searchable — typing + Backspace.
     if (this.list.handleKey(data)) {
       return;
     }
 
-    // Left/Right move the active thinking effort within the model's segments.
     if (
       this.opts.thinkingControl !== false &&
       (matchesKey(data, Key.left) || matchesKey(data, Key.right))
@@ -239,8 +182,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
         if (segments.length > 1) {
           const current = this.effectiveEffort(selected);
           const idx = segments.indexOf(current);
-          // The two-segment case is the legacy boolean On/Off control: both
-          // arrows flip it. With more segments (efforts), ←/→ step.
           let next: number;
           if (segments.length === 2) {
             next = idx === 0 ? 1 : 0;
@@ -286,8 +227,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
         ? currentTheme.fg('textMuted', '  (type to search)')
         : '';
 
-    // "type to search" already lives in the title suffix, so the hint only
-    // surfaces the backspace shortcut once a query is active.
     const hintParts: string[] = [];
     if (this.opts.providerSwitchHint) hintParts.push('Tab toggle provider');
     hintParts.push('↑↓ navigate');
@@ -315,8 +254,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
     if (view.items.length === 0) {
       lines.push(currentTheme.fg('textMuted', '   No matches'));
     } else {
-      // Column width for model names so the provider column lines up. Capped so
-      // the provider + "← current" marker still fit on normal terminal widths.
       const nameCap = Math.max(8, Math.floor(width * 0.5));
       let nameWidth = 0;
       for (let i = view.page.start; i < view.page.end; i++) {
@@ -343,7 +280,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
       }
     }
 
-    // Scroll / match indicator.
     if (view.query.length > 0) {
       lines.push('');
       lines.push(
@@ -384,13 +320,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
       active
         ? currentTheme.boldFg('primary', `[ ${label} ]`)
         : currentTheme.fg('text', `  ${label}  `);
-    // The whole segment is muted, suffix included, so the disabled side reads
-    // as a single greyed-out control rather than a selectable option.
     const unavailable = (label: string): string =>
       currentTheme.fg('textMuted', `  ${label} (Unsupported)  `);
 
-    // Non-effort always-on / unsupported models keep the original On/Off layout
-    // so the control never shifts while moving across legacy models.
     const efforts = effortsOf(choice.model);
     const availability = thinkingAvailability(choice.model);
     if (efforts.length === 0 && availability === 'always-on') {

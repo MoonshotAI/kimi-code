@@ -116,7 +116,6 @@ describe('ActivityPaneComponent', () => {
         tip: 'ctrl+s: steer mid-turn',
       });
 
-      // Width 8 is exactly the width of "working" (no spinner frame in the mock).
       expect(component.render(8).map((line) => line.trimEnd())).toEqual(['', 'working']);
     },
   );

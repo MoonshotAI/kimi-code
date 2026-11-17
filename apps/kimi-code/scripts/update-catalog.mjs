@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-/**
- * Fetches models.dev/api.json, strips fields not needed by kimi-code, and
- * writes the result as raw JSON for release builds to inline.
- *
- * This script intentionally does not write into src/. The source tree keeps a
- * placeholder so the generated catalog is not committed.
- */
-
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
@@ -24,9 +16,6 @@ const KEEP_MODEL = new Set([
   "reasoning",
   "interleaved",
   "modalities",
-  // Message-level tool declarations capability — the models.dev
-  // normalizer reads it; stripping it here would silently
-  // disable tool-select for catalog-imported aliases.
   "dynamically_loaded_tools",
 ]);
 

@@ -17,8 +17,6 @@ describe('runCommandAsync', () => {
   it('does not block when the command exceeds the timeout', async () => {
     const timeoutMs = 100;
     const start = Date.now();
-    // The child would idle for 30s if left running; runCommandAsync must kill
-    // it and resolve well before that so a wedged helper cannot freeze launch.
     const result = await runCommandAsync(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
       timeoutMs,
     });

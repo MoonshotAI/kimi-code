@@ -71,7 +71,6 @@ describe('memory dispatcher specifics', () => {
     const klient = createKlient({ scope: app, validate: false });
     try {
       const list = await klient.global.workspaces.list();
-      // Mutating the result must not affect what a second call returns.
       (list as unknown[]).push({ id: 'polluted' });
       const again = await klient.global.workspaces.list();
       expect(again.some((w) => w.id === 'polluted')).toBe(false);

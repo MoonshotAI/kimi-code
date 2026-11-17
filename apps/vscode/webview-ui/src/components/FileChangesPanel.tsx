@@ -121,7 +121,6 @@ export function FileChangesPanel({ changes }: FileChangesPanelProps) {
 
   return (
     <div className="flex flex-col bg-card shrink">
-      {/* Header with actions */}
       <div className="flex items-center justify-between px-2.5 py-1.5 text-xs bg-muted/30">
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground">
@@ -160,7 +159,6 @@ export function FileChangesPanel({ changes }: FileChangesPanelProps) {
         )}
       </div>
 
-      {/* File list */}
       <div className="overflow-y-auto flex-1">
         {changes.map((file) => (
           <FileItem

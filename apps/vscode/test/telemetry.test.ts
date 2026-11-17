@@ -1,10 +1,3 @@
-/**
- * Scenario: the extension host joins the shared v1 telemetry pipeline under a three-layer consent gate.
- * Responsibilities: initialize the shared client with extension identity, apply the VS Code global
- * telemetry switch dynamically, emit first_launch on device-id minting, and shut down with a short timeout.
- * Wiring: the real composition root; VS Code, kimi-telemetry, oauth, and SDK config/auth boundaries are mocked.
- * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts test/telemetry.test.ts
- */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const host = vi.hoisted(() => {

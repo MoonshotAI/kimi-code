@@ -48,9 +48,9 @@ describe('task-store', () => {
 
     const tasks = await listBackgroundTasks(sessionDir);
     expect(tasks.map((t) => t.taskId)).toEqual([
-      'agent-bbbbbbbb', // startedAt 3000
-      'question-cccccccc', // 2500
-      'bash-aaaaaaaa', // 1000
+      'agent-bbbbbbbb',
+      'question-cccccccc',
+      'bash-aaaaaaaa',
     ]);
     const proc = tasks.find((t) => t.kind === 'process');
     expect(proc).toMatchObject({
@@ -209,11 +209,11 @@ describe('task-store', () => {
     const tasks = await listBackgroundTasks(sessionDir);
     const proc = tasks.find((t) => t.taskId === 'bash-dddddddd')!;
     expect(proc.kind).toBe('process');
-    expect(proc.status).toBe('timed_out'); // failed + timed_out → timed_out
+    expect(proc.status).toBe('timed_out');
     expect(proc).toMatchObject({ detached: true, timeoutMs: 5000 });
     const agent = tasks.find((t) => t.taskId === 'agent-eeeeeeee')!;
     expect(agent.kind).toBe('agent');
-    expect(agent.status).toBe('running'); // awaiting_approval → running
+    expect(agent.status).toBe('running');
     expect(agent).toMatchObject({ agentId: 'agent-2', subagentType: 'general' });
   });
 
@@ -234,8 +234,6 @@ describe('task-store', () => {
       taskId: 'bash-aaaaaaaa', kind: 'process', description: 'ok', command: 'x',
       pid: 1, exitCode: 0, status: 'completed', detached: true, startedAt: 100, endedAt: 200,
     });
-    // Passes the shape guard (has task_id) but stop_reason / subagent_type are
-    // numbers — the old code threw on `.trim()` and lost ALL tasks.
     await writeTask(sessionDir, 'agent-bbbbbbbb.json', {
       task_id: 'agent-bbbbbbbb', command: '', description: 'bad', pid: 0,
       started_at: 50, ended_at: null, exit_code: null, status: 'failed',
@@ -243,7 +241,6 @@ describe('task-store', () => {
     });
 
     const tasks = await listBackgroundTasks(sessionDir);
-    // No throw; both tasks listed, the corrupt fields coerced away.
     expect(tasks.map((t) => t.taskId).toSorted()).toEqual(['agent-bbbbbbbb', 'bash-aaaaaaaa']);
     const bad = tasks.find((t) => t.taskId === 'agent-bbbbbbbb')!;
     expect(bad.stopReason).toBeUndefined();
@@ -295,7 +292,6 @@ describe('task-store', () => {
     const head = await readTaskOutput(sessionDir, 'bash-12345678', 0, 5);
     expect(head).toMatchObject({ offset: 0, nextOffset: 5, size: 11, content: 'hello', eof: false });
 
-    // Paging forward from the previous window's nextOffset reaches EOF exactly.
     const tail = await readTaskOutput(sessionDir, 'bash-12345678', head.nextOffset, 100);
     expect(tail).toMatchObject({ offset: 5, nextOffset: 11, size: 11, content: ' world', eof: true });
 

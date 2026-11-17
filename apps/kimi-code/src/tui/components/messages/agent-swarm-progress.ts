@@ -234,7 +234,6 @@ export class AgentSwarmProgressComponent implements Component {
     this.members = [];
   }
 
-  /** Live palette, read on each render so a theme switch recolors the panel. */
   private get colors(): ColorPalette {
     return currentTheme.palette;
   }
@@ -260,22 +259,12 @@ export class AgentSwarmProgressComponent implements Component {
     this.markDirty();
   }
 
-  /**
-   * Show the bound model once in the header. Every swarm member binds to the
-   * same model, so the first child status update wins and later ones (e.g.
-   * from resumed agents that kept a different binding) do not churn it.
-   */
   setModelDisplay(modelDisplay: string): void {
     if (this.modelDisplay.length > 0 || modelDisplay.length === 0) return;
     this.modelDisplay = modelDisplay;
     this.markDirty();
   }
 
-  /**
-   * Show the thinking effort next to the model, same first-wins rule. Only
-   * ever called with a concrete level (the handler filters the boolean
-   * states), so its presence already implies a real effort tier.
-   */
   setEffortDisplay(effortDisplay: string): void {
     if (this.effortDisplay.length > 0 || effortDisplay.length === 0) return;
     this.effortDisplay = effortDisplay;
@@ -513,9 +502,6 @@ export class AgentSwarmProgressComponent implements Component {
       outerWidth - visibleWidth(AGENT_SWARM_LEFT_INDENT) - AGENT_SWARM_RIGHT_GAP,
     );
     const palette = currentTheme.palette;
-    // The empty panel has no grid, so the height callback stays untouched
-    // there (matching the uncached path); with members its result feeds the
-    // cache key, since a shrinking dock compresses the grid.
     const gridHeight = this.members.length === 0 ? undefined : this.availableGridHeight?.();
     const cache = this.renderCache;
     if (
@@ -575,14 +561,6 @@ export class AgentSwarmProgressComponent implements Component {
     return lines;
   }
 
-  /**
-   * Renders that change with wall-clock time even without any mutation must
-   * never be served from the cache: the activity spinner ticks externally,
-   * running cells keep drifting toward their estimate, and the completion /
-   * failure fill animates for a short window. Once the panel is static it
-   * stays static until the next mutation bumps the version, so a cache hit
-   * can safely skip `startAnimationIfNeeded()`.
-   */
   private hasTimeDependentRender(): boolean {
     if (this.toolCallActive && this.activitySpinnerText !== undefined) return true;
     return this.hasAnimatedMembers();
@@ -744,9 +722,6 @@ export class AgentSwarmProgressComponent implements Component {
           nowMs,
         })
       : undefined;
-    // Terminal and queued cells are fully determined by this key, so repeated
-    // frames of an animating panel reuse them; the elapsed-time clamp keeps
-    // hits valid once the completion fill window has passed.
     const key: AgentSwarmCellCacheKey = [
       currentTheme.palette,
       snapshot.phase,
@@ -883,9 +858,6 @@ export class AgentSwarmProgressComponent implements Component {
 
   private hasAnimatedMembers(): boolean {
     const now = Date.now();
-    // Running cells and estimator catch-up only animate while the tool call
-    // is live: no further progress arrives once it ends (an unparsable result
-    // leaves members running), so ticking would repaint the tree forever.
     if (
       this.toolCallActive &&
       (this.progressEstimator.hasPendingCatchup() ||
@@ -923,10 +895,6 @@ export class AgentSwarmProgressComponent implements Component {
       this.progressEstimator.markCompleted(member.id, nowMs);
       member.completedAtMs = nowMs;
     }
-    // Terminal cells render a single-line label, so only a bounded prefix of
-    // the final output is worth keeping; full outputs must not accumulate on
-    // the component for the lifetime of the transcript. The latest-model-text
-    // fallback is baked in here because latestModelText is released below.
     const normalizedCompletedText =
       normalizeFinalOutputText(completedText) ??
       normalizeFinalOutputText(latestNonEmptyLine(member.latestModelText));
@@ -995,17 +963,11 @@ function clearMemberState(member: AgentSwarmMember, ...keys: ClearableMemberKey[
   for (const key of keys) delete member[key];
 }
 
-// Terminal cells no longer stream, so the rolling model-text window and the
-// stale cell memo (whose key referenced it) are dropped; the next render
-// re-memoizes against the bounded terminal label.
 function releaseTerminalMemberText(member: AgentSwarmMember): void {
   member.latestModelText = '';
   delete member.cellCache;
 }
 
-// Display width alone does not bound memory: ANSI sequences and zero-width
-// graphemes add unbounded code units within a single column, so the retained
-// label is additionally capped by storage length.
 function capFinalOutputLabel(text: string): string {
   return capCodeUnits(
     truncateToWidth(text, MAX_FINAL_OUTPUT_LABEL_CHARS, ''),
@@ -1032,8 +994,6 @@ function capCodeUnits(text: string, maxCodeUnits: number): string {
     sgrActive = sgrActiveAfterSequence(sequence, sgrActive);
     index = text.indexOf('\u001B', sequenceEnd);
   }
-  // A cut landing on a lead surrogate reads as the astral code point; back
-  // off so the retained label never ends in an unpaired surrogate.
   const codePoint = text.codePointAt(end - 1);
   if (codePoint !== undefined && codePoint > 0xffff) end -= 1;
   return `${text.slice(0, end)}${osc8CloseSuffix}${sgrActive ? '\u001B[0m' : ''}`;
@@ -1041,12 +1001,6 @@ function capCodeUnits(text: string, maxCodeUnits: number): string {
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-// The storage cap must not slice through a grapheme cluster: a ZWJ sequence
-// (a family emoji runs about eleven code units per two columns) cut in half
-// renders as its separate parts. Back off to the nearest whole cluster; the
-// ANSI walk above only ever lands on escape boundaries, which are cluster
-// boundaries too. A single cluster larger than the budget falls back to the
-// raw cut.
 function graphemeSafeEnd(text: string, end: number): number {
   let boundary = 0;
   for (const { index, segment } of graphemeSegmenter.segment(text)) {
@@ -1056,10 +1010,6 @@ function graphemeSafeEnd(text: string, end: number): number {
   return boundary;
 }
 
-// Mirrors pi-tui's OSC 8 bookkeeping: a sequence with a non-empty URI opens a
-// hyperlink (closed with the opener's terminator), an empty URI closes one.
-// SGR resets do not close hyperlinks, so a sliced opener would otherwise
-// leak the link onto later cells of the grid row.
 function osc8CloseAfterSequence(sequence: string): string | null | undefined {
   if (!sequence.startsWith('\u001B]8;')) return undefined;
   const terminator = sequence.endsWith('\u0007') ? '\u0007' : '\u001B\\';
@@ -1069,9 +1019,6 @@ function osc8CloseAfterSequence(sequence: string): string | null | undefined {
   return body.slice(separatorIndex + 1).length > 0 ? `\u001B]8;;${terminator}` : null;
 }
 
-// SGR state is cumulative: a parameter of 0 (or an empty parameter, which
-// defaults to 0) resets every attribute, anything else activates one, so a
-// sliced label with active styling needs a full reset appended.
 function sgrActiveAfterSequence(sequence: string, active: boolean): boolean {
   if (!sequence.startsWith('\u001B[') || !sequence.endsWith('m')) return active;
   const body = sequence.slice(2, -1);
@@ -1214,13 +1161,6 @@ export function agentSwarmResultSummaryFromOutput(output: string): AgentSwarmRes
   };
 }
 
-/**
- * Whether the output of a failed AgentSwarm call is a rejection that ended the
- * call before any subagent started, such as a call made while swarm mode is
- * off or one that failed input validation. The rejection is addressed to the
- * model, so the transcript shows no swarm for it. Cancellations keep their
- * aborted rendering.
- */
 export function isAgentSwarmRejection(output: string): boolean {
   return (
     !/\b(?:aborted|cancelled|interrupted)\b/i.test(output) &&

@@ -8,8 +8,6 @@ import { ZipFile } from 'yazl';
 import { importSessionZip, isImportId, listImportedIds, readImportMeta, deleteImported } from '../../src/lib/import-store';
 import { resolveSafeTarget } from '../../src/lib/zip-import';
 
-/** Build an in-memory zip from a {path: contents} map (yazl refuses to emit
- *  `..` entries, so traversal is tested via resolveSafeTarget directly). */
 function buildZip(entries: Record<string, string>): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const zip = new ZipFile();
@@ -63,7 +61,6 @@ describe('import-store', () => {
     expect(meta.manifest?.desktopVersion).toBe('1.2.3');
     expect(meta.manifest?.shellEnv).toEqual({ shell: '/bin/zsh', term: 'xterm-256color' });
 
-    // Extracted to imported/<id>/ with the session shape intact.
     const dir = join(home, 'imported', meta.importId);
     expect((await stat(join(dir, 'agents', 'main', 'wire.jsonl'))).isFile()).toBe(true);
     expect((await stat(join(dir, 'logs', 'kimi-code.log'))).isFile()).toBe(true);
@@ -78,7 +75,6 @@ describe('import-store', () => {
     home = await mkdtemp(join(tmpdir(), 'vis-import-'));
     const zip = await buildZip({ 'manifest.json': '{}', 'state.json': '{}' });
     await expect(importSessionZip(home, zip, null, new Date())).rejects.toThrow(/session bundle/);
-    // No partial directory left behind.
     expect(await listImportedIds(home)).toEqual([]);
   });
 

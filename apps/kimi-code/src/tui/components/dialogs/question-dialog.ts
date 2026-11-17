@@ -1,11 +1,3 @@
-/**
- * QuestionDialog — pi-tui version of the structured question prompt.
- *
- * Each question collects an answer locally, and a final Submit tab
- * reviews everything before the answers are emitted upstream. `Ctrl+N`
- * lends the keyboard to the Updates panel; meanwhile the dialog fades.
- */
-
 import {
   Container,
   Input,
@@ -36,9 +28,7 @@ const UNANSWERED_WARNING = 'Some questions are still unanswered.';
 const SUBMIT_ACTIONS = ['Submit', 'Cancel'] as const;
 
 export interface QuestionDialogOptions {
-  /** Whether the terminal window has focus; the dialog fades while it does not. */
   readonly isTerminalFocused?: () => boolean;
-  /** `Ctrl+N`: hand the keyboard to the Updates panel; false when it has nothing to show. */
   readonly onFocusUpdates?: () => boolean;
 }
 
@@ -48,14 +38,6 @@ interface DisplayOption {
   readonly kind: 'preset' | 'other';
 }
 
-/**
- * Push `content` to `lines`, wrapping it to fit `width` with a hanging
- * indent. The first physical line starts with `firstPrefix`; continuation
- * lines get `continuationPrefix`. Pass `tone` to wrap every emitted line
- * in a single ANSI span (cleaner for selection highlights and matches the
- * pre-wrap rendering tests expect); leave it undefined when the prefixes
- * already carry their own mixed styling.
- */
 function appendWrapped(
   lines: string[],
   firstPrefix: string,
@@ -92,17 +74,11 @@ export class QuestionDialogComponent extends Container implements Focusable {
   private reviewMessage: string | undefined;
   private lastAnswerMethod: QuestionSubmissionMethod | undefined;
 
-  /** Per-question cursor position. */
   private readonly cursors: number[];
-  /** Per-question single-select choice. */
   private readonly singleSelections: (number | undefined)[];
-  /** Per-question multi-select choices. */
   private readonly multiSelections: Set<number>[];
-  /** Per-question free-text drafts for the synthetic Other option. */
   private readonly otherDrafts: string[];
-  /** Per-question committed Other values. */
   private readonly committedOtherValues: (string | undefined)[];
-  /** Per-question derived answers used by tabs + review. */
   private readonly answers: (string | undefined)[];
 
   private readonly onToggleToolOutput: (() => void) | undefined;
@@ -135,8 +111,6 @@ export class QuestionDialogComponent extends Container implements Focusable {
     this.committedOtherValues = Array.from({ length: total }, (): string | undefined => undefined);
     this.answers = Array.from({ length: total }, (): string | undefined => undefined);
   }
-
-  // ── Input ─────────────────────────────────────────────────────────
 
   handleInput(data: string): void {
     if (matchesKey(normalizeCapsLockedCtrl(data), Key.ctrl('n')) && this.onFocusUpdates?.() === true) {
@@ -278,8 +252,6 @@ export class QuestionDialogComponent extends Container implements Focusable {
       this.executeSubmitAction(1, 'number_key');
     }
   }
-
-  // ── State mutation ────────────────────────────────────────────────
 
   private gotoTab(target: number): void {
     const total = this.totalTabs();
@@ -451,9 +423,6 @@ export class QuestionDialogComponent extends Container implements Focusable {
     this.onAnswer({ answers: out, method: this.lastAnswerMethod ?? method });
   }
 
-  // ── Render ────────────────────────────────────────────────────────
-
-  /** Faded while another panel holds the keyboard or the terminal window is inactive. */
   override render(width: number): string[] {
     this.otherInput.focused = this.focused && this.isEditingOther();
     const lines = this.isSubmitTab() ? this.renderSubmitTab(width) : this.renderQuestionTab(width);
@@ -694,8 +663,6 @@ export class QuestionDialogComponent extends Container implements Focusable {
     const max = Math.max(0, total - this.maxVisibleOptions);
     return Math.max(0, Math.min(cursor - half, max));
   }
-
-  // ── Helpers ───────────────────────────────────────────────────────
 
   private totalTabs(): number {
     return this.request.data.questions.length + 1;

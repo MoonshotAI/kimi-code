@@ -229,8 +229,6 @@ describe('supportsTerminalProgress', () => {
   });
 
   it('rejects terminals that show every OSC 9 payload as a notification', () => {
-    // iTerm2 treats any OSC 9 payload as a desktop notification, so the
-    // ConEmu-style 9;4 progress sequence must never be sent there.
     expect(supportsTerminalProgress({ TERM_PROGRAM: 'iTerm.app' })).toBe(false);
     expect(supportsTerminalProgress({ TERM_PROGRAM: 'Apple_Terminal' })).toBe(false);
     expect(supportsTerminalProgress({ TERM_PROGRAM: 'WarpTerminal' })).toBe(false);

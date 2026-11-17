@@ -9,17 +9,11 @@ const CONFIG_NAME = 'model_switch_confirm';
 export type ModelSwitchAction = 'compact' | 'continue' | 'cancel';
 export type ModelSwitchSessionType = 'old' | 'new' | 'all';
 
-/** A string served per locale. The TUI is English-only and always reads the
- *  `en` arm; `zh` rides along in the payload for the multi-locale desktop
- *  client. */
 export interface ModelSwitchLocalizedString {
   en?: string;
   zh?: string;
 }
 
-/** A confirm-dialog gate for one model switch. `from` and `to` match upstream
- *  model ids exactly, or any id when the whole field is `*`. The first rule
- *  matching the actual session type and both ids owns the dialog content. */
 export interface ModelSwitchRule {
   from: string | string[];
   to: string | string[];
@@ -33,7 +27,6 @@ export interface ModelSwitchConfirmConfig {
   rules: ModelSwitchRule[];
 }
 
-/** Fetch/parse failures resolve to this disabled default, i.e. no dialog. */
 export const DEFAULT_MODEL_SWITCH_CONFIRM_CONFIG: ModelSwitchConfirmConfig = {
   enable: false,
   rules: [],
@@ -68,9 +61,6 @@ const modelSwitchConfirmConfigSchema = z.unknown().transform((raw): ModelSwitchC
   return { enable: enable.success ? enable.data : false, rules };
 });
 
-/** In-process copy of the config. Unlike the other named configs this one is
- *  never persisted and has no TTL: startup and auth-context changes refresh
- *  it, and the dialog gate reads only this memory copy. */
 let cached: ModelSwitchConfirmConfig | undefined;
 let loadState: 'idle' | 'loading' | 'settled' = 'idle';
 let inFlight:
@@ -84,9 +74,6 @@ let inFlight:
   | undefined;
 let latestRequest: object | undefined;
 
-/** Starts a network refresh, or joins one for the same auth context. Automatic
- *  picker loads stop after the first settled attempt; explicit refreshes still
- *  always refetch. A failed fetch disables the dialog until such a refresh. */
 export async function refreshModelSwitchConfirmConfig(
   options: ClientConfigFetchOptions = {},
 ): Promise<ModelSwitchConfirmConfig | undefined> {
@@ -128,13 +115,10 @@ export function needsModelSwitchConfirmConfigRefresh(): boolean {
   return cached === undefined && loadState !== 'settled';
 }
 
-/** Synchronous read of the in-process copy; undefined until the first
- *  successful refresh of this process. */
 export function peekModelSwitchConfirmConfig(): ModelSwitchConfirmConfig | undefined {
   return cached;
 }
 
-/** Test hook: drop the in-process copy. */
 export function resetModelSwitchConfirmConfigCache(): void {
   cached = undefined;
   loadState = 'idle';
@@ -159,9 +143,6 @@ export function matchModelSwitchRule(
   );
 }
 
-/** Resolve the dialog body text for a matched rule: the rule's English arm,
- *  or undefined when the rule carries no hint — the dialog then shows no body
- *  line. There is deliberately no built-in fallback copy. */
 export function resolveModelSwitchHint(rule: ModelSwitchRule | undefined): string | undefined {
   return rule?.hint?.en;
 }

@@ -1,20 +1,3 @@
-/**
- * ACP-backed `IHostFileSystem` — Session-scoped `IHostFileSystem` that routes
- * text file reads/writes through the ACP client (`fs.readTextFile` /
- * `fs.writeTextFile`, keyed by this session's `sessionId`) and delegates every
- * other operation (binary IO, stat/realpath/readdir/mkdir/remove, exclusive
- * create) to a node-local inner backend.
- *
- * Registered at Session scope so it shadows the App-scope node-local
- * `IHostFileSystem` for Session- and Agent-scope consumers (the os file tools),
- * while App-scope consumers (persistence, skill loading, workspace registry)
- * keep using the real local disk.
- *
- * Lives in `acp-server` (not `agent-core-v2`) because it is ACP-specific: the
- * engine stays agnostic of the ACP client, and only this host binds the client
- * connection.
- */
-
 import { dirname } from 'node:path';
 
 import { RequestError } from '@agentclientprotocol/sdk';
@@ -40,7 +23,6 @@ import {
 
 import { IAcpConnection } from './acpConnection';
 
-/** Options type lifted from `IHostFileSystem.readText` / `readLines`. */
 type ReadTextOptions = NonNullable<Parameters<IHostFileSystem['readText']>[1]>;
 
 function* splitLinesKeepingTerminator(text: string): Generator<string> {
@@ -64,11 +46,6 @@ function isResourceNotFound(error: unknown): boolean {
 export class AcpHostFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
 
-  /**
-   * Local inner backend for every operation the ACP `fs` protocol cannot
-   * express (binary IO, stat, realpath, directory ops, exclusive create),
-   * plus capability fallbacks for text operations.
-   */
   private readonly inner = new HostFileSystem();
 
   constructor(
@@ -80,19 +57,12 @@ export class AcpHostFileSystem implements IHostFileSystem {
     if (!this.connection.fsReadTextFile) {
       return this.inner.readText(path, options);
     }
-    // ACP `fs.readTextFile` returns already-decoded UTF-8 text, so the
-    // `encoding`/`errors` decode options are a no-op here.
     const { content } = await this.connection
       .get()
       .readTextFile({ sessionId: this.ctx.sessionId, path });
     return content;
   }
 
-  /**
-   * Client write failures carry no filesystem error code. When the local
-   * parent is missing or is not a directory, re-raise the failure as the
-   * matching host fs error so callers can create the parent and retry.
-   */
   async writeText(path: string, data: string): Promise<void> {
     if (!this.connection.fsWriteTextFile) {
       return this.inner.writeText(path, data);
@@ -116,12 +86,6 @@ export class AcpHostFileSystem implements IHostFileSystem {
     }
   }
 
-  /**
-   * ACP has no append RPC. When both text capabilities are available, emulate
-   * append against the client's current buffer; otherwise preserve local
-   * append semantics. A structured ACP resource-not-found means an empty
-   * client file, while all other read failures are propagated.
-   */
   async appendText(path: string, data: string): Promise<void> {
     if (!this.connection.fsReadTextFile || !this.connection.fsWriteTextFile) {
       return this.inner.appendText(path, data);
@@ -148,10 +112,6 @@ export class AcpHostFileSystem implements IHostFileSystem {
     return this.inner.readFileHead(path, maxBytes);
   }
 
-  /**
-   * Bridge byte writes only when the payload is valid UTF-8. Binary data stays
-   * on the local backend rather than being silently replaced with U+FFFD.
-   */
   async writeBytes(path: string, data: Uint8Array): Promise<void> {
     if (!this.connection.fsWriteTextFile) {
       return this.inner.writeBytes(path, data);

@@ -1,12 +1,3 @@
-/**
- * WaitFor renderer — the wait result is a timeline (header fields, then
- * `[finished]` / `[completed_during_wait]` / `[still_running]` sections),
- * so the collapsed body shows what the wait came back with instead of the
- * raw key-value dump: the finished task with its outcome, plus counts of
- * tasks that finished alongside or are still running. A timeout is not an
- * error (the tool says so itself), so it renders in the warning tone.
- */
-
 import { Text, type Component } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';

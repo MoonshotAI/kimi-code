@@ -125,7 +125,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     peekMock.mockReturnValue(CONFIG);
     const { host } = makeHost({
       appState: {
-        availableProviders: { 'managed:kimi-code': {} }, // apiKey form: no oauth
+        availableProviders: { 'managed:kimi-code': {} },
       },
     });
     const controller = new CacheHintController(host);
@@ -137,12 +137,9 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
   });
 
   it('does not cold-fetch for providers that can never match a rule', async () => {
-    // Config cache cold (peek returns undefined by default): without the
-    // applicability gate this submit would be swallowed for a fetch that can
-    // never produce a hint.
     const { host } = makeHost({
       appState: {
-        availableProviders: { 'managed:kimi-code': {} }, // apiKey form: no oauth
+        availableProviders: { 'managed:kimi-code': {} },
       },
     });
     const controller = new CacheHintController(host);
@@ -162,7 +159,6 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
     await flush();
     expect(getMock).toHaveBeenCalled();
-    // Fetch resolved without a matching rule → the message is released.
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
     vi.restoreAllMocks();
@@ -239,10 +235,9 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       handleInput: (data: string) => void;
     };
-    dialog.handleInput('\u001B'); // dismiss the first dialog
+    dialog.handleInput('\u001B');
     await flush();
 
-    // Nothing was sent; both inputs are back in the editor, newline-joined.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld', undefined);
   });
@@ -333,12 +328,9 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       handleInput: (data: string) => void;
     };
-    dialog.handleInput('\u001B'); // dismiss
+    dialog.handleInput('\u001B');
     await flush();
 
-    // Nothing was sent; the draft is back in the editor and the stash's
-    // retains go through recall — without this the retain count never
-    // returns to zero and the upload can never be lease-deleted.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     expect(host.restoreInputText).toHaveBeenCalledWith('describe [image #1 (1×1)]', undefined);
     expect(host.recallStashedMedia).toHaveBeenCalledWith(extraction);
@@ -365,7 +357,6 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     controller.recordActivity();
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
     expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
-    // A foreground operation (turn / /compact) kicked off mid-fetch.
     state.appState.streamingPhase = 'waiting';
     await flush();
     vi.restoreAllMocks();
@@ -396,8 +387,6 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     const controller = new CacheHintController(host);
     controller.recordActivity();
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
-    // A send begins a turn but fails before any model request — the expired
-    // baseline must survive, so the retry still intercepts.
     controller.onTurnBegin();
     expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
     vi.restoreAllMocks();
@@ -426,8 +415,8 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       handleInput: (data: string) => void;
     };
-    dialog.handleInput('\u001B[B'); // down → new
-    dialog.handleInput('\u001B[B'); // down → continue
+    dialog.handleInput('\u001B[B');
+    dialog.handleInput('\u001B[B');
     dialog.handleInput('\r');
     await flush();
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('hello', undefined);
@@ -468,8 +457,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       handleInput: (data: string) => void;
     };
-    dialog.handleInput('\r'); // compact (default)
-    // The engine flips isCompacting asynchronously via the started event.
+    dialog.handleInput('\r');
     setTimeout(() => {
       state.appState.isCompacting = true;
     }, 10);
@@ -491,7 +479,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
       handleInput: (data: string) => void;
     };
-    dialog.handleInput('\u001B[B'); // down → new
+    dialog.handleInput('\u001B[B');
     dialog.handleInput('\r');
     await flush();
     expect(host.createNewSession).toHaveBeenCalled();
@@ -620,7 +608,6 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
 });
 
 describe('CacheHintController scenario 1 (resume)', () => {
-  /** maybeShowOnResume awaits the user's choice; dismiss the dialog once mounted. */
   async function showOnResumeAndDismiss(
     controller: CacheHintController,
     host: CacheHintHost,
@@ -683,7 +670,7 @@ describe('CacheHintController scenario 1 (resume)', () => {
     const controller = new CacheHintController(host);
 
     const pending = controller.maybeShowOnResume();
-    await flush(); // let the fetch start (resolveFetch gets assigned)
+    await flush();
     (host as unknown as { session: unknown }).session = { id: 'other-session' };
     resolveFetch(CONFIG);
     await pending;
@@ -704,7 +691,6 @@ describe('CacheHintController scenario 1 (resume)', () => {
 
     const pending = controller.maybeShowOnResume();
     await flush();
-    // The user sent the first prompt while the fetch was in flight.
     state.appState.streamingPhase = 'waiting';
     resolveFetch(CONFIG);
     await pending;
@@ -719,16 +705,12 @@ describe('CacheHintController scenario 1 (resume)', () => {
           resolveFetch = res;
         }),
     );
-    // Idle long past the window when the resume check started…
     const session = resumeSession([Date.now() - 1200_000], 150000);
     const { host } = makeHost({ session });
     const controller = new CacheHintController(host);
 
     const pending = controller.maybeShowOnResume();
-    await flush(); // let the fetch start (resolveFetch gets assigned)
-    // …but the user's first prompt ran to completion while the config was in
-    // flight, refreshing the server-side cache — the stale replay timestamp
-    // must not trigger the dialog.
+    await flush();
     controller.recordActivity();
     resolveFetch(CONFIG);
     await pending;
@@ -751,7 +733,6 @@ describe('CacheHintController scenario 1 (resume)', () => {
     const { host } = makeHost({ session });
     const controller = new CacheHintController(host);
 
-    // The recent permission change must not mask the expired cache.
     await showOnResumeAndDismiss(controller, host);
     expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
   });
@@ -779,7 +760,6 @@ describe('CacheHintController scenario 1 (resume)', () => {
     getMock.mockResolvedValue(CONFIG);
     peekMock.mockReturnValue(CONFIG);
     const now = Date.now();
-    // 9 minutes into a 10-minute cache window — nothing to show on resume.
     const session = resumeSession([now - 540_000], 150000);
     const { host } = makeHost({ session });
     const controller = new CacheHintController(host);
@@ -787,8 +767,6 @@ describe('CacheHintController scenario 1 (resume)', () => {
     await controller.maybeShowOnResume();
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
 
-    // Two minutes later the window has expired; the seeded baseline lets the
-    // idle-submit path catch it instead of waving the prompt through.
     vi.spyOn(Date, 'now').mockReturnValue(now + 660_000);
     expect(controller.maybeInterceptOnSubmit('hello')).toBe(true);
     expect(host.mountEditorReplacement).toHaveBeenCalledOnce();

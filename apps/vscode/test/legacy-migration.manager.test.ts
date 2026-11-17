@@ -1,9 +1,3 @@
-/**
- * Scenario: VS Code discovers and runs legacy kimi-cli migration without touching a real home.
- * Responsibilities: source selection, shared-marker suppression, real migration, retry, and clear reports.
- * Wiring: real temporary files and the public migration package; no stubbed collaborators.
- * Run: pnpm --filter kimi-code test -- legacy-migration.manager.test.ts
- */
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

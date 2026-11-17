@@ -11,7 +11,6 @@ interface ForkTurnMessage {
   }[];
 }
 
-/** Return the core turnId for an assistant bubble, with a legacy message-derived fallback. */
 export function getForkTurnIndex(
   messages: readonly ForkTurnMessage[],
   messageIndex: number,

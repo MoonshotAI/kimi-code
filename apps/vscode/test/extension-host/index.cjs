@@ -103,7 +103,5 @@ function describeTabs() {
 }
 
 function isKimiPanelViewType(viewType) {
-  // VS Code 1.100 exposes the internal `mainThreadWebview-` prefix here;
-  // newer hosts expose the extension's original view type.
   return viewType === "kimiPanel" || viewType.endsWith("-kimiPanel");
 }

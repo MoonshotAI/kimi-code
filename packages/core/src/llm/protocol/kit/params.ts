@@ -1,6 +1,3 @@
-/**
- * Merges caller-supplied extra parameters into encoded request params, dropping undefined values.
- */
 import { assign, shake } from 'radashi';
 
 export function withExtras<TParams extends object>(

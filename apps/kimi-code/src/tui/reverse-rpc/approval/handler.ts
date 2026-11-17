@@ -24,8 +24,6 @@ export function createApprovalRequestHandler(
     });
     try {
       const data = adaptApprovalRequest(event);
-      // A badge lookup failure must never cancel the approval itself — it
-      // degrades to no badge.
       let environment: string | undefined;
       try {
         environment = resolveEnvironment?.();

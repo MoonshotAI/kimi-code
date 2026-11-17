@@ -1,8 +1,3 @@
-/**
- * Loop hook contract: the hook points (turn start, message append, step start, tool batch start, step
- * stop and continue), their event payloads and allowed decisions, registration options, and hook
- * lifecycle events.
- */
 import type { ContentPart, Message, ToolCall } from '#/llm/message';
 import type { QueuedItem, TurnTrigger } from './inbox';
 import type { Cause, StepOutcome } from './outcome';

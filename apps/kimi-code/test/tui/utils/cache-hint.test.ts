@@ -11,7 +11,7 @@ const CONFIG: CacheHintConfig = {
 };
 
 const NOW = 1_800_000_000_000;
-const IDLE_BEYOND_TTL = NOW - 601_000; // 601s > 600s cache_duration
+const IDLE_BEYOND_TTL = NOW - 601_000;
 
 function input(overrides: Partial<Parameters<typeof evaluateCacheHint>[0]> = {}) {
   return {

@@ -70,8 +70,6 @@ export class KimiAuthFacade {
       onRefresh: options.onRefresh,
       configAdapter: {
         configPath: options.configPath,
-        // Write-path base read: strict (a salvaged base would drop the user's
-        // broken-but-fixable sections on rewrite) with an actionable message.
         read: () => readConfigFileForUpdate(options.configPath) as SDKManagedConfig,
         write: async (config) => {
           await writeConfigFile(options.configPath, config);
@@ -164,8 +162,6 @@ export class KimiAuthFacade {
         try {
           return await provider.getAccessToken(options);
         } catch (error) {
-          // Classify OAuth token failures into the public KimiError protocol;
-          // unrecognized errors are rethrown raw (see mapOAuthTokenError).
           throw mapOAuthTokenError(error, providerName) ?? error;
         }
       },
@@ -177,9 +173,6 @@ export class KimiAuthFacade {
     readonly baseUrl?: string | undefined;
   } {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    // Read path: token/status resolution must work off a degraded config
-    // instead of failing the session when an unrelated section is broken.
-    // Write paths (the toolkit's configAdapter.read) stay strict.
     const config = loadRuntimeConfigSafe(this.options.configPath).config;
     const provider = config.providers[name];
     return {

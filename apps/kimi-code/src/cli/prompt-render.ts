@@ -1,35 +1,11 @@
-/**
- * Output rendering for `kimi -p` (print mode) — shared by the v1 driver
- * (`run-prompt.ts`) and the native v2 runner (`v2/run-v2-print.ts`).
- *
- * Both engines feed the same writer classes: v1 via the SDK `Event` stream, v2
- * via the main agent's native `IEventBus` (whose `DomainEvent` payloads are
- * already v1-protocol-shaped). Keeping the writers here lets v2 reuse them
- * without re-implementing rendering, while v1's `runPromptTurn` keeps its own
- * event-filtering / completion flow intact.
- */
-
 import type { PromptOutputFormat } from './options';
 
-/**
- * Structural hook-result shape the renderer reads. Both the v1 SDK
- * `HookResultEvent` and the v2 native `hook.result` `DomainEvent` satisfy it,
- * so the renderer stays engine-agnostic without depending on either event
- * definition.
- */
 interface HookResultEventLike {
   readonly hookEvent: string;
   readonly content: string;
   readonly blocked?: boolean;
 }
 
-/**
- * Structural retry shape the renderer reads. Mirrors the v1 SDK
- * `turn.step.retrying` event fields the stream-json meta line surfaces. Both
- * drivers forward retries to `writeRetrying`: v1 from its SDK event stream,
- * v2 from the native `turn.step.retrying` `DomainEvent` (same field names),
- * after discarding the failed attempt's partial output.
- */
 interface RetryingEventLike {
   readonly failedAttempt: number;
   readonly nextAttempt: number;
@@ -129,9 +105,6 @@ export class PromptTranscriptWriter implements PromptTurnWriter {
 
   writeToolResult(): void {}
 
-  // Text `-p` keeps retries silent: only the failed attempt's partial assistant
-  // text is discarded (handled by the caller). No human-readable retry line is
-  // emitted, matching the prior behavior.
   writeRetrying(): void {}
 
   flushAssistant(): void {
@@ -207,9 +180,6 @@ export class PromptJsonWriter implements PromptTurnWriter {
   }
 
   writeRetrying(event: RetryingEventLike): void {
-    // Emit a machine-readable meta line so stream-json consumers can observe
-    // provider retries. The failed attempt's partial assistant text was already
-    // discarded by the caller, so no half-formed assistant message leaks.
     const message: PromptJsonRetryMetaMessage = {
       role: 'meta',
       type: 'turn.step.retrying',

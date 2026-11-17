@@ -1,14 +1,3 @@
-/**
- * Base class for promise-based reverse RPC dialog controllers.
- *
- * Approval and question flows wait for a UI action before returning a response.
- * Subclasses only need to define the default cancellation response.
- *
- * When concurrent requests arrive (e.g. multiple parallel subagents each
- * needing approval), only one panel is shown at a time; additional requests
- * are queued in arrival order and advance after the current one resolves.
- */
-
 export interface ReverseRpcUIHooks<TPayload> {
   showPanel(payload: TPayload): void;
   hidePanel(): void;
@@ -29,10 +18,6 @@ export abstract class ReverseRpcController<TPayload, TResponse> {
     this.uiHooks = hooks;
   }
 
-  /**
-   * Called when a reverse RPC request arrives from core. The returned promise
-   * resolves after the user responds or `cancelAll` forces cancellation.
-   */
   show(payload: TPayload): Promise<TResponse> {
     return new Promise<TResponse>((resolve) => {
       const entry: Pending<TPayload, TResponse> = { payload, resolve };
@@ -45,7 +30,6 @@ export abstract class ReverseRpcController<TPayload, TResponse> {
     });
   }
 
-  /** Called by the UI after the user makes a panel choice. */
   respond(data: TResponse): void {
     const pending = this.current;
     this.current = null;
@@ -56,7 +40,6 @@ export abstract class ReverseRpcController<TPayload, TResponse> {
     this.advanceOrHide();
   }
 
-  /** Cancels all pending requests during shutdown or session switches. */
   cancelAll(reason: string, hidePanel = true): void {
     const all = [...(this.current === null ? [] : [this.current]), ...this.queue];
     this.current = null;
@@ -95,12 +78,6 @@ export abstract class ReverseRpcController<TPayload, TResponse> {
     this.queue = remaining;
   }
 
-  /**
-   * Subclasses override to short-circuit queued requests when an answer to the
-   * just-resolved one (e.g. an approve-for-session) implies the same answer
-   * for matching queued requests. Return `undefined` to leave the queued
-   * request waiting for its own panel turn.
-   */
   protected autoResolveFor(
     _resolvedPayload: TPayload,
     _response: TResponse,
