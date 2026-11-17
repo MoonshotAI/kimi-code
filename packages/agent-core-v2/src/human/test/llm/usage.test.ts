@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { DecodeSink } from '#/llm/protocol/protocol';
 import { createDecoder as createAnthropicDecoder } from '#/llm/builtin/protocol/anthropic/decode';
-import { createDecoder as createOpenAIDecoder } from '#/llm/builtin/protocol/openai/decode';
+import {
+  createDecoder as createOpenAIDecoder,
+  replay as replayOpenAIResponse,
+} from '#/llm/builtin/protocol/openai/decode';
 import type { TokenUsage } from '#/llm-requester/usage';
 
 function createSink() {
@@ -19,7 +22,7 @@ function createSink() {
 }
 
 describe('openai decoder stream usage', () => {
-  it('preserves missing cache reads and explicit zeroes from the usage chunk', () => {
+  it('preserves top-level usage and falls back to choice usage', () => {
     const { sink, usages } = createSink();
     const raw = { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 };
     createOpenAIDecoder(sink).push({ choices: [], usage: raw });
@@ -31,6 +34,29 @@ describe('openai decoder stream usage', () => {
     const reportedRaw = { prompt_tokens: 120, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 0 } };
     createOpenAIDecoder(reported.sink).push({ usage: reportedRaw });
     expect(reported.usages[0]?.inputCacheRead).toBe(0);
+
+    const choiceRaw = { prompt_tokens: 5, completion_tokens: 1 };
+    const expectedChoiceUsage = [{
+      inputOther: 5,
+      output: 1,
+      inputCacheRead: undefined,
+      inputCacheCreation: 0,
+      raw: choiceRaw,
+    }];
+    const choice = createSink();
+    createOpenAIDecoder(choice.sink).push({
+      choices: [{ delta: { content: 'ok' }, usage: choiceRaw }],
+    });
+    expect(choice.usages).toEqual(expectedChoiceUsage);
+
+    const replayed = createSink();
+    const replayDecoder = createOpenAIDecoder(replayed.sink);
+    for (const chunk of replayOpenAIResponse({
+      choices: [{ message: { content: 'ok' }, usage: choiceRaw }],
+    })) {
+      replayDecoder.push(chunk);
+    }
+    expect(replayed.usages).toEqual(expectedChoiceUsage);
   });
 
   it('splits cached tokens out of the prompt total', () => {
