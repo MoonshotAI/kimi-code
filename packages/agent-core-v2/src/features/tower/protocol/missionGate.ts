@@ -176,7 +176,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'stale-base',
       mission.kind === 'artifact'
-        ? `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land artifacts that were never produced or accepted against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree and refuses while the worker is mid-turn or the worktree is dirty), then have the worker run TowerComplete with the current report and key_artifacts at the rebased tip, present that new request for fresh explicit human acceptance of the entire tip, and retry the merge`
+        ? `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land artifacts that were never produced or accepted against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree and refuses while the worker is mid-turn or the worktree is dirty), then have the worker run TowerComplete with the current report and key_artifacts at the rebased tip, present that new request and record fresh artifact acceptance of the entire tip — in auto mode after presenting, otherwise only after the user approves — and retry the merge`
         : `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land code that was never built or reviewed against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree, refuses while the worker is mid-turn or the worktree is dirty, and a conflict-free rebase waives the re-review), then retry the merge`,
     );
   }
@@ -201,7 +201,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'review-hold',
       mission.kind === 'artifact'
-        ? `latest artifact acceptance record (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) says hold — do not merge until later clean human acceptance with merge approval supersedes it`
+        ? `latest artifact acceptance record (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) says hold — do not merge until later clean artifact acceptance with merge approval supersedes it`
         : `latest applicable review (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) says hold — do not merge until a later clean review with merge approval supersedes it`,
     );
   }
@@ -209,7 +209,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'not-clean',
       mission.kind === 'artifact'
-        ? `latest artifact feedback (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) is "${selectedReview.status}" — rework and fresh clean human acceptance are required`
+        ? `latest artifact feedback (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) is "${selectedReview.status}" — rework and fresh clean artifact acceptance are required`
         : `latest review (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) is "${selectedReview.status}" — a clean round is required`,
     );
   }
@@ -218,7 +218,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'review-not-approved',
       mission.kind === 'artifact'
-        ? `latest clean artifact acceptance (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) has merge verdict "${mergeVerdict || '(missing)'}" — only explicit human acceptance with merge verdict "merge" can pass`
+        ? `latest clean artifact acceptance (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) has merge verdict "${mergeVerdict || '(missing)'}" — only artifact acceptance with merge verdict "merge" can pass`
         : `latest clean review (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) has merge verdict "${mergeVerdict}" — fix-then-merge is not approval; only a clean review with merge verdict "merge" can pass`,
     );
   }
@@ -226,7 +226,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'tip-moved',
       mission.kind === 'artifact'
-        ? `${mission.branch} moved since the human acceptance (accepted ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — have the worker run TowerComplete with the current report and key_artifacts at the moved tip, present that new request for fresh explicit human acceptance of the entire tip, and retry the merge; rebase never waives artifact acceptance`
+        ? `${mission.branch} moved since the human acceptance (accepted ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — have the worker run TowerComplete with the current report and key_artifacts at the moved tip, present that new request and record fresh artifact acceptance of the entire tip — in auto mode after presenting, otherwise only after the user approves — and retry the merge; rebase never waives artifact acceptance`
         : `${mission.branch} moved since the clean review (reviewed ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — re-review required`,
     );
   }
@@ -234,13 +234,13 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     if (mission.completionTip === undefined) {
       return block(
         'completion-tip-mismatch',
-        `${mission.branch} has explicit human acceptance but no recorded completion tip — the acceptance cannot be tied to the delivery the user approved; ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance`,
+        `${mission.branch} has artifact acceptance but no recorded completion tip — the acceptance cannot be tied to a recorded delivery; ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance — in auto mode after presenting, otherwise only after the user approves`,
       );
     }
     if (selectedReview.reviewedCommit !== mission.completionTip) {
       return block(
         'completion-tip-mismatch',
-        `${mission.branch} was accepted at ${selectedReview.reviewedCommit.slice(0, 7)} but its acceptance-request covered ${mission.completionTip.slice(0, 7)} — the user approved a different tip; ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance`,
+        `${mission.branch} was accepted at ${selectedReview.reviewedCommit.slice(0, 7)} but its acceptance-request covered ${mission.completionTip.slice(0, 7)} — the recorded acceptance covered a different tip; ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance — in auto mode after presenting, otherwise only after the user approves`,
       );
     }
   }

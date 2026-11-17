@@ -1623,7 +1623,7 @@ describe('merge gate', () => {
 
     await commitFile(worktreeOf(mission), 'reports/extra.csv', 'name,value\na,1\n', 'add data');
     await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
-      /fresh explicit human acceptance/,
+      /fresh artifact acceptance/,
     );
     await expect(cleanReview('tower', mission.branch)).rejects.toThrow(
       /advanced after the artifact acceptance-request/,

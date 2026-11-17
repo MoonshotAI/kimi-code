@@ -1987,7 +1987,7 @@ describe('TowerMergeTool', () => {
 
     const moved = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
     expect(moved.isError).toBe(true);
-    expect(moved.output).toContain('fresh explicit human acceptance');
+    expect(moved.output).toContain('fresh artifact acceptance');
     expect(moved.output).toContain('rebase never waives artifact acceptance');
 
     const freshAcceptance = {
