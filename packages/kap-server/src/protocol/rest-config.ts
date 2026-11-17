@@ -31,6 +31,7 @@ export const configResponseSchema = z
     subagent: z.unknown().optional(),
     secondary_model: z.unknown().optional(),
     experimental: z.record(z.string(), z.boolean()).optional(),
+    artex: z.unknown().optional(),
     telemetry: z.boolean().optional(),
     disable_feedback_survey: z.boolean().optional(),
     raw: z.record(z.string(), z.unknown()).optional(),
@@ -59,6 +60,7 @@ export const patchConfigRequestSchema = z.object({
   subagent: z.unknown().optional(),
   secondary_model: z.unknown().optional(),
   experimental: z.record(z.string(), z.boolean()).optional(),
+  artex: z.unknown().optional(),
   telemetry: z.boolean().optional(),
   disable_feedback_survey: z.boolean().optional(),
 });

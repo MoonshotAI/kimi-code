@@ -1,4 +1,5 @@
 import {
+  ARTEX_FLAG_ID,
   DEFAULT_AGENT_PROFILE_NAME,
   ErrorCodes,
   Error2,
@@ -8,9 +9,11 @@ import {
   IAgentPlanService,
   IAgentSwarmService,
   IAgentTowerService,
+  IFlagService,
   IModelCatalog,
   IModelService,
   IProviderService,
+  isArtexFeatureAssembled,
   resumeSessionById,
   towerEnterFailureMessage,
   type BindAgentInput,
@@ -18,6 +21,10 @@ import {
   type PermissionMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { IArtexModeService } from '@moonshot-ai/agent-core-v2/features/artex/agent/artexMode';
+import { IArtexSessionContext } from '@moonshot-ai/agent-core-v2/features/artex/session/artexSessionContext';
+
+import { optionalService } from '../transport/ws/v1/agentState';
 import type { SessionAgentConfigPartial } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { ErrorCode } from '../protocol/error-codes';
@@ -138,6 +145,37 @@ export async function applyAgentConfigToSession(
       }
     } else {
       await tower.exit();
+    }
+  }
+  if (agentConfig.artex_mode !== undefined) {
+    const flags = session.accessor.get(IFlagService);
+    if (agentConfig.artex_mode && (!flags.enabled(ARTEX_FLAG_ID) || !isArtexFeatureAssembled(flags))) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'the artex experiment is disabled; enable it with KIMI_CODE_EXPERIMENTAL_ARTEX=1 or `[experimental] artex = true` in config.toml',
+      );
+    }
+    const artex = optionalService(agent, IArtexModeService);
+    if (artex !== undefined) {
+      if (agentConfig.artex_mode) {
+        if (agentConfig.artex_exploration_id !== undefined) {
+          try {
+            session.accessor
+              .get(IArtexSessionContext)
+              .setActiveExplorationId(agentConfig.artex_exploration_id);
+          } catch {
+            // session context unavailable when ARTEX is not assembled
+          }
+        }
+        artex.enter(agentConfig.artex_exploration_id);
+        if (!artex.isActive) {
+          throw new Error2(ErrorCodes.REQUEST_INVALID, 'ARTEX mode could not be enabled');
+        }
+      } else {
+        artex.exit();
+      }
+    } else if (agentConfig.artex_mode) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'ARTEX is not enabled');
     }
   }
   if (agentConfig.goal_objective !== undefined) {

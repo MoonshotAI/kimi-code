@@ -51,13 +51,21 @@ export async function resolveScope(
   }
 }
 
+export type PseudoServiceResolver = (
+  core: Scope,
+  serviceName: string,
+) => object | undefined;
+
 export async function resolveService(
   core: Scope,
   scopeKind: ScopeKind,
   params: Record<string, string>,
   serviceName: string,
   lookup: ChannelLookup = (name) => resolveAnyScopedServiceId(core, name),
+  pseudo?: PseudoServiceResolver,
 ): Promise<object> {
+  const pseudoService = pseudo?.(core, serviceName);
+  if (pseudoService !== undefined) return pseudoService;
   const scope = await resolveScope(core, scopeKind, params);
   if (scope === undefined) {
     throw new Error2(
@@ -87,8 +95,9 @@ export async function dispatch(
   method: string,
   arg: unknown,
   lookup: ChannelLookup = (name) => resolveAnyScopedServiceId(core, name),
+  pseudo?: PseudoServiceResolver,
 ): Promise<unknown> {
-  const service = await resolveService(core, scopeKind, params, serviceName, lookup);
+  const service = await resolveService(core, scopeKind, params, serviceName, lookup, pseudo);
   const member = (service as Record<string, unknown>)[method];
   if (member === undefined) {
     throw new Error2(ErrorCodes.REQUEST_INVALID, `method not found: ${serviceName}.${method}`);
@@ -99,6 +108,19 @@ export async function dispatch(
   }
 
   const args = Array.isArray(arg) ? arg : arg === undefined ? [] : [arg];
+  if (serviceName === 'artexSessionService' && method === 'trafficBlob') {
+    const [hash, offset, length] = args as [string, number | undefined, number | undefined];
+    const result = (await (member as (...a: unknown[]) => Promise<unknown>).apply(service, [
+      hash,
+      offset,
+      length,
+    ])) as { data: Buffer; total: number } | undefined;
+    if (result === undefined) return undefined;
+    return assertSerializable({
+      dataBase64: Buffer.from(result.data).toString('base64'),
+      total: result.total,
+    });
+  }
   const result = await (member as (...a: unknown[]) => unknown).apply(service, args);
   return assertSerializable(result);
 }

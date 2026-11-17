@@ -10,6 +10,7 @@ import { okEnvelope } from '../envelope';
 import type { MetaFeature } from '../protocol/rest-meta';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import type { ConversationService } from '../services/conversation/conversationService';
+import { registerArtexRoutes } from './artex';
 import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
@@ -150,6 +151,7 @@ export async function registerApiV1Routes(
         core,
       );
       registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
+      registerArtexRoutes(apiV1 as unknown as Parameters<typeof registerArtexRoutes>[0], core);
       registerInteractionsRoutes(
         apiV1 as unknown as Parameters<typeof registerInteractionsRoutes>[0],
         core,

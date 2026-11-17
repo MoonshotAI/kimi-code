@@ -37,6 +37,8 @@ const STATE_EVENT_TYPES = [
   'compaction.blocked',
   'agent.status.updated',
   'goal.updated',
+  'artex_mode.enter',
+  'artex_mode.exit',
 ] as const;
 
 export type AgentFeedSend = (agentId: string, message: AgentFeedMessage) => void;

@@ -23,6 +23,12 @@ import {
   usageEventMessageSchema,
 } from './ws-agent';
 import {
+  artexActivityAppendedMessageSchema,
+  artexExplorationUpdatedMessageSchema,
+  artexFindingReportedMessageSchema,
+  artexTrafficCapturedMessageSchema,
+} from './ws-artex';
+import {
   taskBackgroundMessageSchema,
   taskEventMessageSchema,
   taskListMessageSchema,
@@ -243,6 +249,37 @@ export const todoEventOperation = {
     'Todo list of one subscribed agent, sent when a connection starts receiving that agent and on every change, including undo; it replaces the client list.',
 } as const satisfies WsOperationDefinition;
 
+export const artexEventOperations = [
+  {
+    type: 'artex.exploration.updated',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: artexExplorationUpdatedMessageSchema,
+    description: 'ARTEX exploration state changed for a subscribed session.',
+  },
+  {
+    type: 'artex.finding.reported',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: artexFindingReportedMessageSchema,
+    description: 'ARTEX finding reported in the active exploration.',
+  },
+  {
+    type: 'artex.activity.appended',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: artexActivityAppendedMessageSchema,
+    description: 'ARTEX activity log entry appended.',
+  },
+  {
+    type: 'artex.traffic.captured',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: artexTrafficCapturedMessageSchema,
+    description: 'ARTEX proxy captured HTTP exchange metadata.',
+  },
+] as const satisfies readonly WsOperationDefinition[];
+
 export const conversationEventOperations = [
   {
     type: 'turns',
@@ -337,5 +374,6 @@ export const wsOperations = [
   usageEventOperation,
   goalEventOperation,
   todoEventOperation,
+  ...artexEventOperations,
   ...conversationEventOperations,
 ] as const satisfies readonly WsOperationDefinition[];

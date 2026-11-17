@@ -16,6 +16,7 @@ import {
   ErrorCodes,
   IAgentLifecycleService,
   IEventService,
+  IFlagService,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   ISessionActivityView,
@@ -48,6 +49,7 @@ import {
 } from '../../../protocol/interaction-wire';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import type { AgentFeedMessage } from '../../../protocol/ws-agent';
+import type { ArtexWsMessage } from '../../../protocol/ws-artex';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
@@ -58,6 +60,7 @@ import type {
 import { mapError } from '../../errors';
 import { ensureMainAgent } from '../../mainAgent';
 import { SessionAgentFeed } from './sessionAgentFeed';
+import { SessionArtexFeed } from './sessionArtexFeed';
 import { SessionTaskFeed } from './sessionTaskFeed';
 import { toTaskMessage } from './taskState';
 
@@ -81,6 +84,7 @@ export type BroadcastFrame =
   | TaskEventMessage
   | TaskListMessage
   | AgentFeedMessage
+  | ArtexWsMessage
   | ConversationMessage;
 
 export interface BroadcastTarget {
@@ -444,9 +448,33 @@ export class SessionEventBroadcaster {
     const agentStates = new SessionAgentFeed(sessionId, agents, (agentId, message) => {
       this.sendAgentFrame(state, agentId, message);
     });
+    let artexFlags: IFlagService | undefined;
+    try {
+      artexFlags = this.opts.core.accessor.get(IFlagService);
+    } catch {
+      artexFlags = undefined;
+    }
+    const artex = new SessionArtexFeed(
+      sessionId,
+      session,
+      artexFlags,
+      (message) => {
+        this.sendArtexFrame(state, message);
+      },
+    );
     state.tasks = tasks;
     state.agents = agentStates;
-    state.lifecycleDisposables.push(tasks, agentStates);
+    state.lifecycleDisposables.push(tasks, agentStates, artex);
+  }
+
+  private sendArtexFrame(state: SessionState, frame: ArtexWsMessage): void {
+    for (const [target, agents] of state.targets) {
+      if (agents.size === 0) continue;
+      try {
+        target.send(frame);
+      } catch {
+      }
+    }
   }
 
   private sendAgentLists(

@@ -46,6 +46,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/artex/assets",
+    ],
+    [
+      "GET",
+      "/api/v1/artex/companies",
+    ],
+    [
+      "GET",
       "/api/v1/auth",
     ],
     [
@@ -199,6 +207,70 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/sessions/{session_id}/agents/{agent_id}/turns",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/activity",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/constraints",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/coverage",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/credentials",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/findings",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/findings/export",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/goals",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/graph",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/scope",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/status",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/target-pins",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/tokens",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/traffic",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/traffic/blob",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/traffic/exchange",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/artex/traffic/hosts",
     ],
     [
       "GET",
@@ -435,6 +507,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/{tail}",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/artex/control",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/artex/start",
     ],
     [
       "POST",

@@ -11,6 +11,8 @@ import {
   type IAgentScopeHandle,
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
+import { IArtexModeService } from '@moonshot-ai/agent-core-v2/features/artex/agent/artexMode';
+import { IArtexSessionContext } from '@moonshot-ai/agent-core-v2/features/artex/session/artexSessionContext';
 
 import type {
   AgentState,
@@ -32,7 +34,15 @@ export function readAgentState(handle: IAgentScopeHandle, running: boolean): Age
     plan_mode: planActive(handle),
     swarm_mode: optionalService(handle, IAgentSwarmService)?.isActive === true,
     tower_mode: optionalService(handle, IAgentTowerService)?.isActive === true,
+    artex_mode: optionalService(handle, IArtexModeService)?.isActive === true,
+    artex_exploration_id: readArtexExplorationId(handle),
   };
+}
+
+function readArtexExplorationId(handle: IAgentScopeHandle): number | undefined {
+  const artexMode = optionalService(handle, IArtexModeService);
+  if (artexMode?.isActive !== true) return undefined;
+  return optionalService(handle, IArtexSessionContext)?.getActiveExplorationId();
 }
 
 export function readUsageState(handle: IAgentScopeHandle): UsageState | undefined {

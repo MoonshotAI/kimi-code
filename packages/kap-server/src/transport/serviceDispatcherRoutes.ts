@@ -10,7 +10,7 @@ import {
   describeAllChannels,
   resolveAnyScopedServiceId,
 } from './channelRegistry';
-import { type ChannelLookup, dispatch } from './dispatcher';
+import { type ChannelLookup, type PseudoServiceResolver, dispatch } from './dispatcher';
 import { mapDebugError, validationEnvelope, withTimeout } from './errors';
 
 interface RpcRequest {
@@ -35,6 +35,7 @@ export interface RouteHost {
 export interface ServiceDispatcherRouteOptions {
   readonly callTimeoutMs?: number;
   readonly lookup?: ChannelLookup;
+  readonly pseudo?: PseudoServiceResolver;
   readonly describe?: () => readonly ChannelDescriptor[];
 }
 
@@ -45,6 +46,7 @@ export function registerServiceDispatcherRoutes(
   opts: ServiceDispatcherRouteOptions = {},
 ): void {
   const lookup = opts.lookup ?? ((name) => resolveAnyScopedServiceId(core, name));
+  const pseudo = opts.pseudo;
   const scopeRoutes: { path: string; scopeKind: ScopeKind }[] = [
     { path: `${basePath}/:service/:method`, scopeKind: 'core' },
     { path: `${basePath}/session/:session_id/:service/:method`, scopeKind: 'session' },
@@ -54,7 +56,7 @@ export function registerServiceDispatcherRoutes(
     },
   ];
   for (const { path, scopeKind } of scopeRoutes) {
-    const handler = makeHandler(core, scopeKind, opts, lookup);
+    const handler = makeHandler(core, scopeKind, opts, lookup, pseudo);
     app.get(path, handler);
     app.post(path, handler);
   }
@@ -70,6 +72,7 @@ function makeHandler(
   scopeKind: ScopeKind,
   opts: ServiceDispatcherRouteOptions,
   lookup: ChannelLookup,
+  pseudo?: PseudoServiceResolver,
 ): (req: RpcRequest, reply: RpcReply) => Promise<unknown> {
   return async (req, reply) => {
     const requestId = req.id;
@@ -105,6 +108,7 @@ function makeHandler(
           method,
           promptAttempt === undefined ? arg : { ...(arg as object), promptId: promptAttempt.id },
           lookup,
+          pseudo,
         ),
         opts.callTimeoutMs ?? 30_000,
       );

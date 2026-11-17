@@ -1,5 +1,6 @@
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 
+import { resolveArtexPseudoService } from '../routes/artex';
 import { registerBusinessSnapshotRoutes } from './businessSnapshotRoutes';
 import { describeAllChannels, resolveAnyScopedServiceId } from './channelRegistry';
 import { type RouteHost, registerServiceDispatcherRoutes } from './serviceDispatcherRoutes';
@@ -7,6 +8,7 @@ import { type RouteHost, registerServiceDispatcherRoutes } from './serviceDispat
 export function registerDebugRoutes(app: RouteHost, core: Scope): void {
   registerServiceDispatcherRoutes(app, core, '/debug', {
     lookup: (name) => resolveAnyScopedServiceId(core, name),
+    pseudo: (scope, serviceName) => resolveArtexPseudoService(scope, serviceName),
     describe: describeAllChannels,
   });
   registerBusinessSnapshotRoutes(app, core, '/debug');
