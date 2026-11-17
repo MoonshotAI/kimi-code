@@ -15,6 +15,7 @@ import {
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
+  IConfigRegistry,
   IConfigService,
   IEventService,
   INTERACTION_TAG_SESSION_ID,
@@ -33,6 +34,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
+  HostChangedEvent,
   ModelCatalogRefreshChange,
   ModelCatalogRefreshFailure,
   ModelCatalogRetiredDefault,
@@ -188,6 +190,13 @@ export class SessionEventBroadcaster {
     this.feedSubscription = opts.conversations.onDidCreateFeed((created) => {
       this.onFeedCreated(created);
     });
+  }
+
+  publishHostChanged(hosts: HostChangedEvent['hosts']): void {
+    this.enqueueGlobal('event.host.changed', () => ({
+      type: 'event.host.changed',
+      hosts,
+    }));
   }
 
   addGlobalTarget(target: BroadcastTarget): void {
@@ -614,7 +623,7 @@ export class SessionEventBroadcaster {
   private async currentConfig(): Promise<ConfigResponse> {
     const config = this.opts.core.accessor.get(IConfigService);
     await config.ready;
-    return toConfigResponse(config.getAll());
+    return toConfigResponse(config.getAll(), this.opts.core.accessor.get(IConfigRegistry));
   }
 
   private enqueueWorkChanged(sessionId: string, work: SessionActivityState): void {

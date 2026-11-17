@@ -37,12 +37,16 @@ import { registerSessionRatingRoutes } from './sessionRating';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionListAndBatchRoutes } from './sessionList';
 import { registerSessionsRoutes } from './sessions';
+import type { HostBridgeManager } from '../services/hosts/hostBridgeManager';
+import { registerImportProvidersRoute } from '../services/hosts/hostProviders';
+import { registerHostsRoutes } from './hosts';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
 import { registerToolsRoutes } from './tools';
 import { registerConversationRoutes } from './conversation';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
+import { hostSources } from '../services/hosts/hostFanout';
 
 interface ApiV1AppHost {
   register(
@@ -66,11 +70,14 @@ export interface RegisterApiV1RoutesOptions {
   readonly enableShutdown?: boolean;
   readonly guiStore: IGuiStoreService;
   readonly onShutdown: () => void;
+  readonly drainIdleSessions: () => Promise<boolean>;
+  readonly hostBridges: HostBridgeManager;
   readonly connectionRegistry: IConnectionRegistry;
   readonly conversations: ConversationService;
   readonly sessionRating: SessionRatingHost;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
+  readonly managedHost?: boolean;
   readonly webTitle?: string;
 }
 
@@ -129,12 +136,18 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
         opts.conversations,
+        hostSources(opts.hostBridges),
       );
       registerSessionListAndBatchRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionListAndBatchRoutes>[0],
         core,
+        hostSources(opts.hostBridges),
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
+      registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
+      if (opts.managedHost === true) {
+        registerImportProvidersRoute(apiV1 as unknown as Parameters<typeof registerImportProvidersRoute>[0], core);
+      }
       registerSessionRatingRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],
         opts.sessionRating,
@@ -171,6 +184,7 @@ export async function registerApiV1Routes(
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
         core,
+        hostSources(opts.hostBridges),
       );
       registerWorkspaceFsRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspaceFsRoutes>[0],
@@ -200,6 +214,7 @@ export async function registerApiV1Routes(
       if (opts.enableShutdown !== false) {
         registerShutdownRoutes(apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0], {
           onShutdown: opts.onShutdown,
+          drainIdleSessions: opts.drainIdleSessions,
         });
       }
     },

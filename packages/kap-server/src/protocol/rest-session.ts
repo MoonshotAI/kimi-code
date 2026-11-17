@@ -112,8 +112,20 @@ export const listSessionsQuerySchema = z
     page: z.coerce.number().int().min(1).optional(),
     before_id: z.string().min(1).optional(),
     after_id: z.string().min(1).optional(),
+    include_archive: booleanQueryParam,
+    exclude_empty: booleanQueryParam,
+    archived_only: booleanQueryParam,
+    hosts: z.literal('include').optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.archived_only === true && value.include_archive === true) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'archived_only and include_archive are mutually exclusive',
+        path: ['archived_only'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
     const cursorParams = [
       value.page_token !== undefined ? 'page_token' : undefined,
       value.page !== undefined ? 'page' : undefined,
@@ -213,6 +225,7 @@ export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
 export const sessionIdProjectionSchema = z.object({
   id: z.string().min(1),
   archived: z.boolean(),
+  host_id: z.string().optional(),
 });
 export type SessionIdProjection = z.infer<typeof sessionIdProjectionSchema>;
 
@@ -221,6 +234,7 @@ export const listSessionsFlatResponseSchema = z.object({
   total: z.number().int().nonnegative(),
   has_more: z.boolean(),
   next_page_token: z.string().min(1).optional(),
+  unavailable_hosts: z.array(z.string()).optional(),
 });
 export type ListSessionsFlatResponse = z.infer<typeof listSessionsFlatResponseSchema>;
 
@@ -228,6 +242,7 @@ export const sessionWorkspaceGroupSchema = z.object({
   workspace_id: z.string().min(1),
   sessions: z.array(z.union([sessionSchema, sessionIdProjectionSchema])),
   total: z.number().int().nonnegative(),
+  host_id: z.string().optional(),
 });
 export type SessionWorkspaceGroup = z.infer<typeof sessionWorkspaceGroupSchema>;
 
@@ -236,6 +251,7 @@ export const listSessionsGroupedResponseSchema = z.object({
   total: z.number().int().nonnegative(),
   has_more: z.boolean(),
   next_page_token: z.string().min(1).optional(),
+  unavailable_hosts: z.array(z.string()).optional(),
 });
 export type ListSessionsGroupedResponse = z.infer<typeof listSessionsGroupedResponseSchema>;
 

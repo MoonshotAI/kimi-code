@@ -41,6 +41,7 @@ import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/inte
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
 import type { ConversationService } from '../services/conversation/conversationService';
+import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
 import {
   archiveSessionResponseSchema,
   cancelPromptPredictionRequestSchema,
@@ -130,6 +131,21 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
+const sessionGetQuerySchema = z.object({ hosts: z.literal('include').optional() });
+
+const hostSessionSchema = sessionSchema;
+
+async function sessionOnHosts(hosts: HostSources, id: string) {
+  return findOnHosts(hosts, async (session) => {
+    try {
+      return await hostGet<Session>(session, `/api/v1/sessions/${encodeURIComponent(id)}`);
+    } catch (error) {
+      if (error instanceof HostSourceError && error.code === ErrorCode.SESSION_NOT_FOUND) return undefined;
+      throw error;
+    }
+  });
+}
+
 const sessionChildrenListQueryCoercion = z
   .object({
     before_id: z.string().min(1).optional(),
@@ -171,7 +187,12 @@ const sessionActionRequestSchema = z.preprocess(
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conversations: ConversationService): void {
+export function registerSessionsRoutes(
+  app: SessionRouteHost,
+  core: Scope,
+  conversations: ConversationService,
+  hosts?: HostSources,
+): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -303,17 +324,37 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
       method: 'GET',
       path: '/sessions/{session_id}',
       params: sessionIdParamSchema,
-      success: { data: sessionSchema },
+      querystring: sessionGetQuerySchema,
+      success: { data: hostSessionSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.HOST_UNAVAILABLE]: {},
       },
-      description: 'Get a session by ID',
+      description:
+        'Get a session by ID. hosts=include also looks the session up on each SSH host and tags it with host_id; when it is not found and a host cannot answer, the result is HOST_UNAVAILABLE',
       tags: ['sessions'],
     },
     async (req, reply) => {
       const { session_id } = req.params;
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
+      if (summary === undefined && req.query.hosts === 'include' && hosts !== undefined) {
+        const lookup = await sessionOnHosts(hosts, session_id);
+        if (lookup.found !== undefined) {
+          reply.send(okEnvelope(lookup.found, req.id));
+        } else if (lookup.unavailable.length > 0) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.HOST_UNAVAILABLE,
+              `session ${session_id} may be on an unavailable host: ${lookup.unavailable.join(', ')}`,
+              req.id,
+            ),
+          );
+        } else {
+          reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id));
+        }
+        return;
+      }
       if (summary === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
