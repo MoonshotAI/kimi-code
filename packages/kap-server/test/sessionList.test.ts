@@ -322,13 +322,17 @@ describe('server /api/v1/sessions list', () => {
       created_at: new Date(3_000).toISOString(),
       updated_at: new Date(5_000).toISOString(),
       archived: false,
-      busy: false,
-      main_turn_active: false,
+      activity: 'idle',
+      cwd: '/repo/a',
       pending_interaction: 'none',
-      metadata: { cwd: '/repo/a' },
-      agent_config: { model: '' },
     });
     expect('git' in first).toBe(false);
+    expect(first).not.toHaveProperty('busy');
+    expect(first).not.toHaveProperty('main_turn_active');
+    expect(first).not.toHaveProperty('agent_config');
+    expect(first).not.toHaveProperty('usage');
+    expect(first).not.toHaveProperty('permission_rules');
+    expect(first).not.toHaveProperty('message_count');
 
     const second = page.items[1] as Session;
     expect(second.title).toBe('');
@@ -336,7 +340,7 @@ describe('server /api/v1/sessions list', () => {
     expect(third.last_prompt).toBeUndefined();
   });
 
-  it('exposes the live session model on listed sessions', async () => {
+  it('returns the main agent model from profile and omits it from SessionInfo', async () => {
     await (server as RunningServer).close();
     await writeFile(
       join(home as string, 'config.toml'),
@@ -368,7 +372,7 @@ describe('server /api/v1/sessions list', () => {
     const created = await authedFetch(server, base, '/api/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ metadata: { cwd: home } }),
+      body: JSON.stringify({ cwd: home }),
     });
     const createdBody = (await created.json()) as { code: number; data: { id: string } };
     expect(createdBody.code).toBe(0);
@@ -379,11 +383,13 @@ describe('server /api/v1/sessions list', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ agent_config: { model: 'stub' } }),
     });
-    expect(((await bound.json()) as { code: number }).code).toBe(0);
+    const boundBody = (await bound.json()) as { code: number; data: { agent: { model?: string } } };
+    expect(boundBody.code).toBe(0);
+    expect(boundBody.data.agent.model).toBe('stub');
 
     const page = await getData();
     const item = page.items.find((entry) => entry.id === id) as Session | undefined;
-    expect(item?.agent_config).toEqual({ model: 'stub' });
+    expect(item?.cwd).toBe(home);
 
     await rm(join(home as string, 'config.toml'), { force: true });
     await (server as RunningServer).close();
@@ -862,7 +868,7 @@ describe('server /api/v1/sessions list', () => {
 
     const first = a.sessions[0] as Session;
     expect(first.last_prompt).toBe('do alpha');
-    expect(first.metadata.cwd).toBe('/repo/a');
+    expect(first.cwd).toBe('/repo/a');
     expect('git' in first).toBe(false);
   });
 
@@ -1009,7 +1015,7 @@ describe('server /api/v1/sessions list', () => {
     expect(page.total).toBe(2);
     const merged = page.groups.find((group) => group.workspace_id === WS_A);
     expect(merged?.sessions.map((item) => item.id)).toEqual(['s5', 's1', 's2']);
-    expect((merged?.sessions[0] as Session | undefined)?.metadata.cwd).toBe('/repo/a');
+    expect((merged?.sessions[0] as Session | undefined)?.cwd).toBe('/repo/a');
     expect(merged?.total).toBe(3);
   });
 });
@@ -1086,7 +1092,7 @@ describe('server /api/v1/sessions batch archive/restore', () => {
     const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ metadata: { cwd: home } }),
+      body: JSON.stringify({ cwd: home }),
     });
     const body = (await res.json()) as {
       code: number;

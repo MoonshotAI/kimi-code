@@ -19,6 +19,7 @@ import {
   sessionForkSchema,
   sessionSchema,
 } from './session';
+import { agentStateSchema } from './ws-agent';
 
 export { sessionWarningSchema, sessionWarningsResponseSchema };
 export type {
@@ -297,7 +298,10 @@ export const exportSessionRequestSchema = z
   .strict();
 export type ExportSessionRequest = z.infer<typeof exportSessionRequestSchema>;
 
-export const updateSessionProfileResponseSchema = sessionSchema;
+export const updateSessionProfileResponseSchema = z.object({
+  session: sessionSchema,
+  agent: agentStateSchema,
+});
 export type UpdateSessionProfileResponse = z.infer<typeof updateSessionProfileResponseSchema>;
 
 export const updateSessionMetaRequestSchema = updateSessionProfileRequestSchema;
@@ -309,7 +313,7 @@ export type UpdateSessionMetaResponse = UpdateSessionProfileResponse;
 export const updateSessionRequestSchema = updateSessionProfileRequestSchema;
 export type UpdateSessionRequest = z.infer<typeof updateSessionRequestSchema>;
 
-export const updateSessionResponseSchema = sessionSchema;
+export const updateSessionResponseSchema = updateSessionProfileResponseSchema;
 export type UpdateSessionResponse = z.infer<typeof updateSessionResponseSchema>;
 
 export const forkSessionRequestSchema = sessionForkSchema;

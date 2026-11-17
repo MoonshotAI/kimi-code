@@ -27,6 +27,7 @@ export interface AnyFrame {
   readonly code?: number;
   readonly msg?: string;
   readonly payload?: unknown;
+  readonly [key: string]: unknown;
 }
 
 export interface WsClientOptions {
