@@ -50,7 +50,6 @@
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [
-      "oxlint --fix --quiet",
       "oxlint --type-aware --quiet"
     ]
   },
