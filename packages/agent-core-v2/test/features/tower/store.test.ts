@@ -1514,7 +1514,7 @@ describe('merge gate', () => {
     });
 
     await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
-      /waiting for explicit human acceptance/,
+      /waiting for artifact acceptance/,
     );
 
     await store.registerAgent(
@@ -1568,7 +1568,7 @@ describe('merge gate', () => {
     await writeFile(store.abs(review.file), raw.replace(/^mission:.*\r?\n/m, ''));
 
     await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
-      /mission-matching explicit human acceptance/,
+      /mission-matching artifact acceptance/,
     );
 
     await store.submitReview('tower', {

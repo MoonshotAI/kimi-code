@@ -1740,7 +1740,7 @@ describe('TowerReviewTool', () => {
     expect(await store.latestReview('feat/artifact-engine')).toBeDefined();
   });
 
-  it('refuses artifact acceptance in a noninteractive run', async () => {
+  it('records artifact acceptance in a noninteractive run when the user asked for the merge', async () => {
     const store = await setupArtifactMission();
     currentAgentId = 'main';
     nonInteractive = true;
@@ -1751,13 +1751,14 @@ describe('TowerReviewTool', () => {
       status: 'clean',
       merge: 'merge',
       findings: 'none',
-      decision: 'accept without the human',
+      decision: 'the user asked for the merge in the objective',
       acceptance_tip: tip,
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('cannot be recorded in a noninteractive run');
-    expect(await store.latestReview('feat/artifact-engine')).toBeUndefined();
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('artifact acceptance for feat/artifact-engine');
+    expect(result.output).toContain('recorded on the exact tip');
+    expect(await store.latestReview('feat/artifact-engine')).toBeDefined();
   });
 
   it('still records rework feedback in auto permission mode', async () => {
@@ -1970,7 +1971,7 @@ describe('TowerMergeTool', () => {
 
     const waiting = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
     expect(waiting.isError).toBe(true);
-    expect(waiting.output).toContain('waiting for explicit human acceptance');
+    expect(waiting.output).toContain('waiting for artifact acceptance');
     expect(await git(repo, 'rev-parse', 'HEAD')).toBe(baseTip);
 
     await store.submitReview('tower', {

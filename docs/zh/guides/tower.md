@@ -78,7 +78,7 @@ Tower 支持三种 mission 类型。可以根据 worker 能否写入产物以及
 
 当工作需要读取业务输入并写出交付物时，使用 `artifact`。例如："创建一个 artifact mission 生成季度分析，提交 `reports/q3/summary.html` 和 `reports/q3/data.csv`，然后把这些文件交给我验收。"
 
-worker 会在预留的 scope 内提交所有交付物，并将 `reports/q3/summary.html` 和 `reports/q3/data.csv` 标记为关键产物；未提交的文件不会参与验收或合并。Tower 展示关键产物和其他已提交文件的数量，需要查看细节时也可以打开完整清单。验收覆盖当前整个 tip，包括未列入关键产物清单的改动。你提出修改时会进入返工，任何新 commit 或 rebase 后都需要重新验收。在 Never Ask 模式下，Tower 会展示关键产物，并在所展示的 tip 上记录验收；在非交互运行中，Tower 会让产物保持等待，不会替你自行验收。
+worker 会在预留的 scope 内提交所有交付物，并将 `reports/q3/summary.html` 和 `reports/q3/data.csv` 标记为关键产物；未提交的文件不会参与验收或合并。Tower 展示关键产物和其他已提交文件的数量，需要查看细节时也可以打开完整清单。验收覆盖当前整个 tip，包括未列入关键产物清单的改动。你提出修改时会进入返工，任何新 commit 或 rebase 后都需要重新验收。你明确要求合并，或验收所展示的产物后，Tower 在所展示的 tip 上记录验收；意图未明确时，交互模式下会请你确认，非交互运行则让产物保持等待，不会替你自行验收。这条规则与权限模式无关。
 
 ## 查看状态并干预
 

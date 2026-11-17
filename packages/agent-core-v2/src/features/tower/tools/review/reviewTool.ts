@@ -1,6 +1,5 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -28,7 +27,6 @@ export class TowerReviewTool implements ITowerReviewTool {
     @ISessionEventBus private readonly sessionBus: ISessionEventBus,
     @IAgentToolExecutorService private readonly tasks: IAgentToolExecutorService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
   resolveExecution(args: TowerReviewToolInput): ToolExecution {
@@ -47,18 +45,6 @@ export class TowerReviewTool implements ITowerReviewTool {
               mission.status !== 'merged' &&
               mission.status !== 'abandoned',
           );
-          if (
-            caller === 'tower' &&
-            artifactMission !== undefined &&
-            args.status === 'clean' &&
-            args.merge === 'merge' &&
-            this.bootstrap.args.nonInteractive === true
-          ) {
-            return {
-              output: `artifact acceptance for ${args.target} cannot be recorded in a noninteractive run — leave mission ${artifactMission.id} completed and waiting for explicit human approval in an interactive session`,
-              isError: true,
-            };
-          }
           const result = await store.submitReview(caller, {
             target: args.target,
             status: args.status,

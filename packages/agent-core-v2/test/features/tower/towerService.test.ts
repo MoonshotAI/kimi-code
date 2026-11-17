@@ -31,7 +31,6 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { STATE_FILE, TowerStore, type TowerState } from '#/features/tower/protocol/index';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { TowerSendTool } from '#/features/tower/tools/send/sendTool';
 import { TowerReviewTool } from '#/features/tower/tools/review/reviewTool';
 import { TowerCompleteTool } from '#/features/tower/tools/complete/completeTool';
@@ -2966,10 +2965,6 @@ describe('AgentTowerService', () => {
                 }
               : undefined,
         } as unknown as IAgentLifecycleService,
-        {
-          _serviceBrand: undefined,
-          args: { requestHeaders: {}, nonInteractive: false },
-        } as unknown as IBootstrapService,
       );
 
       const result = await executeTool(tool, {
@@ -4283,9 +4278,9 @@ describe('TowerModeInjection', () => {
     expect(text).toContain('Surveys do not need review');
     expect(text).toContain('kind: "artifact"');
     expect(text).toContain('acceptance-request');
-    expect(text).toContain('explicit user approval');
-    expect(text).toContain('In auto mode, present the key artifacts');
-    expect(text).toContain('In a noninteractive run, leave the mission completed and waiting');
+    expect(text).toContain('When the user has asked for the merge or approved the presented artifacts');
+    expect(text).toContain('ask for it in interactive mode');
+    expect(text).toContain('in a noninteractive run leave the mission completed and waiting instead of merging');
     expect(text).toContain('never substitute an independent review');
     expect(text).toContain('merged or abandoned');
     expect(text).toContain('background execution is unavailable');
