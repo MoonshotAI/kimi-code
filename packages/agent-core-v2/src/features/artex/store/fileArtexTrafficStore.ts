@@ -256,8 +256,8 @@ export class FileArtexTrafficStore {
       );
     }
     const candidates = state.exchanges
-      .filter((row) => row.host === host)
-      .filter((row) => (port === '' ? true : urlAuthorityMatches(row.url, host, port)))
+      .filter((row) => (host === '' ? true : row.host === host))
+      .filter((row) => (host === '' || port === '' ? true : urlAuthorityMatches(row.url, host, port)))
       .filter((row) => (contains === '' ? true : matchesContains(row, contains)))
       .toSorted((a, b) => b.ts - a.ts || (a.id < b.id ? 1 : -1));
 
@@ -773,9 +773,9 @@ function templatePath(url: string): string {
     .join('/');
 }
 
-function normalizeSearchHost(raw: string): { host: string; port: string } {
-  const value = raw.trim();
-  if (value === '') throw new Error('host is a required parameter');
+function normalizeSearchHost(raw: string | undefined): { host: string; port: string } {
+  const value = (raw ?? '').trim();
+  if (value === '') return { host: '', port: '' };
   let host = value;
   let port = '';
   if (value.includes('://')) {

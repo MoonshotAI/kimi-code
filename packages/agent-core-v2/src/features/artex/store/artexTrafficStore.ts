@@ -36,7 +36,7 @@ export interface ArtexExchangeRaw {
 }
 
 export interface ArtexTrafficSearchQuery {
-  readonly host: string;
+  readonly host?: string;
   readonly contains?: string;
   readonly bodyContains?: string;
   readonly page?: number;

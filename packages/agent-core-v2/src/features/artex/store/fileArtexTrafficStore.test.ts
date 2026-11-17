@@ -56,6 +56,31 @@ describe('FileArtexTrafficStore', () => {
     expect(miss).toHaveLength(0);
   });
 
+  it('searches across all hosts when host is omitted, empty, or absent', async () => {
+    const alpha = await store.record(
+      exchange({ host: 'alpha.example.test', url: 'https://alpha.example.test/one' }),
+    );
+    const beta = await store.record(
+      exchange({ host: 'beta.example.test', url: 'https://beta.example.test/two' }),
+    );
+
+    const acrossAll = await store.search({});
+    expect(acrossAll.map((row) => row.id).toSorted()).toEqual([alpha, beta].toSorted());
+
+    const emptyHost = await store.search({ host: '' });
+    expect(emptyHost).toHaveLength(2);
+
+    const whitespaceHost = await store.search({ host: '   ' });
+    expect(whitespaceHost).toHaveLength(2);
+
+    const noFilters = await store.search({ host: '', contains: '', bodyContains: '' });
+    expect(noFilters).toHaveLength(2);
+
+    const stillScoped = await store.search({ host: 'alpha.example.test' });
+    expect(stillScoped).toHaveLength(1);
+    expect(stillScoped[0]!.id).toBe(alpha);
+  });
+
   it('rejects a too-short body keyword rather than guessing', async () => {
     await store.record(exchange());
     await expect(store.search({ host: 'example.test', bodyContains: 'ab' })).rejects.toThrow(

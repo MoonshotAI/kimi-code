@@ -14,7 +14,7 @@ import { artexErr, artexJson, artexRecordingInactive } from '../toolSupport';
 import DESCRIPTION from './traffic_search.md?raw';
 
 export const TrafficSearchInputSchema = z.object({
-  host: z.string(),
+  host: z.string().optional(),
   contains: z.string().optional(),
   body_contains: z.string().optional(),
   limit: z.number().int().optional(),
@@ -39,7 +39,10 @@ export class ArtexTrafficSearchTool implements AgentTool<TrafficSearchInput> {
   resolveExecution(args: TrafficSearchInput): ToolExecution {
     return {
       approvalRule: this.name,
-      description: `Searching ARTEX traffic for ${args.host}`,
+      description:
+        args.host !== undefined && args.host.trim() !== ''
+          ? `Searching ARTEX traffic for ${args.host}`
+          : 'Searching ARTEX traffic across all hosts',
       execute: () => this.execute(args),
     };
   }
@@ -47,14 +50,9 @@ export class ArtexTrafficSearchTool implements AgentTool<TrafficSearchInput> {
   private async execute(args: TrafficSearchInput): Promise<ExecutableToolResult> {
     const inactive = await artexRecordingInactive(this.recorder);
     if (inactive !== undefined) return inactive;
-    if (args.host.trim() === '') {
-      return artexErr(
-        'host is a required parameter: specify a bare host, host:port, or full URL to avoid a full-database scan.',
-      );
-    }
     try {
       const rows = await this.recorder.store().search({
-        host: args.host,
+        host: args.host ?? '',
         contains: args.contains,
         bodyContains: args.body_contains,
         limit: args.limit,
