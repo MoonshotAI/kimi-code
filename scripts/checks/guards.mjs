@@ -11,6 +11,7 @@ const REGISTRY_FILE = 'scripts/checks/registry.json';
 const LEVEL_NAMES = { allow: 'off', off: 'off', warn: 'warn', deny: 'error', error: 'error' };
 const LEVEL_RANKS = { off: 0, warn: 1, error: 2 };
 const KIND_ORDER = { weakened: 0, changed: 1, strengthened: 2 };
+const DIFFED_KEYS = new Set(['$schema', 'categories', 'plugins', 'rules', 'overrides', 'ignorePatterns']);
 
 function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
@@ -103,8 +104,8 @@ export function diffConfigs(before, after) {
     ...diffOverrides(before.overrides, after.overrides),
     ...diffMembers(before.ignorePatterns, after.ignorePatterns, 'ignore pattern', 'weakened', 'strengthened'),
   ];
-  for (const key of ['env', 'globals', 'settings']) {
-    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (!DIFFED_KEYS.has(key) && JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
       findings.push({ kind: 'changed', detail: `${key} changed` });
     }
   }
@@ -205,17 +206,39 @@ function formatWiringFinding(finding) {
   ];
 }
 
-function readEffectiveConfig() {
-  const result = spawnSync(
-    process.execPath,
-    [join(ROOT, 'node_modules/oxlint/bin/oxlint'), '--type-aware', '--print-config'],
-    { cwd: ROOT, encoding: 'utf8' },
-  );
+export function expandOverridePlugins(config, catalog) {
+  const categories = config.categories ?? {};
+  const pluginKey = (name) => name.replaceAll('_', '-');
+  return {
+    ...config,
+    overrides: (config.overrides ?? []).map((override) => {
+      const plugins = (override.plugins ?? []).map(pluginKey);
+      if (plugins.length === 0) return override;
+      const categoryRules = catalog
+        .filter((rule) => plugins.includes(pluginKey(rule.scope)) && levelOf(categories[rule.category]) !== 'off')
+        .map((rule) => [`${rule.scope}/${rule.value}`, categories[rule.category]]);
+      return { ...override, rules: { ...Object.fromEntries(categoryRules), ...override.rules } };
+    }),
+  };
+}
+
+function runOxlint(args) {
+  const result = spawnSync(process.execPath, [join(ROOT, 'node_modules/oxlint/bin/oxlint'), ...args], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
   if (result.status !== 0) {
     const output = result.stderr === '' ? result.stdout : result.stderr;
-    throw new Error(`oxlint --print-config exited with ${result.status}: ${output}`);
+    throw new Error(`oxlint ${args.join(' ')} exited with ${result.status}: ${output}`);
   }
-  return sortKeys(JSON.parse(result.stdout));
+  return JSON.parse(result.stdout);
+}
+
+function readEffectiveConfig() {
+  const config = runOxlint(['--type-aware', '--print-config']);
+  const catalog = runOxlint(['--rules', '--format', 'json']);
+  return sortKeys(expandOverridePlugins(config, catalog));
 }
 
 export function main(args) {

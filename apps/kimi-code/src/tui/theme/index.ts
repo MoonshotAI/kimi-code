@@ -3,7 +3,7 @@
  */
 
 import { getBuiltInPalette } from './colors';
-import type { ColorPalette, ResolvedTheme } from './colors';
+import type { ColorPalette } from './colors';
 import { loadCustomThemeMerged } from './custom-theme-loader';
 import { detectTerminalTheme } from './detect';
 

@@ -188,8 +188,6 @@ import {
   type SteerOutcome,
   type StepRetryState,
   type TranscriptEntry,
-  type TUIStartupOptions,
-  type TUIStartupState,
 } from './types';
 import { workingLabel } from './utils/activity-label';
 import { hasDispose } from './utils/component-capabilities';

@@ -81,7 +81,21 @@
     "typescript/no-unsafe-type-assertion": "off",
     "typescript/strict-boolean-expressions": "off",
     "typescript/no-duplicate-type-constituents": "off",
-    "import/max-dependencies": "off"
+    "import/max-dependencies": "off",
+
+    // Enabled through the categories above by the oxlint 1.59 -> 1.94 upgrade and
+    // already reporting on existing code. Off until the lint restructure decides
+    // each rule, so the upgrade itself does not change what lint reports.
+    "typescript/no-useless-default-assignment": "off",
+    "eslint/no-underscore-dangle": "off",
+    "eslint/require-unicode-regexp": "off",
+    "typescript/no-generated-empty-object-type": "off",
+    "typescript/no-unnecessary-type-parameters": "off",
+    "typescript/prefer-readonly-parameter-types": "off",
+    "typescript/strict-void-return": "off",
+    "unicorn/no-negated-condition": "off",
+    "unicorn/prefer-number-coercion": "off",
+    "unicorn/prefer-single-call": "off"
   },
   "overrides": [
     {
@@ -109,6 +123,20 @@
         "packages/kap-server/src/search/worker/**/*.ts",
         "packages/kap-server/src/search/indexCore.ts",
         "packages/kap-server/src/search/match.ts"
+      ],
+      "rules": {
+        "import/extensions": "off"
+      }
+    },
+    {
+      // These files import with explicit `.js` specifiers, which oxlint 1.59 did
+      // not report. The packages build with tsdown, so the build does not need
+      // the specifiers; the lint restructure decides whether to drop them.
+      "files": [
+        "packages/minidb/**",
+        "packages/klient/**",
+        "packages/migration-legacy/**",
+        "packages/acp-server/test/_helpers/scriptedProvider.ts"
       ],
       "rules": {
         "import/extensions": "off"
@@ -147,14 +175,28 @@
         "import/no-cycle": "off",
         "typescript/no-meaningless-void-operator": "off",
         "typescript/require-array-sort-compare": "off",
-        "vitest/expect-expect": "error",
+        // Tests assert through helpers such as expectTree() and
+        // ctx.expectResumeMatches(); vitest's default names are kept.
+        "vitest/expect-expect": [
+          "error",
+          {
+            "assertFunctionNames": ["expect", "expectTypeOf", "assert", "assertType", "expect*", "assert*", "*.expect*"]
+          }
+        ],
         "vitest/no-conditional-tests": "error",
         "vitest/no-focused-tests": "error",
         "vitest/no-identical-title": "error",
         "vitest/valid-expect": "off",
         "vitest/valid-describe-callback": "error",
         "vitest/no-standalone-expect": "error",
-        "vitest/warn-todo": "off"
+        "vitest/warn-todo": "off",
+
+        // Enabled for test files by the oxlint 1.59 -> 1.94 upgrade and already
+        // reporting on existing tests. Off until the lint restructure decides each rule.
+        "vitest/no-conditional-expect": "off",
+        "vitest/no-conditional-in-test": "off",
+        "vitest/require-to-throw-message": "off",
+        "vitest/valid-title": "off"
       }
     }
   ],

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { checkWiring, diffConfigs } from './guards.mjs';
+import { checkWiring, diffConfigs, expandOverridePlugins } from './guards.mjs';
 
 function config(patch = {}) {
   return {
@@ -94,6 +94,46 @@ await test('diffConfigs reports an override whose file list changed as removed a
   assert.deepEqual(kindsAndDetails(diffConfigs(config(), after)), [
     'changed: override **/*.spec.ts: added',
     'changed: override **/*.test.ts: removed',
+  ]);
+});
+
+await test('diffConfigs reports a change in any other top-level key, such as options', () => {
+  const after = config({ options: { typeAware: false } });
+  assert.deepEqual(kindsAndDetails(diffConfigs(config(), after)), ['changed: options changed']);
+});
+
+const CATALOG = [
+  { scope: 'vitest', value: 'no-focused-tests', category: 'correctness' },
+  { scope: 'vitest', value: 'no-conditional-expect', category: 'correctness' },
+  { scope: 'vitest', value: 'no-conditional-in-test', category: 'pedantic' },
+  { scope: 'vitest', value: 'prefer-lowercase-title', category: 'style' },
+  { scope: 'jest', value: 'no-hooks', category: 'correctness' },
+];
+
+const withVitest = (rules) =>
+  config({ overrides: [{ files: ['**/*.test.ts'], plugins: ['vitest'], rules }] });
+
+await test('expandOverridePlugins adds the enabled-category rules of a plugin turned on only in an override', () => {
+  const expanded = expandOverridePlugins(
+    withVitest({ 'vitest/no-conditional-expect': 'allow', 'vitest/expect-expect': 'deny' }),
+    CATALOG,
+  );
+  assert.deepEqual(expanded.overrides[0].rules, {
+    'vitest/no-focused-tests': 'deny',
+    'vitest/no-conditional-expect': 'allow',
+    'vitest/no-conditional-in-test': 'warn',
+    'vitest/expect-expect': 'deny',
+  });
+});
+
+await test('diffConfigs sees a rule that a newer oxlint adds to an enabled category for an override plugin', () => {
+  const before = expandOverridePlugins(withVitest({}), CATALOG);
+  const after = expandOverridePlugins(withVitest({}), [
+    ...CATALOG,
+    { scope: 'vitest', value: 'require-to-throw-message', category: 'correctness' },
+  ]);
+  assert.deepEqual(kindsAndDetails(diffConfigs(before, after)), [
+    'strengthened: override **/*.test.ts: vitest/require-to-throw-message: off → error',
   ]);
 });
 

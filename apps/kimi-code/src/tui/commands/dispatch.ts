@@ -39,7 +39,6 @@ import {
   handleSecondaryModelCommand,
   handleThemeCommand,
   showExperimentsPanel,
-  showModelPicker,
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
