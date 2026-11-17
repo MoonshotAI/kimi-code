@@ -293,8 +293,10 @@ export class WorkspaceService implements IWorkspaceService {
     return this.runExclusive(async () => {
       await this.ensureMerged();
       let deletedRoot: string | undefined;
+      let deletedWorkspace: Workspace | undefined;
       await this.store.update(async (catalog) => {
-        let root = catalog.workspaces.find((ws) => ws.id === id)?.root;
+        deletedWorkspace = catalog.workspaces.find((ws) => ws.id === id);
+        let root = deletedWorkspace?.root;
         if (root === undefined) {
           root = (await readSessionIndexEntries(this.storage)).find(
             (line) => encodeWorkDirKey(line.workDir) === id,
@@ -319,7 +321,7 @@ export class WorkspaceService implements IWorkspaceService {
         };
       });
       if (deletedRoot !== undefined) {
-        this.event.publish(new WorkspaceDeleted({ payload: { workspaceId: id, root: deletedRoot } }));
+        this.event.publish(new WorkspaceDeleted({ payload: { workspaceId: id, root: deletedRoot, workspace: deletedWorkspace } }));
       }
     });
   }

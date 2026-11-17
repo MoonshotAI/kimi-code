@@ -156,6 +156,7 @@ vi.mock('../../src/migration/index', async (importOriginal) => ({
 }));
 
 vi.mock('node:child_process', () => ({
+  execFile: vi.fn(),
   execFileSync: mocks.execFileSync,
   spawnSync: mocks.spawnSync,
 }));

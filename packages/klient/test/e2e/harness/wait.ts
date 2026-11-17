@@ -24,10 +24,10 @@ export function waitForFrame(
 }
 
 /**
- * Poll `GET /sessions/{sid}` until aggregate `busy` matches. Useful as a
- * final synchronization point — the server's `turn.ended` arrives before
- * the session work projection flips to false, so scenarios that want a
- * quiescent session must poll.
+ * Poll `GET /sessions/{sid}` until aggregate activity matches the requested
+ * work state. Useful as a final synchronization point — the server's
+ * `turn.ended` arrives before the session activity projection flips to idle,
+ * so scenarios that want a quiescent session must poll.
  */
 export async function waitForSessionBusy(
   http: HttpClient,
@@ -42,12 +42,12 @@ export async function waitForSessionBusy(
   while (Date.now() < deadline) {
     const session = await http.getSession(sid);
     last = session;
-    if (session.busy === busy) return session;
+    if ((session.activity !== 'idle') === busy) return session;
     await sleep(pollMs);
   }
   throw new Error(
     `session ${sid} did not reach busy=${busy} within ${timeoutMs}ms ` +
-      `(last busy=${last?.busy ?? 'unknown'})`,
+      `(last activity=${last?.activity ?? 'unknown'})`,
   );
 }
 

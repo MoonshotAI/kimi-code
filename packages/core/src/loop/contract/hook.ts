@@ -3,11 +3,17 @@
  * stop and continue), their event payloads and allowed decisions, registration options, and hook
  * lifecycle events.
  */
-import type { Message, ToolCall } from '#/llm/message';
-import type { ToolResult } from '#/tool/executor';
+import type { ContentPart, Message, ToolCall } from '#/llm/message';
 import type { QueuedItem, TurnTrigger } from './inbox';
 import type { Cause, StepOutcome } from './outcome';
 import type { LoopProfile } from './profile';
+
+export interface ToolResult {
+  content: ContentPart[];
+  isError?: boolean;
+  durationMs?: number;
+  blocked?: Cause;
+}
 
 export interface TurnStartingEvent {
   readonly turnId: number;
@@ -75,6 +81,8 @@ export interface LoopHooks {
 }
 
 export type HookPoint = keyof LoopHooks;
+
+export type ToolHookPoint = 'tool.starting' | 'tool.permitting' | 'tool.ending';
 
 export type HookFailurePolicy = 'pause' | 'block';
 

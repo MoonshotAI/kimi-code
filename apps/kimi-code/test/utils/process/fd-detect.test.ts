@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('#/utils/process/resolve-command', () => ({
   resolveCommandPath: mocks.resolveCommandPath,
 }));
-vi.mock('node:child_process', () => ({ spawnSync: mocks.spawnSync }));
+vi.mock('node:child_process', () => ({ execFile: vi.fn(), spawnSync: mocks.spawnSync }));
 
 const originalEnv = { ...process.env };
 let tempHome: string | undefined;

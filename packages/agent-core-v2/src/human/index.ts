@@ -48,8 +48,6 @@ export * from '@moonshot-ai/core/llm/builtin/provider/kimi/index';
 export * from '@moonshot-ai/core/llm/builtin/provider/kimi/errors';
 export * from '@moonshot-ai/core/llm/builtin/provider/kimi/schema';
 export * from './credentials';
-export * from '@moonshot-ai/core/tool/executor';
-export * from '@moonshot-ai/core/tool/tool';
 export {
   renderToolResultForModel,
   type AssistantMessageAttributes,

@@ -20,13 +20,13 @@ import {
   ISessionTitleService,
   IEventService,
   SessionCreated,
-  IWorkspaceAliases,
   ISessionManager,
   IWorkspaceInstanceManager,
   IWorkspaceService,
   closeSessionById,
   ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
+  getOrRestoreAgent,
   programForSession,
   resolveSubagentModelPool,
   reloadOnStale,
@@ -34,18 +34,14 @@ import {
   setSessionArchived,
   Error2,
   type IAgentScopeHandle,
-  type ISessionScopeHandle,
   type Scope,
-  type SessionSummary,
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
-import { pageResponseSchema } from '../protocol/pagination';
 import type { ConversationService } from '../services/conversation/conversationService';
-import { collectFromHosts, findOnHosts, hostGet, hostProjects, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
-import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
+import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
 import {
   archiveSessionResponseSchema,
   cancelPromptPredictionRequestSchema,
@@ -69,20 +65,20 @@ import {
   undoSessionRequestSchema,
   undoSessionResponseSchema,
   updateSessionProfileRequestSchema,
+  updateSessionProfileResponseSchema,
 } from '../protocol/rest-session';
 import {
-  emptySessionUsage,
   sessionSchema,
   type Session,
+  type SessionGit,
   type SessionPendingInteraction,
 } from '../protocol/session';
-import { workspaceIdSchema } from '../protocol/workspace';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
+import { readAgentState } from '../transport/ws/v1/agentState';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
 import { sendEnvironmentError } from './environment';
@@ -131,95 +127,13 @@ const booleanQueryParam = z.preprocess((value) => {
   return value;
 }, z.boolean().optional());
 
-const DEFAULT_SESSION_LIST_PAGE_SIZE = 20;
-
-const sessionsListQueryCoercion = z
-  .object({
-    before_id: z.string().min(1).optional(),
-    after_id: z.string().min(1).optional(),
-    page_size: z.coerce.number().int().min(1).max(100).optional(),
-    busy: booleanQueryParam,
-    include_archive: booleanQueryParam,
-    exclude_empty: booleanQueryParam,
-    archived_only: booleanQueryParam,
-    workspace_id: workspaceIdSchema.optional(),
-    hosts: z.literal('include').optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (
-      value.hosts === 'include' &&
-      (value.page_size !== undefined ||
-        value.before_id !== undefined ||
-        value.after_id !== undefined ||
-        value.workspace_id !== undefined)
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'hosts=include lists every session at once and cannot be combined with paging or workspace_id',
-        path: ['hosts'],
-        params: { code: ErrorCode.VALIDATION_FAILED },
-      });
-    }
-    if (value.before_id !== undefined && value.after_id !== undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'before_id and after_id are mutually exclusive',
-        path: ['before_id'],
-        params: { code: ErrorCode.VALIDATION_FAILED },
-      });
-    }
-    if (value.archived_only === true && value.include_archive === true) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'archived_only and include_archive are mutually exclusive',
-        path: ['archived_only'],
-        params: { code: ErrorCode.VALIDATION_FAILED },
-      });
-    }
-  });
-
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
 const sessionGetQuerySchema = z.object({ hosts: z.literal('include').optional() });
 
-const hostSessionSchema = sessionSchema.extend({ host_id: z.string().optional() });
-
-const sessionListResponseSchema = pageResponseSchema(hostSessionSchema).extend({
-  unavailable_hosts: z.array(z.string()).optional(),
-});
-
-function sessionsOnHosts(
-  hosts: HostSources,
-  query: { busy?: boolean; include_archive?: boolean; archived_only?: boolean; exclude_empty?: boolean },
-) {
-  return collectFromHosts(hosts, async (session) => {
-    const [projects, sessions] = await Promise.all([
-      hostProjects<{ id: string; kind: string }>(session),
-      (async () => {
-        if (query.archived_only !== true) {
-          return (await hostGet<{ items: Session[] }>(session, '/api/v1/sessions', query)).items;
-        }
-        const items: Session[] = [];
-        let beforeId: string | undefined;
-        for (;;) {
-          const page = await hostGet<{ items: Session[]; has_more: boolean }>(session, '/api/v1/sessions', {
-            ...query,
-            page_size: 100,
-            before_id: beforeId,
-          });
-          items.push(...page.items);
-          const last = page.items.at(-1);
-          if (!page.has_more || last === undefined) return items;
-          beforeId = last.id;
-        }
-      })(),
-    ]);
-    const managed = new Set(projects.map((project) => project.id));
-    return sessions.filter((item) => managed.has(item.workspace_id));
-  });
-}
+const hostSessionSchema = sessionSchema;
 
 async function sessionOnHosts(hosts: HostSources, id: string) {
   return findOnHosts(hosts, async (session) => {
@@ -298,12 +212,24 @@ export function registerSessionsRoutes(
     },
     async (req, reply) => {
       const body = req.body;
-      const callerCwd = typeof body.metadata?.cwd === 'string' ? body.metadata.cwd : undefined;
+      const topCwd = body.cwd;
+      const metaCwd = typeof body.metadata?.cwd === 'string' ? body.metadata.cwd : undefined;
+      if (topCwd !== undefined && metaCwd !== undefined && topCwd !== metaCwd) {
+        reply.send(
+          buildValidationEnvelope(
+            [{ path: 'cwd', message: `cwd (${topCwd}) must equal metadata.cwd (${metaCwd})` }],
+            req.id,
+          ),
+        );
+        return;
+      }
+      const callerCwd = topCwd ?? metaCwd;
+      const cwdPath = topCwd !== undefined ? 'cwd' : 'metadata.cwd';
       const workspaceId = body.workspace_id;
       if (workspaceId === undefined && callerCwd === undefined) {
         reply.send(
           buildValidationEnvelope(
-            [{ path: 'metadata.cwd', message: 'either workspace_id or metadata.cwd is required' }],
+            [{ path: cwdPath, message: 'either workspace_id or cwd is required' }],
             req.id,
           ),
         );
@@ -330,8 +256,8 @@ export function registerSessionsRoutes(
             buildValidationEnvelope(
               [
                 {
-                  path: 'metadata.cwd',
-                  message: `metadata.cwd (${callerCwd}) must equal workspace root (${workspace.root})`,
+                  path: cwdPath,
+                  message: `${cwdPath} (${callerCwd}) must equal workspace root (${workspace.root})`,
                 },
               ],
               req.id,
@@ -391,144 +317,6 @@ export function registerSessionsRoutes(
     createRoute.path,
     createRoute.options,
     createRoute.handler as Parameters<SessionRouteHost['post']>[2],
-  );
-
-  const listRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/sessions',
-      querystring: sessionsListQueryCoercion,
-      success: { data: sessionListResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
-      },
-      description:
-        'List sessions. hosts=include (only without paging) adds the sessions of the projects created on each SSH host, tagged with host_id; hosts that cannot answer are listed in unavailable_hosts',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      const raw = req.query;
-      const archivedOnly = raw.archived_only === true;
-
-      const { roots, visibleWorkspaceIds } = await loadWorkspaceVisibility(core);
-
-      if (raw.workspace_id !== undefined && !roots.has(raw.workspace_id)) {
-        reply.send(
-          errEnvelope(
-            ErrorCode.WORKSPACE_NOT_FOUND,
-            `workspace ${raw.workspace_id} does not exist`,
-            req.id,
-          ),
-        );
-        return;
-      }
-
-      const workspaceIds =
-        raw.workspace_id === undefined
-          ? undefined
-          : await core.accessor.get(IWorkspaceAliases).resolveAliasIds(raw.workspace_id);
-      const index = core.accessor.get(ISessionIndex);
-      const includeArchived = archivedOnly ? true : raw.include_archive;
-
-      interface Eligible {
-        readonly summary: SessionSummary;
-        readonly cwd: string;
-        readonly facts?: SessionFacts;
-      }
-
-      const collect = async (pageSize: number): Promise<{ visible: Eligible[]; hasMore: boolean }> => {
-        const wanted = pageSize + 1;
-        const collected: Eligible[] = [];
-        let before = raw.before_id;
-        const after = raw.after_id;
-        const afterCursor = after !== undefined ? await index.get(after) : undefined;
-        const newerThanCursor = (summary: SessionSummary): boolean =>
-          afterCursor === undefined ||
-          summary.updatedAt > afterCursor.updatedAt ||
-          (summary.updatedAt === afterCursor.updatedAt && summary.id > afterCursor.id);
-        while (collected.length < wanted) {
-          const page = await index.listRecent({
-            workspaceIds,
-            includeArchived,
-            limit: wanted - collected.length,
-            before,
-            after: before === undefined ? after : undefined,
-          });
-          if (page.items.length === 0) break;
-          let exhausted = false;
-          for (const summary of page.items) {
-            if (!visibleWorkspaceIds.has(summary.workspaceId)) continue;
-            if (!newerThanCursor(summary)) {
-              exhausted = true;
-              break;
-            }
-            const cwd = summary.cwd ?? roots.get(summary.workspaceId);
-            if (cwd === undefined) continue;
-            if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-            if (archivedOnly && !summary.archived) continue;
-            const facts = raw.busy === undefined ? undefined : resolveSessionFacts(core, summary.id);
-            if (facts !== undefined && facts.busy !== raw.busy) continue;
-            collected.push({ summary, cwd, facts });
-          }
-          if (exhausted || page.nextCursor === undefined) break;
-          before = page.nextCursor;
-        }
-        return { visible: collected.slice(0, pageSize), hasMore: collected.length > pageSize };
-      };
-
-      if (raw.page_size === undefined) {
-        const page = await index.listRecent({
-          workspaceIds,
-          includeArchived,
-          before: raw.before_id,
-          after: raw.after_id,
-        });
-        const eligible: Eligible[] = [];
-        for (const summary of page.items) {
-          if (!visibleWorkspaceIds.has(summary.workspaceId)) continue;
-          const cwd = summary.cwd ?? roots.get(summary.workspaceId);
-          if (cwd === undefined) continue;
-          if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-          if (archivedOnly && !summary.archived) continue;
-          eligible.push({ summary, cwd });
-        }
-        const projected = eligible.map(({ summary, cwd }) =>
-          toWireSession(summary, cwd, resolveSessionFacts(core, summary.id)),
-        );
-        const items =
-          raw.busy !== undefined
-            ? projected.filter((session) => session.busy === raw.busy)
-            : projected;
-        if (raw.hosts !== 'include' || hosts === undefined) {
-          reply.send(okEnvelope({ items, has_more: false }, req.id));
-          return;
-        }
-        const remote = await sessionsOnHosts(hosts, {
-          busy: raw.busy,
-          include_archive: raw.include_archive,
-          archived_only: raw.archived_only,
-          exclude_empty: raw.exclude_empty,
-        });
-        const merged = [...items, ...remote.items].toSorted(
-          (a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id),
-        );
-        reply.send(okEnvelope({ items: merged, has_more: false, unavailable_hosts: remote.unavailable }, req.id));
-        return;
-      }
-
-      const pageSize = raw.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
-      const { visible, hasMore } = await collect(pageSize);
-      const items = visible.map(({ summary, cwd, facts }) =>
-        toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
-      );
-      reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
-    },
-  );
-  app.get(
-    listRoute.path,
-    listRoute.options,
-    listRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
 
   const getRoute = defineRoute(
@@ -647,7 +435,7 @@ export function registerSessionsRoutes(
       path: '/sessions/{session_id}/profile',
       params: sessionIdParamSchema,
       body: updateSessionProfileRequestSchema,
-      success: { data: sessionSchema },
+      success: { data: updateSessionProfileResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -667,19 +455,27 @@ export function registerSessionsRoutes(
           await applySessionAgentConfig(core, session_id, agent_config);
         }
         const session = toWireSession(fields, fields.root, resolveSessionFacts(core, fields.id));
-        if (typeof req.body.title === 'string' && req.body.title.trim().length > 0) {
+        const main =
+          agent_config !== undefined
+            ? await resolveMainAgent(core, session_id)
+            : await resolveExistingMainAgent(core, session_id);
+        const agent = readAgentState(main, session.activity === 'turn');
+        if (
+          (typeof req.body.title === 'string' && req.body.title.trim().length > 0) ||
+          (req.body.metadata !== undefined && Object.keys(req.body.metadata).length > 0)
+        ) {
           core.accessor.get(IEventService).publish(
             new SessionMetaUpdated({
               payload: {
                 agentId: 'main',
                 sessionId: session_id,
                 title: session.title,
-                patch: { title: session.title, isCustomTitle: true },
+                patch: { title: session.title, isCustomTitle: Boolean(session.title) },
               },
             }),
           );
         }
-        reply.send(okEnvelope(session, req.id));
+        reply.send(okEnvelope({ session, agent }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
       }
@@ -848,7 +644,7 @@ export function registerSessionsRoutes(
         );
         const items =
           req.query.busy !== undefined
-            ? projected.filter((session) => session.busy === req.query.busy)
+            ? projected.filter((session) => (session.activity !== 'idle') === req.query.busy)
             : projected;
         reply.send(okEnvelope({ items, has_more: page.nextCursor !== undefined }, req.id));
       } catch (error) {
@@ -1409,27 +1205,29 @@ export function toWireSession(
   fields: SessionWireFields,
   cwd: string,
   facts: SessionFacts,
+  git?: SessionGit,
 ): Session {
+  const lastTurnReason =
+    facts.lastTurnReason ?? (facts.live === false ? fields.lastTurnReason : undefined);
+  const lastTurnOutcome =
+    lastTurnReason === 'cancelled' ? 'interrupted' : lastTurnReason;
+  const activity = facts.mainTurnActive ? 'turn' : facts.busy ? 'background' : 'idle';
   return {
     id: fields.id,
     workspace_id: fields.workspaceId,
+    cwd,
     title: fields.title ?? '',
     created_at: new Date(fields.createdAt).toISOString(),
     updated_at: new Date(fields.updatedAt).toISOString(),
     archived_at:
       fields.archivedAt === undefined ? undefined : new Date(fields.archivedAt).toISOString(),
-    busy: facts.busy,
-    main_turn_active: facts.mainTurnActive,
+    activity,
     pending_interaction: facts.pendingInteraction,
-    last_turn_reason:
-      facts.lastTurnReason ?? (facts.live === false ? fields.lastTurnReason : undefined),
+    last_turn_outcome: lastTurnOutcome,
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
-    metadata: buildWireMetadata(fields.custom, cwd),
-    agent_config: { model: facts.model ?? '' },
-    usage: emptySessionUsage(),
-    permission_rules: [],
-    message_count: 0,
+    metadata: buildWireMetadata(fields.custom),
+    git,
   };
 }
 
@@ -1439,7 +1237,6 @@ export interface SessionFacts {
   readonly pendingInteraction: SessionPendingInteraction;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   readonly live?: boolean;
-  readonly model?: string;
 }
 
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
@@ -1455,14 +1252,7 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
   return {
     ...handle.accessor.get(ISessionActivityView).state(),
     live: true,
-    model: readLiveSessionModel(handle),
   };
-}
-
-function readLiveSessionModel(session: ISessionScopeHandle): string | undefined {
-  const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
-  if (main === undefined) return undefined;
-  return readLegacyStatus(main)?.model;
 }
 
 async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentScopeHandle> {
@@ -1473,6 +1263,17 @@ async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentS
   return ensureMainAgent(session);
 }
 
+async function resolveExistingMainAgent(
+  core: Scope,
+  sessionId: string,
+): Promise<IAgentScopeHandle | undefined> {
+  const session = await resumeSessionById(core.accessor, sessionId);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+  }
+  return getOrRestoreAgent(session, MAIN_AGENT_ID);
+}
+
 function normalizeOptional(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -1481,11 +1282,10 @@ function normalizeOptional(value: string | undefined): string | undefined {
 
 function buildWireMetadata(
   custom: Record<string, unknown> | undefined,
-  cwd: string,
-): { cwd: string; [key: string]: unknown } {
-  if (custom === undefined) return { cwd };
+): Record<string, unknown> | undefined {
+  if (custom === undefined) return undefined;
   const { goal: _drop, ...rest } = custom as { goal?: unknown; [key: string]: unknown };
-  return { ...rest, cwd };
+  return Object.keys(rest).length === 0 ? undefined : rest;
 }
 
 function buildValidationEnvelope(

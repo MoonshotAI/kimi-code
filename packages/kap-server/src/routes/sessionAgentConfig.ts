@@ -140,7 +140,7 @@ export async function applyAgentConfigToSession(
       await tower.exit();
     }
   }
-  if (agentConfig.goal_objective !== undefined) {
+  if (agentConfig.goal_objective !== undefined && agentConfig.goal_control !== 'edit') {
     await agent.accessor
       .get(IAgentGoalService)
       .createGoal({ objective: agentConfig.goal_objective });
@@ -156,6 +156,9 @@ export async function applyAgentConfigToSession(
         break;
       case 'cancel':
         await goal.cancelGoal({});
+        break;
+      case 'edit':
+        await goal.editGoalObjective({ objective: agentConfig.goal_objective ?? '' });
         break;
     }
   }

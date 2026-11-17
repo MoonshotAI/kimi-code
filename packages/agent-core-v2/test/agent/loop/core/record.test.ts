@@ -11,7 +11,7 @@ import {
 } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
-import type { ToolExecuteInput, ToolResult } from '@moonshot-ai/core/tool/executor';
+import { textToolContent, type ToolReturn } from '#/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
 
 function requester(responses: MockProviderResponse[]): LoopLlmRequester {
@@ -85,16 +85,17 @@ describe('loop record', () => {
     });
     expect(restored.state.messages).toEqual(loop.state.messages);
 
-    let settleBackground: ((result: ToolResult) => void) | undefined;
-    let settleSlow: ((result: ToolResult) => void) | undefined;
-    const executor = executorFrom(['bg', 'slow'], ({ toolCall, detach }: ToolExecuteInput) => {
-        if (toolCall.name === 'bg') {
-          detach?.('bg ack');
-          return new Promise<ToolResult>((resolve) => {
+    let settleBackground: ((result: ToolReturn) => void) | undefined;
+    let settleSlow: ((result: ToolReturn) => void) | undefined;
+    const executor = executorFrom(['bg', 'slow'], (context) => {
+        if (context.call.name === 'bg') {
+          context.onDetach(() => ({ content: textToolContent('bg ack') }));
+          context.detach('bg ack');
+          return new Promise<ToolReturn>((resolve) => {
             settleBackground = resolve;
           });
         }
-        return new Promise<ToolResult>((resolve) => {
+        return new Promise<ToolReturn>((resolve) => {
           settleSlow = resolve;
         });
       },

@@ -4,9 +4,8 @@
  */
 import { createUserMessage, type UserMessage } from '#/llm/message';
 import { errorText } from '#/llm/protocol/errors';
-import type { ToolHookPoint } from '#/tool/executor';
+import type { HookPoint as LoopHookPoint, ToolHookPoint } from '../contract/hook';
 import type { HookFailedEvent } from '../contract/emitted';
-import type { HookPoint as LoopHookPoint } from '../contract/hook';
 import type { Cause } from '../contract/outcome';
 
 type HookPoint = LoopHookPoint | ToolHookPoint;

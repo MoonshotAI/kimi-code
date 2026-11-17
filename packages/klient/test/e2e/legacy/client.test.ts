@@ -134,7 +134,7 @@ describeLive('DaemonClient (live server required)', () => {
     const fetched = await client.getSession(session.id);
     log('fetched session', fetched);
     expect(fetched.id).toBe(session.id);
-    expect(fetched.metadata.cwd).toBe(process.cwd());
+    expect(fetched.cwd).toBe(process.cwd());
   });
 
   it('forks a session through the action-suffix route', async () => {
@@ -590,22 +590,8 @@ function okEnvelope<T>(data: T): { code: 0; msg: string; data: T; request_id: st
   return { code: 0, msg: 'success', data, request_id: 'req_test' };
 }
 
-function frameForLog(frame: {
-  type: string;
-  session_id?: string;
-  request_id?: string;
-  code?: number;
-  msg?: string;
-  payload?: unknown;
-}): Record<string, unknown> {
-  return {
-    type: frame.type,
-    session_id: frame.session_id,
-    request_id: frame.request_id,
-    code: frame.code,
-    msg: frame.msg,
-    payload: frame.payload,
-  };
+function frameForLog(frame: Record<string, unknown> & { type: string }): Record<string, unknown> {
+  return { ...frame };
 }
 
 function testSession(overrides: Partial<Session> = {}): Session {
@@ -615,21 +601,8 @@ function testSession(overrides: Partial<Session> = {}): Session {
     title: 'Example session',
     created_at: '2026-06-09T00:00:00.000Z',
     updated_at: '2026-06-09T00:00:00.000Z',
-    busy: false,
-    metadata: { cwd: '/tmp/example-server-e2e' },
-    agent_config: { model: '' },
-    usage: {
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_creation_tokens: 0,
-      total_cost_usd: 0,
-      context_tokens: 0,
-      context_limit: 0,
-      turn_count: 0,
-    },
-    permission_rules: [],
-    message_count: 0,
+    cwd: '/tmp/example-server-e2e',
+    activity: 'idle',
   };
   return {
     ...base,

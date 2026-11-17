@@ -38,6 +38,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "DELETE",
+      "/api/v1/mcp/servers/{name}",
+    ],
+    [
+      "DELETE",
       "/api/v1/oauth/login",
     ],
     [
@@ -51,10 +55,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "DELETE",
       "/api/v1/workspaces/{workspace_id}",
-    ],
-    [
-      "DELETE",
-      "/api/v2/mcp/servers/{name}",
     ],
     [
       "GET",
@@ -162,7 +162,15 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/mcp/auth-statuses",
+    ],
+    [
+      "GET",
       "/api/v1/mcp/servers",
+    ],
+    [
+      "GET",
+      "/api/v1/mcp/servers/{name}",
     ],
     [
       "GET",
@@ -306,22 +314,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v2/mcp/auth-statuses",
-    ],
-    [
-      "GET",
-      "/api/v2/mcp/servers",
-    ],
-    [
-      "GET",
-      "/api/v2/mcp/servers/{name}",
-    ],
-    [
-      "GET",
-      "/api/v2/sessions",
-    ],
-    [
-      "GET",
       "/asyncapi.json",
     ],
     [
@@ -426,7 +418,31 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/mcp/servers/{tail}",
+      "/api/v1/mcp/auth:begin",
+    ],
+    [
+      "POST",
+      "/api/v1/mcp/auth:cancel",
+    ],
+    [
+      "POST",
+      "/api/v1/mcp/auth:complete",
+    ],
+    [
+      "POST",
+      "/api/v1/mcp/auth:reset",
+    ],
+    [
+      "POST",
+      "/api/v1/mcp/servers",
+    ],
+    [
+      "POST",
+      "/api/v1/mcp/servers:inspect",
+    ],
+    [
+      "POST",
+      "/api/v1/mcp/servers:test",
     ],
     [
       "POST",
@@ -479,6 +495,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions:archive",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions:restore",
     ],
     [
       "POST",
@@ -577,42 +601,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
       "/api/v1/workspaces/{workspace_id}/untrust",
     ],
     [
-      "POST",
-      "/api/v2/mcp/auth:begin",
-    ],
-    [
-      "POST",
-      "/api/v2/mcp/auth:cancel",
-    ],
-    [
-      "POST",
-      "/api/v2/mcp/auth:complete",
-    ],
-    [
-      "POST",
-      "/api/v2/mcp/auth:reset",
-    ],
-    [
-      "POST",
-      "/api/v2/mcp/servers",
-    ],
-    [
-      "POST",
-      "/api/v2/mcp/servers:inspect",
-    ],
-    [
-      "POST",
-      "/api/v2/mcp/servers:test",
-    ],
-    [
-      "POST",
-      "/api/v2/sessions:archive",
-    ],
-    [
-      "POST",
-      "/api/v2/sessions:restore",
-    ],
-    [
       "PUT",
       "/api/v1/hosts/{id}",
     ],
@@ -626,11 +614,11 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "PUT",
-      "/api/v1/providers/{provider_id}",
+      "/api/v1/mcp/servers/{name}",
     ],
     [
       "PUT",
-      "/api/v2/mcp/servers/{name}",
+      "/api/v1/providers/{provider_id}",
     ],
   ],
 }

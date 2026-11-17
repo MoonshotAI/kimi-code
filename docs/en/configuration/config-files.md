@@ -128,6 +128,8 @@ Each entry in the `providers` table defines an API provider, keyed by a unique n
 | `api_key` | `string` | No | API key, written in plain text in the config file |
 | `api_key_env` | `string` | No | Name of a shell environment variable to read the API key from instead of storing it in the config file; re-read on every request. Mutually exclusive with `api_key` and `oauth`; an unset or empty variable fails the request with an error naming the variable |
 | `base_url` | `string` | No | API base URL |
+| `search_url` | `string` | No | Optional `WebSearch` endpoint URL for models under this provider (authenticated with this provider's credential) |
+| `feedback_url` | `string` | No | Optional `/feedback` endpoint URL for models under this provider (authenticated with this provider's credential) |
 | `oauth` | `table` | No | OAuth credential reference (`storage` and `key` fields); injected automatically by the login flow, so you normally never write this by hand |
 | `env` | `table<string, string>` | No | Fallback source for provider credentials; see the `env` sub-table |
 | `custom_headers` | `table<string, string>` | No | Custom HTTP headers attached to each request |

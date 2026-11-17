@@ -30,6 +30,7 @@ import {
   IAgentScopeContext,
   makeAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
+import { IEnvironmentService } from '#/app/environment/environment';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import {
@@ -109,6 +110,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionWorkdir private readonly workdir: ISessionWorkdir,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
@@ -302,6 +304,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       stage = 'restore';
       handle.accessor.get(IAgentPermissionRulesService);
       await handle.accessor.get(IEventDispatcher).restore();
+      const binding = handle.accessor.get(IAgentEnvironmentBindingService);
+      if (binding.current.environmentId.startsWith('acp:') && this.environments.current(binding.current.environmentId) === undefined) {
+        binding.bind(this.workdir.environmentId, binding.current.cwd ?? this.workdir.cwd);
+      }
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
       stage = 'bootstrap';
       const initialProfile = await this.bindBootstrap(handle, opts);
