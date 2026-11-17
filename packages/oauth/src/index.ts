@@ -163,12 +163,21 @@ export type {
   FetchChatTitleResult,
 } from './managed-tools';
 
-export { fetchSubmitFeedback, kimiCodeFeedbackUrl } from './managed-feedback';
+export {
+  fetchSubmitFeedback,
+  fetchUpdateFeedback,
+  kimiCodeFeedbackUpdateUrl,
+  kimiCodeFeedbackUrl,
+} from './managed-feedback';
 export type {
   FetchSubmitFeedbackError,
   FetchSubmitFeedbackOk,
   FetchSubmitFeedbackResult,
+  FetchUpdateFeedbackError,
+  FetchUpdateFeedbackOk,
+  FetchUpdateFeedbackResult,
   SubmitFeedbackBody,
+  UpdateFeedbackBody,
 } from './managed-feedback';
 
 export {
@@ -181,6 +190,7 @@ export type {
   CompleteFeedbackUploadBody,
   CreateFeedbackUploadUrlBody,
   CreateFeedbackUploadUrlResponse,
+  FeedbackUploadPart,
   FetchCompleteFeedbackUploadResult,
   FetchCreateFeedbackUploadUrlResult,
   FetchFeedbackUploadError,

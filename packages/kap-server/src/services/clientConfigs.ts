@@ -57,6 +57,38 @@ const modelSwitchConfirmConfigSchema = z.unknown().transform((raw): ModelSwitchC
   return { enable: enable.success ? enable.data : false, rules };
 });
 
+export const FEEDBACK_FORM_CONFIG_NAME = 'feedback_form';
+
+const feedbackReasonSchema = z.object({
+  id: z.string().min(1),
+  label: z
+    .record(z.string(), z.string().min(1))
+    .refine((label) => label['en'] !== undefined && label['zh'] !== undefined),
+});
+const feedbackReasonListSchema = z
+  .array(feedbackReasonSchema)
+  .refine((reasons) => new Set(reasons.map((reason) => reason.id)).size === reasons.length);
+const feedbackFormConfigSchema = z.unknown().transform((raw) => {
+  if (typeof raw !== 'object' || raw === null) {
+    return { version: 1, reply_reasons: { positive: undefined, negative: undefined } };
+  }
+  const record = raw as Record<string, unknown>;
+  const reasons = record['reply_reasons'];
+  if (record['version'] !== 1 || typeof reasons !== 'object' || reasons === null) {
+    return { version: 1, reply_reasons: { positive: undefined, negative: undefined } };
+  }
+  const reasonRecord = reasons as Record<string, unknown>;
+  const positive = feedbackReasonListSchema.safeParse(reasonRecord['positive']);
+  const negative = feedbackReasonListSchema.safeParse(reasonRecord['negative']);
+  return {
+    version: 1,
+    reply_reasons: {
+      positive: positive.success ? positive.data : undefined,
+      negative: negative.success ? negative.data : undefined,
+    },
+  };
+});
+
 export const EFFORT_SWITCH_CONFIG_NAME = 'effort_switch_confirm';
 
 interface EffortSwitchConfig {
@@ -102,6 +134,7 @@ const effortSwitchConfigSchema = z.unknown().transform((raw): EffortSwitchConfig
 const registry = new Map<string, z.ZodTypeAny>([
   [MODEL_SWITCH_CONFIRM_CONFIG_NAME, modelSwitchConfirmConfigSchema],
   [EFFORT_SWITCH_CONFIG_NAME, effortSwitchConfigSchema],
+  [FEEDBACK_FORM_CONFIG_NAME, feedbackFormConfigSchema],
   [CLIENT_UPGRADE_POLICY_CONFIG_NAME, clientUpgradePolicySchema],
 ]);
 

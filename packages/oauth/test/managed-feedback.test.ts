@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   fetchSubmitFeedback,
+  fetchUpdateFeedback,
+  kimiCodeFeedbackUpdateUrl,
   kimiCodeFeedbackUrl,
   type SubmitFeedbackBody,
 } from '../src/managed-feedback';
@@ -29,6 +31,48 @@ describe('kimiCodeFeedbackUrl', () => {
   it('honours KIMI_CODE_BASE_URL and trims trailing slashes', () => {
     vi.stubEnv('KIMI_CODE_BASE_URL', 'https://example.test/v9///');
     expect(kimiCodeFeedbackUrl()).toBe('https://example.test/v9/feedback');
+  });
+});
+
+describe('fetchUpdateFeedback', () => {
+  it('posts top-level content and info patches to the update endpoint', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchUpdateFeedback(
+      kimiCodeFeedbackUpdateUrl('https://example.test/coding/v1'),
+      'access-token',
+      { feedback_id: 42, content: 'more detail', info: { cancel: false, reasons: ['fast'] } },
+    );
+
+    expect(result).toEqual({ kind: 'ok' });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://example.test/coding/v1/feedback/update');
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer access-token');
+    expect(JSON.parse(init.body as string)).toEqual({
+      feedback_id: 42,
+      content: 'more detail',
+      info: { cancel: false, reasons: ['fast'] },
+    });
+  });
+
+  it('preserves update rejection status and server message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { message: 'update window expired' } }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    const result = await fetchUpdateFeedback('https://example.test/feedback/update', 'token', {
+      feedback_id: 42,
+      info: { cancel: true },
+    });
+
+    expect(result).toEqual({ kind: 'error', status: 409, message: 'update window expired' });
   });
 });
 
@@ -61,6 +105,27 @@ describe('fetchSubmitFeedback', () => {
     expect(headers.get('accept')).toBe('application/json');
 
     expect(JSON.parse(init?.body as string)).toEqual(SAMPLE_BODY);
+  });
+
+  it('allows global feedback without a session_id', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ feedback_id: 4 }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const body: SubmitFeedbackBody = {
+      content: 'global feedback',
+      version: '1.2.3',
+      os: 'macOS 26.1',
+      model: null,
+      info: { kind: 'global' },
+    };
+
+    await expect(
+      fetchSubmitFeedback('https://example.test/feedback', 'token', body),
+    ).resolves.toEqual({ kind: 'ok', feedbackId: 4 });
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual(body);
+    expect(JSON.parse(init.body as string)).not.toHaveProperty('session_id');
   });
 
   it('returns an error when the server omits feedback_id', async () => {

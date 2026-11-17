@@ -9,6 +9,24 @@ import {
   type KimiHostIdentity,
 } from './identity';
 import {
+  fetchSubmitFeedback,
+  fetchUpdateFeedback,
+  kimiCodeFeedbackUpdateUrl,
+  kimiCodeFeedbackUrl,
+  type FetchSubmitFeedbackResult,
+  type FetchUpdateFeedbackResult,
+  type SubmitFeedbackBody,
+  type UpdateFeedbackBody,
+} from './managed-feedback';
+import {
+  fetchCompleteFeedbackUpload,
+  fetchCreateFeedbackUploadUrl,
+  type CompleteFeedbackUploadBody,
+  type CreateFeedbackUploadUrlBody,
+  type FetchCompleteFeedbackUploadResult,
+  type FetchCreateFeedbackUploadUrlResult,
+} from './managed-feedback-upload';
+import {
   KIMI_CODE_OAUTH_KEY,
   KIMI_CODE_PROVIDER_NAME,
   provisionManagedKimiCodeConfig,
@@ -308,6 +326,89 @@ export class KimiOAuthToolkit<TConfig = unknown> {
         message: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  async submitFeedback(
+    body: SubmitFeedbackBody,
+    providerName?: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    } = {},
+  ): Promise<FetchSubmitFeedbackResult> {
+    return this.withAccessToken(
+      providerName,
+      options,
+      (accessToken) => fetchSubmitFeedback(kimiCodeFeedbackUrl(options.baseUrl), accessToken, body),
+    );
+  }
+
+  async updateFeedback(
+    body: UpdateFeedbackBody,
+    providerName?: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    } = {},
+  ): Promise<FetchUpdateFeedbackResult> {
+    return this.withAccessToken(
+      providerName,
+      options,
+      (accessToken) =>
+        fetchUpdateFeedback(kimiCodeFeedbackUpdateUrl(options.baseUrl), accessToken, body),
+    );
+  }
+
+  private async withAccessToken<T>(
+    providerName: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    },
+    run: (accessToken: string) => Promise<T>,
+  ): Promise<T | { readonly kind: 'error'; readonly message: string }> {
+    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    try {
+      const accessToken = await this.ensureFresh(name, {
+        oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
+      });
+      return await run(accessToken);
+    } catch (error) {
+      return {
+        kind: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async createFeedbackUploadUrl(
+    body: CreateFeedbackUploadUrlBody,
+    providerName?: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    } = {},
+  ): Promise<FetchCreateFeedbackUploadUrlResult> {
+    return this.withAccessToken(
+      providerName,
+      options,
+      (accessToken) => fetchCreateFeedbackUploadUrl(accessToken, body, { baseUrl: options.baseUrl }),
+    );
+  }
+
+  async completeFeedbackUpload(
+    body: CompleteFeedbackUploadBody,
+    providerName?: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    } = {},
+  ): Promise<FetchCompleteFeedbackUploadResult> {
+    return this.withAccessToken(
+      providerName,
+      options,
+      (accessToken) => fetchCompleteFeedbackUpload(accessToken, body, { baseUrl: options.baseUrl }),
+    );
   }
 
   managerFor(

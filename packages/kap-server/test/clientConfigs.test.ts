@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clientConfigsBaseUrl,
   EFFORT_SWITCH_CONFIG_NAME,
+  FEEDBACK_FORM_CONFIG_NAME,
   fetchClientConfig,
   isRegisteredClientConfig,
   MODEL_SWITCH_CONFIRM_CONFIG_NAME,
@@ -190,7 +191,57 @@ describe('fetchClientConfig', () => {
   });
 });
 
-describe('server-v2 GET /api/v1/client-configs/{name}', () => {
+describe('feedback_form', () => {
+  it('parses positive and negative reasons independently', async () => {
+    const validPositive = [{ id: 'fast', label: { zh: '快速高效', en: 'Fast and efficient' } }];
+    const validNegative = [
+      { id: 'slow_or_stuck', label: { zh: '速度慢或卡住', en: 'Slow or stuck' } },
+    ];
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        name: FEEDBACK_FORM_CONFIG_NAME,
+        config: {
+          version: 1,
+          reply_reasons: {
+            positive: validPositive,
+            negative: [{ id: 'other', label: { zh: '其他' } }],
+          },
+        },
+      }),
+    );
+
+    await expect(
+      fetchClientConfig(FEEDBACK_FORM_CONFIG_NAME, 'https://example.test', fetchImpl),
+    ).resolves.toEqual({
+      version: 1,
+      reply_reasons: { positive: validPositive, negative: undefined },
+    });
+
+    fetchImpl.mockImplementation(async () =>
+      jsonResponse({
+        name: FEEDBACK_FORM_CONFIG_NAME,
+        config: {
+          version: 1,
+          reply_reasons: {
+            positive: [
+              { id: 'other', label: { zh: '其他', en: 'Other' } },
+              { id: 'other', label: { zh: '重复', en: 'Duplicate' } },
+            ],
+            negative: validNegative,
+          },
+        },
+      }),
+    );
+    await expect(
+      fetchClientConfig(FEEDBACK_FORM_CONFIG_NAME, 'https://example.test', fetchImpl),
+    ).resolves.toEqual({
+      version: 1,
+      reply_reasons: { positive: undefined, negative: validNegative },
+    });
+  });
+});
+
+describe('server-v2 POST /api/v1/client_configs', () => {
   let server: RunningServer | undefined;
   let cloud: Server | undefined;
   let home: string | undefined;

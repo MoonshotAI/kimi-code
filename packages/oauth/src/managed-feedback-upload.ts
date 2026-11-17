@@ -17,6 +17,7 @@ export interface FeedbackUploadPart {
 
 export interface CreateFeedbackUploadUrlResponse {
   readonly upload_id: number;
+  readonly storage_upload_id?: string;
   readonly parts: readonly FeedbackUploadPart[];
 }
 
@@ -76,7 +77,12 @@ export async function fetchCreateFeedbackUploadUrl(
   if (parsed === undefined) {
     return { kind: 'error', message: 'Feedback upload request failed: missing upload id or parts.' };
   }
-  return { kind: 'ok', upload_id: parsed.uploadId, parts: parsed.parts };
+  return {
+    kind: 'ok',
+    upload_id: parsed.uploadId,
+    storage_upload_id: parsed.storageUploadId,
+    parts: parsed.parts,
+  };
 }
 
 export async function fetchCompleteFeedbackUpload(
@@ -146,11 +152,16 @@ function feedbackBaseUrl(baseUrl?: string): string {
 
 function readUpload(
   payload: unknown,
-): { readonly uploadId: number; readonly parts: FeedbackUploadPart[] } | undefined {
+): {
+  readonly uploadId: number;
+  readonly storageUploadId?: string;
+  readonly parts: FeedbackUploadPart[];
+} | undefined {
   const upload = readRecord(payload, 'upload');
   if (typeof upload !== 'object' || upload === null) return undefined;
   const record = upload as Record<string, unknown>;
   const uploadId = readNumberField(record, 'id');
+  const storageUploadId = readStringField(record, 'upload_id');
   const partsRaw = record['parts'];
   if (!Array.isArray(partsRaw) || partsRaw.length === 0) return undefined;
   const parts: FeedbackUploadPart[] = [];
@@ -159,7 +170,7 @@ function readUpload(
     if (part === undefined) return undefined;
     parts.push(part);
   }
-  return uploadId === undefined ? undefined : { uploadId, parts };
+  return uploadId === undefined ? undefined : { uploadId, storageUploadId, parts };
 }
 
 function readPart(item: unknown): FeedbackUploadPart | undefined {
