@@ -144,8 +144,9 @@ describe('kimi web', () => {
     expect(longs).not.toContain('--allow-remote-terminals');
   });
 
-  it('runs `kimi server` with the same options as `kimi web` but `open: false` by default', async () => {
+  it('runs a hidden `kimi server` with the same options as `kimi web` but `open: false` by default', async () => {
     const program = makeProgram();
+    expect(program.helpInformation()).not.toMatch(/^\s+server\s/m);
     const server = program.commands.find((c) => c.name() === 'server');
     expect(server).toBeDefined();
     expect(server?.commands.map((c) => c.name()).toSorted()).toEqual([
