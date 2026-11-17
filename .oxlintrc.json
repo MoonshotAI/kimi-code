@@ -223,6 +223,9 @@
     // Interfaces that only extend a payload type are how event and service
     // declarations merge with their classes here.
     "typescript/no-empty-object-type": "off",
+    // Its findings disagree with tsc here: removing the assertions it flags breaks
+    // type-checking in 41 files.
+    "typescript/no-unnecessary-type-assertion": "off",
     // The TUI matches terminal control characters on purpose.
     "eslint/no-control-regex": "off",
     // no-floating-promises already reports unhandled promise chains.
