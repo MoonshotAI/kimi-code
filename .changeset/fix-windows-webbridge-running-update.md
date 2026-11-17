@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix Windows WebBridge updates failing while the daemon is running.
+修复 Windows 上 WebBridge 守护进程运行时无法更新的问题，更新前需确认停止相关进程。
