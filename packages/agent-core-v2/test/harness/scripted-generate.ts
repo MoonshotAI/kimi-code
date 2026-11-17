@@ -971,3 +971,356 @@ function defaultRawFinishReason(
 function replacer(_key: string, value: unknown): unknown {
   return value === undefined ? null : value;
 }
+
+export function coreRequesterFromA(
+  initial: InitializedLlmRequester,
+  requester: LlmRequester,
+): InitializedLlmRequester {
+  return {
+    [requesterContents]: contentsOf(initial),
+    with: ((part: LlmRequestPart) => {
+      const merged = mergeFields(contentsOf(initial), contentsOf(part)) as LlmRequestPart;
+      return coreRequesterFromA(createRequester().with(merged as never) as InitializedLlmRequester, requester);
+    }) as InitializedLlmRequester['with'],
+    request: (rest) => initial.with(rest).request({}),
+    generate: (rest, control) =>
+      runLlmRequest(initial.with(rest).request({}), control, (request, settleControl) =>
+        runLegacyRequester(request, requester, settleControl),
+      ),
+  };
+}
+
+async function runLegacyRequester(
+  request: ReturnType<InitializedLlmRequester['request']>,
+  requester: LlmRequester,
+  control: LlmSettleControl,
+): Promise<LlmOutcome> {
+  const endpoint = await resolveEndpoint(request.endpoint);
+  const options = request.protocol.options as { readonly extras?: unknown } | undefined;
+  const config: LlmRequestConfig = {
+    model: {
+      provider: request.model.spec.provider,
+      model: request.model.spec.name,
+      capability: legacyCapability(request.model.spec),
+      maxContextSize: request.model.spec.maxContextSize,
+      maxInputSize: request.model.spec.maxInputSize,
+      baseUrl: endpoint.baseUrl,
+      defaultHeaders: endpoint.headers,
+      apiKey: endpoint.apiKey,
+    },
+    systemPrompt: request.profile?.systemPrompt,
+    tools: request.profile?.tools?.filter((tool) => tool.deferred !== true),
+    cacheKey: request.model.cacheKey,
+    thinking: request.model.thinking,
+    responseFormat: request.model.responseFormat,
+    maxCompletionTokens:
+      request.model.maxOutputTokens === 'none' ? 0 : request.model.maxOutputTokens,
+    maxContextTokens: request.model.spec.maxContextSize,
+    extraParams:
+      options?.extras === undefined
+        ? undefined
+        : ({ openai: options.extras } as LlmRequestConfig['extraParams']),
+    stream: request.protocol.stream,
+  };
+  const content: LlmRequestContent = {
+    messages: request.content.messages,
+    usedContextTokens: request.content.usedTokens,
+  };
+  let requestStartedAt = Date.now();
+  let requestSentAt: number | undefined;
+  let firstChunkAt: number | undefined;
+  let serverDecodeMs = 0;
+  let clientConsumeMs = 0;
+  let lastResumeAt = 0;
+  let decodeEluStart: EventLoopUtilization | undefined;
+  let decodeEluEnd: EventLoopUtilization | undefined;
+  let headers: Record<string, string> | undefined;
+  let requestId: string | undefined;
+  let usage: Parameters<typeof mergeUsagePatch>[0];
+  let finish: FinishInfo | undefined;
+  let messageId: string | undefined;
+  let failure: { readonly error: import('#human/llm/response').LlmErrorMessage; readonly rawError?: unknown } | undefined;
+  const failed = (
+    current: { error: import('#human/llm/response').LlmErrorMessage; rawError?: unknown },
+  ): LlmOutcome => ({
+    type: 'failed',
+    ...current,
+    message: accumulator.finish(),
+    usage,
+    headers,
+    finish,
+    messageId,
+    requestId,
+    timing:
+      firstChunkAt === undefined
+        ? undefined
+        : buildStreamTiming(
+            requestStartedAt,
+            requestSentAt,
+            firstChunkAt,
+            Date.now(),
+            finalizeDecodeStats(decodeEluEnd, { serverDecodeMs, clientConsumeMs }),
+          ) as LlmTiming,
+    diagnostics:
+      errorDiagnostics(current.rawError) ??
+      request.protocol.base.diagnoseError?.({
+        error: current.error,
+        rawError: current.rawError,
+        headers,
+      }),
+  });
+  const accumulator = createMessageAccumulator();
+  try {
+    await requester.generate(config, content, {
+      signal: control.signal,
+      onEvent: (event) => {
+        switch (event.type) {
+          case 'llm.sent':
+            if (requestSentAt !== undefined) requestStartedAt = Date.now();
+            requestSentAt = Date.now();
+            control.onEvent?.(event);
+            return;
+          case 'llm.streaming.headers':
+            headers = event.headers;
+            requestId = request.protocol.base.requestId?.(event.headers);
+            control.onEvent?.(event);
+            return;
+          case 'llm.streaming.part': {
+            const arrivedAt = Date.now();
+            if (firstChunkAt === undefined) {
+              firstChunkAt = arrivedAt;
+              decodeEluStart = performance.eventLoopUtilization();
+            } else {
+              serverDecodeMs += arrivedAt - lastResumeAt;
+            }
+            const accumulated = accumulator.push(event.part);
+            const part = event.part.type === 'think' && accumulated.part.type === 'think'
+              ? { ...event.part, hidden: accumulated.part.hidden }
+              : event.part;
+            control.onEvent?.({ ...event, part, block: accumulated.block });
+            lastResumeAt = Date.now();
+            clientConsumeMs += lastResumeAt - arrivedAt;
+            return;
+          }
+          case 'llm.streaming.usage':
+            usage = mergeUsagePatch(usage, event.usage);
+            return;
+          case 'llm.streaming.finish':
+            finish = event.finish;
+            return;
+          case 'llm.streaming.message_id':
+            messageId = event.messageId;
+            return;
+          case 'llm.failed.syntax':
+          case 'llm.failed.remote':
+            failure = { error: event.error, rawError: 'rawError' in event ? event.rawError : undefined };
+            return;
+          case 'llm.request.retrying':
+            return;
+          case 'llm.done':
+            return;
+        }
+      },
+    });
+  } catch (error) {
+    if (control.signal.aborted || isAbortError(error)) {
+      return { type: 'aborted', message: usableOutputOf(accumulator.finish()), reason: error };
+    }
+    const raw = unwrapErrorCause(error);
+    const classified = llmMessageFromError(raw);
+    const normalized =
+      classified?.kind === 'status' && isImageFormatError(raw)
+        ? { ...classified, kind: 'image_format' as const }
+        : classified?.kind === 'status' && isRecoverableRequestStructureError(raw)
+          ? { ...classified, kind: 'request_structure' as const }
+          : classified;
+    return failed({ error: normalized ?? toLlmErrorMessage(raw), rawError: error });
+  }
+  if (failure !== undefined) {
+    return failed(failure);
+  }
+  const message = accumulator.finish();
+  const empty = emptyResponseError(message, config.model, finish ?? NO_FINISH);
+  if (empty !== null) return failed({ error: empty });
+  if (request.protocol.stream !== false && finish === undefined) {
+    return failed({
+      error: {
+        kind: 'provider',
+        message: `The API stream ended without a finish event. Provider: ${config.model.provider}, model: ${config.model.model}`,
+        retryable: true,
+      },
+    });
+  }
+  const streamEndedAt = Date.now();
+  if (firstChunkAt !== undefined) {
+    serverDecodeMs += streamEndedAt - lastResumeAt;
+    if (decodeEluStart !== undefined) decodeEluEnd = performance.eventLoopUtilization(decodeEluStart);
+  }
+  return {
+    type: 'done',
+    message,
+    usage,
+    headers,
+    requestId,
+    finish,
+    messageId,
+    timing:
+      firstChunkAt === undefined
+        ? undefined
+        : buildStreamTiming(
+            requestStartedAt,
+            requestSentAt,
+            firstChunkAt,
+            streamEndedAt,
+            finalizeDecodeStats(decodeEluEnd, { serverDecodeMs, clientConsumeMs }),
+          ) as LlmTiming,
+  };
+}
+
+
+function legacyCapability(
+  spec: ReturnType<InitializedLlmRequester['request']>['model']['spec'],
+): LlmRequestConfig['model']['capability'] {
+  const capability = spec.capability;
+  if (capability === undefined) return UNKNOWN_CAPABILITY;
+  return {
+    image_in: capability.image_in === true,
+    video_in: capability.video_in === true,
+    audio_in: capability.audio_in === true,
+    thinking: capability.thinking === true,
+    tool_use: capability.tool_use ?? true,
+    dynamically_loaded_tools: capability.dynamically_loaded_tools === true,
+  };
+}
+
+
+export interface ModelEventRequester {
+  readonly model: Model;
+  request(
+    input: ModelRequestInput,
+    signal?: AbortSignal,
+    params?: ModelRequestParams,
+  ): AsyncIterable<ModelRequestEvent>;
+}
+
+export function aRequesterFromModelEvents(requester: ModelEventRequester): LlmRequester {
+  return {
+    async generate(config, content, control) {
+      const input: ModelRequestInput = {
+        systemPrompt: config.systemPrompt ?? '',
+        tools: config.tools ?? [],
+        messages: content.messages,
+        responseFormat: config.responseFormat,
+      };
+      const params: ModelRequestParams = {
+        cacheKey: config.cacheKey,
+        sampling: samplingFromExtraParams(config.extraParams),
+        thinkingEffort: config.thinking?.effort,
+        thinkingKeep: config.thinking?.keep,
+        maxCompletionTokens: config.maxCompletionTokens,
+        usedContextTokens: content.usedContextTokens,
+        maxContextTokens: config.maxContextTokens,
+        stream: config.stream,
+        onRequestId: (requestId) => {
+          control.onEvent?.({
+            type: 'llm.streaming.headers',
+            headers:
+              requestId === undefined
+                ? {}
+                : { 'x-request-id': requestId, 'x-trace-id': requestId },
+          });
+        },
+      };
+      let sawPart = false;
+      for await (const event of requester.request(input, control.signal, params)) {
+        switch (event.type) {
+          case 'part':
+            sawPart = true;
+            control.onEvent?.({ type: 'llm.streaming.part', part: event.part });
+            break;
+          case 'usage':
+            control.onEvent?.({
+              type: 'llm.streaming.usage',
+              usage: event.usage,
+            });
+            break;
+          case 'finish': {
+            if (!sawPart) {
+              for (const part of partsFromGeneratedMessage(event.message)) {
+                control.onEvent?.({ type: 'llm.streaming.part', part });
+              }
+            }
+            if (event.requestId !== undefined) {
+              control.onEvent?.({
+                type: 'llm.streaming.headers',
+                headers: { 'x-request-id': event.requestId, 'x-trace-id': event.requestId },
+              });
+            }
+            control.onEvent?.({
+              type: 'llm.streaming.finish',
+              finish: {
+                finishReason: event.providerFinishReason ?? null,
+                rawFinishReason: event.rawFinishReason ?? null,
+              },
+            });
+            if (event.id !== undefined) {
+              control.onEvent?.({ type: 'llm.streaming.message_id', messageId: event.id });
+            }
+            break;
+          }
+          case 'timing':
+            break;
+        }
+      }
+      control.onEvent?.({ type: 'llm.done' });
+    },
+  };
+}
+
+
+interface StreamDecodeStats {
+  readonly serverDecodeMs: number;
+  readonly clientConsumeMs: number;
+  readonly clientBlockedMs?: number;
+}
+
+function finalizeDecodeStats(
+  elu: EventLoopUtilization | undefined,
+  raw: StreamDecodeStats,
+): StreamDecodeStats {
+  if (elu === undefined) return raw;
+  return {
+    serverDecodeMs: raw.serverDecodeMs,
+    clientConsumeMs: raw.clientConsumeMs,
+    clientBlockedMs: Math.max(0, Math.round(elu.active) - raw.clientConsumeMs),
+  };
+}
+
+type MutableModelRequestTiming = { -readonly [K in keyof ModelRequestTiming]: ModelRequestTiming[K] };
+
+export function buildStreamTiming(
+  requestStartedAt: number,
+  requestSentAt: number | undefined,
+  firstChunkAt: number,
+  streamEndedAt: number | undefined,
+  decodeStats: StreamDecodeStats | undefined,
+): ModelRequestTiming {
+  const outputEndedAt = streamEndedAt ?? Date.now();
+  const timing: MutableModelRequestTiming = {
+    firstTokenLatencyMs: Math.max(0, firstChunkAt - requestStartedAt),
+    streamDurationMs: Math.max(0, outputEndedAt - firstChunkAt),
+  };
+  if (requestSentAt !== undefined) {
+    const sentAt = Math.min(Math.max(requestSentAt, requestStartedAt), firstChunkAt);
+    timing.requestBuildMs = sentAt - requestStartedAt;
+    timing.serverFirstTokenMs = firstChunkAt - sentAt;
+  }
+  if (decodeStats !== undefined) {
+    timing.serverDecodeMs = Math.max(0, decodeStats.serverDecodeMs);
+    timing.clientConsumeMs = Math.max(0, decodeStats.clientConsumeMs);
+    if (decodeStats.clientBlockedMs !== undefined) {
+      timing.clientBlockedMs = Math.max(0, decodeStats.clientBlockedMs);
+    }
+  }
+  return timing;
+}
