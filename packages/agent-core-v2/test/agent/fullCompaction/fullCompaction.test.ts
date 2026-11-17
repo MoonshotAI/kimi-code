@@ -781,7 +781,7 @@ describe('FullCompaction', () => {
       return {
         parts: [{ type: 'text', text: 'Recovered compacted summary.' }],
         usage: null,
-        finishReason: null,
+        finishReason: 'completed',
       };
     });
     const ctx = testAgent({ generate });
