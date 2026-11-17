@@ -140,6 +140,10 @@ export interface AgentFacade {
    * Throws when there is nothing to compact or a turn is active.
    */
   compact(input?: { instruction?: string }): Promise<boolean>;
+  enterArtex(input?: { explorationId?: number }): Promise<void>;
+  exitArtex(): Promise<void>;
+  isArtexActive(): Promise<boolean>;
+  getArtexStatus(): Promise<{ active: boolean; explorationId?: number }>;
 }
 
 export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFacade {
@@ -237,5 +241,13 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
       call(scope, 'agentFullCompactionService', 'begin', [
         { source: 'manual', instruction: input?.instruction },
       ]) as Promise<boolean>,
+    enterArtex: (input) =>
+      call(scope, 'artexModeService', 'enter', [input?.explorationId]) as Promise<void>,
+    exitArtex: () => call(scope, 'artexModeService', 'exit', []) as Promise<void>,
+    isArtexActive: () => call(scope, 'artexModeService', 'isActive', []) as Promise<boolean>,
+    getArtexStatus: async () => {
+      const active = (await call(scope, 'artexModeService', 'isActive', [])) as boolean;
+      return { active };
+    },
   };
 }

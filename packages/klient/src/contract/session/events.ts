@@ -41,6 +41,10 @@ export interface SessionEventPayloads {
   'interactions.resolved': InteractionResolution;
   /** The merged skill catalog changed; the payload is the changed source id. */
   'skills.changed': string;
+  'artex.exploration.updated': Record<string, unknown>;
+  'artex.finding.reported': Record<string, unknown>;
+  'artex.activity.appended': Record<string, unknown>;
+  'artex.traffic.captured': Record<string, unknown>;
 }
 
 export type SessionEventName = keyof SessionEventPayloads;
@@ -70,5 +74,29 @@ export const sessionEvents = {
     kind: 'stream',
     name: 'interactions:resolved',
     schema: interactionResolutionSchema,
+  },
+  'artex.exploration.updated': {
+    kind: 'stream',
+    name: 'artex:events',
+    type: 'artex.exploration.updated',
+    schema: z.looseObject({ type: z.literal('artex.exploration.updated') }),
+  },
+  'artex.finding.reported': {
+    kind: 'stream',
+    name: 'artex:events',
+    type: 'artex.finding.reported',
+    schema: z.looseObject({ type: z.literal('artex.finding.reported') }),
+  },
+  'artex.activity.appended': {
+    kind: 'stream',
+    name: 'artex:events',
+    type: 'artex.activity.appended',
+    schema: z.looseObject({ type: z.literal('artex.activity.appended') }),
+  },
+  'artex.traffic.captured': {
+    kind: 'stream',
+    name: 'artex:events',
+    type: 'artex.traffic.captured',
+    schema: z.looseObject({ type: z.literal('artex.traffic.captured') }),
   },
 } satisfies Record<SessionEventName, SessionEventRegistration>;

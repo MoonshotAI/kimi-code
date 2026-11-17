@@ -53,7 +53,9 @@ import type {
   SkillActivationInput,
 } from '@moonshot-ai/agent-core-v2/features/skill/skill';
 import { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
-import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import { IEventBus, ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import { IArtexWorkStoreProvider } from '@moonshot-ai/agent-core-v2/features/artex/store/artexWorkStoreProvider';
+import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type {
   FileMeta,
   GetResult,
@@ -67,6 +69,7 @@ import { Readable } from 'node:stream';
 import type { EventSourceRef, IDisposable, ScopeRef } from '../../core/channel.js';
 import { RPCError } from '../../core/errors.js';
 import { IEventService, serviceTokens } from './serviceRegistry.js';
+import { createArtexGlobalFacade } from './artexGlobalFacade.js';
 
 /** Structural minimum of an engine `Scope` / `IScopeHandle`. */
 export interface ScopeLike {
@@ -405,6 +408,15 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   }
 
   function resolveService(resolved: ResolvedScope, service: string): Record<string, unknown> {
+    if (service === 'artexGlobalFacade') {
+      if (resolved.kind !== 'core') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return createArtexGlobalFacade({
+        flags: resolved.like.accessor.get(IFlagService),
+        workProvider: resolved.like.accessor.get(IArtexWorkStoreProvider),
+      });
+    }
     if (
       service === 'sessionInteractionService' ||
       service === 'sessionApprovalService' ||
@@ -482,6 +494,17 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         handler(wireClone(projectAgentEvent(event)));
       });
     }
+    if (resolved.kind === 'session' && name === 'artex:events') {
+      const bus = resolved.like.accessor.get(ISessionEventBus);
+      return bus.subscribe((event) => {
+        const type =
+          typeof event === 'object' && event !== null && 'type' in event
+            ? (event as { type: string }).type
+            : (event as { constructor?: { type?: string } }).constructor?.type;
+        if (type === undefined || !type.startsWith('artex.')) return;
+        handler(wireClone(event));
+      });
+    }
     throw new RPCError(REQUEST_INVALID, `unknown event stream: ${name} (${resolved.kind})`);
   }
 
@@ -530,6 +553,22 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         } catch (error) {
           rethrowFileErrorAsRpc(error);
         }
+      }
+      if (service === 'artexSessionService' && method === 'trafficBlob') {
+        const [hash, offset, length] = args as [string, number | undefined, number | undefined];
+        const member = instance[method];
+        if (typeof member !== 'function') {
+          throw new RPCError(REQUEST_INVALID, `method not found: ${service}.${method}`);
+        }
+        const result = (await (member as (...a: unknown[]) => Promise<unknown>).apply(
+          instance,
+          [hash, offset, length],
+        )) as { data: Buffer; total: number } | undefined;
+        if (result === undefined) return undefined;
+        return {
+          dataBase64: Buffer.from(result.data).toString('base64'),
+          total: result.total,
+        };
       }
       if (service === 'fileService' && method === 'get') {
         const [fileId] = args as [string];

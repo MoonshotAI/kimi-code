@@ -48,6 +48,8 @@ import { sessionQuestionContract } from './session/question.js';
 import { sessionPromptPredictionContract } from './session/promptPrediction.js';
 import { sessionSkillCatalogContract } from './session/skills.js';
 import { sessionTitleContract } from './session/title.js';
+import { globalArtexContract } from './global/artex.js';
+import { agentArtexModeContract, sessionArtexContract } from './session/artex.js';
 
 export const globalContract: KlientContract = {
   // core (app scope)
@@ -68,6 +70,7 @@ export const globalContract: KlientContract = {
   bootstrapService: envContract,
   fileService: filesContract,
   mcpManagementService: mcpManagementContract,
+  artexGlobalFacade: globalArtexContract,
   sessionManager: sessionManagerContract,
   // session scope
   sessionMetadata: sessionMetadataContract,
@@ -78,6 +81,7 @@ export const globalContract: KlientContract = {
   sessionSkillCatalog: sessionSkillCatalogContract,
   sessionTitleService: sessionTitleContract,
   sessionActivityView: sessionActivityViewContract,
+  artexSessionService: sessionArtexContract,
   // agent scope
   agentSkillService: agentSkillContract,
   agentLoopService: agentLoopContract,
@@ -93,6 +97,7 @@ export const globalContract: KlientContract = {
   agentTaskService: agentTaskContract,
   agentMcpService: agentMcpContract,
   agentFullCompactionService: agentFullCompactionContract,
+  artexModeService: agentArtexModeContract,
 };
 
 export type { KlientContract, ProcedureContract, ServiceContract, StreamingProcedureContract } from './types.js';

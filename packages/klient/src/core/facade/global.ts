@@ -335,6 +335,22 @@ export interface KlientEnvInfo {
   readonly logsDir: string;
 }
 
+export interface GlobalArtexFacade {
+  listCompanies(workDir: string): Promise<readonly Record<string, unknown>[]>;
+  createCompany(input: { workDir: string; name: string; logo?: string }): Promise<Record<string, unknown>>;
+  addCompanyScope(input: {
+    workDir: string;
+    companyId: number;
+    lines: readonly string[];
+    reason: string;
+  }): Promise<Record<string, unknown>>;
+  listAssets(input: { workDir: string; query?: Record<string, unknown> }): Promise<readonly Record<string, unknown>[]>;
+  insertAssets(input: { workDir: string; inputs: readonly Record<string, unknown>[] }): Promise<readonly Record<string, unknown>[]>;
+  listInterceptRules(workDir: string): Promise<readonly Record<string, unknown>[]>;
+  listAssetInterceptRules(workDir: string): Promise<readonly Record<string, unknown>[]>;
+  targetGateExemptions(workDir: string): Promise<readonly string[]>;
+}
+
 export interface GlobalFacade {
   readonly sessions: GlobalSessionsFacade;
   readonly workspaces: GlobalWorkspacesFacade;
@@ -347,6 +363,7 @@ export interface GlobalFacade {
   readonly hostFs: GlobalHostFsFacade;
   readonly files: GlobalFilesFacade;
   readonly mcp: GlobalMcpFacade;
+  readonly artex: GlobalArtexFacade;
   env(): Promise<KlientEnvInfo>;
 }
 
@@ -598,6 +615,39 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
         return { meta: wire.meta, data: Buffer.from(wire.data, 'base64') };
       },
       delete: (fileId) => call('fileService', 'delete', [fileId]) as Promise<void>,
+    },
+
+    artex: {
+      listCompanies: (workDir) =>
+        call('artexGlobalFacade', 'listCompanies', [workDir]) as Promise<readonly Record<string, unknown>[]>,
+      createCompany: (input) =>
+        call('artexGlobalFacade', 'createCompany', [input.workDir, input.name, input.logo]) as Promise<
+          Record<string, unknown>
+        >,
+      addCompanyScope: (input) =>
+        call('artexGlobalFacade', 'addCompanyScope', [
+          input.workDir,
+          input.companyId,
+          input.lines,
+          input.reason,
+        ]) as Promise<Record<string, unknown>>,
+      listAssets: (input) =>
+        call('artexGlobalFacade', 'listAssets', [
+          input.workDir,
+          input.query,
+        ]) as Promise<readonly Record<string, unknown>[]>,
+      insertAssets: (input) =>
+        call('artexGlobalFacade', 'insertAssets', [input.workDir, input.inputs]) as Promise<
+          readonly Record<string, unknown>[]
+        >,
+      listInterceptRules: (workDir) =>
+        call('artexGlobalFacade', 'listInterceptRules', [workDir]) as Promise<readonly Record<string, unknown>[]>,
+      listAssetInterceptRules: (workDir) =>
+        call('artexGlobalFacade', 'listAssetInterceptRules', [workDir]) as Promise<
+          readonly Record<string, unknown>[]
+        >,
+      targetGateExemptions: (workDir) =>
+        call('artexGlobalFacade', 'targetGateExemptions', [workDir]) as Promise<readonly string[]>,
     },
 
     mcp: {

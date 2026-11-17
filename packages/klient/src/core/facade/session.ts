@@ -30,6 +30,10 @@ import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/cat
 import type { ScopeRef } from '../channel.js';
 import type { McpServerConfig } from '../../contract/mcp.js';
 import type { ScopedCaller } from './global.js';
+import {
+  createSessionArtexFacade,
+  type SessionArtexFacade,
+} from './session-artex.js';
 
 export type { ScopedCaller } from './global.js';
 
@@ -124,9 +128,12 @@ export interface SessionFacade {
   readonly questions: SessionQuestionsFacade;
   readonly interactions: SessionInteractionsFacade;
   readonly skills: SessionSkillsFacade;
+  readonly artex: SessionArtexFacade;
   /** Agent id → metadata for every agent registered in this session. */
   agents(): Promise<Readonly<Record<string, AgentMeta>>>;
 }
+
+export type { SessionArtexFacade };
 
 export function createSessionFacade(call: ScopedCaller, sessionId: string): SessionFacade {
   const scope: ScopeRef = { sessionId };
@@ -211,6 +218,8 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
       list: () =>
         call(scope, 'sessionSkillCatalog', 'list', []) as Promise<readonly SkillSummary[]>,
     },
+
+    artex: createSessionArtexFacade(call, scope),
 
     agents: async () => {
       const meta = await read();

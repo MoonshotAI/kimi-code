@@ -763,3 +763,19 @@ const _warningEvent: AssertWire<typeof warningEventSchema, WarningEvent> = true;
 // and `agentStatusUpdatedEventSchema`: they are deliberately `z.looseObject`s
 // (index signature breaks both-ways assignability) — `permission.approval.*`
 // is not part of the protocol event union at all.
+
+// ── ARTEX session/global contracts ──────────────────────────────────────────
+import type { IArtexSessionService } from '@moonshot-ai/agent-core-v2/features/artex/session/artexSessionService';
+import { artexTrafficBlobWireResultSchema, sessionArtexContract } from '../src/contract/session/artex.js';
+
+type ArtexTrafficBlobWire = { dataBase64: string; total: number };
+const _artexTrafficBlobWire: AssertWire<
+  typeof artexTrafficBlobWireResultSchema,
+  ArtexTrafficBlobWire
+> = true;
+
+type ArtexSessionStatus = Awaited<ReturnType<IArtexSessionService['status']>>;
+const _artexSessionStatus: AssertEngineToWire<
+  typeof sessionArtexContract.status.output,
+  ArtexSessionStatus
+> = true;
