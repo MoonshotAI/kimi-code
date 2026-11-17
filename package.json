@@ -36,7 +36,7 @@
     "@types/node": "^22.15.3",
     "@vitest/coverage-v8": "4.1.4",
     "husky": "^9.1.7",
-    "ignore": "7.0.6",
+    "ignore": "^5.3.2",
     "lint-staged": "16.4.0",
     "oxc-parser": "0.159.0",
     "oxlint": "1.59.0",
