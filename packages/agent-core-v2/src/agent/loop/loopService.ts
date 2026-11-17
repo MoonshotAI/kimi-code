@@ -466,7 +466,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         agentId: this.scopeContext.agentId,
         taskOutputs: this.taskOutputs,
         messages: seededMessages ?? snapshot.input.messages ?? [],
-        pending: snapshot.input.inbox?.notify ?? [],
+        pending: [
+          ...(snapshot.input.inbox?.notify ?? []),
+          ...(snapshot.input.inbox?.remind ?? []),
+        ],
         isLive: (taskId) => this.toolExecutor.handler(taskId)?.snapshot().status === 'running',
       });
       const pendingWork = (snapshot.input.inbox?.normal?.length ?? 0) + (snapshot.input.inbox?.notify?.length ?? 0);
@@ -488,6 +491,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): void {
     this.initialized = true;
     const loop = createLoop({
+      shouldQueueTaskNotification: (taskId) => !this.suppressedTaskNotifications.has(taskId),
       completionMessage: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
         if (handler?.snapshot().fields.task === undefined) {
@@ -495,7 +499,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         }
         return this.taskOutputs.createCompletion(agentTaskInfo(handler), input.toolCall.id);
       },
-      shouldQueueTaskNotification: (taskId) => !this.suppressedTaskNotifications.has(taskId),
       executor: this.toolExecutor.executor,
       toolContext: () => {
         const context = {
@@ -543,7 +546,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       this.maybeSettle();
     });
-    this.scheduleTaskReconciliation();
+    for (const completion of completions) loop.recordNotification(completion);
+    this.drainPendingToLoop();
     this.maybeSettle();
   }
 

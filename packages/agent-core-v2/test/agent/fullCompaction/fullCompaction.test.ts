@@ -781,7 +781,7 @@ describe('FullCompaction', () => {
       return {
         parts: [{ type: 'text', text: 'Recovered compacted summary.' }],
         usage: null,
-        finishReason: null,
+        finishReason: 'completed',
       };
     });
     const ctx = testAgent({ generate });
@@ -2422,10 +2422,7 @@ describe('FullCompaction', () => {
       callCount += 1;
       inputs.push(inputHistorySnapshot(history));
       if (callCount === 1) {
-        return providerHttpError(429, 'first attempt rate limited', {
-          requestId: 'req-first-429',
-          retryAfterMs: 1,
-        });
+        return providerHttpError(429, 'first attempt rate limited', { requestId: 'req-first-429', retryAfterMs: 1 });
       }
       if (callCount === 2) {
         return providerHttpError(400, 'Context length exceeded', { requestId: 'req-context-overflow' });
