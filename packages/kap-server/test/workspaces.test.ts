@@ -613,7 +613,6 @@ describe('server-v2 /api/v1/workspaces', () => {
       let failed = false;
       const get = vi.spyOn(docs, 'get').mockImplementation(async <T>(scope: string, key: string) => {
         if (shouldFail && scope === 'workspace-trust') {
-          shouldFail = false;
           failed = true;
           throw new Error('temporary trust read failure');
         }
@@ -629,6 +628,7 @@ describe('server-v2 /api/v1/workspaces', () => {
         expect(workspace.program.mcpConfig.servers()).toEqual({});
         const recovered: boolean[] = [];
         workspace.program.trust.onDidChange((change) => recovered.push(change.trusted));
+        shouldFail = false;
 
         const trusted = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
         expect(trusted.body.code).toBe(0);
@@ -667,7 +667,6 @@ describe('server-v2 /api/v1/workspaces', () => {
       let failed = false;
       const get = vi.spyOn(docs, 'get').mockImplementation(async <T>(scope: string, key: string) => {
         if (shouldFail && scope === 'workspace-trust') {
-          shouldFail = false;
           failed = true;
           throw new Error('temporary trust read failure');
         }
@@ -681,6 +680,7 @@ describe('server-v2 /api/v1/workspaces', () => {
         await workspace.program.mcpConfig.ready;
         expect(failed).toBe(true);
         expect(workspace.program.mcpConfig.servers()).toEqual({});
+        shouldFail = false;
 
         const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
         expect(revoked.body.code).toBe(0);
