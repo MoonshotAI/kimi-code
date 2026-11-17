@@ -261,9 +261,19 @@ export async function settleLlmRequest(
   }
 
   const message = finishMessage();
-  const empty = emptyResponseError(message, request.model.spec, finish ?? NO_FINISH);
+  const finalFinish = finish ?? NO_FINISH;
+  const empty = emptyResponseError(message, request.model.spec, finalFinish);
   if (empty !== null) {
     return failed({ error: empty }, message);
+  }
+  if (request.protocol.stream !== false && finalFinish.finishReason === null) {
+    return failed({
+      error: {
+        kind: 'provider',
+        message: `The API stream ended without a finish event. Provider: ${request.model.spec.provider}, model: ${request.model.spec.name}`,
+        retryable: true,
+      },
+    }, message);
   }
   return { type: 'done', message: assistantMessage(message, 'llm'), ...extras() };
 }

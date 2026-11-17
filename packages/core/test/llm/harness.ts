@@ -3,6 +3,7 @@ import { expect, it } from 'vitest';
 import type { ResolvedEndpoint } from '#/llm/endpoint';
 import { createUserMessage, type Message, type StreamedMessagePart } from '#/llm/message';
 import type { DecodeSink, LlmModule, Protocol } from '#/llm/protocol/protocol';
+import type { LlmRetryOptions } from '#/llm/policy/retry';
 import type {
   LlmEndpoint,
   LlmRequestModel,
@@ -170,6 +171,7 @@ export async function runGenerate<TOptions, TRequest, TResponse, TChunk, TClient
     endpoint?: LlmEndpoint;
     stream?: boolean;
     signal?: AbortSignal;
+    retry?: LlmRetryOptions;
   },
 ): Promise<{ outcome: LlmOutcome; events: LlmRunEvent[] }> {
   const events: LlmRunEvent[] = [];
@@ -189,7 +191,7 @@ export async function runGenerate<TOptions, TRequest, TResponse, TChunk, TClient
         messages: input.module.content.messages,
         usedTokens: input.module.content.usedTokens,
       },
-      policy: { retry: { maxAttemptsPerStep: 1 } },
+      policy: { retry: input.retry ?? { maxAttemptsPerStep: 1 } },
     },
     {
       signal: input.signal ?? new AbortController().signal,

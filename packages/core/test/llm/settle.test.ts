@@ -223,6 +223,71 @@ describe('LLM request settlement', () => {
     ).toBeNull();
   });
 
+  it.each([
+    { name: 'is missing', chunks: [{ text: 'Let me write the report.' }] },
+    {
+      name: 'has no finish reason',
+      chunks: [{ text: 'Let me write the report.', finish: NO_FINISH }],
+    },
+  ])('rejects visible output when the finish $name', async ({ chunks }) => {
+    const result = failedOutcome((await runGenerate(fakeProtocol({ chunks }), {
+      module: testModule(),
+    })).outcome);
+
+    expect(result.error).toMatchObject({
+      kind: 'provider',
+      retryable: true,
+      message: expect.stringContaining('without a finish event'),
+    });
+    expect(result.message).toMatchObject({
+      content: [{ type: 'text', text: 'Let me write the report.' }],
+      attributes: { source: 'salvaged' },
+    });
+  });
+
+  it('keeps non-streaming responses without a finish event unchanged', async () => {
+    const streamed = await runGenerate(fakeProtocol({
+      chunks: [{ text: 'complete response' }],
+    }), { module: testModule(), stream: false });
+
+    expect(doneOutcome(streamed.outcome).message.content).toEqual([
+      { type: 'text', text: 'complete response' },
+    ]);
+  });
+
+  it('retries an interrupted response with visible output and without a finish event', async () => {
+    let attempts = 0;
+    const protocol = fakeProtocol({
+      sendStream: async () => {
+        attempts += 1;
+        const chunks: FakeChunk[] = attempts === 1
+          ? [{ text: 'Let me write the report.' }]
+          : [{
+              text: 'Let me write the report.',
+              finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+            }];
+        return { body: asyncChunks(chunks), headers: { 'x-request-id': 'req-success' } };
+      },
+    });
+
+    const streamed = await runGenerate(protocol, {
+      module: testModule(),
+      retry: { infiniteRetry: true },
+    });
+
+    expect(attempts).toBe(2);
+    expect(doneOutcome(streamed.outcome).message.content).toEqual([
+      { type: 'text', text: 'Let me write the report.' },
+    ]);
+    expect(streamed.events).toContainEqual(expect.objectContaining({
+      type: 'llm.retrying',
+      reason: 'backoff',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      error: expect.objectContaining({ kind: 'provider', retryable: true }),
+    }));
+  });
+
   it('returns syntax and provider failures and preserves partial Message output on abort', async () => {
     const syntax = failedOutcome((await runGenerate(fakeProtocol({
       encode: () => {
