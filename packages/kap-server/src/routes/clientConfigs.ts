@@ -10,18 +10,18 @@ import {
 } from '../services/clientConfigs';
 
 interface RouteHost {
-  post(
+  get(
     path: string,
     options: { preHandler?: unknown[]; schema?: Record<string, unknown> },
     handler: (
-      req: { id: string; body: unknown },
+      req: { id: string; params: unknown },
       reply: { send(payload: unknown): void },
     ) => Promise<void> | void,
   ): unknown;
 }
 
-const clientConfigsRequestSchema = z.object({
-  name: z.string(),
+const clientConfigParamsSchema = z.object({
+  name: z.string().min(1),
 });
 
 const clientConfigResultSchema = z.object({
@@ -32,15 +32,16 @@ const clientConfigResultSchema = z.object({
 export function registerClientConfigsRoutes(app: RouteHost, core: Scope): void {
   const route = defineRoute(
     {
-      method: 'POST',
-      path: '/client_configs',
-      body: clientConfigsRequestSchema,
+      method: 'GET',
+      path: '/client-configs/{name}',
+      params: clientConfigParamsSchema,
       success: { data: clientConfigResultSchema },
       description: 'Fetch a named cloud-controlled client configuration',
       tags: ['config'],
+      hide: true,
     },
     async (req, reply) => {
-      const { name } = req.body;
+      const { name } = req.params;
       if (!isRegisteredClientConfig(name)) {
         reply.send(okEnvelope({ name, config: null }, req.id));
         return;
@@ -56,5 +57,5 @@ export function registerClientConfigsRoutes(app: RouteHost, core: Scope): void {
       reply.send(okEnvelope({ name, config: config ?? null }, req.id));
     },
   );
-  app.post(route.path, route.options, route.handler as Parameters<RouteHost['post']>[2]);
+  app.get(route.path, route.options, route.handler as Parameters<RouteHost['get']>[2]);
 }

@@ -22,7 +22,6 @@ import type {
   ProviderCatalogItem,
   SetDefaultModelResponse,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type { Message } from '@moonshot-ai/kap-server/protocol/message';
 import type {
   InteractionRespondRequest,
   InteractionRespondResult,
@@ -42,17 +41,17 @@ import type {
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
 import type { ConversationTurnsPage } from '@moonshot-ai/kap-server/protocol/conversation';
 import type {
+  CancelSessionRequest,
   CompactSessionRequest,
   CompactSessionResponse,
   ForkSessionRequest,
-  SessionAbortResponse,
+  SessionCancelResponse,
   UndoSessionRequest,
   UndoSessionResponse,
   UpdateSessionProfileResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-session';
 import type {
   Session,
-  SessionChildCreate,
   SessionCreate,
 } from '@moonshot-ai/kap-server/protocol/session';
 import type {
@@ -213,15 +212,6 @@ export class DaemonClient {
   archiveSession(sid: string): Promise<{ archived: true }> {
     return this.http.archiveSession(sid);
   }
-  listChildren(
-    sid: string,
-    query?: { page_size?: number; before_id?: string; after_id?: string; busy?: boolean },
-  ): Promise<{ items: Session[]; has_more: boolean }> {
-    return this.http.listChildren(sid, query);
-  }
-  createChild(sid: string, body: SessionChildCreate = {}): Promise<Session> {
-    return this.http.createChild(sid, body);
-  }
 
   // ── Workspaces + folder picker ──────────────────────────────────────────
   listWorkspaces(): Promise<{ items: Workspace[] }> {
@@ -253,12 +243,6 @@ export class DaemonClient {
   deleteFile(fileId: string): Promise<{ deleted: true }> {
     return this.http.deleteFile(fileId);
   }
-  listMessages(
-    sid: string,
-    query?: { page_size?: number; before_id?: string; after_id?: string; role?: string },
-  ): Promise<{ items: Message[]; has_more: boolean }> {
-    return this.http.listMessages(sid, query);
-  }
   listTurns(sid: string): Promise<ConversationTurnsPage> {
     return this.http.listTurns(sid);
   }
@@ -281,17 +265,14 @@ export class DaemonClient {
   listPrompts(sid: string): Promise<PromptListResponse> {
     return this.http.listPrompts(sid);
   }
-  steerPrompt(sid: string, pid: string): Promise<PromptSteerResult> {
-    return this.http.steerPrompt(sid, pid);
-  }
   steerPrompts(sid: string, promptIds: readonly string[]): Promise<PromptSteerResult> {
     return this.http.steerPrompts(sid, promptIds);
   }
   abortPrompt(sid: string, pid: string): Promise<PromptAbortResponse> {
     return this.http.abortPrompt(sid, pid);
   }
-  abortSession(sid: string): Promise<SessionAbortResponse> {
-    return this.http.abortSession(sid);
+  cancelSession(sid: string, body: CancelSessionRequest = {}): Promise<SessionCancelResponse> {
+    return this.http.cancelSession(sid, body);
   }
   respondInteraction(
     sid: string,

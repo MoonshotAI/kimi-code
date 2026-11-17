@@ -15,7 +15,6 @@ import type {
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { Envelope } from '@moonshot-ai/kap-server/protocol/envelope';
 import type { ConversationTurnsPage } from '@moonshot-ai/kap-server/protocol/conversation';
-import type { Message } from '@moonshot-ai/kap-server/protocol/message';
 import type {
   InteractionRespondRequest,
   InteractionRespondResult,
@@ -32,17 +31,17 @@ import type {
   PromptSubmitResult,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
 import type {
+  CancelSessionRequest,
   CompactSessionRequest,
   CompactSessionResponse,
   ForkSessionRequest,
-  SessionAbortResponse,
+  SessionCancelResponse,
   UndoSessionRequest,
   UndoSessionResponse,
   UpdateSessionProfileResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-session';
 import type {
   Session,
-  SessionChildCreate,
   SessionCreate,
 } from '@moonshot-ai/kap-server/protocol/session';
 import type {
@@ -258,23 +257,6 @@ export class HttpClient {
   archiveSession(sid: string): Promise<{ archived: true }> {
     return this.request('POST', `/sessions/${encodeURIComponent(sid)}:archive`, {});
   }
-  listChildren(
-    sid: string,
-    query?: { page_size?: number; before_id?: string; after_id?: string; busy?: boolean },
-  ): Promise<{ items: Session[]; has_more: boolean }> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/children${qs(query)}`,
-      undefined,
-    );
-  }
-  createChild(sid: string, body: SessionChildCreate = {}): Promise<Session> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/children`,
-      body,
-    );
-  }
 
   // ── Workspaces ──────────────────────────────────────────────────────────
   listWorkspaces(): Promise<{ items: Workspace[] }> {
@@ -326,12 +308,6 @@ export class HttpClient {
   }
 
   // ── Messages ────────────────────────────────────────────────────────────
-  listMessages(
-    sid: string,
-    query?: { page_size?: number; before_id?: string; after_id?: string; role?: string },
-  ): Promise<{ items: Message[]; has_more: boolean }> {
-    return this.request('GET', `/sessions/${encodeURIComponent(sid)}/messages${qs(query)}`, undefined);
-  }
   listTurns(sid: string): Promise<ConversationTurnsPage> {
     return this.request('GET', `/sessions/${encodeURIComponent(sid)}/agents/main/turns`, undefined);
   }
@@ -342,13 +318,6 @@ export class HttpClient {
   }
   submitPrompt(sid: string, body: PromptSubmission): Promise<PromptSubmitResult> {
     return this.request('POST', `/sessions/${encodeURIComponent(sid)}/prompts`, body);
-  }
-  steerPrompt(sid: string, pid: string): Promise<PromptSteerResult> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/prompts/${encodeURIComponent(pid)}:steer`,
-      {},
-    );
   }
   steerPrompts(sid: string, promptIds: readonly string[]): Promise<PromptSteerResult> {
     return this.request(
@@ -364,8 +333,8 @@ export class HttpClient {
       {},
     );
   }
-  abortSession(sid: string): Promise<SessionAbortResponse> {
-    return this.request('POST', `/sessions/${encodeURIComponent(sid)}:abort`, {});
+  cancelSession(sid: string, body: CancelSessionRequest = {}): Promise<SessionCancelResponse> {
+    return this.request('POST', `/sessions/${encodeURIComponent(sid)}:cancel`, body);
   }
 
   // ── Approvals / Questions (reverse-RPC resolves) ────────────────────────

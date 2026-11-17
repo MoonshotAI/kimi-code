@@ -157,6 +157,15 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
   }
 
+  whenCreateSettled(agentId?: string): Promise<void> {
+    if (agentId !== undefined) {
+      const pending = this.creating.get(agentId);
+      return pending === undefined ? Promise.resolve() : pending.then(() => undefined, () => undefined);
+    }
+    if (this.creating.size === 0) return Promise.resolve();
+    return Promise.allSettled(this.creating.values()).then(() => undefined);
+  }
+
   private async nextAvailableAgentId(): Promise<string> {
     let maxSuffix = -1;
     const consider = (id: string): void => {
