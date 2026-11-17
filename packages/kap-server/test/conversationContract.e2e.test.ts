@@ -103,6 +103,7 @@ function sseToolCall(id: string, name: string, args: string): string {
 interface LlmRoute {
   readonly match: (body: string) => boolean;
   readonly respond: () => string;
+  readonly status?: number;
   readonly delayMs?: number;
   readonly pause?: { readonly afterEvents: number; readonly ms: number };
 }
@@ -125,6 +126,11 @@ async function startMockLlm(routes: readonly LlmRoute[], fallback: () => string 
       const respond = route?.respond ?? fallback;
       const pause = route?.pause;
       const send = (): void => {
+        if (route?.status !== undefined && route.status !== 200) {
+          res.writeHead(route.status, { 'content-type': 'application/json' });
+          res.end(respond());
+          return;
+        }
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         if (pause === undefined) {
           res.end(respond());
@@ -434,7 +440,7 @@ describe('conversation contract e2e', () => {
     server = undefined;
     if (home !== undefined) await rm(home, { recursive: true, force: true });
     home = undefined;
-  });
+  }, 30000);
 
   async function boot(routes: readonly LlmRoute[]): Promise<void> {
     llm = await startMockLlm(routes);
@@ -1046,6 +1052,158 @@ describe('conversation contract e2e', () => {
       { headers: authHeaders(server!) },
     );
     expect(((await turnsAfterCloseRes.json()) as { code: number }).code).toBe(40401);
+    channel.close();
+  });
+
+  it('S13: sessions/{id}:continue resumes interrupted or failed turns, rejects idle/completed with 40940 and busy with 40901', async () => {
+    let failNow = false;
+    await boot([
+      {
+        match: () => failNow,
+        status: 400,
+        respond: () => JSON.stringify({ error: { message: 'synthetic upstream error' } }),
+      },
+      {
+        match: (body) => body.includes('Summarize the conversation'),
+        respond: () => sseText('compacted summary'),
+      },
+      {
+        match: (body) => body.includes('Continue the interrupted work from where it stopped'),
+        respond: () => sseText('resumed reply'),
+      },
+      {
+        match: (body) => body.includes('interrupt me'),
+        respond: () => sseTextChunks('half-1 ', 'half-2'),
+        pause: { afterEvents: 1, ms: 5000 },
+      },
+    ]);
+
+    const sid = await createSession(server!, base);
+    const channel = await subscribeConversation(server!, sid);
+
+    const freshRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
+      {
+        method: 'POST',
+        headers: authHeaders(server!, { 'content-type': 'application/json' }),
+        body: '{}',
+      },
+    );
+    expect(((await freshRes.json()) as { code: number }).code).toBe(40940);
+
+    await submitPrompt(server!, base, sid, 'interrupt me');
+    await until('running turn started', () => channel.turns().some((t) => t.status === 'running'));
+
+    const busyRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
+      {
+        method: 'POST',
+        headers: authHeaders(server!, { 'content-type': 'application/json' }),
+        body: '{}',
+      },
+    );
+    expect(((await busyRes.json()) as { code: number }).code).toBe(40901);
+
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`, {
+      method: 'POST',
+      body: {},
+    });
+    await until(
+      'first turn interrupted',
+      () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'interrupted',
+    );
+
+    const continued = await rest<{ continued: true }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
+      { method: 'POST', body: {} },
+    );
+    expect(continued).toEqual({ continued: true });
+
+    await until(
+      'continuation turn completed',
+      () => channel.turns().length >= 2 && channel.turns().at(-1)?.status === 'ended',
+    );
+    const continuedTurn = channel.turns().at(-1)!;
+    expect(continuedTurn.outcome).toBe('completed');
+    expect(continuedTurn.items.some((item: any) => item.type === 'user_message')).toBe(false);
+    expect(continuedTurn.items.find((item: any) => item.type === 'assistant_message')?.text).toBe('resumed reply');
+
+    const completedRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
+      {
+        method: 'POST',
+        headers: authHeaders(server!, { 'content-type': 'application/json' }),
+        body: '{}',
+      },
+    );
+    expect(((await completedRes.json()) as { code: number }).code).toBe(40940);
+
+    failNow = true;
+    await submitPrompt(server!, base, sid, 'trigger failure');
+    await until(
+      'failed turn ended',
+      () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'failed',
+    );
+    failNow = false;
+
+    const continuedAfterFail = await rest<{ continued: true }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
+      { method: 'POST', body: {} },
+    );
+    expect(continuedAfterFail).toEqual({ continued: true });
+    await until(
+      'continuation after failure completed',
+      () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'completed',
+    );
+
+    const firstTurnId = channel.turns()[0]!.turn_id;
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}:undo`, {
+      method: 'POST',
+      body: { turn_id: firstTurnId },
+    });
+    const afterUndoRes = await fetch(
+      `${base}/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
+      {
+        method: 'POST',
+        headers: authHeaders(server!, { 'content-type': 'application/json' }),
+        body: '{}',
+      },
+    );
+    expect(((await afterUndoRes.json()) as { code: number }).code).toBe(40940);
+
+    failNow = true;
+    await submitPrompt(server!, base, sid, 'trigger failure before compact');
+    await until(
+      'second failed turn ended',
+      () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'failed',
+    );
+    failNow = false;
+
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}:compact`, {
+      method: 'POST',
+      body: {},
+    });
+    await until(
+      'compaction system turn recorded',
+      () => channel.turns().at(-1)?.kind === 'system' && channel.turns().at(-1)?.outcome === 'completed',
+    );
+
+    const continuedAfterCompact = await rest<{ continued: true }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:continue`,
+      { method: 'POST', body: {} },
+    );
+    expect(continuedAfterCompact).toEqual({ continued: true });
+    await until(
+      'continuation after compaction completed',
+      () => channel.turns().at(-1)?.kind === 'agent' && channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'completed',
+    );
+
     channel.close();
   });
 }, 90000);

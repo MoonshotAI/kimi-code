@@ -13,6 +13,7 @@ export const metaCapabilitiesSchema = z.object({
   interactions_list: z.literal(true),
   session_wait: z.literal(true),
   agent_close: z.literal(true),
+  session_continue: z.literal(true),
 });
 
 export type MetaCapabilities = z.infer<typeof metaCapabilitiesSchema>;

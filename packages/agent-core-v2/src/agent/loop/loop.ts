@@ -301,6 +301,8 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   settled(): Promise<void>;
 
+  continueTurn(reminders?: readonly Message[]): void;
+
   retry(): Promise<TurnResult | undefined>;
 
   close(): Promise<void>;
