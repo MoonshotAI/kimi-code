@@ -571,6 +571,9 @@ describe('kimi-webbridge entry', () => {
         'error',
         { running: true, version: 'v1.11.3' },
         { running: false },
+        { running: true, version: 'v1.11.3' },
+        'error',
+        'error',
         { running: false },
         { running: true, version: 'v1.11.4', extension_connected: true },
       ],
@@ -626,7 +629,8 @@ describe('kimi-webbridge entry', () => {
     const { fetchImpl } = fakeFetch({
       statusSequence: [
         { running: true, version: 'v1.11.3', extension_connected: true },
-        { running: false },
+        'error',
+        'error',
       ],
     });
     const entry = createKimiWebbridgeEntry(
@@ -660,7 +664,8 @@ describe('kimi-webbridge entry', () => {
     const { fetchImpl } = fakeFetch({
       statusSequence: [
         { running: true, version: 'v1.11.3', extension_connected: true },
-        { running: false },
+        'error',
+        'error',
         { running: false },
       ],
       binary: new TextEncoder().encode('latest-bin'),

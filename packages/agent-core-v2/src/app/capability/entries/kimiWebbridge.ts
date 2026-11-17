@@ -204,7 +204,6 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     let unavailableResponses = 0;
     for (let attempt = 0; attempt < START_POLL_ATTEMPTS; attempt += 1) {
       const status = await fetchDaemonStatus();
-      if (status?.running === false) return;
       if (status === undefined) {
         unavailableResponses += 1;
         if (unavailableResponses >= 2) return;
