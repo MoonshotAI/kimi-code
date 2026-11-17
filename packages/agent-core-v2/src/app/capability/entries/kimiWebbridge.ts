@@ -201,9 +201,16 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
   }
 
   async function waitForDaemonStopped(): Promise<void> {
+    let unavailableResponses = 0;
     for (let attempt = 0; attempt < START_POLL_ATTEMPTS; attempt += 1) {
       const status = await fetchDaemonStatus();
-      if (status?.running !== true) return;
+      if (status?.running === false) return;
+      if (status === undefined) {
+        unavailableResponses += 1;
+        if (unavailableResponses >= 2) return;
+      } else {
+        unavailableResponses = 0;
+      }
       await new Promise((resolve) => {
         setTimeout(resolve, START_POLL_INTERVAL_MS);
       });
@@ -264,21 +271,35 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
         'WebBridge daemon must be stopped before updating its binary',
       );
     }
-    if (stopRunningDaemon) {
-      report('stop-processes');
-      const stopped = await runCommand(ctx.hostProcess, binPath, ['stop'], {
-        timeout: START_TIMEOUT_MS,
-      });
-      if (stopped.code !== 0) {
-        throw new Error2(
-          CapabilityErrors.codes.CAPABILITY_PROCESS_CONTROL_FAILED,
-          `kimi-webbridge stop failed: ${stopped.stderr || stopped.stdout}`,
-        );
+    const staging = installNewBinary ? await downloadBinary(report, asset) : undefined;
+    try {
+      if (stopRunningDaemon) {
+        report('stop-processes');
+        const stopped = await runCommand(ctx.hostProcess, binPath, ['stop'], {
+          timeout: START_TIMEOUT_MS,
+        });
+        if (stopped.code !== 0) {
+          throw new Error2(
+            CapabilityErrors.codes.CAPABILITY_PROCESS_CONTROL_FAILED,
+            `kimi-webbridge stop failed: ${stopped.stderr || stopped.stdout}`,
+          );
+        }
+        await waitForDaemonStopped();
       }
-      await waitForDaemonStopped();
-    }
-    if (installNewBinary) {
-      await installBinary(report, asset);
+      if (staging !== undefined) {
+        try {
+          await installBinary(staging);
+        } catch (error) {
+          if (stopRunningDaemon) {
+            await runCommand(ctx.hostProcess, binPath, ['start'], {
+              timeout: START_TIMEOUT_MS,
+            }).catch(() => undefined);
+          }
+          throw error;
+        }
+      }
+    } finally {
+      if (staging !== undefined) await rm(staging, { force: true }).catch(() => undefined);
     }
 
     const status = await fetchDaemonStatus();
@@ -323,10 +344,10 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       : undefined;
   }
 
-  async function installBinary(
+  async function downloadBinary(
     report: CapabilityInstallReporter,
     asset: string,
-  ): Promise<void> {
+  ): Promise<string> {
     report('download', 0);
     const url = kimiCdnContentUrl(`${BINARY_CDN_PATH}/${asset}`);
     const staging = path.join(
@@ -342,15 +363,20 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
         },
         ctx.fetchImpl,
       );
-      await mkdir(binDir, { recursive: true });
-      await rename(staging, binPath).catch(async (error: NodeJS.ErrnoException) => {
-        if (error.code !== 'EXDEV') throw error;
-        await renameAcrossDevicesFallback(staging, binPath);
-      });
-      if (ctx.platform !== 'win32') await chmod(binPath, 0o755);
-    } finally {
+      return staging;
+    } catch (error) {
       await rm(staging, { force: true }).catch(() => undefined);
+      throw error;
     }
+  }
+
+  async function installBinary(staging: string): Promise<void> {
+    await mkdir(binDir, { recursive: true });
+    await rename(staging, binPath).catch(async (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EXDEV') throw error;
+      await renameAcrossDevicesFallback(staging, binPath);
+    });
+    if (ctx.platform !== 'win32') await chmod(binPath, 0o755);
   }
 
   return {
