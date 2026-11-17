@@ -142,6 +142,7 @@ export type KimiErrorCode =
   | 'agent.not_closable'
   | 'agent.max_tokens_exceeded'
   | 'turn.agent_busy'
+  | 'turn.not_continuable'
   | 'goal.already_exists'
   | 'goal.not_found'
   | 'goal.objective_empty'
