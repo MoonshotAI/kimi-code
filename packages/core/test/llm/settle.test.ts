@@ -223,6 +223,48 @@ describe('LLM request settlement', () => {
     ).toBeNull();
   });
 
+  it('rejects repeated output even when the provider returned visible content', async () => {
+    const model: LlmModelSpec = { provider: 'test', name: 'test-model' };
+    const finish = { finishReason: 'other', rawFinishReason: 'repeat' } as const;
+    for (const message of [
+      accumulatedMessage([{ type: 'text', text: 'repeated text' }]),
+      accumulatedMessage([{ type: 'function', id: 'call_1', name: 'tool', arguments: '{}' }]),
+    ]) {
+      expect(emptyResponseError(message, model, finish)).toMatchObject({
+        kind: 'empty_response',
+        rawFinishReason: 'repeat',
+        retryable: true,
+        message: expect.stringContaining('repeated output'),
+      });
+    }
+
+    const repeated = failedOutcome((await runGenerate(fakeProtocol({
+      chunks: [{ text: 'repeated text', finish }],
+    }), { module: testModule() })).outcome);
+    expect(repeated.error).toMatchObject({
+      kind: 'empty_response',
+      rawFinishReason: 'repeat',
+      retryable: true,
+      message: expect.stringContaining('repeated output'),
+    });
+  });
+
+  it('rejects incomplete streams without rejecting a completed non-streaming response', async () => {
+    const incomplete = failedOutcome((await runGenerate(fakeProtocol({
+      chunks: [{ text: 'incomplete text' }],
+    }), { module: testModule() })).outcome);
+    expect(incomplete.error).toMatchObject({
+      kind: 'provider',
+      retryable: true,
+      message: expect.stringContaining('without a finish event'),
+    });
+
+    const nonStreaming = doneOutcome((await runGenerate(fakeProtocol({
+      chunks: [{ text: 'completed text' }],
+    }), { module: testModule(), stream: false })).outcome);
+    expect(nonStreaming.message.content).toEqual([{ type: 'text', text: 'completed text' }]);
+  });
+
   it('returns syntax and provider failures and preserves partial Message output on abort', async () => {
     const syntax = failedOutcome((await runGenerate(fakeProtocol({
       encode: () => {

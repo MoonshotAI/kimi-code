@@ -290,6 +290,7 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
+    if ('origin' in event && event.origin === 'shellCommand') return;
     this.notifications.handleEvent(event);
     if (event.type === 'background.task.started' || event.type === 'background.task.terminated') {
       this.host.handleBackgroundTaskStatus?.(event.info);

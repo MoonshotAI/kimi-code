@@ -114,7 +114,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; returned text is appended to context; blocking skips the model call this turn |
 | `UserPromptQueued` | The queued prompt text | — | Triggered when a message is queued while a turn is still running; payload includes `prompt_id`, `prompt`, `queue_length` |
 | `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked |
-| `Stop` | Empty string | ✓ | Triggered when the model is about to end the turn; if blocked, a message can be appended to let the model continue |
+| `Stop` | Empty string | ✓ | Triggered after a turn completes; payload includes `turn_id`, `step`, `first_step_of_turn`, `finish_reason`, and `usage` (token usage for the final step); if blocked, a message starts a new continuation turn |
 | `TurnStarted` | Turn origin kind (e.g. `user`, `task`, `system_trigger`) | — | Triggered when a new turn begins; payload includes `turn_id`, `origin_kind`, `origin_name`, `prompt` |
 | `PostToolUse` | Tool name | — | Triggered after a tool executes successfully |
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked |

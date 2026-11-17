@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   ConfigChanged,
   ConfigRegistry,
+  ConfigWarning,
   IConfigRegistry,
   IConfigService,
   IEventService,
@@ -345,9 +346,16 @@ describe('server-v2 config changed WS notifications', () => {
     expect(last.config['default_model']).toBe('k2');
   });
 
-  it('publishes an event when config.toml is edited outside the process and reloaded', async () => {
+  it('publishes change and error diagnostic events when config.toml is edited outside the process and reloaded', async () => {
     await boot('default_permission_mode = "auto"\n');
     const frames = await openWs();
+    const warnings: string[] = [];
+    const events = (server as RunningServer).core.accessor.get(IEventService);
+    const subscription = events.subscribe((event) => {
+      if (event instanceof ConfigWarning) {
+        warnings.push(...event.payload.warnings.map((warning) => warning.message));
+      }
+    });
 
     await writeFile(
       join(home as string, 'config.toml'),
@@ -361,6 +369,13 @@ describe('server-v2 config changed WS notifications', () => {
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), { timeout: 10000 });
     const last = frames.at(-1) as ConfigChangedFrame;
     expect(last.config['default_permission_mode']).toBe('yolo');
+
+    await writeFile(join(home as string, 'config.toml'), '= broken =', 'utf-8');
+    await config.reload();
+    await vi.waitFor(() => {
+      expect(warnings).toContainEqual(expect.stringMatching(/failed to (parse|decode)/i));
+    });
+    subscription.dispose();
   });
 
   it('closes the config publisher before the app, so a pending change is never delivered during shutdown', async () => {

@@ -43,6 +43,7 @@ export type OpenAIRawChunk = {
       tool_calls?: OpenAIRawStreamToolCallDelta[];
     };
     finish_reason?: string | null;
+    usage?: OpenAIRawUsage | null;
   }[];
   usage?: OpenAIRawUsage | null;
 };

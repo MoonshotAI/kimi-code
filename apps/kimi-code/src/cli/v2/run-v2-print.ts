@@ -160,9 +160,7 @@ export async function runV2Print(
   }
   const telemetryEnabled = shouldEnableTelemetry({ enabled: configTelemetryEnabled });
   for (const diagnostic of configService.diagnostics()) {
-    if (diagnostic.severity === 'warning') {
-      stderr.write(`Warning: ${diagnostic.message}\n`);
-    }
+    stderr.write(`${diagnostic.severity === 'error' ? 'Error' : 'Warning'}: ${diagnostic.message}\n`);
   }
 
   let restorePermission = async (): Promise<void> => {};
@@ -523,7 +521,8 @@ async function runNativeTurn(
       ? new PromptJsonWriter(stdout)
       : new PromptTranscriptWriter(stdout, stderr);
 
-  await agent.accessor.get(IAuthSummaryService).ensureReady();
+  const sessionModel = agent.accessor.get(IAgentLoopService).getModel();
+  await agent.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
 
   const turnEndings = createPrintTurnEndings();
   const toolStatuses = new Map<string, string>();

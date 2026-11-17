@@ -505,6 +505,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     bus!.publish(
       new ToolUpdated({
         agentId: 'main',
+        origin: 'loop',
         turnId,
         toolCallId: 'call_1',
         taskId: 'task-1',
@@ -517,6 +518,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     bus!.publish(
       new ToolUpdated({
         agentId: 'main',
+        origin: 'loop',
         turnId,
         toolCallId: 'call_1',
         taskId: 'task-1',
