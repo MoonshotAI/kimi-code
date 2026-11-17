@@ -649,6 +649,30 @@ describe('AgentToolSelectService gate', () => {
 });
 
 describe('AgentToolSelectService S0 baseline (gate closed)', () => {
+  it.each([false, true])('preserves an explicit tool baseline without disclosure (flag: %s)', async (enabled) => {
+    flagEnabled = enabled;
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: !enabled });
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+    const baseline = h.sut.initialTools();
+    const alpha = new StubMcpTool(MCP_ALPHA);
+    const registration = registerMcp(h, alpha);
+    registerMcp(h, new StubMcpTool(MCP_BETA), 'inline');
+    registerBuiltin(h, new EchoTool('Denied'));
+    activeToolNames = new Set(['Echo', MCP_ALPHA, MCP_BETA, MCP_GAMMA]);
+
+    const first = await resolveWith(h, { tools: baseline, messages: [], capabilities, dynamic: true });
+    expect(first.profile?.tools?.map((tool) => tool.name)).toEqual(['Echo']);
+    expect(first.profile?.tools?.every((tool) => tool.deferred === undefined)).toBe(true);
+    expect(baseline.map((tool) => tool.name)).toEqual(['Echo']);
+
+    registration.dispose();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA, 'ok', REQUIRED_PAYLOAD_PARAMETERS));
+    registerMcp(h, new StubMcpTool(MCP_GAMMA));
+    const next = await resolveWith(h, { tools: baseline, messages: [], capabilities, dynamic: true });
+    expect(next.profile?.tools).toEqual(first.profile?.tools);
+  });
+
   it.each([false, true])('keeps initial schemas pinned without dynamic loading (restored: %s)', async (restoring) => {
     flagEnabled = true;
     const h = createHarness();
@@ -1054,8 +1078,9 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     expect(h.sut.requestTools(frozen, true, false)).toBe(frozen);
     expect(h.sut.requestTools(frozen, true, true)).toBe(frozen);
     const staticTools = h.sut.requestTools(shaped, false, true, messages);
-    expect(staticTools.map((tool) => tool.name)).toEqual(['Echo', MCP_ALPHA]);
+    expect(staticTools.map((tool) => tool.name)).toEqual(['Echo', MCP_ALPHA, MCP_BETA]);
     expect(staticTools.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBeUndefined();
+    expect(staticTools.find((tool) => tool.name === MCP_BETA)?.deferred).toBeUndefined();
     expect(h.sut.requestTools(shaped, true, true, messages)).toBe(shaped);
     expect(shaped.find((tool) => tool.name === SELECT_TOOLS_TOOL_NAME)).toBeDefined();
   });

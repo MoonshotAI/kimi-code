@@ -33,6 +33,8 @@ import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivati
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import { startInProcessHttpMcpServer } from '../../mcpCore/stubs';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IFlagService } from '#/app/flag/flag';
@@ -57,8 +59,10 @@ import {
   appService,
   agentServices,
   createMockProvider,
+  createTestAgent,
   createScriptedGenerate,
   llmGenerateServices,
+  mcpServices,
   sessionServices,
   telemetryServices,
   testAgent,
@@ -612,6 +616,46 @@ describe('subagent task reminders and fork request parity', () => {
 
     expect(list).not.toHaveBeenCalled();
     expect(taskReminders(child.accessor.get(IAgentLoopService).history())).toHaveLength(1);
+  });
+
+  it.each(['startup', 'runtime'] as const)('keeps btw tools identical after %s MCP discovery', async (timing) => {
+    const server = await startInProcessHttpMcpServer();
+    const manager = new McpConnectionManager();
+    ctx = createTestAgent(
+      mcpServices({ manager }),
+      appService(IAppendLogStore, new ScopedAppendLogStore()),
+      appService(IFlagService, stubFlag(false)),
+    );
+    try {
+      ctx.configure({ tools: ['Read', 'mcp__*'] });
+      await ctx.restorePersisted();
+      const config = { srv: { transport: 'http' as const, url: server.url, deferred: false } };
+      if (timing === 'startup') await manager.connectAll(config);
+      ctx.mockNextResponse({ type: 'text', text: 'first' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+      await ctx.untilTurnEnd();
+      if (timing === 'runtime') await manager.connectAll(config);
+      ctx.mockNextResponse({ type: 'text', text: 'second' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+      const parentTools = ctx.llmCalls[1]!.tools;
+      expect(parentTools.map((tool) => tool.name)).toEqual(timing === 'startup' ? ['mcp__srv__echo', 'Read'] : ['Read']);
+      expect(ctx.llmCalls[0]!.tools).toEqual(parentTools);
+
+      const childId = await ctx.get(ISessionBtwService).start();
+      const child = ctx.get(IAgentLifecycleService).handleOf(childId)!;
+      const childLoop = child.accessor.get(IAgentLoopService);
+      expect(childLoop.baselineTools()).toEqual(ctx.get(IAgentLoopService).baselineTools());
+      expect(child.accessor.get(IAgentToolRegistryService).resolve('mcp__srv__echo')).toBeDefined();
+      ctx.mockNextResponse({ type: 'text', text: 'child' });
+      const prompt = childLoop.submit({ role: 'user', content: [{ type: 'text', text: 'side question' }] });
+      expect((await childLoop.promptHandle(prompt.id)!.completion).state).toBe('completed');
+      expect(ctx.llmCalls[2]!.tools).toEqual(parentTools);
+    } finally {
+      await ctx.dispose();
+      await manager.shutdown();
+      await server.close();
+    }
   });
 
   it('keeps btw system, tools and inherited history identical to main', async () => {

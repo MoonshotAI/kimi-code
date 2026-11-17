@@ -70,6 +70,11 @@ import {
 } from './tool/outcome';
 import { createWaitForTasks, type WaitForTasks } from './tool/tasks';
 
+interface PreparedStepStartingRun extends StepStartingRun {
+  readonly tools?: readonly ToolDescription[];
+  readonly preparationFailure?: { readonly error: unknown };
+}
+
 interface Deferred<T> {
   readonly promise: Promise<T>;
   resolve(value: T): void;
@@ -259,7 +264,7 @@ type ActorMessage =
   | { readonly type: 'turn.failed'; readonly turn: LiveTurn; readonly error: unknown }
   | { readonly type: 'step.start'; readonly turn: LiveTurn }
   | { readonly type: 'step.hooks'; readonly turn: LiveTurn; readonly step: StepState }
-  | { readonly type: 'step.started'; readonly turn: LiveTurn; readonly step: StepState; readonly run: StepStartingRun }
+  | { readonly type: 'step.started'; readonly turn: LiveTurn; readonly step: StepState; readonly run: PreparedStepStartingRun }
   | { readonly type: 'step.after_starting'; readonly turn: LiveTurn; readonly step: StepState }
   | { readonly type: 'step.ending'; readonly turn: LiveTurn; readonly step: StepState }
   | { readonly type: 'step.ended'; readonly turn: LiveTurn; readonly step: StepState; readonly run: StepEndingRun }
@@ -321,6 +326,7 @@ class LoopActor implements Loop {
   private profile: LoopProfile | undefined;
   private requesterError: unknown;
   private toolsSettled = false;
+  private prepareInitialTools: CreateLoopOptions['prepareInitialTools'];
   private revision = 0;
   private seq = 0;
   private kicking = false;
@@ -352,6 +358,7 @@ class LoopActor implements Loop {
       this.record(event);
     });
     this.requesterTemplate = options.requester;
+    this.prepareInitialTools = options.prepareInitialTools;
     this.executor = options.executor;
     this.toolContext = options.toolContext;
     this.completionFactory = options.completionMessage;
@@ -1288,9 +1295,10 @@ class LoopActor implements Loop {
     this.complete(turn, this.stepStarting(turn, step), (run) => ({ type: 'step.started', turn, step, run }));
   }
 
-  private async stepStarting(turn: LiveTurn, step: StepState): Promise<StepStartingRun> {
+  private async stepStarting(turn: LiveTurn, step: StepState): Promise<PreparedStepStartingRun> {
+    let run: StepStartingRun;
     try {
-      return await runStepStarting(
+      run = await runStepStarting(
         this.registry,
         {
           turnId: turn.id,
@@ -1302,6 +1310,13 @@ class LoopActor implements Loop {
       );
     } catch (error) {
       return { messages: this.durable.messages, failures: [runtimeFailure(error)] };
+    }
+    if (run.blocked !== undefined || turn.promptOnly === true || this.prepareInitialTools === undefined) return run;
+    try {
+      const tools = await this.prepareInitialTools(this.durable.profile.tools ?? [], step.scope.signal);
+      return { ...run, tools };
+    } catch (error) {
+      return { ...run, preparationFailure: { error } };
     }
   }
 
@@ -1318,7 +1333,7 @@ class LoopActor implements Loop {
     return true;
   }
 
-  private completeStepStarting(turn: LiveTurn, step: StepState, run: StepStartingRun): void {
+  private completeStepStarting(turn: LiveTurn, step: StepState, run: PreparedStepStartingRun): void {
     if (!this.isCurrentStep(turn, step, 'stepStarting')) return;
     if (this.finishSteeredStep(turn, step)) return;
     const reports = hookFailureReports('step.starting', run.failures);
@@ -1326,6 +1341,10 @@ class LoopActor implements Loop {
       this.record({ type: 'context.settled', messages: [...run.messages], reason: run.rewrittenBy });
     }
     this.report('step.starting', turn, reports, true);
+    if (run.preparationFailure !== undefined) {
+      this.fail(turn, run.preparationFailure.error);
+      return;
+    }
     if (run.blocked !== undefined) {
       step.outcome = { type: 'blocked', at: 'step.starting', cause: run.blocked };
       turn.outcome = step.outcome;
@@ -1333,6 +1352,12 @@ class LoopActor implements Loop {
       step.outcome = { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } };
       turn.outcome = step.outcome;
     } else {
+      if (run.tools !== undefined) {
+        this.profile = { ...this.profile, tools: [...run.tools] };
+        this.record({ type: 'tools.settled', tools: [...run.tools] });
+        this.toolsSettled = true;
+        this.prepareInitialTools = undefined;
+      }
       turn.phase = 'requesting';
     }
     this.post({ type: 'step.after_starting', turn, step });

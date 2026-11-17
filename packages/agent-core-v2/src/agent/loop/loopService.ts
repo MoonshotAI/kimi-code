@@ -469,7 +469,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       });
       const pendingWork = (snapshot.input.inbox?.normal?.length ?? 0) + (snapshot.input.inbox?.notify?.length ?? 0);
       if (lease === undefined && (completions.length > 0 || pendingWork > 0)) lease = this.runGate.acquire();
-      this.createLoopFromSnapshot(snapshot, tools, completions, seededMessages);
+      this.createLoopFromSnapshot(snapshot, tools, initialTools === undefined, completions, seededMessages);
     } finally {
       lease?.release();
     }
@@ -478,6 +478,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private createLoopFromSnapshot(
     snapshot: LoopJournalSnapshot,
     tools: readonly Tool[],
+    prepareInitialTools: boolean,
     completions: readonly UserMessage[],
     seededMessages?: readonly Message[],
     minimumNextTurnId = 0,
@@ -485,6 +486,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): void {
     this.initialized = true;
     const loop = createLoop({
+      prepareInitialTools: prepareInitialTools ? async (baseline, signal) => {
+        await this.toolSelect.prepareCatalog(signal);
+        const names = new Set(baseline.map((tool) => tool.name));
+        return [...baseline, ...this.toolSelect.initialTools('mcp').filter((tool) => !names.has(tool.name))]
+          .toSorted((left, right) => left.name.localeCompare(right.name));
+      } : undefined,
       completionMessage: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
         if (handler?.snapshot().fields.task === undefined) {
@@ -580,8 +587,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     capabilities: LlmModelCapability | undefined,
   ): readonly Tool[] {
     const disclosure = this.toolSelect.enabled(capabilities);
-    const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
-    return baseline.filter((tool) => active.has(tool.name));
+    return this.toolSelect.requestTools(baseline, disclosure, true, this.history());
   }
 
   private async prepareTools(

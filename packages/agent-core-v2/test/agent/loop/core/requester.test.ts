@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { createControlledPromise } from '@antfu/utils';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createUserMessage, extractText } from '@moonshot-ai/core/llm/message';
 import type { LlmRecovery } from '@moonshot-ai/core/llm/policy/recovery';
@@ -27,6 +28,98 @@ function listOf<T>(value: readonly T[] | (() => readonly T[]) | undefined): read
 }
 
 describe('loop.requester', () => {
+  it('prepares initial tools once and preserves them in the loop baseline', async () => {
+    const started = createControlledPromise<void>();
+    const ready = createControlledPromise<void>();
+    const tools = [{ name: 'late', description: 'late tool', parameters: { type: 'object', properties: {} } }];
+    const seen: LlmRequest[] = [];
+    const prepareInitialTools = vi.fn(async () => {
+      started.resolve();
+      await ready;
+      return tools;
+    });
+    const loop = createLoop({
+      executor: noopExecutor,
+      input: { profile: { tools: [] } },
+      prepareInitialTools,
+      requester: fakeRequester((request) => {
+        seen.push(request);
+        return done('reply');
+      }).with({ model: { spec } }),
+    });
+    try {
+      const first = loop.runTurn(createUserMessage('hello'));
+      await started;
+      expect(seen).toHaveLength(0);
+      ready.resolve();
+      expect((await first).type).toBe('done');
+      expect(loop.state.profile.tools).toEqual(tools);
+      expect((await loop.runTurn(createUserMessage('again'))).type).toBe('done');
+      expect(prepareInitialTools).toHaveBeenCalledTimes(1);
+      expect(seen.map((request) => request.profile?.tools)).toEqual([tools, tools]);
+    } finally {
+      ready.resolve();
+      await loop.close();
+    }
+  });
+
+  it('retries initial tool preparation after a failed attempt without sending an incomplete request', async () => {
+    const seen: LlmRequest[] = [];
+    const prepareInitialTools = vi.fn(async () => [])
+      .mockRejectedValueOnce(new Error('initial tools unavailable'));
+    const loop = createLoop({
+      executor: noopExecutor,
+      prepareInitialTools,
+      requester: fakeRequester((request) => {
+        seen.push(request);
+        return done('reply');
+      }).with({ model: { spec } }),
+    });
+    try {
+      expect((await loop.runTurn(createUserMessage('first'))).type).toBe('failed');
+      expect(seen).toHaveLength(0);
+      expect((await loop.runTurn(createUserMessage('retry'))).type).toBe('done');
+      expect(prepareInitialTools).toHaveBeenCalledTimes(2);
+      expect(seen).toHaveLength(1);
+    } finally {
+      await loop.close();
+    }
+  });
+
+  it('does not settle initial tools returned after the first turn was aborted', async () => {
+    const started = createControlledPromise<void>();
+    const ready = createControlledPromise<void>();
+    const seen: LlmRequest[] = [];
+    const prepareInitialTools = vi.fn(async () => {
+      started.resolve();
+      await ready;
+      return [];
+    });
+    const loop = createLoop({
+      executor: noopExecutor,
+      input: { profile: { tools: [] } },
+      prepareInitialTools,
+      requester: fakeRequester((request) => {
+        seen.push(request);
+        return done('reply');
+      }).with({ model: { spec } }),
+    });
+    try {
+      const first = loop.runTurn(createUserMessage('first'));
+      await started;
+      loop.abort();
+      ready.resolve();
+      expect((await first).type).toBe('aborted');
+      expect(seen).toHaveLength(0);
+      expect((await loop.runTurn(createUserMessage('retry'))).type).toBe('done');
+      expect(prepareInitialTools).toHaveBeenCalledTimes(2);
+      expect(seen).toHaveLength(1);
+    } finally {
+      ready.resolve();
+      await loop.close();
+    }
+  });
+
   it('creates one requester snapshot per turn and fills live history and policies', async () => {
     const seen: LlmRequest[] = [];
     let snapshotCount = 0;

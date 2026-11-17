@@ -2,7 +2,7 @@
  * `Loop` interface and `createLoop` entry: the options a host supplies (tool executor, requester,
  * hooks, restored input) and the operations it can call on a running loop.
  */
-import type { Message, SystemMessage, ToolCall, UserMessage } from '#/llm/message';
+import type { Message, SystemMessage, ToolCall, ToolDescription, UserMessage } from '#/llm/message';
 import type { PolicyRegistry } from '#/llm/policy/registry';
 import type { ToolExecutionHandler } from '#/tool/runtime';
 import type { WaitOpts } from '#/utils/wait';
@@ -38,6 +38,7 @@ export interface CreateLoopOptions {
   readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'turnId'>;
   readonly hooks?: readonly HookRegistration[];
   readonly input?: LoopInput;
+  readonly prepareInitialTools?: (tools: readonly ToolDescription[], signal: AbortSignal) => Promise<readonly ToolDescription[]>;
   readonly abortGraceMs?: number;
   readonly completionMessage?: ToolCompletionFactory;
   readonly onListenerError?: (error: unknown, event: LoopEmitted) => void;
