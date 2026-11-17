@@ -16,12 +16,6 @@ const RolloutBatchSchema = z.object({
   delaySeconds: z.number().int().min(0),
 });
 
-/**
- * CDN `latest.json` wire format. Deliberately NOT `.strict()` — unknown
- * fields are ignored so future manifest additions never break shipped
- * clients (the plain-text `/latest` taught us that hard-failing on
- * unexpected content bricks the update path forever).
- */
 export const UpdateManifestSchema = z.object({
   version: z.string().refine((value) => valid(value) !== null, { error: 'invalid semver' }),
   publishedAt: z
@@ -31,9 +25,7 @@ export const UpdateManifestSchema = z.object({
 });
 
 export interface FetchLatestResult {
-  /** Raw newest version — what `kimi upgrade` installs, never rollout-gated. */
   readonly latest: string;
-  /** Null when the JSON manifest was unavailable and we fell back to plain text. */
   readonly manifest: UpdateManifest | null;
 }
 
@@ -63,16 +55,6 @@ async function fetchWithTimeout<T>(
   }
 }
 
-/**
- * Fetch the latest published Kimi Code version from the CDN.
- *
- * **Throws** on any failure (network error, non-2xx, empty body, non-semver
- * text). Callers must catch — `refreshUpdateCache` deliberately lets the
- * error propagate so the existing cache stays intact instead of being
- * overwritten with a null `latest` on a transient blip.
- *
- * `fetchImpl` is injectable for tests; defaults to the global `fetch`.
- */
 export async function fetchLatestVersionFromCdn(
   fetchImpl: typeof fetch = fetch,
   timeoutMs: number = CDN_FETCH_TIMEOUT_MS,
@@ -102,14 +84,6 @@ async function fetchManifestFromCdn(
   });
 }
 
-/**
- * Fetch the rollout manifest, falling back to the plain-text `/latest` when
- * `latest.json` is unavailable or malformed. The fallback removes any
- * deployment-order coupling between client releases and the CDN file, and a
- * null manifest means "fully rolled out" — exactly the pre-rollout behavior.
- *
- * **Throws** only when both sources fail; callers must catch (see above).
- */
 export async function fetchLatestFromCdn(
   fetchImpl: typeof fetch = fetch,
   timeoutMs: number = CDN_FETCH_TIMEOUT_MS,
@@ -127,7 +101,6 @@ export interface ChannelFeed extends FetchLatestResult {
   readonly channel: UpdateChannel;
 }
 
-/** Canary failures stay failures because stable is a different release line. */
 export async function fetchChannelFeed(
   channel: UpdateChannel,
   fetchImpl: typeof fetch = fetch,

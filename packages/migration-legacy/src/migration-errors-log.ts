@@ -13,20 +13,6 @@ export interface MigrationErrorsLogInput {
   readonly failures: readonly MigrationFailureEntry[];
 }
 
-/**
- * Append this run's outcome to `<targetHome>/migration-errors.log` — an
- * append-only cross-run diagnostic record.
- *
- * Each call contributes one block prefixed by a timestamped header. A run
- * with failures appends per-session diagnostics (source path, reason, and a
- * `context.jsonl` line-count + role histogram). A run with no failures
- * appends a one-line `no failures.` marker — the file therefore captures the
- * complete history of every migration attempt, so a single log shared by a
- * user covers all retries.
- *
- * Best-effort: a finished migration must not be turned into a failure by a
- * log write error, so all I/O is guarded.
- */
 export async function writeMigrationErrorsLog(
   targetHome: string,
   input: MigrationErrorsLogInput,
@@ -52,22 +38,12 @@ export async function writeMigrationErrorsLog(
 
   try {
     await mkdir(targetHome, { recursive: true, mode: 0o700 });
-    // POSIX `O_APPEND` makes a single `appendFile` atomic — concurrent runs
-    // would still produce well-formed blocks. `mode` only applies when the
-    // file is created; an existing log keeps its prior 0600.
     await appendFile(migrationErrorsLogFile(targetHome), lines.join('\n'), {
       mode: 0o600,
     });
-  } catch {
-    // Best-effort — see the doc comment above.
-  }
+  } catch {}
 }
 
-/**
- * One-line `context.jsonl` summary for a failed session: line count plus a
- * role histogram. The histogram is the key diagnostic — it tells a genuine
- * write failure from a session whose context held only markers.
- */
 async function describeContext(sessionDir: string): Promise<string> {
   let text: string;
   try {
@@ -85,9 +61,7 @@ async function describeContext(sessionDir: string): Promise<string> {
         const raw = (parsed as Record<string, unknown>)['role'];
         role = typeof raw === 'string' ? raw : '<no-role>';
       }
-    } catch {
-      // role stays '<unparseable>'
-    }
+    } catch {}
     roleCounts.set(role, (roleCounts.get(role) ?? 0) + 1);
   }
   const histogram = [...roleCounts.entries()]

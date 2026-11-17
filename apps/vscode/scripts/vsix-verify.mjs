@@ -72,9 +72,6 @@ const TEXT_EXTENSIONS = new Set([
 const BUILTIN_IMPORTS = new Set(
   builtinModules.flatMap((name) => [name, name.startsWith('node:') ? name.slice(5) : `node:${name}`]),
 );
-// `ws` probes these native accelerators inside try/catch and immediately uses
-// its bundled JavaScript fallback when they are absent. They are not required
-// runtime dependencies and must not be shipped as cross-platform native code.
 const OPTIONAL_FALLBACK_IMPORTS = new Set(['bufferutil', 'canvas', 'utf-8-validate']);
 const MANIFEST_FIELDS = [
   'name',
@@ -297,8 +294,6 @@ function walkSyntax(value, visit) {
 function isRuntimeRequire(callee) {
   if (callee?.type === 'Identifier') return /^(?:__)?require\d*$/.test(callee.name);
   if (callee?.type !== 'MemberExpression' || callee.computed === true) return false;
-  // `this.require(...)` is an ordinary class method call (e.g. a private field
-  // accessor in bundled sources), never a CommonJS require of a bare specifier.
   if (callee.object?.type === 'ThisExpression') return false;
   return callee.property?.type === 'Identifier' && callee.property.name === 'require';
 }

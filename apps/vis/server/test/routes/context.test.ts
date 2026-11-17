@@ -19,14 +19,10 @@ describe('context route', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
 
-    // The route must pass these projection fields straight through (it used to
-    // cherry-pick only messages/usage/config/permission/planMode).
     expect(body).toHaveProperty('contextTokens');
     expect(body).toHaveProperty('goal');
     expect(body).toHaveProperty('swarm');
 
-    // The sample fixture's only step.end carries usage 10+5 → contextTokens=15,
-    // and has no goal / swarm records.
     expect(body['contextTokens']).toBe(15);
     expect(body['goal']).toBeNull();
     expect(body['swarm']).toEqual({ active: false });
@@ -122,8 +118,6 @@ describe('context route', () => {
     cleanup = c;
     const app = contextRoute(home);
 
-    // Default (model view): the real user prompt before compaction is KEPT, the
-    // assistant reply is dropped, then the summary, then the post-compaction tail.
     const modelRes = await app.request('/session_fixture/context?agent=main');
     expect(modelRes.status).toBe(200);
     const modelBody = (await modelRes.json()) as {
@@ -136,8 +130,6 @@ describe('context route', () => {
     expect(modelBody.messages[2]!.message.content[0]).toMatchObject({ text: buildCompactionContinuationText() });
     expect(modelBody.messages[3]!.message.content[0]).toMatchObject({ text: 'after compaction' });
 
-    // Full history: every pre-compaction message (user prompt + assistant reply)
-    // is KEPT, then the summary marker, then the post-compaction tail.
     const fullRes = await app.request('/session_fixture/context?agent=main&history=full');
     expect(fullRes.status).toBe(200);
     const fullBody = (await fullRes.json()) as {

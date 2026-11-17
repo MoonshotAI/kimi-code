@@ -31,10 +31,6 @@ import { detectShellEnvironment } from '#/utils/process/shell-env';
 import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
 
-// ---------------------------------------------------------------------------
-// Feedback
-// ---------------------------------------------------------------------------
-
 export async function handleFeedbackCommand(host: SlashCommandHost): Promise<void> {
   const fallback = (reason: string): void => {
     host.showStatus(reason);
@@ -50,8 +46,6 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
       host.state.appState.sessionId,
     );
   } catch {
-    // The sign-in state is unreadable — keep the feedback entry usable by
-    // falling back to GitHub Issues instead of failing the command.
     fallback(FEEDBACK_STATUS_FALLBACK);
     return;
   }
@@ -67,17 +61,12 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     return;
   }
 
-  // Stage 1: collect the free-form feedback text.
   const input = await promptFeedbackInput(host);
   if (input === undefined) {
     host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
   }
 
-  // Stage 2: ask whether to attach diagnostics (logs / codebase).
-  // The codebase scanner reads the local filesystem, so a remote-bound
-  // session cannot package its codebase — drop the option with a hint
-  // instead of scanning the wrong machine.
   const remoteSession =
     host.state.appState.environment !== undefined &&
     host.state.appState.environment.environmentId !== 'local';
@@ -94,9 +83,6 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
 
   const version = withFeedbackVersionPrefix(host.state.appState.version);
   const spinner = host.showLoginProgressSpinner(FEEDBACK_STATUS_SUBMITTING);
-  // Guarantee the spinner's underlying setInterval is always cleared, even when
-  // submitFeedback throws — otherwise the interval (and its per-frame
-  // requestRender) leaks for the rest of the session.
   let stopped = false;
   const stopSpinner = (opts: { ok: boolean; label: string }): void => {
     if (stopped) return;
@@ -142,10 +128,6 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     throw error;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Info commands
-// ---------------------------------------------------------------------------
 
 interface SessionUsageResult {
   readonly usage?: SessionUsage;
@@ -216,8 +198,6 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
     if (host.session !== undefined) {
       servers = await host.session.listMcpServers();
     } else {
-      // v2 session-less: the MCP connection set is workspace-scoped, so it is
-      // inspectable before the first session exists.
       servers = await host.harness.listWorkspaceMcpServers(host.state.appState.workDir);
     }
   } catch (error) {

@@ -336,9 +336,6 @@ describe('KimiTUI resume message replay', () => {
   });
 
   it('renders an uploaded image daemon ref as a bare placeholder on replay', async () => {
-    // An uploaded image persists as a self-contained `kimi-file://` part; on
-    // replay it renders as a bare `[image]` placeholder — neither the
-    // materialization path nor the internal url may surface.
     const driver = await replayIntoDriver([
       message(
         'user',
@@ -361,9 +358,6 @@ describe('KimiTUI resume message replay', () => {
   });
 
   it('keeps the tag of a legacy upload pair as user text on replay', async () => {
-    // Legacy history paired the daemon ref with an `<image path>` tag. The
-    // pairing is gone: the tag is plain user text and replays verbatim while
-    // the ref still renders as `[image]`.
     const driver = await replayIntoDriver([
       message(
         'user',
@@ -1029,9 +1023,6 @@ describe('KimiTUI resume message replay', () => {
     ).toBe(false);
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
       .toBe(true);
-    // An agent-kind task termination mounts no transcript card on its own —
-    // the subagent lifecycle path owns agent terminal cards, and here it is
-    // suppressed because the task was already transcripted as timed out.
     expect(
       driver.state.transcriptEntries.some(
         (entry) => entry.backgroundAgentStatus?.phase === 'failed',
@@ -1097,7 +1088,6 @@ describe('KimiTUI resume message replay', () => {
 
     expect(status?.backgroundAgentStatus?.headline).toBe('bash task completed in background');
     expect(status?.backgroundAgentStatus?.detail).toContain('Codex comment poller');
-    // The raw notification XML must not leak into the visible transcript.
     expect(
       driver.state.transcriptEntries.some(
         (entry) => entry.kind === 'user' && entry.content.includes('<notification'),
@@ -1834,9 +1824,7 @@ describe('KimiTUI resume message replay', () => {
     const driver = await replayIntoDriver(replay);
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
 
-    // Continuation prompts are model-facing and never render as user bubbles.
     expect(transcript).not.toContain('Continue working toward the active goal.');
-    // Only the most recent REPLAY_TURN_LIMIT goal turns are replayed.
     expect(transcript).not.toContain('round 0 summary');
     expect(transcript).not.toContain('round 14 summary');
     expect(transcript).toContain('round 15 summary');
@@ -1850,8 +1838,6 @@ describe('KimiTUI resume message replay', () => {
 
   it('folds oversized goal rounds even though continuation boundaries are hidden', async () => {
     const replay: AgentReplayRecord[] = [goalReplay(goalSnapshot(), { kind: 'created' })];
-    // Ten continuation rounds — exactly at the replay turn limit, so nothing
-    // is trimmed and only folding can bound the oversized final round.
     for (let i = 0; i < 9; i++) {
       replay.push(
         message('user', [{ type: 'text', text: 'Continue working toward the active goal.' }], {
@@ -1863,7 +1849,6 @@ describe('KimiTUI resume message replay', () => {
         message('tool', [{ type: 'text', text: 'ok' }], { toolCallId: `call_${i}` }),
       );
     }
-    // Final round: 40 tool calls and 5 assistant texts in one continuation turn.
     replay.push(
       message('user', [{ type: 'text', text: 'Continue working toward the active goal.' }], {
         origin: { kind: 'system_trigger', name: 'goal_continuation' },
@@ -1881,8 +1866,6 @@ describe('KimiTUI resume message replay', () => {
     const driver = await replayIntoDriver(replay);
     const children = driver.state.transcriptContainer.children;
 
-    // The oversized round folds to the per-turn caps even with no visible
-    // boundary component mounted for the continuation prompt.
     const tools = children.filter((child) => child instanceof ToolCallComponent);
     expect(tools).toHaveLength(9 + TRANSCRIPT_KEEP_RECENT_STEPS);
     const assistants = children.filter((child) => child instanceof AssistantMessageComponent);
@@ -1894,7 +1877,6 @@ describe('KimiTUI resume message replay', () => {
     expect(summaryText).toContain(`call ${40 - TRANSCRIPT_KEEP_RECENT_STEPS} tools`);
     expect(summaryText).toContain(`${5 - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED} messages`);
 
-    // The folded content is gone from view; the latest work stays.
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).not.toContain('final text 0');
     expect(transcript).toContain('final text 4');

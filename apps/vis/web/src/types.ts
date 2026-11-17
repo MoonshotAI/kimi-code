@@ -1,7 +1,3 @@
-// Client-side types — re-export server DTOs (type-only cross-package import).
-// The server's `agent-record-types.ts` is the single source of truth for
-// all session / agent / wire shapes.
-
 export type {
   SessionSummary,
   SessionDetail,
@@ -54,12 +50,6 @@ export interface DeleteSessionResponse {
   deleted: true;
 }
 
-/**
- * Shape returned by `GET /api/sessions/:id/context?agent=<agentId>`.
- *
- * Mirrors `ContextProjection` from context-projector, plus the `sessionId`
- * and `agentId` echoed by the route.
- */
 export interface ContextResponse {
   sessionId: string;
   agentId: string;

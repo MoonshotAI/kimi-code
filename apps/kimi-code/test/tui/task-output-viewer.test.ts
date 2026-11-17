@@ -147,28 +147,24 @@ describe('TaskOutputViewer — scrolling', () => {
 
   it('PageDown scrolls a page', () => {
     const viewer = makeViewer({ output: bigOutput(50), rows: 12 });
-    // PageDown via prompt-toolkit-style sequence "[6~"
     viewer.handleInput('[6~');
     const out = strip(viewer.render(120).join('\n'));
-    // body has 12 - 2 (header/footer) - 2 (top/bot border) = 8 viewable rows.
-    // PageDown shifts by (body - 1) = 7 lines.
     expect(out).toContain('line-008');
     expect(out).not.toContain('line-001');
   });
 
   it('Ctrl+D scrolls a page down', () => {
     const viewer = makeViewer({ output: bigOutput(50), rows: 12 });
-    viewer.handleInput('\u0004'); // Ctrl+D
+    viewer.handleInput('\u0004');
     const out = strip(viewer.render(120).join('\n'));
-    // Same page size as PageDown: body has 8 viewable rows, page = 7 lines.
     expect(out).toContain('line-008');
     expect(out).not.toContain('line-001');
   });
 
   it('Ctrl+U scrolls a page up', () => {
     const viewer = makeViewer({ output: bigOutput(50), rows: 12 });
-    viewer.handleInput('G'); // jump to bottom first
-    viewer.handleInput('\u0015'); // Ctrl+U
+    viewer.handleInput('G');
+    viewer.handleInput('\u0015');
     const out = strip(viewer.render(120).join('\n'));
     expect(out).toContain('line-036');
     expect(out).not.toContain('line-050');
@@ -179,7 +175,6 @@ describe('TaskOutputViewer — scrolling', () => {
     viewer.handleInput('G');
     const out = strip(viewer.render(120).join('\n'));
     expect(out).toContain('line-100');
-    // Footer reads 100% at the end.
     expect(out).toContain('100%');
   });
 
@@ -193,7 +188,6 @@ describe('TaskOutputViewer — scrolling', () => {
 
   it('scrolling clamps at the start and end', () => {
     const viewer = makeViewer({ output: bigOutput(5), rows: 20 });
-    // Scrolling down on a buffer smaller than the body should not advance.
     viewer.handleInput('[B');
     viewer.handleInput('[B');
     const out = strip(viewer.render(120).join('\n'));
@@ -215,8 +209,6 @@ describe('TaskOutputViewer — input', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  // Under the Kitty keyboard protocol (e.g. VSCode integrated terminal),
-  // ordinary printable keys arrive as CSI-u sequences.
   it('Kitty-encoded q invokes onClose', () => {
     const onClose = vi.fn();
     makeViewer({ output: 'x', onClose }).handleInput('\u001B[113u');
@@ -228,7 +220,7 @@ describe('TaskOutputViewer — input', () => {
       output: Array.from({ length: 200 }, (_, i) => `line-${String(i)}`).join('\n'),
       rows: 10,
     });
-    viewer.handleInput('\u001B[71u'); // G (uppercase)
+    viewer.handleInput('\u001B[71u');
     const rendered = strip(viewer.render(120).join('\n'));
     expect(rendered).toContain('line-199');
   });
@@ -240,10 +232,8 @@ describe('TaskOutputViewer — live tail via setProps', () => {
   }
 
   it('follows new lines when the viewer is already parked at the bottom', () => {
-    // 5 lines, body has ~26 viewable rows → user is at bottom by default.
     const viewer = makeViewer({ output: makeOutput(5), rows: 30 });
     viewer.handleInput('G');
-    // Append more lines.
     viewer.setProps({
       taskId: 'bash-aaaaaaaa',
       info: info(),
@@ -256,9 +246,7 @@ describe('TaskOutputViewer — live tail via setProps', () => {
 
   it('preserves scroll position when the user has scrolled up', () => {
     const viewer = makeViewer({ output: makeOutput(100), rows: 14 });
-    // Body has 14 - 4 = 10 viewable rows; max scroll = 90. Stay at top (0).
     expect(strip(viewer.render(120).join('\n'))).toContain('line-001');
-    // Output grows. Since user is at scroll=0 (not bottom), keep them at top.
     viewer.setProps({
       taskId: 'bash-aaaaaaaa',
       info: info(),

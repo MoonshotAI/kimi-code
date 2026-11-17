@@ -1,7 +1,3 @@
-/**
- * Turns tool execution results into messages: tool messages for completed, aborted, blocked, and failed
- * calls, and the user message that reports a detached tool's completion.
- */
 import {
   createToolMessage,
   createUserMessage,

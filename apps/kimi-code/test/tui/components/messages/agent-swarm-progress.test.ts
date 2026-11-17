@@ -217,7 +217,7 @@ describe('AgentSwarmProgressComponent', () => {
 
   it('repaints from the active palette when the theme changes', () => {
     const previousLevel = chalk.level;
-    chalk.level = 3; // force truecolor so palette differences surface as ANSI
+    chalk.level = 3;
     try {
       const component = createComponent();
       const titleOf = (): string => {
@@ -230,7 +230,6 @@ describe('AgentSwarmProgressComponent', () => {
       currentTheme.setPalette(lightColors);
       const after = titleOf();
 
-      // Same visible text, different ANSI colours (reads currentTheme live).
       expect(strip(after)).toBe(strip(before));
       expect(after).not.toBe(before);
     } finally {
@@ -908,7 +907,6 @@ describe('AgentSwarmProgressComponent render caching', () => {
     component.markCompleted('agent-1', 'done one');
     component.markCompleted('agent-2', 'done two');
     component.markToolCallEnded();
-    // Past the 360ms completion fill window, so the panel is fully static.
     vi.setSystemTime(2_000);
     return component;
   }

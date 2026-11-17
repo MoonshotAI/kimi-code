@@ -49,10 +49,6 @@ export function resolveWorkspacePath(
 export function relativeWorkspacePath(rootUri: vscode.Uri, candidateUri: vscode.Uri): string | undefined {
   if (rootUri.scheme !== candidateUri.scheme) return undefined;
 
-  // VS Code exposes native Windows file paths through `fsPath`, while URI
-  // paths always use `/`. Comparing the URI strings makes the same drive or
-  // UNC path look different when only separator or drive/share casing differs.
-  // Native filesystem semantics are the right contract for `file:` URIs.
   if (rootUri.scheme === "file") {
     const relativePath = relativeFsPath(rootUri.fsPath, candidateUri.fsPath);
     return relativePath === "" ? undefined : relativePath;

@@ -75,8 +75,6 @@ describe('detectFdPath', () => {
 
     const binaryPath = join(getBinDir(), process.platform === 'win32' ? 'fd.exe' : 'fd');
     if (process.platform === 'win32') {
-      // Creating a real Windows PE executable in a unit test is not practical;
-      // the asset-name tests still cover Windows selection logic.
       return;
     }
 

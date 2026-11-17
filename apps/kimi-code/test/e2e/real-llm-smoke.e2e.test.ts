@@ -1,16 +1,3 @@
-/**
- * Real-LLM smoke. Opt-in only — runs when `KIMI_E2E_REAL=1` is set, so
- * `make test` / CI never touches the network. Goes through the SDK's
- * `KimiHarness` entry and round-trips one real prompt. Requires provider
- * credentials on disk.
- *
- * Env knobs:
- *   KIMI_E2E_REAL     — set to "1" to enable this suite
- *   KIMI_E2E_MODEL    — model alias override (default: config's default)
- *   KIMI_E2E_PROMPT   — prompt text (default: "Reply with a single word: hi")
- *   KIMI_E2E_WORKDIR  — workspace directory (default: /tmp/kimi-e2e)
- */
-
 import { mkdirSync } from 'node:fs';
 import process from 'node:process';
 

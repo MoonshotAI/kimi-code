@@ -20,8 +20,6 @@ export async function handleTowerCommand(host: SlashCommandHost, args: string): 
     const session = await requireSessionEnsured(host);
     if (session === undefined) return;
     try {
-      // The SDK returns the engine-rendered summary; its first line is the
-      // state headline, which the notice lifts into the title.
       const [title, ...rest] = (await session.getTowerStatus()).split('\n');
       host.showNotice(title ?? 'Tower status', rest.length > 0 ? rest.join('\n') : undefined);
     } catch (error) {
@@ -38,9 +36,6 @@ export async function handleTowerCommand(host: SlashCommandHost, args: string): 
 }
 
 async function startTowerWithBase(host: SlashCommandHost, base: string): Promise<void> {
-  // `/tower <base>` is manual activation too: it turns tower mode on and pins
-  // the branch missions merge back into (the engine validates that it is a
-  // local branch). Only the agent can never enter the mode by itself.
   const wasActive = host.state.appState.towerMode;
   if (!(await setTowerMode(host, true, base))) return;
   host.showNotice(wasActive ? `Tower base: ${base}` : `Tower mode: ON (base: ${base})`);
@@ -48,8 +43,6 @@ async function startTowerWithBase(host: SlashCommandHost, base: string): Promise
 
 async function applyTowerMode(host: SlashCommandHost, enabled: boolean): Promise<void> {
   const wasActive = host.state.appState.towerMode;
-  // The setter is idempotent engine-side, so always reassert — a stale cache
-  // must not leave the authoritative mode unchanged.
   if (!(await setTowerMode(host, enabled))) return;
   if (wasActive === enabled) {
     host.showStatus(`Tower mode is already ${enabled ? 'on' : 'off'}.`);
@@ -67,9 +60,6 @@ async function setTowerMode(
   if (session === undefined) return false;
   try {
     await session.setTowerMode(enabled, base);
-    // The engine may silently refuse entry (flag off, feature not assembled
-    // until a restart, another session owning the workspace tower) — confirm
-    // the mode actually took before reporting success.
     const status = await session.getStatus();
     const effective = status.towerMode ?? false;
     if (effective !== enabled) {
@@ -93,7 +83,5 @@ async function setTowerMode(
 
 async function requireSessionEnsured(host: SlashCommandHost): Promise<Session | undefined> {
   if (host.session !== undefined) return host.session;
-  // v2 session-less: lazy-create the session on first use — the same path
-  // the first prompt takes.
   return host.ensureSession();
 }

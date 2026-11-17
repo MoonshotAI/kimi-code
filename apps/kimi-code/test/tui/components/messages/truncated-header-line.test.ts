@@ -71,9 +71,7 @@ describe('renderHeaderContent', () => {
 
   it('drops the middle before the fixed parts when the row is too narrow for it', () => {
     const content = { head: 'HEAD ', flex: { text: 'abcdef', keep: 'head' as const }, tail: ' T' };
-    // One spare cell: the middle collapses to an ellipsis between the fixed parts.
     expect(renderHeaderContent(content, 8)).toBe('HEAD … T');
-    // No spare cell: the middle is dropped outright, both fixed parts stay.
     expect(renderHeaderContent(content, 7)).toBe('HEAD  T');
   });
 
@@ -81,7 +79,6 @@ describe('renderHeaderContent', () => {
     const content = { head: 'HEAD ', flex: { text: 'abcdef', keep: 'head' as const }, tail: ' T' };
     const line = strip(renderHeaderContent(content, 5));
     expect(line).toBe('HE… T');
-    // Below two cells for the head there is nothing left to keep: cut from the end.
     const tiny = strip(renderHeaderContent(content, 3));
     expect(visibleWidth(tiny)).toBeLessThanOrEqual(3);
     expect(tiny.endsWith('…')).toBe(true);
@@ -89,8 +86,6 @@ describe('renderHeaderContent', () => {
 
   it('keeps ANSI escape sequences atomic and zero-width when cutting', () => {
     const colored = '\x1b[32mabcdef\x1b[0mghijkl';
-    // 2 (head) + 5 for the middle: the whole opening sequence plus 4 visible
-    // cells, then the ellipsis. The sequence is never split or measured.
     const line = renderHeaderContent(
       { head: 'H ', flex: { text: colored, keep: 'head' }, tail: '' },
       7,
@@ -138,7 +133,6 @@ describe('TruncatedHeaderLine', () => {
 });
 
 describe('graphemes that pack many code units into a cell', () => {
-  // A ZWJ family emoji: 2 cells, 11 UTF-16 code units.
   const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}';
 
   it('never assumes a cut from code-unit length alone', () => {

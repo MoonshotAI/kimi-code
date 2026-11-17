@@ -1,26 +1,3 @@
-/**
- * NotifyPanel — mid-turn updates, shown right above the input area.
- *
- * Updates are grouped into CHANNELS, one per agent: the main agent plus one
- * channel per subagent that posts a `NotifyUser` update. The head is a rule
- * labelled with the channel tabs and a pager; the body is the current update.
- * `Ctrl+N` or a click gives the panel keyboard focus, then `←`/`→` switch
- * channels, `Shift+←`/`→` page through the channel's updates, `↑`/`↓` scroll
- * a docked body, and `Esc`/`Ctrl+N`/`↵` hand focus back to the input area.
- * Any other key hands focus back and goes to the editor, or is ignored while
- * an approval or question stands in for the editor. The wheel scrolls without
- * taking focus. Until the user picks a channel or page, an unfocused panel
- * follows the newest update across channels. A manual selection pins that
- * view; its channel follows its own tail only while unfocused and already on
- * the latest page. Focus freezes the view, and other channels collect an
- * unread dot. Clearing for a new turn restores automatic following.
- *
- * The panel folds to a one-line stub when the turn ends, and while an
- * approval or question waits on a short screen. Focus always
- * unfolds it; once the turn has ended, an ordinary blur keeps it open until
- * an explicit close. The host clears the panel when the next turn starts.
- */
-
 import {
   Key,
   matchesKey,
@@ -45,7 +22,6 @@ import { normalizeCapsLockedCtrl } from '../editor/custom-editor';
 import { DockSection, type DockLayout, type DockPart } from './dock-section';
 
 export interface NotifyPanelLayout extends DockLayout {
-  /** Current terminal height; a short screen folds the panel while a prompt waits. */
   readonly screenRows?: () => number;
 }
 
@@ -54,7 +30,6 @@ export interface NotifyEntry {
   readonly agentId: string;
   readonly agentName?: string;
   readonly time: number;
-  /** One-line headline of the update; absent for updates posted without one. */
   readonly title?: string;
   readonly text: string;
 }
@@ -69,13 +44,10 @@ interface NotifyChannel {
   readonly key: string;
   readonly label: string;
   readonly entries: NotifyEntry[];
-  /** Page (entry index) the user last read in this channel. */
   page: number;
-  /** Ids of entries that arrived while the user was reading another channel. */
   readonly unreadIds: Set<string>;
 }
 
-/** What a click on a head segment does. */
 type HeadAction =
   | { readonly kind: 'channel'; readonly key: string }
   | { readonly kind: 'prev' }
@@ -99,22 +71,14 @@ const BODY_INDENT = '  ';
 
 export class NotifyPanelComponent extends DockSection implements Focusable {
   private readonly channels: NotifyChannel[] = [];
-  /** Key of the channel on display; channels themselves are append-only. */
   private activeKey = MAIN_AGENT_ID;
-  /** Follow updates across channels until the user picks a channel or page. */
   private followLatest = true;
   private hasFocus = false;
   private ended = false;
-  /** Focused since the turn ended: stays open after an ordinary blur, until an explicit close. */
   private keptOpen = false;
-  /** Set while an approval or question waits. */
   private promptPending = false;
   private readonly screenRows: (() => number) | undefined;
   private hitTargets: readonly HitTarget[] = [];
-  /**
-   * Hands keyboard focus back to the input area. `key` is a key the panel
-   * does not own, for the editor; undefined when there is nothing to forward.
-   */
   onReturnFocus: ((key: string | undefined) => void) | undefined;
 
   constructor(layout?: NotifyPanelLayout) {
@@ -122,12 +86,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     this.screenRows = layout?.screenRows;
   }
 
-  /**
-   * Add or update an entry. A repeated `id` updates in place. An unfocused
-   * panel follows activity across channels until a manual selection pins it.
-   * While pinned, the current channel follows its own tail only at the latest
-   * page, and other channels collect unread entries.
-   */
   upsert(entry: NotifyEntry): void {
     const ch = this.channelFor(entry);
     const following =
@@ -196,31 +154,19 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     }));
   }
 
-  /** Every entry across channels, in display order (main first, then arrival). */
   getEntries(): readonly NotifyEntry[] {
     return this.channels.flatMap((ch) => ch.entries);
   }
 
-  /**
-   * The turn that produced these updates has ended: fold the panel down to
-   * a one-line stub so the final reply owns the screen. A
-   * focused user keeps reading, and an ordinary blur does not fold it. Only
-   * an explicit Escape, Ctrl+N or close action folds it after the turn ends.
-   */
   setEnded(ended: boolean): void {
     if (ended && !this.ended && this.hasFocus) this.keptOpen = true;
     this.ended = ended;
   }
 
-  /**
-   * An approval or question waits. The panel keeps its size and focus; only
-   * a docked panel on a short screen folds, so the prompt keeps its rows.
-   */
   setPrompt(pending: boolean): void {
     this.promptPending = pending;
   }
 
-  /** Set by the TUI when keyboard focus moves to or away from the panel. */
   get focused(): boolean {
     return this.hasFocus;
   }
@@ -230,7 +176,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     else this.blur();
   }
 
-  /** Whether there is something to read. */
   canFocus(): boolean {
     return this.channels.length > 0;
   }
@@ -249,24 +194,20 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     return true;
   }
 
-  /** Folded to the one-line stub while unfocused: the turn ended, or a prompt needs the rows. */
   private isFolded(): boolean {
     return !this.hasFocus && (this.promptNeedsRows() || (this.ended && !this.keptOpen));
   }
 
-  /** An approval or question waits on a screen too short to also show the docked body. */
   private promptNeedsRows(): boolean {
     const screenRows = this.screenRows?.();
     return this.promptPending && screenRows !== undefined && screenRows < UPDATES_PROMPT_FOLD_SCREEN_ROWS;
   }
 
-  /** Hand the keyboard back after an explicit close: a panel that folds unfocused folds now. */
   private close(): void {
     this.keptOpen = false;
     if (this.hasFocus) this.onReturnFocus?.(undefined);
   }
 
-  /** Nothing is left to read: hand the keyboard back to the input area. */
   private dropFocus(): void {
     if (!this.hasFocus) return;
     this.hasFocus = false;
@@ -296,7 +237,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     }
   }
 
-  /** Older channel (`←`), landing on its latest update; false on the leftmost tab. */
   prevChannel(): boolean {
     const index = this.activeIndex();
     if (index <= 0) return false;
@@ -304,7 +244,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     return true;
   }
 
-  /** Newer channel (`→`), landing on its latest update; false on the rightmost tab. */
   nextChannel(): boolean {
     const index = this.activeIndex();
     if (index >= this.channels.length - 1) return false;
@@ -312,7 +251,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     return true;
   }
 
-  /** Older update in the current channel (`Shift+←`); false on the first page. */
   prevPage(): boolean {
     if (this.channels.length === 0) return false;
     const ch = this.activeChannel();
@@ -323,7 +261,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     return true;
   }
 
-  /** Newer update in the current channel (`Shift+→`); false on the latest page. */
   nextPage(): boolean {
     if (this.channels.length === 0) return false;
     const ch = this.activeChannel();
@@ -343,11 +280,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     return [this.paintSegments(segments, width)];
   }
 
-  /**
-   * A click anywhere takes keyboard focus, on top of what the clicked head
-   * segment does; `close` only closes. A press on a head segment is claimed
-   * so it does not start a text selection, while the body stays selectable.
-   */
   protected override handlePartMouse(
     part: DockPart,
     event: TuiMouseEvent,
@@ -365,7 +297,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     return takesFocus ? { handled: true, focus: true } : { handled: true };
   }
 
-  /** Run a clicked head action; false when it hands the keyboard away rather than taking it. */
   private runAction(action: HeadAction): boolean {
     switch (action.kind) {
       case 'channel':
@@ -430,12 +361,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     return truncateToWidth(line, width);
   }
 
-  /**
-   * The expanded head: a rule labelled with the channel tabs, the pager and a
-   * key hint, plus a leave button while focused or kept open. Slims down as
-   * width shrinks: first the hint goes, then the other tabs, then the label
-   * altogether.
-   */
   private headSegments(width: number): HeadSegment[] {
     const rule = (text: string) => currentTheme.fg(this.hasFocus ? 'primary' : 'border', text);
     const dim = (text: string) => currentTheme.fg('textDim', text);
@@ -472,12 +397,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     return [{ text: '─'.repeat(width), style: rule }];
   }
 
-  /**
-   * The collapsed one-liner: an expand marker, the channel tabs, the total
-   * update count, and a preview of the current entry's first line —
-   * everything the user needs to decide whether to open the panel. A click on
-   * a tab opens that channel; anywhere else opens the current one.
-   */
   private stubSegments(width: number): HeadSegment[] {
     const dim = (text: string) => currentTheme.fg('textDim', text);
     const expand: HeadAction = { kind: 'expand' };
@@ -545,7 +464,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     };
   }
 
-  /** An entry's title, else its first non-empty line stripped of list/bold markers. */
   private previewText(entry: NotifyEntry): string | undefined {
     if (entry.title !== undefined) return entry.title;
     const firstLine = entry.text
@@ -580,7 +498,6 @@ export class NotifyPanelComponent extends DockSection implements Focusable {
     return created;
   }
 
-  /** Dedup identical labels as `explore`, `explore_2`, `explore_3`, … */
   private labelFor(base: string): string {
     if (!this.channels.some((ch) => ch.label === base)) return base;
     let n = 2;

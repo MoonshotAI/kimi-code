@@ -12,9 +12,7 @@ export interface McpStepInput {
 export interface McpStepResult {
   readonly mergedServers: readonly string[];
   readonly keptNewForConflicts: readonly string[];
-  /** Source servers dropped because kimi-code's MCP schema rejects them. */
   readonly droppedServers: readonly string[];
-  /** Target `mcp.json` existed but was unparseable; output went to a sibling. */
   readonly wroteSiblingDueToConflict: boolean;
   readonly sourceUnreadable: boolean;
 }
@@ -46,9 +44,6 @@ export async function migrateMcpStep(input: McpStepInput): Promise<McpStepResult
   try {
     sourceText = await readFile(sourceMcpJson(input.sourceHome), 'utf-8');
   } catch (error) {
-    // Only a missing mcp.json means "nothing to migrate"; any other read
-    // failure (permissions, I/O) must mark the step incomplete so the
-    // completion marker does not permanently suppress a retry.
     return emptyResult(!isEnoent(error));
   }
 
@@ -73,7 +68,7 @@ export async function migrateMcpStep(input: McpStepInput): Promise<McpStepResult
   try {
     targetText = await readFile(targetMcpFile(input.targetHome), 'utf-8');
   } catch {
-    targetText = undefined; // absent — start fresh
+    targetText = undefined;
   }
   let targetUnparseable = false;
   if (targetText !== undefined) {
@@ -88,9 +83,6 @@ export async function migrateMcpStep(input: McpStepInput): Promise<McpStepResult
         }
       }
     } catch {
-      // The target mcp.json exists but is malformed. Overwriting it would
-      // silently destroy the user's existing servers — write the migrated
-      // servers to a sibling and leave the original untouched.
       targetUnparseable = true;
     }
   }
@@ -100,8 +92,6 @@ export async function migrateMcpStep(input: McpStepInput): Promise<McpStepResult
   const droppedServers: string[] = [];
 
   for (const [name, srv] of Object.entries(srcServers)) {
-    // A server kimi-code's MCP schema rejects would break every session
-    // (resolveSessionMcpConfig parses all entries on create/resume) — drop it.
     if (!McpServerConfigSchema.safeParse(srv).success) {
       droppedServers.push(name);
       continue;

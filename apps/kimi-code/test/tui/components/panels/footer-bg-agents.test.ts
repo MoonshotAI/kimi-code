@@ -64,7 +64,6 @@ describe('FooterComponent — background task / agent badges', () => {
     const out = strip(footer.render(120)[0]!);
     expect(out).toMatch(/\[2 tasks running\]/);
     expect(out).toMatch(/\[3 agents running\]/);
-    // Task badge appears before agent badge in the line.
     expect(out.indexOf('2 tasks')).toBeLessThan(out.indexOf('3 agents'));
   });
 
@@ -97,7 +96,6 @@ describe('FooterComponent — background task / agent badges', () => {
   it('drops the badges when terminal is too narrow to fit them', () => {
     const footer = new FooterComponent(baseState());
     footer.setBackgroundCounts({ bashTasks: 4, agentTasks: 3 });
-    // Extremely narrow width: footer primary content fills the line, so leftLine wins.
     const [line1] = footer.render(20);
     expect(line1).toBeDefined();
     expect(strip(line1!)).not.toMatch(/\[4 tasks running\]/);

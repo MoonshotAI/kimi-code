@@ -263,8 +263,6 @@ describe('SessionEventHandler goal queue promotion', () => {
     const { host, session } = makeHost();
     host.state.appState.streamingPhase = 'idle';
     host.state.queuedMessages = [];
-    // The queue looks empty and the phase is idle, but a shifted queued message
-    // is still awaiting its deferred send. Promotion must not jump ahead of it.
     host.state.queuedMessageDispatchPending = true;
     const handler = new SessionEventHandler(host);
 
@@ -272,8 +270,6 @@ describe('SessionEventHandler goal queue promotion', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(session.createGoal).not.toHaveBeenCalled();
 
-    // Once the queued message has been dispatched, the flag clears and the
-    // promotion proceeds on the next retry.
     host.state.queuedMessageDispatchPending = false;
     handler.retryQueuedGoalPromotion();
     await vi.waitFor(() => {

@@ -10,30 +10,14 @@ interface DebugTokenUsage {
 export interface StepTimingInput {
   readonly llmFirstTokenLatencyMs?: number;
   readonly llmStreamDurationMs?: number;
-  /**
-   * Split of `llmFirstTokenLatencyMs` into the client-side request-build
-   * portion (`llmRequestBuildMs`) and the network + API-server portion
-   * (`llmServerFirstTokenMs`). Both present together or not at all.
-   */
   readonly llmRequestBuildMs?: number;
   readonly llmServerFirstTokenMs?: number;
-  /**
-   * Split of `llmStreamDurationMs` (the decode window) into server time spent
-   * awaiting parts (`llmServerDecodeMs`) and client time spent processing parts
-   * (`llmClientConsumeMs`). Both present together or not at all.
-   */
   readonly llmServerDecodeMs?: number;
   readonly llmClientConsumeMs?: number;
   readonly llmClientBlockedMs?: number;
   readonly usage?: DebugTokenUsage;
 }
 
-// Decode TPS is only meaningful when the output actually streamed over a
-// measurable window. Below this threshold the duration is dominated by
-// `Date.now()`'s ~1ms quantization (short / single-chunk tool-call turns can
-// drain in 1ms), so dividing output tokens by it would report inflated rates
-// like tens of thousands of tok/s. In that case we report the raw counts
-// instead of a meaningless ratio.
 const MIN_STREAM_MS_FOR_TPS = 50;
 
 export function formatStepDebugTiming(input: StepTimingInput): string | undefined {
@@ -82,9 +66,6 @@ function usageInputTotal(usage: DebugTokenUsage | undefined): number {
   return (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0);
 }
 
-// Render TTFT, splitting the latency into the network + API-server portion and
-// the in-process request-build portion when the provider reported the
-// boundary. Falls back to the bare total otherwise.
 function formatTtft(input: StepTimingInput): string {
   const total = formatDuration(input.llmFirstTokenLatencyMs ?? 0);
   const build = input.llmRequestBuildMs;
@@ -93,9 +74,6 @@ function formatTtft(input: StepTimingInput): string {
   return `${total} (api ${formatDuration(server)} + client ${formatDuration(build)})`;
 }
 
-// Render the decode-window split as a trailing clause, e.g.
-// `; server 4.6s + client 0.4s`. A large client share means the host's per-part
-// processing is throttling decode. Empty when the provider did not report it.
 function formatDecodeSplit(input: StepTimingInput): string {
   const server = input.llmServerDecodeMs;
   const client = input.llmClientConsumeMs;

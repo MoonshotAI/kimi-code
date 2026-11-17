@@ -1,7 +1,3 @@
-/**
- * Prompt origin metadata for user messages (client metadata, bundled skill activations, file
- * attachments), skill-activation text parts, and merging several steer messages into one user message.
- */
 import type { ContentPart, PromptOrigin, TextPart } from '#/llm/message';
 
 export type { PromptOrigin } from '#/llm/message';

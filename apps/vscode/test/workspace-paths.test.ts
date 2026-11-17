@@ -1,11 +1,3 @@
-/**
- * Scenario: Webview file paths and the selected working directory.
- * Responsibilities: directory/search/open paths are scoped, normalized, and symlink-safe;
- * editor mentions use relative paths inside the working directory and absolute paths outside.
- * Wiring: real temporary local files plus the public handler/bridge surfaces;
- * VS Code host APIs are the only stubbed boundary.
- * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/workspace-paths.test.ts
- */
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

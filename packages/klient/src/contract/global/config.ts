@@ -1,8 +1,3 @@
-/**
- * `configService` — layered global config service. Mirrors
- * `agent-core-v2/app/config/config.ts`.
- */
-
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';

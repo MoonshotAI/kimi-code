@@ -217,15 +217,8 @@ export class BridgeHandler {
     selection: vscode.Selection,
   ): Promise<string | null> {
     const workDirUri = this.getWorkDirUri(webviewId);
-    // Mirror the CLI/TUI: no UI-level directory gate on mentions. Inside the
-    // working directory the mention is relative; outside it (for example a
-    // file under the session's additionalDirs) it falls back to the absolute
-    // path, and the session's tool layer decides readability. Virtual
-    // documents (untitled:, git:, ...) have no meaningful path to mention.
     if (workDirUri === null || documentUri.scheme !== workDirUri.scheme) return null;
     const filePath = relativeWorkspacePath(workDirUri, documentUri) ?? documentUri.fsPath;
-    // Quote paths containing spaces, as the CLI/TUI mention completers do, so
-    // whitespace cannot split the path; any line range goes after the quote.
     const mentionTarget = filePath.includes(" ") ? `"${filePath}"` : filePath;
 
     if (selection.isEmpty) return `@${mentionTarget}`;
@@ -295,7 +288,6 @@ export class BridgeHandler {
   }
 
   private trace(id: string, method: string, durationMs: number, ok: boolean): void {
-    // Deliberately exclude params, prompt text, file paths, and credentials.
     const line = `[bridge] id=${id} method=${method} ok=${String(ok)} durationMs=${durationMs}`;
     console.debug(`[kimi-vscode] ${line}`);
     this.writeLog(line);

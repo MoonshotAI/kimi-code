@@ -554,7 +554,6 @@ describe('plugins command capability surface', () => {
     const { host, installCapability, statuses } = fakeHost({
       capabilityStatus: () => {
         calls += 1;
-        // The pre-check sees the running install; the poll then sees it settle.
         return Promise.resolve(
           calls === 1
             ? { state: 'partial', steps: [], install: { running: true, step: 'download', percent: 40 } }
@@ -570,8 +569,6 @@ describe('plugins command capability surface', () => {
       'kimi-cu',
     );
 
-    // The service rejects duplicate starts (40922) — a healthy in-progress
-    // install must be followed via polling, never reported as a failure.
     expect(installCapability).not.toHaveBeenCalled();
     expect(statuses.some((s) => s.includes('Failed to install'))).toBe(false);
     expect(statuses.some((s) => s.includes('is installed'))).toBe(true);

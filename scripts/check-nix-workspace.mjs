@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-/**
- * Recursively resolve workspace dependencies starting from apps/kimi-code
- * and verify they are all present in flake.nix workspaceNames/workspacePaths.
- *
- * Exit code 0 if everything is in sync, 1 otherwise.
- */
-
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 
@@ -13,9 +6,6 @@ const ROOT = resolve(import.meta.dirname, "..");
 const FLAKE_NIX = join(ROOT, "flake.nix");
 const START_PKG = "@moonshot-ai/kimi-code";
 
-/**
- * Parse pnpm-workspace.yaml to get workspace directory globs.
- */
 function getWorkspaceGlobs() {
   const yamlPath = join(ROOT, "pnpm-workspace.yaml");
   const content = readFileSync(yamlPath, "utf8");
@@ -39,9 +29,6 @@ function getWorkspaceGlobs() {
   return globs;
 }
 
-/**
- * Expand globs like "packages/*" into actual directories.
- */
 function expandGlobsSafe(globs) {
   const dirs = [];
   for (const g of globs) {
@@ -64,9 +51,6 @@ function expandGlobsSafe(globs) {
   return dirs;
 }
 
-/**
- * Build a map of package name -> relative directory for all workspace packages.
- */
 function buildWorkspaceMap(dirs) {
   const map = new Map();
   for (const dir of dirs) {
@@ -80,9 +64,6 @@ function buildWorkspaceMap(dirs) {
   return map;
 }
 
-/**
- * Recursively collect all workspace dependencies (transitive closure).
- */
 function resolveWorkspaceDeps(workspaceMap, startName) {
   const visited = new Set();
   const closure = new Set();
@@ -120,9 +101,6 @@ function resolveWorkspaceDeps(workspaceMap, startName) {
   return closure;
 }
 
-/**
- * Parse workspaceNames and workspacePaths from flake.nix.
- */
 function parseFlakeNix() {
   const content = readFileSync(FLAKE_NIX, "utf8");
 
@@ -136,7 +114,6 @@ function parseFlakeNix() {
       throw new Error(`Could not find ${label} in flake.nix`);
     }
     const items = [];
-    // workspaceNames uses quoted strings, workspacePaths uses bare Nix paths
     const itemRegex = label === "workspacePaths" ? /\.\/[^\s\]]+/g : /"([^"]+)"/g;
     let m;
     if (label === "workspacePaths") {
@@ -185,7 +162,6 @@ function main() {
     }
   }
 
-  // Also check that the start package itself is in flake.nix
   if (!flakeNameSet.has(START_PKG)) {
     missingNames.unshift(START_PKG);
   }

@@ -2,13 +2,9 @@ import { useState, type ReactNode } from 'react';
 
 interface SizePreviewProps {
   label?: string;
-  /** Byte/char count for the dim label */
   sizeBytes: number;
-  /** Preview text shown when collapsed (first ~200 chars) */
   preview?: string;
-  /** Full content renderer */
   children: ReactNode;
-  /** Start expanded if true */
   defaultOpen?: boolean;
 }
 

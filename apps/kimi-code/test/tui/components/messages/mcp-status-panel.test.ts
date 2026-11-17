@@ -21,8 +21,6 @@ describe('buildMcpStatusReportLines', () => {
       ],
     }).map(strip);
 
-    // The box renderer (UsagePanelComponent.render) treats each returned string
-    // as exactly one row, so an embedded newline would punch through the border.
     for (const line of lines) {
       expect(line).not.toContain('\n');
     }

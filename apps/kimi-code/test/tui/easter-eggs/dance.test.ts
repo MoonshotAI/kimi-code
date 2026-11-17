@@ -16,7 +16,6 @@ import { darkColors } from '#/tui/theme/colors';
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
 
-/** Ordered list of "r,g,b" truecolor codes in the order they appear. */
 function truecolorCodes(text: string): string[] {
   return [...text.matchAll(TRUECOLOR_PATTERN)].map((m) => `${m[1]},${m[2]},${m[3]}`);
 }
@@ -115,7 +114,6 @@ describe('RainbowDance', () => {
     vi.advanceTimersByTime(DANCE_FRAME_MS * 5);
     expect(dance.phase).toBe(5);
 
-    // Monotonic — the dance state itself has no palette-length cycle.
     vi.advanceTimersByTime(DANCE_FRAME_MS * 5);
     expect(dance.phase).toBe(10);
   });

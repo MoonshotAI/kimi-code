@@ -1,8 +1,3 @@
-/**
- * OpenAI model capability tables (reasoning, vision with tools, text with tools) and their inference
- * from model names, shared by the Chat Completions and Responses protocols.
- */
-
 export const OPENAI_REASONING_CAPABILITY = Object.freeze({
   image_in: false,
   video_in: false,

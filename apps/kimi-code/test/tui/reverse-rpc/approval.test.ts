@@ -52,12 +52,8 @@ describe('approval reverse-rpc', () => {
       scope: 'session',
       feedback: 'ok',
     });
-    // Queued same-action requests inherit a session-scoped approval without
-    // surfacing another panel. The user's feedback is not carried over —
-    // it described the first request only.
     await expect(second).resolves.toEqual({ decision: 'approved', scope: 'session' });
     await expect(fourth).resolves.toEqual({ decision: 'approved', scope: 'session' });
-    // A different-action request still waits for an explicit decision.
     expect(controller.hasPending()).toBe(true);
 
     controller.respond({ decision: 'rejected' });
@@ -82,8 +78,6 @@ describe('approval reverse-rpc', () => {
     controller.respond({ decision: 'approved' });
 
     await expect(first).resolves.toEqual({ decision: 'approved' });
-    // The second same-action request must NOT be auto-resolved — approve-once
-    // is a one-shot decision, not a session rule.
     expect(controller.hasPending()).toBe(true);
     controller.respond({ decision: 'approved' });
     await expect(second).resolves.toEqual({ decision: 'approved' });

@@ -1,7 +1,3 @@
-/**
- * Anthropic Messages decoding: the stream decoder that turns SDK events into streamed parts, usage,
- * and finish info; replay of a non-streaming response as stream events; and SDK error classification.
- */
 import {
   APIConnectionError as RawAnthropicSDKConnectionError,
   APIConnectionTimeoutError as RawAnthropicSDKConnectionTimeoutError,

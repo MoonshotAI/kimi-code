@@ -210,9 +210,6 @@ describe('FileMentionProvider', () => {
   it('opens @ file mention when typed in the middle of a slash command argument', async () => {
     writeFileSync(join(workDir, 'README.md'), 'readme');
     const provider = new FileMentionProvider([GOAL_COMMAND], workDir, NO_FD);
-    // Cursor sits in the middle of the /goal argument text, right after a
-    // freshly typed `@`. The slash-argument guard must not suppress the @
-    // file list here.
     const line = '/goal Fix the @checkout docs';
     const result = await provider.getSuggestions([line], 0, '/goal Fix the @'.length, {
       signal: ctrl(),
@@ -321,8 +318,6 @@ describe('FileMentionProvider', () => {
 
   it('joins multiple aliases with an ASCII comma in the label', async () => {
     const provider = new FileMentionProvider([HELP_FULL_COMMAND], workDir, NO_FD);
-    // '?' only matches the alias, not the primary name, so the label must
-    // list the aliases.
     const result = await provider.getSuggestions(['/?'], 0, 2, { signal: ctrl() });
 
     expect(result).not.toBeNull();
@@ -565,9 +560,6 @@ describe('FileMentionProvider', () => {
   it.runIf(IS_FD_INSTALLED)(
     'uses fd for additionalDirs even when cwd is large enough to exhaust the fallback scanner',
     async () => {
-      // Fill cwd with enough entries to push the filesystem fallback past its
-      // 2000-entry scan cap, so it would never reach the additional root. fd
-      // searches each root independently and still finds the deep target.
       for (let i = 0; i < 2000; i++) {
         writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');
       }
@@ -590,9 +582,6 @@ describe('FileMentionProvider', () => {
   it.runIf(IS_FD_INSTALLED)(
     'treats a bare fd command name as executable and resolves it via PATH',
     async () => {
-      // A bare "fd" (system PATH lookup) must not be mistaken for unavailable;
-      // otherwise the large cwd would push the fallback scanner past its cap
-      // and hide the deep target in the additional root.
       for (let i = 0; i < 2000; i++) {
         writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');
       }
@@ -1009,7 +998,6 @@ describe('FileMentionProvider', () => {
         '/tmp/My',
       );
       expect(result.lines[0]).toBe('cd "/tmp/My Dir/"');
-      // Cursor sits before the closing quote so the next `/` continues inside it.
       expect(result.cursorCol).toBe('cd "/tmp/My Dir/'.length);
     });
 
@@ -1022,7 +1010,6 @@ describe('FileMentionProvider', () => {
         { value: 'help', label: 'help' },
         '/',
       );
-      // pi-tui's slash-command branch: beforePrefix + '/' + value + ' '
       expect(result.lines[0]).toBe('/help ');
     });
   });
@@ -1060,10 +1047,6 @@ describe('FileMentionProvider', () => {
         () => 'bash',
       );
 
-      // `/add-dir ` (trailing space) used to be re-triggered with force:false,
-      // which let pi-tui's own slash-command handling return subcommand
-      // completions. Bash mode now only ever triggers force:true path
-      // completion, so the argument completer must not run.
       const text = '/add-dir ';
       const result = await provider.getSuggestions([text], 0, text.length, {
         signal: ctrl(),

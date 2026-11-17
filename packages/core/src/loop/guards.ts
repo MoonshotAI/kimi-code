@@ -1,7 +1,3 @@
-/**
- * Runtime type guards for values that reach the loop from hooks and hosts: messages, tool calls, LLM
- * outcomes, and tool results.
- */
 import type { AssistantMessage, Message, ToolCall } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import type { ToolResult } from './contract/hook';

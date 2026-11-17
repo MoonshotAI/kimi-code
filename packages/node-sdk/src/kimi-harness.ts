@@ -184,9 +184,6 @@ export class KimiHarness {
       sessionStartedProperties: _sessionStartedProperties,
       ...resumeInput
     } = stripLegacyKaosOptions(input);
-    // A session whose close is in flight (`isClosed` but not yet unmapped)
-    // is not a valid resume target — fall through and re-resume fresh, which
-    // the engine serializes behind that close.
     if (active !== undefined && !active.isClosed) {
       if (input.agentProfile !== undefined) {
         await this.rpc.resumeSession({ ...resumeInput, id });
@@ -194,12 +191,6 @@ export class KimiHarness {
       return active;
     }
 
-    // Coalesce concurrent resumes of the same id onto one facade, keyed by
-    // the full input so a caller with different options (dirs, replay,
-    // profile) never has them silently dropped; without this,
-    // parallel identical callers each build their own Session over the
-    // shared engine handle, and one facade's close kills the engine handle
-    // under the other.
     const key = resumeCoalesceKey(id, input);
     const inflight = this.resumeInflight.get(key);
     if (inflight !== undefined) return inflight;
@@ -684,11 +675,6 @@ export class KimiHarness {
       ...this.sessionStartedProperties,
       ...sessionScoped,
       ...this.sessionStartedDynamicProperties?.(),
-      // Canonical fields are owned by the harness and must win over any
-      // caller-supplied sessionStartedProperties that happen to share a key.
-      // A single-process host has no per-connection client id, so `client_id`
-      // stays empty; empty strings (unlike null) survive payload flattening,
-      // keeping the client-attribution keys present on every row.
       client_id: '',
       client_name: this.identity?.productName ?? '',
       client_version: this.identity?.version ?? '',
@@ -705,9 +691,6 @@ function resumeCoalesceKey(id: string, input: ResumeSessionInput): string {
 }
 
 function stripLegacyKaosOptions<T extends object>(input: T): T {
-  // JavaScript hosts may still pass the removed kaos options; keep them out of
-  // forwarded RPC inputs and serialized keys — custom implementations can hold
-  // circular runtime handles.
   const { kaos, persistenceKaos, ...rest } = input as T & {
     kaos?: unknown;
     persistenceKaos?: unknown;

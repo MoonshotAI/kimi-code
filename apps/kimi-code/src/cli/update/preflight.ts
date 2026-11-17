@@ -110,11 +110,8 @@ export function canAutoInstall(source: InstallSource, _platform: NodeJS.Platform
     case 'bun-global':
       return true;
     case 'homebrew':
-      // Homebrew upgrade may mutate other dependents and the formula can lag
-      // behind the CDN release — prompt the user to run `brew upgrade` manually.
       return false;
     case 'native':
-      // Staged-swap self update works on every platform (win32 included).
       return true;
     case 'unsupported':
       return false;
@@ -143,11 +140,6 @@ export function spawnForSource(
     case 'homebrew':
       return { cmd: 'brew', args: ['upgrade', 'kimi-code'] };
     case 'native':
-      // Native installs self-spawn the hidden downloader sub-command, which
-      // stages the binary next to the exe (verified against the release
-      // manifest's sha256); the swap happens on the next startup. This
-      // replaces the old `curl|bash` / `irm|iex` re-install dance — no shell,
-      // no pipeline exit-status loss, no PowerShell dependency on Windows.
       return { cmd: process.execPath, args: ['__update_download', version] };
     case 'unsupported':
       throw new Error('unsupported install source cannot be auto-installed');
@@ -158,29 +150,12 @@ function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Resolve a spawn target from `spawnForSource` to an absolute executable path
- * via PATH, refusing hits inside the current working directory: the update
- * preflight runs before the workspace trust gate, so a package-manager binary
- * planted in an untrusted workspace must never be executed. On win32 the
- * resolved path is quoted because the spawn goes through cmd.exe (shell:
- * true) and paths like `C:\Program Files\...` would otherwise split. Returns
- * undefined when the command cannot be safely resolved.
- */
 function resolveSpawnCommand(cmd: string, platform: NodeJS.Platform): string | undefined {
   const resolved = resolveCommandPath(cmd);
   if (resolved === undefined) return undefined;
   return platform === 'win32' ? `"${resolved}"` : resolved;
 }
 
-/**
- * Resolve the spawn target for an install. Package managers are resolved from
- * `PATH` to an absolute executable via `resolveSpawnCommand` (workspace-trust
- * safety, see above). The native self-spawn instead uses `process.execPath`
- * verbatim — already absolute — and never goes through a shell. Returns the
- * shell flag alongside, since Windows package-manager shims (.cmd) still
- * need one.
- */
 function resolveInstallSpawn(
   source: InstallSource,
   plan: ActionableUpdatePlan,
@@ -200,7 +175,6 @@ function resolveInstallSpawn(
   return { resolvedCmd, args, shell: platform === 'win32' };
 }
 
-// Built per call: the official-installer URL follows the current region.
 function thirdPartySourceNote(): string {
   return (
     '\nNote: Third-party sources may lag behind the official release.\n' +
@@ -263,7 +237,6 @@ function renderBackgroundInstallSuccessNotice(version: string): string {
   return `Kimi Code updated to ${displayVersion}\nChangelog: ${CHANGELOG_URL}\n`;
 }
 
-/** Resolved once per preflight: which feed to read and whether rollout gating applies. */
 interface UpdateCheckContext {
   readonly selection: ChannelSelection;
   readonly experimental: boolean;
@@ -273,7 +246,6 @@ function refreshInBackground(check: UpdateCheckContext): void {
   void refreshUpdateCache({ channel: check.selection.channel }).catch(() => {});
 }
 
-/** Telemetry properties describing where this device sits in the rollout. */
 interface RolloutTelemetry {
   readonly rollout_bucket: number;
   readonly rollout_delay_seconds: number;
@@ -301,7 +273,6 @@ function rolloutTelemetryFor(
 
 type RolloutCheckPhase = 'startup-cache' | 'background-refresh' | 'prompt-refresh';
 
-/** Record which case a passive version check hit in `updates/rollout.log`. */
 function logRolloutDecision(
   phase: RolloutCheckPhase,
   check: UpdateCheckContext,
@@ -438,16 +409,6 @@ function hasFreshActiveInstall(state: UpdateInstallState, target: UpdateTarget):
   return Date.now() - startedAt < AUTO_INSTALL_ACTIVE_TTL_MS;
 }
 
-/**
- * A fresh-looking `active` record is not proof of work for native installs:
- * the parent that wrote it may have exited before the spawned downloader's
- * exit event (or the downloader died before doing anything), and the 6 h TTL
- * would then silently block every retry. Past the spawn grace window — the
- * worker needs a moment to self-acquire the lock — lock liveness IS the
- * truth: held ⇒ a download is running; free ⇒ the record is an orphan and
- * the caller may start a new attempt. Package-manager sources have no such
- * liveness signal and keep the TTL behavior above.
- */
 const NATIVE_INSTALL_SPAWN_GRACE_MS = 60_000;
 
 async function hasNativeInstallInFlight(
@@ -537,24 +498,12 @@ async function showPendingBackgroundInstallNotice(
   return nextState;
 }
 
-/**
- * `KIMI_CODE_NO_AUTO_UPDATE` (or the legacy `KIMI_CLI_NO_AUTO_UPDATE` alias)
- * fully disables automatic update behavior — no check, no background install,
- * no prompt, and no staged-swap at startup (see `native-swap.ts`). Migrated
- * from kimi-cli, where the variable gated all auto-update behavior. Accepts
- * the usual truthy values (`1`/`true`/`yes`/`on`).
- */
 export function isAutoUpdateDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
   const truthy = (value?: string): boolean =>
     ['1', 'true', 'yes', 'on'].includes((value ?? '').trim().toLowerCase());
   return truthy(env['KIMI_CODE_NO_AUTO_UPDATE']) || truthy(env['KIMI_CLI_NO_AUTO_UPDATE']);
 }
 
-/**
- * The persisted `[upgrade].auto_install` preference (defaults to true when
- * the config cannot be read). Gates the passive background install — and the
- * startup swap of automatically staged payloads (see `native-swap.ts`).
- */
 export async function shouldAutoInstallUpdates(): Promise<boolean> {
   try {
     const config = await loadTuiConfig();
@@ -588,25 +537,19 @@ function trackUpdateEvent(
 ): void {
   try {
     track?.(event, properties);
-  } catch {
-    // Telemetry must never affect update prompting.
-  }
+  } catch {}
 }
 
 function logUpdateInfo(logger: UpdateLogger, message: string, payload: Record<string, unknown>): void {
   try {
     logger.info(message, payload);
-  } catch {
-    // Diagnostic logging must never affect update prompting.
-  }
+  } catch {}
 }
 
 function logUpdateWarn(logger: UpdateLogger, message: string, payload: Record<string, unknown>): void {
   try {
     logger.warn(message, payload);
-  } catch {
-    // Diagnostic logging must never affect update prompting.
-  }
+  } catch {}
 }
 
 async function promptInstall(
@@ -636,11 +579,6 @@ export async function installUpdate(
     );
   }
   await new Promise<void>((resolve, reject) => {
-    // Windows package managers (npm/pnpm/yarn) are .cmd shims. Since the
-    // CVE-2024-27980 fix, Node throws EINVAL when spawning a .cmd/.bat without
-    // a shell, so run through the shell on win32. The version is a validated
-    // semver and the package name is a constant, so args are shell-safe. The
-    // native self-spawn is an .exe and needs no shell.
     const child = spawn(spawnTarget.resolvedCmd, [...spawnTarget.args], {
       stdio: 'inherit',
       shell: spawnTarget.shell ? true : undefined,
@@ -668,10 +606,6 @@ async function startBackgroundInstall(
   rolloutTelemetry: RolloutTelemetry,
 ): Promise<void> {
   const target = plan.target;
-  // The native self-spawned downloader holds the install lock itself for the
-  // whole download — taking it here too would race the child (it starts before
-  // this function's finally releases) into a false success. Package-manager
-  // installs keep the outer lock, which only guards against duplicate spawns.
   const lock =
     source === 'native'
       ? { filePath: '', release: async (): Promise<void> => {} }
@@ -761,9 +695,6 @@ async function startBackgroundInstall(
     };
 
     if (spawnTarget === undefined) {
-      // The package manager cannot be resolved to an absolute path outside
-      // the cwd — record a normal install failure instead of spawning a bare
-      // command name that Windows would resolve into the untrusted workspace.
       finish(false);
       return;
     }
@@ -771,9 +702,6 @@ async function startBackgroundInstall(
       detached: true,
       stdio: 'ignore',
       shell: spawnTarget.shell ? true : undefined,
-      // On Windows a detached child gets its own console window; with shell:true
-      // that window would flash during a passive background update. Hide it so
-      // the silent updater stays silent.
       windowsHide: platform === 'win32' ? true : undefined,
     });
     child.once('error', () => { finish(false); });

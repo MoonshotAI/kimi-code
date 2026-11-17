@@ -40,9 +40,7 @@ export class StartPermissionPromptComponent<
   focused = false;
   private selectedIndex = 0;
   private choiceRows: readonly number[] = [];
-  /** Option under the pointer: highlighted and previewed, but not selected. */
   private hoverIndex: number | undefined;
-  /** A click this soon after the prompt appeared was aimed at what was there before. */
   private readonly shownAt = Date.now();
 
   constructor(private readonly opts: StartPermissionPromptOptions<TChoice>) {

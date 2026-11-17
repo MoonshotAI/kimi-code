@@ -1,10 +1,3 @@
-/**
- * Status report line builder for `/status`.
- *
- * It mirrors `/usage` visual language but keeps runtime status formatting
- * separate from the TUI orchestration layer.
- */
-
 import {
   effectiveModelAlias,
   type ModelAlias,
@@ -46,7 +39,6 @@ export interface StatusReportOptions {
   readonly permissionMode: PermissionMode;
   readonly planMode: boolean;
   readonly towerMode: boolean;
-  /** Whether the tower experiment is enabled on engine v2 — gates the Tower mode row. */
   readonly towerAvailable: boolean;
   readonly contextUsage: number;
   readonly contextTokens: number;

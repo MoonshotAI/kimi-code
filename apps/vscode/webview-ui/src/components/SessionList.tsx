@@ -35,7 +35,7 @@ interface SessionItemProps {
   isSelected: boolean;
   onSelect: () => void;
   onDelete: () => void;
-  dirLabel: string | null; // null = current dir, string = relative path
+  dirLabel: string | null;
 }
 
 function SessionItem({ session, isSelected, onSelect, onDelete, dirLabel }: SessionItemProps) {
@@ -99,7 +99,6 @@ export function SessionList({ onClose }: SessionListProps) {
     const activeWorkDir = currentWorkDir || workspaceRoot;
     if (sessionWorkDir === activeWorkDir) return null;
     if (!workspaceRoot) return sessionWorkDir;
-    // Show (root) for workspace root, relative path for subdirs
     if (sessionWorkDir === workspaceRoot) {
       return "/";
     }
@@ -118,7 +117,6 @@ export function SessionList({ onClose }: SessionListProps) {
   const handleSelect = async (session: SessionInfo) => {
     console.log("[SessionList] Loading session:", session.id);
 
-    // If streaming, show confirmation dialog
     if (isStreaming) {
       setPendingSession(session);
       return;
@@ -129,7 +127,6 @@ export function SessionList({ onClose }: SessionListProps) {
 
   const doLoadSession = async (session: SessionInfo) => {
     try {
-      // Switch workDir if session is from a different directory
       const activeWorkDir = currentWorkDir || workspaceRoot;
       if (session.workDir !== activeWorkDir) {
         const newWorkDir = session.workDir === workspaceRoot ? null : session.workDir;
