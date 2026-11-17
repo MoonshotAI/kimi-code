@@ -783,9 +783,6 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
-      '@moonshot-ai/core':
-        specifier: workspace:^
-        version: link:../core
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
