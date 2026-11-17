@@ -232,6 +232,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return [];
   }
 
+  async prepareBaselineTools(): Promise<readonly Tool[]> {
+    return [];
+  }
+
   override getModelCapabilities(): LegacyModelCapability {
     return fromLlmModelSpec({ provider: 'stub', name: 'stub', capability: capabilities });
   }

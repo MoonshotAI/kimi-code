@@ -40,6 +40,7 @@ import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IFlagService } from '#/app/flag/flag';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { ISessionBtwService } from '#/features/btw/btw';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
@@ -63,6 +64,7 @@ import {
   createScriptedGenerate,
   llmGenerateServices,
   mcpServices,
+  sessionService,
   sessionServices,
   telemetryServices,
   testAgent,
@@ -652,6 +654,54 @@ describe('subagent task reminders and fork request parity', () => {
       expect((await childLoop.promptHandle(prompt.id)!.completion).state).toBe('completed');
       expect(ctx.llmCalls[2]!.tools).toEqual(parentTools);
     } finally {
+      await ctx.dispose();
+      await manager.shutdown();
+      await server.close();
+    }
+  });
+
+  it('keeps btw tools identical when forked during initial MCP discovery', async () => {
+    const server = await startInProcessHttpMcpServer();
+    const manager = new McpConnectionManager();
+    const ready = createControlledPromise<void>();
+    const waiting = createControlledPromise<void>();
+    ctx = createTestAgent(
+      sessionService(ISessionMcpHandle, {
+        _serviceBrand: undefined,
+        get ready() {
+          waiting.resolve();
+          return ready;
+        },
+        connectionManager: manager,
+        isBaselineServer: () => true,
+      }),
+      appService(IAppendLogStore, new ScopedAppendLogStore()),
+      appService(IFlagService, stubFlag(false)),
+    );
+    try {
+      ctx.configure({ tools: ['Read', 'mcp__*'] });
+      await ctx.restorePersisted();
+      ctx.mockNextResponse({ type: 'text', text: 'parent' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+      await waiting;
+      await manager.connectAll({ srv: { transport: 'http', url: server.url, deferred: false } });
+
+      const childStart = ctx.get(ISessionBtwService).start();
+      ready.resolve();
+      const childId = await childStart;
+      await ctx.untilTurnEnd();
+
+      const child = ctx.get(IAgentLifecycleService).handleOf(childId)!;
+      const childLoop = child.accessor.get(IAgentLoopService);
+      const parentTools = ctx.llmCalls[0]!.tools;
+      expect(parentTools.map((tool) => tool.name)).toEqual(['mcp__srv__echo', 'Read']);
+      expect(childLoop.baselineTools()).toEqual(ctx.get(IAgentLoopService).baselineTools());
+      ctx.mockNextResponse({ type: 'text', text: 'child' });
+      const prompt = childLoop.submit({ role: 'user', content: [{ type: 'text', text: 'side question' }] });
+      expect((await childLoop.promptHandle(prompt.id)!.completion).state).toBe('completed');
+      expect(ctx.llmCalls[1]!.tools).toEqual(parentTools);
+    } finally {
+      ready.resolve();
       await ctx.dispose();
       await manager.shutdown();
       await server.close();

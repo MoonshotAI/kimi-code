@@ -253,6 +253,8 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   baselineTools(): readonly Tool[];
 
+  prepareBaselineTools(signal?: AbortSignal): Promise<readonly Tool[]>;
+
   bindingSnapshot(): ProfileBindingSnapshot;
 
   setProfile(profile: ProfileBindingSnapshot): Promise<void>;

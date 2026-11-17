@@ -393,7 +393,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         thinking: override.thinking ?? sourceData.thinkingLevel,
       },
       initialProfile: override?.profile === undefined ? sourceData : undefined,
-      initialTools: override?.profile === undefined ? sourceLoop.baselineTools() : undefined,
+      initialTools: override?.profile === undefined ? await sourceLoop.prepareBaselineTools() : undefined,
       environmentId: sourceBinding.environmentId,
       environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,

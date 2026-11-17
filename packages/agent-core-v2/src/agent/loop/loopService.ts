@@ -188,6 +188,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private historySnapshotDepth = 0;
   private loop: Loop | undefined;
   private initialized = false;
+  private initialToolsPreparationPending = false;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private readonly batchStartingHooks = new Map<string, HookRegistration>();
@@ -313,6 +314,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   baselineTools(): readonly Tool[] {
     return this.loop?.state.profile.tools ?? this.toolSelect.initialTools();
+  }
+
+  async prepareBaselineTools(signal?: AbortSignal): Promise<readonly Tool[]> {
+    const baseline = this.baselineTools();
+    if (!this.initialToolsPreparationPending) return baseline;
+    return this.completeInitialTools(baseline, signal);
+  }
+
+  private async completeInitialTools(baseline: readonly Tool[], signal?: AbortSignal): Promise<readonly Tool[]> {
+    await this.toolSelect.prepareCatalog(signal);
+    const names = new Set(baseline.map((tool) => tool.name));
+    return [...baseline, ...this.toolSelect.initialTools('mcp').filter((tool) => !names.has(tool.name))]
+      .toSorted((left, right) => left.name.localeCompare(right.name));
   }
 
   private get toolSelect(): IAgentToolSelectService {
@@ -485,13 +499,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     historyRevision?: number,
   ): void {
     this.initialized = true;
+    this.initialToolsPreparationPending = prepareInitialTools;
     const loop = createLoop({
-      prepareInitialTools: prepareInitialTools ? async (baseline, signal) => {
-        await this.toolSelect.prepareCatalog(signal);
-        const names = new Set(baseline.map((tool) => tool.name));
-        return [...baseline, ...this.toolSelect.initialTools('mcp').filter((tool) => !names.has(tool.name))]
-          .toSorted((left, right) => left.name.localeCompare(right.name));
-      } : undefined,
+      prepareInitialTools: prepareInitialTools ? (baseline, signal) => this.completeInitialTools(baseline, signal) : undefined,
       completionMessage: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
         if (handler?.snapshot().fields.task === undefined) {
@@ -539,6 +549,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.setRequester(this.createLoopRequester(loop));
     this.loop = loop;
     loop.subscribe((event) => {
+      if (event.type === 'tools.settled') this.initialToolsPreparationPending = false;
       const enriched = this.turns.enrich(event, this.toolExecutor);
       this.notifications.project(event);
       if (event.type === 'llm.retrying') this.journal.append(enriched);

@@ -145,6 +145,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     },
     start: async () => {},
     baselineTools: () => [],
+    prepareBaselineTools: async () => [],
     bindingSnapshot: () => ({ thinkingLevel: 'off', systemPrompt: '' }),
     setProfile: async () => {},
     bindProfile: async () => {},

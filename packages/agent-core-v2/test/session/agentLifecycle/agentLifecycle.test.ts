@@ -422,6 +422,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       start: vi.fn(async () => {}),
       baselineTools: () => [],
+      prepareBaselineTools: async () => [],
       data: () => ({
         ...(loopProfileSequence.length > 0 ? loopProfileSequence.shift()! : loopProfile),
         modelCapabilities: UNKNOWN_CAPABILITY,
