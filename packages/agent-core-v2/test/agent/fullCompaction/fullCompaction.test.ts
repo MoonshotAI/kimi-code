@@ -2428,7 +2428,7 @@ describe('FullCompaction', () => {
         });
       }
       if (callCount === 2) {
-        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-context-overflow');
+        return providerHttpError(400, 'Context length exceeded', { requestId: 'req-context-overflow' });
       }
       if (callCount === 3) {
         return textResult('Overflow compacted summary.');

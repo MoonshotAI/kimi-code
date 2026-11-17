@@ -221,8 +221,8 @@ class LoopMailbox {
     const kind = normalHead === undefined ? 'notify' as const : 'normal' as const;
     const remainingNotify = normalHead === undefined ? this.notifyEntries.slice(1) : this.notifyEntries;
     const promptOnly =
-      head.meta?.promptOnly === true ||
-      remainingNotify.some((entry) => entry.meta?.promptOnly !== true);
+      head.attributes?.promptOnly === true ||
+      remainingNotify.some((entry) => entry.attributes?.promptOnly !== true);
     this.normal = normalHead === undefined ? this.normal : this.normal.slice(1);
     this.notifyEntries = remainingNotify;
     const reminders = promptOnly ? [] : this.drainReminders();
@@ -744,7 +744,7 @@ class LoopActor implements Loop {
   recordNotification(message: UserMessage): LoopAck<'prompt.notified'> | undefined {
     const normalized = normalizeUserMessage({
       ...message,
-      meta: { ...message.meta, promptOnly: true },
+      attributes: { ...message.attributes, promptOnly: true },
     });
     this.check({ type: 'input.notify', message: normalized });
     if (!this.open()) return undefined;

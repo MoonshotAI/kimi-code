@@ -754,8 +754,8 @@ describe('notify turn handoff', () => {
 
     const ordinaryEvents: LoopEmitted[] = [];
     const ordinary = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: requester([done('ordinary')]) }),
-      executor: createExecutor([]),
+      requester: requester([done('ordinary')]),
+      executor: createExecutor({}),
       input: { inbox: { normal: [prompt('queued')] } },
     });
     ordinary.subscribe((event) => ordinaryEvents.push(event));
@@ -773,8 +773,8 @@ describe('notify turn handoff', () => {
 
     const executableEvents: LoopEmitted[] = [];
     const executable = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: requester([done('ordinary')]) }),
-      executor: createExecutor([]),
+      requester: requester([done('ordinary')]),
+      executor: createExecutor({}),
       input: { inbox: { notify: [prompt('ordinary')] } },
     });
     executable.subscribe((event) => executableEvents.push(event));

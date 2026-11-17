@@ -263,8 +263,8 @@ export function schedule(tx: StateTx): void {
   const kind = normalHead === undefined ? 'notify' as const : 'normal' as const;
   const notify = normalHead === undefined ? inbox.notify.slice(1) : inbox.notify;
   const promptOnly =
-    head.meta?.promptOnly === true ||
-    notify.some((entry) => entry.meta?.promptOnly !== true);
+    head.attributes?.promptOnly === true ||
+    notify.some((entry) => entry.attributes?.promptOnly !== true);
   patch(tx, {
     inbox: {
       normal: normalHead === undefined ? inbox.normal : inbox.normal.slice(1),

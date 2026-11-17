@@ -965,7 +965,7 @@ describe('conversation contract e2e', () => {
           run_in_background: true,
         }),
       },
-      { turnId: 1 },
+      { origin: 'loop', turnId: 1 },
     );
     await bgHandler;
     const bgTaskId = bgHandler.taskId;

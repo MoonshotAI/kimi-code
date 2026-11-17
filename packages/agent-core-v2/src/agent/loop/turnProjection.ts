@@ -23,15 +23,9 @@ import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecuto
 import { legacyToolDurationMs } from '#/tool/executor';
 import type { AgentLoopService } from './loopService';
 import type { AgentPromptProjection, ActivePrompt, PendingTurn } from './promptProjection';
-import {
-  MAX_STEPS_REASON,
-  type Loop,
-  type LoopEmitted,
-  type StepStartingDecision,
-  type StepStartingEvent,
-  type StepStoppingEvent,
-  type TurnTrigger,
-} from '@moonshot-ai/core/loop/index';
+import type { Loop, LoopEmitted, StepStartingEvent, StepStoppingEvent, TurnTrigger } from '@moonshot-ai/core/loop/index';
+import type { StepStartingDecision } from '@moonshot-ai/core/loop/contract/hook';
+import { MAX_STEPS_REASON } from '@moonshot-ai/core/loop/index';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { FinishReason, LlmTiming } from '@moonshot-ai/core/llm/response';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
@@ -410,7 +404,7 @@ export class AgentTurnProjection {
       case 'turn.started': {
         const pending = this.options.prompts.pending(event.turnId);
         if (pending === undefined) return event;
-        return { ...event, message: { ...pending.entry, content: pending.message.content } };
+        return { ...event, message: { ...pending.entry } };
       }
       case 'tool.started': {
         const handler = event.taskId === undefined ? undefined : toolExecutor.handler(event.taskId);
@@ -423,11 +417,11 @@ export class AgentTurnProjection {
         const prepared = snapshot?.prepared;
         const result = prepared?.kind === 'execute' || prepared?.kind === 'synthetic' ? prepared.result : undefined;
         const stop = result as { stopTurn?: boolean; stopTurnReason?: string } | undefined;
-        const toolMessage = event.outcome.message;
+        const entry = event.outcome.message;
         return {
           ...event,
           result: {
-            output: result?.output ?? toolMessage.content,
+            output: result?.output ?? entry.content,
             isError: event.outcome.type === 'succeeded' ? result?.isError : true,
             note: result?.note,
             durationMs: event.detached || snapshot === undefined ? undefined : legacyToolDurationMs(snapshot),
@@ -437,7 +431,7 @@ export class AgentTurnProjection {
         };
       }
       case 'step.ended':
-        return event.timing === undefined ? { ...event, timing: this.active?.current?.timing } : event;
+        return { ...event, timing: this.active?.current?.timing };
       case 'turn.ended': {
         const active = this.active;
         const promptOnly = this.promptOnlyTurnIds.has(event.turnId);
@@ -656,14 +650,14 @@ export class AgentTurnProjection {
         const step = turn?.current;
         if (turn === undefined || step === undefined) return;
         step.entry = event.message as AssistantMessage;
-        const attributes = step.entry.attributes;
-        step.usage = attributes?.usage ?? step.usage;
-        step.providerFinishReason = attributes?.finish?.finishReason ?? step.providerFinishReason;
-        step.rawFinishReason = attributes?.finish?.rawFinishReason ?? step.rawFinishReason;
-        step.messageId = attributes?.messageId ?? step.messageId;
+        const meta = step.entry.attributes;
+        step.usage = meta?.usage ?? step.usage;
+        step.providerFinishReason = meta?.finish?.finishReason ?? step.providerFinishReason;
+        step.rawFinishReason = meta?.finish?.rawFinishReason ?? step.rawFinishReason;
+        step.messageId = meta?.messageId ?? step.messageId;
         this.lastRequestId = this.activeRequestTrace?.requestId;
         const toolCalls = step.entry.toolCalls;
-        if (toolCalls.length === 0 && attributes?.partial !== true) this.endOrInterruptStep(turn, step, step.providerFinishReason ?? 'completed');
+        if (toolCalls.length === 0 && meta?.partial !== true) this.endOrInterruptStep(turn, step, step.providerFinishReason ?? 'completed');
         else if (toolCalls.length > 0) step.pendingToolIds = new Set(toolCalls.map((call) => call.id));
         return;
       }
@@ -674,7 +668,7 @@ export class AgentTurnProjection {
         const step = turn?.current;
         if (turn === undefined || step === undefined) return;
         step.pendingToolIds.delete(event.toolCallId);
-        const toolCall = step.entry?.toolCalls.find((call) => call.id === event.toolCallId);
+        const toolCall = step.entry?.toolCalls?.find((call) => call.id === event.toolCallId);
         if (toolCall !== undefined) step.tools.push({ toolCall, outcome: event.outcome, result: event.result });
         if (step.pendingToolIds.size === 0) this.endOrInterruptStep(turn, step, 'tool_calls');
         return;
@@ -722,7 +716,7 @@ export class AgentTurnProjection {
 
   private activate(pending: PendingTurn, turnId: number): void {
     if (this.active !== undefined || pending.waiter === undefined) return;
-    const prompt = this.options.prompts.begin(pending.waiter, { ...pending.entry, content: pending.message.content });
+    const prompt = this.options.prompts.begin(pending.waiter, { ...pending.entry });
     const controller = new AbortController();
     const ready = createControlledPromise<void>();
     const result = createControlledPromise<TurnResult>();

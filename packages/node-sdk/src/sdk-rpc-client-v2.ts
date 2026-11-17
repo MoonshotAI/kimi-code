@@ -1385,10 +1385,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         cwd: ctx.cwd,
         provider: undefined,
         modelAlias: profile.modelAlias,
-        model:
-          profile.modelAlias === undefined
-            ? undefined
-            : agent.accessor.get(IAgentLoopService).resolveModelContext().model,
+        model: (() => {
+          if (profile.modelAlias === undefined) return undefined;
+          try {
+            return agent.accessor.get(IAgentLoopService).resolveModelContext().model;
+          } catch (error) {
+            if (isError2(error) && (error.code === ErrorCodes.CONFIG_INVALID || error.code === ProfileErrors.codes.MODEL_CONFIG_INVALID)) {
+              return undefined;
+            }
+            throw error;
+          }
+        })(),
         modelCapabilities: profile.modelCapabilities,
         profileName: profile.profileName,
         thinkingEffort: profile.thinkingLevel,
@@ -2018,10 +2025,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         ) {
           return agent;
         }
-        if (binding === undefined && data.modelAlias !== undefined && isError2(error)) {
+        if (binding === undefined && isError2(error)) {
           const model = error.details?.['model'];
           if (
-            error.code === ErrorCodes.CONFIG_INVALID &&
+            (error.code === ErrorCodes.CONFIG_INVALID || error.code === ProfileErrors.codes.MODEL_CONFIG_INVALID) &&
             typeof model === 'string' &&
             error.message === `Model "${model}" is not configured in config.toml.`
           ) {
