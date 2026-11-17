@@ -490,6 +490,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/sessions/{session_id}/agents/{agent_id}:close",
+    ],
+    [
+      "POST",
       "/api/v1/sessions/{session_id}/export",
     ],
     [
