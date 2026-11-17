@@ -6,6 +6,17 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.6.3 (2026-11-17)
+
+### Bug Fixes
+
+- Fix duplicate output and a lingering loading spinner after foreground shell commands.
+- Fix background notifications incorrectly stopping Tower tasks.
+- Fix external Stop hooks not running after each completed turn.
+- Prevent restored background task notifications from starting model requests when sessions are resumed or forked.
+- Fix Windows WebBridge updates failing while the daemon is running.
+- Fix several known issues.
+
 ## 2.6.2 (2026-11-14)
 
 ### Features
