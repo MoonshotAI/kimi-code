@@ -50,8 +50,8 @@ Useful scripts:
 - `pnpm dev:cli` — run the CLI in dev mode
 - `pnpm test` — run tests (vitest)
 - `pnpm typecheck` — TypeScript check (note: builds packages first)
-- `pnpm lint` — oxlint
-- `pnpm lint:fix` — oxlint with auto-fix
+- `pnpm lint` — oxlint (errors only), the agent-core-v2 import-boundary check, and the lint guards
+- `pnpm lint:fix` — apply oxlint auto-fixes; some of them change behavior (for example `||` → `??`), so review the diff
 - `pnpm build` — build all packages
 
 ## Commit Convention
@@ -69,7 +69,7 @@ All commits and PR titles must follow [Conventional Commits](https://www.convent
 | ci       | CI / build pipeline changes                 | ci: cache pnpm store                      |
 | build    | Build system / artifact changes             | build(native): add win32-arm64 target     |
 | perf     | Performance improvement                     | perf(session): batch event flushes        |
-| style    | Formatting only (no logic)                  | style: apply oxlint --fix                 |
+| style    | Formatting only (no logic)                  | style(tui): fix indentation in the footer |
 
 PR titles are enforced by the `pr-title-checker` workflow — a non-conforming title will block merge.
 
@@ -90,7 +90,7 @@ Every PR opens with the [PR template](.github/pull_request_template.md). PR titl
 
 - TypeScript across the codebase.
 - Linting via `oxlint` (config in `.oxlintrc.json`).
-- Auto-formatting via `pnpm lint:fix`.
+- No formatter is enforced yet. `pnpm lint:fix` applies oxlint auto-fixes, not formatting, and some of them change behavior, so review its diff.
 - Follow existing local patterns when the lint rules do not cover a style choice.
 
 ## Engine Invariants
