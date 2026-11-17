@@ -44,6 +44,7 @@ const KIMI_CONFIG_DOMAINS = [
   'image',
   'modelCatalog',
   'experimental',
+  'artex',
   'environments',
   'telemetry',
   'disableFeedbackSurvey',

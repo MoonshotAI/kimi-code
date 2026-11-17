@@ -299,6 +299,10 @@ import {
   type SetSessionSwarmModeRpcInput,
   type SetSessionThinkingRpcInput,
   type SetSessionTowerModeRpcInput,
+  type SetSessionArtexModeRpcInput,
+  type ArtexStartRpcInput,
+  type ArtexControlRpcInput,
+  type ArtexExportRpcInput,
   type UpdateSessionMetadataRpcInput,
 } from '#/rpc';
 import type {
@@ -2295,6 +2299,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       planMode: plan !== null,
       swarmMode: agent.accessor.get(IAgentSwarmService).isActive,
       towerMode: agent.accessor.get(IAgentTowerService).isActive,
+      artexMode: (await facade.isArtexActive()) === true,
       contextTokens,
       maxContextTokens,
       contextUsage,
@@ -2688,6 +2693,61 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       agentId: MAIN_AGENT_ID,
       toolExecutor: agent.accessor.get(IAgentToolExecutorService),
       concurrency: () => agent.accessor.get(ITowerRateLimitService).snapshot(),
+    });
+  }
+
+  override async setArtexMode(input: SetSessionArtexModeRpcInput): Promise<void> {
+    const agent = await this.agentFacade(input.sessionId);
+    if (input.enabled) {
+      await agent.enterArtex(
+        input.explorationId !== undefined ? { explorationId: input.explorationId } : undefined,
+      );
+      if ((await agent.isArtexActive()) !== true) {
+        throw new V2Error2(V2ErrorCodes.REQUEST_INVALID, 'ARTEX mode could not be enabled');
+      }
+    } else {
+      await agent.exitArtex();
+    }
+  }
+
+  override async getArtexStatus(input: SessionIdRpcInput): Promise<Record<string, unknown>> {
+    const session = this.klient.session(input.sessionId);
+    const agent = session.agent(this.interactiveAgentId);
+    const [status, active] = await Promise.all([session.artex.status(), agent.isArtexActive()]);
+    return { ...status, active };
+  }
+
+  override async startArtexExploration(input: ArtexStartRpcInput): Promise<Record<string, unknown>> {
+    return this.klient.session(input.sessionId).artex.start({
+      goal: input.goal,
+      description: input.description,
+      explorationId: input.explorationId,
+    });
+  }
+
+  override async controlArtexExploration(input: ArtexControlRpcInput): Promise<Record<string, unknown>> {
+    return this.klient.session(input.sessionId).artex.control({
+      action: input.action,
+      explorationId: input.explorationId,
+    });
+  }
+
+  override async getArtexGraph(
+    input: SessionIdRpcInput & { explorationId?: number },
+  ): Promise<Record<string, unknown>> {
+    return this.klient.session(input.sessionId).artex.graph(input.explorationId);
+  }
+
+  override async listArtexFindings(
+    input: SessionIdRpcInput & { explorationId?: number },
+  ): Promise<readonly Record<string, unknown>[]> {
+    return this.klient.session(input.sessionId).artex.findings(input.explorationId);
+  }
+
+  override async exportArtexReport(input: ArtexExportRpcInput): Promise<Record<string, unknown>> {
+    return this.klient.session(input.sessionId).artex.exportReport({
+      format: input.format ?? 'markdown',
+      explorationId: input.explorationId,
     });
   }
 

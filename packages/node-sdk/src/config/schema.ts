@@ -1,4 +1,5 @@
 import { parsePattern } from '@moonshot-ai/agent-core-v2/agent/permissionRules/matchesRule';
+import { ArtexConfigSchema } from '@moonshot-ai/agent-core-v2/features/artex/config/configSection';
 import { EnvironmentsSectionSchema } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import { z } from 'zod';
 
@@ -319,6 +320,7 @@ export const KimiConfigSchema = z.object({
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
+  artex: ArtexConfigSchema.optional(),
   environments: EnvironmentsConfigSchema.optional(),
   telemetry: z.boolean().optional(),
   disableFeedbackSurvey: z.boolean().optional(),

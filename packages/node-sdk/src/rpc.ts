@@ -148,6 +148,27 @@ export interface SetSessionTowerModeRpcInput extends SessionIdRpcInput {
   readonly base?: string;
 }
 
+export interface SetSessionArtexModeRpcInput extends SessionIdRpcInput {
+  readonly enabled: boolean;
+  readonly explorationId?: number;
+}
+
+export interface ArtexStartRpcInput extends SessionIdRpcInput {
+  readonly goal: string;
+  readonly description?: string;
+  readonly explorationId?: number;
+}
+
+export interface ArtexControlRpcInput extends SessionIdRpcInput {
+  readonly action: 'pause' | 'resume' | 'stop' | 'rerun_blocked';
+  readonly explorationId?: number;
+}
+
+export interface ArtexExportRpcInput extends SessionIdRpcInput {
+  readonly format?: 'markdown' | 'json' | 'csv';
+  readonly explorationId?: number;
+}
+
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
   readonly name: string;
   readonly path?: string;
@@ -401,6 +422,51 @@ export abstract class SDKRpcClientBase {
   abstract swarm(input: SessionPromptRpcInput): Promise<void>;
 
   abstract setTowerMode(input: SetSessionTowerModeRpcInput): Promise<void>;
+
+  abstract setArtexMode(input: SetSessionArtexModeRpcInput): Promise<void>;
+
+  async getArtexStatus(_input: SessionIdRpcInput): Promise<Record<string, unknown>> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'ARTEX status is not implemented for this engine',
+    );
+  }
+
+  async startArtexExploration(_input: ArtexStartRpcInput): Promise<Record<string, unknown>> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'ARTEX start is not implemented for this engine',
+    );
+  }
+
+  async controlArtexExploration(_input: ArtexControlRpcInput): Promise<Record<string, unknown>> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'ARTEX control is not implemented for this engine',
+    );
+  }
+
+  async getArtexGraph(
+    _input: SessionIdRpcInput & { explorationId?: number },
+  ): Promise<Record<string, unknown>> {
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'ARTEX graph is not implemented for this engine');
+  }
+
+  async listArtexFindings(
+    _input: SessionIdRpcInput & { explorationId?: number },
+  ): Promise<readonly Record<string, unknown>[]> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'ARTEX findings are not implemented for this engine',
+    );
+  }
+
+  async exportArtexReport(_input: ArtexExportRpcInput): Promise<Record<string, unknown>> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'ARTEX report export is not implemented for this engine',
+    );
+  }
 
   async getTowerStatus(_input: SessionIdRpcInput): Promise<string> {
     throw new KimiError(

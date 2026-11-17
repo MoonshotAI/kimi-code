@@ -417,6 +417,54 @@ export class Session {
     return this.rpc.getTowerStatus({ sessionId: this.id });
   }
 
+  async setArtexMode(enabled: boolean, explorationId?: number): Promise<void> {
+    this.ensureOpen();
+    if (typeof enabled !== 'boolean') {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Session ARTEX mode must be a boolean');
+    }
+    await this.rpc.setArtexMode({ sessionId: this.id, enabled, explorationId });
+  }
+
+  async getArtexStatus(): Promise<Record<string, unknown>> {
+    this.ensureOpen();
+    return this.rpc.getArtexStatus({ sessionId: this.id });
+  }
+
+  async startArtex(input: {
+    goal: string;
+    description?: string;
+    explorationId?: number;
+  }): Promise<Record<string, unknown>> {
+    this.ensureOpen();
+    return this.rpc.startArtexExploration({ sessionId: this.id, ...input });
+  }
+
+  async controlArtex(input: {
+    action: 'pause' | 'resume' | 'stop' | 'rerun_blocked';
+    explorationId?: number;
+  }): Promise<Record<string, unknown>> {
+    this.ensureOpen();
+    return this.rpc.controlArtexExploration({ sessionId: this.id, ...input });
+  }
+
+  async getArtexGraph(explorationId?: number): Promise<Record<string, unknown>> {
+    this.ensureOpen();
+    return this.rpc.getArtexGraph({ sessionId: this.id, explorationId });
+  }
+
+  async listArtexFindings(explorationId?: number): Promise<readonly Record<string, unknown>[]> {
+    this.ensureOpen();
+    return this.rpc.listArtexFindings({ sessionId: this.id, explorationId });
+  }
+
+  async exportArtexReport(input?: {
+    format?: 'markdown' | 'json' | 'csv';
+    explorationId?: number;
+  }): Promise<Record<string, unknown>> {
+    this.ensureOpen();
+    return this.rpc.exportArtexReport({ sessionId: this.id, ...input });
+  }
+
   async getPlan(): Promise<SessionPlan> {
     this.ensureOpen();
     return this.rpc.getPlan({ sessionId: this.id });

@@ -52,6 +52,8 @@ import type {
   ToolCallRequest,
   ToolCallResponse,
 } from '#/interaction';
+import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+
 import { translateDomainEvent } from '#/v2/event-mapper';
 
 /**
@@ -139,6 +141,30 @@ export class SessionEventWiring {
       const handle = manager.handleOf(agent.agentId);
       if (handle !== undefined) this.attachAgent(handle);
     }
+  try {
+    const sessionBus = session.accessor.get(ISessionEventBus);
+    this.disposables.push(
+      sessionBus.subscribe((event) => {
+        const type =
+          typeof event === 'object' && event !== null && 'type' in event
+            ? String((event as { type: string }).type)
+            : (event as { constructor?: { type?: string } }).constructor?.type;
+        if (type === undefined || !type.startsWith('artex.')) return;
+        const payload =
+          typeof event === 'object' && event !== null && 'payload' in event
+            ? (event as { payload: unknown }).payload
+            : event;
+        this.sink.receiveEvent({
+          type,
+          sessionId: this.session.id,
+          agentId: MAIN_AGENT_ID,
+          ...(typeof payload === 'object' && payload !== null ? (payload as object) : { payload }),
+        } as Event);
+      }),
+    );
+  } catch {
+    // ARTEX session bus is absent when the feature is not assembled.
+  }
   }
 
   dispose(): void {
