@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { abortable } from '#/_base/utils/abort';
 import { defineState } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -10,12 +11,14 @@ import { IFileService } from '#/app/file/fileService';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
-import type { ContentPart, Message } from '#human/llm/message';
+import type { ContentPart, ImageURLPart, Message } from '#human/llm/message';
 import { mediaFileIdOf, mediaUrlOf } from '#human/llm/protocol/kit/media';
+import { MediaUploadFailedError } from '#human/media/upload';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import {
+  imageUploadFailureCheckFor,
   imageUploaderFor,
   mediaAcceptsMime,
   mediaAcceptsSource,
@@ -51,6 +54,8 @@ import {
 
 const VIDEO_CACHE_SCOPE = 'video-upload-cache';
 const IMAGE_CACHE_SCOPE = 'image-upload-cache';
+const IMAGE_STATUS_CHECK_CONCURRENCY = 4;
+const IMAGE_STATUS_CHECK_TIMEOUT_MS = 5_000;
 const PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const VIDEO_UNAVAILABLE_TEXT =
   '[video omitted: the uploaded file is no longer available]';
@@ -113,6 +118,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   >();
   private imageMemoBytes = 0;
   private readonly imageUploadUnsupported = new Set<string>();
+  private readonly imageUploadKeys = new WeakMap<ImageURLPart, string>();
+  private readonly inlineOnlyImages = new Set<string>();
 
   async resolve(
     messages: readonly Message[],
@@ -167,6 +174,46 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     }
     changed = (await this.applyMediaBudget(out, budgetEntries)) || changed;
     return changed ? out : messages;
+  }
+
+  async recoverFailedImageUploads(
+    messages: readonly Message[],
+    request: InitializedLlmRequester,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const checkUpload = imageUploadFailureCheckFor(request);
+    if (checkUpload === undefined) return false;
+    const uploads = new Map<string, Set<string>>();
+    for (const message of messages) {
+      for (const part of message.content) {
+        if (part.type !== 'image_url') continue;
+        const cacheKey = this.imageUploadKeys.get(part);
+        const id = msFileIdFromUrl(part.imageUrl.url);
+        if (cacheKey === undefined || id === undefined || !PROVIDER_ID_RE.test(id)) continue;
+        const keys = uploads.get(id) ?? new Set();
+        keys.add(cacheKey);
+        uploads.set(id, keys);
+      }
+    }
+    if (uploads.size === 0) return false;
+
+    const timeout = AbortSignal.timeout(IMAGE_STATUS_CHECK_TIMEOUT_MS);
+    const probeSignal = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+    const pending = uploads.entries();
+    let recovered = false;
+    await Promise.all(
+      Array.from({ length: Math.min(IMAGE_STATUS_CHECK_CONCURRENCY, uploads.size) }, async () => {
+        for (const [id, cacheKeys] of pending) {
+          if (probeSignal.aborted) break;
+          const failed = await abortable(checkUpload(id, probeSignal), probeSignal).catch(() => false);
+          if (!failed) continue;
+          for (const cacheKey of cacheKeys) await this.markImageInlineOnly(cacheKey);
+          recovered = true;
+        }
+      }),
+    );
+    signal?.throwIfAborted();
+    return recovered;
   }
 
   async displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>> {
@@ -274,26 +321,28 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         ? undefined
         : imageUploaderFor(model, request);
     const inlineKey = `image\0${ref.fileId}`;
-    if (uploader === undefined) {
-      const memoed = this.memoedImage(inlineKey, model.providerType, support);
-      if (memoed !== undefined) return memoed;
-      return this.resolveImageUncached(ref, model, request, inlineKey, undefined, support, signal);
-    }
-    const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
-    const memoed = this.resolved.get(cacheKey);
-    if (memoed !== undefined && mediaAcceptsSource(support, memoed)) return memoed;
-    const cachedLlmFileId = await this.readCachedUpload(IMAGE_CACHE_SCOPE, cacheKey);
-    if (cachedLlmFileId !== undefined) {
-      const part: ContentPart = {
-        type: 'image_url',
-        imageUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId },
-      };
-      if (mediaAcceptsSource(support, part)) {
-        this.resolved.set(cacheKey, part);
-        return part;
+    if (uploader !== undefined) {
+      const cacheKey = `${inlineKey}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
+      if (!(await this.isImageInlineOnly(cacheKey))) {
+        const memoed = this.resolved.get(cacheKey);
+        if (memoed?.type === 'image_url' && mediaAcceptsSource(support, memoed)) {
+          return this.memoizeUploadedImage(cacheKey, memoed);
+        }
+        const cachedLlmFileId = await this.readCachedUpload(IMAGE_CACHE_SCOPE, cacheKey);
+        if (cachedLlmFileId !== undefined) {
+          const part: ImageURLPart = {
+            type: 'image_url',
+            imageUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId },
+          };
+          if (mediaAcceptsSource(support, part)) {
+            return this.memoizeUploadedImage(cacheKey, part);
+          }
+        }
+        return this.resolveImageUncached(ref, model, request, inlineKey, { uploader, cacheKey }, support, signal);
       }
     }
-    return this.resolveImageUncached(ref, model, request, inlineKey, { uploader, cacheKey }, support, signal);
+    return this.memoedImage(inlineKey, model.providerType, support) ??
+      this.resolveImageUncached(ref, model, request, inlineKey, undefined, support, signal);
   }
 
   private async resolveImageUncached(
@@ -382,17 +431,19 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         });
         return undefined;
       }
+      if (await this.isImageInlineOnly(upload.cacheKey)) return undefined;
       const llmFileId = mediaFileIdOf(uploaded) ?? msFileIdFromUrl(mediaUrlOf(uploaded));
       if (llmFileId !== undefined) {
         await this.writeCachedUpload(IMAGE_CACHE_SCOPE, upload.cacheKey, llmFileId);
       }
-      this.resolved.set(upload.cacheKey, uploaded);
-      return uploaded;
+      return this.memoizeUploadedImage(upload.cacheKey, uploaded);
     } catch (error) {
       if (signal?.aborted) throw error;
       if (isMediaUploadAuthError(error)) throw error;
       if (error instanceof ImageUploadUnsupportedError) {
         this.imageUploadUnsupported.add(model.providerType ?? model.protocol);
+      } else if (error instanceof MediaUploadFailedError) {
+        await this.markImageInlineOnly(upload.cacheKey);
       }
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
@@ -401,6 +452,26 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       });
       return undefined;
     }
+  }
+
+  private memoizeUploadedImage(cacheKey: string, part: ImageURLPart): ImageURLPart {
+    this.resolved.set(cacheKey, part);
+    this.imageUploadKeys.set(part, cacheKey);
+    return part;
+  }
+
+  private async isImageInlineOnly(cacheKey: string): Promise<boolean> {
+    if (this.inlineOnlyImages.has(cacheKey)) return true;
+    const inlineOnly = await this.blobs.has(IMAGE_CACHE_SCOPE, inlineOnlyImageBlobKey(cacheKey)).catch(() => false);
+    if (inlineOnly) this.inlineOnlyImages.add(cacheKey);
+    return inlineOnly;
+  }
+
+  private async markImageInlineOnly(cacheKey: string): Promise<void> {
+    this.inlineOnlyImages.add(cacheKey);
+    this.resolved.delete(cacheKey);
+    await this.blobs.put(IMAGE_CACHE_SCOPE, inlineOnlyImageBlobKey(cacheKey), new Uint8Array([1]))
+      .catch(() => undefined);
   }
 
   private memoedImage(
@@ -705,6 +776,10 @@ function msFileIdFromUrl(url: string): string | undefined {
 
 function blobKey(cacheKey: string): string {
   return createHash('sha256').update(cacheKey).digest('hex');
+}
+
+function inlineOnlyImageBlobKey(cacheKey: string): string {
+  return blobKey(`inline-only\0${cacheKey}`);
 }
 
 async function readStream(stream: NodeJS.ReadableStream, signal?: AbortSignal): Promise<Buffer> {

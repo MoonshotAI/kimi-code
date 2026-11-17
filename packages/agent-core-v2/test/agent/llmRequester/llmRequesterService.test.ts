@@ -251,6 +251,7 @@ function createService(
   const mediaResolver: IAgentMediaResolverService = {
     _serviceBrand: undefined,
     resolve: async (messages) => messages,
+    recoverFailedImageUploads: async () => false,
     displayPaths: async () => new Map(),
     ...options.mediaResolver,
   };
