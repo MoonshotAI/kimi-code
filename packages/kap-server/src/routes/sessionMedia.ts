@@ -50,6 +50,7 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
     {
       method: 'GET',
       path: '/sessions/{session_id}/media/{file_id}',
+      minRole: 'viewer',
       params: sessionMediaParamSchema,
       rawResponse: { 200: { type: 'string', format: 'binary' } },
       errors: {

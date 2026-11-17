@@ -43,6 +43,7 @@ export function registerInteractionsRoutes(app: InteractionRouteHost, core: Scop
     {
       method: 'POST',
       path: '/sessions/{session_id}/interactions/{interaction_id}',
+      minRole: 'operator',
       params: interactionRespondParamsSchema,
       body: interactionRespondRequestSchema,
       success: { data: interactionRespondResultSchema },

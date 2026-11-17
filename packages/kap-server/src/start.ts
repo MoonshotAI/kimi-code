@@ -77,7 +77,7 @@ import {
 } from './middleware/hostnames';
 import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middleware/origin';
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
-import { createAuthHook } from './middleware/auth';
+import { createAuthHook, getRequestPrincipal, setRequestPrincipal } from './middleware/auth';
 import {
   initializeServerTelemetry,
   type ServerTelemetry,
@@ -97,8 +97,13 @@ import {
   RemoteControlDeviceClient,
 } from '@moonshot-ai/remote-control';
 
+import {
+  createAccessTokenStore,
+  type AccessPrincipal,
+  type EphemeralTokenSpec,
+} from './services/auth/accessTokenStore';
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
-import { createCredentialValidator } from './services/auth/credentials';
+import { createPrincipalResolver } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
 
@@ -127,6 +132,9 @@ export interface ServerStartOptions {
   readonly insecureNoTls?: boolean;
   readonly allowRemoteShutdown?: boolean;
   readonly authTokenService?: IAuthTokenService;
+  readonly enableAccessTokens?: boolean;
+  readonly disableOwnerTokenStore?: boolean;
+  readonly ephemeralTokens?: readonly EphemeralTokenSpec[];
   readonly disableAuth?: boolean;
   readonly webTitle?: string;
   readonly rpcToken?: string;
@@ -161,6 +169,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const homeDir = resolveKimiHome(opts.homeDir);
   const serverVersion = opts.serverVersion ?? getServerVersion();
   const idleReclaimMs = resolveSessionIdleReclaimMs(opts.env ?? process.env);
+  for (const spec of opts.ephemeralTokens ?? []) {
+    if (!spec.token.startsWith('kap_')) {
+      throw new Error('Ephemeral access token must start with "kap_"');
+    }
+  }
   const disableAuth = opts.disableAuth === true || opts.socketPath !== undefined;
   const registration: InstanceRegistration =
     opts.socketPath !== undefined
@@ -200,17 +213,36 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
+  const connectionRegistry = new ConnectionRegistry();
   let authTokenService: IAuthTokenService;
   let passwordConfigured = false;
   if (opts.authTokenService !== undefined) {
     authTokenService = opts.authTokenService;
+  } else if (opts.disableOwnerTokenStore === true) {
+    authTokenService = {
+      _serviceBrand: undefined,
+      getToken: () => '',
+      isValid: async () => false,
+    };
   } else {
     const tokenStore = await createTokenStore(homeDir);
     const passwordHash = await resolvePasswordHash();
     passwordConfigured = passwordHash !== undefined;
     authTokenService = createAuthTokenService({ tokenStore, passwordHash });
   }
-  const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
+  const accessTokensPersisted = opts.enableAccessTokens !== false;
+  const accessTokenStore = createAccessTokenStore({
+    homeDir,
+    persist: accessTokensPersisted,
+    ephemeralTokens: opts.ephemeralTokens,
+    onRevoked: (principalId) => {
+      connectionRegistry.closeByPrincipalId(principalId);
+    },
+  });
+  const resolvePrincipal = createPrincipalResolver(authTokenService, {
+    rpcToken: opts.rpcToken,
+    accessTokenStore,
+  });
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
@@ -351,7 +383,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   if (!disableAuth) {
     app.addHook(
       'onRequest',
-      createAuthHook(authTokenService, { limiter: authFailureLimiter, validateCredential }),
+      createAuthHook(authTokenService, { limiter: authFailureLimiter, resolvePrincipal }),
     );
   } else if (opts.disableAuth === true) {
     logger.warn(
@@ -378,6 +410,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
     capabilityInstallSubscription.dispose();
+    accessTokenStore.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
     if (hostNotifyTimer !== undefined) {
@@ -419,7 +452,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
   };
 
-  const connectionRegistry = new ConnectionRegistry();
   let notifyHosts = (): void => {};
   let hostNotifyTimer: ReturnType<typeof setTimeout> | undefined;
   const hostBridges = new HostBridgeManager(core, () => notifyHosts());
@@ -534,10 +566,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   await registerOpenApi();
 
   await registerApiV1Routes(app, core, {
+    serverId: registration.serverId,
     serverVersion,
     hostIdentity: opts.hostIdentity,
     debugEndpoints,
     enableShutdown,
+    access: {
+      accessTokenStore,
+      persistEnabled: accessTokensPersisted,
+    },
     remoteControl: {
       service: remoteControlManager,
       devices: remoteControlDevices,
@@ -606,10 +643,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);
       const candidate = bearerToken !== null && bearerToken.length > 0 ? bearerToken : protocolToken;
-      let ok = false;
+      let principal: AccessPrincipal | null = null;
       if (candidate !== null) {
         try {
-          ok = await validateCredential(candidate);
+          principal = await resolvePrincipal(candidate);
         } catch (error) {
           logger.warn(
             {
@@ -620,10 +657,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             },
             'ws upgrade rejected',
           );
-          ok = false;
+          principal = null;
         }
       }
-      if (!ok) {
+      if (principal === null) {
         logger.warn(
           {
             remoteAddress: req.socket.remoteAddress,
@@ -636,6 +673,20 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         (socket as Socket).destroy();
         return;
       }
+      if ((isDebug || hostProxyTarget !== undefined) && principal.role !== 'owner') {
+        logger.warn(
+          {
+            remoteAddress: req.socket.remoteAddress,
+            path: url,
+            reason: 'insufficient_role',
+          },
+          'ws upgrade rejected',
+        );
+        (socket as Socket).write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        (socket as Socket).destroy();
+        return;
+      }
+      setRequestPrincipal(req as unknown as Record<symbol, AccessPrincipal>, principal);
     }
 
     (socket as Socket).setNoDelay(true);
@@ -643,7 +694,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await proxyHostWebSocket(hostBridges, hostProxyTarget!, req, socket, head);
       return;
     }
-    if (isV1) hostBridges.activate();
+    if (isV1 && getRequestPrincipal(req).role === 'owner') hostBridges.activate();
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {

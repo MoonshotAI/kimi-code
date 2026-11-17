@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { AccessRole } from '../services/auth/accessTokenStore';
+import { requireRole } from './auth';
 import { jsonSchema, openApiDocumentJsonSchema } from './schema';
 import { validateBody, validateParams, validateQuery } from './validate';
 
@@ -101,6 +103,7 @@ export interface DefineRouteOptions<
   operationId?: string;
   consumes?: string[];
   hide?: boolean;
+  minRole: AccessRole;
 }
 
 export interface RouteDefinition<
@@ -135,6 +138,11 @@ export function defineRoute<
   handler: RouteDefinition<TBody, TParams, TQuery>['handler'],
 ): RouteDefinition<TBody, TParams, TQuery> {
   const preHandler: unknown[] = [];
+
+  const effectiveRole = options.minRole;
+  if (effectiveRole !== 'viewer') {
+    preHandler.push(requireRole(effectiveRole));
+  }
 
   if (options.params) {
     preHandler.push(validateParams(options.params, options.rawErrorStatus === true));

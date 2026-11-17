@@ -40,6 +40,7 @@ export function registerConversationRoutes(
     {
       method: 'GET',
       path: '/sessions/{session_id}/agents/{agent_id}/turns',
+      minRole: 'viewer',
       params: agentParamsSchema,
       querystring: turnsQuerySchema,
       success: { data: conversationTurnsPageSchema },

@@ -55,6 +55,7 @@ import { buildContentDisposition } from '../lib/contentDisposition';
 import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { sendRawError } from '../lib/rawError';
 import { requestLog } from '../lib/requestLog';
+import { getRequestPrincipal } from '../middleware/auth';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -192,11 +193,12 @@ async function resolveWorkspaceFs(
   core: Scope,
   ref: string,
   required: readonly EnvironmentCapability[],
+  allowRegisterAbsoluteRoot = true,
 ): Promise<FsScope | undefined> {
   const workspaces = core.accessor.get(IWorkspaceService);
   let ws = await workspaces.get(ref);
   if (ws === undefined) {
-    if (!isAbsolute(ref)) return undefined;
+    if (!allowRegisterAbsoluteRoot || !isAbsolute(ref)) return undefined;
     try {
       ws = await workspaces.createOrTouch(ref);
     } catch {
@@ -269,6 +271,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/{tail}',
+      minRole: 'operator',
       params: sessionIdAndTailParamSchema,
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
@@ -326,7 +329,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           required.push('process');
         }
         environmentFs = session === undefined && fsAction === 'search'
-          ? await resolveWorkspaceFs(core, session_id, required)
+          ? await resolveWorkspaceFs(
+              core,
+              session_id,
+              required,
+              getRequestPrincipal(req).role === 'owner',
+            )
           : session === undefined
             ? undefined
             : acquireSessionFs(core, session_id, required);
@@ -406,6 +414,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/workspace/fs::list',
+      minRole: 'operator',
       body: workspaceFsListBodySchema,
       success: { data: fsListResponseSchema },
       errors: {
@@ -426,7 +435,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, ...listRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
+        environmentFs = await resolveWorkspaceFs(
+          core,
+          workspace,
+          ['fs'],
+          getRequestPrincipal(req).role === 'owner',
+        );
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -456,6 +470,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/workspace/fs::search',
+      minRole: 'operator',
       body: workspaceFsSearchBodySchema,
       success: { data: fsSearchResponseSchema },
       errors: {
@@ -474,7 +489,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, ...searchRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs', 'process']);
+        environmentFs = await resolveWorkspaceFs(
+          core,
+          workspace,
+          ['fs', 'process'],
+          getRequestPrincipal(req).role === 'owner',
+        );
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -504,6 +524,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/workspace/fs::suggest',
+      minRole: 'operator',
       body: workspaceFsSuggestBodySchema,
       success: { data: fsSuggestResponseSchema },
       errors: {
@@ -521,7 +542,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, stream, ...suggestRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
+        environmentFs = await resolveWorkspaceFs(
+          core,
+          workspace,
+          ['fs'],
+          getRequestPrincipal(req).role === 'owner',
+        );
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -555,6 +581,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/fs::suggest',
+      minRole: 'owner',
       body: rootFsSuggestBodySchema,
       success: { data: fsSuggestResponseSchema },
       errors: {
@@ -620,6 +647,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/sessions/{session_id}/fs/*',
+      minRole: 'viewer',
       querystring: fsDownloadQuerySchema,
       rawResponse: {
         200: { type: 'string', format: 'binary' },

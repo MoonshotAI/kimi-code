@@ -46,6 +46,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     {
       method: 'GET',
       path: '/sessions/{session_id}/environment',
+      minRole: 'viewer',
       params: sessionEnvironmentParamsSchema,
       success: { data: environmentBindingResponseSchema },
       errors: {
@@ -70,6 +71,7 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     {
       method: 'GET',
       path: '/sessions/{session_id}/environments',
+      minRole: 'viewer',
       params: sessionEnvironmentParamsSchema,
       success: { data: sessionEnvironmentsResponseSchema },
       errors: {

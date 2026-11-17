@@ -607,6 +607,7 @@ describe('CLI options parsing', () => {
         'provider',
         'session',
         'acp',
+        'access',
         'web',
         'server',
         'rc',

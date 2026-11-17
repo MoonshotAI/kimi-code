@@ -114,6 +114,8 @@ export function registerImportProvidersRoute(app: {
     {
       method: 'POST',
       path: '/hosts::import-providers',
+      minRole: 'owner',
+      hide: true,
       body: sharedProvidersSchema,
       success: { data: providerCopyResultSchema },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },

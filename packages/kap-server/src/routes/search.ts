@@ -78,6 +78,7 @@ export function registerSearchRoutes(app: SearchRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/search',
+      minRole: 'viewer',
       body: searchMessagesBodySchema,
       success: { data: searchMessagesResponseSchema },
       errors: {

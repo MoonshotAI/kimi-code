@@ -73,6 +73,7 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
     {
       method: 'GET',
       path: '/capabilities',
+      minRole: 'viewer',
       success: { data: listCapabilitiesResponseSchema },
       errors: {},
       description: 'List built-in capabilities with layered readiness status',
@@ -94,6 +95,7 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
     {
       method: 'GET',
       path: '/capabilities/{capability_id}',
+      minRole: 'viewer',
       params: capabilityIdParamSchema,
       success: { data: capabilityStatusSchema },
       errors: {
@@ -124,6 +126,7 @@ export function registerCapabilitiesRoutes(app: CapabilitiesRouteHost, core: Sco
     {
       method: 'POST',
       path: '/capabilities/{tail}',
+      minRole: 'owner',
       params: capabilityTailParamsSchema,
       body: capabilityInstallOptionsSchema.optional(),
       success: { data: capabilityStatusSchema },

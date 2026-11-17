@@ -48,6 +48,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'GET',
       path: '/hosts',
+      minRole: 'owner',
       success: { data: z.object({ hosts: z.array(hostSnapshotSchema) }) },
       description: 'List configured SSH hosts and their connection status',
       tags: ['hosts'],
@@ -62,6 +63,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'GET',
       path: '/hosts::ssh-hosts',
+      minRole: 'owner',
       success: {
         data: z.object({
           config_path: z.string(),
@@ -104,6 +106,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'POST',
       path: '/hosts::test',
+      minRole: 'owner',
       body: hostWireSchema,
       success: { data: testResultSchema },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },
@@ -136,6 +139,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'POST',
       path: '/hosts::connect',
+      minRole: 'owner',
       body: hostIdBodySchema,
       success: { data: hostSnapshotSchema },
       errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {} },
@@ -175,6 +179,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'POST',
       path: '/hosts::copy-providers',
+      minRole: 'owner',
       body: hostIdBodySchema,
       success: { data: providerCopyResultSchema },
       errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {}, [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {} },
@@ -200,6 +205,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'PUT',
       path: '/hosts/{id}',
+      minRole: 'owner',
       params: z.object({ id: hostIdSchema }),
       body: hostWireSchema,
       success: { data: z.object({ ok: z.literal(true) }) },
@@ -218,6 +224,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
     {
       method: 'DELETE',
       path: '/hosts/{id}',
+      minRole: 'owner',
       params: hostIdBodySchema,
       success: { data: z.object({ ok: z.literal(true) }) },
       description: 'Remove a host',

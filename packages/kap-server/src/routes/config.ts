@@ -3,6 +3,7 @@ import { applySectionToToml } from '@moonshot-ai/agent-core-v2/app/config/toml';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
+import { getRequestPrincipal } from '../middleware/auth';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { configResponseSchema, patchConfigRequestSchema } from '../protocol/rest-config';
@@ -21,7 +22,7 @@ interface ConfigRouteHost {
   ): unknown;
   post(
     path: string,
-    options: { schema?: Record<string, unknown> },
+    options: { preHandler?: unknown[]; schema?: Record<string, unknown> },
     handler: (
       req: { id: string; body: unknown },
       reply: { send(payload: unknown): void },
@@ -35,6 +36,7 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/config',
+      minRole: 'viewer',
       success: { data: configResponseSchema },
       description: 'Get the global Kimi configuration (secrets redacted)',
       tags: ['config'],
@@ -42,7 +44,9 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
     async (req, reply) => {
       const config = core.accessor.get(IConfigService);
       await config.ready;
-      reply.send(okEnvelope(toConfigResponse(config.getAll(), registry), req.id));
+      const redact = getRequestPrincipal(req).role !== 'owner';
+      const base = toConfigResponse(config.getAll(), registry);
+      reply.send(okEnvelope(redact ? redactConfigForNonOwner(base) : base, req.id));
     },
   );
   app.get(getRoute.path, getRoute.options, getRoute.handler as Parameters<ConfigRouteHost['get']>[2]);
@@ -51,6 +55,7 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/config',
+      minRole: 'owner',
       body: patchConfigRequestSchema,
       success: { data: configResponseSchema },
       errors: {
@@ -119,6 +124,20 @@ export function toConfigResponse(
     wire['providers'] = {};
   }
   return wire as ConfigResponse;
+}
+
+export function redactConfigForNonOwner(config: ConfigResponse): ConfigResponse {
+  const { raw: _raw, hosts: _hosts, environments, ...rest } = config as ConfigResponse & {
+    hosts?: unknown;
+    environments?: unknown;
+  };
+  if (environments === undefined) {
+    return rest as ConfigResponse;
+  }
+  return {
+    ...rest,
+    environments: toEnvironmentResponses(environments),
+  } as ConfigResponse;
 }
 
 interface ProviderLike {
@@ -194,6 +213,27 @@ function toServiceResponses(value: unknown): Record<string, unknown> {
       ...rest,
       has_api_key: hasModelCredential(raw as ModelLike),
       custom_header_keys: isPlainObject(customHeaders) ? Object.keys(customHeaders) : undefined,
+    };
+  }
+  return result;
+}
+
+function toEnvironmentResponses(value: unknown): unknown {
+  if (!isPlainObject(value)) return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (!isPlainObject(entry)) {
+      result[key] = entry;
+      continue;
+    }
+    const { env, headers, ...rest } = entry as {
+      env?: unknown;
+      headers?: unknown;
+    } & Record<string, unknown>;
+    result[key] = {
+      ...rest,
+      env_keys: isPlainObject(env) ? Object.keys(env) : undefined,
+      header_keys: isPlainObject(headers) ? Object.keys(headers) : undefined,
     };
   }
   return result;

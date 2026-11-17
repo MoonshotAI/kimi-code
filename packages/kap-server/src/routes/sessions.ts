@@ -74,6 +74,7 @@ import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
+import { getRequestPrincipal } from '../middleware/auth';
 import { defineRoute } from '../middleware/defineRoute';
 import { readAgentState } from '../transport/ws/v1/agentState';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -160,6 +161,7 @@ export function registerSessionsRoutes(
     {
       method: 'POST',
       path: '/sessions',
+      minRole: 'operator',
       body: createSessionRequestSchema,
       success: { data: sessionSchema },
       errors: {
@@ -286,6 +288,7 @@ export function registerSessionsRoutes(
     {
       method: 'GET',
       path: '/sessions/{session_id}',
+      minRole: 'viewer',
       params: sessionIdParamSchema,
       querystring: sessionGetQuerySchema,
       success: { data: hostSessionSchema },
@@ -300,6 +303,12 @@ export function registerSessionsRoutes(
     },
     async (req, reply) => {
       const { session_id } = req.params;
+      if (req.query.hosts === 'include' && getRequestPrincipal(req).role !== 'owner') {
+        (reply as unknown as { code(s: number): { send(p: unknown): unknown } })
+          .code(403)
+          .send(errEnvelope(ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions', req.id));
+        return;
+      }
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
       if (summary === undefined && req.query.hosts === 'include' && hosts !== undefined) {
         const lookup = await sessionOnHosts(hosts, session_id);
@@ -351,6 +360,7 @@ export function registerSessionsRoutes(
     {
       method: 'POST',
       path: '/sessions/{session_id}/profile',
+      minRole: 'operator',
       params: sessionIdParamSchema,
       body: updateSessionProfileRequestSchema,
       success: { data: updateSessionProfileResponseSchema },
@@ -409,6 +419,7 @@ export function registerSessionsRoutes(
     {
       method: 'POST',
       path: '/sessions/{session_id}/title/generate',
+      minRole: 'operator',
       params: sessionIdParamSchema,
       body: z.preprocess(
         (value) => (value === undefined ? {} : value),
@@ -465,6 +476,7 @@ export function registerSessionsRoutes(
     {
       method: 'POST',
       path: '/sessions/{tail}',
+      minRole: 'operator',
       params: sessionActionTailParamSchema,
       body: sessionActionRequestSchema,
       success: {
@@ -519,6 +531,7 @@ export function registerSessionsRoutes(
     {
       method: 'GET',
       path: '/sessions/{session_id}/warnings',
+      minRole: 'viewer',
       params: sessionIdParamSchema,
       success: { data: sessionWarningsResponseSchema },
       errors: {

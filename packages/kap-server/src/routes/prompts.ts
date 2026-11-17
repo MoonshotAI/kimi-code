@@ -158,6 +158,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/sessions/{session_id}/prompts',
+      minRole: 'viewer',
       params: sessionIdParamSchema,
       success: { data: promptListResponseSchema },
       errors: {
@@ -373,6 +374,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/prompts',
+      minRole: 'operator',
       body: promptSubmissionSchema,
       params: sessionIdParamSchema,
       success: { data: promptSubmitResultSchema },
@@ -400,6 +402,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/steer',
+      minRole: 'operator',
       body: promptSubmissionSchema,
       params: sessionIdParamSchema,
       success: { data: promptSubmitResultSchema },
@@ -427,6 +430,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/prompts::steer',
+      minRole: 'operator',
       body: promptSteerRequestSchema,
       params: sessionIdParamSchema,
       success: { data: promptSteerResultSchema },
@@ -457,6 +461,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/prompts/{tail}',
+      minRole: 'operator',
       success: { data: promptAbortResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},

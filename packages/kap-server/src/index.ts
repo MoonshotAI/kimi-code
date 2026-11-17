@@ -10,6 +10,28 @@ export {
   serverTokenPath,
 } from './services/auth/persistentToken';
 export { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './services/hosts/hostProtocol';
+export {
+  ACCESS_TOKEN_PREFIX,
+  accessTokensPath,
+  createAccessTokenStore,
+  createPersistedAccessToken,
+  generateAccessToken,
+  hashAccessToken,
+  hasMinimumRole,
+  listPersistedAccessPrincipals,
+  revokePersistedAccessPrincipal,
+} from './services/auth/accessTokenStore';
+export type {
+  AccessPrincipal,
+  AccessPrincipalView,
+  AccessRole,
+  AccessTokenRecord,
+  AccessTokenStore,
+  AccessTokenStoreOptions,
+  EphemeralTokenSpec,
+  ExternalAccessRole,
+} from './services/auth/accessTokenStore';
+export { KIMI_AGENT_PROTOCOL_VERSION } from './routes/meta';
 export { createServerLogger } from './services/pinoLoggerService';
 export type {
   CreateLoggerOptions,
