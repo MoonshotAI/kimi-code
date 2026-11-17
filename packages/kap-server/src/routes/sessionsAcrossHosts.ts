@@ -316,7 +316,7 @@ export async function listAllSessionsAcrossHosts(
   hosts: HostSources,
   local: (query: Query) => Promise<SessionsListOutcome>,
 ): Promise<SessionsListOutcome> {
-  const context = contextFor({ ...query, sort: 'updated_at_desc' });
+  const context = contextFor({ ...query, fields: undefined });
   try {
     const { sources } = await collectSources(context.query, hosts, local, context.unavailable);
     const items: Session[] = [];
@@ -328,11 +328,13 @@ export async function listAllSessionsAcrossHosts(
         buffer = await load(source, context, buffer.next);
       }
     }
-    items.sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id));
+    items.sort((a, b) => context.compare(context.position(a), context.position(b)));
     return {
       ok: true,
       data: {
-        items,
+        items: query.fields === undefined
+          ? items
+          : items.map((item) => project(item, false, item.host_id) as Session),
         total: items.length,
         has_more: false,
         unavailable_hosts: [...new Set(context.unavailable)].toSorted(),
