@@ -2619,9 +2619,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * (`InMemoryAgentRecordPersistence`, no metadata).
    */
   override async startBtw(input: SessionIdRpcInput): Promise<string> {
-    const session = this.requireLiveSession(input.sessionId);
-    await this.materializeMainAgent(session);
-    return session.accessor.get(ISessionBtwService).start();
+    return this.withStaleReload(input.sessionId, async () => {
+      const session = this.requireLiveSession(input.sessionId);
+      await this.materializeMainAgent(session);
+      return session.accessor.get(ISessionBtwService).start();
+    });
   }
 
   override async predictNextPrompt(input: {

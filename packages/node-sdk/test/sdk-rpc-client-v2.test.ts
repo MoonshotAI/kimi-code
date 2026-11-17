@@ -1020,6 +1020,38 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
+  it('reloads a stale session before starting btw', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const other = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    let otherClosed = false;
+    try {
+      await client.createSession({ id: 'ses_btw_stale', workDir });
+      await client.getSessionWarnings({ sessionId: 'ses_btw_stale' });
+      await other.resumeSession({ id: 'ses_btw_stale' });
+      await other.importContext({
+        sessionId: 'ses_btw_stale',
+        content: 'updated by another client',
+        source: "session 'other'",
+      });
+      await other.close();
+      otherClosed = true;
+      const handler = vi.fn(async (_summary: unknown) => {});
+      client.setStaleReloadHandler('ses_btw_stale', handler);
+
+      const agentId = await client.startBtw({ sessionId: 'ses_btw_stale' });
+
+      expect(agentId).toMatch(/^agent-\d+$/);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0]?.[0]).toMatchObject({ id: 'ses_btw_stale' });
+    } finally {
+      await client.close();
+      if (!otherClosed) await other.close();
+    }
+  });
+
   it('close() awaits the MCP OAuth service shutdown', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
