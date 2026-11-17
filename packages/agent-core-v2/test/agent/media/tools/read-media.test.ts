@@ -1,7 +1,7 @@
 import * as posixPath from 'node:path/posix';
 import { Readable } from 'node:stream';
 
-import type { ModelCapability } from '@moonshot-ai/core/llm/request';
+import type { ModelCapability, LlmFiles } from '@moonshot-ai/core/llm/request';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import { Jimp } from 'jimp';
@@ -35,7 +35,6 @@ import type { IFileService } from '#/app/file/fileService';
 import type { IBlobStore } from '#/persistence/interface/blobStore';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
-import type { LlmFiles } from '@moonshot-ai/core/llm/request';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';

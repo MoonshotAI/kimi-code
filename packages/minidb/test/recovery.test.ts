@@ -6,7 +6,16 @@ import type { PathLike } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MiniDb } from '../src/index.js';
-import { HEADER_SIZE, CRC_SIZE, encodeFrame, TYPE_SET } from '../src/codec.js';
+import {
+  HEADER_SIZE,
+  CRC_SIZE,
+  encodeFrame,
+  TYPE_SET,
+  scanFrameRefsFd,
+  scanFrameRefsFdAsync,
+  MAGIC,
+  DEFAULT_RESYNC_CANDIDATE_BUDGET,
+} from '../src/codec.js';
 
 afterEach(() => {
   vi.doUnmock('node:fs');
@@ -638,7 +647,6 @@ test('a read-only open racing a compaction rotation always recovers one complete
 
 // ---- stage 6: async frame scanner -------------------------------------------
 
-import { scanFrameRefsFd, scanFrameRefsFdAsync, MAGIC, DEFAULT_RESYNC_CANDIDATE_BUDGET } from '../src/codec.js';
 import fsSync from 'node:fs';
 
 test('async scanner: results match the sync scanner on clean and corrupt files', async () => {

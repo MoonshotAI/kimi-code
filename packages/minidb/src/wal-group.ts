@@ -10,8 +10,7 @@
 // itself (it truncates the WAL path — see MiniDb.recoverWalInPlace).
 
 import type { StoreRecord } from './store.js';
-import type { WAL } from './wal.js';
-import type { WalPoison } from './wal.js';
+import type { WAL, WalPoison } from './wal.js';
 
 /** Per-flush-group rollback state: the pre-group logical record of every key
  *  the group's ops touched, plus the count of the group's ops still awaiting

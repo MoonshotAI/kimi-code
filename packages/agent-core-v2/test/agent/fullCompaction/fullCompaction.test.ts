@@ -3,8 +3,11 @@ import { appendContext } from '../contextMemory/stubs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { type Message } from '@moonshot-ai/core/llm/message';
-import { type StreamedMessagePart, type ToolCall } from '@moonshot-ai/core/llm/message';
+import {
+  type Message,
+  type StreamedMessagePart,
+  type ToolCall,
+} from '@moonshot-ai/core/llm/message';
 import { resolveEndpoint } from '@moonshot-ai/core/llm/endpoint';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,8 +23,23 @@ import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/e
 import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
-import { agentService, appService, appServices, createCommandRunner, execEnvServices, findGenerateCallPrefixBreak, hostEnvironmentServices, createMockProvider, providerHttpError, sessionServices, testAgent as createTestAgent, type MockProviderResponse } from '../../harness';
+import {
+  type TestAgentContext,
+  type TestAgentOptions,
+  type TestAgentServiceOverride,
+  agentService,
+  appService,
+  appServices,
+  createCommandRunner,
+  execEnvServices,
+  findGenerateCallPrefixBreak,
+  hostEnvironmentServices,
+  createMockProvider,
+  providerHttpError,
+  sessionServices,
+  testAgent as createTestAgent,
+  type MockProviderResponse,
+} from '../../harness';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';

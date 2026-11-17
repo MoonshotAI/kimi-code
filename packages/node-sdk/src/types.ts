@@ -1,4 +1,4 @@
-import type { HostUiCapability } from '@moonshot-ai/agent-core-v2';
+import type { HostUiCapability, ContentPart } from '@moonshot-ai/agent-core-v2';
 import type {
   ExportSessionManifest,
   ShellEnvironment,
@@ -6,7 +6,6 @@ import type {
 import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
 import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
 import type { ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';

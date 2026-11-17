@@ -8,6 +8,7 @@ import {
   type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
   type AgentTaskStatus,
+  AgentTaskPersistence,
 } from '#/agent/task/task';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { Event } from '#/_base/event';
@@ -47,7 +48,6 @@ import {
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentTaskRequestService, AgentTaskService } from '#/agent/task/taskService';
 import { createTaskCompletionEntry, IAgentTaskOutputService } from '#/agent/task/taskOutput';
-import { AgentTaskPersistence } from '#/agent/task/task';
 
 const posixEnv: IHostEnvironment = {
   _serviceBrand: undefined,

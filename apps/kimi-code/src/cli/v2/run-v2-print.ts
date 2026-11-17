@@ -84,8 +84,8 @@ import type {
   AssistantDelta,
   ThinkingDelta,
   ToolCallDelta,
+  TurnStepRetrying,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { HookResult } from '@moonshot-ai/agent-core-v2/features/externalHooks/agent/agentExternalHooksService';
 import type {
   ToolCallStarted,

@@ -65,7 +65,10 @@ import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
-import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import {
+  JsonAtomicDocumentStore,
+  TomlAtomicDocumentStore,
+} from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
@@ -80,7 +83,6 @@ import { stubAgentEnvironment } from '../../environment/stubs';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { ILogService } from '#/_base/log/log';
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';

@@ -169,6 +169,7 @@
     "import/namespace": "deny",
     "import/no-absolute-path": "deny",
     "import/no-cycle": "deny",
+    "import/no-duplicates": "deny",
     "import/no-empty-named-blocks": "deny",
     "import/no-named-as-default-member": "allow",
     "import/no-self-import": "deny",

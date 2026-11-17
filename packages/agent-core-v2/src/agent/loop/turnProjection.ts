@@ -21,7 +21,7 @@ import type { IAgentStateService } from '#/agent/state/agentState';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { legacyToolDurationMs } from '#/tool/executor';
-import type { AgentLoopService } from './loopService';
+import type { AgentLoopService, LoopInterruptReason } from './loopService';
 import type { AgentPromptProjection, ActivePrompt, PendingTurn } from './promptProjection';
 import {
   MAX_STEPS_REASON,
@@ -70,7 +70,6 @@ import type {
 } from './loop';
 import { createMaxStepsExceededError, isMaxStepsExceededError } from './loop';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
-import type { LoopInterruptReason } from './loopService';
 
 export const loopLastRequestIdKey = defineState<string | undefined>(
   'loop.lastRequestId',

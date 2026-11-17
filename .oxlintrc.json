@@ -141,6 +141,7 @@
     "import/namespace": "error",
     "import/no-absolute-path": "error",
     "import/no-cycle": "error",
+    "import/no-duplicates": "error",
     "import/no-empty-named-blocks": "error",
     "import/no-self-import": "error",
 
