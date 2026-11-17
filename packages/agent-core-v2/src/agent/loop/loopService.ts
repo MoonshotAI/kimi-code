@@ -1417,10 +1417,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       await loop.waitForIdle();
       await this.turns.drain();
-      const pendingBeforeSettlement = this.hasPendingRequests();
+      const hadSettlementTasks = this.settlementTasks.size > 0;
       await this.settleTrackedTasks();
       if (this.loop !== loop) continue;
-      if (!pendingBeforeSettlement && this.quiescenceDepth === 0 && this.historySnapshotDepth === 0 && this.hasPendingRequests()) {
+      if (hadSettlementTasks && this.quiescenceDepth === 0 && this.historySnapshotDepth === 0 && this.hasPendingRequests()) {
         await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
         continue;
       }
