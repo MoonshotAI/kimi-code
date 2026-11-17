@@ -140,7 +140,8 @@ export function createProgram(
         'Set the working directory on the environment selected by --environment.',
       ).hideHelp(),
     )
-    .option('--plan', 'Start in plan mode.', false);
+    .option('--plan', 'Start in plan mode.', false)
+    .option('--artex', 'Enable ARTEX autonomous pentest mode for the session.', false);
 
   registerExportCommand(program);
   registerForkCommand(program);
@@ -224,6 +225,7 @@ export function createProgram(
       yolo: yoloValue,
       auto: autoValue,
       plan: raw['plan'] as boolean,
+      artex: raw['artex'] as boolean,
       model: raw['model'] as string | undefined,
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],
       prompt: raw['prompt'] as string | undefined,

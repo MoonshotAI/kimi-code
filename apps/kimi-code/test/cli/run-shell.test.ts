@@ -304,7 +304,7 @@ describe('runShell', () => {
           productName: 'kimi-code-cli',
           version: '1.2.3-test',
         }),
-        sessionStartedProperties: { yolo: true, auto: false, plan: true, afk: false },
+        sessionStartedProperties: { yolo: true, auto: false, plan: true, artex: false, afk: false },
       }),
     );
     expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();

@@ -52,6 +52,7 @@ export interface AppState {
   inputMode: 'prompt' | 'bash';
   swarmMode: boolean;
   towerMode: boolean;
+  artexMode?: boolean;
   /** Live thinking effort of the active session (e.g. 'off', 'on', 'high');
    * mirrors the runtime. The single source of truth for the thinking state in
    * the TUI. */
@@ -407,6 +408,7 @@ export interface TUIStartupOptions {
   readonly yolo: boolean;
   readonly auto: boolean;
   readonly plan: boolean;
+  readonly artex?: boolean;
   readonly model?: string;
   readonly additionalDirs?: readonly string[];
   /** Resolved profile name from --agent/--agent-file; bound to the startup session only. */

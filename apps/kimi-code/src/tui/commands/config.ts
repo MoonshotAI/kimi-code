@@ -909,6 +909,9 @@ export async function applyExperimentalFeatureChanges(
       // them; only the mode machinery (enter/injection/guards) reacts live.
       host.showNotice('Tower mode takes effect after restarting Kimi Code.');
     }
+    if (changes.some((change) => change.id === 'artex')) {
+      host.showNotice('ARTEX mode takes effect after restarting Kimi Code.');
+    }
     host.track('experimental_features_apply', {
       changed: changes.length,
       flags: features

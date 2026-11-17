@@ -192,6 +192,8 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     planMode: appState.planMode,
     towerMode: appState.towerMode,
     towerAvailable: isExperimentalFlagEnabled('tower'),
+    artexMode: appState.artexMode,
+    artexAvailable: isExperimentalFlagEnabled('artex'),
     contextUsage: appState.contextUsage,
     contextTokens: appState.contextTokens,
     maxContextTokens: appState.maxContextTokens,

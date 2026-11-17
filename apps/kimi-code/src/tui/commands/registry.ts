@@ -190,6 +190,15 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'idle-only',
   },
   {
+    name: 'artex',
+    aliases: ['pentest'],
+    description: 'Autonomous pentest exploration mode and live graph/findings dashboard',
+    priority: 100,
+    argumentHint: '[on|off|status|pause|resume|stop|dashboard|report] | <goal>',
+    availability: 'always',
+    experimentalFlag: 'artex',
+  },
+  {
     name: 'tower',
     aliases: [],
     description: 'Report tower status, toggle tower mode, or turn it on with a base branch',

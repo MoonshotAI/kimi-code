@@ -92,7 +92,13 @@ export async function runShell(
         ? [process.execPath]
         : [process.execPath, ...process.execArgv, process.argv[1]!],
     },
-    sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
+    sessionStartedProperties: {
+      yolo: opts.yolo,
+      auto: opts.auto,
+      plan: opts.plan,
+      artex: opts.artex === true,
+      afk: false,
+    },
   };
   const harness = createKimiHarness(harnessOptions);
   startupTrace('harness:created');

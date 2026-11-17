@@ -156,6 +156,7 @@ import { SessionReplayRenderer } from './controllers/session-replay';
 import { StagingLeaseTracker, type StagingLease } from './controllers/staging-leases';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { SurveyController } from './controllers/survey-controller';
+import { ArtexBrowserController } from './controllers/artex-browser';
 import { TasksBrowserController } from './controllers/tasks-browser';
 import { installRainbowDance } from './easter-eggs/dance';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
@@ -320,6 +321,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     inputMode: 'prompt',
     swarmMode: false,
     towerMode: false,
+    artexMode: input.cliOptions.artex === true,
     thinkingEffort: 'off',
     contextUsage: 0,
     contextTokens: 0,
@@ -462,6 +464,7 @@ export class KimiTUI {
   readonly sessionEventHandler: SessionEventHandler;
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
+  readonly artexBrowserController: ArtexBrowserController;
   readonly surveyController: SurveyController;
   readonly editorKeyboard: EditorKeyboardController;
   readonly modelMigration: ModelMigrationController;
@@ -539,6 +542,7 @@ export class KimiTUI {
         yolo: startupInput.cliOptions.yolo,
         auto: startupInput.cliOptions.auto,
         plan: startupInput.cliOptions.plan,
+        artex: startupInput.cliOptions.artex === true,
         model: startupInput.cliOptions.model,
         additionalDirs: startupInput.additionalDirs,
         agentProfile: startupInput.agentProfile,
@@ -611,6 +615,7 @@ export class KimiTUI {
     this.sessionEventHandler = new SessionEventHandler(this);
     this.sessionReplay = new SessionReplayRenderer(this);
     this.tasksBrowserController = new TasksBrowserController(this);
+    this.artexBrowserController = new ArtexBrowserController(this);
     this.surveyController = new SurveyController(this, {
       accessToken: () => this.harness.auth.getCachedAccessToken(),
       telemetryDisabled: () => isTelemetryDisabledByEnv() || this.telemetryDisabled,
@@ -1300,6 +1305,7 @@ export class KimiTUI {
             shouldReplayHistory = true;
           } else {
             session = await this.harness.createSession(createSessionOptions);
+            await this.applyStartupArtexMode(session);
             this.startupNotice = combineStartupNotice(
               this.startupNotice,
               `No sessions to continue under "${workDir}"; starting a fresh session.`,
@@ -1374,6 +1380,7 @@ export class KimiTUI {
     // before tearing the UI down, so they can't keep firing requestRender after
     // stop() returns (or leak when stop() runs without process.exit).
     this.tasksBrowserController.close();
+    this.artexBrowserController.close();
     this.btwPanelController.clear();
     this.stopActivitySpinner();
     this.streamingUI.clearActiveCompaction();
@@ -3255,6 +3262,10 @@ export class KimiTUI {
     this.state.tasksBrowser = value;
   }
 
+  setArtexBrowser(value: TUIState['artexBrowser']): void {
+    this.state.artexBrowser = value;
+  }
+
   appendStartupNotice(extra: string): void {
     this.startupNotice = combineStartupNotice(this.startupNotice, extra);
   }
@@ -3544,6 +3555,7 @@ export class KimiTUI {
       this.setAppState({ sessionId: session.id });
       try {
         await this.activateRuntime();
+        await this.applyStartupArtexMode(session);
         await this.syncRuntimeState(session);
       } catch (error) {
         this.sessionEventHandler.startSubscription();
@@ -3604,6 +3616,7 @@ export class KimiTUI {
       planMode: status.planMode,
       swarmMode: status.swarmMode ?? false,
       towerMode: status.towerMode ?? false,
+      artexMode: status.artexMode ?? false,
       contextTokens: status.contextTokens,
       maxContextTokens: status.maxContextTokens,
       contextUsage: status.contextUsage,
@@ -3670,6 +3683,19 @@ export class KimiTUI {
         await session.setPlanMode(true);
       }
     }
+    await this.applyStartupArtexMode(session);
+  }
+
+  private async applyStartupArtexMode(session: Session): Promise<void> {
+    if (!this.options.startup.artex) return;
+    const status = await session.getStatus();
+    if (status.artexMode === true) {
+      this.setAppState({ artexMode: true });
+      return;
+    }
+    await session.setArtexMode(true);
+    const after = await session.getStatus();
+    this.setAppState({ artexMode: after.artexMode ?? false });
   }
 
   // Re-apply startup flags that the user explicitly passed on the command line.
@@ -3684,6 +3710,9 @@ export class KimiTUI {
     }
     if (startup.plan) {
       this.setAppState({ planMode: true });
+    }
+    if (startup.artex) {
+      this.setAppState({ artexMode: true });
     }
   }
 
@@ -3867,6 +3896,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.resetRuntimeState();
     this.tasksBrowserController.close();
+    this.artexBrowserController.close();
     this.btwPanelController.clear();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.sessionEventHandler.notifications.clear();

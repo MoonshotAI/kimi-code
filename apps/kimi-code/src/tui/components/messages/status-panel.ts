@@ -48,6 +48,8 @@ export interface StatusReportOptions {
   readonly towerMode: boolean;
   /** Whether the tower experiment is enabled on engine v2 — gates the Tower mode row. */
   readonly towerAvailable: boolean;
+  readonly artexMode?: boolean;
+  readonly artexAvailable?: boolean;
   readonly contextUsage: number;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
@@ -111,6 +113,7 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   const permission = options.status?.permission ?? options.permissionMode;
   const planMode = options.status?.planMode ?? options.planMode;
   const towerMode = options.status?.towerMode ?? options.towerMode;
+  const artexMode = options.status?.artexMode ?? options.artexMode ?? false;
   const sessionId = options.sessionId.trim().length > 0 ? options.sessionId : 'none';
   const rows: FieldRow[] = [
     { label: 'Model', value: formatModelStatus(options) },
@@ -120,6 +123,9 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   ];
   if (options.towerAvailable) {
     rows.push({ label: 'Tower mode', value: towerMode ? 'on' : 'off' });
+  }
+  if (options.artexAvailable) {
+    rows.push({ label: 'ARTEX mode', value: artexMode ? 'on' : 'off' });
   }
   rows.push({ label: 'Session', value: sessionId });
   const title = options.sessionTitle?.trim();

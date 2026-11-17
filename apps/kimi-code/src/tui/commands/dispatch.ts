@@ -11,6 +11,7 @@ import type { AuthFlowController } from '../controllers/auth-flow';
 import type { BtwPanelController } from '../controllers/btw-panel';
 import type { ModelMigrationController } from '../controllers/model-migration';
 import type { StreamingUIController } from '../controllers/streaming-ui';
+import type { ArtexBrowserController } from '../controllers/artex-browser';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import type { FollowUpDelivery } from '../config';
@@ -72,6 +73,7 @@ import {
   handleTitleCommand,
 } from './session';
 import { handleSwarmCommand } from './swarm';
+import { handleArtexCommand } from './artex';
 import { handleTowerCommand } from './tower';
 import { handleUndoCommand } from './undo';
 import { handleRemoteControlCommand, handleWebCommand } from './web';
@@ -99,6 +101,7 @@ export {
   showSettingsSelector,
 } from './config';
 export { handleSwarmCommand } from './swarm';
+export { handleArtexCommand } from './artex';
 export { handleTowerCommand } from './tower';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
@@ -239,6 +242,7 @@ export interface SlashCommandHost {
   readonly streamingUI: StreamingUIController;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
+  readonly artexBrowserController: ArtexBrowserController;
   readonly authFlow: AuthFlowController;
   readonly modelMigration: ModelMigrationController;
 }
@@ -382,6 +386,7 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'init',
   'plan',
   'swarm',
+  'artex',
   'undo',
   'web',
 ]);
@@ -544,6 +549,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'tower':
       await handleTowerCommand(host, args);
+      return;
+    case 'artex':
+      await handleArtexCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);

@@ -40,6 +40,7 @@ export interface CLIOptions {
   yolo: boolean;
   auto: boolean;
   plan: boolean;
+  artex?: boolean;
   model: string | undefined;
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;

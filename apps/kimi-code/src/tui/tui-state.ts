@@ -25,6 +25,7 @@ import { CustomEditor } from './components/editor/custom-editor';
 import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER, DOCK_QUEUE_ROWS, DOCK_UPDATES_ROWS } from './constant/rendering';
 import { CLICK_GUARD_MS } from './constant/terminal';
+import type { ArtexBrowserState } from './controllers/artex-browser';
 import type { TasksBrowserState } from './controllers/tasks-browser';
 import { currentTheme, type Theme } from './theme';
 import {
@@ -102,6 +103,7 @@ export interface TUIState {
    */
   editorReplacementMounted: boolean;
   tasksBrowser: TasksBrowserState | undefined;
+  artexBrowser: ArtexBrowserState | undefined;
   externalEditorRunning: boolean;
   queuedMessages: QueuedMessage[];
   /**
@@ -256,6 +258,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     activeDialog: null,
     editorReplacementMounted: false,
     tasksBrowser: undefined,
+    artexBrowser: undefined,
     externalEditorRunning: false,
     queuedMessages: [],
     queuedMessageDispatchPending: false,
