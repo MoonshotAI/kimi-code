@@ -10,8 +10,10 @@ import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, isError2, SessionErrors, unwrapErrorCause } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAgentCronService } from '#/features/cron/cronService';
-import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
@@ -34,6 +36,15 @@ import {
   type CreateManagedSessionOptions,
   type UnguardedSessionLifecycle,
 } from './sessionManager';
+
+function isEphemeralHandle(handle: ISessionScopeHandle | undefined): boolean {
+  if (handle === undefined) return false;
+  try {
+    return handle.accessor.get(ISessionContext)?.ephemeral === true;
+  } catch {
+    return false;
+  }
+}
 
 interface SessionControllerEntry {
   readonly workspaceId: string;
@@ -100,6 +111,7 @@ export class SessionManager implements ISessionManager {
         const entry = await this.controllerForWorkspace({
           workspaceId: opened.workspaceId,
           root: options.workDir,
+          ephemeral: options.ephemeral,
         });
         return this.runControllerOperation(entry, (controller) => controller.create(effective));
       };
@@ -120,8 +132,8 @@ export class SessionManager implements ISessionManager {
     if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
     const lease = await this.workspaces.acquire(
       options.workspaceId === undefined
-        ? { root: options.workDir }
-        : { workspaceId: options.workspaceId, root: options.workDir },
+        ? { root: options.workDir, ephemeral: options.ephemeral }
+        : { workspaceId: options.workspaceId, root: options.workDir, ephemeral: options.ephemeral },
     );
     try {
       if (!remote) {
@@ -208,8 +220,28 @@ export class SessionManager implements ISessionManager {
     return this.sessions.get(sessionId);
   }
 
-  status(sessionId: string): Promise<SessionSummary | undefined> {
-    return this.index.get(sessionId);
+  async status(sessionId: string): Promise<SessionSummary | undefined> {
+    const indexed = await this.index.get(sessionId);
+    if (indexed !== undefined) return indexed;
+    const live = this.sessions.get(sessionId);
+    if (!isEphemeralHandle(live)) return undefined;
+    const ctx = live!.accessor.get(ISessionContext);
+    const meta = await live!.accessor.get(ISessionMetadata).read();
+    return buildSessionSummary({
+      id: sessionId,
+      workspaceId: ctx.workspaceId,
+      cwd: ctx.cwd,
+      environmentId: meta.environmentId,
+      environmentCwd: meta.environmentCwd,
+      title: meta.title,
+      lastPrompt: meta.lastPrompt,
+      createdAt: meta.createdAt,
+      updatedAt: meta.updatedAt,
+      archived: meta.archived,
+      archivedAt: meta.archivedAt,
+      custom: meta.custom,
+      lastTurnReason: meta.lastTurnReason,
+    });
   }
 
   async whenResumeSettled(sessionId: string): Promise<void> {
@@ -270,27 +302,40 @@ export class SessionManager implements ISessionManager {
     });
   }
 
-  async closeIfIdle(sessionId: string, idleTimeoutMs: number): Promise<boolean> {
+  async closeIfIdle(
+    sessionId: string,
+    idleTimeoutMs: number,
+    options?: { readonly isRetained?: () => boolean },
+  ): Promise<boolean> {
     return this.serializeLifecycle(sessionId, async () => {
       const handle = this.sessions.get(sessionId);
       const entry = this.owners.get(sessionId);
       if (handle === undefined || entry === undefined) return false;
+      const isEphemeral = isEphemeralHandle(handle);
+      if (isEphemeral && options?.isRetained?.() === true) return false;
       return this.runControllerOperation(this.retainController(entry), async (controller) => {
         if (Date.now() - handle.accessor.get(ISessionActivityView).lastActiveAt() < idleTimeoutMs) return false;
-        let lease: SessionLockLease;
-        try {
-          lease = this.sessionLocks.lease(sessionId);
-        } catch (error) {
-          if (isError2(error) && error.code === SessionErrors.codes.SESSION_OCCUPIED) return false;
-          throw error;
+        let lease: SessionLockLease | undefined;
+        if (!isEphemeral) {
+          try {
+            lease = this.sessionLocks.lease(sessionId);
+          } catch (error) {
+            if (isError2(error) && error.code === SessionErrors.codes.SESSION_OCCUPIED) return false;
+            throw error;
+          }
         }
         try {
           if (await this.retained(handle)) return false;
-          await controller.close(sessionId, 'reclaim');
-          this.reclaimed.add(sessionId);
+          if (isEphemeral && options?.isRetained?.() === true) return false;
+          if (isEphemeral) {
+            this.sessions.delete(sessionId);
+            this.owners.delete(sessionId);
+          }
+          await controller.close(sessionId, isEphemeral ? 'exit' : 'reclaim');
+          if (!isEphemeral) this.reclaimed.add(sessionId);
           return true;
         } finally {
-          lease.release();
+          lease?.release();
         }
       });
     });
@@ -338,6 +383,7 @@ export class SessionManager implements ISessionManager {
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
       }
       await this.runControllerOperation(entry, async (controller) => {
+        const wasEphemeral = isEphemeralHandle(this.sessions.get(sessionId));
         await controller.close(sessionId);
         const cleanups: Promise<unknown>[] = [];
         this.willDeleteEmitter.fire({
@@ -352,7 +398,9 @@ export class SessionManager implements ISessionManager {
         const settled = await Promise.allSettled(cleanups);
         const failed = settled.find((result) => result.status === 'rejected');
         if (failed?.status === 'rejected') throw failed.reason;
-        await controller.delete(sessionId);
+        if (!wasEphemeral) {
+          await controller.delete(sessionId);
+        }
         this.reclaimed.delete(sessionId);
       });
     });

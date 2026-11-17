@@ -310,10 +310,28 @@ export class ReadTool implements IReadTool {
     if (!environmentPath.isAbsolute(path)) return undefined;
     const normalized = environmentPath.normalize(path);
     const taskOutput = this.session !== undefined && this.agent !== undefined && (
+      isTaskOutputFilePath(
+        normalized,
+        this.session.ephemeral === true
+          ? environmentPath.join(this.session.sessionDir, this.agent.scope())
+          : environmentPath.join(this.session.sessionDir, 'agents', this.agent.agentId),
+        environmentPath,
+      ) ||
       isTaskOutputFilePath(normalized, environmentPath.join(this.session.sessionDir, 'agents', this.agent.agentId), environmentPath) ||
+      (this.agent.agentId === 'main' && isTaskOutputFilePath(
+        normalized,
+        this.session.ephemeral === true
+          ? environmentPath.join(this.session.sessionDir, this.session.scope())
+          : this.session.sessionDir,
+        environmentPath,
+      )) ||
       (this.agent.agentId === 'main' && isTaskOutputFilePath(normalized, this.session.sessionDir, environmentPath))
     );
-    if (!taskOutput && !this.resultTruncation.isSpillFilePath(normalized)) return undefined;
+    const ephemeralWire =
+      this.session?.ephemeral === true && this.resultTruncation.isWireJournalPath(normalized);
+    if (!taskOutput && !ephemeralWire && !this.resultTruncation.isSpillFilePath(normalized)) {
+      return undefined;
+    }
     return { fs: this.hostFs, path: normalized, environmentPath: { ...environmentPath, separator: environmentPath.sep, delimiter: environmentPath.delimiter }, pathClass: this.hostEnvironment.pathClass };
   }
 
@@ -331,7 +349,8 @@ export class ReadTool implements IReadTool {
         if (planFile && (await this.planService?.resolveFile(path, 'read'))?.path !== path) {
           return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
         }
-        return { ...await this.execution(environmentFileSource(target.fs, path), args, false), spillExempt: true };
+        const eventLog = !planFile && this.resultTruncation.isWireJournalPath(path);
+        return { ...await this.execution(environmentFileSource(target.fs, path), args, eventLog), spillExempt: true };
       },
     };
   }

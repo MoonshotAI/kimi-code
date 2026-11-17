@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import {
@@ -6,6 +7,7 @@ import {
   sliceOnCodePointBoundary,
 } from '#/_base/text/code-points';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
@@ -38,13 +40,20 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
   declare readonly _serviceBrand: undefined;
 
   private readonly storageScope: string;
+  private readonly ephemeralSpillDir: string | undefined;
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IAgentScopeContext agent: IAgentScopeContext,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @ISessionContext private readonly session: ISessionContext,
   ) {
     this.storageScope = agent.scope('tool-results');
+    const sessionCtx = this.session as ISessionContext | undefined;
+    this.ephemeralSpillDir =
+      sessionCtx?.ephemeral === true
+        ? join(sessionCtx.sessionDir, 'agents', agent.agentId, 'tool-results')
+        : undefined;
   }
 
   async truncateForModel<T extends ExecutableToolResult>(
@@ -117,15 +126,22 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
   }
 
   isSpillFilePath(path: string): boolean {
-    const dir = normalize(join(this.bootstrap.homeDir, this.storageScope));
+    const dir = normalize(this.ephemeralSpillDir ?? join(this.bootstrap.homeDir, this.storageScope));
     const normalized = normalize(path);
     return normalized === dir || normalized.startsWith(`${dir}/`);
   }
 
   isWireJournalPath(path: string): boolean {
-    const sessionsDir = normalize(join(this.bootstrap.homeDir, this.bootstrap.scope('sessions')));
     const normalized = normalize(path);
-    return normalized.startsWith(`${sessionsDir}/`) && basename(normalized) === AGENT_WIRE_RECORD_KEY;
+    if (basename(normalized) !== AGENT_WIRE_RECORD_KEY) return false;
+    const sessionsDir = normalize(join(this.bootstrap.homeDir, this.bootstrap.scope('sessions')));
+    if (normalized.startsWith(`${sessionsDir}/`)) return true;
+    const sessionCtx = this.session as ISessionContext | undefined;
+    if (sessionCtx?.ephemeral === true) {
+      const ephemRoot = normalize(sessionCtx.sessionDir);
+      return normalized.startsWith(`${ephemRoot}/`);
+    }
+    return false;
   }
 
   private async saveToolResult(
@@ -135,6 +151,12 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
   ): Promise<{ readonly outputPath: string; readonly preservedChars: number } | undefined> {
     try {
       const key = `${safeToolResultFileStem(toolName, toolCallId)}-${randomUUID()}.txt`;
+      if (this.ephemeralSpillDir !== undefined) {
+        await mkdir(this.ephemeralSpillDir, { recursive: true, mode: 0o700 });
+        const outputPath = join(this.ephemeralSpillDir, key);
+        await writeFile(outputPath, encoder.encode(text), { mode: 0o600 });
+        return { outputPath, preservedChars: text.length };
+      }
       await this.storage.write(this.storageScope, key, encoder.encode(text), { atomic: true });
       return {
         outputPath: join(this.bootstrap.homeDir, this.storageScope, key),

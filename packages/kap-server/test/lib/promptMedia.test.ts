@@ -2,11 +2,12 @@ import { Readable } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
-import type { FileMeta, GetResult, IFileService } from '@moonshot-ai/agent-core-v2';
+import type { FileMeta, GetResult, IAgentEnvironmentService, IFileService } from '@moonshot-ai/agent-core-v2';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
-import type { EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { Environment, EnvironmentLease, EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
 
 import {
+  environmentMediaTargets,
   resolvePromptMediaFiles,
   type PromptAttachmentsTarget,
 } from '../../src/lib/promptMedia';
@@ -154,5 +155,43 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
     ).rejects.toThrow('no such file: f_missing');
     expect(fake.removed).toEqual([]);
     expectStoredBytes(fake.files, target, data);
+  });
+
+  it('scopes remote staging under a session-owned directory and registers session cleanup for ephemeral sessions', async () => {
+    const fake = fakeEnvironmentFs();
+    const tracked: Array<{ sessionId?: string; dispose: () => Promise<void> | void }> = [];
+    const env = {
+      identity: { environmentId: 'ssh-1', generation: 'g1' },
+      host: { tempDir: '/remote/tmp' },
+      fs: fake.fs,
+      path: environmentPath,
+    } as unknown as Environment;
+    const lease: EnvironmentLease = {
+      environment: env,
+      track: (resource, sessionId) => {
+        tracked.push({ sessionId, dispose: () => resource.dispose() });
+        return resource;
+      },
+      dispose: () => {},
+    };
+    const envService = {
+      acquireWhenReady: async () => lease,
+    } as unknown as IAgentEnvironmentService;
+
+    const targets = environmentMediaTargets(
+      { environmentId: 'ssh-1' },
+      envService,
+      { sessionId: 's_ephem', ephemeral: true },
+    );
+    const attachments = await targets.resolveAttachmentsTarget!();
+    const originals = await targets.resolveOriginalsTarget!();
+    expect(attachments.dir).toBe('/remote/tmp/kimi-code/ephemeral-s_ephem/attachments');
+    expect(originals.dir).toBe('/remote/tmp/kimi-code/ephemeral-s_ephem/original-images');
+    expect(tracked).toHaveLength(1);
+    expect(tracked[0]?.sessionId).toBe('s_ephem');
+
+    await tracked[0]!.dispose();
+    expect(fake.removed).toEqual(['/remote/tmp/kimi-code/ephemeral-s_ephem']);
+    targets.dispose();
   });
 });

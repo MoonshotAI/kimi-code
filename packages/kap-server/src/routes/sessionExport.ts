@@ -55,6 +55,7 @@ export function registerSessionExportRoute(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.SESSION_EPHEMERAL_UNSUPPORTED]: {},
         [ErrorCode.INTERNAL_ERROR]: {},
       },
       description: 'Export a session and diagnostic logs as a zip archive',
@@ -183,6 +184,10 @@ function sendMappedError(reply: SessionExportReply, req: { id: string }, error: 
   if (isError2(error)) {
     if (error.code === ErrorCodes.SESSION_NOT_FOUND) {
       reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, requestId));
+      return;
+    }
+    if (error.code === ErrorCodes.SESSION_EPHEMERAL_UNSUPPORTED) {
+      reply.send(errEnvelope(ErrorCode.SESSION_EPHEMERAL_UNSUPPORTED, error.message, requestId));
       return;
     }
   }

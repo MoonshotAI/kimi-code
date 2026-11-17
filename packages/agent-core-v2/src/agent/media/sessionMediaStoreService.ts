@@ -6,6 +6,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { isFileId } from '#/app/file/fileService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
@@ -35,13 +36,20 @@ interface SessionMediaMetadata {
 export class SessionMediaStoreService implements ISessionMediaStore {
   declare readonly _serviceBrand: undefined;
   private readonly scope: string;
+  private readonly storage: IFileSystemStorageService;
 
   constructor(
     @ISessionContext sessionContext: ISessionContext,
-    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IFileSystemStorageService storage: IFileSystemStorageService,
     @IAtomicDocumentStore private readonly documents: IAtomicDocumentStore,
   ) {
-    this.scope = sessionContext.scope('media');
+    if (sessionContext.ephemeral === true) {
+      this.scope = 'media';
+      this.storage = new FileStorageService(sessionContext.sessionDir, 0o700, 0o600);
+    } else {
+      this.scope = sessionContext.scope('media');
+      this.storage = storage;
+    }
   }
 
   async put(input: SessionMediaPutInput): Promise<string> {

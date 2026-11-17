@@ -1,6 +1,6 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,6 +12,8 @@ import {
   IAgentTaskOutputService,
   IAgentToolExecutorService,
   IConfigService,
+  ISessionContext,
+  ISessionManager,
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
@@ -170,6 +172,9 @@ function configToml(llmPort: number): string {
     'provider = "stub"',
     'model = "stub"',
     'max_context_size = 100000',
+    '',
+    '[database]',
+    'global_search = true',
     '',
   ].join('\n');
 }
@@ -1205,5 +1210,178 @@ describe('conversation contract e2e', () => {
     );
 
     channel.close();
+  });
+
+  it('S14: ephemeral sessions run in memory without home persistence, stay out of lists/global events, reject persistence actions with 40941, and vanish on delete', async () => {
+    await boot([{ match: () => true, respond: () => sseText('ephemeral reply') }]);
+
+    const ephemeralWorkDir = await mkdtemp(join(tmpdir(), 'kimi-ephemeral-work-'));
+    const globalFrames: any[] = [];
+    const globalWs = new WebSocket(`ws://127.0.0.1:${server!.port}/api/v1/ws`, [
+      `kimi-code.bearer.${bearerToken(server!)}`,
+    ]);
+    globalWs.on('message', (data) => {
+      try {
+        globalFrames.push(JSON.parse(rawToString(data)));
+      } catch {
+      }
+    });
+    await new Promise<void>((resolve, reject) => {
+      globalWs.once('open', () => resolve());
+      globalWs.once('error', reject);
+    });
+
+    try {
+      const created = await rest<{ id: string; cwd: string; ephemeral?: boolean }>(
+        server!,
+        base,
+        '/api/v1/sessions',
+        { method: 'POST', body: { cwd: ephemeralWorkDir, ephemeral: true, title: 'Temp Probe' } },
+      );
+      expect(created.ephemeral).toBe(true);
+      expect(created.cwd).toBe(ephemeralWorkDir);
+      const sid = created.id;
+
+      const tempDirPath = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(ISessionContext).sessionDir;
+      expect(tempDirPath.startsWith(home!)).toBe(false);
+      const dirMode = process.platform === 'win32' ? 0o700 : (await stat(tempDirPath)).mode & 0o777;
+      expect(dirMode).toBe(0o700);
+
+      const channel = await subscribeConversation(server!, sid);
+      await submitPrompt(server!, base, sid, 'ephemeral question');
+      await until(
+        'ephemeral turn completed',
+        () => channel.turns().at(-1)?.status === 'ended' && channel.turns().at(-1)?.outcome === 'completed',
+      );
+      expect(channel.turns().at(-1)?.items.find((item: any) => item.type === 'assistant_message')?.text).toBe(
+        'ephemeral reply',
+      );
+
+      const directGet = await rest<{ id: string; ephemeral?: boolean; last_turn_outcome?: string }>(
+        server!,
+        base,
+        `/api/v1/sessions/${encodeURIComponent(sid)}`,
+      );
+      expect(directGet).toMatchObject({
+        id: sid,
+        ephemeral: true,
+        last_turn_outcome: 'completed',
+      });
+
+      const listed = await rest<{ items: Array<{ id: string }> }>(server!, base, '/api/v1/sessions?page_size=100');
+      expect(listed.items.some((item) => item.id === sid)).toBe(false);
+
+      const workspaces = await rest<{ items: Array<{ root: string }> }>(server!, base, '/api/v1/workspaces');
+      expect(workspaces.items.some((ws) => ws.root === ephemeralWorkDir)).toBe(false);
+
+      const searchRes = await rest<{ items: Array<{ session_id: string }> }>(server!, base, '/api/v1/search', {
+        method: 'POST',
+        body: { query: 'ephemeral' },
+      });
+      expect(searchRes.items.some((item) => item.session_id === sid)).toBe(false);
+
+      const indexJsonl = await readFile(join(home!, 'session_index.jsonl'), 'utf8').catch(() => '');
+      expect(indexJsonl.includes(sid)).toBe(false);
+
+      for (const path of [
+        `/api/v1/sessions/${encodeURIComponent(sid)}:archive`,
+        `/api/v1/sessions/${encodeURIComponent(sid)}:restore`,
+        `/api/v1/sessions/${encodeURIComponent(sid)}:fork`,
+        `/api/v1/sessions/${encodeURIComponent(sid)}:reload`,
+        `/api/v1/sessions/${encodeURIComponent(sid)}/export`,
+      ]) {
+        const res = await fetch(`${base}${path}`, {
+          method: 'POST',
+          headers: authHeaders(server!, { 'content-type': 'application/json' }),
+          body: '{}',
+        });
+        expect(((await res.json()) as { code: number }).code).toBe(40941);
+      }
+      const workspacesAfterUnsupported = await rest<{ items: Array<{ root: string }> }>(
+        server!,
+        base,
+        '/api/v1/workspaces',
+      );
+      expect(workspacesAfterUnsupported.items.some((ws) => ws.root === ephemeralWorkDir)).toBe(false);
+
+      const batchArchive = await rest<{ results: Array<{ id: string; ok: boolean; error?: { code: number } }> }>(
+        server!,
+        base,
+        '/api/v1/sessions:archive',
+        { method: 'POST', body: { ids: [sid] } },
+      );
+      expect(batchArchive.results[0]).toMatchObject({
+        id: sid,
+        ok: false,
+        error: { code: 40941 },
+      });
+
+      const closeReasons: Array<{ sessionId: string; reason: string }> = [];
+      const closeSub = server!.core.accessor.get(ISessionManager).onWillCloseSession?.((ev) => {
+        closeReasons.push({ sessionId: ev.sessionId, reason: ev.reason });
+      });
+      try {
+        const notReclaimedWhileRetained = await server!.core.accessor
+          .get(ISessionManager)
+          .closeIfIdle(sid, 0, { isRetained: () => true });
+        expect(notReclaimedWhileRetained).toBe(false);
+
+        let lookupWhileWillCloseRunning: unknown = 'unset';
+        const hookSub = server!.core.accessor.get(ISessionManager).onWillCloseSession?.((ev) => {
+          if (ev.sessionId !== sid) return;
+          ev.waitUntil(
+            (async () => {
+              lookupWhileWillCloseRunning = getLiveSessionById(server!.core.accessor, sid);
+            })(),
+          );
+        });
+        try {
+          const retainedWhileIdle = await server!.core.accessor.get(ISessionManager).closeIfIdle(sid, 0);
+          expect(retainedWhileIdle).toBe(true);
+          expect(lookupWhileWillCloseRunning).toBeUndefined();
+          expect(closeReasons).toEqual([{ sessionId: sid, reason: 'exit' }]);
+          await expect(stat(tempDirPath)).rejects.toThrow();
+        } finally {
+          hookSub?.dispose();
+        }
+      } finally {
+        closeSub?.dispose();
+      }
+
+      const afterReclaimRes = await fetch(`${base}/api/v1/sessions/${encodeURIComponent(sid)}`, {
+        headers: authHeaders(server!),
+      });
+      expect(((await afterReclaimRes.json()) as { code: number }).code).toBe(40401);
+
+      const second = await rest<{ id: string }>(server!, base, '/api/v1/sessions', {
+        method: 'POST',
+        body: { cwd: ephemeralWorkDir, ephemeral: true },
+      });
+      const secondTempDir = getLiveSessionById(server!.core.accessor, second.id)!.accessor.get(ISessionContext).sessionDir;
+      const deleted = await rest<{ deleted: true }>(
+        server!,
+        base,
+        `/api/v1/sessions/${encodeURIComponent(second.id)}:delete`,
+        { method: 'POST', body: {} },
+      );
+      expect(deleted).toEqual({ deleted: true });
+      await expect(stat(secondTempDir)).rejects.toThrow();
+
+      const afterDeleteRes = await fetch(`${base}/api/v1/sessions/${encodeURIComponent(second.id)}`, {
+        headers: authHeaders(server!),
+      });
+      expect(((await afterDeleteRes.json()) as { code: number }).code).toBe(40401);
+
+      expect(
+        globalFrames.some(
+          (frame) => frame.type === 'session' && (frame.session?.id === sid || frame.session?.id === second.id),
+        ),
+      ).toBe(false);
+
+      channel.close();
+    } finally {
+      globalWs.close();
+      await rm(ephemeralWorkDir, { recursive: true, force: true });
+    }
   });
 }, 90000);
