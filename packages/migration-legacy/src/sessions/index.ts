@@ -44,7 +44,7 @@ export async function migrateSessionsStep(
   let bucketsSkippedNoWorkdirFound = 0;
   let sessionsSkippedPlaceholder = 0;
   let sessionsSkippedEmpty = 0;
-  let sessionsSkippedMalformed = 0;
+  const sessionsSkippedMalformed = 0;
   const sessionsFailed: Array<{ sourcePath: string; reason: string }> = [];
   const sessionsConflicts: Array<{ sourcePath: string; targetPath: string }> = [];
 

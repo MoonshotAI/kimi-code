@@ -72,7 +72,7 @@ export async function writeSnapshot(
     // writev(2) may short-write (signal interruption, RLIMIT_FSIZE, …). Loop
     // until every byte is on the kernel side; otherwise the snapshot would be
     // silently truncated and later renamed over the good one.
-    let bufs = batch;
+    const bufs = batch;
     let off = 0; // byte offset within bufs[0]
     while (bufs.length > 0) {
       const toWrite = off > 0 ? [bufs[0]!.subarray(off), ...bufs.slice(1)] : bufs;

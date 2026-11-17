@@ -45,7 +45,7 @@ async function daemonReachable(): Promise<boolean> {
 const reachable = await daemonReachable();
 const describeLive = reachable ? describe : describe.skip;
 
-let created: { client: DaemonClient; sid: string }[] = [];
+const created: { client: DaemonClient; sid: string }[] = [];
 
 afterEach(async () => {
   // Best-effort cleanup so reruns don't accumulate phantom sessions.

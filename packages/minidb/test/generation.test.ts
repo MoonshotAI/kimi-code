@@ -742,7 +742,7 @@ describe('generation build + load', () => {
 
   test('read-only reader keeps serving through a writer generation switch', async () => {
     const dir = await openTmp('reader-switch');
-    let writer = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
+    const writer = await MiniDb.open<Record<string, unknown>>({ dir, valueCodec: 'json' });
     await seedIndexedDb(writer, 500);
     await writer.rebuildGeneration();
 

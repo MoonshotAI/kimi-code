@@ -15,6 +15,7 @@
     "eslint/no-sequences": "error",
     "eslint/no-unmodified-loop-condition": "error",
     "eslint/no-useless-constructor": "error",
+    "eslint/prefer-const": "error",
     "import/no-named-as-default": "error",
     "oxc/bad-comparison-sequence": "error",
     "promise/no-callback-in-promise": "error",

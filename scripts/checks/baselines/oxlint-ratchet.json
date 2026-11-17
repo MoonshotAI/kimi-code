@@ -190,6 +190,33 @@
   "eslint/no-useless-constructor": {
     "packages/agent-core-v2/src/session/state/sessionStateService.ts": 1
   },
+  "eslint/prefer-const": {
+    "apps/kimi-code/src/cli/run-shell.ts": 1,
+    "apps/kimi-code/src/cli/sub/web/run.ts": 1,
+    "apps/kimi-code/src/cli/v2/run-v2-print.ts": 1,
+    "apps/kimi-code/src/tui/controllers/btw-panel.ts": 1,
+    "apps/kimi-code/src/tui/controllers/staging-leases.ts": 1,
+    "apps/kimi-code/src/tui/utils/tmux-keyboard.ts": 1,
+    "apps/kimi-code/src/utils/clipboard/clipboard-common.ts": 1,
+    "packages/agent-core-v2/src/agent/actorService/agentActorService.ts": 1,
+    "packages/agent-core-v2/src/agent/profile/profileService.ts": 2,
+    "packages/agent-core-v2/src/features/tower/protocol/store.ts": 1,
+    "packages/agent-core-v2/src/persistence/backends/node-fs/appendLogStore.ts": 1,
+    "packages/agent-core-v2/test/agent/environmentBinding/environmentBindingService.test.ts": 1,
+    "packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts": 2,
+    "packages/agent-core-v2/test/agent/mcp/output.test.ts": 1,
+    "packages/agent-core-v2/test/agent/tools/os/environmentGenerationGuard.test.ts": 2,
+    "packages/agent-core-v2/test/app/sessionManager/sessionManagerService.test.ts": 1,
+    "packages/agent-core-v2/test/tool/tool.test.ts": 2,
+    "packages/agent-core-v2/test/wire/wireService.test.ts": 1,
+    "packages/core/src/loop/tool/tasks.ts": 1,
+    "packages/core/src/utils/wait.ts": 1,
+    "packages/kap-server/test/conversationContract.e2e.test.ts": 1,
+    "packages/kap-server/test/hosts.test.ts": 2,
+    "packages/product/test/session-rating.test.ts": 1,
+    "packages/remote-control/test/remote-control.test.ts": 12,
+    "packages/telemetry/test/telemetry.test.ts": 1
+  },
   "import/no-named-as-default": {
     "packages/kap-server/test/wsBearerProtocol.test.ts": 1
   },

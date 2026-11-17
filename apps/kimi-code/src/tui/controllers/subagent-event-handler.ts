@@ -837,7 +837,7 @@ export class SubAgentEventHandler {
   }
 
   private getOrActivateToolComponent(parentToolCallId: string) {
-    let component = this.host.streamingUI.getToolComponent(parentToolCallId);
+    const component = this.host.streamingUI.getToolComponent(parentToolCallId);
     if (component !== undefined) return component;
     const toolCall = this.host.streamingUI.getActiveToolCall(parentToolCallId);
     if (toolCall === undefined) return undefined;

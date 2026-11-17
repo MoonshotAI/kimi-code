@@ -290,7 +290,7 @@ interface WireBody {
 
 async function probeWireEncoding(): Promise<void> {
   console.log('\n=== part A: wire-encoding boundary (local stub) ===');
-  let handler: (req: IncomingMessage, res: ServerResponse) => void = (_req, res) =>
+  const handler: (req: IncomingMessage, res: ServerResponse) => void = (_req, res) =>
     writePong(res);
   let lastBody: WireBody | undefined;
 
