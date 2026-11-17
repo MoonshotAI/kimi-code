@@ -353,14 +353,16 @@ function sessionHost(projects: FakeProject[], sessions: Array<Record<string, unk
       const { pathname, query } = parseQuery(req.path);
       if (pathname === '/api/v1/workspaces') return reply(200, { code: 0, msg: 'success', data: { items: projects } });
       if (pathname === '/api/v1/sessions') {
-        const filter = query['workspace_id'] === undefined ? undefined : [query['workspace_id']].flat();
-        const items = sessions.filter((session) =>
-          (filter === undefined || filter.includes(String(session['workspace_id']))) &&
-          (query['archived'] === 'true' || query['archived_only'] === 'true'
+        const fake = sessions.filter((session) =>
+          query['archived'] === 'true' || query['archived_only'] === 'true'
             ? session['archived'] === true
-            : query['archived'] === 'all' || query['include_archive'] === 'true' || session['archived'] !== true),
-        );
-        return reply(200, { code: 0, msg: 'success', data: { items, total: items.length, has_more: false } });
+            : query['archived'] === 'all' || query['include_archive'] === 'true' || session['archived'] !== true,
+        ).map((session) => ({
+          id: String(session['id']),
+          workspace: String(session['workspace_id']),
+          updated: Date.parse(String(session['updated_at'])),
+        }));
+        return reply(200, { code: 0, msg: 'success', data: serve(fake, query) });
       }
       const found = sessions.find((session) => pathname === `/api/v1/sessions/${String(session['id'])}`);
       return found === undefined
@@ -374,7 +376,7 @@ function sessionHost(projects: FakeProject[], sessions: Array<Record<string, unk
 }
 
 describe('v1 sessions across hosts', () => {
-  it('lists every session at once and finds a session by id on the host that owns it', async () => {
+  it('lists flat and grouped sessions across hosts and finds a session by id on the host that owns it', async () => {
     const home = await mkdtemp(join(tmpdir(), 'kimi-host-sessions-'));
     const remote: Array<Record<string, unknown>> = [];
     const requests: string[] = [];
@@ -418,6 +420,20 @@ describe('v1 sessions across hosts', () => {
       const own = await call(`/api/v1/sessions/${String(local['id'])}?hosts=include`);
       expect(own.code).toBe(0);
       expect(own.data['host_id']).toBeUndefined();
+
+      const grouped = await call('/api/v1/sessions?hosts=include&view=by_workspace&group_page_size=5');
+      expect(grouped).toMatchObject({ code: 0 });
+      const groups = grouped.data['groups'] as Array<{ workspace_id: string; host_id?: string; sessions: Array<{ id: string; host_id?: string }> }>;
+      expect(groups.map((group) => [group.workspace_id, group.host_id])).toEqual([
+        ['wm_dev', 'dev'],
+        [local['workspace_id'], undefined],
+      ]);
+      expect(groups[0]!.sessions).toEqual([expect.objectContaining({ id: remoteId, host_id: 'dev' })]);
+      expect(await call('/api/v1/sessions?hosts=include&view=by_workspace&workspace_id=wm_dev')).toMatchObject({
+        code: 0,
+        data: { groups: [{ workspace_id: 'wm_dev', host_id: 'dev' }] },
+      });
+
       expect((await call('/api/v1/sessions/session_missing?hosts=include')).code).toBe(50005);
       list.mockReturnValue([dev]);
       expect((await call('/api/v1/sessions/session_missing?hosts=include')).code).toBe(40401);
