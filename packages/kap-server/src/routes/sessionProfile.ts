@@ -64,6 +64,7 @@ export async function updateSessionProfile(
     root: ctx.cwd,
     title: meta.title,
     lastPrompt: meta.lastPrompt,
+    forkedFrom: meta.forkedFrom,
     createdAt: meta.createdAt,
     updatedAt: meta.updatedAt,
     archived: meta.archived,

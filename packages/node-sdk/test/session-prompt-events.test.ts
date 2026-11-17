@@ -927,10 +927,14 @@ describe('Session.prompt events', () => {
         turnIndex: 0,
       });
       const state = fork.getResumeState();
+      const persistedState = JSON.parse(
+        await readFile(join(fork.summary!.sessionDir, 'state.json'), 'utf8'),
+      );
 
       expect(fork.id).toBe('ses_turn_fork_metadata_child');
       expect(fork.workDir).toBe(source.workDir);
       expect(state?.sessionMetadata.forkedFrom).toBe(source.id);
+      expect(persistedState.forkedFrom).toBe(source.id);
       expect(fork.summary).toMatchObject({
         title: 'Historical branch',
         lastPrompt: 'branch here',

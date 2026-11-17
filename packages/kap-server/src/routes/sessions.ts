@@ -1132,6 +1132,7 @@ export interface SessionWireFields {
   readonly workspaceId: string;
   readonly title?: string;
   readonly lastPrompt?: string;
+  readonly forkedFrom?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly archived: boolean;
@@ -1161,6 +1162,7 @@ export function toWireSession(
       facts.lastTurnReason ?? (facts.live === false ? fields.lastTurnReason : undefined),
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
+    forked_from: fields.forkedFrom,
     metadata: buildWireMetadata(fields.custom, cwd),
     agent_config: { model: facts.model ?? '' },
     usage: emptySessionUsage(),

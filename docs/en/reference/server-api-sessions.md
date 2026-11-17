@@ -25,6 +25,7 @@ The live status fields (`busy`, `main_turn_active`, `pending_interaction`, `last
 | `pending_interaction` | string | The interaction waiting for an answer: `none` / `approval` / `question`. `approval` when an approval and a question are both pending |
 | `last_turn_reason` | string | Outcome of the main agent's latest turn: `completed` / `cancelled` / `failed`. Cleared when the main agent starts a new turn |
 | `last_prompt` | string | Text of the most recent user prompt, when present |
+| `forked_from` | string | ID of the direct source session, present only when this session was created by forking another session |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
 | `agent_config` | object | Contains only `model`. When the session is loaded in the current server process and the main agent has a model, `model` is the main agent's current model; otherwise it is `""`. The create-session response carries this model too, unless no model was available at creation |
 | `usage` | object | Token rollup: `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `context_tokens`, and the optional `context_limit`, `total_cost_usd`, and `turn_count`. Currently always zeros. The live context size comes with each agent's [`usage` frame](./server-api-conversation.md#agent-state) over the WebSocket |

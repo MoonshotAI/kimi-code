@@ -1684,12 +1684,13 @@ describe('FileSessionIndex (read model)', () => {
     expect(docs.gets).toBe(0);
   });
 
-  it('re-projects summaries indexed before environment bindings were recorded', async () => {
+  it('re-projects summaries from an older index schema', async () => {
     await seedSession('remote', {
       createdAt: 1,
       updatedAt: 2,
       environmentId: 'dev-box',
       environmentCwd: '/remote/project',
+      forkedFrom: 'source-session',
     });
 
     const first = build();
@@ -1725,7 +1726,12 @@ describe('FileSessionIndex (read model)', () => {
     await second.prepare();
     const page = await second.listRecent({ workspaceIds: [workspaceId] });
     expect(page.items).toMatchObject([
-      { id: 'remote', environmentId: 'dev-box', environmentCwd: '/remote/project' },
+      {
+        id: 'remote',
+        environmentId: 'dev-box',
+        environmentCwd: '/remote/project',
+        forkedFrom: 'source-session',
+      },
     ]);
   });
 
@@ -1925,7 +1931,7 @@ describe('FileSessionIndex (read model)', () => {
       items: [{ id: 'a' }, { id: 'c' }, { id: 'b' }],
     });
     const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 3 });
+    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 4 });
     expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
   });
 

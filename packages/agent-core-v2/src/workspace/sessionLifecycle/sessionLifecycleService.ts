@@ -843,6 +843,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           cwd: hostCwd,
           environmentId: meta.environmentId,
           environmentCwd: meta.environmentCwd,
+          forkedFrom: meta.forkedFrom,
           title,
           lastPrompt: meta.lastPrompt,
           createdAt: now,
