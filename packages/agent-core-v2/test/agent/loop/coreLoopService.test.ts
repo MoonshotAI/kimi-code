@@ -885,4 +885,86 @@ describe('core LoopService integration', () => {
     expect(() => handle.accessor.get(IAgentScopeContext)).toThrow();
     (subject as unknown as { root: { dispose(): void } }).root.dispose();
   });
+
+  it('excludes the active running turn from snapshot.hasPendingRequests while keeping quiescence gated', async () => {
+    const loop = ctx.get(IAgentLoopService);
+    const observations: Array<{
+      readonly stage: string;
+      readonly state: string;
+      readonly hasPendingRequests: boolean;
+      readonly quiescenceAvailable: boolean;
+    }> = [];
+
+    let stage = 'single';
+    loop.hooks.onWillBeginStep.register('observe-begin', async (_hookCtx, next) => {
+      const snap = loop.snapshot();
+      const lease = loop.tryAcquireQuiescence();
+      observations.push({
+        stage: `${stage}:begin`,
+        state: snap.state,
+        hasPendingRequests: snap.hasPendingRequests,
+        quiescenceAvailable: lease !== undefined,
+      });
+      lease?.dispose();
+      await next();
+    });
+    loop.hooks.onDidFinishStep.register('observe-finish', async (_hookCtx, next) => {
+      await next();
+      if (stage === 'queued-submit') {
+        stage = 'queued-submit-followup';
+        loop.submit({
+          role: 'user',
+          content: [{ type: 'text', text: 'queued follow-up' }],
+          attributes: { origin: { kind: 'user' } },
+        });
+      } else if (stage === 'queued-notify') {
+        stage = 'queued-notify-followup';
+        loop.notify({
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'queued notification' }],
+          },
+        });
+      }
+      const snap = loop.snapshot();
+      const lease = loop.tryAcquireQuiescence();
+      observations.push({
+        stage: `${stage}:finish`,
+        state: snap.state,
+        hasPendingRequests: snap.hasPendingRequests,
+        quiescenceAvailable: lease !== undefined,
+      });
+      lease?.dispose();
+    });
+
+    ctx.mockNextResponse({ type: 'text', text: 'single answer' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first' }] });
+    await loop.settled();
+
+    stage = 'queued-submit';
+    ctx.mockNextResponse({ type: 'text', text: 'before queued user prompt' });
+    ctx.mockNextResponse({ type: 'text', text: 'after queued user prompt' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second' }] });
+    await loop.settled();
+
+    stage = 'queued-notify';
+    ctx.mockNextResponse({ type: 'text', text: 'before queued notify' });
+    ctx.mockNextResponse({ type: 'text', text: 'after queued notify' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'third' }] });
+    await loop.settled();
+
+    expect(observations).toEqual([
+      { stage: 'single:begin', state: 'running', hasPendingRequests: false, quiescenceAvailable: false },
+      { stage: 'single:finish', state: 'running', hasPendingRequests: false, quiescenceAvailable: false },
+      { stage: 'queued-submit:begin', state: 'running', hasPendingRequests: false, quiescenceAvailable: false },
+      { stage: 'queued-submit-followup:finish', state: 'running', hasPendingRequests: true, quiescenceAvailable: false },
+      { stage: 'queued-submit-followup:begin', state: 'running', hasPendingRequests: false, quiescenceAvailable: false },
+      { stage: 'queued-submit-followup:finish', state: 'running', hasPendingRequests: false, quiescenceAvailable: false },
+      { stage: 'queued-notify:begin', state: 'running', hasPendingRequests: false, quiescenceAvailable: false },
+      { stage: 'queued-notify-followup:finish', state: 'running', hasPendingRequests: true, quiescenceAvailable: false },
+      { stage: 'queued-notify-followup:begin', state: 'running', hasPendingRequests: false, quiescenceAvailable: false },
+      { stage: 'queued-notify-followup:finish', state: 'running', hasPendingRequests: false, quiescenceAvailable: false },
+    ]);
+    expect(loop.snapshot()).toMatchObject({ state: 'idle', hasPendingRequests: false });
+  });
 });

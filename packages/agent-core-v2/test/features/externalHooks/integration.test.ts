@@ -81,6 +81,7 @@ import { IModelService } from '#/llm-adapter/model/model';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
+import { createTestAgent, externalHookServices } from '../../harness';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 
@@ -1616,6 +1617,332 @@ describe('IExternalHooksRunnerService integration', () => {
     } finally {
       ix?.dispose();
       disposables.dispose();
+    }
+  });
+
+  it('fires external Stop hook once on real AgentLoopService completion and skips tool_calls and filtered steps', async () => {
+    const logPath = hookLogPath();
+    const engine = makeHookRunner([
+      {
+        event: 'Stop',
+        command: stdinScript([
+          'const fs = require("node:fs");',
+          `fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ event: "Stop", stop_hook_active: parsed.stop_hook_active }) + "\\n");`,
+        ].join('\n')),
+        timeout: 5,
+      },
+      {
+        event: 'StopFailure',
+        command: stdinScript([
+          'const fs = require("node:fs");',
+          `fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ event: "StopFailure", error_type: parsed.error_type }) + "\\n");`,
+        ].join('\n')),
+        timeout: 5,
+      },
+    ]);
+
+    const ctx = createTestAgent(externalHookServices(engine));
+    try {
+      await ctx.restorePersisted();
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      });
+
+      ctx.mockNextResponse({ type: 'text', text: 'Direct reply' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Say hi' }] });
+      await ctx.untilTurnEnd();
+
+      const readEvents = (): Array<Record<string, unknown>> =>
+        existsSync(logPath)
+          ? readFileSync(logPath, 'utf8')
+              .trim()
+              .split('\n')
+              .filter(Boolean)
+              .map((line) => JSON.parse(line) as Record<string, unknown>)
+          : [];
+
+      expect(readEvents()).toEqual([{ event: 'Stop', stop_hook_active: false }]);
+
+      ctx.mockNextResponse(
+        { type: 'text', text: 'Calling tool' },
+        {
+          type: 'function',
+          id: 'call_lookup_1',
+          name: 'Lookup',
+          arguments: JSON.stringify({ query: 'sun' }),
+        },
+      );
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use tool then finish' }] });
+      await ctx.untilToolCall({ output: 'warm' });
+      expect(readEvents()).toEqual([{ event: 'Stop', stop_hook_active: false }]);
+
+      ctx.mockNextResponse({ type: 'text', text: 'Final after tool' });
+      await ctx.untilTurnEnd();
+      expect(readEvents()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
+
+      ctx.mockNextProviderResponse({
+        parts: [
+          { type: 'text', text: 'Gemini tool call with STOP finishReason' },
+          {
+            type: 'function',
+            id: 'call_lookup_gemini',
+            name: 'Lookup',
+            arguments: JSON.stringify({ query: 'moon' }),
+          },
+        ],
+        finishReason: 'completed',
+        rawFinishReason: 'STOP',
+      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Gemini style tool step' }] });
+      await ctx.untilToolCall({ output: 'silver' });
+      expect(readEvents()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
+
+      ctx.mockNextResponse({ type: 'text', text: 'Final after Gemini tool' });
+      await ctx.untilTurnEnd();
+      expect(readEvents()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
+
+      ctx.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'blocked' }],
+        finishReason: 'filtered',
+      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Filtered turn' }] });
+      await ctx.untilTurnEnd();
+      await vi.waitFor(() => {
+        expect(readEvents()).toEqual([
+          { event: 'Stop', stop_hook_active: false },
+          { event: 'Stop', stop_hook_active: false },
+          { event: 'Stop', stop_hook_active: false },
+          { event: 'StopFailure', error_type: 'ProviderFilteredError' },
+        ]);
+      });
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('defers Stop hook while user submissions or notifications are queued on real AgentLoopService', async () => {
+    const stopCalls: Array<{ readonly turnCount: number }> = [];
+    let allowQueuedArrival!: () => void;
+    let blockDuringAsyncStop = false;
+    const hookEngine = {
+      trigger: async () => [],
+      fireAndForgetTrigger: async () => [],
+      triggerBlock: async (event: string) => {
+        if (event !== 'Stop') return undefined;
+        stopCalls.push({ turnCount: stopCalls.length + 1 });
+        if (blockDuringAsyncStop) {
+          blockDuringAsyncStop = false;
+          allowQueuedArrival();
+          await flushMicrotasks();
+          return { block: true as const, reason: 'stale stop continuation' };
+        }
+        return undefined;
+      },
+    };
+
+    const ctx = createTestAgent(externalHookServices(hookEngine));
+    try {
+      await ctx.restorePersisted();
+      const loop = ctx.get(IAgentLoopService);
+
+      let mode: 'none' | 'submit' | 'notify' = 'submit';
+      const stepHook = loop.hooks.onWillBeginStep.register('enqueue-during-turn', async (_hookCtx, next) => {
+        if (mode === 'submit') {
+          mode = 'none';
+          loop.submit({
+            role: 'user',
+            content: [{ type: 'text', text: 'queued user follow-up' }],
+            attributes: { origin: { kind: 'user' } },
+          });
+        } else if (mode === 'notify') {
+          mode = 'none';
+          loop.notify({
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'queued background note' }],
+            },
+          });
+        }
+        await next();
+      });
+
+      ctx.mockNextResponse({ type: 'text', text: 'turn 0 answer' });
+      ctx.mockNextResponse({ type: 'text', text: 'turn 1 answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start submit queue test' }] });
+      await loop.settled();
+      expect(stopCalls).toHaveLength(1);
+
+      mode = 'notify';
+      ctx.mockNextResponse({ type: 'text', text: 'turn 2 answer' });
+      ctx.mockNextResponse({ type: 'text', text: 'turn 3 answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start notify queue test' }] });
+      await loop.settled();
+      expect(stopCalls).toHaveLength(2);
+
+      stepHook.dispose();
+
+      blockDuringAsyncStop = true;
+      const arrivalReady = new Promise<void>((resolve) => {
+        allowQueuedArrival = resolve;
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'turn 4 answer' });
+      ctx.mockNextResponse({ type: 'text', text: 'turn 5 user answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'race with async stop' }] });
+      await arrivalReady;
+      loop.submit({
+        role: 'user',
+        content: [{ type: 'text', text: 'user prompt arriving during Stop hook' }],
+        attributes: { origin: { kind: 'user' } },
+      });
+      await loop.settled();
+
+      expect(stopCalls).toHaveLength(4);
+      expect(
+        ctx.contextData().history.some(
+          (msg) => msg.origin?.kind === 'system_trigger' && msg.origin.name === 'stop_hook',
+        ),
+      ).toBe(false);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('runs a blocking Stop hook continuation once per prompt cycle on real AgentLoopService without looping infinitely', async () => {
+    const logPath = hookLogPath();
+    const engine = makeHookRunner([
+      {
+        event: 'Stop',
+        command: stdinScript([
+          'const fs = require("node:fs");',
+          `fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ event: "Stop", stop_hook_active: parsed.stop_hook_active }) + "\\n");`,
+          'process.stderr.write("Verify result before stopping");',
+          'process.exit(2);',
+        ].join('\n')),
+        timeout: 5,
+      },
+      {
+        event: 'Interrupt',
+        command: stdinScript([
+          'const fs = require("node:fs");',
+          `fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ event: "Interrupt", turn_id: parsed.turn_id, reason: parsed.reason }) + "\\n");`,
+        ].join('\n')),
+        timeout: 5,
+      },
+    ]);
+
+    const ctx = createTestAgent(externalHookServices(engine));
+    try {
+      await ctx.restorePersisted();
+      const loop = ctx.get(IAgentLoopService);
+
+      ctx.mockNextResponse({ type: 'text', text: 'Initial answer' });
+      ctx.mockNextResponse({ type: 'text', text: 'Verified answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'First user prompt' }] });
+      await loop.settled();
+
+      expect(ctx.llmCalls).toHaveLength(2);
+      const readHookLog = (): Array<Record<string, unknown>> =>
+        readFileSync(logPath, 'utf8')
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(readHookLog()).toEqual([{ event: 'Stop', stop_hook_active: false }]);
+      expect(ctx.contextData().history).toContainEqual(
+        expect.objectContaining({
+          role: 'user',
+          content: [{ type: 'text', text: 'Verify result before stopping' }],
+          origin: { kind: 'system_trigger', name: 'stop_hook' },
+        }),
+      );
+
+      ctx.mockNextResponse({ type: 'text', text: 'Second initial answer' });
+      ctx.mockNextResponse({ type: 'text', text: 'Second verified answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Second user prompt' }] });
+      await loop.settled();
+
+      expect(ctx.llmCalls).toHaveLength(4);
+      expect(readHookLog()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
+
+      const originalNotify = loop.notify.bind(loop);
+      let cancelOnStopNotify = true;
+      loop.notify = ((note?: unknown) => {
+        const handle = originalNotify(note as never);
+        if (cancelOnStopNotify) {
+          cancelOnStopNotify = false;
+          loop.cancel();
+        }
+        return handle;
+      }) as typeof loop.notify;
+      ctx.mockNextResponse({ type: 'text', text: 'Cancelled turn answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Prompt cancelled after Stop' }] });
+      await loop.settled();
+      loop.notify = originalNotify;
+      await flushMicrotasks();
+
+      expect(ctx.llmCalls).toHaveLength(5);
+      expect(readHookLog()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
+
+      let cancelBeforeStop = true;
+      const midStepCancel = loop.hooks.onWillBeginStep.register('cancel-mid-step', async (_hookCtx, next) => {
+        if (cancelBeforeStop) {
+          cancelBeforeStop = false;
+          loop.cancel();
+        }
+        await next();
+      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Prompt cancelled before Stop' }] });
+      await loop.settled();
+      midStepCancel.dispose();
+      await vi.waitFor(() => {
+        expect(readHookLog()).toEqual([
+          { event: 'Stop', stop_hook_active: false },
+          { event: 'Stop', stop_hook_active: false },
+          { event: 'Stop', stop_hook_active: false },
+          { event: 'Interrupt', turn_id: 5, reason: 'cancelled' },
+        ]);
+      });
+
+      ctx.mockNextResponse({ type: 'text', text: 'Third initial answer' });
+      ctx.mockNextResponse({ type: 'text', text: 'Third verified answer' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Prompt after cancel' }] });
+      await loop.settled();
+
+      expect(ctx.llmCalls).toHaveLength(7);
+      expect(readHookLog()).toEqual([
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Stop', stop_hook_active: false },
+        { event: 'Interrupt', turn_id: 5, reason: 'cancelled' },
+        { event: 'Stop', stop_hook_active: false },
+      ]);
+    } finally {
+      await ctx.dispose();
     }
   });
 });

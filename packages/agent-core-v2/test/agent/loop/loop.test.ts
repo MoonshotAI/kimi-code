@@ -128,6 +128,7 @@ describe('Agent loop', () => {
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 0, "part": { "type": "think", "think": "<think-1>", "reasoningKey": "reasoning_content" }, "startedAt": "<time>" }, "time": "<time>" }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 1, "stepUuid": "<uuid-2>", "block": 1, "part": { "type": "text", "text": "<text-1><text-2>" }, "startedAt": "<time>" }, "time": "<time>" }
       [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [wire] token_counting.measured     { "agentId": "main", "length": 2, "tokens": 13, "time": "<time>" }
       [emit] turn.ended                  { "time": "<time>", "agentId": "main", "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
