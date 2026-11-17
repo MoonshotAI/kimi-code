@@ -179,6 +179,7 @@ export class ConversationFeed implements IDisposable {
   }
 
   async page(before: number | undefined, limit: number): Promise<ConversationTurnsPage> {
+    this.flushPending();
     const turns = (this.beforeReplay ?? this.state).turns;
     const end = before === undefined ? turns.length : turns.findIndex((turn) => turn.ordinal >= before);
     const stop = end === -1 ? turns.length : end;
