@@ -31,7 +31,6 @@ class FakeChannel implements KlientChannel {
     return Promise.resolve(this.results.has(key) ? this.results.get(key) : this.result);
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async *stream(_scope: ScopeRef, _service: string, _method: string, _args: unknown[]): AsyncIterableIterator<unknown> {
     // stub — streaming is not exercised in facade tests
   }

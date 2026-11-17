@@ -76,7 +76,7 @@ class RpcBodyTooLargeError extends Error {
   }
 }
 
-class FakeWebSocket extends EventEmitter { // oxlint-disable-line eslint-plugin-unicorn/prefer-event-target
+class FakeWebSocket extends EventEmitter {
   readonly OPEN = 1;
   readonly CLOSED = 3;
   readyState = 1;

@@ -97,7 +97,6 @@ function fakeInitialAppState(): AppState {
 }
 
 function stripAnsi(s: string): string {
-  // eslint-disable-next-line no-control-regex
   return s.replaceAll(/\u001B\[[0-9;?]*[a-zA-Z]|\u001B\][^\u0007]*\u0007/g, '');
 }
 

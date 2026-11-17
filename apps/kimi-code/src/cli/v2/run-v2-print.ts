@@ -852,7 +852,6 @@ export function createPrintTurnEndings(): PrintTurnEndings & {
             settled = true;
             clearTimeout(timer);
             waiter = undefined;
-            // oxlint-disable-next-line promise/no-multiple-resolved -- `settled` guards the single resolve; the rule cannot see it
             resolve(value);
           };
           // A delay beyond the host timer ceiling (an explicit

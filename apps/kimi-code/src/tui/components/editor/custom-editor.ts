@@ -25,7 +25,6 @@ import { extractAtPrefix } from './file-mention-provider';
 import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
 import { WrappingSelectList } from './wrapping-select-list';
 
-// oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 
 const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
@@ -35,7 +34,6 @@ const BRACKET_PASTE_END = '\u001B[201~';
 // Kitty keyboard protocol CSI-u sequence: ESC [ keycode ; modifier[:eventType] u.
 // We intentionally match only the simple two-field form — enough to rewrite
 // `ctrl+<LETTER>` with caps_lock into `ctrl+<letter>` without caps_lock.
-// oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match CSI
 const KITTY_CSI_U = /^\u001B\[(\d+);(\d+)((?::\d+)*)u$/;
 // Kitty modifier bit layout: shift=1, alt=2, ctrl=4, super=8, hyper=16,
 // meta=32, caps_lock=64, num_lock=128. Reported value is `mask + 1`.

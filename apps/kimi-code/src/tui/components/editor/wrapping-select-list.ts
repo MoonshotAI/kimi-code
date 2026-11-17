@@ -25,7 +25,6 @@ const ELLIPSIS_WIDTH = visibleWidth(ELLIPSIS);
 // inside the theme's colour wrapping and reset the rest of the line (e.g.
 // a selected row with a truncated name loses its colour after the name),
 // so strip it.
-// oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const TRAILING_ANSI_RESET = /(?:\u001B\[0m)+$/;
 
 function truncatePlainToWidth(text: string, maxWidth: number): string {

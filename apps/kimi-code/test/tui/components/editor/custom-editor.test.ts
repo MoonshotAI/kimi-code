@@ -348,7 +348,6 @@ describe('CustomEditor Tab key handling', () => {
 });
 
 describe('CustomEditor slash argument hint', () => {
-  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
   const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
 
   it('renders the argument hint after a command with a trailing space', () => {
@@ -430,7 +429,6 @@ describe('CustomEditor slash argument hint', () => {
 });
 
 describe('CustomEditor slash menu description wrapping', () => {
-  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
   const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
 
   it('wraps long slash command descriptions to at most two lines with an ellipsis', async () => {
@@ -741,7 +739,6 @@ describe('CustomEditor shortcut telemetry hooks', () => {
 });
 
 describe('CustomEditor bash mode border label', () => {
-  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
   const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
 
   it('shows "! shell mode" on the top border in bash mode', () => {

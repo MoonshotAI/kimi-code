@@ -3212,7 +3212,6 @@ export class KimiTUI {
     });
     for (const child of componentsToRemove) {
       // pi-tui Container.removeChild (not a DOM node); `child.remove()` does not exist.
-      // oxlint-disable-next-line unicorn/prefer-dom-node-remove
       this.state.transcriptContainer.removeChild(child);
       if (hasDispose(child)) child.dispose();
     }
@@ -4390,7 +4389,6 @@ export class KimiTUI {
     });
     for (const child of componentsToRemove) {
       // pi-tui Container.removeChild (not a DOM node); `child.remove()` does not exist.
-      // oxlint-disable-next-line unicorn/prefer-dom-node-remove
       this.state.transcriptContainer.removeChild(child);
       if (hasDispose(child)) child.dispose();
     }

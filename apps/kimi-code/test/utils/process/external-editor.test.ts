@@ -1,4 +1,3 @@
-/* eslint-disable import/first -- vi.mock setup must run before the imports it stubs out. */
 import { EventEmitter } from 'node:events';
 import { writeFile } from 'node:fs/promises';
 import type * as FsPromises from 'node:fs/promises';
