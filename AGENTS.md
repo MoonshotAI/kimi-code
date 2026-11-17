@@ -47,7 +47,8 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 ## General Coding Rules
 
-- Unless the user explicitly asks, do not modify, add, or delete comments. This includes line comments, block comments, and JSDoc.
+- Do not write comments in JS/TS code. `pnpm lint` (`scripts/check-comments.mjs`) rejects every comment except tool directives (`@ts-*`, `oxlint-`/`eslint-` disables, `prettier-ignore`, and the like), the shebang, `/// <reference>`, and single-tag JSDoc `@type` casts in JS files. Let names, types, and structure say what the code does, and turn a constraint into a type, a test, or a lint rule instead of a note.
+- Paths listed in `.commentignore` (gitignore syntax) are exempt from that check. Leave their existing comments alone unless the user asks, and add an entry only when the user asks.
 - For optional object properties, pass `undefined` directly instead of using conditional spread.
   - YES: `{ user }`
   - NO: `{ ...(user ? { user } : undefined) }`
