@@ -7,7 +7,7 @@
   },
   "rules": {
     "eslint/array-callback-return": "error",
-    "eslint/no-empty": "error",
+    "eslint/no-empty": ["error", { "allowEmptyCatch": true }],
     "eslint/no-fallthrough": "error",
     "eslint/no-loop-func": "error",
     "eslint/no-promise-executor-return": "error",

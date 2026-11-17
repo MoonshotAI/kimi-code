@@ -83,7 +83,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 - Prefer `rg` / `rg --files` when reading code.
 - When designing changes, follow existing boundaries and local patterns first.
-- Before finishing any code change, run `pnpm lint`; it must exit with status 0. It runs oxlint, the agent-core-v2 import-boundary check, and the guards and ratchet in `scripts/checks/`. If it reports errors in code you did not touch, run `pnpm install` and lint again: type-aware rules on an install older than the lockfile report errors that do not exist.
+- Before finishing any code change, run `pnpm lint`; it must exit with status 0. It runs the comment check, oxlint, the agent-core-v2 import-boundary check, and the guards and ratchet in `scripts/checks/`. If it reports errors in code you did not touch, run `pnpm install` and lint again: type-aware rules on an install older than the lockfile report errors that do not exist.
 - Fix lint errors in the code. Do not add a disable directive, edit `.oxlintrc.json` or `.oxlintrc.ratchet.json`, rewrite the lint snapshot, or raise the ratchet baseline in `scripts/checks/baselines/` just to get a passing run; if a rule is wrong for your case, stop and report it. A directive that is truly needed names the rule and gives its reason after ` -- `.
 - Rules in `.oxlintrc.ratchet.json` already have findings in existing code, frozen per file in `scripts/checks/baselines/oxlint-ratchet.json`. New code must not add to them; after fixing existing findings, run `node scripts/checks/ratchet.mjs --update` to lower the baseline.
 - Do not run `pnpm lint:fix`: some oxlint auto-fixes change behavior (for example `||` becomes `??` and `sort()` becomes `toSorted()`).

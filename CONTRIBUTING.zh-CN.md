@@ -50,7 +50,7 @@ pnpm install
 - `pnpm dev:cli` — 开发模式运行 CLI
 - `pnpm test` — 运行测试（vitest）
 - `pnpm typecheck` — TypeScript 检查（注意：会先构建各包）
-- `pnpm lint` — oxlint、agent-core-v2 的 import 边界检查、lint 守卫，以及冻结存量问题的基线检查
+- `pnpm lint` — 注释检查、oxlint、agent-core-v2 的 import 边界检查、lint 守卫，以及冻结存量问题的基线检查
 - `pnpm lint:fix` — 应用 oxlint 的自动修复；其中一些会改变行为（例如把 `||` 改成 `??`），改完要看 diff
 - `pnpm build` — 构建全部包
 

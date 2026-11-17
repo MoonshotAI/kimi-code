@@ -1,6 +1,11 @@
 {
   "invocations": [
     {
+      "run": "node scripts/check-comments.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "AGENTS.md forbids comments in JS/TS code, and this check is what enforces it."
+    },
+    {
       "run": "oxlint --type-aware --deny-warnings",
       "in": "package.json#scripts.lint",
       "why": "This is the lint gate itself. Without it nothing in .oxlintrc.json is enforced, and any extra path argument would narrow what gets linted."
@@ -31,6 +36,11 @@
       "why": "The guards are code too. Their tests keep a broken guard from silently passing everything."
     },
     {
+      "run": "node --test scripts/check-comments.test.mjs",
+      "in": ".github/workflows/ci.yml#jobs.lint",
+      "why": "The comment check is code too. Its tests keep a broken check from silently passing every file."
+    },
+    {
       "run": "pnpm run sherif",
       "in": ".github/workflows/ci.yml#jobs.lint",
       "why": "Sherif keeps dependency versions and manifests consistent across the workspace."
@@ -39,6 +49,11 @@
       "run": "pnpm lint-staged",
       "in": ".husky/pre-commit",
       "why": "The pre-commit hook gives the earliest lint feedback, before CI."
+    },
+    {
+      "run": "node scripts/check-comments.mjs",
+      "in": "package.json#lint-staged",
+      "why": "The pre-commit hook rejects comments in staged files before CI does."
     },
     {
       "run": "oxlint --type-aware --deny-warnings",

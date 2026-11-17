@@ -268,7 +268,7 @@
     {
       // These files import with explicit `.js` specifiers, which oxlint 1.59 did
       // not report. The packages build with tsdown, so the build does not need
-      // the specifiers; the lint restructure decides whether to drop them.
+      // the specifiers; dropping them is left to a separate change.
       "files": [
         "packages/minidb/**",
         "packages/klient/**",
