@@ -7,6 +7,7 @@ import { WebSocket } from 'ws';
 
 import {
   accessTokensPath,
+  approveAccessRequestByUserCode,
   createPersistedAccessToken,
   generateAccessToken,
   hashAccessToken,
@@ -64,7 +65,7 @@ async function waitFor<T>(
   throw new Error('timed out waiting for condition');
 }
 
-describe('KAP access roles and token store', () => {
+describe('KAP access roles, token store, and passwordless handshake', () => {
   let home: string | undefined;
   let server: RunningServer | undefined;
   const sockets: WebSocket[] = [];
@@ -107,7 +108,7 @@ describe('KAP access roles and token store', () => {
   }
 
   it.skipIf(process.platform === 'win32')(
-    'persists only sha256 hashes in 0600 access_tokens.json, enforces viewer / operator / owner boundaries, and closes active WS on revoke',
+    'persists only sha256 hashes in 0600 access_tokens.json and enforces viewer / operator / owner boundaries',
     async () => {
       const { base, wsUrl, ownerToken } = await boot();
       const workDir = await mkdtemp(join(tmpdir(), 'kimi-kap-ws-'));
@@ -247,18 +248,6 @@ describe('KAP access roles and token store', () => {
           viewerConn.frames.find((f) => f['type'] === 'response' && f['request_id'] === 'stop-1'),
         );
         expect(stopReply['code']).toBe(ErrorCode.ACCESS_FORBIDDEN);
-
-        const principals = await listPersistedAccessPrincipals(home!);
-        expect(principals.some((p) => p.id === viewerCreated.principal.id)).toBe(true);
-
-        await revokePersistedAccessPrincipal(home!, viewerCreated.principal.id);
-        const closedInfo = await viewerConn.closed;
-        expect(closedInfo.code).toBe(1008);
-
-        const afterRevokeRes = await fetch(`${base}/api/v1/access/me`, {
-          headers: { Authorization: `Bearer ${viewerCreated.token}` },
-        });
-        expect(afterRevokeRes.status).toBe(401);
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }
@@ -290,6 +279,154 @@ describe('KAP access roles and token store', () => {
       headers: { Authorization: `Bearer ${ephem}` },
     });
     expect(((await meRes.json()) as { data: { role: string } }).data.role).toBe('operator');
+  });
+
+  it('completes passwordless handshake via owner REST resolve and CLI user_code approve, pushing events only to owner WS and disconnecting on revoke', async () => {
+    const prompts: string[] = [];
+    const { base, wsUrl, ownerToken } = await boot({
+      onAccessRequestPrompt: (req) => prompts.push(req.user_code),
+    });
+
+    const viewerSeed = await createPersistedAccessToken(home!, {
+      name: 'observer',
+      role: 'viewer',
+    });
+    const ownerWs = await openWs(wsUrl, ownerToken);
+    const viewerWs = await openWs(wsUrl, viewerSeed.token);
+    sockets.push(ownerWs.ws, viewerWs.ws);
+
+    const crossSiteRes = await fetch(`${base}/api/v1/access/requests`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'https://evil.example.com',
+      },
+      body: JSON.stringify({ client_name: 'Bad Site', role: 'operator' }),
+    });
+    expect(crossSiteRes.status).toBe(403);
+
+    const nullOriginRes = await fetch(`${base}/api/v1/access/requests`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'null',
+      },
+      body: JSON.stringify({ client_name: 'Sandboxed Iframe', role: 'operator' }),
+    });
+    expect(nullOriginRes.status).toBe(403);
+
+    const ansiNameRes = await fetch(`${base}/api/v1/access/requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: 'Bad\u001B[31mName', role: 'operator' }),
+    });
+    expect(((await ansiNameRes.json()) as { code: number }).code).toBe(
+      ErrorCode.VALIDATION_FAILED,
+    );
+
+    const reqRes = await fetch(`${base}/api/v1/access/requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: 'Acme Studio', role: 'operator' }),
+    });
+    expect(reqRes.status).toBe(200);
+    const reqBody = (await reqRes.json()) as {
+      code: number;
+      data: { request_id: string; device_code: string; user_code: string };
+    };
+    expect(reqBody.code).toBe(0);
+    expect(prompts).toContain(reqBody.data.user_code);
+
+    const ownerPush = await waitFor(() =>
+      ownerWs.frames.find(
+        (f) =>
+          f['type'] === 'event.access.request' &&
+          (f['request'] as { request_id?: string })?.request_id === reqBody.data.request_id,
+      ),
+    );
+    expect((ownerPush['request'] as { status: string }).status).toBe('pending');
+    expect(viewerWs.frames.some((f) => f['type'] === 'event.access.request')).toBe(false);
+
+    const pendingExchange = await fetch(
+      `${base}/api/v1/access/requests/${reqBody.data.request_id}:exchange`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: reqBody.data.device_code }),
+      },
+    );
+    expect(((await pendingExchange.json()) as { data: { status: string } }).data.status).toBe(
+      'pending',
+    );
+
+    const wrongDeviceRes = await fetch(
+      `${base}/api/v1/access/requests/${reqBody.data.request_id}:exchange`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: 'kapd_wrong' }),
+      },
+    );
+    expect(wrongDeviceRes.status).toBe(403);
+
+    const cliApproved = await approveAccessRequestByUserCode(
+      home!,
+      reqBody.data.user_code.toLowerCase().replace('-', ''),
+    );
+    expect(cliApproved.ok).toBe(true);
+
+    await waitFor(() =>
+      ownerWs.frames.find(
+        (f) =>
+          f['type'] === 'event.access.request' &&
+          (f['request'] as { request_id?: string; status?: string })?.request_id ===
+            reqBody.data.request_id &&
+          (f['request'] as { status?: string })?.status === 'approved',
+      ),
+    );
+
+    const approvedExchange = await fetch(
+      `${base}/api/v1/access/requests/${reqBody.data.request_id}:exchange`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: reqBody.data.device_code }),
+      },
+    );
+    const exchanged = (await approvedExchange.json()) as {
+      code: number;
+      data: { status: string; token: string; role: string; principal_id: string };
+    };
+    expect(exchanged.code).toBe(0);
+    expect(exchanged.data.status).toBe('approved');
+    expect(exchanged.data.role).toBe('operator');
+
+    const replayExchange = await fetch(
+      `${base}/api/v1/access/requests/${reqBody.data.request_id}:exchange`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: reqBody.data.device_code }),
+      },
+    );
+    expect(((await replayExchange.json()) as { code: number }).code).toBe(
+      ErrorCode.ACCESS_REQUEST_RESOLVED,
+    );
+
+    const clientWs = await openWs(wsUrl, exchanged.data.token);
+    sockets.push(clientWs.ws);
+
+    const principals = await listPersistedAccessPrincipals(home!);
+    expect(principals.some((p) => p.id === exchanged.data.principal_id)).toBe(true);
+
+    await revokePersistedAccessPrincipal(home!, exchanged.data.principal_id);
+    const closedInfo = await clientWs.closed;
+    expect(closedInfo.code).toBe(1008);
+
+    const afterRevokeRes = await fetch(`${base}/api/v1/access/me`, {
+      headers: { Authorization: `Bearer ${exchanged.data.token}` },
+    });
+    expect(afterRevokeRes.status).toBe(401);
   });
 
   it('blocks non-owner tokens from SSH host routes, host proxy, hosts=include fanout, and config.hosts', async () => {

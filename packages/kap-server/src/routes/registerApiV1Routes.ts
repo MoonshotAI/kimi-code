@@ -85,7 +85,7 @@ export async function registerApiV1Routes(
   await app.register(
     async (apiV1) => {
       const accessTokensEnabled =
-        opts.access === undefined || opts.access.persistEnabled !== false;
+        opts.access === undefined || opts.access.handshakeManager !== undefined;
       registerHealthRoute(apiV1, { accessTokensEnabled });
 
       if (opts.debugEndpoints === true) {

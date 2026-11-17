@@ -779,9 +779,11 @@ export class SessionEventBroadcaster {
       ...fields,
       event_created_at: createdAt,
     } as EventEnvelope;
+    const ownerOnly = event.type === 'event.access.request';
     let redactedEnvelope: EventEnvelope | undefined;
     for (const target of this.globalTargets) {
       const isOwner = (target.role ?? 'owner') === 'owner';
+      if (ownerOnly && !isOwner) continue;
       let payload = ownerEnvelope;
       if (!isOwner && event.type === 'config') {
         redactedEnvelope ??= {

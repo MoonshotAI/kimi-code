@@ -12,18 +12,27 @@ export {
 export { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './services/hosts/hostProtocol';
 export {
   ACCESS_TOKEN_PREFIX,
+  accessRequestsDir,
   accessTokensPath,
+  approveAccessRequestByUserCode,
+  createAccessHandshakeManager,
   createAccessTokenStore,
   createPersistedAccessToken,
   generateAccessToken,
   hashAccessToken,
   hasMinimumRole,
   listPersistedAccessPrincipals,
+  normalizeUserCode,
   revokePersistedAccessPrincipal,
 } from './services/auth/accessTokenStore';
 export type {
+  AccessHandshakeManager,
+  AccessHandshakeManagerOptions,
   AccessPrincipal,
   AccessPrincipalView,
+  AccessRequestExchangeResult,
+  AccessRequestStatus,
+  AccessRequestView,
   AccessRole,
   AccessTokenRecord,
   AccessTokenStore,

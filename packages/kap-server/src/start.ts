@@ -98,8 +98,10 @@ import {
 } from '@moonshot-ai/remote-control';
 
 import {
+  createAccessHandshakeManager,
   createAccessTokenStore,
   type AccessPrincipal,
+  type AccessRequestView,
   type EphemeralTokenSpec,
 } from './services/auth/accessTokenStore';
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
@@ -135,6 +137,7 @@ export interface ServerStartOptions {
   readonly enableAccessTokens?: boolean;
   readonly disableOwnerTokenStore?: boolean;
   readonly ephemeralTokens?: readonly EphemeralTokenSpec[];
+  readonly onAccessRequestPrompt?: (request: AccessRequestView) => void;
   readonly disableAuth?: boolean;
   readonly webTitle?: string;
   readonly rpcToken?: string;
@@ -242,6 +245,18 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const resolvePrincipal = createPrincipalResolver(authTokenService, {
     rpcToken: opts.rpcToken,
     accessTokenStore,
+  });
+  const accessRequestLimiter = createAuthFailureLimiter({
+    maxFailures: 10,
+    windowMs: 60_000,
+    banMs: 60_000,
+    logger,
+  });
+  const accessExchangeLimiter = createAuthFailureLimiter({
+    maxFailures: 15,
+    windowMs: 60_000,
+    banMs: 60_000,
+    logger,
   });
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
@@ -410,7 +425,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
     capabilityInstallSubscription.dispose();
+    accessHandshakeManager?.dispose();
     accessTokenStore.dispose();
+    accessRequestLimiter.dispose();
+    accessExchangeLimiter.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
     if (hostNotifyTimer !== undefined) {
@@ -489,6 +507,19 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }, 10);
     hostNotifyTimer.unref?.();
   };
+  const accessHandshakeManager = accessTokensPersisted
+    ? createAccessHandshakeManager({
+        homeDir,
+        serverId: registration.serverId,
+        tokenStore: accessTokenStore,
+        onRequestEvent: (request) => {
+          broadcaster.sendOwnerEvent({
+            type: 'event.access.request',
+            request,
+          });
+        },
+      })
+    : undefined;
 
   const configService = core.accessor.get(IConfigService);
   const publishConfigWarnings = (diagnostics: readonly ConfigDiagnostic[]): void => {
@@ -573,7 +604,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     enableShutdown,
     access: {
       accessTokenStore,
-      persistEnabled: accessTokensPersisted,
+      handshakeManager: accessHandshakeManager,
+      allowedOrigins,
+      requestLimiter: accessRequestLimiter,
+      exchangeLimiter: accessExchangeLimiter,
+      onHandshakePrompt: opts.onAccessRequestPrompt,
     },
     remoteControl: {
       service: remoteControlManager,
@@ -601,6 +636,24 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const wssV1 = registerWsV1(core, {
     registry: connectionRegistry,
     broadcaster,
+    onOwnerConnected: (conn) => {
+      if (accessHandshakeManager === undefined) return;
+      void accessHandshakeManager
+        .listPendingRequests()
+        .then((pending) => {
+          for (const request of pending) {
+            conn.send(
+              {
+                type: 'event.access.request',
+                request,
+                event_created_at: new Date().toISOString(),
+              },
+              'immediate',
+            );
+          }
+        })
+        .catch(() => {});
+    },
   });
   const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
 

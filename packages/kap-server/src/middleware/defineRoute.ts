@@ -103,7 +103,7 @@ export interface DefineRouteOptions<
   operationId?: string;
   consumes?: string[];
   hide?: boolean;
-  minRole: AccessRole;
+  minRole: AccessRole | 'public';
 }
 
 export interface RouteDefinition<
@@ -140,7 +140,7 @@ export function defineRoute<
   const preHandler: unknown[] = [];
 
   const effectiveRole = options.minRole;
-  if (effectiveRole !== 'viewer') {
+  if (effectiveRole !== 'public' && effectiveRole !== 'viewer') {
     preHandler.push(requireRole(effectiveRole));
   }
 

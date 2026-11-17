@@ -1492,8 +1492,11 @@ describe('kimi web --json and kimi access CLI', () => {
     ).rejects.toThrow(/--json cannot be combined with --dangerous-bypass-auth/);
   });
 
-  it('manages tokens via kimi access create/list/revoke', async () => {
+  it('manages tokens and approves pending requests via kimi access create/list/revoke/approve', async () => {
     const { registerAccessCommand } = await import('#/cli/sub/access');
+    const { createAccessHandshakeManager, createAccessTokenStore } = await import(
+      '@moonshot-ai/kap-server'
+    );
     let stdout = '';
     let stderr = '';
     const program = new Command('kimi').exitOverride();
@@ -1541,5 +1544,29 @@ describe('kimi web --json and kimi access CLI', () => {
     stdout = '';
     await program.parseAsync(['node', 'kimi', 'access', 'revoke', principalId]);
     expect(stdout).toContain(`Revoked access token ${principalId}`);
+
+    const store = createAccessTokenStore({ homeDir });
+    const handshake = createAccessHandshakeManager({
+      homeDir,
+      serverId: 'srv_test',
+      tokenStore: store,
+    });
+    try {
+      const req = await handshake.createRequest({
+        clientName: 'Local Bench',
+        role: 'operator',
+      });
+      stdout = '';
+      await program.parseAsync(['node', 'kimi', 'access', 'approve', req.user_code]);
+      expect(stdout).toContain('Approved operator access for "Local Bench"');
+      const exchanged = await handshake.exchangeRequest(req.request_id, req.device_code);
+      expect(exchanged.ok).toBe(true);
+      if (exchanged.ok) {
+        expect(exchanged.result.status).toBe('approved');
+      }
+    } finally {
+      handshake.dispose();
+      store.dispose();
+    }
   });
 });

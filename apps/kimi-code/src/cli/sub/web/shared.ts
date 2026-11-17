@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type {
+  AccessRequestView,
   EphemeralTokenSpec,
   ServerLogLevel,
 } from '@moonshot-ai/kap-server';
@@ -57,6 +58,7 @@ export interface ParsedServerOptions {
   enableAccessTokens?: boolean;
   ephemeralTokens?: readonly EphemeralTokenSpec[];
   logToStderr?: boolean;
+  onAccessRequestPrompt?: (request: AccessRequestView) => void;
 }
 
 export interface ServerCliOptions {

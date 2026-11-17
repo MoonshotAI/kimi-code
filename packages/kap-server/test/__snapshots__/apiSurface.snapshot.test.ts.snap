@@ -294,6 +294,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/access/requests",
+    ],
+    [
+      "POST",
+      "/api/v1/access/requests/{tail}",
+    ],
+    [
+      "POST",
       "/api/v1/capabilities/{tail}",
     ],
     [

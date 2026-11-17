@@ -1,4 +1,5 @@
 import {
+  approveAccessRequestByUserCode,
   createPersistedAccessToken,
   listPersistedAccessPrincipals,
   revokePersistedAccessPrincipal,
@@ -98,13 +99,40 @@ export async function handleAccessRevoke(
   deps.stdout.write(`Revoked access token ${revoked.id} (${sanitizeTerminalText(revoked.name)}).\n`);
 }
 
+export async function handleAccessApprove(
+  deps: AccessCommandDeps,
+  userCode: string,
+  opts: { readonly json: boolean },
+): Promise<void> {
+  const outcome = await approveAccessRequestByUserCode(deps.homeDir(), userCode);
+  if (!outcome.ok) {
+    const safeCode = sanitizeTerminalText(userCode);
+    if (outcome.reason === 'expired') {
+      throw new Error(`Access request for code "${safeCode}" has expired.`);
+    }
+    if (outcome.reason === 'already_resolved') {
+      throw new Error(`Access request for code "${safeCode}" has already been resolved.`);
+    }
+    throw new Error(`No pending access request found for code "${safeCode}".`);
+  }
+  if (opts.json) {
+    deps.stdout.write(
+      `${JSON.stringify({ request: outcome.request, principal: outcome.principal }, null, 2)}\n`,
+    );
+    return;
+  }
+  deps.stdout.write(
+    `Approved ${outcome.principal.role} access for "${sanitizeTerminalText(outcome.principal.name)}" (${outcome.principal.id}).\n`,
+  );
+}
+
 export function registerAccessCommand(
   parent: Command,
   deps?: Partial<AccessCommandDeps>,
 ): void {
   const access = parent
     .command('access')
-    .description('Manage external KAP client access tokens.');
+    .description('Manage external KAP client access tokens and approve local connection requests.');
 
   access
     .command('create')
@@ -153,6 +181,21 @@ export function registerAccessCommand(
       const resolved = resolveAccessDeps(deps);
       try {
         await handleAccessRevoke(resolved, id, { json: options.json === true });
+      } catch (error) {
+        resolved.stderr.write(`${errorMessage(error)}\n`);
+        resolved.exit(1);
+      }
+    });
+
+  access
+    .command('approve')
+    .description('Approve a pending local client access request by user verification code.')
+    .argument('<user_code>', 'Verification code displayed by the client or server.')
+    .option('--json', 'Emit JSON output.', false)
+    .action(async (userCode: string, options: { json?: boolean }) => {
+      const resolved = resolveAccessDeps(deps);
+      try {
+        await handleAccessApprove(resolved, userCode, { json: options.json === true });
       } catch (error) {
         resolved.stderr.write(`${errorMessage(error)}\n`);
         resolved.exit(1);

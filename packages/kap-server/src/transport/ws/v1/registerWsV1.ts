@@ -14,6 +14,7 @@ export const WS_PATH = '/api/v1/ws';
 export interface RegisterWsV1Options {
   readonly registry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
+  readonly onOwnerConnected?: (target: WsConnectionV1) => void;
   readonly flushIntervalMs?: number;
   readonly maxBatchSize?: number;
   readonly highWaterMarkBytes?: number;
@@ -40,6 +41,9 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
       highWaterMarkBytes: opts.highWaterMarkBytes,
       heartbeatIntervalMs: opts.heartbeatIntervalMs,
     });
+    if (conn.role === 'owner') {
+      opts.onOwnerConnected?.(conn);
+    }
     socket.on('close', () => registry.remove(conn.id));
   });
 

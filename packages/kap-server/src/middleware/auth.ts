@@ -69,6 +69,12 @@ function decodeRequestPath(rawUrl: string): string | null {
   }
 }
 
+function isUnauthenticatedAccessRoute(method: string, path: string): boolean {
+  if (method !== 'POST') return false;
+  if (path === '/api/v1/access/requests') return true;
+  return /^\/api\/v1\/access\/requests\/areq_[0-9A-HJKMNP-TV-Z]{26}:exchange$/.test(path);
+}
+
 export function defaultIsBypassed(req: FastifyRequest): boolean {
   if (req.method === 'OPTIONS') {
     return true;
@@ -78,6 +84,9 @@ export function defaultIsBypassed(req: FastifyRequest): boolean {
     return false;
   }
   if (req.method === 'GET' && path === '/api/v1/healthz') {
+    return true;
+  }
+  if (isUnauthenticatedAccessRoute(req.method, path)) {
     return true;
   }
   const isApi = path.startsWith('/api/');

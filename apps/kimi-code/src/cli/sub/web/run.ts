@@ -481,6 +481,13 @@ async function runServerInProcess(
     disableOwnerTokenStore: options.disableOwnerTokenStore,
     enableAccessTokens: options.enableAccessTokens,
     ephemeralTokens: options.ephemeralTokens,
+    onAccessRequestPrompt:
+      options.onAccessRequestPrompt ??
+      (options.logToStderr === true
+        ? undefined
+        : (request) => {
+            process.stderr.write(`Run: kimi access approve ${request.user_code}\n`);
+          }),
     webTitle: options.webTitle,
     socketPath: options.socketPath,
     managedBy: options.managedBy,
