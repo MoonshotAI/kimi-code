@@ -1907,6 +1907,12 @@ describe('FileSessionIndex (read model)', () => {
       seq: 4,
       schemaVersion: 1,
     });
+
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+    await store.reprojectNow();
+    const third = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(third.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+    expect(scans).toBe(3);
   });
 
   it('reconciliation reads only the journaled sessions and refreshes the checkpoint', async () => {

@@ -1286,6 +1286,19 @@ describe('Agent loop', () => {
     }
   });
 
+  it('returns from settled while quiescence holds new admissions', async () => {
+    const lease = loop.tryAcquireQuiescence();
+    expect(lease).toBeDefined();
+    const held = submitTurn(loop, 'held').turn;
+    await loop.settled();
+    expect(held.state).toBe('queued');
+    expect(loop.snapshot()).toMatchObject({ state: 'idle', hasPendingRequests: true });
+
+    ctx.mockNextResponse({ type: 'text', text: 'after release' });
+    lease?.dispose();
+    await expect(held.result).resolves.toMatchObject({ type: 'completed' });
+  });
+
   it('can abort an admission while quiescence holds it', async () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();

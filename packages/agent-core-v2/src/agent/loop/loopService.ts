@@ -193,6 +193,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private initialized = false;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
+  private closing = false;
   private readonly batchStartingHooks = new Map<string, HookRegistration>();
   private readonly journal: LoopJournal;
   private readonly prompts: AgentPromptProjection;
@@ -919,25 +920,35 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   close(): Promise<void> {
     if (this.closePromise !== undefined) return this.closePromise;
-    this.disposing = true;
-    const reason = abortError('Agent loop disposed');
-    this.prompts.close();
-    this.notifications.close();
-    this.pendingSubmissions.length = 0;
-    this.pendingNotifications.length = 0;
-    this.turns.close(reason);
+    this.closing = true;
     this.closePromise = (async () => {
+      const waitForStop = this.settlementTasks.size > 0;
       try {
-        await this.taskReconciliation;
-        await this.settleTrackedTasks();
+        if (waitForStop) {
+          await this.taskReconciliation;
+          await this.settleTrackedTasks();
+          if (this.hasPendingRequests()) await this.settled();
+        }
       } finally {
-        this.loop?.flushReminders();
-        await this.loop?.close();
-        await this.turns.drain();
-        await this.journal.settled();
-        await this.wire.drainPersisted();
-        await this.wire.flush();
-        this.maybeSettle();
+        this.disposing = true;
+        const reason = abortError('Agent loop disposed');
+        this.prompts.close();
+        this.notifications.close();
+        this.pendingSubmissions.length = 0;
+        this.pendingNotifications.length = 0;
+        this.turns.close(reason);
+        try {
+          await this.taskReconciliation;
+          await this.settleTrackedTasks();
+        } finally {
+          this.loop?.flushReminders();
+          await this.loop?.close();
+          await this.turns.drain();
+          await this.journal.settled();
+          await this.wire.drainPersisted();
+          await this.wire.flush();
+          this.maybeSettle();
+        }
       }
     })();
     return this.closePromise;
@@ -1018,6 +1029,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private admit(input: UserMessage): { readonly id: string; readonly entry: UserMessage } {
     if (this.disposing) throw abortError('Agent loop disposed');
+    const origin = (input.attributes?.origin ?? (input as ContextMessage).origin) as PromptOrigin | undefined;
+    const stopHook = origin?.kind === 'system_trigger' && origin.name === 'stop_hook';
+    if (this.closing && !stopHook) throw abortError('Agent loop disposed');
     this.runGate.begin();
     const snapshot = this.snapshot();
     return this.prompts.admit(input, snapshot.state === 'running' || snapshot.paused || snapshot.queue.length > 0);
@@ -1401,7 +1415,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await loop.waitForIdle();
       await this.turns.drain();
       await this.settleTrackedTasks();
-      if (this.loop !== loop || this.hasPendingRequests()) continue;
+      if (this.loop !== loop) continue;
+      if (this.quiescenceDepth === 0 && this.historySnapshotDepth === 0 && this.hasPendingRequests()) {
+        await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
+        continue;
+      }
       await this.wire.flush();
       return this.turns.lastResult;
     }

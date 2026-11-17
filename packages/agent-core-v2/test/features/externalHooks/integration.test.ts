@@ -461,13 +461,14 @@ describe('IExternalHooksRunnerService integration', () => {
           if (event !== 'Stop') return undefined;
           stopCalls += 1;
           await stopGate;
-          return undefined;
+          return { block: true, reason: 'continue from Stop before close' };
         },
       },
     });
     const loop = ctx.get(IAgentLoopService);
     try {
       ctx.mockNextResponse({ type: 'text', text: 'answer' });
+      ctx.mockNextResponse({ type: 'text', text: 'continued answer before close' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'ordinary turn' }] });
       await vi.waitFor(() => {
         expect(stopCalls).toBe(1);
@@ -481,6 +482,19 @@ describe('IExternalHooksRunnerService integration', () => {
       releaseStop?.();
       await closing;
       expect(closed).toBe(true);
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(ctx.contextData().history).toContainEqual(
+        expect.objectContaining({
+          content: [{ type: 'text', text: 'continue from Stop before close' }],
+          origin: { kind: 'system_trigger', name: 'stop_hook' },
+        }),
+      );
+      expect(ctx.contextData().history).toContainEqual(
+        expect.objectContaining({
+          role: 'assistant',
+          content: [{ type: 'text', text: 'continued answer before close' }],
+        }),
+      );
     } finally {
       releaseStop?.();
       await loop.close();
