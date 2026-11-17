@@ -50,7 +50,7 @@ Useful scripts:
 - `pnpm dev:cli` — run the CLI in dev mode
 - `pnpm test` — run tests (vitest)
 - `pnpm typecheck` — TypeScript check (note: builds packages first)
-- `pnpm lint` — oxlint (errors only), the agent-core-v2 import-boundary check, and the lint guards
+- `pnpm lint` — oxlint, the agent-core-v2 import-boundary check, the lint guards, and the ratchet that freezes rules with existing findings
 - `pnpm lint:fix` — apply oxlint auto-fixes; some of them change behavior (for example `||` → `??`), so review the diff
 - `pnpm build` — build all packages
 
