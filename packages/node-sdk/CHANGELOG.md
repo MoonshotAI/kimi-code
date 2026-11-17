@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.23.2
+
+### Patch Changes
+
+- [#4982](https://github.com/MoonshotAI/kimi-code/pull/4982) [`9d7f9af`](https://github.com/MoonshotAI/kimi-code/commit/9d7f9af9fba7d1282873a31ec8486f9ea956c591) Thanks [@sailist](https://github.com/sailist)! - 修复了若干已知的问题。
+
 ## 0.23.1
 
 ### Patch Changes
