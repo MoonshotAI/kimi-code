@@ -1,7 +1,7 @@
 {
   "invocations": [
     {
-      "run": "oxlint --type-aware --quiet",
+      "run": "oxlint --type-aware --deny-warnings",
       "in": "package.json#scripts.lint",
       "why": "This is the lint gate itself. Without it nothing in .oxlintrc.json is enforced, and any extra path argument would narrow what gets linted."
     },
@@ -36,7 +36,7 @@
       "why": "The pre-commit hook gives the earliest lint feedback, before CI."
     },
     {
-      "run": "oxlint --type-aware --quiet",
+      "run": "oxlint --type-aware --deny-warnings",
       "in": "package.json#lint-staged",
       "why": "The pre-commit hook lints staged files with the same rules CI enforces."
     },
