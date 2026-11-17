@@ -924,7 +924,7 @@ describe('AgentMediaResolverService image strategy', () => {
 });
 
 describe('AgentMediaResolverService image upload', () => {
-  it('uploads an MCP screenshot once and sends its ms reference in both Kimi requests', async () => {
+  it('retries a missing uploaded screenshot with inline base64 and preserves later cache reuse', async () => {
     const storage = new InMemoryStorageService();
     const mediaStore = new SessionMediaStoreService(
       makeSessionContext({ sessionId: 's1', workspaceId: 'w1', sessionDir, sessionScope: 's1', cwd: sessionDir }),
@@ -944,6 +944,7 @@ describe('AgentMediaResolverService image upload', () => {
     ];
     const urls: string[] = [];
     const bodies: string[] = [];
+    const recoveryEvents: Array<{ strategy: string; action: string }> = [];
     const mockFetch: typeof fetch = async (input, init) => {
       const httpRequest = new Request(input, init);
       const path = new URL(httpRequest.url).pathname;
@@ -961,6 +962,12 @@ describe('AgentMediaResolverService image upload', () => {
       }
       expect(path).toBe('/v1/chat/completions');
       bodies.push(await httpRequest.text());
+      if (bodies.length === 1 || bodies.at(-1)!.includes('ms://unrecoverable')) {
+        return Response.json(
+          { error: { message: 'The requested resource was not found', type: 'resource_not_found_error' } },
+          { status: 404 },
+        );
+      }
       return Response.json({
         id: 'completion_1',
         model: 'stub',
@@ -982,25 +989,51 @@ describe('AgentMediaResolverService image upload', () => {
       const events = generateModel(routed, { systemPrompt: '', messages: history }, undefined, undefined, {
         recoveries: [media.recovery],
         resolvers: [media.toolResolver, media.resolver],
+        onRecovery: (event) => {
+          recoveryEvents.push({ strategy: event.strategy, action: event.action });
+        },
       });
       const eventTypes: string[] = [];
       for await (const event of events) eventTypes.push(event.type);
       expect(eventTypes).toContain('finish');
     }
-    expect(urls).toEqual(['/v1/files', '/v1/chat/completions', '/v1/chat/completions']);
-    for (const body of bodies) {
-      const { messages: wireMessages } = JSON.parse(body) as { messages: unknown[] };
-      expect(wireMessages).toContainEqual(expect.objectContaining({
-        role: 'tool',
-        tool_call_id: 'call_1',
-        content: expect.arrayContaining([{
-          type: 'image_url',
-          image_url: { url: 'ms://uploaded-screenshot', id: 'uploaded-screenshot' },
-        }]),
-      }));
-      expect(body).not.toContain('data:image/');
-      expect(body).not.toContain(screenshot.toString('base64'));
-    }
+    expect(urls).toEqual([
+      '/v1/files',
+      '/v1/chat/completions',
+      '/v1/chat/completions',
+      '/v1/chat/completions',
+    ]);
+    expect(bodies).toHaveLength(3);
+    expect(bodies[0]).toContain('ms://uploaded-screenshot');
+    expect(bodies[0]).not.toContain('data:image/');
+    expect(bodies[1]).toContain(`data:image/png;base64,${screenshot.toString('base64')}`);
+    expect(bodies[1]).not.toContain('ms://uploaded-screenshot');
+    expect(bodies[2]).toContain('ms://uploaded-screenshot');
+    expect(bodies[2]).not.toContain('data:image/');
+    expect(recoveryEvents).toEqual([{ strategy: 'media-resource-not-found', action: 'base64' }]);
+
+    await expect(
+      (async () => {
+        const events = generateModel(routed, {
+          systemPrompt: '',
+          messages: [{
+            role: 'user',
+            content: [{
+              type: 'image_url',
+              imageUrl: { url: 'ms://unrecoverable', id: 'unrecoverable' },
+            }],
+          }],
+        }, undefined, undefined, {
+          recoveries: [media.recovery],
+          resolvers: [media.toolResolver, media.resolver],
+        });
+        for await (const _event of events) {}
+      })(),
+    ).rejects.toThrow('The requested resource was not found');
+    expect(bodies).toHaveLength(4);
+    expect(bodies[3]).toContain('ms://unrecoverable');
+    expect(bodies[3]).not.toContain('data:image/');
+    expect(recoveryEvents).toHaveLength(1);
   });
 
   it('uploads an image once and serves later resolves from the cached reference', async () => {

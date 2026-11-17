@@ -11,6 +11,7 @@ export interface IAgentMediaResolverService {
     model: Model,
     requester: InitializedLlmRequester,
     signal?: AbortSignal,
+    forceInline?: boolean,
   ): Promise<readonly Message[]>;
   displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>>;
 }
