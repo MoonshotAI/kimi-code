@@ -122,7 +122,7 @@ worker 与 Agent、AgentSwarm 使用相同的模型选择规则：未配置 `[se
 - "让 worker agent-docs 使用 smart/slow。"
 - "让审查 feat/build-gemm 的 reviewer 使用 smart/slow。"
 
-可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。模型池有两个及以上条目时才提供 `model` 参数。
+可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。配置模型池后即提供 `model` 参数（含单条目池），reviewer 可用它显式沿用池中模型。
 
 如果希望控制 token 开支，可以将池默认值设为成本较低的模型；worker 默认使用它，单次派生时显式指定池中别名即可覆盖——这对 worker 和 reviewer 都适用。
 

@@ -34,9 +34,9 @@ import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
-  buildSubagentModelDescriptions,
-  exposesSubagentModelChoice,
+  buildSubagentPoolModelDescriptions,
   resolveSubagentBinding,
+  resolveSubagentModelPool,
   resolveSubagentThinking,
   resolveSubagentTimeoutMs,
   stripSubagentModelParameter,
@@ -95,14 +95,14 @@ export class TowerSpawnTool implements ITowerSpawnTool {
   readonly name = 'TowerSpawn' as const;
 
   get description(): string {
-    const modelLines = buildSubagentModelDescriptions(this.config);
+    const modelLines = buildSubagentPoolModelDescriptions(this.config);
     return modelLines === undefined ? DESCRIPTION : `${DESCRIPTION}\n\n${modelLines}`;
   }
 
   get parameters(): Record<string, unknown> {
-    return exposesSubagentModelChoice(this.config)
-      ? TOWER_SPAWN_PARAMETERS
-      : TOWER_SPAWN_PARAMETERS_NO_MODEL;
+    return resolveSubagentModelPool(this.config) === undefined
+      ? TOWER_SPAWN_PARAMETERS_NO_MODEL
+      : TOWER_SPAWN_PARAMETERS;
   }
 
   private readonly callerAgentId: string;

@@ -122,7 +122,7 @@ You can explicitly choose the model for an individual new spawn in a normal mess
 - "Spawn the worker agent-docs with smart/slow."
 - "Use smart/slow for the reviewer of feat/build-gemm."
 
-The only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); aliases that exist only in `[models]` are not accepted. The `model` parameter is available only when the pool has two or more entries.
+The only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); aliases that exist only in `[models]` are not accepted. The `model` parameter is available whenever a pool is configured, including single-entry pools, so a reviewer can explicitly keep the pool model.
 
 To control token costs, set the pool default to a cheaper model; workers use it by default, and an explicit pool alias overrides the default for one spawn — for workers and reviewers alike.
 
