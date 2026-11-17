@@ -520,6 +520,61 @@ describe('kimi-webbridge entry', () => {
     expect(await readFile(binPath, 'utf8')).toBe('old-bin');
   });
 
+  it('continues a confirmed Windows update after the daemon has already stopped', async () => {
+    const userHome = path.join(root, 'user-home');
+    await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge.exe');
+    await writeFile(binPath, 'old-bin');
+    const plugins = fakePlugins([
+      { id: 'kimi-browser-extension', enabled: true, state: 'ok', version: '1.11.3' },
+    ]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [
+        'error',
+        { running: false },
+        { running: true, version: 'v1.11.4', extension_connected: true },
+      ],
+      binary: new TextEncoder().encode('latest-bin'),
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({ platform: 'win32', arch: 'x64', plugins: plugins.service, hostProcess: host.service, fetchImpl }),
+    );
+    const reports: string[] = [];
+
+    await entry.install((step) => reports.push(step), { stopRunningProcesses: true });
+
+    expect(reports[0]).toBe('download');
+    expect(host.calls.map((call) => `${call.command} ${call.args.join(' ')}`)).toEqual([
+      `${binPath} start`,
+    ]);
+    expect(await readFile(binPath, 'utf8')).toBe('latest-bin');
+  });
+
+  it('installs a missing managed Windows binary without stopping an external daemon', async () => {
+    const userHome = path.join(root, 'user-home');
+    const binPath = path.join(userHome, '.kimi-webbridge', 'bin', 'kimi-webbridge.exe');
+    const plugins = fakePlugins([
+      { id: 'kimi-browser-extension', enabled: true, state: 'ok', version: '1.11.3' },
+    ]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [
+        { running: true, version: 'v1.11.3', extension_connected: true },
+        { running: true, version: 'v1.11.3', extension_connected: true },
+      ],
+      binary: new TextEncoder().encode('latest-bin'),
+    });
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({ platform: 'win32', arch: 'x64', plugins: plugins.service, hostProcess: host.service, fetchImpl }),
+    );
+
+    await entry.install(() => {}, { stopRunningProcesses: true });
+
+    expect(host.calls).toEqual([]);
+    expect(await readFile(binPath, 'utf8')).toBe('latest-bin');
+  });
+
   it('stops and restarts a running Windows daemon around a confirmed binary update', async () => {
     const userHome = path.join(root, 'user-home');
     await mkdir(path.join(userHome, '.kimi-webbridge', 'bin'), { recursive: true });

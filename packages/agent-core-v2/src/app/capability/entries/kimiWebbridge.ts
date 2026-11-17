@@ -261,9 +261,15 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       .every((step) => step.state === 'ok');
     const standaloneSkillMigrationPending =
       stepStates.get('standalone-skill-migration') === 'missing';
-    const installNewBinary = stepStates.get('daemon-binary') !== 'ok' || readyBefore;
+    const installNewBinary =
+      stepStates.get('daemon-binary') !== 'ok' ||
+      readyBefore ||
+      (ctx.platform === 'win32' && options.stopRunningProcesses === true);
     const stopRunningDaemon =
-      ctx.platform === 'win32' && installNewBinary && stepStates.get('daemon') === 'ok';
+      ctx.platform === 'win32' &&
+      installNewBinary &&
+      stepStates.get('daemon') === 'ok' &&
+      (await exists(binPath));
     if (stopRunningDaemon && options.stopRunningProcesses !== true) {
       throw new Error2(
         CapabilityErrors.codes.CAPABILITY_PROCESSES_RUNNING,
