@@ -1,7 +1,7 @@
 import type { Message, ToolDescription, ContentPart } from '#/llm/message';
 import { providerImagePolicy } from '#/llm/protocol/kit/media';
 import { requestIdFromHeader } from '#/llm/protocol/kit/http';
-import type { Decoder, LlmErrorDiagnosticsInput } from '#/llm/protocol/protocol';
+import type { LlmErrorDiagnosticsInput } from '#/llm/protocol/protocol';
 import type { LlmModelSpec, ThinkingRequestOptions } from '#/llm/request';
 import { llmStatusErrorMessage, type LlmRemoteErrorMessage } from '#/llm/response';
 import {
@@ -17,8 +17,6 @@ import {
   type OpenAINativeMessage,
   type OpenAINativeToolCall,
   type OpenAILowerContext,
-  type OpenAIRawChunk,
-  type OpenAIRawUsage,
 } from '#/llm/builtin/protocol/openai/index';
 import {
   openAIResponsesModelLegality,
@@ -121,18 +119,6 @@ function applyKimiMessageExtras(
   return native;
 }
 
-function hoistKimiUsage(chunk: OpenAIRawChunk): OpenAIRawChunk {
-  if (chunk.usage !== null && chunk.usage !== undefined && typeof chunk.usage === 'object') {
-    return chunk;
-  }
-  const firstChoice = chunk.choices?.[0] as { usage?: OpenAIRawUsage | null } | undefined;
-  const choiceUsage = firstChoice?.usage;
-  if (choiceUsage === null || choiceUsage === undefined || typeof choiceUsage !== 'object') {
-    return chunk;
-  }
-  return { ...chunk, usage: choiceUsage };
-}
-
 const kimiImageMimes = providerImagePolicy('kimi').acceptedMimes;
 
 function withKimiErrors(base: {
@@ -173,13 +159,6 @@ export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
       toolMessageConversion: module.options?.toolMessageConversion ?? 'keep_parts',
     };
     return lowerOpenAIMessage(message, ctx).map((native) => applyKimiMessageExtras(message, native));
-  },
-  decoder: (module, sink): Decoder<OpenAIRawChunk> => {
-    const inner = base.decoder(module, sink);
-    return {
-      push: (chunk) => inner.push(hoistKimiUsage(chunk)),
-      end: () => inner.end(),
-    };
   },
   flatten: (native, module) => {
     const { extra_body: extraBody, ...extras } = module.options?.extras ?? {};
