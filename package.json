@@ -53,7 +53,6 @@
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [
       "node scripts/check-comments.mjs",
-      "oxlint --fix --quiet",
       "oxlint --type-aware --quiet"
     ],
     ".commentignore": "node scripts/check-comments.mjs"
