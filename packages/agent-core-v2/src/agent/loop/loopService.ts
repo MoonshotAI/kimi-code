@@ -927,7 +927,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         if (waitForStop) {
           await this.taskReconciliation;
           await this.settleTrackedTasks();
-          if (this.hasPendingRequests()) await this.settled();
+          if (this.hasPendingRequests()) {
+            await this.loop?.waitForIdle();
+            await this.turns.drain();
+          }
         }
       } finally {
         this.disposing = true;
@@ -1414,9 +1417,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       await loop.waitForIdle();
       await this.turns.drain();
+      const pendingBeforeSettlement = this.hasPendingRequests();
       await this.settleTrackedTasks();
       if (this.loop !== loop) continue;
-      if (this.quiescenceDepth === 0 && this.historySnapshotDepth === 0 && this.hasPendingRequests()) {
+      if (!pendingBeforeSettlement && this.quiescenceDepth === 0 && this.historySnapshotDepth === 0 && this.hasPendingRequests()) {
         await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
         continue;
       }
