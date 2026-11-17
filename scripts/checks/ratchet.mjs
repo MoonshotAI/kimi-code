@@ -1,0 +1,215 @@
+#!/usr/bin/env node
+
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+
+const ROOT = resolve(import.meta.dirname, '../..');
+const RATCHET_FILE = 'scripts/checks/ratchet.mjs';
+const MAIN_CONFIG = '.oxlintrc.json';
+const RATCHET_CONFIG = '.oxlintrc.ratchet.json';
+const BASELINE_FILE = 'scripts/checks/baselines/oxlint-ratchet.json';
+const UNUSED_DIRECTIVE = /^Unused (?:eslint|oxlint)-disable directive/;
+
+export function ruleOf(code) {
+  const match = /^([\w-]+)\((.+)\)$/.exec(code ?? '');
+  return match === null ? undefined : `${match[1]}/${match[2]}`;
+}
+
+export function ratchetRules(config) {
+  const rules = new Set();
+  for (const entries of [config.rules, ...(config.overrides ?? []).map((override) => override.rules)]) {
+    for (const [rule, setting] of Object.entries(entries ?? {})) {
+      const level = Array.isArray(setting) ? setting[0] : setting;
+      if (level !== 'off' && level !== 'allow') rules.add(rule);
+    }
+  }
+  return rules;
+}
+
+export function countFindings(diagnostics, rules) {
+  const counts = {};
+  const unused = [];
+  for (const diagnostic of diagnostics) {
+    if (UNUSED_DIRECTIVE.test(diagnostic.message)) {
+      unused.push(diagnostic);
+      continue;
+    }
+    const rule = ruleOf(diagnostic.code);
+    if (rule === undefined || !rules.has(rule)) continue;
+    counts[rule] ??= {};
+    counts[rule][diagnostic.filename] = (counts[rule][diagnostic.filename] ?? 0) + 1;
+  }
+  return { counts, unused };
+}
+
+export function compareCounts(baseline, current) {
+  const changes = [];
+  for (const rule of new Set([...Object.keys(baseline), ...Object.keys(current)])) {
+    const before = baseline[rule] ?? {};
+    const after = current[rule] ?? {};
+    for (const file of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      const from = before[file] ?? 0;
+      const to = after[file] ?? 0;
+      if (to > from) changes.push({ kind: 'added', rule, file, from, to });
+      if (to < from) changes.push({ kind: 'removed', rule, file, from, to });
+    }
+  }
+  return changes.toSorted((a, b) => {
+    for (const key of ['kind', 'rule', 'file']) {
+      const order = a[key].localeCompare(b[key]);
+      if (order !== 0) return order;
+    }
+    return 0;
+  });
+}
+
+function sortCounts(counts) {
+  return Object.fromEntries(
+    Object.keys(counts)
+      .toSorted()
+      .map((rule) => [
+        rule,
+        Object.fromEntries(
+          Object.keys(counts[rule])
+            .toSorted()
+            .map((file) => [file, counts[rule][file]]),
+        ),
+      ]),
+  );
+}
+
+function totals(counts) {
+  const files = new Set();
+  let findings = 0;
+  for (const perFile of Object.values(counts)) {
+    for (const [file, count] of Object.entries(perFile)) {
+      files.add(file);
+      findings += count;
+    }
+  }
+  return { findings, files: files.size };
+}
+
+function runOxlint(args) {
+  const result = spawnSync(process.execPath, [join(ROOT, 'node_modules/oxlint/bin/oxlint'), ...args], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    const output = result.stderr === '' ? result.stdout : result.stderr;
+    throw new Error(`oxlint ${args.join(' ')} exited with ${result.status}: ${output.slice(0, 2000)}`);
+  }
+}
+
+function describeLocation(diagnostic) {
+  const span = diagnostic.labels?.[0]?.span;
+  const help = diagnostic.help === undefined ? '' : ` ${diagnostic.help}`;
+  return `    ${diagnostic.filename}:${span?.line}:${span?.column}  ${diagnostic.message}${help}`;
+}
+
+function formatReport(changes, unused, diagnostics) {
+  const lines = [];
+  const added = changes.filter((change) => change.kind === 'added');
+  const removed = changes.filter((change) => change.kind === 'removed');
+  if (unused.length > 0) {
+    lines.push(
+      `✗ ratchet: ${unused.length} disable directive(s) suppress nothing`,
+      ...unused.map(describeLocation),
+      '  Why: a suppression that matches no finding hides nothing today and silently hides the next real finding on that line.',
+      '  What to do: delete the directive, or the rule names in it that report nothing.',
+    );
+  }
+  if (added.length > 0) {
+    lines.push(`✗ ratchet: new findings for rules frozen in ${BASELINE_FILE}`);
+    for (const change of added) {
+      lines.push(`  ${change.rule} in ${change.file}: ${change.from} → ${change.to}`);
+      lines.push(
+        ...diagnostics
+          .filter((diagnostic) => diagnostic.filename === change.file && ruleOf(diagnostic.code) === change.rule)
+          .map(describeLocation),
+      );
+    }
+    lines.push(
+      '  Why: these rules already have findings in existing code, so they are frozen at today\'s count per file. New code must not add to them.',
+      `  What to do: fix the new occurrence. Do not raise the baseline to pass. If you moved existing code from another file, run \`node ${RATCHET_FILE} --update --allow-increase\` and say so in the PR.`,
+    );
+  }
+  if (removed.length > 0) {
+    lines.push(
+      `✗ ratchet: ${BASELINE_FILE} allows more findings than the code has`,
+      ...removed.map((change) => `  ${change.rule} in ${change.file}: ${change.from} → ${change.to}`),
+      '  Why: the baseline only moves down. Lowering it now keeps fixed findings from coming back unnoticed.',
+      `  What to do: run \`node ${RATCHET_FILE} --update\` and commit the baseline.`,
+    );
+  }
+  return lines;
+}
+
+export function main(args) {
+  const known = new Set(['--update', '--allow-increase']);
+  const unknown = args.filter((arg) => !known.has(arg));
+  if (unknown.length > 0 || (args.includes('--allow-increase') && !args.includes('--update'))) {
+    process.stderr.write(
+      `✗ ratchet: unsupported arguments ${args.join(' ')}. Run \`pnpm lint\`; \`node ${RATCHET_FILE} --update\` lowers ${BASELINE_FILE}.\n`,
+    );
+    return 2;
+  }
+  let mainConfig;
+  let ratchetConfig;
+  let diagnostics;
+  try {
+    mainConfig = runOxlint(['--type-aware', '--print-config']);
+    ratchetConfig = runOxlint(['-c', RATCHET_CONFIG, '--type-aware', '--print-config']);
+    diagnostics = runOxlint(['-c', RATCHET_CONFIG, '--type-aware', '--format', 'json']).diagnostics;
+  } catch (error) {
+    process.stderr.write(`✗ ratchet: could not run oxlint. ${error.message}\n`);
+    return 1;
+  }
+  const mainIgnores = JSON.stringify((mainConfig.ignorePatterns ?? []).toSorted());
+  const ratchetIgnores = JSON.stringify((ratchetConfig.ignorePatterns ?? []).toSorted());
+  if (mainIgnores !== ratchetIgnores) {
+    process.stderr.write(
+      [
+        `✗ ratchet: ignorePatterns in ${RATCHET_CONFIG} differ from ${MAIN_CONFIG}`,
+        '  Why: extends does not carry ignorePatterns over, so the ratchet would lint a different set of files than lint does.',
+        `  What to do: copy the ignorePatterns list from ${MAIN_CONFIG} into ${RATCHET_CONFIG}.`,
+      ].join('\n') + '\n',
+    );
+    return 1;
+  }
+  const rules = ratchetRules(JSON.parse(readFileSync(join(ROOT, RATCHET_CONFIG), 'utf8')));
+  const { counts, unused } = countFindings(diagnostics, rules);
+  const baselinePath = join(ROOT, BASELINE_FILE);
+  const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')) : {};
+  const changes = compareCounts(baseline, counts);
+  if (args.includes('--update')) {
+    const added = changes.filter((change) => change.kind === 'added');
+    if (added.length > 0 && !args.includes('--allow-increase')) {
+      process.stderr.write(`${formatReport(added, [], diagnostics).join('\n')}\n`);
+      return 1;
+    }
+    mkdirSync(dirname(baselinePath), { recursive: true });
+    writeFileSync(baselinePath, `${JSON.stringify(sortCounts(counts), null, 2)}\n`);
+    const { findings, files } = totals(counts);
+    process.stdout.write(`✓ ratchet: wrote ${BASELINE_FILE} (${findings} findings in ${files} files)\n`);
+    return 0;
+  }
+  const report = formatReport(changes, unused, diagnostics);
+  if (report.length > 0) {
+    process.stderr.write(`${report.join('\n')}\n`);
+    return 1;
+  }
+  const { findings, files } = totals(counts);
+  process.stdout.write(
+    `✓ ratchet: ${rules.size} rules frozen at ${findings} findings in ${files} files; nothing new, no unused suppressions\n`,
+  );
+  return 0;
+}
+
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === import.meta.filename) {
+  process.exitCode = main(process.argv.slice(2));
+}

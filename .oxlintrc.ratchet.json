@@ -1,0 +1,87 @@
+{
+  "extends": [
+    "./.oxlintrc.json"
+  ],
+  "options": {
+    "reportUnusedDisableDirectives": "error"
+  },
+  "rules": {
+    "eslint/array-callback-return": "error",
+    "eslint/no-empty": "error",
+    "eslint/no-fallthrough": "error",
+    "eslint/no-loop-func": "error",
+    "eslint/no-promise-executor-return": "error",
+    "eslint/no-regex-spaces": "error",
+    "eslint/no-sequences": "error",
+    "eslint/no-unmodified-loop-condition": "error",
+    "eslint/no-useless-constructor": "error",
+    "import/no-named-as-default": "error",
+    "oxc/bad-comparison-sequence": "error",
+    "promise/no-callback-in-promise": "error",
+    "promise/no-promise-in-callback": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-namespace": "error",
+    "typescript/no-require-imports": "error",
+    "typescript/no-unnecessary-boolean-literal-compare": "error",
+    "typescript/no-unnecessary-type-conversion": "error",
+    "typescript/no-unsafe-enum-comparison": "error",
+    "typescript/no-unsafe-function-type": "error",
+    "typescript/no-useless-default-assignment": "error",
+    "typescript/prefer-nullish-coalescing": "error",
+    "typescript/prefer-promise-reject-errors": "error",
+    "typescript/related-getter-setter-pairs": "error",
+    "typescript/switch-exhaustiveness-check": "error",
+    "unicorn/no-array-reverse": "error",
+    "unicorn/no-array-sort": "error",
+    "unicorn/require-post-message-target-origin": "error"
+  },
+  "overrides": [
+    {
+      "files": [
+        "packages/*/src/**",
+        "apps/*/src/**"
+      ],
+      "rules": {
+        "eslint/no-console": "error"
+      }
+    },
+    {
+      "files": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/test/**/*.ts",
+        "**/test/**/*.tsx"
+      ],
+      "plugins": [
+        "vitest"
+      ],
+      "rules": {
+        "vitest/no-conditional-expect": "error",
+        "vitest/no-disabled-tests": "error",
+        "vitest/valid-title": "error",
+        "eslint/no-console": "off"
+      }
+    },
+    {
+      "files": [
+        "**/examples/**/*.ts",
+        "**/examples/**/*.tsx"
+      ],
+      "rules": {
+        "eslint/no-console": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "dist/",
+    "dist-web/",
+    "coverage/",
+    "node_modules/",
+    "apps/*/scripts/",
+    "docs/smoke-archive/",
+    "packages/pi-tui/",
+    "*.generated.ts"
+  ]
+}

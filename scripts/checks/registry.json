@@ -16,6 +16,11 @@
       "why": "The guards keep the oxlint config and the wiring of these checks from changing unnoticed."
     },
     {
+      "run": "node scripts/checks/ratchet.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "It freezes rules that already have findings at their current count per file and reports suppressions that no longer suppress anything; without it new code could add to that debt unnoticed."
+    },
+    {
       "run": "pnpm run lint",
       "in": ".github/workflows/ci.yml#jobs.lint",
       "why": "CI is the only place where lint blocks a merge; local runs and git hooks can be skipped."
