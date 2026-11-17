@@ -19,23 +19,9 @@ import type {
 } from '../contract/hook';
 import type { QueuedItem } from '../contract/inbox';
 import type { Cause, StepEndingPoint, StepOutcome } from '../contract/outcome';
-import { isMessage, isObject, isToolResult } from '../guards';
+import { isCause, isMessage, isObject, isToolResult } from '../guards';
 import { hookFailureCause, type HookFailure } from './failure';
 import type { HookItem, HookSource } from './registry';
-
-function isOptionalString(value: unknown): boolean {
-  return value === undefined || typeof value === 'string';
-}
-
-function isCause(value: unknown): value is Cause {
-  return (
-    isObject(value) &&
-    typeof value['reason'] === 'string' &&
-    isOptionalString(value['by']) &&
-    isOptionalString(value['message']) &&
-    (value['details'] === undefined || isObject(value['details']))
-  );
-}
 
 function isTurnStartingVerdict(value: unknown): value is TurnStartingVerdict {
   return isObject(value) && value['type'] === 'blocked' && isCause(value['cause']);

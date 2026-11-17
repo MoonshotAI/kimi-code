@@ -13,7 +13,7 @@ export function isObject(value: unknown): value is Fields {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isCause(value: unknown): value is Cause {
+export function isCause(value: unknown): value is Cause {
   return (
     isObject(value) &&
     typeof value['reason'] === 'string' &&
