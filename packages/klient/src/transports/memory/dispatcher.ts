@@ -163,9 +163,9 @@ function withSessionTags<TPayload>(
 
 function interactionServiceView(sessionId: string): Record<string, unknown> {
   return {
-    request: (req: InteractionRequest<unknown>) =>
+    request: (req: InteractionRequest) =>
       interactions.request(withSessionTags(sessionId, req)),
-    enqueue: (req: InteractionRequest<unknown>) =>
+    enqueue: (req: InteractionRequest) =>
       interactions.enqueue(withSessionTags(sessionId, req)),
     respond: (id: string, response: unknown) => {
       respondScoped(sessionId, id, response);

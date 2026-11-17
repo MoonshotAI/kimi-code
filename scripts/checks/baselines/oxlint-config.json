@@ -297,6 +297,7 @@
     "typescript/no-this-alias": "deny",
     "typescript/no-unnecessary-condition": "allow",
     "typescript/no-unnecessary-parameter-property-assignment": "deny",
+    "typescript/no-unnecessary-type-arguments": "deny",
     "typescript/no-unnecessary-type-constraint": "deny",
     "typescript/no-unnecessary-type-parameters": "allow",
     "typescript/no-unsafe-argument": "allow",

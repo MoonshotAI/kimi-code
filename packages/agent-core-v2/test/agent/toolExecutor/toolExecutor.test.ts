@@ -1083,7 +1083,7 @@ describe('onWillExecuteTool', () => {
   it('awaits waitUntil work and lets calls through when it returns undefined', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
-    const gate = deferred<void>();
+    const gate = deferred();
     registerLegacyWill(executor, (event) => {
       event.waitUntil(gate.promise);
     });
@@ -2014,8 +2014,8 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('returns a detach ack while wait continues to the real final result', async () => {
-    const started = deferred<void>();
-    const release = deferred<void>();
+    const started = deferred();
+    const release = deferred();
     const executor = new HandlerToolExecutor([{
       name: 'background',
       description: 'background',
@@ -2073,9 +2073,9 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('stops one execution through its internal signal without aborting another', async () => {
-    const firstStarted = deferred<void>();
-    const secondStarted = deferred<void>();
-    const secondRelease = deferred<void>();
+    const firstStarted = deferred();
+    const secondStarted = deferred();
+    const secondRelease = deferred();
     let secondSignal: AbortSignal | undefined;
     const executor = new HandlerToolExecutor([
       {
@@ -2121,8 +2121,8 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('calls stopping once and uses asynchronous abandon as its final fallback', async () => {
-    const started = deferred<void>();
-    const abandon = deferred<void>();
+    const started = deferred();
+    const abandon = deferred();
     let stoppingCalls = 0;
     const executor = new HandlerToolExecutor([{
       name: 'hanging',
@@ -2173,8 +2173,8 @@ describe('ToolExecutor handler kernel', () => {
   it('composes hooks in order and seals responses after execute settles', async () => {
     const events: string[] = [];
     let prepareCalls = 0;
-    const afterEntered = deferred<void>();
-    const afterRelease = deferred<void>();
+    const afterEntered = deferred();
+    const afterRelease = deferred();
     const first = {
       label: 'first',
       validating() {
@@ -2302,8 +2302,8 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('reads fields and output mid-run and surfaces flush and close errors', async () => {
-    const started = deferred<void>();
-    const release = deferred<void>();
+    const started = deferred();
+    const release = deferred();
     const store = memoryOutputStore();
     const outputStore = {
       open(taskId: string) {
@@ -2389,8 +2389,8 @@ describe('ToolExecutor handler kernel', () => {
   });
 
   it('runs legacy preparation, finalization, synthetic short-circuiting and updates', async () => {
-    const started = deferred<void>();
-    const release = deferred<void>();
+    const started = deferred();
+    const release = deferred();
     const steerSignal = new AbortController().signal;
     const remind = vi.fn();
     const legacy: ExecutableTool<Record<string, unknown>> = {
@@ -2561,9 +2561,9 @@ describe('ToolExecutor handler kernel', () => {
     expect(executor.removeExecute(replacement)).toBe(true);
     expect(executor.list()).toEqual([]);
 
-    const slowResolve = deferred<void>();
-    const slowFinalize = deferred<void>();
-    const slowFinalizerEntered = deferred<void>();
+    const slowResolve = deferred();
+    const slowFinalize = deferred();
+    const slowFinalizerEntered = deferred();
     let syntheticNow = 0;
     const slowSyntheticExecutor = new HandlerToolExecutor([
       new LegacyExecutableToolAdapter({
@@ -2600,13 +2600,13 @@ describe('ToolExecutor handler kernel', () => {
       await vi.advanceTimersByTimeAsync(ms);
     };
     try {
-      const cooperativeStarted = deferred<void>();
-      const cooperativeFinalizerStarted = deferred<void>();
-      const hangingStarted = deferred<void>();
-      const slowExecutionStarted = deferred<void>();
-      const slowFinalizerStarted = deferred<void>();
-      const finalizerRelease = deferred<void>();
-      const slowFinalizerRelease = deferred<void>();
+      const cooperativeStarted = deferred();
+      const cooperativeFinalizerStarted = deferred();
+      const hangingStarted = deferred();
+      const slowExecutionStarted = deferred();
+      const slowFinalizerStarted = deferred();
+      const finalizerRelease = deferred();
+      const slowFinalizerRelease = deferred();
       const cancellable: ExecutableTool<Record<string, unknown>> = {
         name: 'cancellable',
         description: 'cancellable',

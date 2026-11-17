@@ -89,7 +89,7 @@ function extractWireText(wirePath: string): { text: string; messages: number } {
 }
 
 export class SessionStore {
-  private constructor(public db: MiniDb<unknown>) {}
+  private constructor(public db: MiniDb) {}
 
   static async open(dir: string): Promise<SessionStore> {
     const db = await MiniDb.open({ dir, valueCodec: 'json', onLockFail: 'readonly' });

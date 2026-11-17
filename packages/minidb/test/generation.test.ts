@@ -54,7 +54,7 @@ async function openTmp(name: string): Promise<string> {
   return dir;
 }
 
-type AnyDb = MiniDb<unknown>;
+type AnyDb = MiniDb;
 
 async function closeAll(...dbs: (AnyDb | undefined)[]): Promise<void> {
   for (const db of dbs) await db?.close().catch(() => {});
@@ -129,7 +129,7 @@ describe('skiplist bulkLoad', () => {
     const entries: { key: number; val: string }[] = [];
     for (let i = 0; i < 5000; i++) entries.push({ key: i * 2, val: `v${i}` });
     const bulk = SkipList.bulkLoad(entries, { compareKey: cmpNumber, compareVal: cmpString });
-    const inc = new SkipList<number, string>({ compareKey: cmpNumber, compareVal: cmpString });
+    const inc = new SkipList<number>({ compareKey: cmpNumber, compareVal: cmpString });
     for (const e of entries) inc.insert(e.key, e.val);
     expect(bulk.length).toBe(inc.length);
     expect(bulk.toArray()).toEqual(inc.toArray());
@@ -1104,8 +1104,8 @@ describe('generation fault matrix', () => {
     const fh = (wal as unknown as { fh: Fh | null }).fh!;
     const origWritev = fh.writev.bind(fh);
     let fired = false;
-    const entered = deferred<void>();
-    const proceed = deferred<void>();
+    const entered = deferred();
+    const proceed = deferred();
     (fh as { writev: unknown }).writev = async (bufs: readonly Uint8Array[]) => {
       if (fired) return origWritev(bufs);
       fired = true;

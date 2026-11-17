@@ -4156,8 +4156,8 @@ describe('AgentSwarm tool execution contract', () => {
   it('runs item-based swarms through the session swarm service and renders XML results', async () => {
     const runSwarm = vi.fn(
       async (
-        args: SessionSwarmRunArgs<unknown>,
-      ): Promise<readonly SessionSwarmRunResult<unknown>[]> => {
+        args: SessionSwarmRunArgs,
+      ): Promise<readonly SessionSwarmRunResult[]> => {
         return args.tasks.map((task, index) => ({
           task,
           agentId: `agent-explore-${String(index + 1)}`,
@@ -4349,8 +4349,8 @@ describe('AgentSwarm tool execution contract', () => {
     );
     const runSwarm = vi.fn(
       async (
-        args: SessionSwarmRunArgs<unknown>,
-      ): Promise<readonly SessionSwarmRunResult<unknown>[]> => {
+        args: SessionSwarmRunArgs,
+      ): Promise<readonly SessionSwarmRunResult[]> => {
         return args.tasks.map((task, index) => ({
           task,
           agentId: task.kind === 'resume' ? task.resumeAgentId : `agent-new-${String(index + 1)}`,
@@ -4469,8 +4469,8 @@ describe('AgentSwarm tool execution contract', () => {
   it('reports failed subagents inside the XML result without failing the tool', async () => {
     const runSwarm = vi.fn(
       async (
-        args: SessionSwarmRunArgs<unknown>,
-      ): Promise<readonly SessionSwarmRunResult<unknown>[]> => [
+        args: SessionSwarmRunArgs,
+      ): Promise<readonly SessionSwarmRunResult[]> => [
         {
           task: args.tasks[0]!,
           agentId: 'agent-coder-1',
@@ -4518,8 +4518,8 @@ describe('AgentSwarm tool execution contract', () => {
   it('omits the resume hint when incomplete subagents have no agent ids', async () => {
     const runSwarm = vi.fn(
       async (
-        args: SessionSwarmRunArgs<unknown>,
-      ): Promise<readonly SessionSwarmRunResult<unknown>[]> => [
+        args: SessionSwarmRunArgs,
+      ): Promise<readonly SessionSwarmRunResult[]> => [
         {
           task: args.tasks[0]!,
           status: 'failed' as const,
@@ -4565,8 +4565,8 @@ describe('AgentSwarm tool execution contract', () => {
   it('renders a handoff stop reason on a completed subagent and offers a resume hint', async () => {
     const runSwarm = vi.fn(
       async (
-        args: SessionSwarmRunArgs<unknown>,
-      ): Promise<readonly SessionSwarmRunResult<unknown>[]> => [
+        args: SessionSwarmRunArgs,
+      ): Promise<readonly SessionSwarmRunResult[]> => [
         {
           task: args.tasks[0]!,
           agentId: 'agent-coder-1',
@@ -4615,8 +4615,8 @@ describe('AgentSwarm tool execution contract', () => {
   it('reports partial aborted subagents inside the XML result', async () => {
     const runSwarm = vi.fn(
       async (
-        args: SessionSwarmRunArgs<unknown>,
-      ): Promise<readonly SessionSwarmRunResult<unknown>[]> => [
+        args: SessionSwarmRunArgs,
+      ): Promise<readonly SessionSwarmRunResult[]> => [
         {
           task: args.tasks[0]!,
           agentId: 'agent-coder-1',
