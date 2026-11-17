@@ -759,7 +759,7 @@ The server dispatches through the route `POST /api/v1/capabilities/{tail}`, and 
 
 On success, `data` is a [capability status object](#capability-status-object).
 
-Currently only `kimi-cu` on Windows checks for running processes. When related processes exist and `stopRunningProcesses: true` was not passed, the background install ends with `install.confirmationRequired` set to `stop-processes`.
+Currently `kimi-cu` and `kimi-webbridge` on Windows check for running processes. When related processes exist and `stopRunningProcesses: true` was not passed, the background install ends with `install.confirmationRequired` set to `stop-processes`.
 
 - `40001`: missing or unknown action suffix
 - `40418`: no capability with that id
