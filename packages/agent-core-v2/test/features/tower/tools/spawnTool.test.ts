@@ -687,7 +687,7 @@ describe('TowerSpawnTool', () => {
     expect(activityLog).toMatch(/spawn .*model=kimi-code/);
   });
 
-  it('binds reviewers to the configured pool default', async () => {
+  it('binds reviewers to the tower model when a pool is configured', async () => {
     secondaryModel = {
       defaultModel: 'cheap/fast',
       models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
@@ -700,11 +700,13 @@ describe('TowerSpawnTool', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: cheap/fast');
+    expect(result.output).toContain('model: kimi-code');
     expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
+      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
       labels: { parentAgentId: 'main' },
     });
+    const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    expect(activityLog).toMatch(/spawn .*model=kimi-code/);
   });
 
   it('rejects a catalog-resolvable alias outside the secondary pool before any spawn side effect', async () => {

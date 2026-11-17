@@ -115,16 +115,16 @@ kimi-code 重启后，如果改由另一个会话接管当前项目，原会话�
 
 Tower 与 Goal、Plan 和 swarm 模式互斥。进入 Tower 会退出 Plan 或 swarm，并暂停正在运行的 goal；启用 goal、Plan 或 swarm 也会退出 Tower。Tower 的状态会保留在磁盘上，之后可以用 `/tower on` 返回。
 
-worker 和 reviewer 与 Agent、AgentSwarm 使用相同的模型选择规则。未配置 `[secondary_model]` 时，二者都继承 Tower 当前模型。配置后，新派生的 worker 和 reviewer 都使用 `default_model`。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
+worker 与 Agent、AgentSwarm 使用相同的模型选择规则：未配置 `[secondary_model]` 时继承 Tower 当前模型；配置后，新派生的 worker 使用 `default_model`。reviewer 则始终默认继承 Tower 当前模型，让合并门禁的评审与 Tower 保持同一模型；只有显式指定池中别名时，reviewer 才改用其他模型。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
 
 你也可以通过普通消息为某次新派生明确指定模型。例如，假设 `smart/slow` 已在池内配置：
 
 - "让 worker agent-docs 使用 smart/slow。"
 - "让审查 feat/build-gemm 的 reviewer 使用 smart/slow。"
 
-可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。模型池有两个及以上条目时才提供 `model` 参数。选择只作用于本次新派生的 Agent：不会修改正在运行或已恢复的 Agent，也不会保存给后续派生。
+可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。模型池有两个及以上条目时才提供 `model` 参数。
 
-如果希望控制 token 开支，可以将池默认值设为成本较低的模型；worker 和 reviewer 默认使用它，单次派生也可以通过显式指定池中别名覆盖。
+如果希望控制 token 开支，可以将池默认值设为成本较低的模型；worker 默认使用它，单次派生时显式指定池中别名即可覆盖——这对 worker 和 reviewer 都适用。
 
 ## 安全边界与资源开销
 

@@ -69,6 +69,17 @@ async function reviewExcerpt(store: TowerStore, file: string): Promise<string> {
   return truncateSection(body.trim(), REVIEW_EXCERPT_MAX_CHARS);
 }
 
+function resolveSpawnBinding(
+  config: IConfigService,
+  args: TowerSpawnToolInput,
+  own: { modelAlias: string; thinkingLevel: string },
+): SubagentBinding {
+  if (args.kind === 'reviewer' && args.model === undefined) {
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
+  }
+  return resolveSubagentBinding(config, own, args.model);
+}
+
 async function findCompletionReport(
   store: TowerStore,
   author: string,
@@ -222,11 +233,10 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         binding =
           own.modelAlias === undefined
             ? undefined
-            : resolveSubagentBinding(
-                this.config,
-                { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-                args.model,
-              );
+            : resolveSpawnBinding(this.config, args, {
+                modelAlias: own.modelAlias,
+                thinkingLevel: own.thinkingLevel,
+              });
       } catch (error) {
         return {
           output: error instanceof Error ? error.message : String(error),

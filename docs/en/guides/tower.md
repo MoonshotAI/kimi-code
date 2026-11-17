@@ -115,16 +115,16 @@ After Kimi Code restarts, if another session takes over the current project, the
 
 Tower is mutually exclusive with Goal, Plan, and swarm modes. Entering Tower exits Plan or swarm and pauses the active goal; activating a goal or entering Plan or swarm also exits Tower. Tower state remains on disk, and you can return later with `/tower on`.
 
-Workers and reviewers follow the same model-selection rules as Agent and AgentSwarm. Without `[secondary_model]`, both inherit Tower's current model. Once it is configured, newly spawned workers and reviewers use `default_model`. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
+Workers follow the same model-selection rules as Agent and AgentSwarm: without `[secondary_model]` they inherit Tower's current model, and once it is configured, newly spawned workers use `default_model`. Reviewers always inherit Tower's current model by default, so the merge-gate review runs on the same model as the tower; a reviewer switches to another model only when an explicit pool alias is passed. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
 
 You can explicitly choose the model for an individual new spawn in a normal message. For example, assuming `smart/slow` is configured in the pool:
 
 - "Spawn the worker agent-docs with smart/slow."
 - "Use smart/slow for the reviewer of feat/build-gemm."
 
-The only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); aliases that exist only in `[models]` are not accepted. The `model` parameter is available only when the pool has two or more entries. The choice applies only to that new agent: it does not change running or resumed agents and is not saved for future spawns.
+The only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); aliases that exist only in `[models]` are not accepted. The `model` parameter is available only when the pool has two or more entries.
 
-To control token costs, set the pool default to a cheaper model; workers and reviewers use it by default, and an explicit pool alias can override it for one spawn.
+To control token costs, set the pool default to a cheaper model; workers use it by default, and an explicit pool alias overrides the default for one spawn — for workers and reviewers alike.
 
 ## Safety and resource cost
 
