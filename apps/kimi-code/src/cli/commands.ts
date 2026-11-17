@@ -6,6 +6,7 @@ import { Command, InvalidArgumentError, Option } from 'commander';
 import { EXEC_SERVER_COMMAND } from './exec-server';
 import type { CLIOptions } from './options';
 import type { InstallIntent, UpdateChannel } from './update/types';
+import { registerAccessCommand } from './sub/access';
 import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
@@ -147,6 +148,7 @@ export function createProgram(
   registerProviderCommand(program);
   registerSessionCommand(program);
   registerAcpCommand(program);
+  registerAccessCommand(program);
   registerWebCommand(program);
   registerLoginCommand(program);
   registerDoctorCommand(program);

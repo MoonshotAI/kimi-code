@@ -135,6 +135,7 @@ describe('kimi web', () => {
     expect(remoteControl?.short).toBe('--rc');
     // web opens the browser by default → the option is the negative --no-open.
     expect(longs).toContain('--no-open');
+    expect(longs).toContain('--json');
     // The background/daemon era flags are gone: the server always runs in the
     // foreground.
     expect(longs).not.toContain('--foreground');
@@ -1411,5 +1412,149 @@ describe('filterDisplayAddresses', () => {
       { address: '10.0.0.1', family: 'IPv4' },
       { address: '2001:db8::1', family: 'IPv6' },
     ]);
+  });
+});
+
+describe('kimi web --json and kimi access CLI', () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'kimi-cli-access-'));
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it('starts in --json mode with an ephemeral operator token, does not read server.token, skips openUrl, and prints single-line JSON', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const { runner, calls } = makeRunner('http://127.0.0.1:49123/');
+    const io = makeIo();
+    const openUrl = vi.fn();
+    const resolveToken = vi.fn(() => 'persistent-owner-token');
+
+    await handleWebCommand(
+      { port: '0', json: true, open: true },
+      {
+        startServerForeground: runner,
+        openUrl,
+        resolveToken,
+        stdout: io.stdout,
+        stderr: io.stderr,
+      },
+    );
+
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(resolveToken).not.toHaveBeenCalled();
+    expect(calls.options?.disableOwnerTokenStore).toBe(true);
+    expect(calls.options?.enableAccessTokens).toBe(false);
+    expect(calls.options?.logToStderr).toBe(true);
+    expect(calls.options?.ephemeralTokens).toHaveLength(1);
+    expect(calls.options?.ephemeralTokens?.[0]?.role).toBe('operator');
+
+    const lines = io.readStdout().trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      origin: 'http://127.0.0.1:49123',
+      ws_url: 'ws://127.0.0.1:49123/api/v1/ws',
+      token: calls.options?.ephemeralTokens?.[0]?.token,
+      role: 'operator',
+      kimi_agent_protocol_version: '0.1.0',
+    });
+    expect(String(parsed['token']).startsWith('kap_')).toBe(true);
+
+    const { formatJsonBootLine } = await import('#/cli/sub/web/run');
+    expect(JSON.parse(formatJsonBootLine('http://::1:58627', 'kap_t'))).toMatchObject({
+      origin: 'http://[::1]:58627',
+      ws_url: 'ws://[::1]:58627/api/v1/ws',
+    });
+    expect(JSON.parse(formatJsonBootLine('http://:::58627', 'kap_t'))).toMatchObject({
+      origin: 'http://[::1]:58627',
+      ws_url: 'ws://[::1]:58627/api/v1/ws',
+    });
+  });
+
+  it('rejects combining --json with --remote-control or --dangerous-bypass-auth', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const io = makeIo();
+    await expect(
+      handleWebCommand(
+        { json: true, remoteControl: true },
+        { openUrl: vi.fn(), stdout: io.stdout, stderr: io.stderr },
+      ),
+    ).rejects.toThrow(/--json cannot be combined with --remote-control/);
+
+    await expect(
+      handleWebCommand(
+        { json: true, dangerousBypassAuth: true },
+        { openUrl: vi.fn(), stdout: io.stdout, stderr: io.stderr },
+      ),
+    ).rejects.toThrow(/--json cannot be combined with --dangerous-bypass-auth/);
+
+    await expect(
+      handleWebCommand(
+        { json: true, debugEndpoints: true },
+        { openUrl: vi.fn(), stdout: io.stdout, stderr: io.stderr },
+      ),
+    ).rejects.toThrow(/--json cannot be combined with --debug-endpoints/);
+
+    await expect(
+      handleWebCommand(
+        { json: true, allowRemoteShutdown: true },
+        { openUrl: vi.fn(), stdout: io.stdout, stderr: io.stderr },
+      ),
+    ).rejects.toThrow(/--json cannot be combined with --allow-remote-shutdown/);
+  });
+
+  it('manages tokens via kimi access create/list/revoke', async () => {
+    const { registerAccessCommand } = await import('#/cli/sub/access');
+    let stdout = '';
+    let stderr = '';
+    const program = new Command('kimi').exitOverride();
+    registerAccessCommand(program, {
+      homeDir: () => homeDir,
+      stdout: {
+        write(c) {
+          stdout += String(c);
+          return true;
+        },
+      },
+      stderr: {
+        write(c) {
+          stderr += String(c);
+          return true;
+        },
+      },
+      exit: (code) => {
+        throw new Error(`exit:${code}`);
+      },
+    });
+
+    await program.parseAsync([
+      'node',
+      'kimi',
+      'access',
+      'create',
+      '--name',
+      'Test Orchestrator',
+      '--role',
+      'viewer',
+    ]);
+    const issuedToken = stdout.trim();
+    expect(issuedToken.startsWith('kap_')).toBe(true);
+    expect(stderr).toContain('Created viewer token');
+
+    stdout = '';
+    await program.parseAsync(['node', 'kimi', 'access', 'list', '--json']);
+    const listed = JSON.parse(stdout) as { items: Array<{ id: string; role: string; revoked_at: string | null }> };
+    expect(listed.items).toHaveLength(1);
+    expect(listed.items[0]?.role).toBe('viewer');
+    expect(listed.items[0]?.revoked_at).toBeNull();
+
+    const principalId = listed.items[0]!.id;
+    stdout = '';
+    await program.parseAsync(['node', 'kimi', 'access', 'revoke', principalId]);
+    expect(stdout).toContain(`Revoked access token ${principalId}`);
   });
 });

@@ -18,6 +18,7 @@ import type { McpServerConfigView } from '@moonshot-ai/agent-core-v2/mcpCore/con
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { getRequestPrincipal } from '../middleware/auth';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 
@@ -250,6 +251,7 @@ function fromGlobalMcpServerConfigWire(wire: GlobalMcpServerConfigWire): GlobalM
 
 function toMcpServerConfigDataWire(
   config: McpServerConfig | McpServerConfigView,
+  redactSecrets = false,
 ): McpServerConfigDataWire {
   const common = {
     enabled: config.enabled,
@@ -260,12 +262,17 @@ function toMcpServerConfigDataWire(
     disabled_tools: config.disabledTools,
   };
   if (config.transport === 'stdio') {
-    const envKeys = 'envKeys' in config && config.envKeys !== undefined ? [...config.envKeys] : undefined;
+    const envKeys =
+      'envKeys' in config && config.envKeys !== undefined
+        ? [...config.envKeys]
+        : redactSecrets && 'env' in config && config.env !== undefined
+          ? Object.keys(config.env)
+          : undefined;
     return {
       transport: 'stdio',
       command: config.command,
       args: config.args,
-      env: 'env' in config ? config.env : undefined,
+      env: !redactSecrets && 'env' in config ? config.env : undefined,
       env_keys: envKeys,
       cwd: config.cwd,
       executor: config.executor,
@@ -274,11 +281,15 @@ function toMcpServerConfigDataWire(
     };
   }
   const headerKeys =
-    'headerKeys' in config && config.headerKeys !== undefined ? [...config.headerKeys] : undefined;
+    'headerKeys' in config && config.headerKeys !== undefined
+      ? [...config.headerKeys]
+      : redactSecrets && 'headers' in config && config.headers !== undefined
+        ? Object.keys(config.headers)
+        : undefined;
   return {
     transport: config.transport,
     url: config.url,
-    headers: 'headers' in config ? config.headers : undefined,
+    headers: !redactSecrets && 'headers' in config ? config.headers : undefined,
     header_keys: headerKeys,
     auth: config.auth,
     bearer_token_env_var: config.bearerTokenEnvVar,
@@ -296,10 +307,13 @@ function toMcpLocatorWire(locator: McpServerLocator): McpServerLocatorWire {
   return { source: 'plugin', plugin_id: locator.pluginId, server_name: locator.serverName };
 }
 
-function toManagedServerWire(server: McpManagedServer): McpManagedServerWire {
+function toManagedServerWire(
+  server: McpManagedServer,
+  redactSecrets = false,
+): McpManagedServerWire {
   return {
     name: server.name,
-    config: toMcpServerConfigDataWire(server.config),
+    config: toMcpServerConfigDataWire(server.config, redactSecrets),
     source: server.source,
     origin: server.origin,
     mutable: server.mutable,
@@ -386,6 +400,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/mcp/servers',
+      minRole: 'viewer',
       querystring: serverScopedQuerySchema,
       success: { data: z.array(mcpManagedServerSchema) },
       errors: baseErrorSchemas,
@@ -395,8 +410,14 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
+        const redact = getRequestPrincipal(req).role !== 'owner';
         const servers = await management().listServers({ cwd: req.query.cwd });
-        reply.send(okEnvelope(servers.map(toManagedServerWire), req.id));
+        reply.send(
+          okEnvelope(
+            servers.map((s) => toManagedServerWire(s, redact)),
+            req.id,
+          ),
+        );
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -412,6 +433,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/mcp/servers/{name}',
+      minRole: 'viewer',
       params: serverNameParamSchema,
       querystring: serverScopedQuerySchema,
       success: { data: mcpManagedServerSchema },
@@ -421,8 +443,9 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
+        const redact = getRequestPrincipal(req).role !== 'owner';
         const server = await management().getServer(req.params.name, { cwd: req.query.cwd });
-        reply.send(okEnvelope(toManagedServerWire(server), req.id));
+        reply.send(okEnvelope(toManagedServerWire(server, redact), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -438,6 +461,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/mcp/servers',
+      minRole: 'owner',
       querystring: serverScopedQuerySchema,
       body: globalMcpServerConfigSchema,
       success: { data: z.array(mcpManagedServerSchema) },
@@ -451,7 +475,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
         const servers = await management().addServer(fromGlobalMcpServerConfigWire(req.body), {
           cwd: req.query.cwd,
         });
-        reply.send(okEnvelope(servers.map(toManagedServerWire), req.id));
+        reply.send(okEnvelope(servers.map((s) => toManagedServerWire(s)), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -467,6 +491,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'PUT',
       path: '/mcp/servers/{name}',
+      minRole: 'owner',
       params: serverNameParamSchema,
       querystring: serverScopedQuerySchema,
       body: mcpServerConfigBodySchema,
@@ -482,7 +507,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
           { ...fromMcpServerConfigWire(req.body), name: req.params.name },
           { cwd: req.query.cwd },
         );
-        reply.send(okEnvelope(servers.map(toManagedServerWire), req.id));
+        reply.send(okEnvelope(servers.map((s) => toManagedServerWire(s)), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -498,6 +523,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'DELETE',
       path: '/mcp/servers/{name}',
+      minRole: 'owner',
       params: serverNameParamSchema,
       querystring: serverScopedQuerySchema,
       success: { data: z.array(mcpManagedServerSchema) },
@@ -509,7 +535,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const servers = await management().removeServer(req.params.name, { cwd: req.query.cwd });
-        reply.send(okEnvelope(servers.map(toManagedServerWire), req.id));
+        reply.send(okEnvelope(servers.map((s) => toManagedServerWire(s)), req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
       }
@@ -525,6 +551,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/mcp/servers::test',
+      minRole: 'owner',
       body: testServerBodySchema,
       success: { data: mcpServerTestResultSchema },
       errors: namedServerErrorSchemas,
@@ -558,6 +585,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/mcp/servers::inspect',
+      minRole: 'owner',
       body: inspectServersBodySchema,
       success: { data: z.array(mcpServerInspectionSchema) },
       errors: namedServerErrorSchemas,
@@ -587,6 +615,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/mcp/auth-statuses',
+      minRole: 'viewer',
       querystring: authStatusesQuerySchema,
       success: { data: z.array(mcpServerAuthStatusSchema) },
       errors: baseErrorSchemas,
@@ -596,9 +625,16 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       try {
+        const isOwner = getRequestPrincipal(req).role === 'owner';
+        if (!isOwner && req.query.verify === 'true') {
+          (reply as unknown as { code(s: number): { send(p: unknown): unknown } })
+            .code(403)
+            .send(errEnvelope(ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions', req.id));
+          return;
+        }
         const statuses = await management().listAuthStatuses({
           cwd: req.query.cwd,
-          verify: req.query.verify === undefined ? undefined : req.query.verify === 'true',
+          verify: !isOwner ? false : req.query.verify === undefined ? undefined : req.query.verify === 'true',
         });
         reply.send(okEnvelope(statuses.map(toAuthStatusWire), req.id));
       } catch (error) {
@@ -616,6 +652,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/mcp/auth::begin',
+      minRole: 'owner',
       body: mcpServerLocatorSchema,
       querystring: serverScopedQuerySchema,
       success: { data: mcpServerAuthBeginResultSchema },
@@ -645,6 +682,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/mcp/auth::complete',
+      minRole: 'owner',
       body: authCompleteBodySchema,
       success: { data: z.null() },
       errors: oauthErrorSchemas,
@@ -683,6 +721,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/mcp/auth::cancel',
+      minRole: 'owner',
       body: authCancelBodySchema,
       success: { data: z.null() },
       errors: oauthErrorSchemas,
@@ -708,6 +747,7 @@ export function registerMcpRoutes(app: McpRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/mcp/auth::reset',
+      minRole: 'owner',
       body: mcpServerLocatorSchema,
       querystring: serverScopedQuerySchema,
       success: { data: z.null() },

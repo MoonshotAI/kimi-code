@@ -30,6 +30,7 @@ export function registerSessionRatingRoutes(
     {
       method: 'POST',
       path: '/sessions/{session_id}/rating',
+      minRole: 'operator',
       params: z.object({ session_id: z.string().min(1) }),
       body: sessionRatingRequestSchema,
       success: { data: sessionRatingResultSchema.nullable() },

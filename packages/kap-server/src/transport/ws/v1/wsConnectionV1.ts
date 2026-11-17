@@ -3,6 +3,11 @@ import { subscribeMessageSchema, unsubscribeMessageSchema } from '../../../proto
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
+import {
+  hasMinimumRole,
+  type AccessPrincipal,
+  type AccessRole,
+} from '../../../services/auth/accessTokenStore';
 import { ErrorCode } from '../../../protocol/error-codes';
 import { mapError } from '../../errors';
 import type { IConnectionRegistry } from '../connectionRegistry';
@@ -45,6 +50,7 @@ export interface WsConnectionV1Options {
   readonly connectionRegistry: IConnectionRegistry;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
+  readonly principal?: AccessPrincipal;
   readonly flushIntervalMs?: number;
   readonly maxBatchSize?: number;
   readonly highWaterMarkBytes?: number;
@@ -56,6 +62,8 @@ export class WsConnectionV1 implements BroadcastTarget {
   readonly connectedAt: string;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
+  readonly role: AccessRole;
+  readonly principalId: string | undefined;
 
   private readonly socket: WebSocket;
   private readonly broadcaster: SessionEventBroadcaster;
@@ -82,6 +90,8 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.connectedAt = new Date().toISOString();
     this.remoteAddress = opts.remoteAddress;
     this.userAgent = opts.userAgent;
+    this.role = opts.principal?.role ?? 'owner';
+    this.principalId = opts.principal?.principalId;
     this.socket = opts.socket;
     this.broadcaster = opts.broadcaster;
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
@@ -139,6 +149,11 @@ export class WsConnectionV1 implements BroadcastTarget {
       this.enqueueControl(() => this.onSubscribe(requestId, frame));
     } else if (frame.type === 'unsubscribe') {
       this.enqueueControl(() => this.onUnsubscribe(requestId, frame));
+    } else if (
+      (frame.type === 'task.stop' || frame.type === 'task.background') &&
+      !hasMinimumRole(this.role, 'operator')
+    ) {
+      this.respond(requestId, ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions');
     } else {
       this.taskRequests.handle(requestId, frame);
     }

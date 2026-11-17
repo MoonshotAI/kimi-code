@@ -76,6 +76,7 @@ export function registerOAuthRoutes(
     {
       method: 'POST',
       path: '/oauth/login',
+      minRole: 'owner',
       body: oauthLoginStartRequestSchema,
       success: { data: oauthFlowStartSchema },
       description: 'Start an OAuth device-code flow',
@@ -99,6 +100,7 @@ export function registerOAuthRoutes(
     {
       method: 'GET',
       path: '/oauth/login',
+      minRole: 'owner',
       querystring: oauthLoginQuerySchema,
       success: { data: oauthFlowSnapshotOrNullSchema },
       description: 'Poll the current OAuth device-code flow',
@@ -119,6 +121,7 @@ export function registerOAuthRoutes(
     {
       method: 'DELETE',
       path: '/oauth/login',
+      minRole: 'owner',
       querystring: oauthLoginQuerySchema,
       success: { data: oauthLoginCancelResponseSchema },
       description: 'Cancel the current OAuth device-code flow',
@@ -145,6 +148,7 @@ export function registerOAuthRoutes(
     {
       method: 'POST',
       path: '/oauth/logout',
+      minRole: 'owner',
       body: oauthLogoutRequestSchema,
       success: { data: oauthLogoutResponseSchema },
       errors: { [ErrorCode.INTERNAL_ERROR]: {} },
@@ -265,8 +269,10 @@ export function registerOAuthRoutes(
     {
       method: 'GET',
       path: '/oauth/usage',
+      minRole: 'owner',
       querystring: oauthLoginQuerySchema,
       success: { data: managedUsageResultSchema },
+      errors: { [ErrorCode.ACCESS_FORBIDDEN]: {} },
       description: 'Get the managed account usage summary',
       tags: ['auth'],
     },
@@ -285,8 +291,10 @@ export function registerOAuthRoutes(
     {
       method: 'GET',
       path: '/oauth/userinfo',
+      minRole: 'owner',
       querystring: oauthLoginQuerySchema,
       success: { data: managedUserInfoResultSchema },
+      errors: { [ErrorCode.ACCESS_FORBIDDEN]: {} },
       description: 'Get the managed account profile',
       tags: ['auth'],
     },
@@ -305,6 +313,7 @@ export function registerOAuthRoutes(
     {
       method: 'GET',
       path: '/oauth/region',
+      minRole: 'viewer',
       success: { data: oauthRegionResultSchema },
       description: 'Resolve the client region (mainland-cn/global)',
       tags: ['auth'],

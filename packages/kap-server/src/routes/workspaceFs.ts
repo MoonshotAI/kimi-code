@@ -70,6 +70,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
     {
       method: 'GET',
       path: '/fs::browse',
+      minRole: 'owner',
       querystring: fsBrowseQuerySchema,
       success: { data: fsBrowseResponseSchema },
       description: 'Browse local directories (server folder picker backend)',
@@ -95,6 +96,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
     {
       method: 'GET',
       path: '/fs::home',
+      minRole: 'owner',
       success: { data: fsHomeResponseSchema },
       description: 'Folder picker landing payload: $HOME + recent workspace roots',
       tags: ['workspaces'],
@@ -119,6 +121,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
     {
       method: 'GET',
       path: '/fs::content',
+      minRole: 'owner',
       querystring: fsContentQuerySchema,
       rawResponse: {
         200: { type: 'string', format: 'binary' },
@@ -152,6 +155,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
     {
       method: 'POST',
       path: '/fs::mkdir',
+      minRole: 'owner',
       body: fsMkdirBodySchema,
       success: { data: fsMkdirResponseSchema },
       errors: {

@@ -25,6 +25,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { getRequestPrincipal } from '../middleware/auth';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -139,6 +140,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'GET',
       path: '/models',
+      minRole: 'viewer',
       success: { data: listModelsResponseSchema },
       description: 'List configured model aliases',
       tags: ['models'],
@@ -158,6 +160,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'POST',
       path: '/models/{tail}',
+      minRole: 'owner',
       params: modelActionTailParamSchema,
       success: { data: setDefaultModelResponseSchema },
       errors: {
@@ -200,6 +203,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'GET',
       path: '/providers',
+      minRole: 'viewer',
       success: { data: listProvidersResponseSchema },
       description: 'List configured providers',
       tags: ['providers'],
@@ -219,6 +223,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'POST',
       path: '/providers',
+      minRole: 'owner',
       body: createProviderRequestSchema,
       success: { data: createProviderResponseSchema },
       errors: {
@@ -306,6 +311,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'PUT',
       path: '/providers/{provider_id}',
+      minRole: 'owner',
       params: providerIdParamSchema,
       body: replaceProviderRequestSchema,
       success: { data: replaceProviderResponseSchema },
@@ -478,6 +484,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'POST',
       path: '/providers:action',
+      minRole: 'owner',
       params: providerCollectionActionParamSchema,
       body: providerCollectionActionBodySchema.optional(),
       success: {
@@ -524,6 +531,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'POST',
       path: '/providers/{tail}',
+      minRole: 'owner',
       params: providerActionTailParamSchema,
       success: { data: refreshProviderModelsResponseSchema },
       errors: {
@@ -568,6 +576,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'GET',
       path: '/providers/{provider_id}',
+      minRole: 'viewer',
       params: providerIdParamSchema,
       success: { data: getProviderResponseSchema },
       errors: {
@@ -582,12 +591,15 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
       try {
         const { provider_id } = req.params;
         const provider = await (await loadCatalog(core)).getProvider(provider_id);
-        const config = await loadConfig(core);
-        const stored = config.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue?.[provider_id];
+        const isOwner = getRequestPrincipal(req).role === 'owner';
+        const config = isOwner ? await loadConfig(core) : undefined;
+        const stored = config?.inspect<ProvidersSection>(PROVIDERS_SECTION).userValue?.[provider_id];
         const apiKey = stored?.apiKey;
         reply.send(
           okEnvelope(
-            apiKey !== undefined && apiKey !== '' ? { ...provider, api_key: apiKey } : provider,
+            isOwner && apiKey !== undefined && apiKey !== ''
+              ? { ...provider, api_key: apiKey }
+              : provider,
             req.id,
           ),
         );
@@ -607,6 +619,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'DELETE',
       path: '/providers/{provider_id}',
+      minRole: 'owner',
       params: providerIdParamSchema,
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
@@ -672,6 +685,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'GET',
       path: '/catalog/providers',
+      minRole: 'viewer',
       success: { data: listCatalogProvidersResponseSchema },
       errors: { [ErrorCode.CATALOG_UNAVAILABLE]: {} },
       description:
@@ -699,6 +713,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
     {
       method: 'GET',
       path: '/catalog/providers/{catalog_id}',
+      minRole: 'viewer',
       params: catalogIdParamSchema,
       success: { data: getCatalogProviderResponseSchema },
       errors: {

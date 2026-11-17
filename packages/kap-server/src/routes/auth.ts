@@ -20,6 +20,7 @@ export function registerAuthRoute(app: RouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/auth',
+      minRole: 'viewer',
       success: { data: authSummarySchema },
       description: 'Get server auth readiness snapshot',
       tags: ['auth'],

@@ -9,6 +9,7 @@ import { ulid } from 'ulid';
 import { okEnvelope } from '../envelope';
 import type { MetaFeature } from '../protocol/rest-meta';
 import type { ConversationService } from '../services/conversation/conversationService';
+import { registerAccessRoutes, type RegisterAccessRoutesOptions } from './access';
 import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
@@ -59,6 +60,7 @@ interface ApiV1RouteHost {
 }
 
 export interface RegisterApiV1RoutesOptions {
+  readonly serverId?: string;
   readonly serverVersion: string;
   readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
@@ -69,6 +71,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly conversations: ConversationService;
   readonly sessionRating: SessionRatingHost;
   readonly remoteControl: RemoteControlRouteOptions;
+  readonly access?: RegisterAccessRoutesOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly managedHost?: boolean;
   readonly webTitle?: string;
@@ -81,7 +84,9 @@ export async function registerApiV1Routes(
 ): Promise<void> {
   await app.register(
     async (apiV1) => {
-      registerHealthRoute(apiV1);
+      const accessTokensEnabled =
+        opts.access === undefined || opts.access.persistEnabled !== false;
+      registerHealthRoute(apiV1, { accessTokensEnabled });
 
       if (opts.debugEndpoints === true) {
         registerDebugRoutes(apiV1 as unknown as Parameters<typeof registerDebugRoutes>[0], core);
@@ -89,9 +94,10 @@ export async function registerApiV1Routes(
 
       registerMetaRoute(apiV1, {
         serverVersion: opts.serverVersion,
-        serverId: ulid(),
+        serverId: opts.serverId ?? ulid(),
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
+        accessTokensEnabled,
         webTitle: opts.webTitle,
         getExperimentalFlags: async () => {
           await core.accessor.get(IConfigService).ready;
@@ -108,6 +114,12 @@ export async function registerApiV1Routes(
             })),
       });
 
+      if (opts.access !== undefined) {
+        registerAccessRoutes(
+          apiV1 as unknown as Parameters<typeof registerAccessRoutes>[0],
+          opts.access,
+        );
+      }
       registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], core);
       registerOAuthRoutes(
         apiV1 as unknown as Parameters<typeof registerOAuthRoutes>[0],
@@ -206,12 +218,15 @@ export async function registerApiV1Routes(
   );
 }
 
-function registerHealthRoute(apiV1: ApiV1RouteHost): void {
+function registerHealthRoute(
+  apiV1: ApiV1RouteHost,
+  opts: { readonly accessTokensEnabled: boolean },
+): void {
   apiV1.get(
     '/healthz',
     {
       schema: {
-        description: 'Health check',
+        description: 'Health check and pre-auth bootstrap capability discovery',
         response: {
           200: {
             type: 'object',
@@ -220,7 +235,11 @@ function registerHealthRoute(apiV1: ApiV1RouteHost): void {
               msg: { type: 'string' },
               data: {
                 type: 'object',
-                properties: { ok: { type: 'boolean' } },
+                properties: {
+                  ok: { type: 'boolean' },
+                  kimi_agent_protocol_version: { type: 'string' },
+                  access_tokens: { type: 'boolean' },
+                },
               },
               request_id: { type: 'string' },
             },
@@ -229,7 +248,16 @@ function registerHealthRoute(apiV1: ApiV1RouteHost): void {
       },
     },
     async (req, reply) => {
-      return reply.send(okEnvelope({ ok: true }, req.id));
+      return reply.send(
+        okEnvelope(
+          {
+            ok: true,
+            kimi_agent_protocol_version: '0.1.0',
+            access_tokens: opts.accessTokensEnabled,
+          },
+          req.id,
+        ),
+      );
     },
   );
 }

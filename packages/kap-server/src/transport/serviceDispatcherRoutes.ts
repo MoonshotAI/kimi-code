@@ -28,8 +28,20 @@ interface RpcReply {
 }
 
 export interface RouteHost {
-  get(path: string, handler: (req: RpcRequest, reply: RpcReply) => Promise<unknown>): unknown;
-  post(path: string, handler: (req: RpcRequest, reply: RpcReply) => Promise<unknown>): unknown;
+  get(
+    path: string,
+    optionsOrHandler:
+      | { schema?: Record<string, unknown> }
+      | ((req: RpcRequest, reply: RpcReply) => Promise<unknown>),
+    handler?: (req: RpcRequest, reply: RpcReply) => Promise<unknown>,
+  ): unknown;
+  post(
+    path: string,
+    optionsOrHandler:
+      | { schema?: Record<string, unknown> }
+      | ((req: RpcRequest, reply: RpcReply) => Promise<unknown>),
+    handler?: (req: RpcRequest, reply: RpcReply) => Promise<unknown>,
+  ): unknown;
 }
 
 export interface ServiceDispatcherRouteOptions {

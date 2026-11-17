@@ -38,6 +38,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/tools',
+      minRole: 'viewer',
       querystring: listToolsQuerySchema,
       success: { data: listToolsResponseSchema },
       description: 'List available tools',

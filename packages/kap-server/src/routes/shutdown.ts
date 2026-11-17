@@ -32,6 +32,7 @@ export function registerShutdownRoutes(
     {
       method: 'POST',
       path: '/shutdown',
+      minRole: 'owner',
       querystring: shutdownQuerySchema,
       success: { data: z.object({ ok: z.boolean() }) },
       description: 'Gracefully shut down the server; with if_idle=true, only when it has no live work (ok: false otherwise)',

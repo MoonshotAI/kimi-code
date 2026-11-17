@@ -7,7 +7,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ServerLogLevel } from '@moonshot-ai/kap-server';
+import type {
+  EphemeralTokenSpec,
+  ServerLogLevel,
+} from '@moonshot-ai/kap-server';
 
 export const LOCAL_SERVER_HOST = '127.0.0.1';
 export const DEFAULT_LAN_HOST = '0.0.0.0';
@@ -50,6 +53,10 @@ export interface ParsedServerOptions {
   socketPath?: string;
   /** Internal owner tag for a background server; enables idle exit. */
   managedBy?: string;
+  disableOwnerTokenStore?: boolean;
+  enableAccessTokens?: boolean;
+  ephemeralTokens?: readonly EphemeralTokenSpec[];
+  logToStderr?: boolean;
 }
 
 export interface ServerCliOptions {

@@ -17,6 +17,7 @@ import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { getRequestPrincipal } from '../middleware/auth';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -584,6 +585,7 @@ export function registerSessionListAndBatchRoutes(
     {
       method: 'GET',
       path: '/sessions',
+      minRole: 'viewer',
       querystring: listSessionsQuerySchema,
       success: { data: listSessionsResponseSchema },
       errors: {
@@ -598,6 +600,12 @@ export function registerSessionListAndBatchRoutes(
     async (req, reply) => {
       const raw = req.query;
       const { hosts: includeHosts, ...query } = raw;
+      if (includeHosts === 'include' && getRequestPrincipal(req).role !== 'owner') {
+        (reply as unknown as { code(s: number): { send(p: unknown): unknown } })
+          .code(403)
+          .send(errEnvelope(ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions', req.id));
+        return;
+      }
       const local = (next: Omit<ListSessionsQuery, 'hosts'>) => listSessionsHere(core, gitResolver, next);
       const outcome = includeHosts === 'include' && hosts !== undefined
         ? raw.view !== 'by_workspace' && raw.page_size === undefined && raw.page_token === undefined && raw.page === undefined && raw.before_id === undefined && raw.after_id === undefined
@@ -619,6 +627,7 @@ export function registerSessionListAndBatchRoutes(
       {
         method: 'POST',
         path: `/sessions::${action}`,
+        minRole: 'operator',
         body: batchSessionsRequestSchema,
         success: { data: batchSessionsResponseSchema },
         errors: {

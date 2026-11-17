@@ -72,6 +72,7 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/files',
+      minRole: 'operator',
       success: { data: uploadFileResponseSchema },
       consumes: ['multipart/form-data'],
       description: 'Upload a file',
@@ -124,6 +125,7 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/files/{file_id}',
+      minRole: 'viewer',
       params: getFileParamSchema,
       rawResponse: {
         200: { type: 'string', format: 'binary' },
@@ -176,6 +178,7 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
     {
       method: 'DELETE',
       path: '/files/{file_id}',
+      minRole: 'operator',
       params: deleteFileParamSchema,
       success: { data: deleteFileResponseSchema },
       description: 'Delete a file by ID',

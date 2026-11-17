@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
+import { getRequestPrincipal } from '../middleware/auth';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -78,6 +79,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     {
       method: 'GET',
       path: '/workspaces',
+      minRole: 'viewer',
       querystring: listWorkspacesQuerySchema,
       success: { data: listWorkspacesResponseSchema },
       description:
@@ -85,6 +87,12 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
       tags: ['workspaces'],
     },
     async (req, reply) => {
+      if (req.query.hosts === 'include' && getRequestPrincipal(req).role !== 'owner') {
+        (reply as unknown as { code(s: number): { send(p: unknown): unknown } })
+          .code(403)
+          .send(errEnvelope(ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions', req.id));
+        return;
+      }
       const items = await core.accessor.get(IWorkspaceService).list();
       const projected = await Promise.all(items.map((ws) => toWireWorkspace(core, ws)));
       if (req.query.hosts !== 'include' || hosts === undefined) {
@@ -103,6 +111,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     {
       method: 'POST',
       path: '/workspaces',
+      minRole: 'owner',
       body: createWorkspaceRequestSchema,
       success: { data: createWorkspaceResponseSchema },
       errors: {
@@ -166,6 +175,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     {
       method: 'PATCH',
       path: '/workspaces/{workspace_id}',
+      minRole: 'owner',
       params: workspaceIdParamSchema,
       body: updateWorkspaceRequestSchema,
       success: { data: updateWorkspaceResponseSchema },
@@ -225,6 +235,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     {
       method: 'DELETE',
       path: '/workspaces/{workspace_id}',
+      minRole: 'owner',
       params: workspaceIdParamSchema,
       success: { data: deleteWorkspaceResponseSchema },
       errors: {
@@ -259,6 +270,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     {
       method: 'GET',
       path: '/workspaces/{workspace_id}/trust',
+      minRole: 'viewer',
       params: workspaceIdParamSchema,
       success: { data: workspaceTrustResponseSchema },
       errors: {
@@ -283,6 +295,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     {
       method: 'POST',
       path: '/workspaces/{workspace_id}/trust',
+      minRole: 'owner',
       params: workspaceIdParamSchema,
       success: { data: workspaceTrustResponseSchema },
       errors: {
@@ -308,6 +321,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     {
       method: 'POST',
       path: '/workspaces/{workspace_id}/untrust',
+      minRole: 'owner',
       params: workspaceIdParamSchema,
       success: { data: workspaceTrustResponseSchema },
       errors: {
@@ -333,6 +347,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     {
       method: 'POST',
       path: '/workspaces/{workspace_id}/primary',
+      minRole: 'owner',
       params: workspaceIdParamSchema,
       body: setPrimaryRequestSchema,
       success: { data: setPrimaryResponseSchema },
@@ -403,6 +418,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, h
     {
       method: 'GET',
       path: '/workspaces/project-config-dirs',
+      minRole: 'owner',
       querystring: projectConfigDirsQuerySchema,
       success: { data: projectConfigDirsResponseSchema },
       description: 'Read a project local.toml additional_dir set without mutating anything',

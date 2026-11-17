@@ -65,6 +65,11 @@ describe('API surface snapshot', () => {
     };
     const paths = openApi.paths ?? {};
     expect(Object.keys(paths).length).toBeGreaterThan(0);
+    expect(
+      Object.keys(paths).filter(
+        (p) => p.startsWith('/api/v1/debug') || p.startsWith('/api/v1/client-configs'),
+      ),
+    ).toEqual([]);
 
     const routes: Array<[string, string]> = [];
     for (const [path, item] of Object.entries(paths)) {
@@ -113,7 +118,7 @@ describe('API surface snapshot', () => {
   });
 });
 
-const HOST_CONTRACT = { apiLevel: 1, digest: '0728dbdf7a2e2a7a9868a2987fa4fc1b488a8a4563fbccd6d360b6612b05e1f6' };
+const HOST_CONTRACT = { apiLevel: 1, digest: '5dd6af2720550a2d0b4bcb48348cd5717a6cd4067632b41a48f5fe8a44377238' };
 
 const NON_CONTRACT_KEYS = new Set(['description', 'summary', 'example', 'examples']);
 const NAMED_MEMBER_KEYS = new Set(['properties', 'patternProperties']);

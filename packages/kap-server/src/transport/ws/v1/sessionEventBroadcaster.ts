@@ -59,7 +59,7 @@ import {
 import { toWireQuestion } from '../../../protocol/question-wire';
 import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
-import { toConfigResponse } from '../../../routes/config';
+import { redactConfigForNonOwner, toConfigResponse } from '../../../routes/config';
 import { resolveSessionFacts, toWireSession, type SessionFacts, type SessionWireFields } from '../../../routes/sessions';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
@@ -91,6 +91,7 @@ export type BroadcastFrame =
   | ConversationMessage;
 
 export interface BroadcastTarget {
+  readonly role?: 'viewer' | 'operator' | 'owner';
   send(frame: BroadcastFrame, delivery?: BroadcastDelivery): void;
 }
 
@@ -193,10 +194,15 @@ export class SessionEventBroadcaster {
   }
 
   publishHostChanged(hosts: HostChangedEvent['hosts']): void {
-    this.enqueueGlobal('event.host.changed', () => ({
-      type: 'event.host.changed',
-      hosts,
-    }));
+    if (this.closed) return;
+    this.globalQueue = this.globalQueue
+      .then(() => {
+        this.sendOwnerEvent({
+          type: 'event.host.changed',
+          hosts,
+        });
+      })
+      .catch((error: unknown) => this.logDispatchError('event.host.changed', error));
   }
 
   addGlobalTarget(target: BroadcastTarget): void {
@@ -751,15 +757,42 @@ export class SessionEventBroadcaster {
       .catch((error: unknown) => this.logDispatchError(eventType, error));
   }
 
-  private sendGlobal(event: Event): void {
+  sendOwnerEvent(event: Event): void {
     const { agentId: _agentId, sessionId: _sessionId, time, ...fields } = event;
     const envelope = {
       ...fields,
       event_created_at: time !== undefined ? new Date(time).toISOString() : new Date().toISOString(),
     } as EventEnvelope;
     for (const target of this.globalTargets) {
+      if ((target.role ?? 'owner') !== 'owner') continue;
       try {
         target.send(envelope, 'immediate');
+      } catch {
+      }
+    }
+  }
+
+  private sendGlobal(event: Event): void {
+    const { agentId: _agentId, sessionId: _sessionId, time, ...fields } = event;
+    const createdAt = time !== undefined ? new Date(time).toISOString() : new Date().toISOString();
+    const ownerEnvelope = {
+      ...fields,
+      event_created_at: createdAt,
+    } as EventEnvelope;
+    let redactedEnvelope: EventEnvelope | undefined;
+    for (const target of this.globalTargets) {
+      const isOwner = (target.role ?? 'owner') === 'owner';
+      let payload = ownerEnvelope;
+      if (!isOwner && event.type === 'config') {
+        redactedEnvelope ??= {
+          ...fields,
+          config: redactConfigForNonOwner(event.config),
+          event_created_at: createdAt,
+        } as EventEnvelope;
+        payload = redactedEnvelope;
+      }
+      try {
+        target.send(payload, 'immediate');
       } catch {
       }
     }

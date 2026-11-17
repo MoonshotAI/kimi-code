@@ -36,6 +36,7 @@ export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope
     {
       method: 'GET',
       path: '/sessions/{session_id}/file-history/changes',
+      minRole: 'viewer',
       params: sessionIdParamSchema,
       querystring: fileHistoryChangesQuerySchema,
       success: { data: fileHistoryChangesResponseSchema },
@@ -78,6 +79,7 @@ export function registerFileHistoryRoutes(app: FileHistoryRouteHost, core: Scope
     {
       method: 'GET',
       path: '/sessions/{session_id}/file-history/content',
+      minRole: 'viewer',
       params: sessionIdParamSchema,
       querystring: fileHistoryContentQuerySchema,
       success: { data: fileHistoryContentResponseSchema },

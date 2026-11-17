@@ -3,6 +3,8 @@ export interface ConnectionLike {
   readonly connectedAt: string;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
+  readonly principalId?: string;
+  readonly role?: string;
   readonly subscriptionSessionIds: readonly string[];
   close(code?: number, reason?: string): void;
 }
@@ -13,6 +15,7 @@ export interface IConnectionRegistry {
   get(connId: string): ConnectionLike | undefined;
   values(): Iterable<ConnectionLike>;
   closeAll(reason?: string): void;
+  closeByPrincipalId?(principalId: string, reason?: string): number;
   size(): number;
 }
 
@@ -44,6 +47,20 @@ export class ConnectionRegistry implements IConnectionRegistry {
       } catch {
       }
     }
+  }
+
+  closeByPrincipalId(principalId: string, reason = 'token revoked'): number {
+    let count = 0;
+    for (const conn of Array.from(this.conns.values())) {
+      if (conn.principalId !== principalId) continue;
+      this.conns.delete(conn.id);
+      count += 1;
+      try {
+        conn.close(1008, reason);
+      } catch {
+      }
+    }
+    return count;
   }
 
   size(): number {

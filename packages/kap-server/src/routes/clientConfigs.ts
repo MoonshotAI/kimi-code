@@ -39,6 +39,7 @@ export function registerClientConfigsRoutes(app: RouteHost, core: Scope): void {
       description: 'Fetch a named cloud-controlled client configuration',
       tags: ['config'],
       hide: true,
+      minRole: 'owner',
     },
     async (req, reply) => {
       const { name } = req.params;

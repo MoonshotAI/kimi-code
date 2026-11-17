@@ -79,6 +79,7 @@ export function registerRemoteControlRoutes(
     {
       method: 'GET',
       path: '/remote-control',
+      minRole: 'owner',
       success: { data: remoteControlStatusSchema },
       description: 'Get the Remote Control tunnel status',
       tags: ['remote-control'],
@@ -118,6 +119,7 @@ export function registerRemoteControlRoutes(
     {
       method: 'POST',
       path: '/remote-control',
+      minRole: 'owner',
       body: setRemoteControlRequestSchema,
       success: { data: remoteControlStatusSchema },
       errors: {
@@ -204,6 +206,7 @@ export function registerRemoteControlRoutes(
     {
       method: 'GET',
       path: '/remote-control/devices',
+      minRole: 'owner',
       success: { data: remoteControlDeviceListSchema },
       errors: { [ErrorCode.INTERNAL_ERROR]: {} },
       description: 'List Remote Control devices',
@@ -223,6 +226,7 @@ export function registerRemoteControlRoutes(
     {
       method: 'PATCH',
       path: '/remote-control/devices/{id}',
+      minRole: 'owner',
       params: remoteControlDeviceParamsSchema,
       body: renameRemoteControlDeviceRequestSchema,
       success: { data: remoteControlDeviceMutationResponseSchema },
@@ -250,6 +254,7 @@ export function registerRemoteControlRoutes(
     {
       method: 'POST',
       path: '/remote-control/devices/{id}/deactivate',
+      minRole: 'owner',
       params: remoteControlDeviceParamsSchema,
       success: { data: remoteControlDeviceMutationResponseSchema },
       errors: {
@@ -295,6 +300,7 @@ export function registerRemoteControlRoutes(
     {
       method: 'DELETE',
       path: '/remote-control/devices/{id}',
+      minRole: 'owner',
       params: remoteControlDeviceParamsSchema,
       success: { data: remoteControlDeviceMutationResponseSchema },
       errors: {

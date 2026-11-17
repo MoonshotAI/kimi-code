@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { WebSocketServer, type RawData } from 'ws';
 
 import { errEnvelope } from '../../envelope';
+import { requireRole } from '../../middleware/auth';
 import { ErrorCode } from '../../protocol/error-codes';
 import { HOST_RPC_MAX_BODY_BYTES } from '../../transport/jsonlRpcStream';
 import { selectWsBearerProtocol } from '../../transport/ws/bearerProtocol';
@@ -154,6 +155,7 @@ export function registerHostProxyRoutes(
       scope.route({
         method: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
         url,
+        preHandler: [requireRole('owner') as never],
         handler: async (req, reply) => {
           await proxyHttp(manager, req, reply);
         },

@@ -55,6 +55,7 @@ import { buildContentDisposition } from '../lib/contentDisposition';
 import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { sendRawError } from '../lib/rawError';
 import { requestLog } from '../lib/requestLog';
+import { getRequestPrincipal } from '../middleware/auth';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -65,6 +66,7 @@ import {
 import { sendEnvironmentError } from './environment';
 
 interface FsPostReply {
+  code?(status: number): FsPostReply;
   send(payload: unknown): unknown;
   hijack?(): FsPostReply;
   getHeader?(name: string): string | number | readonly string[] | undefined;
@@ -192,11 +194,12 @@ async function resolveWorkspaceFs(
   core: Scope,
   ref: string,
   required: readonly EnvironmentCapability[],
+  allowRegisterAbsoluteRoot = true,
 ): Promise<FsScope | undefined> {
   const workspaces = core.accessor.get(IWorkspaceService);
   let ws = await workspaces.get(ref);
   if (ws === undefined) {
-    if (!isAbsolute(ref)) return undefined;
+    if (!allowRegisterAbsoluteRoot || !isAbsolute(ref)) return undefined;
     try {
       ws = await workspaces.createOrTouch(ref);
     } catch {
@@ -269,9 +272,11 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/{tail}',
+      minRole: 'operator',
       params: sessionIdAndTailParamSchema,
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.ACCESS_FORBIDDEN]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
@@ -309,6 +314,14 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         return;
       }
       const fsAction = action as FsAction;
+      const isOwner = getRequestPrincipal(req).role === 'owner';
+      if (!isOwner && (fsAction === 'open' || fsAction === 'open-in' || fsAction === 'reveal')) {
+        (reply as FsPostReply).code?.(403);
+        reply.send(
+          errEnvelope(ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions', req.id),
+        );
+        return;
+      }
 
       const session = await resumeSessionById(core.accessor, session_id);
       let environmentFs: FsScope | undefined;
@@ -326,7 +339,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           required.push('process');
         }
         environmentFs = session === undefined && fsAction === 'search'
-          ? await resolveWorkspaceFs(core, session_id, required)
+          ? await resolveWorkspaceFs(
+              core,
+              session_id,
+              required,
+              isOwner,
+            )
           : session === undefined
             ? undefined
             : acquireSessionFs(core, session_id, required);
@@ -341,10 +359,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         }
         switch (fsAction) {
           case 'list':
-            await handleList(environmentFs.fs, req, reply);
+            await handleList(environmentFs.fs, req, reply, isOwner);
             return;
           case 'read':
-            await handleRead(environmentFs.fs, req, reply);
+            await handleRead(environmentFs.fs, req, reply, isOwner);
             return;
           case 'list_many':
             await handleListMany(environmentFs.fs, req, reply);
@@ -406,10 +424,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/workspace/fs::list',
+      minRole: 'operator',
       body: workspaceFsListBodySchema,
       success: { data: fsListResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.ACCESS_FORBIDDEN]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PERMISSION_DENIED]: {},
@@ -424,9 +444,22 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { workspace, ...listRequest } = req.body;
+      const isOwner = getRequestPrincipal(req).role === 'owner';
+      if (!isOwner && listRequest.allow_external_symlinks === true) {
+        (reply as FsPostReply).code?.(403);
+        reply.send(
+          errEnvelope(ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions', req.id),
+        );
+        return;
+      }
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
+        environmentFs = await resolveWorkspaceFs(
+          core,
+          workspace,
+          ['fs'],
+          isOwner,
+        );
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -456,6 +489,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/workspace/fs::search',
+      minRole: 'operator',
       body: workspaceFsSearchBodySchema,
       success: { data: fsSearchResponseSchema },
       errors: {
@@ -474,7 +508,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, ...searchRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs', 'process']);
+        environmentFs = await resolveWorkspaceFs(
+          core,
+          workspace,
+          ['fs', 'process'],
+          getRequestPrincipal(req).role === 'owner',
+        );
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -504,6 +543,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/workspace/fs::suggest',
+      minRole: 'operator',
       body: workspaceFsSuggestBodySchema,
       success: { data: fsSuggestResponseSchema },
       errors: {
@@ -521,7 +561,12 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, stream, ...suggestRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
+        environmentFs = await resolveWorkspaceFs(
+          core,
+          workspace,
+          ['fs'],
+          getRequestPrincipal(req).role === 'owner',
+        );
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -555,6 +600,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/fs::suggest',
+      minRole: 'owner',
       body: rootFsSuggestBodySchema,
       success: { data: fsSuggestResponseSchema },
       errors: {
@@ -620,6 +666,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/sessions/{session_id}/fs/*',
+      minRole: 'viewer',
       querystring: fsDownloadQuerySchema,
       rawResponse: {
         200: { type: 'string', format: 'binary' },
@@ -627,6 +674,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       rawErrorStatus: true,
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.ACCESS_FORBIDDEN]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
@@ -655,6 +703,13 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         sendRawError(reply as FsDownloadReply, errEnvelope(ErrorCode.VALIDATION_FAILED, 'path is empty', req.id));
         return;
       }
+      const allowExternalSymlinks = req.query.allow_external_symlinks === 'true';
+      if (allowExternalSymlinks && getRequestPrincipal(req).role !== 'owner') {
+        (reply as FsDownloadReply)
+          .code(403)
+          .send(errEnvelope(ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions', req.id));
+        return;
+      }
 
       let session: Awaited<ReturnType<typeof resumeSessionById>>;
       try {
@@ -677,7 +732,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         environmentFs = acquireSessionFs(core, session_id, ['fs']);
         resolved = await environmentFs.fs.resolveDownload(
           relPath,
-          req.query.allow_external_symlinks === 'true',
+          allowExternalSymlinks,
         );
       } catch (error) {
         environmentFs?.lease.dispose();
@@ -782,20 +837,30 @@ export function createEnvironmentReadStream(
 type Req = { id: string; body: unknown };
 type Reply = FsPostReply;
 
-async function handleList(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleList(fs: IWorkspaceFsService, req: Req, reply: Reply, isOwner: boolean): Promise<void> {
   const parsed = fsListRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  if (!isOwner && parsed.data.allow_external_symlinks === true) {
+    reply.code?.(403);
+    reply.send(errEnvelope(ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions', req.id));
     return;
   }
   const data = await fs.list(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 
-async function handleRead(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+async function handleRead(fs: IWorkspaceFsService, req: Req, reply: Reply, isOwner: boolean): Promise<void> {
   const parsed = fsReadRequestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  if (!isOwner && parsed.data.allow_external_symlinks === true) {
+    reply.code?.(403);
+    reply.send(errEnvelope(ErrorCode.ACCESS_FORBIDDEN, 'Insufficient token permissions', req.id));
     return;
   }
   const data = await fs.read(parsed.data);

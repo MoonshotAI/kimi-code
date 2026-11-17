@@ -123,6 +123,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/sessions/{session_id}/skills',
+      minRole: 'viewer',
       params: sessionIdParamSchema,
       success: { data: listSkillsResponseSchema },
       errors: {
@@ -156,6 +157,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/workspaces/{workspace_id}/skills',
+      minRole: 'viewer',
       params: workspaceIdParamSchema,
       success: { data: listSkillsResponseSchema },
       errors: {
@@ -194,6 +196,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/skills/{tail}',
+      minRole: 'operator',
       body: activateSkillRequestSchema,
       params: skillTailParamsSchema,
       success: { data: activateSkillResultSchema },
