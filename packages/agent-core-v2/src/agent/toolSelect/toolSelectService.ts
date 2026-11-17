@@ -166,8 +166,11 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         (tool.deferred !== true || active.has(tool.name)))
       .map((tool) => tool.deferred === true ? { ...(loaded.get(tool.name) ?? tool), deferred: undefined } : tool);
     const names = new Set(tools.map((tool) => tool.name));
+    const currentSources = new Map(this.currentTools().map((tool) => [tool.name, tool.source]));
     for (const tool of loaded.values()) {
       if (names.has(tool.name)) continue;
+      const source = currentSources.get(tool.name) ?? (isMcpToolName(tool.name) ? 'mcp' : undefined);
+      if (!this.toolPolicy.isToolActive(tool.name, source)) continue;
       tools.push({ ...tool, deferred: undefined });
       names.add(tool.name);
     }

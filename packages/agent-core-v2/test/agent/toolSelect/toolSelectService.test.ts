@@ -691,6 +691,25 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     expect(tools.every((tool) => tool.deferred === undefined)).toBe(true);
   });
 
+  it('filters history-loaded tools through the current policy without disclosure', () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+    const baseline = h.sut.initialTools();
+    const active = new Set(['Echo', MCP_BETA]);
+    activeToolNames = active;
+
+    const tools = h.sut.requestTools(
+      baseline.filter((tool) => active.has(tool.name)),
+      false,
+      true,
+      [schemaMessage(MCP_ALPHA, MCP_BETA)],
+    );
+
+    expect(tools.map((tool) => tool.name)).toEqual(['Echo', MCP_BETA]);
+  });
+
   it.each([false, true])('keeps initial schemas pinned without dynamic loading (restored: %s)', async (restoring) => {
     flagEnabled = true;
     const h = createHarness();
