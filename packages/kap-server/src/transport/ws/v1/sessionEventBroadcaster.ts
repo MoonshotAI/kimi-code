@@ -91,6 +91,7 @@ export type BroadcastFrame =
   | ConversationMessage;
 
 export interface BroadcastTarget {
+  readonly isClosed?: boolean;
   send(frame: BroadcastFrame, delivery?: BroadcastDelivery): void;
 }
 
@@ -138,6 +139,7 @@ function releaseConversation(subscription: AgentSubscription): void {
 
 export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
+  private readonly pendingSubscribes = new Map<string, number>();
   private readonly workTrackers = new Map<string, WorkTracker>();
   private readonly globalTargets = new Set<BroadcastTarget>();
   private globalQueue: Promise<void> = Promise.resolve();
@@ -207,44 +209,64 @@ export class SessionEventBroadcaster {
     this.globalTargets.delete(target);
   }
 
+  retainPendingSubscribe(sessionId: string): () => void {
+    this.pendingSubscribes.set(sessionId, (this.pendingSubscribes.get(sessionId) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const remaining = (this.pendingSubscribes.get(sessionId) ?? 1) - 1;
+      if (remaining <= 0) this.pendingSubscribes.delete(sessionId);
+      else this.pendingSubscribes.set(sessionId, remaining);
+    };
+  }
+
   async subscribe(
     sessionId: string,
     target: BroadcastTarget,
     agentIds: readonly string[],
     accepted?: () => void,
   ): Promise<void> {
-    let session: ISessionScopeHandle | undefined;
+    const release = this.retainPendingSubscribe(sessionId);
     try {
-      session = await resumeSessionById(this.opts.core.accessor, sessionId);
-      if (session !== undefined) await ensureMainAgent(session);
-    } catch (error) {
-      this.opts.logger?.warn(
-        { sessionId, err: error instanceof Error ? error.message : String(error) },
-        'session subscribe failed',
-      );
-      throw error;
+      let session: ISessionScopeHandle | undefined;
+      try {
+        session = await resumeSessionById(this.opts.core.accessor, sessionId);
+        if (session !== undefined) await ensureMainAgent(session);
+      } catch (error) {
+        this.opts.logger?.warn(
+          { sessionId, err: error instanceof Error ? error.message : String(error) },
+          'session subscribe failed',
+        );
+        throw error;
+      }
+      if (session === undefined) {
+        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session not found: ${sessionId}`);
+      }
+      if (target.isClosed === true) {
+        return;
+      }
+      const state = this.ensureState(sessionId);
+      if (state === undefined) {
+        throw new Error(`session ${sessionId} closed while subscribing`);
+      }
+      let agents = state.targets.get(target);
+      if (agents === undefined) {
+        agents = new Map();
+        state.targets.set(target, agents);
+      }
+      const added: string[] = [];
+      for (const agentId of agentIds) {
+        if (agents.has(agentId)) continue;
+        agents.set(agentId, { generation: 0 });
+        added.push(agentId);
+      }
+      accepted?.();
+      this.sendAgentLists(state, target, added);
+      for (const agentId of new Set(agentIds)) void this.sync(state, target, agentId);
+    } finally {
+      release();
     }
-    if (session === undefined) {
-      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session not found: ${sessionId}`);
-    }
-    const state = this.ensureState(sessionId);
-    if (state === undefined) {
-      throw new Error(`session ${sessionId} closed while subscribing`);
-    }
-    let agents = state.targets.get(target);
-    if (agents === undefined) {
-      agents = new Map();
-      state.targets.set(target, agents);
-    }
-    const added: string[] = [];
-    for (const agentId of agentIds) {
-      if (agents.has(agentId)) continue;
-      agents.set(agentId, { generation: 0 });
-      added.push(agentId);
-    }
-    accepted?.();
-    this.sendAgentLists(state, target, added);
-    for (const agentId of new Set(agentIds)) void this.sync(state, target, agentId);
   }
 
   unsubscribe(sessionId: string, target: BroadcastTarget, agentIds?: readonly string[]): void {
@@ -267,6 +289,12 @@ export class SessionEventBroadcaster {
       .filter((state) => state.targets.has(target))
       .map((state) => state.sessionId)
       .toSorted();
+  }
+
+  hasSubscribers(sessionId: string): boolean {
+    if ((this.pendingSubscribes.get(sessionId) ?? 0) > 0) return true;
+    const state = this.sessions.get(sessionId);
+    return state !== undefined && state.targets.size > 0;
   }
 
   removeTarget(target: BroadcastTarget): void {
@@ -519,6 +547,7 @@ export class SessionEventBroadcaster {
 
   private trackWork(sessionId: string, session: ISessionScopeHandle): void {
     if (this.closed) return;
+    if (isEphemeralSession(session)) return;
     this.untrackWork(sessionId);
     let workView: ISessionActivityView;
     try {
@@ -691,6 +720,9 @@ export class SessionEventBroadcaster {
       if (payload === undefined) return;
       const sessionId = sessionMetaUpdatedSessionId(corePayload);
       if (sessionId === undefined) return;
+      if (isEphemeralSession(getLiveSessionById(this.opts.core.accessor, sessionId))) {
+        return;
+      }
       this.enqueueGlobal(event.type, () => this.sessionEvent('updated', sessionId, undefined, {
         title: payload.title ?? (typeof payload.patch?.['title'] === 'string' ? payload.patch['title'] : undefined),
         lastPrompt: typeof payload.patch?.['lastPrompt'] === 'string' ? payload.patch['lastPrompt'] : undefined,
@@ -817,6 +849,15 @@ export class SessionEventBroadcaster {
     } else {
       logger.warn({ eventType, err: error }, 'session event dispatch failed');
     }
+  }
+}
+
+function isEphemeralSession(session: ISessionScopeHandle | undefined): boolean {
+  if (session === undefined) return false;
+  try {
+    return session.accessor.get(ISessionContext)?.ephemeral === true;
+  } catch {
+    return false;
   }
 }
 

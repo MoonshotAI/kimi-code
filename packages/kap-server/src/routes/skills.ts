@@ -279,11 +279,13 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
               resolved.handle.accessor.get(ISessionMediaStore),
             );
             const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
-            const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
+            const sessionCtx = resolved.handle.accessor.get(ISessionContext);
+            const sessionDir = sessionCtx.sessionDir;
             const mainAgent = await ensureMainAgentHandle(resolved.handle);
             const environmentMedia = environmentMediaTargets(
               mainAgent.accessor.get(IAgentEnvironmentBindingService).current,
               mainAgent.accessor.get(IAgentEnvironmentService),
+              { sessionId: session_id, ephemeral: sessionCtx.ephemeral === true },
             );
             try {
               preparedMedia = await resolvePromptMediaFiles(

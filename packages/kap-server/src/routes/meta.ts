@@ -45,6 +45,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       session_wait: true as const,
       agent_close: true as const,
       session_continue: true as const,
+      ephemeral_sessions: true as const,
     }),
     server_id: opts.serverId,
     started_at: opts.startedAt,

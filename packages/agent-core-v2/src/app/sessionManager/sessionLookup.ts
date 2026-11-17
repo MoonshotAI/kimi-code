@@ -20,6 +20,7 @@ export async function programForSession(
     return accessor.get(IWorkspaceInstanceManager).acquire({
       workspaceId: context.workspaceId,
       root: context.cwd,
+      ephemeral: context.ephemeral === true ? true : undefined,
     });
   }
   const summary = await accessor.get(ISessionIndex).get(sessionId);

@@ -20,6 +20,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
+import { join } from 'pathe';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import type { McpServerEntry } from '#/mcpCore/connection-manager';
 import { IAgentMcpService } from './mcp';
@@ -71,6 +73,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @ISessionContext private readonly session: ISessionContext,
   ) {
     super();
     this.states.contributeState(mcpDiscoveryKey);
@@ -369,7 +372,27 @@ export class AgentMcpService extends Service implements IAgentMcpService {
           createMcpTool(qualified, tool, client, {
             serverName,
             attachmentStore: this.attachmentStore,
-            originals: () => environmentTempTarget(this.environment, 'original-images'),
+            originals: () => {
+              const sessionCtx = this.session as ISessionContext | undefined;
+              if (sessionCtx?.ephemeral === true) {
+                try {
+                  const inspected = this.environment.inspect();
+                  if (inspected.identity.environmentId === 'local' && inspected.fs !== undefined && inspected.path !== undefined) {
+                    return {
+                      fs: inspected.fs,
+                      path: inspected.path,
+                      dir: join(sessionCtx.sessionDir, 'original-images'),
+                    };
+                  }
+                } catch {
+                  return undefined;
+                }
+              }
+              return environmentTempTarget(this.environment, 'original-images', undefined, {
+                sessionId: sessionCtx?.sessionId,
+                ephemeral: sessionCtx?.ephemeral === true,
+              });
+            },
             telemetry: this.telemetry,
             providerType: () => this.loop.getModelProviderType(),
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),

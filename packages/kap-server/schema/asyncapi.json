@@ -2436,6 +2436,9 @@
                     "cwd": {
                       "type": "string"
                     },
+                    "ephemeral": {
+                      "type": "boolean"
+                    },
                     "git": {
                       "properties": {
                         "branch": {

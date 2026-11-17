@@ -70,6 +70,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly hostBridges: HostBridgeManager;
   readonly conversations: ConversationService;
   readonly sessionRating: SessionRatingHost;
+  readonly retainSessionForRequest?: (req: object, sessionId: string) => void;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly managedHost?: boolean;
@@ -134,11 +135,13 @@ export async function registerApiV1Routes(
         core,
         opts.conversations,
         hostSources(opts.hostBridges),
+        opts.retainSessionForRequest,
       );
       registerSessionListAndBatchRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionListAndBatchRoutes>[0],
         core,
         hostSources(opts.hostBridges),
+        opts.retainSessionForRequest,
       );
       registerContextRoutes(
         apiV1 as unknown as Parameters<typeof registerContextRoutes>[0],

@@ -63,10 +63,44 @@ export interface EnvironmentTempTarget {
   readonly dir: string;
 }
 
+const trackedEphemeralEnvironmentRoots = new WeakMap<IHostFileSystem, Set<string>>();
+
+export function trackEphemeralEnvironmentRoot(
+  lease: EnvironmentLease,
+  fs: IHostFileSystem,
+  path: EnvironmentPath,
+  tempDir: string,
+  sessionId: string,
+): string {
+  const root = path.join(tempDir, 'kimi-code', `ephemeral-${sessionId}`);
+  let tracked = trackedEphemeralEnvironmentRoots.get(fs);
+  if (tracked === undefined) {
+    tracked = new Set();
+    trackedEphemeralEnvironmentRoots.set(fs, tracked);
+  }
+  if (!tracked.has(root)) {
+    tracked.add(root);
+    lease.track(
+      {
+        dispose: async () => {
+          try {
+            await fs.remove(root).catch(() => {});
+          } finally {
+            tracked.delete(root);
+          }
+        },
+      },
+      sessionId,
+    );
+  }
+  return root;
+}
+
 export function environmentTempTarget(
   service: IAgentEnvironmentService,
   subdir: string,
   localTempDir?: string,
+  options?: { readonly sessionId?: string; readonly ephemeral?: boolean },
 ): EnvironmentTempTarget | undefined {
   let lease: EnvironmentLease;
   try {
@@ -78,10 +112,16 @@ export function environmentTempTarget(
     const environment = lease.environment;
     const fs = environment.fs;
     const path = environment.path;
+    const isLocal = environment.identity.environmentId === LOCAL_ENVIRONMENT_ID;
+    const ephemeralSessionId = options?.ephemeral === true ? options.sessionId : undefined;
     const tempDir =
       environment.host?.tempDir ??
-      (environment.identity.environmentId === LOCAL_ENVIRONMENT_ID ? localTempDir : undefined);
+      (isLocal ? localTempDir : undefined);
     if (fs === undefined || path === undefined || tempDir === undefined) return undefined;
+    if (ephemeralSessionId !== undefined && !isLocal) {
+      const ephemeralRoot = trackEphemeralEnvironmentRoot(lease, fs, path, tempDir, ephemeralSessionId);
+      return { fs, path, dir: path.join(ephemeralRoot, subdir) };
+    }
     return { fs, path, dir: path.join(tempDir, 'kimi-code', subdir) };
   } finally {
     lease.dispose();

@@ -19,6 +19,7 @@ import {
   normalizeImageMime,
   persistOriginalImage,
   resolveEffectiveImageMime,
+  trackEphemeralEnvironmentRoot,
   unsupportedImageMimeFromUrl,
   type EnvironmentBinding,
   type GetResult,
@@ -157,21 +158,38 @@ export interface EnvironmentMediaTargets {
 export function environmentMediaTargets(
   binding: EnvironmentBinding,
   environment: IAgentEnvironmentService,
+  options?: { readonly sessionId?: string; readonly ephemeral?: boolean },
 ): EnvironmentMediaTargets {
   if (binding.environmentId === 'local') return { dispose: () => {} };
   let lease: EnvironmentLease | undefined;
+  const ephemeralSessionId = options?.ephemeral === true ? options.sessionId : undefined;
   const acquire = async (): Promise<Environment> => {
-    lease ??= await environment.acquireWhenReady(['fs']);
+    if (lease === undefined) {
+      lease = await environment.acquireWhenReady(['fs']);
+      if (ephemeralSessionId !== undefined) {
+        const targetEnv = lease.environment;
+        const tempDir = (targetEnv.host as Environment['host'] & { tempDir?: string }).tempDir;
+        if (tempDir !== undefined && targetEnv.fs !== undefined && targetEnv.path !== undefined) {
+          trackEphemeralEnvironmentRoot(lease, targetEnv.fs, targetEnv.path, tempDir, ephemeralSessionId);
+        }
+      }
+    }
     return lease.environment;
   };
   return {
-    resolveOriginalsTarget: async () => environmentTempDirTarget(await acquire(), 'original-images'),
-    resolveAttachmentsTarget: async () => environmentTempDirTarget(await acquire(), 'attachments'),
+    resolveOriginalsTarget: async () =>
+      environmentTempDirTarget(await acquire(), 'original-images', ephemeralSessionId),
+    resolveAttachmentsTarget: async () =>
+      environmentTempDirTarget(await acquire(), 'attachments', ephemeralSessionId),
     dispose: () => lease?.dispose(),
   };
 }
 
-function environmentTempDirTarget(environment: Environment, subdir: string): PromptAttachmentsTarget {
+function environmentTempDirTarget(
+  environment: Environment,
+  subdir: string,
+  ephemeralSessionId?: string,
+): PromptAttachmentsTarget {
   const tempDir = (environment.host as Environment['host'] & { tempDir?: string }).tempDir;
   if (tempDir === undefined || environment.fs === undefined || environment.path === undefined) {
     throw new Error2(
@@ -180,7 +198,10 @@ function environmentTempDirTarget(environment: Environment, subdir: string): Pro
     );
   }
   return {
-    dir: environment.path.join(tempDir, 'kimi-code', subdir),
+    dir:
+      ephemeralSessionId === undefined
+        ? environment.path.join(tempDir, 'kimi-code', subdir)
+        : environment.path.join(tempDir, 'kimi-code', `ephemeral-${ephemeralSessionId}`, subdir),
     fs: environment.fs,
     path: environment.path,
   };

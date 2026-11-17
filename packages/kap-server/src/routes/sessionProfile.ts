@@ -68,6 +68,7 @@ export async function updateSessionProfile(
     updatedAt: meta.updatedAt,
     archived: meta.archived,
     archivedAt: meta.archivedAt,
+    ephemeral: ctx.ephemeral === true ? true : undefined,
     custom: meta.custom,
   };
 }

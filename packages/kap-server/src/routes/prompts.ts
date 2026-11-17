@@ -230,8 +230,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           );
           resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
 
+          const sessionCtx = session.accessor.get(ISessionContext);
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
-          const environmentMedia = environmentMediaTargets(resolved.binding.current, resolved.environment);
+          const environmentMedia = environmentMediaTargets(
+            resolved.binding.current,
+            resolved.environment,
+            { sessionId: session_id, ephemeral: sessionCtx.ephemeral === true },
+          );
           try {
             preparedMedia = await resolvePromptMediaFiles(
               resolvedSessionMedia,

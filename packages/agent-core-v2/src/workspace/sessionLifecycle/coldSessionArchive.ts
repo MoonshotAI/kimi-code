@@ -6,6 +6,7 @@ import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '#/app/sessionManager/sessionLookup';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
+import { ErrorCodes, isError2 } from '#/errors';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -94,7 +95,7 @@ export async function setSessionArchived(
 
 export type SessionArchiveBatchItemOutcome =
   | { id: string; ok: true }
-  | { id: string; ok: false; reason: 'not_found' | 'error'; message: string };
+  | { id: string; ok: false; reason: 'not_found' | 'ephemeral' | 'error'; message: string };
 
 export async function setSessionArchivedBatch(
   accessor: ServicesAccessor,
@@ -109,6 +110,9 @@ export async function setSessionArchivedBatch(
         ? { id, ok: true }
         : { id, ok: false, reason: 'not_found', message: `session ${id} does not exist` };
     } catch (error) {
+      if (isError2(error) && error.code === ErrorCodes.SESSION_EPHEMERAL_UNSUPPORTED) {
+        return { id, ok: false, reason: 'ephemeral', message: error.message };
+      }
       return {
         id,
         ok: false,

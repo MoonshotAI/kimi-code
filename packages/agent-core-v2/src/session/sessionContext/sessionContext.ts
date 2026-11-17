@@ -15,6 +15,7 @@ export interface ISessionContext {
   readonly sessionDir: string;
   readonly metaScope: string;
   readonly cwd: string;
+  readonly ephemeral?: boolean;
   scope(subKey?: string): string;
 }
 
@@ -42,6 +43,7 @@ export function makeSessionContext(input: {
   readonly sessionScope: string;
   readonly cwd: string;
   readonly metaScope?: string;
+  readonly ephemeral?: boolean;
 }): ISessionContext {
   const { sessionScope } = input;
   return {
@@ -51,6 +53,7 @@ export function makeSessionContext(input: {
     sessionDir: input.sessionDir,
     metaScope: input.metaScope ?? sessionScope,
     cwd: input.cwd,
+    ephemeral: input.ephemeral,
     scope: (subKey?: string): string =>
       subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
   };

@@ -33,7 +33,9 @@ import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IEnvironmentService } from '#/app/environment/environment';
+import { basename } from 'pathe';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
@@ -134,9 +136,10 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
 
   acquire(ref: WorkspaceInstanceRef): Promise<WorkspaceInstanceLease> {
     if (this.disposing) return Promise.reject(new Error('workspace instance manager is disposing'));
+    const mode = ref.ephemeral === true ? 'ephemeral' : 'persisted';
     const key = 'workspaceId' in ref
-      ? `id:${ref.workspaceId}`
-      : `root:${ref.root.replace(/[\\/]$/, '')}`;
+      ? `id:${mode}:${ref.workspaceId}`
+      : `root:${mode}:${ref.root.replace(/[\\/]$/, '')}`;
     let request = this.requests.get(key);
     if (request === undefined) {
       const pending: Promise<Workspace> = this.resolveWorkspace(ref).finally(() => {
@@ -152,12 +155,35 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     let workspace: Workspace | undefined;
     if ('workspaceId' in ref) {
       workspace = await this.workspaces.get(ref.workspaceId);
-      if (workspace === undefined && ref.root !== undefined) workspace = await this.workspaces.createOrTouch(ref.root);
+      if (workspace === undefined && ref.root !== undefined) {
+        workspace = ref.ephemeral === true
+          ? await this.ephemeralWorkspaceForRoot(ref.root)
+          : await this.workspaces.createOrTouch(ref.root);
+      }
+    } else if (ref.ephemeral === true) {
+      workspace = await this.ephemeralWorkspaceForRoot(ref.root);
     } else {
       workspace = await this.workspaces.createOrTouch(ref.root);
     }
     if (workspace === undefined) throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${'workspaceId' in ref ? ref.workspaceId : ref.root} does not exist`);
     return workspace;
+  }
+
+  private async ephemeralWorkspaceForRoot(root: string): Promise<Workspace> {
+    const registered = await this.workspaces.list();
+    const rootKey = workspaceRootKey(root);
+    const matched = registered.find((entry) => workspaceRootKey(entry.root) === rootKey);
+    if (matched !== undefined) return matched;
+    const now = Date.now();
+    return {
+      id: encodeWorkDirKey(root),
+      root,
+      name: basename(root),
+      kind: 'implicit',
+      additionalDirs: [],
+      createdAt: now,
+      lastOpenedAt: now,
+    };
   }
 
   private async acquireWorkspace(workspace: Workspace): Promise<WorkspaceInstanceLease> {

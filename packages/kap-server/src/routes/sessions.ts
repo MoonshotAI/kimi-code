@@ -44,6 +44,7 @@ import type { ServerResponse } from 'node:http';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import { ISessionRunGate } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionRunGate';
+import { encodeWorkDirKey, workspaceRootKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
 import { wrapSystemReminder } from '@moonshot-ai/agent-core-v2/features/reminder/systemReminder';
 import {
@@ -171,6 +172,7 @@ export function registerSessionsRoutes(
   core: Scope,
   conversations: ConversationService,
   hosts?: HostSources,
+  retainSessionForRequest?: (req: object, sessionId: string) => void,
 ): void {
   const createRoute = defineRoute(
     {
@@ -251,41 +253,54 @@ export function registerSessionsRoutes(
       }
 
       try {
+        const isEphemeral = body.ephemeral === true;
         const resolved =
-          bucket === undefined
-            ? await registry.createOrTouch(workDir)
-            : ((await registry.touch(bucket.id)) ?? bucket);
+          bucket !== undefined
+            ? (isEphemeral ? bucket : ((await registry.touch(bucket.id)) ?? bucket))
+            : isEphemeral
+              ? await resolveEphemeralWorkspaceBucket(registry, workDir)
+              : await registry.createOrTouch(workDir);
         const custom = customSessionMetadata(body.metadata);
         const agentConfig = body.agent_config ?? {};
         const mainAgentBinding = await creationMainAgentBinding(core, agentConfig);
         const { profile: _profile, model: _model, thinking: _thinking, ...settings } = agentConfig;
         const appliesSettings = Object.keys(settings).some((key) => key !== 'tower_base');
         const handle = await core.accessor.get(ISessionManager).create({
-          workspaceId: resolved.id,
+          workspaceId: isEphemeral && bucket === undefined ? undefined : resolved.id,
+          ephemeral: isEphemeral ? true : undefined,
           workDir,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
           mainAgentBinding,
           ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
           prepare: async (session) => {
+            retainSessionForRequest?.(req, session.id);
             if (Object.keys(custom).length > 0) {
               await session.accessor.get(ISessionMetadata).update({ custom });
             }
             if (appliesSettings) await applyAgentConfigToSession(session, settings);
           },
         });
+        retainSessionForRequest?.(req, handle.id);
         const metadata = handle.accessor.get(ISessionMetadata);
         if (typeof body.title === 'string') await metadata.setTitle(body.title);
         const meta = await metadata.read();
         const sessionId = meta.id;
+        const sessionCtx = handle.accessor.get(ISessionContext);
         const session = toWireSession(
-          { ...meta, workspaceId: resolved.id },
-          resolved.root,
+          {
+            ...meta,
+            workspaceId: sessionCtx.workspaceId,
+            ephemeral: isEphemeral ? true : undefined,
+          },
+          sessionCtx.cwd,
           resolveSessionFacts(core, sessionId),
         );
-        core.accessor.get(IEventService).publish(
-          new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
-        );
+        if (!isEphemeral) {
+          core.accessor.get(IEventService).publish(
+            new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
+          );
+        }
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -316,7 +331,7 @@ export function registerSessionsRoutes(
     },
     async (req, reply) => {
       const { session_id } = req.params;
-      const summary = await core.accessor.get(ISessionIndex).get(session_id);
+      const summary = await core.accessor.get(ISessionManager).status(session_id);
       if (summary === undefined && req.query.hosts === 'include' && hosts !== undefined) {
         const lookup = await sessionOnHosts(hosts, session_id);
         if (lookup.found !== undefined) {
@@ -340,6 +355,8 @@ export function registerSessionsRoutes(
         );
         return;
       }
+      const live = getLiveSessionById(core.accessor, session_id);
+      const isEphemeral = live?.accessor.get(ISessionContext).ephemeral === true;
       const cwd =
         summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) {
@@ -353,7 +370,14 @@ export function registerSessionsRoutes(
         return;
       }
       reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
+        okEnvelope(
+          toWireSession(
+            isEphemeral ? { ...summary, ephemeral: true } : summary,
+            cwd,
+            resolveSessionFacts(core, session_id),
+          ),
+          req.id,
+        ),
       );
     },
   );
@@ -395,8 +419,9 @@ export function registerSessionsRoutes(
             : await resolveExistingMainAgent(core, session_id);
         const agent = readAgentState(main, session.activity === 'turn');
         if (
-          (typeof req.body.title === 'string' && req.body.title.trim().length > 0) ||
-          (req.body.metadata !== undefined && Object.keys(req.body.metadata).length > 0)
+          fields.ephemeral !== true &&
+          ((typeof req.body.title === 'string' && req.body.title.trim().length > 0) ||
+            (req.body.metadata !== undefined && Object.keys(req.body.metadata).length > 0))
         ) {
           core.accessor.get(IEventService).publish(
             new SessionMetaUpdated({
@@ -509,6 +534,7 @@ export function registerSessionsRoutes(
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
         [ErrorCode.TURN_NOT_FOUND]: {},
         [ErrorCode.TURN_NOT_CONTINUABLE]: {},
+        [ErrorCode.SESSION_EPHEMERAL_UNSUPPORTED]: {},
       },
       description: 'Run a session action',
       tags: ['sessions'],
@@ -648,7 +674,7 @@ async function readWaitSnapshot(
     const meta = await live.accessor.get(ISessionMetadata).read();
     const ctx = live.accessor.get(ISessionContext);
     baseSession = toWireSession(
-      { ...meta, workspaceId: ctx.workspaceId },
+      { ...meta, workspaceId: ctx.workspaceId, ephemeral: ctx.ephemeral === true ? true : undefined },
       ctx.cwd,
       resolveSessionFacts(core, id),
     );
@@ -813,10 +839,20 @@ async function waitSessionAction(
   );
 }
 
+function rejectEphemeralSession(live: ISessionScopeHandle | undefined, id: string, action: string): void {
+  if (live?.accessor.get(ISessionContext).ephemeral === true) {
+    throw new Error2(
+      ErrorCodes.SESSION_EPHEMERAL_UNSUPPORTED,
+      `ephemeral session ${id} cannot be ${action}`,
+    );
+  }
+}
+
 async function forkSessionAction(
   ctx: SessionActionCtx<z.infer<typeof forkSessionRequestSchema>>,
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
+  rejectEphemeralSession(getLiveSessionById(core.accessor, id), id, 'forked');
   const lease = await programForSession(core.accessor, id);
   if (lease === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
@@ -1102,6 +1138,7 @@ async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {
 
 async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
+  rejectEphemeralSession(getLiveSessionById(core.accessor, id), id, 'archived');
   const summary = await core.accessor.get(ISessionManager).status(id);
   if (summary === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
@@ -1132,6 +1169,7 @@ async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
 async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
   const live = getLiveSessionById(core.accessor, id);
+  rejectEphemeralSession(live, id, 'reloaded from disk');
   const indexEntry =
     live === undefined ? await core.accessor.get(ISessionIndex).get(id) : undefined;
   if (live !== undefined) {
@@ -1229,6 +1267,7 @@ export interface SessionWireFields {
   readonly updatedAt: number;
   readonly archived: boolean;
   readonly archivedAt?: number;
+  readonly ephemeral?: boolean;
   readonly custom?: Record<string, unknown>;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
@@ -1257,10 +1296,22 @@ export function toWireSession(
     pending_interaction: facts.pendingInteraction,
     last_turn_outcome: lastTurnOutcome,
     archived: fields.archived,
+    ephemeral: fields.ephemeral === true ? true : undefined,
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom),
     git,
   };
+}
+
+async function resolveEphemeralWorkspaceBucket(
+  registry: IWorkspaceService,
+  workDir: string,
+): Promise<{ readonly id: string; readonly root: string }> {
+  const list = await registry.list();
+  const rootKey = workspaceRootKey(workDir);
+  const matched = list.find((entry) => workspaceRootKey(entry.root) === rootKey);
+  if (matched !== undefined) return matched;
+  return { id: encodeWorkDirKey(workDir), root: workDir };
 }
 
 export interface SessionFacts {

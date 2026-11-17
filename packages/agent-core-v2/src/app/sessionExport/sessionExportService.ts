@@ -16,6 +16,7 @@ import {
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { buildExportManifest, type ExportSessionManifestSummary } from './manifest';
@@ -65,6 +66,22 @@ export class SessionExportService implements ISessionExportService {
       );
     }
 
+    const live = this.liveSession(input.sessionId);
+    let isEphemeral = false;
+    if (live !== undefined) {
+      try {
+        isEphemeral = live.accessor.get(ISessionContext)?.ephemeral === true;
+      } catch {
+        isEphemeral = false;
+      }
+    }
+    if (isEphemeral) {
+      throw new Error2(
+        ErrorCodes.SESSION_EPHEMERAL_UNSUPPORTED,
+        `Ephemeral session "${input.sessionId}" cannot be exported`,
+        { details: { sessionId: input.sessionId } },
+      );
+    }
     const summary = await this.index.get(input.sessionId);
     const globalLogOnly = input.includeGlobalLog === true && input.sessionId.trim().length === 0;
     if (summary === undefined && !globalLogOnly) {

@@ -13,6 +13,7 @@ export const SessionErrors = {
     SESSION_TOWER_MODE_INVALID: 'session.tower_mode_invalid',
     SESSION_OCCUPIED: 'session.occupied',
     SESSION_STALE: 'session.stale',
+    SESSION_EPHEMERAL_UNSUPPORTED: 'session.ephemeral_unsupported',
   },
   retryable: ['session.fork_active_turn', 'session.occupied'],
 } as const satisfies ErrorDomain;
