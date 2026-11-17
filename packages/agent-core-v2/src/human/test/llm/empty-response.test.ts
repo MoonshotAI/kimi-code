@@ -36,8 +36,37 @@ function withResponseStream(chunks: readonly Record<string, unknown>[]) {
   };
 }
 
+async function generateOpenAI(
+  attempts: readonly (readonly Record<string, unknown>[])[],
+  infiniteRetry = false,
+) {
+  let calls = 0;
+  const requester = createCoreRequester().with({
+    protocol: { base: openAIProtocol },
+    endpoint: {
+      baseUrl: 'https://example.test/v1',
+      clientFactory: () => {
+        const chunks = attempts[calls++];
+        if (chunks === undefined) throw new Error('unexpected request attempt');
+        return {
+          chat: { completions: { create: () => withResponseStream(chunks) } },
+        };
+      },
+    },
+  });
+  const outcome = await requester.generate(
+    {
+      model: { spec: { provider: 'openai', name: 'test-model' } },
+      content: { messages: [createUserMessage('hi')] },
+      policy: { retry: { maxAttemptsPerStep: 1, infiniteRetry } },
+    },
+    { signal: new AbortController().signal },
+  );
+  return { calls, outcome };
+}
+
 describe('emptyResponseError', () => {
-  it('reports an empty response when the stream produced nothing', () => {
+  it('reports an empty response when the stream produced nothing', async () => {
     const message = accumulatedMessage([]);
     const error = emptyResponseError(message, model, NO_FINISH);
     expect(error).toMatchObject({
@@ -60,9 +89,13 @@ describe('emptyResponseError', () => {
       retryable: false,
     });
     expect(filtered?.message).toContain('filtered the response');
+    await expect(generateOpenAI([[]])).resolves.toMatchObject({
+      calls: 1,
+      outcome: { type: 'failed', error: { kind: 'empty_response', retryable: true } },
+    });
   });
 
-  it('reports a think-only response but tolerates whitespace text', () => {
+  it('distinguishes think-only and whitespace responses', async () => {
     const thinkOnly = accumulatedMessage([{ type: 'think', think: 'reasoning' }]);
     const error = emptyResponseError(thinkOnly, model, NO_FINISH);
     expect(error?.kind).toBe('empty_response');
@@ -78,9 +111,17 @@ describe('emptyResponseError', () => {
     expect(emptyResponseError(thinkWithWhitespace, model, NO_FINISH)?.message).toContain(
       'only thinking content',
     );
+    await expect(
+      generateOpenAI([
+        [{ choices: [{ delta: { reasoning_content: 'reasoning' }, finish_reason: null }] }],
+      ]),
+    ).resolves.toMatchObject({
+      calls: 1,
+      outcome: { type: 'failed', error: { kind: 'empty_response', retryable: true } },
+    });
   });
 
-  it('accepts text or tool calls unless the provider stopped for repeated output', async () => {
+  it('rejects repeated or incomplete responses and preserves completed output', async () => {
     const text = accumulatedMessage([{ type: 'text', text: 'hi' }]);
     const toolCall = accumulatedMessage([
       { type: 'function', id: 'call_1', name: 'tool', arguments: '{}' },
@@ -112,33 +153,63 @@ describe('emptyResponseError', () => {
       });
     }
 
-    const chunks = [
-      { choices: [{ delta: { content: 'repeated text' }, finish_reason: 'repeat' }] },
-    ];
-    const requester = createCoreRequester().with({
-      protocol: { base: openAIProtocol },
-      endpoint: {
-        baseUrl: 'https://example.test/v1',
-        clientFactory: () => ({
-          chat: { completions: { create: () => withResponseStream(chunks) } },
-        }),
+    await expect(
+      generateOpenAI([
+        [{ choices: [{ delta: { content: 'repeated text' }, finish_reason: 'repeat' }] }],
+      ]),
+    ).resolves.toMatchObject({
+      calls: 1,
+      outcome: {
+        type: 'failed',
+        error: {
+          kind: 'empty_response',
+          rawFinishReason: 'repeat',
+          retryable: true,
+          message: expect.stringContaining('repeated output'),
+        },
       },
     });
-    const outcome = await requester.generate(
-      {
-        model: { spec: { provider: 'openai', name: 'test-model' } },
-        content: { messages: [createUserMessage('hi')] },
-        policy: { retry: { maxAttemptsPerStep: 1 } },
-      },
-      { signal: new AbortController().signal },
-    );
-    expect(outcome).toMatchObject({
-      type: 'failed',
-      error: {
-        kind: 'empty_response',
-        rawFinishReason: 'repeat',
-        retryable: true,
-        message: expect.stringContaining('repeated output'),
+
+    const incompleteAttempts = [
+      [{ choices: [{ delta: { content: 'Let me write the report.' }, finish_reason: null }] }],
+      [{ choices: [{ delta: { content: '  \n' }, finish_reason: null }] }],
+      [{
+        choices: [{
+          delta: {
+            tool_calls: [{ index: 0, id: 'call_1', function: { name: 'Write', arguments: '{"path":' } }],
+          },
+          finish_reason: null,
+        }],
+      }],
+    ];
+    for (const chunks of incompleteAttempts) {
+      await expect(generateOpenAI([chunks])).resolves.toMatchObject({
+        calls: 1,
+        outcome: {
+          type: 'failed',
+          error: {
+            kind: 'provider',
+            retryable: true,
+            message: expect.stringContaining('without a finish event'),
+          },
+        },
+      });
+    }
+
+    await expect(
+      generateOpenAI([
+        [{ choices: [{ delta: { content: 'Let me write the report.' }, finish_reason: null }] }],
+        [
+          { choices: [{ delta: { content: 'completed' }, finish_reason: null }] },
+          { choices: [{ delta: {}, finish_reason: 'stop' }] },
+        ],
+      ], true),
+    ).resolves.toMatchObject({
+      calls: 2,
+      outcome: {
+        type: 'done',
+        finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+        message: { content: [{ type: 'text', text: 'completed' }] },
       },
     });
   });

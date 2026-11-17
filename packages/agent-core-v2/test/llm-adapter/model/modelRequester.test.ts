@@ -232,7 +232,7 @@ describe('generateModel request execution', () => {
     expect(requester.calls[0]?.config.model.apiKey).toBeUndefined();
   });
 
-  it('streams successful events and rejects repeated output', async () => {
+  it('streams successful events and rejects invalid terminal outcomes', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) =>
       emitAll(emit, [
@@ -310,6 +310,23 @@ describe('generateModel request execution', () => {
       rawFinishReason: 'repeat',
       retryable: true,
       message: expect.stringContaining('repeated output'),
+    });
+
+    const incomplete = new FakeLlmRequester();
+    incomplete.handler = (_i, emit) => {
+      emitAll(emit, [
+        { type: 'llm.sent' },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'incomplete text' } },
+        { type: 'llm.done' },
+      ]);
+    };
+    const incompleteImpl = modelEventRequester(
+      modelWith(createStaticCredentialProvider()),
+      incomplete,
+    );
+    await expect(collect(incompleteImpl.request(INPUT))).rejects.toMatchObject({
+      retryable: true,
+      message: expect.stringContaining('without a finish event'),
     });
   });
 

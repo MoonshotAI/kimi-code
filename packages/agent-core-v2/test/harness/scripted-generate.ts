@@ -560,6 +560,15 @@ async function runLegacyRequester(
   const message = accumulator.finish();
   const empty = emptyResponseError(message, config.model, finish ?? NO_FINISH);
   if (empty !== null) return failed({ error: empty });
+  if (request.protocol.stream !== false && finish === undefined) {
+    return failed({
+      error: {
+        kind: 'provider',
+        message: `The API stream ended without a finish event. Provider: ${config.model.provider}, model: ${config.model.model}`,
+        retryable: true,
+      },
+    });
+  }
   const streamEndedAt = Date.now();
   if (firstChunkAt !== undefined) {
     serverDecodeMs += streamEndedAt - lastResumeAt;
