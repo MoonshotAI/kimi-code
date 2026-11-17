@@ -600,7 +600,7 @@ export function registerSessionListAndBatchRoutes(
       const { hosts: includeHosts, ...query } = raw;
       const local = (next: Omit<ListSessionsQuery, 'hosts'>) => listSessionsHere(core, gitResolver, next);
       const outcome = includeHosts === 'include' && hosts !== undefined
-        ? raw.page_size === undefined && raw.page_token === undefined && raw.page === undefined && raw.before_id === undefined && raw.after_id === undefined
+        ? raw.view !== 'by_workspace' && raw.page_size === undefined && raw.page_token === undefined && raw.page === undefined && raw.before_id === undefined && raw.after_id === undefined
           ? await listAllSessionsAcrossHosts(query, hosts, local)
           : await listSessionsAcrossHosts(raw, hosts, local)
         : await local(query);
