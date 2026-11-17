@@ -13,10 +13,10 @@ Rule of thumb: **if users cannot perceive the change, write no changeset.** A ch
 
 Do not write:
 - Docs-only or tests-only changes that never enter the shipped artifact.
-- Changes internal to core/server packages — architecture, protocols, refactors, config/journal/wire mechanics — unless they fix a bug users care about.
+- Purely internal core/server refactors — internal architecture, wire/journal mechanics, or hidden first-party endpoints (`hide: true`) — unless they fix a bug users care about or change public KAP behavior.
 - When you are unsure whether users can perceive a change, ask first.
 
-Do write: user-perceivable new features or behavior changes, and internal-package changes that fix a user-useful bug or change CLI output/behavior (list `@moonshot-ai/kimi-code` for those).
+Do write: user-perceivable new features or behavior changes, CLI subcommands/flags (`kimi web --json`, etc.), public KAP core conversation/session capabilities perceptible to external KAP callers, and internal-package changes that fix a user-useful bug or change CLI output/behavior (list `@moonshot-ai/kimi-code` for those).
 
 ## 2. What to Write
 

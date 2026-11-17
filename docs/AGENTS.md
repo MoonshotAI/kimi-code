@@ -6,12 +6,13 @@ This repository uses VitePress for the documentation site. Most user-facing page
 
 - Locales live under `docs/en/` and `docs/zh/` with mirrored paths and filenames.
 - Main sections (nav + sidebar) are:
-  - Guides: getting-started, migration, use-cases, interaction, sessions
+  - Guides: getting-started, migration, use-cases, interaction, sessions, kap
   - Customization: mcp, skills, plugins, datasource, agents, hooks
   - Configuration: config-files, providers, overrides, env-vars, data-locations
   - Reference: kimi-command, tools, slash-commands, keyboard
   - Release notes: changelog
 - Navigation and sidebar are defined in `docs/.vitepress/config.ts`. Any new or renamed page must be wired there for both locales.
+- Protocol specification companion: `docs/{en,zh}/guides/kap.md` is the human-facing KAP integration overview and prompt entry point; the canonical machine/agent protocol behavioral constitution and endpoint catalog live in `packages/kap-server/docs/kap.md` (paired with live `/openapi.json` and `/asyncapi.json` schemas). Keep `guides/kap.md` and `packages/kap-server/docs/kap.md` aligned whenever KAP authentication, bootstrap commands, or public capabilities change.
 
 ## Source of truth
 

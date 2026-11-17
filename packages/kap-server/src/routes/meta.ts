@@ -1,3 +1,4 @@
+import KAP_SPEC_MARKDOWN from '../../docs/kap.md?raw';
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
@@ -9,7 +10,7 @@ interface RouteHost {
     options: { schema?: Record<string, unknown> },
     handler: (
       req: { id: string },
-      reply: { send(payload: unknown): void },
+      reply: { type?(contentType: string): unknown; send(payload: unknown): void },
     ) => Promise<void> | void,
   ): unknown;
 }
@@ -36,6 +37,8 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       fs_query: true as const,
       mcp: true as const,
       tasks: true as const,
+      interactions_list: true as const,
+      session_wait: true as const,
     }),
     server_id: opts.serverId,
     started_at: opts.startedAt,
@@ -62,4 +65,20 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
     },
   );
   app.get(route.path, route.options, route.handler as Parameters<RouteHost['get']>[2]);
+
+  const kapSpecBytes = Buffer.from(KAP_SPEC_MARKDOWN, 'utf8');
+  app.get(
+    '/kap.md',
+    {
+      schema: {
+        description: 'Get the built-in Kimi Agent Protocol (KAP) Markdown specification matching this server version',
+        tags: ['meta'],
+        operationId: 'getKapSpec',
+      },
+    },
+    async (_req, reply) => {
+      reply.type?.('text/markdown; charset=utf-8');
+      reply.send(kapSpecBytes);
+    },
+  );
 }

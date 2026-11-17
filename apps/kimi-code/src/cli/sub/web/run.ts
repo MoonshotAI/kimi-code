@@ -1,7 +1,14 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
+import {
+  createServerLogger,
+  KIMI_AGENT_PROTOCOL_VERSION,
+  startServer,
+  type IAuthTokenService,
+  type ServerLogger,
+} from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command, Option } from 'commander';
@@ -55,6 +62,7 @@ interface RoutedServer {
 
 export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
+  json?: boolean;
   remoteControl?: boolean;
 }
 
@@ -148,6 +156,13 @@ export function buildWebCommand(
     withServerOptions.option('--open', 'Open the web UI in the default browser.', false);
     withServerOptions.addOption(new Option('--no-open').hideHelp());
   }
+  if (!forceRemoteControl) {
+    withServerOptions.option(
+      '--json',
+      'Start with an in-memory ephemeral bearer token (implies --no-open) and emit a single ready JSON line on stdout.',
+      false,
+    );
+  }
   return withServerOptions.action(async (opts: WebCliOptions) => {
       try {
         await handleWebCommand(
@@ -160,22 +175,91 @@ export function buildWebCommand(
     });
 }
 
+function createEphemeralAuthTokenService(secret: string): IAuthTokenService {
+  const expected = Buffer.from(secret, 'utf8');
+  return {
+    _serviceBrand: undefined,
+    getToken: () => secret,
+    isValid: async (candidate: string) => {
+      const actual = Buffer.from(candidate, 'utf8');
+      return actual.length === expected.length && timingSafeEqual(actual, expected);
+    },
+  };
+}
+
+export function formatJsonBootLine(origin: string, token: string): string {
+  const trimmed = origin.replace(/\/+$/, '');
+  const schemeIdx = trimmed.indexOf('://');
+  const scheme = schemeIdx >= 0 ? trimmed.slice(0, schemeIdx) : 'http';
+  const hostPort = schemeIdx >= 0 ? trimmed.slice(schemeIdx + 3) : trimmed;
+  const lastColon = hostPort.lastIndexOf(':');
+  const rawHost = lastColon >= 0 ? hostPort.slice(0, lastColon) : hostPort;
+  const portSuffix = lastColon >= 0 ? hostPort.slice(lastColon) : '';
+  const canonicalHost =
+    rawHost === '' || rawHost === '0.0.0.0'
+      ? '127.0.0.1'
+      : rawHost === '::'
+        ? '[::1]'
+        : rawHost.includes(':') && !rawHost.startsWith('[')
+          ? `[${rawHost}]`
+          : rawHost;
+  const normalizedOrigin = `${scheme}://${canonicalHost}${portSuffix}`;
+  const url = new URL(normalizedOrigin);
+  const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProtocol}//${url.host}/api/v1/ws`;
+  return `${JSON.stringify({
+    origin: normalizedOrigin,
+    ws_url: wsUrl,
+    token,
+    kimi_agent_protocol_version: KIMI_AGENT_PROTOCOL_VERSION,
+  })}\n`;
+}
+
 export async function handleWebCommand(
   opts: WebCliOptions,
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
+  const jsonMode = opts.json === true;
+  if (jsonMode && opts.remoteControl === true) {
+    throw new Error('--json cannot be combined with --remote-control.');
+  }
+  if (jsonMode && parsed.dangerousBypassAuth) {
+    throw new Error('--json cannot be combined with --dangerous-bypass-auth.');
+  }
+  if (jsonMode && parsed.socketPath !== undefined) {
+    throw new Error('--json cannot be combined with --socket.');
+  }
+  if (jsonMode && parsed.debugEndpoints) {
+    throw new Error('--json cannot be combined with --debug-endpoints.');
+  }
+  if (jsonMode && parsed.allowRemoteShutdown) {
+    throw new Error('--json cannot be combined with --allow-remote-shutdown.');
+  }
   if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
     throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
   }
   if (opts.remoteControl === true && !isLoopbackHost(parsed.host)) {
     throw new Error('--remote-control requires a loopback host.');
   }
+  const ephemeralToken = jsonMode ? randomBytes(32).toString('base64url') : undefined;
+  const runOptions: ParsedServerOptions = jsonMode
+    ? {
+        ...parsed,
+        authTokenService: createEphemeralAuthTokenService(ephemeralToken!),
+        skipInstanceRegistry: true,
+        logToStderr: true,
+      }
+    : parsed;
   const run = deps.startServerForeground ?? startServerForeground;
   let remoteControl: RemoteControlHandle | undefined;
-  await run(parsed, {
+  await run(runOptions, {
     onReady: async (origin, controls) => {
       if (parsed.socketPath !== undefined) return;
+      if (jsonMode) {
+        deps.stdout.write(formatJsonBootLine(origin, ephemeralToken!));
+        return;
+      }
       const token = parsed.dangerousBypassAuth ? undefined : deps.resolveToken?.();
       if (opts.remoteControl === true) {
         if (token === undefined) throw new Error('Unable to read the local server token.');
@@ -310,7 +394,10 @@ async function runServerInProcess(
     process.exit(0);
   }
 
-  const logger = createServerLogger({ level: options.logLevel });
+  const logger = createServerLogger({
+    level: options.logLevel,
+    stream: options.logToStderr === true ? process.stderr : undefined,
+  });
   const webAssetsDir = serverWebAssetsDir();
   if (webAssetsDir === undefined) {
     logger.info(
@@ -331,6 +418,8 @@ async function runServerInProcess(
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowedHosts: options.allowedHosts,
+    authTokenService: options.authTokenService,
+    skipInstanceRegistry: options.skipInstanceRegistry,
     disableAuth: options.dangerousBypassAuth,
     webTitle: options.webTitle,
     socketPath: options.socketPath,

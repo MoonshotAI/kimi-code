@@ -9,7 +9,7 @@ kimi acp
 Once started, the command prints no banner and immediately waits for the ACP client to send an `initialize` request on stdin. Logs are written to stderr (as well as the diagnostic log under `~/.kimi-code/logs/`), so the ACP channel itself stays clean.
 
 ::: tip Who calls this?
-You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../guides/ides.md).
+You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../guides/ides.md); if you are deciding between `kimi -p`, `kimi acp`, and KAP for an external integration, see [Kimi Agent Protocol: Choosing an integration method](../guides/kap.md#choosing-an-integration-method).
 :::
 
 ## Capability matrix

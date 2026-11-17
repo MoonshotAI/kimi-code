@@ -133,7 +133,7 @@ When you need to parse output programmatically, use the `stream-json` format —
 kimi -p "List changed files" --output-format stream-json
 ```
 
-In `stream-json` mode, regular replies produce an Assistant message; when the model calls a tool, an Assistant message with `tool_calls` is emitted first, followed by the corresponding Tool message, then subsequent Assistant messages. Thinking content is not written to JSONL; tool progress and "resuming session" notices are still written to stderr.
+In `stream-json` mode, regular replies produce an Assistant message; when the model calls a tool, an Assistant message with `tool_calls` is emitted first, followed by the corresponding Tool message, then subsequent Assistant messages. Thinking content is not written to JSONL; tool progress and "resuming session" notices are still written to stderr. If you need persistent multi-turn sessions, mid-turn steering, or interactive approvals, see [Kimi Agent Protocol: Choosing an integration method](../guides/kap.md#choosing-an-integration-method).
 
 ## Subcommands
 
@@ -161,7 +161,7 @@ kimi acp
 
 Run the local Kimi server in the foreground of the current terminal — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin — and open the web UI in the default browser once it is ready. The command stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM` (e.g. `Ctrl-C`).
 
-When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For an end-to-end walkthrough of driving sessions over the API, see [Server API: Drive a session over the API](./server-api.md#drive-a-session-over-the-api); for the protocol details, see the [Server API](./server-api.md) reference.
+When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For an end-to-end walkthrough of driving sessions over the API, see [Kimi Agent Protocol: Quick start](../guides/kap.md#quick-start); for the protocol details, see [Kimi Agent Protocol (KAP)](../guides/kap.md).
 
 ```sh
 kimi web                 # run the server in the foreground and open the browser
@@ -181,6 +181,7 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
 | `--web-title <title>` | Custom browser tab title for the web UI; defaults to the workspace directory name |
 | `--no-open` | Do not open the browser once the server is ready |
+| `--json` | Subprocess bootstrap mode: implies `--no-open`, mints an in-memory random bearer token tied to this process (never reads or writes `~/.kimi-code/server.token`), and prints a single JSON line `{ origin, ws_url, token, kimi_agent_protocol_version }` on `stdout` once ready |
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
 
@@ -194,7 +195,7 @@ Deprecated — only stops a server started by a version before 0.28.0. Those ver
 
 #### `kimi web rotate-token`
 
-Generate a new persistent bearer token (written to `~/.kimi-code/server.token`); the previous token stops working immediately. The token is shared by the whole home directory, so every running instance picks the new one up on its next auth check — no restart needed.
+Generate a new persistent bearer token (written to `~/.kimi-code/server.token`); the previous token stops working immediately. The token is shared by the whole home directory, so every running `kimi web` instance picks the new one up on its next auth check — no restart needed.
 
 ### `kimi app`
 

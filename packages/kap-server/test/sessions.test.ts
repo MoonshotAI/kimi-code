@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import {
   Error2,
   ErrorCodes,
+  interactions,
   IBootstrapService,
   IOAuthService,
   type Event2,
@@ -3446,5 +3447,215 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     expect(own).toHaveLength(1);
     expect(answerOf(own[0]!)).toEqual([sideAnswer]);
     expect(new Set(turns.map((turn) => turn.turn_id)).size).toBe(turns.length);
+  });
+});
+
+describe('POST /api/v1/sessions/{id}:wait and live turns buffer flush', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+  let releaseModel: () => void = () => {};
+  let modelGate: Promise<void> = Promise.resolve();
+  const modelBase = 'https://fake-wait-llm.example.test/v1';
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-wait-'));
+    await writeFile(
+      join(home, 'config.toml'),
+      [
+        'default_model = "fake"',
+        '',
+        '[providers.fake]',
+        'type = "openai"',
+        'api_key = "sk-test"',
+        `base_url = "${modelBase}"`,
+        '',
+        '[models.fake]',
+        'provider = "fake"',
+        'model = "fake-model"',
+        'max_context_size = 131072',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!url.startsWith(modelBase)) return realFetch(input, init);
+      const gate = modelGate;
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const enc = new TextEncoder();
+          const send = (delta: Record<string, unknown>, finishReason: string | null) => {
+            controller.enqueue(
+              enc.encode(
+                `data: ${JSON.stringify({
+                  id: 'chatcmpl-wait',
+                  object: 'chat.completion.chunk',
+                  created: 0,
+                  model: 'fake-model',
+                  choices: [{ index: 0, delta, finish_reason: finishReason }],
+                })}\n\n`,
+              ),
+            );
+          };
+          send({ role: 'assistant', content: 'halfway ' }, null);
+          await gate;
+          send({ content: 'done' }, null);
+          send({}, 'stop');
+          controller.enqueue(enc.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterAll(async () => {
+    releaseModel();
+    vi.restoreAllMocks();
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
+  });
+
+  it('returns immediately when idle, times out and flushes in-flight turns while running, wakes on pending approval, and settles on completion', async () => {
+    const createRes = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ cwd: home }),
+    } as never);
+    const sid = ((await createRes.json()) as Envelope<SessionWire>).data.id;
+
+    const idleWaitRes = await fetch(`${base}/api/v1/sessions/${sid}:wait`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ timeout_ms: 5000 }),
+    } as never);
+    const idleWait = (await idleWaitRes.json()) as Envelope<{
+      session: SessionWire;
+      pending_interactions: unknown[];
+      timed_out: boolean;
+    }>;
+    expect(idleWait.code).toBe(0);
+    expect(idleWait.data.timed_out).toBe(false);
+    expect(idleWait.data.session.activity).toBe('idle');
+    expect(idleWait.data.pending_interactions).toEqual([]);
+
+    modelGate = new Promise((resolve) => {
+      releaseModel = resolve;
+    });
+
+    await fetch(`${base}/api/v1/sessions/${sid}/prompts`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        prompt_id: 'p-wait-1',
+        content: [{ type: 'text', text: 'stream test' }],
+        model: 'fake',
+      }),
+    } as never);
+
+    const shortWaitRes = await fetch(`${base}/api/v1/sessions/${sid}:wait`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ timeout_ms: 80 }),
+    } as never);
+    const shortWait = (await shortWaitRes.json()) as Envelope<{
+      session: SessionWire;
+      pending_interactions: unknown[];
+      timed_out: boolean;
+    }>;
+    expect(shortWait.code).toBe(0);
+    expect(shortWait.data.timed_out).toBe(true);
+    expect(shortWait.data.session.activity).toBe('turn');
+
+    await vi.waitFor(async () => {
+      const turnsRes = await fetch(`${base}/api/v1/sessions/${sid}/agents/main/turns`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      const turnsBody = (await turnsRes.json()) as Envelope<ConversationTurnsPage>;
+      const last = turnsBody.data.turns.at(-1);
+      expect(last?.status).toBe('running');
+      const assistant = last?.items.find((i) => i.type === 'assistant_message');
+      expect(assistant && 'text' in assistant ? assistant.text : '').toContain('halfway ');
+    });
+
+    const abortCtrl = new AbortController();
+    const abortedWait = fetch(`${base}/api/v1/sessions/${sid}:wait`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ timeout_ms: 10_000 }),
+      signal: abortCtrl.signal,
+    } as never).catch(() => 'aborted');
+    setTimeout(() => abortCtrl.abort(), 30);
+    expect(await abortedWait).toBe('aborted');
+
+    const approvalWaitPromise = fetch(`${base}/api/v1/sessions/${sid}:wait`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ timeout_ms: 10_000 }),
+    } as never);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const parked = interactions.enqueue({
+      id: 'approval_wait_1',
+      kind: 'approval',
+      payload: {
+        toolCallId: 'tc_wait_1',
+        toolName: 'Bash',
+        action: 'run',
+        display: { command: 'echo ok' },
+      },
+      tags: { agentId: 'main', sessionId: sid, toolCallId: 'tc_wait_1' },
+    });
+
+    const approvalWait = (await (await approvalWaitPromise).json()) as Envelope<{
+      session: SessionWire;
+      pending_interactions: Array<{ interaction_id: string; kind: string }>;
+      timed_out: boolean;
+    }>;
+    expect(approvalWait.code).toBe(0);
+    expect(approvalWait.data.timed_out).toBe(false);
+    expect(approvalWait.data.pending_interactions.map((i) => i.interaction_id)).toEqual([parked.id]);
+
+    await fetch(`${base}/api/v1/sessions/${sid}/interactions/${parked.id}`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ kind: 'approval', decision: 'approved' }),
+    } as never);
+
+    const finalWaitPromise = fetch(`${base}/api/v1/sessions/${sid}:wait`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ timeout_ms: 10_000 }),
+    } as never);
+    setTimeout(() => releaseModel(), 30);
+
+    const finalWait = (await (await finalWaitPromise).json()) as Envelope<{
+      session: SessionWire;
+      pending_interactions: unknown[];
+      timed_out: boolean;
+    }>;
+    expect(finalWait.code).toBe(0);
+    expect(finalWait.data.timed_out).toBe(false);
+    expect(finalWait.data.session.activity).toBe('idle');
+    expect(finalWait.data.pending_interactions).toEqual([]);
   });
 });

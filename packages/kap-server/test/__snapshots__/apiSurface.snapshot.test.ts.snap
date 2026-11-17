@@ -150,6 +150,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/kap.md",
+    ],
+    [
+      "GET",
       "/api/v1/mcp/auth-statuses",
     ],
     [
@@ -243,6 +247,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/sessions/{session_id}/fs/{*}",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/interactions",
     ],
     [
       "GET",
@@ -471,6 +479,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}:takeover",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}:wait",
     ],
     [
       "POST",

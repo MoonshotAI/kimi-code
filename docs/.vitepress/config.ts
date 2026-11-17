@@ -1,3 +1,5 @@
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 import llmstxt from 'vitepress-plugin-llms'
@@ -59,6 +61,7 @@ const config = withMermaid(defineConfig({
                 { text: '在网页中使用', link: '/zh/guides/web' },
                 { text: '远程控制', link: '/zh/guides/remote-control' },
                 { text: '远程环境', link: '/zh/guides/remote-environment' },
+                { text: 'Kimi Agent Protocol (KAP)', link: '/zh/guides/kap' },
               ],
             },
           ],
@@ -93,16 +96,6 @@ const config = withMermaid(defineConfig({
               items: [
                 { text: 'kimi 命令', link: '/zh/reference/kimi-command' },
                 { text: 'kimi acp 子命令', link: '/zh/reference/kimi-acp' },
-                {
-                  text: '服务 API【测试版】',
-                  link: '/zh/reference/server-api',
-                  items: [
-                    { text: '会话与对话', link: '/zh/reference/server-api-conversation' },
-                    { text: '会话接口', link: '/zh/reference/server-api-sessions' },
-                    { text: '服务与配置接口', link: '/zh/reference/server-api-service' },
-                    { text: '文件接口', link: '/zh/reference/server-api-files' },
-                  ],
-                },
                 { text: '内置工具', link: '/zh/reference/tools' },
                 { text: '斜杠命令', link: '/zh/reference/slash-commands' },
                 { text: '键盘快捷键', link: '/zh/reference/keyboard' },
@@ -149,6 +142,7 @@ const config = withMermaid(defineConfig({
                 { text: 'Using Kimi Code in the browser', link: '/en/guides/web' },
                 { text: 'Remote Control', link: '/en/guides/remote-control' },
                 { text: 'Remote environments', link: '/en/guides/remote-environment' },
+                { text: 'Kimi Agent Protocol (KAP)', link: '/en/guides/kap' },
               ],
             },
           ],
@@ -183,16 +177,6 @@ const config = withMermaid(defineConfig({
               items: [
                 { text: 'kimi Command', link: '/en/reference/kimi-command' },
                 { text: 'kimi acp Subcommand', link: '/en/reference/kimi-acp' },
-                {
-                  text: 'Server API (Beta)',
-                  link: '/en/reference/server-api',
-                  items: [
-                    { text: 'Sessions and Conversations', link: '/en/reference/server-api-conversation' },
-                    { text: 'Session Endpoints', link: '/en/reference/server-api-sessions' },
-                    { text: 'Service and Configuration Endpoints', link: '/en/reference/server-api-service' },
-                    { text: 'File Endpoints', link: '/en/reference/server-api-files' },
-                  ],
-                },
                 { text: 'Built-in Tools', link: '/en/reference/tools' },
                 { text: 'Slash Commands', link: '/en/reference/slash-commands' },
                 { text: 'Keyboard Shortcuts', link: '/en/reference/keyboard' },
@@ -218,6 +202,32 @@ const config = withMermaid(defineConfig({
     socialLinks: [
       { icon: 'github', link: 'https://github.com/MoonshotAI/kimi-code' },
     ],
+  },
+
+  buildEnd(siteConfig) {
+    const outDir = siteConfig.outDir
+    const canonicalKapMd = resolve(siteConfig.root, '../packages/kap-server/docs/kap.md')
+    copyFileSync(canonicalKapMd, resolve(outDir, 'kap.md'))
+
+    const legacyPages = [
+      'server-api',
+      'server-api-conversation',
+      'server-api-sessions',
+      'server-api-service',
+      'server-api-files',
+    ]
+    for (const locale of ['en', 'zh'] as const) {
+      const guideTarget = `${base}${locale}/guides/kap.html`
+      const specTarget = `${base}${locale}/reference/kap-spec.html`
+      const quickStartHash = locale === 'zh' ? '#快速开始' : '#quick-start'
+      const authHash = locale === 'zh' ? '#连接与鉴权方式' : '#connecting-and-authenticating'
+      const refDir = resolve(outDir, locale, 'reference')
+      mkdirSync(refDir, { recursive: true })
+      for (const slug of legacyPages) {
+        const html = `<!DOCTYPE html><html lang="${locale}"><head><meta charset="utf-8"><title>Redirecting…</title><link rel="canonical" href="${guideTarget}"><meta http-equiv="refresh" content="0; url=${guideTarget}"><script>(function(){var raw=location.hash||'';var h=raw;try{h=decodeURIComponent(raw);}catch(_){}h=h.toLowerCase();var p=${JSON.stringify(slug)};var g=${JSON.stringify(guideTarget)};var s=${JSON.stringify(specTarget)};var u=g;if(p==='server-api-conversation'){if(/^#(turns|items|user_message|assistant_message|tool_call|notification|system|agent-state|轮次|条目|agent-状态)/.test(h))u=s+'#core-domain-shapes';else if(h.length>1)u=s+'#websocket-and-conversation-reduction-constitution';}else if(/^#(auth|authentication|connection-and-authentication|connecting-and-authenticating|鉴权|连接与鉴权)(?:$|[-_])/.test(h))u=g+${JSON.stringify(authHash)};else if(/^#(quick-start|drive-a-session|快速开始|用-api-驱动)/.test(h))u=g+${JSON.stringify(quickStartHash)};else if(/^#(conventions|online-schemas|address|response-envelope|error-codes|when-several-clients|pagination|action-paths|common-rules|binary-and-streaming|基础约定|在线-schema|地址|响应信封|错误码|多个客户端|分页|动作路径|共同规则|二进制与流式)/.test(h))u=s+'#protocol-conventions-and-evolution';else if(/^#(the-session-object|session-object|session-对象|会话对象)/.test(h))u=s+'#core-domain-shapes';else if(/^#(the-workspace-object|workspace-object|entry-object|workspace-对象|工作区对象|条目对象)/.test(h))u=s+'#files-uploads-workspaces-search';else if(/^#(capability-status-object|plugin-summary|能力状态对象|插件摘要)/.test(h))u=s+'#models-providers-config-tools-capabilities-plugins-mcp-oauth';else if(/^#(websocket-protocol|connect|control-frames|events|reconnect-and-recovery|transcript-protocol|conversation|websocket-协议|建立连接|控制帧|事件|断线恢复|转录协议|对话)(?:$|[-_])/.test(h))u=s+'#websocket-and-conversation-reduction-constitution';else if(h.length>1)u=s+'#complete-endpoint-and-websocket-catalog';location.replace(u);})()</script></head><body><p>Redirecting to <a href="${guideTarget}">${guideTarget}</a>…</p></body></html>\n`
+        writeFileSync(resolve(refDir, `${slug}.html`), html, 'utf8')
+      }
+    }
   },
 
   vite: {

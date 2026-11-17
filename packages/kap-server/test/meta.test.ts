@@ -234,4 +234,26 @@ describe('/api/v1/meta features', () => {
     expect(after.some((feature) => feature.name === 'plan')).toBe(false);
     expect(after).toHaveLength(before.length - 1);
   });
+
+  it('advertises interactions_list and session_wait capabilities and serves authenticated GET /api/v1/kap.md', async () => {
+    const base = await boot();
+    const metaRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    const metaBody = (await metaRes.json()) as {
+      code: number;
+      data: { capabilities: Record<string, boolean> };
+    };
+    expect(metaBody.code).toBe(0);
+    expect(metaBody.data.capabilities['interactions_list']).toBe(true);
+    expect(metaBody.data.capabilities['session_wait']).toBe(true);
+
+    const unauthed = await fetch(`${base}/api/v1/kap.md`);
+    expect(unauthed.status).toBe(401);
+
+    const specRes = await authedFetch(server as RunningServer, base, '/api/v1/kap.md');
+    expect(specRes.status).toBe(200);
+    expect(specRes.headers.get('content-type')).toContain('text/markdown');
+    const text = await specRes.text();
+    expect(text.startsWith('# Kimi Agent Protocol (KAP)')).toBe(true);
+    expect(text).toContain('POST /api/v1/sessions/{session_id}:wait');
+  });
 });
