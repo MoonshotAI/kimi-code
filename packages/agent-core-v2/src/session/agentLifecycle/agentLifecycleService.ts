@@ -382,9 +382,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     const source = sourceManaged.handle;
     const sourceLoop = source.accessor.get(IAgentLoopService);
-    const sourceData = sourceLoop.data();
     const override = opts?.binding;
     const sourceBinding = source.accessor.get(IAgentEnvironmentBindingService).current;
+    const initialTools = override?.profile === undefined ? await sourceLoop.prepareBaselineTools() : undefined;
+    const sourceData = sourceLoop.data();
     const childContext = await this.create({
       agentId: opts?.agentId,
       binding: override?.profile === undefined ? undefined : {
@@ -393,7 +394,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         thinking: override.thinking ?? sourceData.thinkingLevel,
       },
       initialProfile: override?.profile === undefined ? sourceData : undefined,
-      initialTools: override?.profile === undefined ? await sourceLoop.prepareBaselineTools() : undefined,
+      initialTools,
       environmentId: sourceBinding.environmentId,
       environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,

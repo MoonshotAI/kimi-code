@@ -1723,6 +1723,34 @@ describe('AgentLifecycleService', () => {
     });
   });
 
+  it('fork reads the inherited profile after baseline preparation', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    const sourceLoop = svc.handleOf('main')!.accessor.get(IAgentLoopService);
+    await sourceLoop.setProfile({
+      profileName: 'before-preparation',
+      thinkingLevel: 'off',
+      systemPrompt: '',
+      activeToolNames: ['Read', 'mcp__srv__echo'],
+    });
+    vi.spyOn(sourceLoop, 'prepareBaselineTools').mockImplementationOnce(async () => {
+      await sourceLoop.setProfile({
+        profileName: 'after-preparation',
+        thinkingLevel: 'off',
+        systemPrompt: '',
+        activeToolNames: ['Read'],
+      });
+      return [];
+    });
+
+    const child = await svc.fork(source, { agentId: 'forked' });
+
+    expect(svc.handleOf(child.agentId)!.accessor.get(IAgentProfileService).data()).toMatchObject({
+      profileName: 'after-preparation',
+      activeToolNames: ['Read'],
+    });
+  });
+
   it('fork snapshots the source environment and remains independent', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });
