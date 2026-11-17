@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { access, chmod, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -272,7 +272,12 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       );
     }
     const staging = installNewBinary ? await downloadBinary(report, asset) : undefined;
+    const backup = stopRunningDaemon
+      ? `${binPath}.${process.pid}.${Date.now()}.backup`
+      : undefined;
+    let recoveryAttempted = false;
     try {
+      if (backup !== undefined) await copyFile(binPath, backup, constants.COPYFILE_EXCL);
       if (stopRunningDaemon) {
         report('stop-processes');
         const stopped = await runCommand(ctx.hostProcess, binPath, ['stop'], {
@@ -286,32 +291,39 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
         }
         await waitForDaemonStopped();
       }
-      if (staging !== undefined) {
-        try {
-          await installBinary(staging);
-        } catch (error) {
-          if (stopRunningDaemon) {
+      try {
+        if (staging !== undefined) await installBinary(staging);
+        const status = await fetchDaemonStatus();
+        if (status?.running !== true) {
+          report('daemon');
+          const started = await runCommand(ctx.hostProcess, binPath, ['start'], {
+            timeout: START_TIMEOUT_MS,
+          });
+          if (started.code !== 0) {
+            throw new Error(`kimi-webbridge start failed: ${started.stderr || started.stdout}`);
+          }
+          await waitForDaemon();
+        }
+      } catch (error) {
+        if (backup !== undefined) {
+          recoveryAttempted = true;
+          const restored = await rename(backup, binPath).then(
+            () => true,
+            () => false,
+          );
+          if (restored) {
             await runCommand(ctx.hostProcess, binPath, ['start'], {
               timeout: START_TIMEOUT_MS,
             }).catch(() => undefined);
           }
-          throw error;
         }
+        throw error;
       }
     } finally {
       if (staging !== undefined) await rm(staging, { force: true }).catch(() => undefined);
-    }
-
-    const status = await fetchDaemonStatus();
-    if (status?.running !== true) {
-      report('daemon');
-      const started = await runCommand(ctx.hostProcess, binPath, ['start'], {
-        timeout: START_TIMEOUT_MS,
-      });
-      if (started.code !== 0) {
-        throw new Error(`kimi-webbridge start failed: ${started.stderr || started.stdout}`);
+      if (backup !== undefined && !recoveryAttempted) {
+        await rm(backup, { force: true }).catch(() => undefined);
       }
-      await waitForDaemon();
     }
 
     report('skill');
