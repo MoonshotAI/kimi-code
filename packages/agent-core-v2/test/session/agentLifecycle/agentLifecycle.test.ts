@@ -884,8 +884,10 @@ describe('AgentLifecycleService', () => {
     });
     loopSettled.mockImplementationOnce(() => {
       markDrainStarted();
-      return new Promise<void>((resolve) => {
-        releaseDrain = resolve;
+      return new Promise<undefined>((resolve) => {
+        releaseDrain = () => {
+          resolve(undefined);
+        };
       });
     });
     const svc = ix.get(IAgentLifecycleService);
@@ -909,7 +911,7 @@ describe('AgentLifecycleService', () => {
     const main = await svc.create({ agentId: 'main' });
     const disposed: string[] = [];
     disposables.add(svc.onDidClose((agent) => disposed.push(agent.agentId)));
-    loopSettled.mockImplementation(() => new Promise<void>(() => {}));
+    loopSettled.mockImplementation(() => new Promise<undefined>(() => {}));
     vi.useFakeTimers();
     try {
       const removal = svc.remove(main);

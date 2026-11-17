@@ -29,6 +29,7 @@ import {
   createAgentTaskPersistence,
   restoreTaskHistory,
   startAgentTaskInLoop,
+  startControlledTaskInLoop,
 } from './stubs';
 
 function notifiedCount(ctx: TestAgentContext): number {
@@ -236,26 +237,17 @@ describe('task notification → main agent (real Agent instance)', () => {
       } as IAgentScopeHandle;
     }
 
-    it('stop settles killed + notifies only after the child loop goes idle', async () => {
-      let generateStarted!: () => void;
-      const inFlight = new Promise<void>((resolve) => {
-        generateStarted = resolve;
-      });
-      const slowToCancelGenerate = createMockProvider((_request, signal) => {
-        signal.throwIfAborted();
-        generateStarted();
-        return new Promise<never>((_resolve, reject) => {
-          signal.addEventListener('abort', () => {
-            setTimeout(() => reject(signal.reason), 200);
-          }, { once: true });
-        });
-      });
-
+    it('stops child tasks without notifying the child after the parent is killed', async () => {
       const main = createTestAgent(taskServices());
-      const child = createTestAgent({ generate: slowToCancelGenerate });
+      const child = createTestAgent();
       try {
+        const childTask = await startControlledTaskInLoop(child, { description: 'child detached work' });
+        const childTaskId = childTask.handler.taskId;
+        child.mockNextResponse({ type: 'text', text: 'child final response' });
+
         const childHandle = agentScopeHandle(child, 'agent-child');
         const childLoop = child.get(IAgentLoopService);
+        const childTasks = child.get(IAgentTaskService);
         const lifecycle = main.get(IAgentLifecycleService);
         const originalHandleOf = lifecycle.handleOf.bind(lifecycle);
         vi.spyOn(lifecycle, 'handleOf').mockImplementation((agentId) =>
@@ -280,13 +272,20 @@ describe('task notification → main agent (real Agent instance)', () => {
         main.mockNextResponse({ type: 'text', text: 'ack from main agent' });
         const taskId = handler.taskId;
         await handler;
-        await inFlight;
-        expect(childLoop.snapshot().state).toBe('running');
+        await vi.waitFor(() => {
+          expect(child.llmCalls).toHaveLength(3);
+        });
+        expect(childLoop.snapshot().state).toBe('idle');
+        expect(childTasks.list(true).map((info) => info.taskId)).toEqual([childTaskId]);
 
         const background = main.get(IAgentTaskService);
         const info = await background.stop(taskId, 'User initiated stop');
         expect(info?.status).toBe('killed');
         expect(childLoop.snapshot().state).toBe('idle');
+        expect(childTasks.getTask(childTaskId)?.status).toBe('killed');
+        expect(childTasks.list(true)).toEqual([]);
+        expect(child.context.history().filter((message) => message.origin?.kind === 'task')).toEqual([]);
+        expect(child.llmCalls).toHaveLength(3);
 
         await vi.waitFor(() => {
           expect(main.llmCalls.length).toBeGreaterThanOrEqual(1);

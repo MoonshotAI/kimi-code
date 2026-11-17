@@ -305,6 +305,7 @@ class LoopActor implements Loop {
   private readonly completedTurns: LiveTurn[] = [];
   private readonly toolContext?: CreateLoopOptions['toolContext'];
   private readonly completionFactory?: CreateLoopOptions['completionMessage'];
+  private readonly shouldQueueTaskNotification?: CreateLoopOptions['shouldQueueTaskNotification'];
   private readonly abortGraceMs: number;
   private readonly onListenerError?: CreateLoopOptions['onListenerError'];
   private phase: 'idle' | 'running' | 'closed' = 'idle';
@@ -352,6 +353,7 @@ class LoopActor implements Loop {
     this.executor = options.executor;
     this.toolContext = options.toolContext;
     this.completionFactory = options.completionMessage;
+    this.shouldQueueTaskNotification = options.shouldQueueTaskNotification;
     this.abortGraceMs = options.abortGraceMs ?? 2_500;
     this.onListenerError = options.onListenerError;
     this.registry = createHookRegistry();
@@ -1716,10 +1718,13 @@ class LoopActor implements Loop {
       this.tools.delete(slot.key);
       slot.completionPending = false;
       this.notifyTool(slot);
+      const shouldQueue = this.shouldQueueTaskNotification?.(slot.handler.taskId) ?? true;
       this.record({ type: 'tool.async_ended', taskId: slot.handler.taskId, toolCallId: slot.toolCall.id, outcome, message });
-      this.record({ type: 'prompt.notified', message });
-      if (this.turn !== undefined) this.completionHandoff = true;
-      this.mailbox.queue([message]);
+      if (shouldQueue) {
+        this.record({ type: 'prompt.notified', message });
+        if (this.turn !== undefined) this.completionHandoff = true;
+        this.mailbox.queue([message]);
+      }
       drained = true;
     }
     if (!drained) return;

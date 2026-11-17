@@ -37,6 +37,7 @@ export interface CreateLoopOptions {
   readonly input?: LoopInput;
   readonly abortGraceMs?: number;
   readonly completionMessage?: ToolCompletionFactory;
+  readonly shouldQueueTaskNotification?: (taskId: string) => boolean;
   readonly onListenerError?: (error: unknown, event: LoopEmitted) => void;
 }
 

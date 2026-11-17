@@ -284,6 +284,8 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
 
   detachTool(): void {}
 
+  suppressTaskNotifications(): void {}
+
   registerToolBatchStarting(): IDisposable {
     return toDisposable(() => {});
   }
@@ -332,7 +334,7 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return toDisposable(() => {});
   }
 
-  async settled(): Promise<void> {}
+  async settled(): Promise<undefined> {}
 
   async retry(): Promise<never> {
     throw new Error('unused in this suite');
