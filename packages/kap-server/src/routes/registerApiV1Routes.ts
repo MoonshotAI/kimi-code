@@ -14,6 +14,7 @@ import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
 import { registerFileHistoryRoutes } from './fileHistory';
+import { registerFeedbackRoutes } from './feedback';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerInteractionsRoutes } from './interactions';
@@ -121,6 +122,7 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerClientConfigsRoutes>[0],
         core,
       );
+      registerFeedbackRoutes(apiV1 as unknown as Parameters<typeof registerFeedbackRoutes>[0], core);
       registerModelCatalogRoutes(
         apiV1 as unknown as Parameters<typeof registerModelCatalogRoutes>[0],
         core,

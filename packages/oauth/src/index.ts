@@ -183,17 +183,26 @@ export type {
 export {
   fetchCompleteFeedbackUpload,
   fetchCreateFeedbackUploadUrl,
+  uploadArchive,
   kimiCodeFeedbackUploadCompleteUrl,
   kimiCodeFeedbackUploadUrl,
 } from './managed-feedback-upload';
 export type {
+  CompletedUploadPart,
   CompleteFeedbackUploadBody,
+  CompleteFeedbackUploadUrlInput,
   CreateFeedbackUploadUrlBody,
+  CreateFeedbackUploadUrlInput,
   CreateFeedbackUploadUrlResponse,
+  CreateFeedbackUploadUrlResult,
+  FeedbackArchivePart,
+  FeedbackUploadArchive,
   FeedbackUploadPart,
+  FeedbackUploadUrlApi,
   FetchCompleteFeedbackUploadResult,
   FetchCreateFeedbackUploadUrlResult,
   FetchFeedbackUploadError,
+  UploadArchiveOptions,
 } from './managed-feedback-upload';
 
 export {

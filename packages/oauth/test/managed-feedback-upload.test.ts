@@ -60,7 +60,6 @@ describe('fetchCreateFeedbackUploadUrl', () => {
     expect(result).toEqual({
       kind: 'ok',
       upload_id: 28,
-      storage_upload_id: 'tos-multipart-id',
       parts: [{ part_number: 1, url: 'https://example.test/part1', method: 'PUT', size: 123 }],
     });
 

@@ -1,0 +1,298 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { IOAuthService } from '@moonshot-ai/agent-core-v2';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { type RunningServer, startServer } from '../src/start';
+import { authHeaders } from './helpers/auth';
+import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
+
+interface RecordedRequest {
+  readonly method: string;
+  readonly url: string;
+  readonly authorization: string | undefined;
+  readonly body: unknown;
+}
+
+describe('feedback routes', () => {
+  let server: RunningServer;
+  let kfc: Server;
+  let storage: Server;
+  let home: string;
+  let baseUrl: string;
+  let storageUrl: string;
+  let kfcRequests: RecordedRequest[];
+  let storageRequests: RecordedRequest[];
+  let updateStatus: number;
+  let updateMessage: string;
+  let createStatus: number;
+  let partStatus: number;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-feedback-'));
+    kfcRequests = [];
+    storageRequests = [];
+    updateStatus = 200;
+    updateMessage = 'update window expired';
+    createStatus = 200;
+    partStatus = 200;
+    storage = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        storageRequests.push({
+          method: req.method ?? '',
+          url: req.url ?? '',
+          authorization: req.headers.authorization,
+          body: Buffer.concat(chunks).toString('utf8'),
+        });
+        res.writeHead(partStatus, partStatus === 200 ? { etag: '"etag-1"' } : undefined);
+        res.end(partStatus === 200 ? '' : 'storage failed');
+      });
+    });
+    await new Promise<void>((resolve) => storage.listen(0, '127.0.0.1', resolve));
+    storageUrl = `http://127.0.0.1:${(storage.address() as AddressInfo).port}`;
+    kfc = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        kfcRequests.push({
+          method: req.method ?? '',
+          url: req.url ?? '',
+          authorization: req.headers.authorization,
+          body: raw.length > 0 ? JSON.parse(raw) : undefined,
+        });
+        res.setHeader('content-type', 'application/json');
+        if (req.url === '/feedback') {
+          res.writeHead(createStatus);
+          res.end(JSON.stringify(createStatus === 200 ? { feedback_id: 42 } : { error: { message: 'kfc unauthorized' } }));
+          return;
+        }
+        if (req.url === '/feedback/update') {
+          res.writeHead(updateStatus);
+          res.end(JSON.stringify(updateStatus === 200 ? {} : { error: { message: updateMessage } }));
+          return;
+        }
+        if (req.url === '/feedback/upload_url') {
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            upload: {
+              id: 28,
+              upload_id: 'object-storage-upload-id',
+              parts: [{ part_number: 1, url: `${storageUrl}/part-1`, method: 'PUT', size: 5 }],
+            },
+          }));
+          return;
+        }
+        res.writeHead(200);
+        res.end('{}');
+      });
+    });
+    await new Promise<void>((resolve) => kfc.listen(0, '127.0.0.1', resolve));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      env: { ...process.env, KIMI_CODE_BASE_URL: `http://127.0.0.1:${(kfc.address() as AddressInfo).port}` },
+    });
+    baseUrl = `http://127.0.0.1:${server.port}`;
+    vi.spyOn(server.core.accessor.get(IOAuthService), 'resolveTokenProvider').mockReturnValue({
+      getAccessToken: vi.fn(async () => 'managed-kimi-token'),
+    });
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await server.close();
+    await new Promise<void>((resolve) => kfc.close(() => resolve()));
+    await new Promise<void>((resolve) => storage.close(() => resolve()));
+    await rm(home, { recursive: true, force: true });
+  });
+
+  async function post(path: string, body: unknown): Promise<Response> {
+    return fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: authHeaders(server, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('creates reply and sessionless global feedback through managed OAuth', async () => {
+    const reply = await post('/api/v1/feedback', {
+      session_id: 'session-1',
+      content: '',
+      version: '1.2.3',
+      os: 'macOS 26.1',
+      info: {
+        schema_version: 1,
+        kind: 'reply',
+        source: 'reply_button',
+        client: 'desktop',
+        rating: 'positive',
+        turn_id: 'turn-1',
+        reasons: [],
+        upload_session: false,
+        upload_logs: false,
+        attachments: [],
+        cancel: false,
+      },
+    });
+    expect(reply.status).toBe(200);
+    const replyBody = (await reply.json()) as { readonly data: unknown };
+    expect(replyBody).toMatchObject({ code: 0, data: { feedback_id: 42 } });
+    expect(replyBody.data).toEqual({ feedback_id: 42 });
+    expect(JSON.stringify(replyBody)).not.toContain('managed-kimi-token');
+
+    const global = await post('/api/v1/feedback', {
+      content: 'global details',
+      version: '1.2.3',
+      os: 'macOS 26.1',
+      info: {
+        schema_version: 1,
+        kind: 'global',
+        source: 'sidebar',
+        client: 'desktop',
+        category: 'bug',
+        upload_session: false,
+        upload_logs: false,
+        attachments: [],
+      },
+    });
+    expect(global.status).toBe(200);
+    expect(kfcRequests.map((request) => request.authorization)).toEqual([
+      'Bearer managed-kimi-token',
+      'Bearer managed-kimi-token',
+    ]);
+    expect(kfcRequests[0]?.body).toMatchObject({ session_id: 'session-1', model: null });
+    expect(kfcRequests[1]?.body).toEqual({
+      content: 'global details',
+      version: '1.2.3',
+      os: 'macOS 26.1',
+      model: null,
+      info: {
+        schema_version: 1,
+        kind: 'global',
+        source: 'sidebar',
+        client: 'desktop',
+        category: 'bug',
+        upload_session: false,
+        upload_logs: false,
+        attachments: [],
+      },
+    });
+    expect(JSON.stringify(kfcRequests[1]?.body)).not.toContain('session_id');
+  });
+
+  it('rejects a session upload grant without a session target', async () => {
+    const response = await post('/api/v1/feedback', {
+      content: 'global details',
+      version: '1.2.3',
+      os: 'macOS 26.1',
+      info: {
+        schema_version: 1,
+        kind: 'global',
+        source: 'sidebar',
+        client: 'desktop',
+        category: 'bug',
+        upload_session: true,
+        upload_logs: false,
+        attachments: [],
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      code: 40001,
+      msg: 'session upload requires session_id',
+    });
+    expect(kfcRequests).toEqual([]);
+  });
+
+  it('preserves update conflicts and maps KFC auth failures to upstream errors', async () => {
+    updateStatus = 409;
+    const conflict = await post('/api/v1/feedback/update', {
+      feedback_id: 42,
+      info: { cancel: true },
+    });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ msg: 'update window expired' });
+
+    updateStatus = 400;
+    updateMessage = 'invalid feedback patch';
+    const invalid = await post('/api/v1/feedback/update', {
+      feedback_id: 42,
+      content: 'invalid',
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ msg: 'invalid feedback patch' });
+
+    createStatus = 401;
+    const unauthorized = await post('/api/v1/feedback', {
+      content: 'global',
+      version: '1.2.3',
+      os: 'macOS 26.1',
+      info: {
+        schema_version: 1,
+        kind: 'global',
+        source: 'sidebar',
+        client: 'desktop',
+        category: 'other',
+        upload_session: false,
+        upload_logs: false,
+        attachments: [],
+      },
+    });
+    expect(unauthorized.status).toBe(502);
+    expect(await unauthorized.json()).toMatchObject({ msg: 'kfc unauthorized' });
+  });
+
+  it('streams attachments without exposing either token and tries each part once', async () => {
+    const upload = async (): Promise<Response> => fetch(`${baseUrl}/api/v1/feedback/42/attachments`, {
+      method: 'POST',
+      headers: authHeaders(server, {
+        'content-type': 'application/octet-stream',
+        'x-feedback-file-name': encodeURIComponent('session.zip'),
+        'x-feedback-file-size': '5',
+      }),
+      body: 'hello',
+    });
+
+    const uploaded = await upload();
+    expect(uploaded.status).toBe(200);
+    expect(storageRequests).toHaveLength(1);
+    expect(storageRequests[0]).toMatchObject({ method: 'PUT', body: 'hello', authorization: undefined });
+    expect(kfcRequests.at(-1)?.body).toEqual({
+      upload_id: 28,
+      parts: [{ part_number: 1, etag: '"etag-1"' }],
+    });
+    expect(JSON.stringify(kfcRequests.at(-2)?.body)).not.toContain('object-storage-upload-id');
+
+    partStatus = 500;
+    const failed = await upload();
+    expect(failed.status).toBe(502);
+    expect(storageRequests).toHaveLength(2);
+    expect(kfcRequests.filter((request) => request.url === '/feedback/upload_complete')).toHaveLength(1);
+    expect(JSON.stringify(await failed.json())).not.toContain('managed-kimi-token');
+
+    const requestCount = kfcRequests.length;
+    const mismatch = await fetch(`${baseUrl}/api/v1/feedback/42/attachments`, {
+      method: 'POST',
+      headers: authHeaders(server, {
+        'content-type': 'application/octet-stream',
+        'x-feedback-file-name': encodeURIComponent('session.zip'),
+        'x-feedback-file-size': '4',
+      }),
+      body: 'hello',
+    });
+    expect(mismatch.status).toBe(400);
+    expect(kfcRequests).toHaveLength(requestCount);
+    expect(storageRequests).toHaveLength(2);
+  });
+});
