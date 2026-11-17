@@ -24,7 +24,7 @@ export function registerWebCommand(program: Command): void {
   registerRotateTokenCommand(web);
   const server = buildWebCommand(
     program
-      .command('server')
+      .command('server', { hidden: true })
       .description('Run the local Kimi server without opening a browser.'),
     { defaultOpen: false },
   );
