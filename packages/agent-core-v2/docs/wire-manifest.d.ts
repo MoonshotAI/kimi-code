@@ -26,7 +26,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (67 record types)
+// Index (68 record types)
 //   changeNotifier.snapshot            changeNotifier.snapshot                                    src/agent/changeNotifier/changeNotifierOps.ts
 //   config.update                      (none)                                                     src/agent/profile/profileOps.ts
 //   context.append_loop_event          changeNotifier.snapshot, interruptionReminder, plan, turn  src/agent/contextMemory/contextEvents.ts
@@ -38,6 +38,7 @@
 //   cron.cursor                        (none)                                                     src/features/cron/cronOps.ts
 //   cron.delete                        (none)                                                     src/features/cron/cronOps.ts
 //   environment.set_binding            environmentBinding                                         src/agent/environmentBinding/environmentBindingOps.ts
+//   feedback.model_request_recorded    (none)                                                     src/session/feedback/feedbackContext.ts
 //   file_history.checkpoint            fileHistory                                                src/features/fileHistory/fileHistoryOps.ts
 //   file_history.tracked               fileHistory                                                src/features/fileHistory/fileHistoryOps.ts
 //   forked                             (none)                                                     src/session/agentLifecycle/forked.ts
@@ -245,6 +246,21 @@ interface EnvironmentSetBindingPayload {
   agentId: string;
   environmentId: string;
   cwd?: string;
+}
+
+/**
+ * states: (none)
+ * owner: src/session/feedback/feedbackContext.ts
+ */
+interface FeedbackModelRequestRecordedPayload {
+  _name: 'feedback.model_request_recorded';
+  agentId: string;
+  rootTurnId: number;
+  turnId: number;
+  step: number;
+  model: string;
+  provider: string;
+  traceId?: string;
 }
 
 /**
@@ -1006,6 +1022,7 @@ interface WirePayloadMap {
   "cron.cursor": CronCursorPayload;
   "cron.delete": CronDeletePayload;
   "environment.set_binding": EnvironmentSetBindingPayload;
+  "feedback.model_request_recorded": FeedbackModelRequestRecordedPayload;
   "file_history.checkpoint": FileHistoryCheckpointPayload;
   "file_history.tracked": FileHistoryTrackedPayload;
   "forked": ForkedPayload;

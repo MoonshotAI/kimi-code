@@ -5,6 +5,7 @@ export interface AgentRequestAttribution {
   readonly parentRequestId?: string;
   readonly activeRequestId?: string;
   readonly lastRequestId?: string;
+  readonly rootTurnId?: number;
 }
 
 export interface ISessionRequestAttributionService {
@@ -13,6 +14,7 @@ export interface ISessionRequestAttributionService {
   of(agentId: string): AgentRequestAttribution;
   noteUserInput(agentId: string, userInputId: string): void;
   noteActiveRequest(agentId: string, requestId: string | undefined, active?: boolean): void;
+  noteRootTurn(agentId: string, rootTurnId: number | undefined): void;
   noteSubagentDispatch(agentId: string, parentAgentId: string): AgentRequestAttribution;
 }
 

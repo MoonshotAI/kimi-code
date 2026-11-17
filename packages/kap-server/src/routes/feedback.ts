@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { IBootstrapService, IOAuthService, type Scope } from '@moonshot-ai/agent-core-v2';
+import {
+  IBootstrapService,
+  IOAuthService,
+  ISessionFeedbackContextService,
+  resumeSessionById,
+  type FeedbackTurnContext,
+  type Scope,
+} from '@moonshot-ai/agent-core-v2';
 
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
@@ -13,6 +20,8 @@ import {
   updateFeedbackRequestSchema,
 } from '../protocol/rest-feedback';
 import { FeedbackRouteError, ManagedFeedbackGateway } from '../services/feedback';
+import type { ConversationService } from '../services/conversation/conversationService';
+import type { CreateFeedbackRequest } from '../protocol/rest-feedback';
 
 interface FeedbackRouteHost {
   addContentTypeParser(
@@ -35,7 +44,11 @@ interface FeedbackReply {
   send(payload: unknown): unknown;
 }
 
-export function registerFeedbackRoutes(app: FeedbackRouteHost, core: Scope): void {
+export function registerFeedbackRoutes(
+  app: FeedbackRouteHost,
+  core: Scope,
+  conversations: ConversationService,
+): void {
   const gateway = new ManagedFeedbackGateway(
     core.accessor.get(IOAuthService),
     core.accessor.get(IBootstrapService).getEnv('KIMI_CODE_BASE_URL') ??
@@ -57,7 +70,10 @@ export function registerFeedbackRoutes(app: FeedbackRouteHost, core: Scope): voi
     },
     async (req, reply) => {
       try {
-        const feedbackId = await gateway.create(req.body);
+        const feedbackId = await gateway.create(
+          req.body,
+          await readReplyContext(core, conversations, req.body),
+        );
         reply.send(okEnvelope({ feedback_id: feedbackId }, req.id));
       } catch (error) {
         sendFeedbackError(reply as unknown as FeedbackReply, req.id, error);
@@ -115,6 +131,20 @@ export function registerFeedbackRoutes(app: FeedbackRouteHost, core: Scope): voi
     attachment.options,
     attachment.handler as Parameters<FeedbackRouteHost['post']>[2],
   );
+}
+
+async function readReplyContext(
+  core: Scope,
+  conversations: ConversationService,
+  input: CreateFeedbackRequest,
+): Promise<FeedbackTurnContext | undefined> {
+  const info = input.info;
+  if (info.kind !== 'reply' || input.session_id === undefined) return undefined;
+  const turns = await conversations.mainTurns(input.session_id);
+  const turn = turns?.find((candidate) => candidate.turn_id === info.turn_id);
+  if (turn?.turn_number === undefined) return undefined;
+  const session = await resumeSessionById(core.accessor, input.session_id);
+  return session?.accessor.get(ISessionFeedbackContextService).read(turn.turn_number);
 }
 
 function decodeFilename(value: unknown): string {

@@ -14,6 +14,7 @@ export type AgentLLMRequestSource =
   | {
       readonly type: 'turn';
       readonly turnId: number;
+      readonly rootTurnId?: number;
       readonly step?: number;
       readonly logFields?: AgentLLMRequestLogFields;
     }

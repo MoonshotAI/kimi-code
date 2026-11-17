@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import type { IOAuthService } from '@moonshot-ai/agent-core-v2';
+import type { FeedbackTurnContext, IOAuthService } from '@moonshot-ai/agent-core-v2';
 import {
   fetchCompleteFeedbackUpload,
   fetchCreateFeedbackUploadUrl,
@@ -38,15 +38,22 @@ export class ManagedFeedbackGateway {
     private readonly baseUrl: string | undefined,
   ) {}
 
-  async create(input: CreateFeedbackRequest): Promise<number> {
+  async create(input: CreateFeedbackRequest, replyContext?: FeedbackTurnContext): Promise<number> {
     const accessToken = await this.accessToken();
     const result = await fetchSubmitFeedback(kimiCodeFeedbackUrl(this.baseUrl), accessToken, {
       session_id: input.session_id,
       content: input.content,
       version: input.version,
       os: input.os,
-      model: null,
-      info: input.info,
+      model: input.info.kind === 'reply' ? (replyContext?.model ?? null) : null,
+      info: input.info.kind === 'reply'
+        ? {
+            ...input.info,
+            trace_id: replyContext?.traceId,
+            provider: replyContext?.provider,
+            participant_models: replyContext?.participantModels,
+          }
+        : input.info,
     });
     if (result.kind === 'error') throw upstreamError(result);
     return result.feedbackId;

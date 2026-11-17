@@ -601,7 +601,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       source: () => {
         const turn = loop.state.turn;
         if (turn === undefined) throw new BugIndicatingError('Turn request requires an active turn');
-        return { type: 'turn', turnId: turn.id, step: turn.step };
+        const source = { type: 'turn' as const, turnId: turn.id, step: turn.step };
+        return {
+          ...source,
+          rootTurnId: this.requestMetadata.resolve(source).rootTurnId ?? turn.id,
+        };
       },
       runtime,
       dynamicTools: true,

@@ -122,7 +122,11 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerClientConfigsRoutes>[0],
         core,
       );
-      registerFeedbackRoutes(apiV1 as unknown as Parameters<typeof registerFeedbackRoutes>[0], core);
+      registerFeedbackRoutes(
+        apiV1 as unknown as Parameters<typeof registerFeedbackRoutes>[0],
+        core,
+        opts.conversations,
+      );
       registerModelCatalogRoutes(
         apiV1 as unknown as Parameters<typeof registerModelCatalogRoutes>[0],
         core,

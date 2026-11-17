@@ -34,6 +34,10 @@ export class SessionRequestAttributionService
     });
   }
 
+  noteRootTurn(agentId: string, rootTurnId: number | undefined): void {
+    this.agents.set(agentId, { ...this.of(agentId), rootTurnId });
+  }
+
   noteSubagentDispatch(agentId: string, parentAgentId: string): AgentRequestAttribution {
     const current = this.of(agentId);
     const parent = this.of(parentAgentId);
@@ -41,6 +45,7 @@ export class SessionRequestAttributionService
       ...current,
       userInputId: parent.userInputId ?? current.userInputId,
       parentRequestId: parent.activeRequestId ?? current.parentRequestId,
+      rootTurnId: parent.rootTurnId ?? current.rootTurnId,
     };
     this.agents.set(agentId, next);
     return next;

@@ -4,10 +4,22 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { IOAuthService } from '@moonshot-ai/agent-core-v2';
+import {
+  closeSessionById,
+  FeedbackModelRequestRecorded,
+  getLiveSessionById,
+  IEventBus,
+  IEventDispatcher,
+  IOAuthService,
+  MAIN_AGENT_ID,
+} from '@moonshot-ai/agent-core-v2';
+import { ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
+import { ensureMainAgent } from '../src/transport/mainAgent';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
@@ -188,6 +200,93 @@ describe('feedback routes', () => {
       },
     });
     expect(JSON.stringify(kfcRequests[1]?.body)).not.toContain('session_id');
+  });
+
+  it('maps a persisted root turn to the final model request after the session closes', async () => {
+    const createdResponse = await post('/api/v1/sessions', { metadata: { cwd: home } });
+    const created = (await createdResponse.json()) as { readonly data: { readonly id: string } };
+    const sessionId = created.data.id;
+    const session = getLiveSessionById(server.core.accessor, sessionId);
+    if (session === undefined) throw new Error('expected a live session');
+    const agent = await ensureMainAgent(session);
+    const dispatcher = agent.accessor.get(IEventDispatcher);
+    const origin = { kind: 'user' } as const;
+    await dispatcher.dispatch(new TurnPrompt({ agentId: MAIN_AGENT_ID, input: [], origin, turnId: 7 }));
+    await dispatcher.dispatch(new ContextAppendMessage({
+      agentId: MAIN_AGENT_ID,
+      message: { role: 'user', content: [{ type: 'text', text: 'Please answer.' }], origin },
+    }));
+    agent.accessor.get(IEventBus).publish(new TurnStarted({ agentId: MAIN_AGENT_ID, turnId: 7, origin }));
+    await dispatcher.dispatch(new FeedbackModelRequestRecorded({
+      agentId: MAIN_AGENT_ID,
+      rootTurnId: 7,
+      turnId: 7,
+      step: 1,
+      model: 'model-old',
+      provider: 'kimi',
+      traceId: 'trace-old',
+    }));
+    await dispatcher.dispatch(new FeedbackModelRequestRecorded({
+      agentId: MAIN_AGENT_ID,
+      rootTurnId: 7,
+      turnId: 7,
+      step: 2,
+      model: 'model-final',
+      provider: 'openai',
+      traceId: 'trace-final',
+    }));
+    await dispatcher.dispatch(new TurnEnded({
+      agentId: MAIN_AGENT_ID,
+      turnId: 7,
+      reason: 'completed',
+      requestId: 'conversation-trace',
+    }));
+    await dispatcher.flush();
+    await closeSessionById(server.core.accessor, sessionId);
+
+    const turnsResponse = await fetch(`${baseUrl}/api/v1/sessions/${sessionId}/agents/main/turns`, {
+      headers: authHeaders(server),
+    });
+    const turns = (await turnsResponse.json()) as {
+      readonly data: { readonly turns: readonly { readonly turn_id: string }[] };
+    };
+    const turnId = turns.data.turns.at(-1)?.turn_id;
+    if (turnId === undefined) throw new Error('expected a conversation turn');
+
+    const response = await post('/api/v1/feedback', {
+      session_id: sessionId,
+      content: '',
+      version: '1.2.3',
+      os: 'macOS 26.1',
+      info: {
+        schema_version: 1,
+        kind: 'reply',
+        source: 'reply_button',
+        client: 'desktop',
+        rating: 'positive',
+        turn_id: turnId,
+        reasons: [],
+        upload_session: false,
+        upload_logs: false,
+        attachments: [],
+        cancel: false,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(kfcRequests[0]?.body).toMatchObject({
+      session_id: sessionId,
+      model: 'model-final',
+      info: {
+        turn_id: turnId,
+        trace_id: 'trace-final',
+        provider: 'openai',
+        participant_models: [
+          { model: 'model-old', provider: 'kimi' },
+          { model: 'model-final', provider: 'openai' },
+        ],
+      },
+    });
   });
 
   it('rejects a session upload grant without a session target', async () => {

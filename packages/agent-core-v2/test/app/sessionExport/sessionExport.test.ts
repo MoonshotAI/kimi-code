@@ -1023,6 +1023,7 @@ function liveSessionHandle(options: {
           of: () => ({ lastRequestId: options.lastRequestId }),
           noteUserInput: () => {},
           noteActiveRequest: () => {},
+          noteRootTurn: () => {},
           noteSubagentDispatch: () => ({}),
         } satisfies ISessionRequestAttributionService,
       ],

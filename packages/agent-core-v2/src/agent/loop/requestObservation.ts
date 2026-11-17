@@ -28,6 +28,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
+import { FeedbackModelRequestRecorded } from '#/session/feedback/feedbackContext';
 import { defineState } from '#/state/state';
 import { summarizeProjectionRepairs, type ProjectionAnomaly } from './projection';
 import { hasStrictStructureRecovery } from './projectionPolicy';
@@ -293,6 +294,18 @@ export class AgentLoopRequestObserver {
       };
       this.trackCacheBreak(measured, recorded.messages);
       this.states.set(llmRequesterLastMeasuredRequestKey, measured);
+    }
+    const source = request.source;
+    if (source.type === 'turn' && source.rootTurnId !== undefined && source.step !== undefined) {
+      void this.dispatcher.dispatch(new FeedbackModelRequestRecorded({
+        agentId: this.scopeContext.agentId,
+        rootTurnId: source.rootTurnId,
+        turnId: source.turnId,
+        step: source.step,
+        model: request.model.id,
+        provider: request.model.providerType ?? request.model.protocol,
+        traceId: outcome.requestId,
+      }));
     }
     void this.usage.record(this.scopeContext.agentContext, request.modelAlias, usage, request.source);
     if (usage !== undefined) {

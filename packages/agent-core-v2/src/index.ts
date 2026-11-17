@@ -592,6 +592,8 @@ export * from '#/app/auth/auth';
 export * from '#/app/auth/authService';
 export * from '#/app/auth/feedback';
 import '#/app/auth/feedbackService';
+export * from '#/session/feedback/feedbackContext';
+export * from '#/session/feedback/feedbackContextService';
 export * from '#/app/region/region';
 export * from '#/app/region/regionService';
 export * from '#/app/auth/configSection';

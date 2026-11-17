@@ -47,6 +47,7 @@ export interface RequestMetadata {
   readonly stepReason?: StepReason;
   readonly userInputId?: string;
   readonly parentRequestId?: string;
+  readonly rootTurnId?: number;
 }
 
 export function agentRoleOf(agentId: string, meta: AgentMeta | undefined): AgentRole {
@@ -119,6 +120,7 @@ interface AttributionState {
   readonly lastRequestId?: string;
   readonly activeTurn?: {
     readonly turnId: number;
+    readonly rootTurnId?: number;
     readonly turnTrigger: TurnTrigger;
     readonly stepReason: StepReason;
   };
@@ -149,6 +151,7 @@ export class RequestMetadataTracker {
             false,
           );
         }
+        this.attribution?.noteRootTurn(this.scopeContext.agentId, next.activeTurn?.rootTurnId);
       },
       transition: (state: AttributionState, event: unknown, ctx: { readonly silent: boolean }) => {
         if (event instanceof TurnPrompt) {
@@ -173,6 +176,13 @@ export class RequestMetadataTracker {
                 ? undefined
                 : {
                     turnId: event.turnId,
+                    rootTurnId:
+                      dispatched?.rootTurnId ??
+                      (this.scopeContext.agentId === MAIN_AGENT_ID
+                        ? event.turnId
+                        : (state.activeTurn?.rootTurnId ??
+                          this.attribution?.of(this.scopeContext.agentId).rootTurnId ??
+                          event.turnId)),
                     turnTrigger: turnTriggerOf(event.origin),
                     stepReason: 'turn_start' as const,
                   },
@@ -226,6 +236,7 @@ export class RequestMetadataTracker {
         agentRole === 'main' || agentRole === 'btw'
           ? undefined
           : (this.state.parentRequestId ?? recorded?.parentRequestId),
+      rootTurnId: turn ? (activeTurn?.rootTurnId ?? recorded?.rootTurnId) : undefined,
     };
   }
 
