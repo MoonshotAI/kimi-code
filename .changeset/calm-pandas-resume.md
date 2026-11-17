@@ -3,4 +3,4 @@
 '@moonshot-ai/kimi-code-sdk': patch
 ---
 
-Resume legacy sessions after their default model is removed, and use the selected session model for print authentication.
+修复了若干已知的问题。

@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Prevent restored background task notifications from starting model requests when sessions are resumed or forked.
+修复恢复或创建会话分支时后台任务通知意外触发新回复的问题。
