@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTestLoop as createLoop } from './core/factory';
 import { createUserMessage, extractText, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
 import { createMockProviderRequester, type MockProviderResponse } from '../../harness/scripted-generate';
-import type { ToolResult } from './core/executor';
+import { textToolContent, type ToolReturn } from '#/tool/executor';
 import { executorFrom } from './core/executor';
 
 function call(id: string, name = 'Bash'): ToolCall {
@@ -33,11 +33,11 @@ function deferred<T>() {
 describe('actor handler execution', () => {
   it('executes every call in model order without stopBatch or native stopTurn', async () => {
     const executed: string[] = [];
-    const executor = executorFrom(['Bash', 'Read'], async ({ toolCall }) => {
-      executed.push(toolCall.name);
-      return toolCall.id === 't1'
+    const executor = executorFrom(['Bash', 'Read'], async (context) => {
+      executed.push(context.call.name);
+      return context.call.id === 't1'
         ? { content: [{ type: 'text', text: 'first' }] }
-        : { content: [{ type: 'text', text: 'second failed' }], isError: true };
+        : { content: [{ type: 'text', text: 'second failed' }], outcome: 'failed', reason: 'second failed' };
     });
     const scripted = requester([done('', [call('t1'), call('t2', 'Read')]), done('final')]);
     const loop = createLoop({
@@ -60,12 +60,11 @@ describe('actor handler execution', () => {
     const beforeExecuteError = new Error('beforeExecute blew up');
     const failedLoop = createLoop({
       requester: requester([done('', [call('failed')])]),
-      executor: executorFrom(['Bash'], async () => ({ content: [] }), [{
-        point: 'tool.starting',
-        hook: () => {
+      executor: executorFrom(['Bash'], async () => ({ content: [] }), {
+        starting: () => {
           throw beforeExecuteError;
         },
-      }]),
+      }),
     });
     const failedProjections: string[] = [];
     failedLoop.subscribe((event) => {
@@ -82,13 +81,12 @@ describe('actor handler execution', () => {
 
     const vetoedLoop = createLoop({
       requester: requester([done('', [call('vetoed')]), done('final')]),
-      executor: executorFrom(['Bash'], async () => ({ content: [] }), [{
-        point: 'tool.starting',
-        hook: () => ({
-          blocked: { reason: 'denied' },
-          result: { content: [{ type: 'text' as const, text: 'synthetic veto' }], isError: true },
+      executor: executorFrom(['Bash'], async () => ({ content: [] }), {
+        starting: () => ({
+          reject: 'denied',
+          result: { content: [{ type: 'text' as const, text: 'synthetic veto' }], outcome: 'failed', reason: 'denied' },
         }),
-      }]),
+      }),
     });
     expect((await vetoedLoop.runTurn(prompt())).type).toBe('done');
     const vetoed = vetoedLoop.state.messages.find((entry): entry is ToolMessage => entry.role === 'tool');
@@ -100,8 +98,9 @@ describe('actor handler execution', () => {
 
   it('uses one handler for detach, waiting, late completion and close notification', async () => {
     const gate = deferred<void>();
-    const executor = executorFrom(['Bash'], async ({ detach }) => {
-      detach?.('background task_id=task-bg');
+    const executor = executorFrom(['Bash'], async (context) => {
+      context.onDetach(() => ({ content: textToolContent('background task_id=task-bg') }));
+      context.detach('background task_id=task-bg');
       await gate.promise;
       return { content: [{ type: 'text', text: 'finished' }] };
     });
@@ -213,8 +212,9 @@ describe('actor handler execution', () => {
 
     for (const timing of ['before', 'during', 'after'] as const) {
       const resetGate = deferred<void>();
-      const resetExecutor = executorFrom(['Bash'], async ({ detach }) => {
-        detach?.('reset background');
+      const resetExecutor = executorFrom(['Bash'], async (context) => {
+        context.onDetach(() => ({ content: textToolContent('reset background') }));
+        context.detach('reset background');
         await resetGate.promise;
         return { content: [{ type: 'text', text: 'reset finished' }] };
       });
@@ -288,13 +288,16 @@ describe('actor handler execution', () => {
 
   it('settles late results only in their original StepCall when an id is reused', async () => {
     const gates: Array<ReturnType<typeof deferred<void>>> = [];
-    const executor = executorFrom(['Bash'], async ({ toolCall, detach }) => {
+    const executor = executorFrom(['Bash'], async (context) => {
       const index = gates.length;
       const gate = deferred<void>();
       gates.push(gate);
-      if (index === 0) detach?.('old background');
+      if (index === 0) {
+        context.onDetach(() => ({ content: textToolContent('old background') }));
+        context.detach('old background');
+      }
       await gate.promise;
-      return { content: [{ type: 'text', text: `${index}:${toolCall.id}` }] };
+      return { content: [{ type: 'text', text: `${index}:${context.call.id}` }] };
     });
     const scripted = requester([
       done('', [call('same')]),
@@ -336,16 +339,16 @@ describe('actor handler execution', () => {
     const firstStarted = deferred<void>();
     const secondStarted = deferred<void>();
     const secondRelease = deferred<void>();
-    const executor = executorFrom(['Bash', 'Read'], async ({ toolCall, signal }) => {
-      if (toolCall.name === 'Read') {
+    const executor = executorFrom(['Bash', 'Read'], async (context) => {
+      if (context.call.name === 'Read') {
         secondStarted.resolve();
         await secondRelease.promise;
         return { content: [{ type: 'text', text: 'read ok' }] };
       }
       firstStarted.resolve();
-      return new Promise<ToolResult>((resolve) => {
-        signal.addEventListener('abort', () => {
-          resolve({ content: [{ type: 'text', text: 'first aborted' }], isError: true });
+      return new Promise<ToolReturn>((resolve) => {
+        context.signal.addEventListener('abort', () => {
+          resolve({ content: [{ type: 'text', text: 'first aborted' }], outcome: 'failed', reason: 'first aborted' });
         }, { once: true });
       });
     });
