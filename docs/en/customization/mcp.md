@@ -133,6 +133,8 @@ In this example the server receives `LOG_LEVEL=debug` from `env`; every other va
 
 By default, every tool of a server goes straight into the model's top-level tool list; with many connected servers — or a single server that exposes many tools — those definitions occupy context for the whole session. Marking a server as deferred keeps its tools out of the top-level list: the model first sees a manifest of loadable tools, loads full definitions on demand through the built-in `select_tools` tool, and can call them in the same turn once loaded.
 
+If a deferred server's tool definition changes during a session, the old definition is unloaded and the tool is announced again. The model must load the updated definition with `select_tools` before calling the tool again; calls made before that reload are rejected so old arguments cannot reach the new implementation. Tools that are not deferred keep their original definition for the session, and calls after such a definition change fail with a schema update error.
+
 Loading tools on demand is experimental and takes effect only when both prerequisites are met:
 
 - The `tool-select` experimental flag is on: set `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT=1`, or write `tool-select = true` under `[experimental]` in `config.toml`; the master switch `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables it too.

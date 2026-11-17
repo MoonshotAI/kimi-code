@@ -73,13 +73,15 @@ function dropBlankText(message: Message, report: LlmNoticeSink): ContentPart[] {
 
 function carriesStructure(message: Message): boolean {
   if (message.role === 'assistant') return message.toolCalls.length > 0;
-  if (message.role === 'system') return (message.tools?.length ?? 0) > 0;
+  if (message.role === 'system') {
+    return (message.tools?.length ?? 0) > 0 || (message.unloadTools?.length ?? 0) > 0;
+  }
   return message.role === 'tool';
 }
 
 /**
  * Drops blank text parts and non-structural messages that have no meaningful content left, while
- * retaining messages that carry tool calls, tool definitions, or tool results.
+ * retaining messages that carry tool calls, tool lifecycle fields, or tool results.
  *
  * @example
  * // With `report = () => {}`:

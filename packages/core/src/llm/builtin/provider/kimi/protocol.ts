@@ -110,6 +110,12 @@ function applyKimiMessageExtras(
       delete record['content'];
     }
   }
+  if (message.role === 'system' && message.unloadTools !== undefined && message.unloadTools.length > 0) {
+    record['unload_tools'] = [...message.unloadTools];
+    if (record['content'] === '') {
+      delete record['content'];
+    }
+  }
   const convertedToolCalls = record['tool_calls'];
   if (message.role === 'assistant' && Array.isArray(convertedToolCalls)) {
     message.toolCalls.forEach((toolCall, index) => {

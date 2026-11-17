@@ -341,6 +341,36 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(alpha.calls).toBe(1);
     expect(inlineTool.calls).toBe(0);
     expect(updatedInlineTool.calls).toBe(1);
+
+    const updatedAlpha = new StubMcpTool(MCP_ALPHA);
+    updatedAlpha.description = `${MCP_ALPHA} updated desc`;
+    registration = ctx.get(IAgentToolRegistryService).register(updatedAlpha, {
+      source: 'mcp',
+      disclosure: 'deferred',
+    });
+    ctx.mockNextResponse(selectToolsCall('call_select_updated', [MCP_ALPHA]));
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_alpha_updated',
+      name: MCP_ALPHA,
+      arguments: JSON.stringify({ query: 'moon' }),
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'updated alpha done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'reload the updated alpha tool' }] });
+    await ctx.untilTurnEnd();
+
+    const selectUpdatedWire = ctx.llmCalls.at(-3)!;
+    const updatedLoadWire = ctx.llmCalls.at(-2)!;
+    expect(historyText(selectUpdatedWire.history)).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+    expect(updatedLoadWire.history.some((message) =>
+      message.role === 'system' && (message.unloadTools?.length ?? 0) > 0
+    )).toBe(true);
+    expect(updatedLoadWire.history.flatMap((message) => toolsOf(message) ?? []))
+      .toContainEqual(expect.objectContaining({ name: MCP_ALPHA, description: updatedAlpha.description }));
+    expect(ctx.get(IAgentLoopService).history().some((message) =>
+      message.role === 'system' && (message.unloadTools?.length ?? 0) > 0
+    )).toBe(false);
+    expect(updatedAlpha.calls).toBe(1);
   });
 
   it('loads and dispatches a user tool registered through the domain service', async () => {

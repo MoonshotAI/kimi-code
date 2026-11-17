@@ -297,7 +297,11 @@ describe('projector tool-exchange normalization', () => {
   });
 
   it('keeps a schema-only system message when it declares dynamic tools', () => {
-    const projected = project([user('load it'), schemaMessage('mcp__srv__query')]);
+    const projected = project([
+      user('load it'),
+      schemaMessage('mcp__srv__query'),
+      { role: 'system', content: [], unloadTools: ['mcp__srv__query'] },
+    ]);
 
     expect(projected).toEqual([
       {
@@ -317,6 +321,13 @@ describe('projector tool-exchange normalization', () => {
             },
           },
         ],
+        unloadTools: undefined,
+      },
+      {
+        role: 'system',
+        content: [],
+        tools: undefined,
+        unloadTools: ['mcp__srv__query'],
       },
     ]);
   });
