@@ -150,14 +150,8 @@ function canonical(program) {
 }
 
 function jsxChildren(children) {
-  const merged = [];
-  for (const child of children) {
-    if (child.type === 'JSXExpressionContainer' && child.expression.type === 'JSXEmptyExpression') continue;
-    const last = merged.at(-1);
-    if (child.type === 'JSXText' && last?.type === 'JSXText') last.value += child.value;
-    else merged.push(child.type === 'JSXText' ? { type: 'JSXText', value: child.value } : child);
-  }
-  return merged
+  return children
+    .filter((child) => child.type !== 'JSXExpressionContainer' || child.expression.type !== 'JSXEmptyExpression')
     .map((child) => (child.type === 'JSXText' ? { type: 'JSXText', value: cleanJsxText(child.value) } : child))
     .filter((child) => child.type !== 'JSXText' || child.value !== '');
 }

@@ -97,8 +97,13 @@ await test('removes comments without leaving layout debris', () => {
 });
 
 await test('removes JSX comment containers', () => {
-  const source = 'const v = (\n  <div>\n    {/* note */}\n    <span>a {/* inline */} b</span>\n  </div>\n);\n';
-  assert.equal(strip('a.tsx', source), 'const v = (\n  <div>\n    <span>a  b</span>\n  </div>\n);\n');
+  const source = 'const v = (\n  <div>\n    hello\n    {/* note */}\n    <span>a</span>\n  </div>\n);\n';
+  assert.equal(strip('a.tsx', source), 'const v = (\n  <div>\n    hello\n    <span>a</span>\n  </div>\n);\n');
+});
+
+await test('refuses JSX comment removals that change the text children', () => {
+  assert.equal(strip('a.tsx', 'const v = <span>a\n  {/* x */}\n  b</span>;\n'), undefined);
+  assert.equal(strip('a.tsx', 'const v = <span>a {/* x */} b</span>;\n'), undefined);
 });
 
 await test('keeps automatic semicolon insertion intact', () => {
