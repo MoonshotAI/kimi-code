@@ -22,11 +22,6 @@ interface StateJsonShape {
   custom?: Record<string, unknown> & { imported_from_kimi_cli?: boolean };
 }
 
-/** State tab — renders the raw `state.json` blob from session detail.
- *  At the top, a handful of highlight cards surface the most-asked fields
- *  (title / lastPrompt / created / updated / agent count). Below that, the
- *  full JSON is shown via the shared JsonViewer so any custom fields the
- *  upstream writer adds remain readable without code changes. */
 export function StateTab({ state, importMeta }: StateTabProps) {
   const s = useMemo<StateJsonShape>(() => {
     return (state ?? {}) as StateJsonShape;
@@ -56,7 +51,6 @@ export function StateTab({ state, importMeta }: StateTabProps) {
         </div>
       ) : null}
 
-      {/* Highlight cards */}
       <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
         <Card label="title">
           {s.title !== undefined && s.title !== '' ? (
@@ -120,7 +114,6 @@ export function StateTab({ state, importMeta }: StateTabProps) {
         </Card>
       </div>
 
-      {/* Custom blob */}
       <section className="mt-6">
         <h3 className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
           custom
@@ -134,7 +127,6 @@ export function StateTab({ state, importMeta }: StateTabProps) {
         </div>
       </section>
 
-      {/* Raw JSON */}
       <section className="mt-6">
         <h3 className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
           raw state.json
@@ -158,7 +150,6 @@ function Card({ label, children }: { label: string; children: import('react').Re
   );
 }
 
-/** Export-bundle provenance, shown above state.json for imported sessions. */
 function ManifestCard({ meta }: { meta: ImportInfo }) {
   const m = meta.manifest;
   const candidates: [string, string | undefined][] = [

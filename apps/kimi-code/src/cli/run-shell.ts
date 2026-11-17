@@ -53,7 +53,6 @@ export async function runShell(
     configWarning = error.message;
   }
 
-  // Initialise the global Theme singleton before pi-tui grabs stdin.
   const palette = await getColorPalette(tuiConfig.theme);
   currentTheme.setPalette(palette);
 
@@ -69,8 +68,6 @@ export async function runShell(
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     skillDirs: opts.skillsDirs,
-    // The TUI renders the mid-turn update panel; declaring it here is what
-    // makes the engine offer NotifyUser to this process and to no other host.
     uiCapabilities: TUI_HOST_UI_CAPABILITIES,
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
@@ -85,9 +82,6 @@ export async function runShell(
     },
     sshPassword: {
       prompt: (environmentId) => tui.promptSshPassword(environmentId),
-      // ssh runs this as SSH_ASKPASS; `src/main.ts` recognises the askpass
-      // environment before argv, so re-entering this binary (SEA) or this
-      // script under the same node flags (npm / tsx dev) lands in the helper.
       askpassCommand: detectNativeInstall()
         ? [process.execPath]
         : [process.execPath, ...process.execArgv, process.argv[1]!],
@@ -129,12 +123,7 @@ export async function runShell(
   }
   const config = await harness.getConfig();
   startupTrace('config:loaded');
-  // Config diagnostics (deprecated keys, invalid sections, ...) are surfaced
-  // by the TUI itself at `finishStartup` via `showConfigWarningsIfAny` —
-  // folded into the dim startup notice they were too easy to miss.
   const configMs = Date.now() - configStartedAt;
-  // Resolve --agent/--agent-file once for the startup session; validateOptions
-  // has already rejected them alongside --session/--continue.
   const agentProfile = await resolveAgentProfileSelection(opts, workDir);
   const tuiModeResolution = resolveTuiMode(tuiConfig.tuiMode);
   const animationFrameRateResolution = resolveAnimationFrameRate();
@@ -178,28 +167,16 @@ export async function runShell(
   };
 
   let savedStty: string | undefined;
-  // stty runs before tui.start() reaches the workspace trust gate, so it must
-  // never be resolved by name through PATH: a `.` or empty PATH segment would
-  // let an untrusted checkout plant an `stty` executable and run it pre-trust.
-  // resolveCommandPath returns an absolute path and refuses hits inside the
-  // cwd; when it cannot resolve stty, skip the save/restore entirely — it is
-  // best-effort terminal hygiene, not required for startup.
-  // stty is also POSIX-only, so skip it on Windows instead of relying on the
-  // catch below.
   const sttyPath = process.platform === 'win32' ? undefined : resolveCommandPath('stty');
   if (sttyPath !== undefined) {
     try {
-      // stty operates on the terminal behind stdin, so stdin must be the TTY —
-      // piping /dev/null (ignore) makes stty fail with "not a tty".
       const saved = execFileSync(sttyPath, ['-g'], {
         encoding: 'utf8',
         stdio: ['inherit', 'pipe', 'ignore'],
       });
       savedStty = saved.trim();
       execFileSync(sttyPath, ['-ixon'], { stdio: ['inherit', 'ignore', 'ignore'] });
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
   const restoreStty = (): void => {
     if (sttyPath === undefined || savedStty === undefined) return;
@@ -208,18 +185,10 @@ export async function runShell(
     spawnSync(sttyPath, args, { stdio: ['inherit', 'ignore', 'ignore'] });
   };
 
-  // If we crash without going through KimiTUI.stop(), the terminal is left in
-  // raw mode with a hidden cursor and XON/XOFF flow control disabled. Restore
-  // both before exiting so the user's shell is usable afterwards.
   const emergencyExit = (exitCode: number): void => {
-    // The crash log above is only enqueued into the async sink; flush it
-    // synchronously or the `process.exit()` below would drop the one line that
-    // explains why we crashed. Best-effort: an exit path must never throw.
     try {
       flushDiagnosticLogsSync();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     restoreTerminalModes();
     restoreStty();
     process.exit(exitCode);
@@ -227,23 +196,17 @@ export async function runShell(
   const onUncaughtException = (error: unknown): void => {
     try {
       log.error('uncaughtException, restoring terminal and exiting', { error: String(error) });
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     emergencyExit(1);
   };
   const onUnhandledRejection = (reason: unknown): void => {
     try {
       log.error('unhandledRejection, restoring terminal and exiting', { reason: String(reason) });
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     emergencyExit(1);
   };
   process.on('uncaughtException', onUncaughtException);
   process.on('unhandledRejection', onUnhandledRejection);
-  // Remove the crash handlers once the TUI exits cleanly so repeated runShell()
-  // calls in the same process (e.g. tests) don't accumulate process listeners.
   const removeCrashHandlers = (): void => {
     process.off('uncaughtException', onUncaughtException);
     process.off('unhandledRejection', onUnhandledRejection);
@@ -277,9 +240,6 @@ export async function runShell(
     removeCrashHandlers();
     restoreStty();
     if (tui.exitForegroundTask !== undefined) {
-      // `/web` starting a new server: the TUI has shut down cleanly; hand the
-      // terminal to the foreground server instead of exiting. The task runs
-      // until the server stops (Ctrl+C), then this process exits.
       await tui.exitForegroundTask(exitCode);
       return;
     }

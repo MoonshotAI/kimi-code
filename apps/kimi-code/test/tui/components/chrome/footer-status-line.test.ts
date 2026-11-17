@@ -98,7 +98,6 @@ describe('FooterComponent status_line items', () => {
   });
 
   it('honors the configured position of the tips slot', () => {
-    // The tip content itself rotates; locate it via a tips-only render.
     const tipsOnly = plain(
       new FooterComponent({
         ...baseState,
@@ -165,7 +164,6 @@ describe('runStatusLineCommand', () => {
   });
 
   it('caps the captured output instead of accumulating an unending stream', async () => {
-    // 200 KB on a single line, then exit: only the capped prefix is kept.
     const line = await runStatusLineCommand(
       'head -c 200000 /dev/zero | tr "\\0" "a"',
       payload,
@@ -213,7 +211,6 @@ describe('FooterComponent status_line command', () => {
     };
     const footer = new FooterComponent(state);
 
-    // Before the first run completes the built-in layout is still shown.
     expect(plain(footer.render(120)[0]!)).toContain('kimi-k2');
 
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -260,7 +257,7 @@ describe('StatusLineCommandRunner', () => {
 
       runner.maybeRefresh(payload);
       await new Promise((resolve) => setTimeout(resolve, 250));
-      runner.maybeRefresh(payload); // throttled: must defer, not drop
+      runner.maybeRefresh(payload);
       await new Promise((resolve) => setTimeout(resolve, 250));
       expect(readFileSync(counterFile, 'utf-8').trim()).toBe('1');
 
@@ -278,12 +275,12 @@ describe('StatusLineCommandRunner', () => {
       statusLine: { items: null, command: 'printf "aaa"' },
     };
     const footer = new FooterComponent(state);
-    footer.render(120); // kicks the first run
+    footer.render(120);
     await new Promise((resolve) => setTimeout(resolve, 450));
     expect(plain(footer.render(120)[0]!)).toContain('aaa');
 
     footer.setState({ ...state, statusLine: { items: null, command: 'printf "bbb"' } });
-    footer.render(120); // kicks the replacement run
+    footer.render(120);
     await new Promise((resolve) => setTimeout(resolve, 450));
 
     const line1 = plain(footer.render(120)[0]!);

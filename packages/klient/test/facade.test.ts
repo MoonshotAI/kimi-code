@@ -11,7 +11,6 @@ import { KlientValidationError } from '../src/core/validation.js';
 
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Records calls, replays scripted results, and captures listen subscriptions. */
 class FakeChannel implements KlientChannel {
   readonly calls: Array<{ scope: ScopeRef; service: string; method: string; args: unknown[] }> = [];
   readonly subscriptions: Array<{
@@ -20,7 +19,6 @@ class FakeChannel implements KlientChannel {
     dispose: ReturnType<typeof vi.fn>;
   }> = [];
   result: unknown;
-  /** Keyed `${service}.${method}` result overrides. */
   readonly results = new Map<string, unknown>();
   private readonly handlers = new Map<number, (data: unknown) => void>();
   private nextSub = 0;
@@ -31,9 +29,7 @@ class FakeChannel implements KlientChannel {
     return Promise.resolve(this.results.has(key) ? this.results.get(key) : this.result);
   }
 
-  async *stream(_scope: ScopeRef, _service: string, _method: string, _args: unknown[]): AsyncIterableIterator<unknown> {
-    // stub — streaming is not exercised in facade tests
-  }
+  async *stream(_scope: ScopeRef, _service: string, _method: string, _args: unknown[]): AsyncIterableIterator<unknown> {}
 
   listen(scope: ScopeRef, source: EventSourceRef, handler: (data: unknown) => void): IDisposable {
     const id = this.nextSub;
@@ -46,7 +42,6 @@ class FakeChannel implements KlientChannel {
     return { dispose };
   }
 
-  /** Push a raw payload into the Nth subscription (0-based). */
   emit(index: number, data: unknown): void {
     this.handlers.get(index)?.(data);
   }
@@ -77,7 +72,7 @@ describe('facade routing', () => {
       args: ['/x', 'n'],
     });
 
-    channel.result = undefined; // void output
+    channel.result = undefined;
     await klient.global.plugins.setMcpServerEnabled({ id: 'p', server: 's', enabled: true });
     expect(channel.calls[1]).toMatchObject({
       service: 'pluginService',
@@ -149,7 +144,6 @@ describe('facade routing', () => {
       supported: true,
       state: 'partial',
       steps: [{ id: 'permissions', state: 'missing' }],
-      // The completed-install note survives the contract parse (not stripped).
       install: { running: false, note: 'user-skill-migrated' },
     };
     channel.result = [status];
@@ -272,7 +266,7 @@ describe('agent profile routing', () => {
     const klient = createKlientFromChannel(channel);
     const agent = klient.session('s1').agent('main');
 
-    channel.result = undefined; // void output
+    channel.result = undefined;
     await agent.setThinking('on');
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
@@ -714,7 +708,7 @@ describe('contract validation', () => {
   it('rejects drifted output payloads', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
-    channel.result = { id: 's1' }; // missing required SessionSummary fields
+    channel.result = { id: 's1' };
     await expect(klient.global.sessions.get('s1')).rejects.toBeInstanceOf(KlientValidationError);
   });
 
@@ -856,8 +850,6 @@ describe('event hub', () => {
     agent.events.on('compaction.cancelled', (event) => seen.cancelled.push(event));
     agent.events.on('compaction.completed', (event) => seen.completed.push(event));
 
-    // All six registrations share one `events` stream subscription bound to
-    // the agent scope.
     expect(channel.subscriptions).toHaveLength(1);
     expect(channel.subscriptions[0]?.scope).toEqual({ sessionId: 's1', agentId: 'main' });
     expect(channel.subscriptions[0]?.source).toEqual({ kind: 'stream', name: 'events' });

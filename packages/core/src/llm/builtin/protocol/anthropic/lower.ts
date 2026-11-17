@@ -1,7 +1,3 @@
-/**
- * Anthropic Messages encoding: lowers core messages, tools, and params to the native request, adds
- * cache-control breakpoints and beta features, and defines the protocol's media support and pipeline spec.
- */
 import type Anthropic from '@anthropic-ai/sdk';
 import { shake } from 'radashi';
 
@@ -288,15 +284,6 @@ function defaultTool(tool: ToolDescription): Record<string, unknown> {
   };
 }
 
-/**
- * Converts a message with no native content blocks into no output, leaving other messages unchanged.
- *
- * @example
- * // Input:
- * [{ role: 'user', content: [] }] // ←
- * // Output:
- * [] // ←
- */
 const dropEmptyMessages: Pattern<NativeMessage> = {
   name: 'dropEmptyMessages',
   rewrite(items, index) {

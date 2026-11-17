@@ -1,13 +1,3 @@
-/**
- * `kimi web` / `kimi server` — run the local Kimi server (REST + WebSocket +
- * web UI) in the foreground.
- *
- * `kimi web` opens the web UI in the default browser (`--no-open` to skip);
- * `kimi server` runs the same server without opening a browser (`--open` to
- * open). Both stay attached to the terminal and stop with Ctrl+C. Servers left
- * behind by pre-0.28.0 builds are cleaned up with `kimi server kill`.
- */
-
 import type { Command } from 'commander';
 
 import { registerEnsureDaemonCommand } from './ensure-daemon';

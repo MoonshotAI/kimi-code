@@ -14,8 +14,6 @@ function strip(text: string): string {
 
 describe('UsagePanelComponent', () => {
   it('formats session, context, and managed usage sections', () => {
-    // Freeze the clock so the resetAt fixture is an exact hour out — with a
-    // live clock the elapsed milliseconds floor the diff down to 59m.
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-28T00:00:00Z'));
     try {
@@ -130,7 +128,6 @@ describe('UsagePanelComponent', () => {
     expect(output).toContain('50.00');
     expect(output).toContain('Monthly limit');
     expect(output).toContain('200.00');
-    // bar row contains block glyphs but no percentage text
     expect(output).toContain('░');
   });
 
@@ -228,10 +225,7 @@ describe('UsagePanelComponent', () => {
 
     const extraRows = lines.filter((line) => line.includes('¥'));
     expect(extraRows).toHaveLength(3);
-    // The currency symbol stays in one column...
     expect(new Set(extraRows.map((line) => line.indexOf('¥'))).size).toBe(1);
-    // ...and the right-aligned numeric parts end in the same column, so the
-    // decimal points line up across rows.
     expect(new Set(extraRows.map((line) => line.length)).size).toBe(1);
   });
 
@@ -295,8 +289,6 @@ describe('UsagePanelComponent', () => {
   });
 
   it('rebuilds its body from the active palette on invalidate', () => {
-    // Emit the resolved palette value as visible text so the assertion holds
-    // regardless of chalk's colour level in the test environment.
     const component = new UsagePanelComponent(() => [`text=${currentTheme.color('text')}`], 'primary');
     const bodyOf = (): string => {
       const line = component.render(80).map(strip).find((l) => l.includes('text='));

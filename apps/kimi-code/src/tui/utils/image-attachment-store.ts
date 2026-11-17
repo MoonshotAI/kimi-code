@@ -1,42 +1,9 @@
-/**
- * Registry for media pasted into the input box.
- *
- * Each paste produces an `ImageAttachment` with an auto-incrementing id
- * or `VideoAttachment` with a human-readable placeholder (`[image #1
- * (640×480)]` / `[video #2 sample.mov]`). The placeholder is what the
- * user sees in the input field; on submit, `extractMediaAttachments`
- * walks the text and expands image placeholders to image content parts
- * (dispatch-time caption resolution then precedes them with a compression
- * caption when paste-time compression shrank the bytes — see
- * `ImageAttachment.original`) and video placeholders to `kimi-file://`
- * daemon references (the paste was uploaded to the daemon file store in
- * the background, exactly like an uploaded image).
- *
- * Scope is per-`KimiTUI` instance. Reloads (`/new`, `/clear`,
- * session switch) call `clear()` so ids restart from 1 and stale
- * prompt attachments are dropped. We intentionally do NOT persist
- * attachments across sessions — coding-agent doesn't either, and
- * `--resume` wouldn't know how to materialize the files anyway.
- */
-
 export interface ImageAttachmentOriginal {
-  /**
-   * Pre-compression bytes, kept in memory until dispatch-time caption
-   * resolution (`resolveOriginalCaptions`) persists them — the session whose
-   * media-originals dir they belong in may not exist yet at paste time.
-   * Released once persistence succeeds; the on-disk copy is the original
-   * from then on.
-   */
   bytes?: Uint8Array;
   readonly width: number;
   readonly height: number;
-  /** Pre-compression size, retained for captions after `bytes` is released. */
   readonly byteLength: number;
   readonly mime: string;
-  /**
-   * Local resend copy, independent of the session attachment used for
-   * ReadMediaFile. Undefined until persistence succeeds; retried on dispatch.
-   */
   path?: string;
   attachment?: { readonly sessionId: string; readonly reference: string };
 }
@@ -48,31 +15,10 @@ export interface ImageAttachment {
   readonly mime: string;
   readonly width: number;
   readonly height: number;
-  /**
-   * Pre-compression original, recorded when paste-time compression changed
-   * the bytes. Drives the compression caption authored on dispatch so the
-   * model knows it received a downsampled copy. Absent for untouched pastes.
-   */
   readonly original?: ImageAttachmentOriginal | undefined;
-  /**
-   * Daemon file-store id, set when the bytes were uploaded at paste time
-   * (v2 engine only). Submit-time expansion then emits a `kimi-file://`
-   * reference plus an `<image path>` tag instead of inline base64; absent
-   * means the inline form is used.
-   */
   fileId?: string;
-  /** Epoch milliseconds when the daemon staging upload expires. */
   fileExpiresAt?: number;
-  /**
-   * Background ingestion (compression/daemon upload) still in flight. The
-   * paste callback settles once the placeholder is in the editor — typing
-   * never waits on this — but submit holds it briefly
-   * (`pendingImageIngestions`) so a fast paste-then-Enter still gets the
-   * compressed/ref form; a slow ingestion submits the inline form instead.
-   * Cleared when ingestion completes.
-   */
   pending?: Promise<void>;
-  /** Rendered placeholder string, e.g. `[image #1 (640×480)]`. */
   readonly placeholder: string;
 }
 
@@ -83,22 +29,9 @@ export interface VideoAttachment {
   readonly filename: string;
   readonly sourcePath: string;
   readonly label: string;
-  /**
-   * Daemon file-store id, set when the source file was uploaded at paste
-   * time. Submit-time expansion emits a `kimi-file://` video reference;
-   * absent means the upload failed or is still in flight (`pending`), and
-   * expansion refuses the submission — a video has no inline fallback.
-   */
   fileId?: string;
-  /** Epoch milliseconds when the daemon staging upload expires. */
   fileExpiresAt?: number;
-  /**
-   * Background upload still in flight (see `ImageAttachment.pending` — the
-   * same bounded submit wait applies, `pendingMediaIngestions`). Cleared
-   * when the upload completes.
-   */
   pending?: Promise<void>;
-  /** Rendered placeholder string, e.g. `[video #1 sample.mov]`. */
   readonly placeholder: string;
 }
 
@@ -165,11 +98,6 @@ export class ImageAttachmentStore {
     return attachment;
   }
 
-  /**
-   * Complete an image that was inserted into the editor before its ingestion
-   * work (compression/upload) finished. Returns undefined when the attachment
-   * was cleared while that work was in flight.
-   */
   completeImage(
     attachment: ImageAttachment,
     input: {
@@ -197,11 +125,6 @@ export class ImageAttachmentStore {
     return attachment;
   }
 
-  /**
-   * Complete a video whose background daemon upload finished. Returns
-   * undefined when the attachment was cleared while the upload was in
-   * flight — the caller then deletes the orphaned upload.
-   */
   completeVideo(
     attachment: VideoAttachment,
     input: {
@@ -217,13 +140,6 @@ export class ImageAttachmentStore {
     return attachment;
   }
 
-  /**
-   * Record where an attachment's pre-compression original was persisted and
-   * release the in-memory buffer — the on-disk copy is the original from
-   * then on, and the caption only needs the retained metadata. Dispatch-time
-   * caption resolution calls this after a successful write; failures leave
-   * the path unset so a later dispatch retries.
-   */
   setOriginalPath(id: number, path: string): void {
     const attachment = this.byId.get(id);
     if (attachment?.kind !== 'image' || attachment.original === undefined) return;
@@ -235,13 +151,6 @@ export class ImageAttachmentStore {
     return this.byId.get(id);
   }
 
-  /**
-   * Drop every attachment and return the staged daemon file ids to delete.
-   * Uploads with an outstanding retain are excluded: a stashed/queued draft
-   * still references them (e.g. a cache-hint resend into the NEXT session),
-   * so they stay alive for that consumer; if none claims them, the daemon's
-   * staging TTL reaps them.
-   */
   clear(): readonly string[] {
     const fileIds = this.fileIds((id) => (this.stagingUses.get(id) ?? 0) === 0);
     this.byId.clear();
@@ -251,10 +160,6 @@ export class ImageAttachmentStore {
     return fileIds;
   }
 
-  /**
-   * Drop a single attachment, releasing its bytes. Used to reclaim image
-   * memory once the transcript entry that references it is trimmed.
-   */
   remove(id: number): string | undefined {
     const attachment = this.byId.get(id);
     const fileId = attachment?.fileId;
@@ -263,7 +168,6 @@ export class ImageAttachmentStore {
     return fileId;
   }
 
-  /** Drop many attachments at once. See {@link remove}. */
   removeMany(ids: Iterable<number>): readonly string[] {
     const fileIds: string[] = [];
     for (const id of ids) {
@@ -305,12 +209,6 @@ export class ImageAttachmentStore {
     return fileIds;
   }
 
-  /**
-   * Consume the retains a recalled submission held WITHOUT taking the staged
-   * files: the recalled draft still references the attachments, so their
-   * daemon uploads stay alive and the next submit re-retains them. Used by
-   * queue recall; every other release path goes through {@link takeFileIds}.
-   */
   releaseRetains(ids: Iterable<number>): void {
     const released = new Set<number>();
     for (const id of ids) {

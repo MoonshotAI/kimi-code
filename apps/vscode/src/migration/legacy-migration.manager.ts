@@ -78,15 +78,10 @@ export interface LegacyMigrationDiscovery {
 }
 
 export interface LegacyMigrationManagerOptions {
-  /** Harness-resolved homeDir. */
   readonly targetHome: string;
-  /** Defaults to the legacy kimi-cli home (`~/.kimi`). Injectable for isolated tests. */
   readonly defaultSourceHome?: string;
-  /** Defaults to the legacy kimi-cli plans dir (`~/.kimi/plans`). Injectable for isolated tests. */
   readonly plansSourceDir?: string;
-  /** First workspace root. Used only to resolve a relative legacy KIMI_SHARE_DIR. */
   readonly workspaceRoot?: string | null;
-  /** The removed `kimi.environmentVariables` VS Code setting, read once for migration. */
   readonly legacyEnvironmentVariables?: unknown;
 }
 
@@ -152,10 +147,6 @@ interface SourceCandidate {
   readonly origin: LegacyMigrationSourceOrigin;
 }
 
-/**
- * Coordinates legacy kimi-cli migration for the VS Code host while keeping all
- * data translation inside the shared migration package.
- */
 export class LegacyMigrationManager {
   readonly targetHome: string;
 
@@ -178,7 +169,6 @@ export class LegacyMigrationManager {
     this.plansSourceDir = options.plansSourceDir ?? defaultPlansSourceDir();
   }
 
-  /** Detect first-launch work without changing the source or target. */
   async discover(): Promise<LegacyMigrationDiscovery> {
     const inspection = await this.inspect(false);
     const sources = inspection.pending.map((source) => source.preview);
@@ -203,16 +193,10 @@ export class LegacyMigrationManager {
     };
   }
 
-  /** Run the migration selected from the first-launch prompt. */
   async migrateNow(): Promise<LegacyMigrationRunResult> {
     return this.execute(false);
   }
 
-  /**
-   * Explicit command-palette retry. Marker suppression is intentionally
-   * bypassed because a completed marker may also describe a partially failed
-   * run, while the shared migrator itself remains idempotent.
-   */
   async retry(): Promise<LegacyMigrationRunResult> {
     return this.execute(true);
   }
@@ -224,8 +208,6 @@ export class LegacyMigrationManager {
     for (const source of inspection.pending) {
       try {
         const report = await runMigration({
-          // The shared package owns its migration/schema version. It must not
-          // be coupled to the VS Code extension's release version.
           plan: source.plan,
           scope: FULL_MIGRATION_SCOPE,
           source: source.preview.sourceHome,

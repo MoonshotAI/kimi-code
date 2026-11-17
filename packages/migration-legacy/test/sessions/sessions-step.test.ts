@@ -10,13 +10,11 @@ import { targetSessionIndex } from '../../src/paths.js';
 const FIXTURES = fileURLToPath(new URL('../fixtures', import.meta.url));
 const FIXTURE_KIMI = join(FIXTURES, 'multi-workdir', '.kimi');
 
-// md5("/proj-b") — bucket for placeholder + empty cases.
 const PROJ_B_BUCKET = 'dbf62706c1b976e79a5e7cfcc3491a1f';
 
 let targetHome: string;
 beforeEach(async () => {
   targetHome = await mkdtemp(join(tmpdir(), 'sessions-step-'));
-  // Empty dirs cannot live in git, so materialize `uuid-b2` before each run.
   await mkdir(join(FIXTURE_KIMI, 'sessions', PROJ_B_BUCKET, 'uuid-b2'), { recursive: true });
 });
 afterEach(async () => {
@@ -36,33 +34,27 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
     expect(report.bucketsScanned).toBe(3);
     expect(report.bucketsSkippedNonlocalKaos).toBe(1);
     expect(report.bucketsSkippedNoWorkdirFound).toBe(0);
-    expect(report.sessionsMigrated).toBe(2); // a1, a2
+    expect(report.sessionsMigrated).toBe(2);
     expect(report.sessionsSkippedPlaceholder).toBe(1);
     expect(report.sessionsSkippedEmpty).toBe(1);
     expect(report.sessionsFailed).toEqual([]);
   });
 
   it('counts a migrated session as failed when its index entry cannot be written', async () => {
-    // Make `session_index.jsonl` a directory so `appendSessionIndexEntry` fails.
     await mkdir(targetSessionIndex(targetHome), { recursive: true });
     const report = await migrateSessionsStep({
       sourceHome: FIXTURE_KIMI,
       targetHome,
     });
-    // Both sessions land on disk, but a session with no index entry is
-    // unopenable by id — it must be reported as failed, not migrated.
     expect(report.sessionsMigrated).toBe(0);
     expect(report.sessionsFailed).toHaveLength(2);
   });
 
   it('counts an already-migrated session as failed when its index entry cannot be ensured', async () => {
-    // First run migrates cleanly and writes the index.
     await migrateSessionsStep({ sourceHome: FIXTURE_KIMI, targetHome });
-    // Simulate a crash that left the index missing, then make it unwritable.
     const indexPath = targetSessionIndex(targetHome);
     await rm(indexPath, { force: true });
     await mkdir(indexPath, { recursive: true });
-    // The second run sees the session dirs and takes the already-migrated path.
     const report = await migrateSessionsStep({
       sourceHome: FIXTURE_KIMI,
       targetHome,
@@ -72,10 +64,7 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
   });
 
   it('does not duplicate an index entry when a deleted session is re-migrated', async () => {
-    // First run: both sessions migrated, index has two entries.
     await migrateSessionsStep({ sourceHome: FIXTURE_KIMI, targetHome });
-    // The user deletes one migrated session's target dir, but its index line
-    // survives. A re-run re-migrates that session from scratch.
     const indexPath = targetSessionIndex(targetHome);
     const firstLine = (await readFile(indexPath, 'utf-8'))
       .split('\n')
@@ -85,7 +74,6 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
       force: true,
     });
     await migrateSessionsStep({ sourceHome: FIXTURE_KIMI, targetHome });
-    // The re-migrated session must not pick up a second index line.
     const ids = (await readFile(indexPath, 'utf-8'))
       .split('\n')
       .filter((l) => l.length > 0)
@@ -102,7 +90,6 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
       targetHome,
       onSessionProgress: (done, total) => events.push({ done, total }),
     });
-    // multi-workdir fixture migrates 2 real local sessions
     expect(events).toEqual([
       { done: 1, total: 2 },
       { done: 2, total: 2 },
@@ -110,10 +97,6 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
   });
 
   it('routes a corrupt context.jsonl into sessionsFailed (so it reaches migration-errors.log)', async () => {
-    // A session whose `context.jsonl` is unparseable is a real data problem.
-    // It must not be silently absorbed into `sessionsSkippedMalformed` (which
-    // the result screen does not render and `migration-errors.log` does not
-    // include); it must surface as a real failure with diagnostic info.
     const src = await mkdtemp(join(tmpdir(), 'corrupt-sess-src-'));
     try {
       const workdir = '/Users/me/corrupt-proj';
@@ -142,9 +125,6 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
   });
 
   it('counts a content-empty session as skipped-empty (not failed) and still migrates the real one', async () => {
-    // A session whose context.jsonl holds only markers (the user cleared it
-    // in kimi-cli) must be reported as skipped-empty — not failed — without
-    // interfering with the real session beside it.
     const src = await mkdtemp(join(tmpdir(), 'empty-sess-src-'));
     try {
       const workdir = '/Users/me/empty-proj';

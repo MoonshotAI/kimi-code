@@ -1,4 +1,3 @@
-// apps/vis/server/test/lib/context-projector.test.ts
 import { describe, it, expect, afterEach } from 'vitest';
 import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
 import { buildCompactionContinuationText } from '@moonshot-ai/agent-core-v2/agent/contextMemory/compactionHandoff';
@@ -42,8 +41,6 @@ describe('context-projector', () => {
 
     expect(proj.messages).toHaveLength(2);
     expect(proj.messages[0]!.message.role).toBe('user');
-    // The assistant message is reconstructed from step.begin/content.part/step.end,
-    // not from a separate `context.append_message` (the engine never emits one).
     expect(proj.messages[1]!.message.role).toBe('assistant');
     expect(proj.messages[1]!.message.content).toEqual([{ type: 'text', text: 'hello' }]);
 
@@ -161,9 +158,6 @@ describe('context-projector', () => {
     expect(assistant.toolCalls).toEqual([
       { type: 'function', id: 'call_1', name: 'LS', arguments: '{"path":"/"}' },
     ]);
-    // The assistant message was opened by step.begin (line 3), so its
-    // anchor lineNo is that of step.begin even though content/toolCalls
-    // were appended later.
     expect(proj.messages[1]!.lineNo).toBe(3);
     expect(proj.messages[1]!.toolStepUuids).toEqual(['s1']);
 
@@ -275,30 +269,17 @@ describe('context-projector', () => {
       { lineNo: 1, data: { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1', turnId: 'T', step: 0 } }, raw: {} },
       { lineNo: 2, data: { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's1', turnId: 'T', step: 0, usage: { inputOther: 100, output: 20, inputCacheRead: 80, inputCacheCreation: 0 } } }, raw: {} },
       { lineNo: 3, data: { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's2', turnId: 'T', step: 1 } }, raw: {} },
-      // content-filtered response: usage all zero — must NOT reset the fill to 0.
       { lineNo: 4, data: { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's2', turnId: 'T', step: 1, finishReason: 'filtered', usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } } }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    expect(proj.contextTokens).toBe(200); // step1 fill 200, kept across the zero step
+    expect(proj.contextTokens).toBe(200);
   });
-
-  // ---- Fix G: tool.result content must match what the model saw ---------------
-  // The engine's `ContextMemory.appendLoopEvent` (`tool.result` case) stores
-  // `createToolMessage(toolCallId, toolResultOutputForModel(event.result))`, NOT
-  // the raw `event.result.output`. `toolResultOutputForModel`
-  // (`packages/agent-core-v2/src/agent/contextMemory/`) normalizes
-  // error / empty outputs with sentinel strings. The projector must replicate
-  // that normalization so the model-view shows the content the model actually
-  // received for failed / empty tool calls.
 
   const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
   const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
   const TOOL_EMPTY_ERROR_STATUS =
     '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
 
-  /** Build a minimal wire fixture: one assistant step with a tool call, then a
-   *  `tool.result` loop event carrying `result`. Returns the projected tool
-   *  message (last entry). */
   const projectToolResult = (result: unknown) => {
     const entries = [
       {
@@ -358,8 +339,6 @@ describe('context-projector', () => {
   });
 
   it('tool.result: error string starting with ERROR: still gets the wrapped status', () => {
-    // The <system>-wrapped status is the harness verdict; the tool's own
-    // "ERROR:" text is data, so the status is added unconditionally.
     const text = 'ERROR: already wrapped\ndetails here';
     const msg = projectToolResult({ output: text, isError: true });
     expect(msg.content).toEqual([{ type: 'text', text: `${TOOL_ERROR_STATUS}\n${text}` }]);
@@ -419,14 +398,9 @@ describe('context-projector', () => {
       { lineNo: 4, data: { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'new' }], toolCalls: [] } }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // Model view: a legacy record (no keptUserMessageCount) rebuilds the
-    // history as `[summary, ...history.slice(compactedCount)]` — 'old' is
-    // compacted away — then the new prompt is appended.
     expect(proj.messages.map((m) => m.source)).toEqual([
       'compaction_summary', 'append_message',
     ]);
-    // The compaction summary is a user message (the engine's own
-    // representation), not a synthetic system message.
     expect(proj.messages[0]!.message.role).toBe('user');
     expect(proj.messages[0]!.message.origin).toEqual({ kind: 'compaction_summary' });
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'old stuff' });
@@ -460,8 +434,6 @@ describe('context-projector', () => {
     ];
 
     const model = projectContext(entries as any);
-    // Legacy record (no keptUserMessageCount): the pre-compaction prompt is
-    // compacted away, the model sees only the prefixed summary.
     expect(model.messages.map((m) => m.message.content[0])).toMatchObject([
       { text: 'prefixed summary' },
     ]);
@@ -486,8 +458,6 @@ describe('context-projector', () => {
           keptUserMessageCount: 2 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // [m0, m1, summary, anchor] — real user prompts are kept verbatim, the
-    // assistant tail is dropped, and the continuation anchor follows the summary.
     expect(proj.messages).toHaveLength(4);
     expect(proj.messages.map((m) => m.source)).toEqual([
       'append_message', 'append_message', 'compaction_summary', 'append_message',
@@ -506,11 +476,6 @@ describe('context-projector', () => {
   });
 
   it('apply_compaction mirrors the legacy verbatim tail for records without keptUserMessageCount (model)', () => {
-    // A pre-rework record has no keptUserMessageCount. the engine's restore keeps
-    // the old `[summary, ...history.slice(compactedCount)]` tail (assistant/tool
-    // included), so the model view must do the same instead of applying the new
-    // kept-user selection — otherwise it would hide the assistant tail the resumed
-    // agent still has, and surface a pre-compaction user message the agent dropped.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const,
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'u0 (compacted away)' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
@@ -520,13 +485,11 @@ describe('context-projector', () => {
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'u2 (tail)' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
       { lineNo: 4, data: { type: 'context.append_message' as const,
           message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a3 (tail)' }], toolCalls: [] } }, raw: {} },
-      // Legacy record: no keptUserMessageCount, compactedCount(2) < history(4).
       { lineNo: 5, data: { type: 'context.apply_compaction' as const,
           summary: 'sum', compactedCount: 2, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
     ];
 
     const model = projectContext(entries as any);
-    // [summary, u2, a3] — the verbatim tail beyond compactedCount, summary first.
     expect(model.messages.map((m) => m.source)).toEqual([
       'compaction_summary', 'append_message', 'append_message',
     ]);
@@ -536,9 +499,9 @@ describe('context-projector', () => {
   });
 
   it('apply_compaction splits an oversized user pool into head + elision marker + tail (model)', () => {
-    const first = `FIRST ${'a'.repeat(4_000)}`; // ~1k tokens
-    const middle = 'b'.repeat(88_000); // ~22k tokens, over the 20k budget on its own
-    const last = `LAST ${'c'.repeat(4_000)}`; // ~1k tokens
+    const first = `FIRST ${'a'.repeat(4_000)}`;
+    const middle = 'b'.repeat(88_000);
+    const last = `LAST ${'c'.repeat(4_000)}`;
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const,
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: first }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
@@ -552,9 +515,6 @@ describe('context-projector', () => {
     ];
 
     const proj = projectContext(entries as any);
-    // [FIRST, head slice of middle, marker, tail slice of middle, LAST, summary, anchor]
-    // — mirrors the engine's selectCompactionUserMessages + elision marker, with
-    // the continuation anchor after the summary.
     expect(proj.messages).toHaveLength(7);
     const texts = proj.messages.map((m) =>
       m.message.content.map((p: any) => (p.type === 'text' ? p.text : '')).join(''),
@@ -576,8 +536,6 @@ describe('context-projector', () => {
       variant: 'compaction_continuation',
     });
     expect(texts[6]).toBe(buildCompactionContinuationText());
-    // Synthesized entries (the head slice of the same message that anchors the
-    // tail, and the marker) get fractional lineNos so keys stay unique.
     expect(new Set(proj.messages.map((m) => m.lineNo)).size).toBe(7);
   });
 
@@ -620,25 +578,11 @@ describe('context-projector', () => {
     ]);
   });
 
-  // ---- Fix ④: UI-only markers must not offset the engine history indices ------
-  // the engine computes compactedCount (and the micro-compaction cutoff) as
-  // indices into _history, which NEVER contains the synthetic 'undo'/'clear'
-  // markers we push into our messages array. So index-based ops must count ONLY
-  // real history entries (append_message + compaction_summary), skipping
-  // 'undo'/'clear' markers.
-
   it('apply_compaction keeps user messages across a preceding undo marker (model)', () => {
     const userMsg = (text: string) => ({
       role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
       origin: { kind: 'user' as const },
     });
-    // Step 1: append u1, u2 then undo(1) → removes u2, leaves [u1, <undo marker>].
-    // Step 2: append u3, u4 → array is [u1, <undo marker>, u3, u4].
-    // History entries (the engine _history, which has NO marker) are the three
-    // real user prompts [u1, u3, u4]. Compaction keeps all of them (they fit the
-    // budget) and appends the summary, dropping only the synthetic undo marker.
-    // This pins that the marker does not offset the kept-user selection — a naive
-    // array-slice would have retained the wrong prompts.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: turnPrompt('u2'), raw: {} },
@@ -651,8 +595,6 @@ describe('context-projector', () => {
           keptUserMessageCount: 3 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // Correct: [u1, u3, u4, summary, anchor]. The marker is gone, all real
-    // prompts kept, and the continuation anchor follows the summary.
     expect(proj.messages.map((m) => m.source)).toEqual([
       'append_message', 'append_message', 'append_message', 'compaction_summary', 'append_message',
     ]);
@@ -671,17 +613,6 @@ describe('context-projector', () => {
       role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
       origin: { kind: 'user' as const },
     });
-    // Step 1: append tool c0, user u1 then undo(1) → removes u1, leaves
-    //   [c0, <undo marker>].
-    // Step 2: append tool c1 → array is [c0, <undo marker>, c1].
-    // History entries (no marker) are [c0, c1]. A micro cutoff=2 means "blank the
-    // first 2 HISTORY entries" → both c0 AND c1 must be blanked.
-    //
-    // The naive array-index pass (i < cutoff=2 over the messages array) would
-    // blank array index 0 (c0) and index 1 (the undo marker — a no-op since it is
-    // not a tool message), then STOP before reaching c1 at array index 2, leaving
-    // c1 WRONGLY un-blanked. This pins the history-aware behaviour and FAILS
-    // against the naive array-index pass.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: toolMsg('c0', bigText) }, raw: {} },
       { lineNo: 2, data: turnPrompt('u1'), raw: {} },
@@ -692,7 +623,6 @@ describe('context-projector', () => {
     ];
     const proj = projectContext(entries as any);
     expect(proj.messages.map((m) => m.source)).toEqual(['append_message', 'undo', 'append_message']);
-    // Both real tool results are within the first 2 history entries → both blanked.
     expect(proj.messages[0]!.message.content).toEqual([{ type: 'text', text: '[Old tool result content cleared]' }]);
     expect(proj.messages[2]!.message.content).toEqual([{ type: 'text', text: '[Old tool result content cleared]' }]);
   });
@@ -711,7 +641,6 @@ describe('context-projector', () => {
       { lineNo: 4, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // count=1 removes u2 (the last real user prompt). u1 + a1 remain, then an undo marker.
     expect(proj.messages.map((m) => m.source)).toEqual(['append_message', 'append_message', 'undo']);
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'u1' });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'a1' });
@@ -728,12 +657,6 @@ describe('context-projector', () => {
       role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
       origin: { kind: 'injection' as const },
     });
-    // Layout: [u1, a1, u2, INJECTION, a2]. undo(1) walks from the end:
-    //   a2  → removed (non-injection)
-    //   INJECTION → skipped while finding the user anchor
-    //   u2  → removed, real user prompt → count(1) reached → stop.
-    // Once u2 is the cut anchor, the engine slices the whole suffix, so the
-    // injection inside that suffix is removed together with u2 and a2.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: { type: 'context.append_message' as const,
@@ -746,7 +669,6 @@ describe('context-projector', () => {
       { lineNo: 6, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // u1 and a1 remain; u2, the injection, and a2 are removed; marker last.
     expect(proj.messages.map((m) => m.source)).toEqual([
       'append_message', 'append_message', 'undo',
     ]);
@@ -787,7 +709,7 @@ describe('context-projector', () => {
   });
 
   it('micro_compaction.apply blanks tool-result content before the cutoff', () => {
-    const bigText = 'x'.repeat(2000); // comfortably above the 100-token min
+    const bigText = 'x'.repeat(2000);
     const toolMsg = (id: string, text: string) => ({
       role: 'tool' as const, content: [{ type: 'text' as const, text }], toolCalls: [], toolCallId: id,
     });
@@ -797,15 +719,11 @@ describe('context-projector', () => {
       { lineNo: 3, data: { type: 'micro_compaction.apply' as const, cutoff: 1 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // index 0 < cutoff(1) and is a large tool message → blanked; index 1 kept.
     expect(proj.messages[0]!.message.content).toEqual([{ type: 'text', text: '[Old tool result content cleared]' }]);
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: bigText });
   });
 
   it('micro_compaction.apply counts think parts toward the min-content gate', () => {
-    // A tool result dominated by a large `think` part (tiny text) must clear the
-    // min-content gate and be blanked — mirroring the engine's token estimator,
-    // which counts both text and think parts.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: {
           role: 'tool' as const, toolCallId: 'c0', toolCalls: [],
@@ -821,10 +739,6 @@ describe('context-projector', () => {
   });
 
   it('micro_compaction.apply weights non-ASCII (CJK) chars as full tokens', () => {
-    // ~150 CJK chars. Under a naive chars/4 estimate this is ~38 tokens (< 100
-    // gate → NOT blanked, the bug). the engine counts each non-ASCII char as a
-    // full token → ~150 tokens (>= gate → blanked). Assert it IS blanked, so a
-    // Chinese-heavy tool result diverges from the engine no longer.
     const cjk = '中'.repeat(150);
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: {
@@ -850,7 +764,6 @@ describe('context-projector', () => {
       { lineNo: 5, data: { type: 'context.append_message' as const, message: toolMsg('n1', bigText) }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // clear() ran reset() → cutoff back to 0, so the new tool messages must NOT be blanked.
     expect(proj.messages).toHaveLength(2);
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: bigText });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: bigText });
@@ -869,8 +782,6 @@ describe('context-projector', () => {
       { lineNo: 4, data: { type: 'context.append_message' as const, message: toolMsg('n0', bigText) }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // applyCompaction() ran reset() → cutoff back to 0. Result: [summary, n0].
-    // n0 must NOT be blanked.
     expect(proj.messages).toHaveLength(2);
     expect(proj.messages[0]!.source).toBe('compaction_summary');
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: bigText });
@@ -885,12 +796,6 @@ describe('context-projector', () => {
       role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
       origin: { kind: 'user' as const },
     });
-    // Layout: [tool c0, user u1, tool c2]. cutoff=3 covers all three. undo(1)
-    // removes the trailing real user prompt u1 AND the messages after it (c2),
-    // walking from the end: c2 (removed, not a user prompt), u1 (removed, user
-    // prompt → count reached). Remaining: [c0, undo-marker]. The cutoff must be
-    // clamped to min(3, postLen) so a LATER appended tool message is not blanked
-    // by the stale large cutoff.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: toolMsg('c0', bigText) }, raw: {} },
       { lineNo: 2, data: turnPrompt('u1'), raw: {} },
@@ -898,13 +803,9 @@ describe('context-projector', () => {
       { lineNo: 3, data: { type: 'context.append_message' as const, message: toolMsg('c2', bigText) }, raw: {} },
       { lineNo: 4, data: { type: 'micro_compaction.apply' as const, cutoff: 3 }, raw: {} },
       { lineNo: 5, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
-      // appended AFTER undo: index 2 in the final list ([c0, undo-marker, n0]).
       { lineNo: 6, data: { type: 'context.append_message' as const, message: toolMsg('n0', bigText) }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // After undo: [c0, undo-marker]; then n0 appended → [c0, undo-marker, n0].
-    // Clamp made cutoff = min(3, 2) = 2, so n0 (index 2) is NOT blanked.
-    // c0 (index 0 < 2) IS still blanked (the still-valid prefix).
     expect(proj.messages.map((m) => m.source)).toEqual(['append_message', 'undo', 'append_message']);
     expect(proj.messages[0]!.message.content).toEqual([{ type: 'text', text: '[Old tool result content cleared]' }]);
     expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: bigText });
@@ -919,31 +820,6 @@ describe('context-projector', () => {
       role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [],
       origin: { kind: 'user' as const },
     });
-    // A PRIOR undo must leave a surviving marker so that, at a LATER undo's clamp,
-    // the array length exceeds the history-entry count by that marker. the engine
-    // clamps against `_history.length` (NO markers); clamping against
-    // `messages.length` here would be one too high and wrongly blank a later
-    // tool result.
-    //
-    // Trace (model mode):
-    //   1. append u1, u2 → [u1, u2]
-    //   2. undo(1) removes u2 → [u1] then pushes marker → [u1, <undo#1>]
-    //   3. append u3 → [u1, <undo#1>, u3]
-    //   4. micro_compaction cutoff=5 (large) → microCutoff=5
-    //   5. undo(1) removes u3 (cutoff index 2); the <undo#1> marker at index 1
-    //      SURVIVES (1 < 2) → [u1, <undo#1>]. Clamp:
-    //        - buggy  min(5, messages.length=2) = 2
-    //        - fixed  min(5, historyCount=1)    = 1   (u1 is history; marker is not)
-    //      then push <undo#2> → [u1, <undo#1>, <undo#2>]
-    //   6. append big tool n0 → [u1, <undo#1>, <undo#2>, n0]
-    //
-    // Final blanking iterates history entries only (markers skipped). n0 is at
-    // history index 1 (only u1 precedes it as a history entry). It is blanked iff
-    // historyIndex(1) < microCutoff:
-    //   - buggy  microCutoff=2 → 1 < 2 → n0 WRONGLY blanked
-    //   - fixed  microCutoff=1 → 1 >= 1 → pass breaks → n0 preserved
-    // So this is RED (n0 blanked) under the messages.length clamp and GREEN under
-    // the history-count clamp.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const, message: userMsg('u1') }, raw: {} },
       { lineNo: 2, data: turnPrompt('u2'), raw: {} },
@@ -953,16 +829,12 @@ describe('context-projector', () => {
       { lineNo: 4, data: { type: 'context.append_message' as const, message: userMsg('u3') }, raw: {} },
       { lineNo: 5, data: { type: 'micro_compaction.apply' as const, cutoff: 5 }, raw: {} },
       { lineNo: 6, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
-      // appended AFTER the second undo, at history index 1.
       { lineNo: 7, data: { type: 'context.append_message' as const, message: toolMsg('n0', bigText) }, raw: {} },
     ];
     const proj = projectContext(entries as any);
     expect(proj.messages.map((m) => m.source)).toEqual([
       'append_message', 'undo', 'undo', 'append_message',
     ]);
-    // u1 (history index 0 < cutoff) is blanked-eligible but is a user message, so
-    // unchanged. n0 (history index 1) must NOT be blanked: its original content
-    // is preserved, not replaced by the cleared marker.
     expect(proj.messages[3]!.message.content).toEqual([{ type: 'text', text: bigText }]);
   });
 
@@ -997,7 +869,7 @@ describe('context-projector', () => {
             usage: { inputOther: 10, output: 5, inputCacheRead: 2, inputCacheCreation: 3 } } }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    expect(proj.contextTokens).toBe(20); // 10+5+2+3, absolute (not summed across usage.record)
+    expect(proj.contextTokens).toBe(20);
   });
 
   it('uses context.update_token_count as the latest absolute context-token snapshot', () => {
@@ -1010,11 +882,6 @@ describe('context-projector', () => {
     expect(proj.contextTokens).toBe(42);
   });
 
-  // ---- Fix ②: contextTokens updates on clear / compaction lifecycle events ---
-  // the engine ContextMemory sets _tokenCount on clear() (→ 0) and
-  // applyCompaction(result) (→ result.tokensAfter), not only on step.end. These
-  // are derived state, so they apply identically in both projection modes.
-
   for (const mode of ['model', 'full'] as const) {
     it(`resets contextTokens to 0 after a context.clear (mode=${mode})`, () => {
       const entries = [
@@ -1023,7 +890,6 @@ describe('context-projector', () => {
         { lineNo: 2, data: { type: 'context.append_loop_event' as const,
             event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0,
               usage: { inputOther: 10, output: 5, inputCacheRead: 2, inputCacheCreation: 3 } } }, raw: {} },
-        // clear() is the last token-affecting event → contextTokens must be 0.
         { lineNo: 3, data: { type: 'context.clear' as const }, raw: {} },
       ];
       const proj = projectContext(entries as any, mode);
@@ -1037,8 +903,6 @@ describe('context-projector', () => {
         { lineNo: 2, data: { type: 'context.append_loop_event' as const,
             event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0,
               usage: { inputOther: 100, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } } }, raw: {} },
-        // applyCompaction is the last token-affecting event → contextTokens must
-        // be tokensAfter (30), not the pre-compaction step.end snapshot (100).
         { lineNo: 3, data: { type: 'context.apply_compaction' as const,
             summary: 'sum', compactedCount: 0, tokensBefore: 100, tokensAfter: 30 }, raw: {} },
       ];
@@ -1046,11 +910,6 @@ describe('context-projector', () => {
       expect(proj.contextTokens).toBe(30);
     });
   }
-
-  // ---- Full-history mode (Unit 6) -------------------------------------------
-  // In 'full' mode the four destructive lifecycle events insert an inline
-  // marker but do NOT mutate/drop the surrounding message list. 'model' mode
-  // (the default) keeps the existing model's-eye behaviour byte-identical.
 
   it("defaults to 'model' mode when no 2nd arg is passed (keeps recent user messages + summary)", () => {
     const entries = [
@@ -1062,8 +921,6 @@ describe('context-projector', () => {
           summary: 'sum', compactedCount: 2, tokensBefore: 100, tokensAfter: 10,
           keptUserMessageCount: 2 }, raw: {} },
     ];
-    // No 2nd arg → 'model' default: the real user prompts are kept verbatim and
-    // the summary is appended after them, followed by the continuation anchor.
     const proj = projectContext(entries as any);
     expect(proj.messages.map((m) => m.source)).toEqual([
       'append_message', 'append_message', 'compaction_summary', 'append_message',
@@ -1084,9 +941,6 @@ describe('context-projector', () => {
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'm3' }], toolCalls: [] } }, raw: {} },
     ];
     const proj = projectContext(entries as any, 'full');
-    // m0, m1 are KEPT (not dropped), then the summary marker is appended inline,
-    // then the post-compaction tail (m3). Contrast the model-mode test above
-    // which drops the first compactedCount messages.
     expect(proj.messages.map((m) => m.source)).toEqual([
       'append_message', 'append_message', 'compaction_summary', 'append_message',
     ]);
@@ -1111,8 +965,6 @@ describe('context-projector', () => {
       { lineNo: 4, data: { type: 'context.undo' as const, count: 1 }, raw: {} },
     ];
     const proj = projectContext(entries as any, 'full');
-    // All three messages are KEPT, then an undo marker is appended. The
-    // removedMessageCount still reflects what WOULD have been removed (u2 → 1).
     expect(proj.messages.map((m) => m.source)).toEqual([
       'append_message', 'append_message', 'append_message', 'undo',
     ]);
@@ -1132,7 +984,6 @@ describe('context-projector', () => {
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'b' }], toolCalls: [] } }, raw: {} },
     ];
     const proj = projectContext(entries as any, 'full');
-    // 'a' KEPT, then a 'clear' marker, then 'b' — not emptied.
     expect(proj.messages.map((m) => m.source)).toEqual(['append_message', 'clear', 'append_message']);
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'a' });
     expect(proj.messages[1]!.source).toBe('clear');
@@ -1141,7 +992,7 @@ describe('context-projector', () => {
   });
 
   it("full mode does NOT blank the tool result on micro-compaction (shows original content)", () => {
-    const bigText = 'x'.repeat(2000); // comfortably above the 100-token min
+    const bigText = 'x'.repeat(2000);
     const toolMsg = (id: string, text: string) => ({
       role: 'tool' as const, content: [{ type: 'text' as const, text }], toolCalls: [], toolCallId: id,
     });
@@ -1151,8 +1002,6 @@ describe('context-projector', () => {
       { lineNo: 3, data: { type: 'micro_compaction.apply' as const, cutoff: 1 }, raw: {} },
     ];
     const proj = projectContext(entries as any, 'full');
-    // In 'model' mode index 0 would be blanked; in 'full' mode the original
-    // content is preserved.
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: bigText });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: bigText });
   });
@@ -1213,9 +1062,6 @@ describe('context-projector', () => {
     const bubble = proj.messages.at(-1)!;
     expect(bubble.source).toBe('compaction_summary');
     expect(bubble.message.content[0]).toMatchObject({ text: 'compacted so far' });
-    // No tokensAfter on the record → the engine's fallback: an estimate over
-    // the reconstructed shape (here just the summary bubble), NOT the stale
-    // pre-compaction 7777.
     const expected = estimateTokensForMessages([bubble.message]);
     expect(proj.contextTokens).toBe(expected);
     expect(proj.contextTokens).not.toBe(7777);
@@ -1225,9 +1071,6 @@ describe('context-projector', () => {
   });
 
   it('apply_compaction replays a legacy tail even when compactedCount covers the whole history', () => {
-    // Legacy-tail rule (no keptUserMessageCount) is unconditional on how
-    // compactedCount compares to the current history length — the engine's
-    // restore is always `[summary, ...history.slice(compactedCount)]`.
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const,
           message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'u1' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
@@ -1253,7 +1096,6 @@ describe('context-projector', () => {
           keptUserMessageCount: 1, legacyTail: true }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // Verbatim tail [summary, a2], not the kept-user selection.
     expect(proj.messages.map((m) => m.source)).toEqual(['compaction_summary', 'append_message']);
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'a2 (tail)' });
     expect(proj.contextTokens).toBe(5);
@@ -1283,7 +1125,6 @@ describe('context-projector', () => {
       { lineNo: 10, data: { type: 'interruptionReminder.recorded' as const, agentId: 'main', turnId: 1 }, raw: {} },
     ];
     const proj = projectContext(entries as any);
-    // None of these append messages or move derived context state.
     expect(proj.messages).toEqual([]);
     expect(proj.contextTokens).toBe(0);
     expect(proj.usage.byScope.session).toEqual({

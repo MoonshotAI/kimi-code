@@ -1,14 +1,3 @@
-/**
- * TaskOutputViewer — full-screen pi-tui rendered output viewer for
- * a single background task. Replaces the previous "shell out to less"
- * approach so the experience stays inside the TUI: same colors, same
- * fonts, same redraw cycle, no alt-screen flip-flop.
- *
- * Mounted by `kimi-tui.ts` via nested container swap on top of the
- * TasksBrowserApp. Snapshot view (no live tail) — content is fetched
- * once when the viewer opens.
- */
-
 import {
   Container,
   Key,
@@ -74,9 +63,7 @@ export class TaskOutputViewer extends Container implements Focusable {
 
   private props: TaskOutputViewerProps;
   private readonly terminal: Terminal;
-  /** Output split on '\n'. Replaced on `setProps` when `output` changes. */
   private lines: string[];
-  /** Index of the topmost visible line. */
   private scrollTop = 0;
 
   constructor(props: TaskOutputViewerProps, terminal: Terminal) {
@@ -86,12 +73,6 @@ export class TaskOutputViewer extends Container implements Focusable {
     this.lines = this.splitOutput(props.output);
   }
 
-  /**
-   * Update viewer props. When `output` grows (the watched task wrote
-   * new content), follow the tail like `less +F` if the user is parked
-   * at the bottom; otherwise keep the user's current scroll position
-   * so they can read history without being yanked around.
-   */
   setProps(next: TaskOutputViewerProps): void {
     const previousOutput = this.props.output;
     const wasAtBottom = this.scrollTop >= this.maxScroll();
@@ -107,8 +88,6 @@ export class TaskOutputViewer extends Container implements Focusable {
   private splitOutput(output: string): string[] {
     return (output.length > 0 ? sanitizeShellOutput(output) : '[no output captured]').split('\n');
   }
-
-  // ── input ──────────────────────────────────────────────────────────
 
   handleInput(data: string): void {
     const visible = this.viewableRows();
@@ -130,7 +109,7 @@ export class TaskOutputViewer extends Container implements Focusable {
       matchesKey(data, Key.pageUp) ||
       matchesKey(data, Key.ctrl('u')) ||
       k === ' ' ||
-      data === '\u0002' /* C-b */
+      data === '\u0002'
     ) {
       this.scrollBy(-Math.max(1, visible - 1));
       return;
@@ -138,7 +117,7 @@ export class TaskOutputViewer extends Container implements Focusable {
     if (
       matchesKey(data, Key.pageDown) ||
       matchesKey(data, Key.ctrl('d')) ||
-      data === '\u0006' /* C-f */
+      data === '\u0006'
     ) {
       this.scrollBy(Math.max(1, visible - 1));
       return;
@@ -166,15 +145,9 @@ export class TaskOutputViewer extends Container implements Focusable {
     return Math.max(0, this.lines.length - this.viewableRows());
   }
 
-  /**
-   * Number of content rows visible inside the body frame: total terminal
-   * rows minus header(1) + footer(1) + top border(1) + bottom border(1).
-   */
   private viewableRows(): number {
     return Math.max(1, this.terminal.rows - 4);
   }
-
-  // ── render ─────────────────────────────────────────────────────────
 
   override render(width: number): string[] {
     const rows = Math.max(3, this.terminal.rows);
@@ -209,15 +182,13 @@ export class TaskOutputViewer extends Container implements Focusable {
   }
 
   private renderBody(width: number, bodyHeight: number): string[] {
-    // Reserve 1 col for left/right border each, 1 col for left padding.
     const innerWidth = Math.max(1, width - 4);
 
-    // Re-clamp scroll in case the terminal got resized smaller.
     const max = this.maxScroll();
     if (this.scrollTop > max) this.scrollTop = max;
     if (this.scrollTop < 0) this.scrollTop = 0;
 
-    const viewRows = bodyHeight - 2; // inside top + bottom border
+    const viewRows = bodyHeight - 2;
     const top = currentTheme.fg('primary', '┌' + '─'.repeat(Math.max(0, width - 2)) + '┐');
     const bottom = currentTheme.fg('primary', '└' + '─'.repeat(Math.max(0, width - 2)) + '┘');
 

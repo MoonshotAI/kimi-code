@@ -5,8 +5,6 @@ import type { SyntaxNode } from '#/node';
 import { descendantsOfType } from '#/node';
 import { parse } from '#/parse';
 
-/** Compact S-expression of the tree: named leaves are (type "text"),
- *  anonymous leaves are just their quoted type, inner nodes nest. */
 function sexp(node: SyntaxNode): string {
   if (node.children.length === 0) {
     return node.isNamed ? `(${node.type} ${JSON.stringify(node.text)})` : JSON.stringify(node.type);
@@ -22,7 +20,6 @@ function parseOk(source: string): { rootNode: SyntaxNode; hasError: boolean } {
   return result;
 }
 
-/** Parse and assert the exact tree shape plus the hasError flag. */
 function expectTree(source: string, expected: string, hasError = false): SyntaxNode {
   const { rootNode, hasError: actual } = parseOk(source);
   expect(actual).toBe(hasError);
@@ -55,7 +52,6 @@ describe('ParseBudget', () => {
 
   it('applies documented defaults', () => {
     const budget = new ParseBudget();
-    // Default node cap is 50_000: the 50_000th node is still allowed.
     for (let i = 0; i < 50_000; i++) budget.tick();
     expect(() => {
       budget.tick();
@@ -401,7 +397,6 @@ describe('statement lists', () => {
 
 describe('offsets', () => {
   it('uses UTF-16 code unit offsets', () => {
-    // 🎉 is two UTF-16 code units.
     const { rootNode } = parseOk('x🎉y; ls');
     expect(rootNode.endIndex).toBe(8);
     const commands = descendantsOfType(rootNode, 'command');
@@ -442,8 +437,6 @@ describe('adversarial input', () => {
   });
 
   it('parses a 500KB double-quoted string under the default budget', () => {
-    // Regression: per-character budget.tick() used to burn the 50k node cap
-    // on long strings even though only a handful of nodes are created.
     const body = 'a'.repeat(500 * 1024);
     const result = parse(`echo "${body}"`);
     expect(result.ok).toBe(true);
@@ -502,8 +495,6 @@ describe('adversarial input', () => {
     for (let i = 0; i < 20_000; i++) {
       source += String.fromCodePoint(Math.floor(Math.random() * 0xd800));
     }
-    // The call itself must never throw; either it parses (possibly with
-    // errors) or the budget cuts it off.
     const result = parse(source);
     if (result.ok) {
       expect(result.rootNode.type).toBe('program');

@@ -1,21 +1,3 @@
-/**
- * Clipboard image paste → attachment store, with ingestion-time compression.
- *
- * Tests pin:
- *   - an oversized pasted image is downsampled while building the attachment,
- *     so the stored bytes, the `[image #N (W×H)]` placeholder, and the eventual
- *     submitted image all agree on the compressed size
- *   - the pre-compression original is recorded on the attachment in memory —
- *     never persisted at paste time, because the session whose
- *     media-originals dir it belongs in may not exist yet; dispatch-time
- *     caption resolution owns persistence (see image-placeholder tests)
- *   - a within-budget paste is stored byte-for-byte (fast path), with no
- *     original recorded
- *   - on the v2 engine the final bytes are uploaded to the daemon file store
- *     with a crash-recovery TTL, and the attachment carries the returned id
- *     and expiry; an upload failure leaves the paste on the inline fallback
- */
-
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -32,8 +14,6 @@ import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import { parseImageMeta } from '#/utils/image/image-mime';
 import { ImageLimits, type KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
-// vitest hoists vi.mock/vi.hoisted above the imports above, so the mock still
-// applies to the editor-keyboard module that pulls in readClipboardMedia.
 const { readClipboardMedia } = vi.hoisted(() => ({ readClipboardMedia: vi.fn() }));
 
 vi.mock('#/utils/clipboard/clipboard-image', async (importActual) => {
@@ -44,9 +24,7 @@ vi.mock('#/utils/clipboard/clipboard-image', async (importActual) => {
 interface PasteHarness {
   readonly store: ImageAttachmentStore;
   readonly track: ReturnType<typeof vi.fn>;
-  /** Invoke the paste handler, then wait for the background ingestion to settle. */
   pasteImage(): Promise<void>;
-  /** Invoke the paste handler only — background ingestion may still be pending. */
   pasteImageRaw(): Promise<boolean>;
 }
 
@@ -124,7 +102,6 @@ async function solidJpeg(width: number, height: number): Promise<Uint8Array> {
   );
 }
 
-/** Typed `uploadFile` stub so `mock.calls` keeps the (data, options) tuple. */
 function uploadFileMock(id: string) {
   return vi.fn(async (
     _data: Uint8Array,
@@ -132,29 +109,24 @@ function uploadFileMock(id: string) {
   ) => ({ id, expires_at: '2030-01-02T03:04:05.000Z' }));
 }
 
-/**
- * Insert a minimal EXIF APP1 segment carrying only an Orientation tag right
- * after the JPEG SOI marker (jimp itself never writes EXIF).
- */
 function withExifOrientation(jpeg: Uint8Array, orientation: number): Uint8Array {
-  // TIFF body, little-endian: 8-byte header + IFD0 with a single entry.
   const tiff = Buffer.alloc(26);
   tiff.write('II', 0, 'latin1');
   tiff.writeUInt16LE(42, 2);
-  tiff.writeUInt32LE(8, 4); // offset of IFD0
-  tiff.writeUInt16LE(1, 8); // one directory entry
-  tiff.writeUInt16LE(0x0112, 10); // tag: Orientation
-  tiff.writeUInt16LE(3, 12); // type: SHORT
-  tiff.writeUInt32LE(1, 14); // count
-  tiff.writeUInt16LE(orientation, 18); // value, left-aligned in the 4-byte field
-  tiff.writeUInt32LE(0, 22); // no next IFD
+  tiff.writeUInt32LE(8, 4);
+  tiff.writeUInt16LE(1, 8);
+  tiff.writeUInt16LE(0x0112, 10);
+  tiff.writeUInt16LE(3, 12);
+  tiff.writeUInt32LE(1, 14);
+  tiff.writeUInt16LE(orientation, 18);
+  tiff.writeUInt32LE(0, 22);
   const exifBody = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
   const app1Header = Buffer.alloc(4);
   app1Header.writeUInt16BE(0xff_e1, 0);
   app1Header.writeUInt16BE(exifBody.length + 2, 2);
   return new Uint8Array(
     Buffer.concat([
-      Buffer.from(jpeg.subarray(0, 2)), // SOI
+      Buffer.from(jpeg.subarray(0, 2)),
       app1Header,
       exifBody,
       Buffer.from(jpeg.subarray(2)),
@@ -179,12 +151,9 @@ describe('clipboard image paste compression', () => {
     expect(att?.kind).toBe('image');
     if (att?.kind !== 'image') throw new Error('expected image attachment');
 
-    // Stored metadata reflects the compressed size.
     expect(Math.max(att.width, att.height)).toBeLessThanOrEqual(2000);
     expect(att.placeholder).toContain('2000×1000');
 
-    // The stored bytes decode to the compressed dimensions — the thumbnail and
-    // the submitted image both read from these bytes, so they cannot diverge.
     const dims = parseImageMeta(att.bytes);
     expect(dims).not.toBeNull();
     expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(3000);
@@ -201,7 +170,6 @@ describe('clipboard image paste compression', () => {
 
     const att = store.get(1);
     if (att?.kind !== 'image') throw new Error('expected image attachment');
-    // The harness [image] config — not the built-in 2000px — drives ingestion.
     expect(Math.max(att.width, att.height)).toBe(800);
     expect(att.placeholder).toContain('800×400');
     const dims = parseImageMeta(att.bytes);
@@ -225,8 +193,6 @@ describe('clipboard image paste compression', () => {
     expect(att.original?.byteLength).toBe(big.length);
     expect(att.original?.mime).toBe('image/png');
 
-    // Nothing is persisted at paste time — dispatch-time caption resolution
-    // owns that, once the session (and its media-originals dir) is known.
     expect(att.original?.path).toBeUndefined();
   });
 
@@ -257,20 +223,13 @@ describe('clipboard image paste compression', () => {
     if (att?.kind !== 'image') throw new Error('expected image attachment');
     expect(att.width).toBe(80);
     expect(att.height).toBe(80);
-    expect(att.bytes).toBe(small); // identity: no re-encode on the fast path
+    expect(att.bytes).toBe(small);
     expect(att.original).toBeUndefined();
   });
 
   it(
     'records an EXIF-rotated compressed original in display space',
     async () => {
-      // Orientation 6 (rotate 90° CW): the header says 3600x400, but the image
-      // decodes to 400x3600 — the space the compressed bytes and any later
-      // ReadMediaFile region readback live in. The recorded original (which
-      // drives the submit-time compression caption) must match that space, or
-      // the caption contradicts the sent image's aspect and region coordinates
-      // land axis-swapped. (Kept narrow: pure-JS decode+rotate+encode of a
-      // larger frame can outlast the test timeout on slow CI runners.)
       const portrait = withExifOrientation(await solidJpeg(3600, 400), 6);
       readClipboardMedia.mockResolvedValue({
         kind: 'image',
@@ -285,15 +244,12 @@ describe('clipboard image paste compression', () => {
       if (att?.kind !== 'image') throw new Error('expected image attachment');
       expect(att.original?.width).toBe(400);
       expect(att.original?.height).toBe(3600);
-      // The compressed attachment itself keeps the portrait aspect.
       expect(att.width).toBeLessThan(att.height);
     },
     15_000,
   );
 
   it('stores display-space dimensions for an EXIF-rotated untouched paste', async () => {
-    // Within budgets → sent byte-for-byte, but the placeholder and metadata
-    // must still describe the display (rotated) space.
     const portrait = withExifOrientation(await solidJpeg(120, 80), 6);
     readClipboardMedia.mockResolvedValue({
       kind: 'image',
@@ -306,7 +262,7 @@ describe('clipboard image paste compression', () => {
 
     const att = store.get(1);
     if (att?.kind !== 'image') throw new Error('expected image attachment');
-    expect(att.bytes).toBe(portrait); // fast path — untouched
+    expect(att.bytes).toBe(portrait);
     expect(att.original).toBeUndefined();
     expect(att.width).toBe(80);
     expect(att.height).toBe(120);
@@ -347,7 +303,6 @@ describe('clipboard image paste compression', () => {
       mimeType: 'image/png',
       expiresInSec: 60 * 60,
     });
-    // The bytes stay on the attachment for the inline fallback / cache copy.
     expect(att.bytes).toBe(small);
   });
 
@@ -362,8 +317,6 @@ describe('clipboard image paste compression', () => {
     const att = store.get(1);
     if (att?.kind !== 'image') throw new Error('expected image attachment');
     expect(att.fileId).toBe('file-9');
-    // The upload carries exactly what the attachment stores — the compressed
-    // bytes, not the clipboard original.
     const [data] = uploadFile.mock.calls[0]!;
     expect(data).toBe(att.bytes);
     expect(att.bytes).not.toBe(big);
@@ -382,7 +335,7 @@ describe('clipboard image paste compression', () => {
     );
 
     const { store, pasteImage } = createPasteHarness({ uploadFile });
-    await pasteImage(); // must not throw
+    await pasteImage();
 
     const att = store.get(1);
     if (att?.kind !== 'image') throw new Error('expected image attachment');
@@ -405,8 +358,6 @@ describe('clipboard image paste compression', () => {
     );
 
     const { store, pasteImageRaw } = createPasteHarness({ uploadFile });
-    // The handler returns once the placeholder is in the editor; the upload
-    // is still unresolved here — typing is never held behind it.
     await pasteImageRaw();
 
     const att = store.get(1);
@@ -484,8 +435,6 @@ describe('clipboard video paste upload', () => {
       );
 
       const { store, pasteImageRaw } = createPasteHarness({ uploadFile });
-      // The handler returns once the placeholder is in the editor; the upload
-      // is still unresolved here — typing is never held behind it.
       await pasteImageRaw();
 
       const att = store.get(1);
@@ -493,8 +442,6 @@ describe('clipboard video paste upload', () => {
       expect(att.fileId).toBeUndefined();
       expect(att.pending).toBeDefined();
 
-      // The upload starts once the source file has been read in the
-      // background; only then can it be resolved.
       await vi.waitFor(() => {
         expect(uploadFile).toHaveBeenCalled();
       });
@@ -519,7 +466,7 @@ describe('clipboard video paste upload', () => {
       });
 
       const { store, pasteImage } = createPasteHarness({ uploadFile });
-      await pasteImage(); // must not throw
+      await pasteImage();
 
       const att = store.get(1);
       if (att?.kind !== 'video') throw new Error('expected video attachment');

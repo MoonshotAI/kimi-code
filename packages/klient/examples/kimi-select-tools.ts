@@ -1,54 +1,3 @@
-/**
- * Probe the `select_tools` (progressive tool disclosure) capability of the
- * kimi-type providers, based on the real providers/auth in
- * `~/.kimi-code/config.toml`.
- *
- * Feature recap (from the Tool Select guide): with the `tool-select`
- * experimental flag + `tool_use` + `dynamically_loaded_tools` capabilities,
- * MCP tool schemas no longer ride the top-level `tools[]`; the model calls
- * the builtin `select_tools` with exact names (announced in
- * `<tools_added>`/`<tools_removed>` system reminders), the engine injects
- * the loaded schemas as a `role: 'system'` message whose `tools` field
- * carries full definitions, and the model then calls the loaded tool.
- *
- * The wire fact that makes this kimi-specific: only the kimi vendor trait
- * serializes `message.tools` into the outbound request
- * (`kimiOpenAITrait.convertMessage`); every other base SKIPS
- * tool-declaration-only messages entirely. So the whole mechanism can only
- * work on `(kimi, openai)` — this example proves that on a stub, then
- * behaviorally tests each real kimi model with a simulated "kimi computer
- * use" tool pool.
- *
- * Part A — deterministic, local stub (OpenAI Chat Completions wire):
- *   1. kimi providerType: the tool-declaration message reaches the wire with
- *      an embedded `tools` array.
- *   2. no providerType (plain openai): the same message is dropped — the
- *      boundary non-kimi providers cannot cross.
- *   3. `deferred: true` top-level tools are filtered out of the wire
- *      `tools[]` by the contract's generate() (their schema travels via the
- *      declaration message instead).
- *
- * Part B — live, per kimi model from the real config: a two-step flow that
- * mirrors exactly what the agent loop produces.
- *   step 1: announcement + `select_tools` available, user asks for a
- *           screenshot — does the model call `select_tools`, with names from
- *           the announced list?
- *   step 2: history += the select_tools call, its "Loaded: ..." result, and
- *           the schema-injection system message — does the model now call
- *           the loaded computer-use tool?
- *
- * Run:
- *   pnpm -C packages/klient exec tsx --tsconfig ./tsconfig.examples.json \
- *     --import ../../build/register-raw-text-loader.mjs examples/kimi-select-tools.ts
- *
- * Env:
- *   KIMI_CODE_HOME              — default `~/.kimi-code`
- *   KIMI_SELECT_TOOLS_MODELS    — comma-separated model ids for the live parts (default: all kimi-type)
- *   KIMI_SELECT_TOOLS_SKIP_LIVE — set to `1` to skip part B (no real API calls)
- *   KIMI_SELECT_TOOLS_TAP       — set to `1` to run part C instead of B: route
- *                                 the flow through a logging proxy and dump
- *                                 the actual wire Context of each request.
- */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -107,10 +56,6 @@ function createRequester(model: Model, registry: IProtocolAdapterRegistry): Requ
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
 }
-
-// ---------------------------------------------------------------------------
-// The simulated "kimi computer use" MCP tool pool.
-// ---------------------------------------------------------------------------
 
 const COMPUTER_USE_TOOLS: readonly Tool[] = [
   {
@@ -173,7 +118,6 @@ const COMPUTER_USE_TOOLS: readonly Tool[] = [
 
 const COMPUTER_USE_NAMES = COMPUTER_USE_TOOLS.map((t) => t.name);
 
-/** The builtin select_tools schema, mirroring `SelectToolsInputSchema`. */
 const SELECT_TOOLS: Tool = {
   name: 'select_tools',
   description:
@@ -211,7 +155,6 @@ const userMessage = (text: string): Message => ({
   content: [{ type: 'text', text }],
 });
 
-/** The schema-injection message the engine appends after a successful load. */
 const toolDeclarationMessage = (tools: readonly Tool[]): Message => ({
   role: 'system',
   content: [],
@@ -224,10 +167,6 @@ const announcementMessage = (names: readonly string[]): Message => ({
     { type: 'text', text: renderLoadableToolsAnnouncement(names, []) },
   ],
 });
-
-// ---------------------------------------------------------------------------
-// Shared request draining.
-// ---------------------------------------------------------------------------
 
 interface Collected {
   readonly text: string;
@@ -256,10 +195,6 @@ async function collect(
   }
   return { text, toolCalls, finishReason };
 }
-
-// ---------------------------------------------------------------------------
-// Part A — deterministic wire-encoding probes against a local stub.
-// ---------------------------------------------------------------------------
 
 const sseChunk = (delta: object, finishReason: string | null): string =>
   JSON.stringify({
@@ -345,9 +280,6 @@ async function probeWireEncoding(): Promise<void> {
   };
 
   try {
-    // 1) kimi providerType: the declaration message reaches the wire, with the
-    // loaded schema embedded in the message — and the deferred top-level tool
-    // does NOT duplicate into the wire tools[].
     await collect(makeRequester('kimi'), input);
     const kimiBody = lastBody;
     const declaration = kimiBody?.messages?.find((m) => Array.isArray(m.tools));
@@ -369,9 +301,6 @@ async function probeWireEncoding(): Promise<void> {
         `top-level tools=[${(kimiBody?.tools ?? []).map((t) => t.function?.name ?? '?').join(', ')}]`,
     );
 
-    // 2) plain openai: the same declaration message is dropped outright — the
-    // dynamic-tool schema can never reach a non-kimi wire. (3 wire messages =
-    // system prompt + announcement + user; the declaration is gone.)
     await collect(makeRequester(), input);
     const plainBody = lastBody;
     assert(
@@ -392,10 +321,6 @@ async function probeWireEncoding(): Promise<void> {
     });
   }
 }
-
-// ---------------------------------------------------------------------------
-// Part B — live two-step select_tools flow per real kimi model.
-// ---------------------------------------------------------------------------
 
 type Step1Outcome =
   | { readonly kind: 'selected'; readonly names: readonly string[]; readonly callId: string; readonly argumentsJson: string }
@@ -423,7 +348,6 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 
 interface Scenario {
   readonly prompt: string;
-  /** The tool a correct model is expected to select and call. */
   readonly expectTool: string;
 }
 
@@ -464,9 +388,7 @@ async function step1Select(requester: Requester, scenario: Scenario): Promise<St
     try {
       const parsed = JSON.parse(call.arguments ?? '{}') as { names?: unknown };
       if (Array.isArray(parsed.names)) names = parsed.names.filter((n): n is string => typeof n === 'string');
-    } catch {
-      // keep names empty — reported below
-    }
+    } catch {}
     return { kind: 'selected', names, callId: call.id, argumentsJson: call.arguments ?? '' };
   } catch (error) {
     return { kind: 'error', message: error instanceof Error ? error.message.split('\n')[0] ?? '' : String(error) };
@@ -509,8 +431,6 @@ async function step2UseLoadedTool(
         toolCallId: step1.callId,
         content: [{ type: 'text', text: `Loaded: ${loadName}` }],
             },
-      // The schema-injection message — the exact wire shape whose acceptance
-      // this probe measures. Dropped entirely in the isolation retry below.
       ...(withDeclaration ? [toolDeclarationMessage([loadedTool])] : []),
     ],
   });
@@ -530,9 +450,6 @@ async function step2UseLoadedTool(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message.split('\n')[0] ?? '' : String(error);
-    // Differential: retry the SAME request minus the schema-injection message.
-    // If it then succeeds, the backend rejects the dynamic-schema wire shape
-    // specifically; if it fails too, the problem is elsewhere in the flow.
     try {
       await withTimeout(collect(requester, messages(false)), 60_000, 'step2-isolation');
       return {
@@ -606,12 +523,6 @@ async function probeLiveKimiProviders(): Promise<void> {
     app.dispose();
   }
 }
-
-// ---------------------------------------------------------------------------
-// Part C — TAP mode: sit a logging proxy between the requester and the real
-// endpoint, and dump the actual wire Context (structure digest only — auth
-// headers are forwarded untouched, never printed).
-// ---------------------------------------------------------------------------
 
 interface TapWireTool {
   readonly type?: string;
@@ -730,7 +641,6 @@ async function probeTappedContext(): Promise<void> {
           },
           registry,
         );
-        // One scenario is enough to show the mechanism: click (has arguments).
         const scenario = SCENARIOS[1]!;
         const step1 = await step1Select(tapped, scenario);
         if (step1.kind === 'selected') {
@@ -752,8 +662,6 @@ async function probeTappedContext(): Promise<void> {
     app.dispose();
   }
 }
-
-// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   await probeWireEncoding();

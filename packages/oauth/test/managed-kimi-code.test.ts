@@ -68,8 +68,6 @@ describe('provisionManagedKimiCodeConfig', () => {
   });
 
   it('derives a full OAuth ref whose key and persisted host stay in sync', () => {
-    // Default environment collapses to the legacy ref (no persisted host), so
-    // existing production credentials keep resolving to `kimi-code.json`.
     expect(
       resolveKimiCodeOAuthRef({
         oauthHost: 'https://auth.kimi.com/',
@@ -89,8 +87,6 @@ describe('provisionManagedKimiCodeConfig', () => {
       oauthHost: 'https://auth.kimi.com',
     });
 
-    // A non-default environment yields a scoped key AND the normalized host,
-    // both derived from the same input — login and runtime cannot drift apart.
     const devRef = resolveKimiCodeOAuthRef({
       oauthHost: 'https://auth.dev.example.test/',
       baseUrl: 'https://api.dev.example.test/coding/v1',
@@ -923,7 +919,6 @@ describe('reasoning', () => {
       },
     });
 
-    // 'only' → thinking locked on; tools.dynamic_load adds dynamically_loaded_tools.
     expect(config.models?.['kimi-code/kimi-for-coding']?.capabilities).toEqual([
       'thinking',
       'always_thinking',
@@ -932,9 +927,7 @@ describe('reasoning', () => {
       'tool_use',
       'dynamically_loaded_tools',
     ]);
-    // 'none' → no thinking capability.
     expect(config.models?.['kimi-code/kimi-plain']?.capabilities).toEqual(['tool_use']);
-    // 'both' → plain toggleable thinking.
     expect(config.models?.['kimi-code/kimi-toggle']?.capabilities).toEqual([
       'thinking',
       'tool_use',
@@ -1062,8 +1055,6 @@ describe('reasoning', () => {
       },
     });
 
-    // kimi-k2.5 has no reasoning object in the response — the stale
-    // thinking.enabled must not survive the refresh.
     expect(result.defaultModel).toBe('kimi-code/kimi-k2.5');
     expect(result.defaultThinking).toBe(false);
     expect(config.thinking?.enabled).toBe(false);
@@ -1120,7 +1111,6 @@ describe('reasoning.effort', () => {
             display_name: 'Kimi For Coding',
           },
           {
-            // Empty / non-string entries are filtered; absent fields stay undefined.
             id: 'kimi-plain',
             limit: { context: 128000 },
             reasoning: { type: 'only', effort: { valid: ['low', '', 42] } },
@@ -1139,7 +1129,6 @@ describe('reasoning.effort', () => {
 
     expect(models[0]?.supportEfforts).toEqual(['low', 'high', 'max']);
     expect(models[0]?.defaultEffort).toBe('high');
-    // The empty string and number are filtered out of effort.valid.
     expect(models[1]?.supportEfforts).toEqual(['low']);
     expect(models[1]?.defaultEffort).toBeUndefined();
   });
@@ -1170,8 +1159,6 @@ describe('reasoning.effort', () => {
   });
 
   it('ignores legacy effort fields even when reasoning.effort is absent', async () => {
-    // The legacy think_efforts / support_efforts / default_effort fields are no
-    // longer read; only the nested reasoning.effort object is honored.
     const models = await fetchManagedKimiCodeModels({
       accessToken: 'oauth-access-token',
       fetchImpl: async () =>
@@ -1367,21 +1354,17 @@ describe('applyManagedApiKeyProviderModels', () => {
       'my-kimi/',
     );
 
-    // The provider record is user-owned: no rewrite, no oauth, no apiKey reset.
     expect(config.providers['my-kimi']).toEqual({
       type: 'kimi',
       baseUrl: 'https://api.example.test/coding/v1',
       apiKey: 'sk-distributed-key',
     });
-    // Defaults and services are the orchestrator's / OAuth branch's business.
     expect(config.defaultModel).toBe('my-kimi/kimi-k2');
     expect(config.thinking).toEqual({ enabled: false });
     expect(config.services).toBeUndefined();
-    // Upstream-owned fields merge; hand-written extras survive.
     const alias = config.models?.['my-kimi/kimi-k2'];
     expect(alias?.['displayName']).toBe('Fresh K2');
     expect(alias?.['maxOutputSize']).toBe(4096);
-    // New upstream model added; dropped one removed; other providers untouched.
     expect(config.models?.['my-kimi/kimi-k2.5']).toBeDefined();
     expect(config.models?.['my-kimi/kimi-old']).toBeUndefined();
     expect(config.models?.['other/m1']).toBeDefined();
@@ -1493,9 +1476,6 @@ describe('managed protocol routing', () => {
       models: [makeModelInfo('kimi-for-coding', { protocol: 'anthropic' })],
     });
 
-    // The provider stays on the kimi wire + REST base; the anthropic transport
-    // is resolved per-model at runtime, not baked into the provider config, so
-    // the REST base keeps flowing to OAuth key derivation and plugin env.
     expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
       type: 'kimi',
       baseUrl: KIMI_BASE_URL,
@@ -1536,8 +1516,6 @@ describe('managed protocol routing', () => {
       baseUrl: KIMI_BASE_URL,
       models: [makeModelInfo('kimi-for-coding')],
     });
-    // The provider never leaves the kimi wire / REST base across refreshes —
-    // only the per-model protocol annotation changes.
     expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
       type: 'kimi',
       baseUrl: KIMI_BASE_URL,

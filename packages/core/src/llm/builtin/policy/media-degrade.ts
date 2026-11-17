@@ -1,8 +1,3 @@
-/**
- * Built-in media recovery. When a request is too large, media parts other than the most recent ones
- * are replaced with placeholders; if that is not enough, or the provider rejects an image format, all
- * media in the request are stripped.
- */
 import { mediaKeyOf, type ContentPart, type MediaPart, type Message } from '#/llm/message';
 import type {
   LlmRecovery,
@@ -66,23 +61,6 @@ export function countMediaParts(messages: readonly Message[]): number {
   );
 }
 
-/**
- * Replaces the first `count` media parts in message order with degraded-size placeholders, or with
- * `replacement` when provided; later media and non-media content stay unchanged.
- *
- * @example
- * const first = { type: 'image_url', imageUrl: { url: 'https://example.com/first.png' } };
- * const second = { type: 'image_url', imageUrl: { url: 'https://example.com/second.png' } };
- * const degraded = {
- *   type: 'text',
- *   text: '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
- * };
- * // With `count = 1`:
- * // Input:
- * [{ role: 'user', content: [first, second] }] // ←
- * // Output:
- * [{ role: 'user', content: [degraded, second] }] // ←
- */
 export function degradeLeadingMediaParts(
   messages: readonly Message[],
   count: number,
@@ -101,23 +79,6 @@ export function degradeLeadingMediaParts(
   );
 }
 
-/**
- * Keeps the most recent `keepRecent` media parts intact and degrades every earlier media part,
- * preserving message order and all non-media content.
- *
- * @example
- * const older = { type: 'image_url', imageUrl: { url: 'https://example.com/older.png' } };
- * const recent = { type: 'image_url', imageUrl: { url: 'https://example.com/recent.png' } };
- * const degraded = {
- *   type: 'text',
- *   text: '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
- * };
- * // With `keepRecent = 1`:
- * // Input:
- * [{ role: 'user', content: [older, recent] }] // ←
- * // Output:
- * [{ role: 'user', content: [degraded, recent] }] // ←
- */
 export function degradeOlderMediaParts(
   messages: readonly Message[],
   keepRecent: number,
@@ -140,22 +101,6 @@ export function captureMediaKeys(messages: readonly Message[]): ReadonlySet<stri
   return keys;
 }
 
-/**
- * Replaces media parts whose `mediaKeyOf` is in `keys` with provider-compatibility placeholders, or
- * with `replacement` when provided; by default, strips every media part in the input.
- *
- * @example
- * const image = { type: 'image_url', imageUrl: { url: 'https://example.com/chart.png' } };
- * const stripped = {
- *   type: 'text',
- *   text: '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
- * };
- * // With the default `keys = captureMediaKeys(messages)`:
- * // Input:
- * [{ role: 'user', content: [image] }] // ←
- * // Output:
- * [{ role: 'user', content: [stripped] }] // ←
- */
 export function stripMediaParts(
   messages: readonly Message[],
   keys: ReadonlySet<string> = captureMediaKeys(messages),

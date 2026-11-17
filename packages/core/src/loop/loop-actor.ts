@@ -1,8 +1,3 @@
-/**
- * Actor implementation of `Loop`. A single message queue serializes inbox handling, turn and step
- * progression, LLM requests, tool execution and detachment, abort, reset, and close, and every state
- * change is emitted as a `LoopEmitted` event.
- */
 import type { Message, ToolDescription, UserMessage } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import { createPolicyRegistry, type PolicyRegistry } from '#/llm/policy/registry';

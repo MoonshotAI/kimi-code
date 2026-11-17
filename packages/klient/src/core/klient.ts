@@ -1,10 +1,3 @@
-/**
- * The transport-agnostic klient factory. Every transport entry point
- * (`@moonshot-ai/klient/ipc|memory`) builds a `KlientChannel` and hands
- * it here; the returned `Klient` is identical in shape and behavior no matter
- * which transport carried the bytes.
- */
-
 import type { KlientChannel, ScopeRef } from './channel.js';
 import { globalContract, isStreamingContract } from '#/contract/index';
 import { globalEvents, type KlientEventPayloads } from '#/contract/global/events';
@@ -18,11 +11,6 @@ import { createAgentFacade, type AgentFacade } from './facade/agent.js';
 import { parseChunk, parseInput, parseOutput } from './validation.js';
 
 export interface KlientOptions {
-  /**
-   * Validate wire inputs/outputs and event payloads against the contract.
-   * Default `true`. Disable only on measured hot paths — validation is cheap
-   * (sub-µs for typical payloads) and is the drift tripwire.
-   */
   readonly validate?: boolean;
 }
 
@@ -51,7 +39,6 @@ export function createKlientFromChannel(
   const call: ScopedCaller = async (scope, service, method, args, options) => {
     const procedure = globalContract[service]?.[method];
     if (procedure === undefined) {
-      // A facade method without a contract entry is a klient bug, not a wire error.
       throw new Error(`no contract registered for ${service}.${method}`);
     }
     if (isStreamingContract(procedure)) {
@@ -76,7 +63,6 @@ export function createKlientFromChannel(
     const source = channel.stream(scope, service, method, wireArgs);
     if (!validate) return source;
 
-    // Wrap the iterable to validate each chunk.
     const contract = procedure as StreamingProcedureContract;
     return {
       [Symbol.asyncIterator]() {

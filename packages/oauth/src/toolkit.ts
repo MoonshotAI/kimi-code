@@ -334,9 +334,6 @@ export class KimiOAuthToolkit<TConfig = unknown> {
         identity === undefined
           ? undefined
           : () =>
-              // Full identity headers (User-Agent + X-Msh-*): the OAuth host
-              // reads the platform for the client family and the UA (suffix)
-              // for the runtime surface, e.g. kimi web's `(web)`.
               createKimiDefaultHeaders({
                 homeDir: this.homeDir,
                 ...identity,

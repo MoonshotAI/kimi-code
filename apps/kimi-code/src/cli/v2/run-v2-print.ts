@@ -1,19 +1,3 @@
-/**
- * Native v2 `kimi -p` (print mode) runner.
- *
- * Unlike the v1 path (and the former `V2PromptHarness` / `V2Session` shim), this
- * runner drives agent-core-v2's native DI services through an SDK-owned host — no
- * `PromptHarness`, no SDK-shaped session, no v2→v1 event translation. It:
- *   - creates the host through `SDKRpcClientV2`,
- *   - creates / resumes a session and its main agent via native services,
- *   - subscribes to the main agent's per-agent `IEventBus` and renders the
- *     native `Event2` stream (payloads are already v1-protocol-shaped),
- *   - drives a turn through `IAgentLoopService.enqueuePrompt()` and awaits
- *     `Turn.result` for authoritative completion,
- *   - applies the print-mode background policy (config-driven, v1-aligned:
- *     `exit` / `drain` / `steer`) before exiting.
- */
-
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -129,15 +113,8 @@ import {
 } from '../prompt-render';
 
 const PROMPT_UI_MODE = 'print';
-/** Re-check `goalActive` at least this often while waiting for goal turns. */
 const GOAL_WAIT_POLL_MS = 250;
-/** Re-check each agent's prompt queue while waiting for it to drain at exit. */
 const PROMPT_QUIESCE_POLL_MS = 10;
-/**
- * Slack on top of a scheduled cron fire time while waiting for the steered
- * turn: covers the 1s tick poll interval plus fire → inject → turn-launch
- * latency.
- */
 const CRON_FIRE_GRACE_MS = 5_000;
 
 export async function runV2Print(
@@ -173,9 +150,6 @@ export async function runV2Print(
 
   const configService = services.get(IConfigService);
   await configService.ready;
-  // Print-mode config defaults (task timeouts / loop step cap / subagent
-  // timeout → unbounded) before anything resolves a session; only keys the
-  // user left unset are filled, in the memory layer.
   await applyPrintModeConfigDefaults(configService);
   const defaultModel = configService.get<string>('defaultModel') ?? undefined;
   let configTelemetryEnabled = true;
@@ -204,14 +178,10 @@ export async function runV2Print(
       setCrashPhase('shutdown');
       try {
         await restorePermission();
-        // A termination signal can arrive mid-turn: cancel turns and wait for idle agents first.
         await raceWithTimeout(quiesceAgents(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {});
       } finally {
         try {
-          // Concurrent so the phases' allowances cannot sum past PROMPT_CLEANUP_TIMEOUT_MS.
           await Promise.all([
-            // The turn's tail records reach the journal only via the wire's
-            // async persist queue; process.exit must not cut off that queue.
             raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {}),
             telemetryService !== undefined
               ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
@@ -220,7 +190,6 @@ export async function runV2Print(
           ]);
           await client.close();
         } finally {
-          // Keep producers frozen until the journals are drained and disposed.
           releaseQuiescence?.();
         }
       }
@@ -230,14 +199,6 @@ export async function runV2Print(
   removeTerminationCleanup = installPromptTerminationCleanup(promptProcess, cleanup);
 
   try {
-    // Install the appender BEFORE resolving the session: `session_started` and
-    // `session_load_failed` fire inside create()/resume(), so an appender wired
-    // up only after resolveNativeSession() would drop them to the null appender.
-    // The model below is the best known up front; a resumed session's real
-    // model is reconciled once resolved (v2 via setContext, v1 via
-    // setTelemetryModel). The v1 pipeline is initialized here too: the
-    // process-wide crash handlers report through its default client, so its
-    // sink must be attached before the run can crash.
     telemetryService = services.get(ITelemetryService);
     if (telemetryEnabled) {
       telemetryService.addAppender(
@@ -249,8 +210,6 @@ export async function runV2Print(
           getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
         }),
       );
-      // No `first_launch` on the v1 client: the v2 side already tracks it via
-      // `telemetryService.track2` below, so tracking here would double-send.
       const regionResolution = currentKimiRegionResolution();
       initializeTelemetry({
         homeDir,
@@ -269,14 +228,10 @@ export async function runV2Print(
       });
     }
 
-    // Print mode has no trust prompt, so the engine's workspace-trust gate
-    // would silently drop project-level MCP servers — say so on stderr.
     try {
       const gated = await listTrustGatedMcpServers(services, workDir, homeDir);
       if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
-    } catch {
-      // Best-effort: a broken mcp.json or trust store must not fail the run.
-    }
+    } catch {}
 
     let resolved = await resolveNativeSession(services, opts, workDir, defaultModel, stderr);
     const { previousPermissionMode } = resolved;
@@ -367,9 +322,6 @@ async function resolveNativeSession(
   const sessions = services.get(ISessionManager);
   const index = services.get(ISessionIndex);
 
-  // `--agent` selects a catalog profile by name; otherwise `--agent-file`
-  // implicitly selects the profile that file defines. The file
-  // is parsed here (fatal on error) so a bad file fails before any turn.
   let agentProfileName = opts.agent;
   const agentFile = opts.agentFiles[0];
   if (agentProfileName === undefined && agentFile !== undefined) {
@@ -401,9 +353,6 @@ async function resolveNativeSession(
     }
   }
 
-  // `--agent` / `--agent-file` are creation-only: validateOptions rejects them
-  // together with --session/--continue, so resume paths only apply an
-  // explicitly requested model — the bound profile is restored by the engine.
   const applyModelOverride = async (
     profile: IAgentLoopService,
     model: string | undefined,
@@ -419,9 +368,6 @@ async function resolveNativeSession(
     return session;
   };
 
-  // Plan mode waits for the user to review the plan, and nobody can review it
-  // in print mode: a resumed session still in Plan mode keeps running in Plan
-  // mode, and its plan stays unapproved until the user reviews it.
   const notePlanMode = async (agent: IAgentScopeHandle, sessionId: string): Promise<void> => {
     if ((await agent.accessor.get(IAgentPlanService).status()) === null) return;
     stderr.write(
@@ -497,15 +443,11 @@ async function resolveNativeSession(
       profile: agentProfileName ?? 'agent',
       model,
     },
-    // One-shot environment overrides for the new session's initial binding;
-    // validation is enforced by the environments config-resolution layer.
     environmentId: opts.environment,
     environmentCwd: opts.environmentCwd,
   });
   const agentContext = await ensureMainAgent(session);
   const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
-  // `default_plan_mode` opens new sessions in Plan mode, but nobody can review
-  // a plan in print mode, so the setting is skipped for this run.
   const plan = agent.accessor.get(IAgentPlanService);
   if ((await plan.status()) !== null) {
     plan.cancel();
@@ -525,12 +467,6 @@ export interface TrustGatedMcpServer {
   readonly target: string;
 }
 
-/**
- * Project-level MCP servers the workspace-trust gate leaves out in this
- * folder, identified by the origin of each entry in the final merged config
- * (mirrors the SDK's `getWorkspaceTrustInfo`). Empty when the folder is trusted
- * or nothing project-level is declared.
- */
 export async function listTrustGatedMcpServers(
   services: ServicesAccessor,
   workDir: string,
@@ -593,9 +529,6 @@ async function runNativeTurn(
   const toolStatuses = new Map<string, string>();
   const subscription = agent.accessor.get(IEventBus).subscribe((event: Event2<any>) => {
     dispatchNativeEvent(writer, event, stderr, toolStatuses);
-    // Arm the turn-endings collector before `turn.result` settles so a
-    // background-task completion that steers a new turn right after the main
-    // turn ends cannot have its `turn.ended` slip past the policy loop.
     if (event.type === 'turn.ended') turnEndings.push(event as TurnEnded);
   });
   try {
@@ -608,7 +541,6 @@ async function runNativeTurn(
     const handle = loop.promptHandle(id)!;
     const turn = await handle.launched;
     if (turn === undefined) {
-      // A prompt blocked by an onBeforeSubmitPrompt hook never launches a turn.
       writer.finish();
       const completion = await handle.completion;
       throw new Error(
@@ -619,10 +551,6 @@ async function runNativeTurn(
     }
     const result = await turn.result;
 
-    // Turn settled, but `-p` is not done until the print-mode background
-    // policy says so (config-driven: exit / drain / steer). Flush the buffered
-    // assistant message first so a long drain/steer wait does not withhold the
-    // final message.
     writer.flushAssistant();
     if (result.type === 'completed') {
       const skipTurnId = turn.id;
@@ -649,9 +577,6 @@ async function runNativeTurn(
           turnActive: () => loop.snapshot().state === 'running',
         });
       } catch (error) {
-        // A steered turn that fails fails the run (v1 parity). Anything else
-        // is best-effort: a wedged background task must not fail the (already
-        // completed) main turn.
         if (error instanceof PrintSteeredTurnFailedError) {
           writer.finish();
           throw error;
@@ -813,20 +738,10 @@ function dispatchNativeEvent(
 
 export type PrintTurnEnding = TurnEnded;
 
-/**
- * Source of `turn.ended` events for the print steer loop. `next` resolves with
- * the next ending (skipping `skipTurnId`, the main turn's own buffered
- * ending), or `null` when `remainingMs` elapses first.
- */
 export interface PrintTurnEndings {
   next(remainingMs: number, skipTurnId: number): Promise<PrintTurnEnding | null>;
 }
 
-/**
- * Buffered `turn.ended` collector fed from the agent event bus. Events that
- * arrive while no one is waiting are queued, so endings that fire between the
- * main turn settling and the policy loop starting are not missed.
- */
 export function createPrintTurnEndings(): PrintTurnEndings & {
   push: (event: PrintTurnEnding) => void;
 } {
@@ -854,11 +769,6 @@ export function createPrintTurnEndings(): PrintTurnEndings & {
             waiter = undefined;
             resolve(value);
           };
-          // A delay beyond the host timer ceiling (an explicit
-          // `print_wait_ceiling_s` or a far-future cron fire can still reach
-          // it) is clamped by `setClampedTimeout`, so the timer can expire
-          // early: the loop below treats that as a chunk boundary and
-          // re-arms against the real deadline.
           const timer = Number.isFinite(ms)
             ? setClampedTimeout(() => {
                 settle(null);
@@ -874,16 +784,13 @@ export function createPrintTurnEndings(): PrintTurnEndings & {
         const ms = deadlineAt - Date.now();
         if (ms <= 0) return null;
         const ending = await waitOnce(ms);
-        // Timer-chunk boundary, not the real deadline: keep waiting.
         if (ending === null) continue;
         if (ending.turnId !== skipTurnId) return ending;
-        // The skipped turn's own ending: keep waiting within the same budget.
       }
     },
   };
 }
 
-/** A background-task completion steered a new main turn that did not complete. */
 export class PrintSteeredTurnFailedError extends Error {}
 
 export interface PrintBackgroundPolicyInput {
@@ -896,82 +803,19 @@ export interface PrintBackgroundPolicyInput {
   readonly skipTurnId: number;
   readonly warn: (message: string) => void;
   readonly now: () => number;
-  /**
-   * Reports whether an agent goal is still `active`. v2 drives goal
-   * continuation as new turns (v1 keeps a single turn alive), so a `-p` goal
-   * run must stay alive until the goal leaves `active`, independent of the
-   * background policy.
-   */
   readonly goalActive?: () => boolean;
-  /**
-   * Reports the next scheduled cron fire time (epoch ms), or `null` when no
-   * cron task has a future fire. While it returns non-null the policy keeps
-   * the process alive — the cron tick timer itself is unref'd — waiting for
-   * the fire to steer a new turn, then re-evaluating (a fired one-shot task
-   * disappears; a recurring one reports its advanced next fire). Cron
-   * liveness is independent of the background mode: it applies under
-   * `exit`/`drain` too (v1 parity). Omitted = no cron waiting.
-   */
   readonly cronNextFireAt?: () => number | null;
-  /**
-   * Reports whether the agent loop has a turn in flight. A turn steered by a
-   * cron fire is pending work the schedule alone cannot see: a fired
-   * one-shot task disappears from `cronNextFireAt` at once, and a recurring
-   * one keeps reporting the same past fire time until the tick can run
-   * again. While this returns true the policy waits the turn out instead of
-   * reading either signal as quiescence or a wedged tick. Omitted = no
-   * in-flight turn is ever observed.
-   */
   readonly turnActive?: () => boolean;
 }
 
-/**
- * Apply the print-mode (`kimi -p`) background-resource policy after the main
- * turn completes. A single loop re-evaluates the Session's live resources in
- * order on every round and stays alive while any of them is pending:
- *  - turn    : while the loop has a turn in flight (e.g. steered by a cron
- *              fire), wait it out — the schedule cannot represent it: a fired
- *              one-shot task vanishes from `cronNextFireAt` at once, and a
- *              recurring one reports the same past fire time until the tick
- *              runs again, so neither signal may be read as quiescence or a
- *              wedged tick mid-turn.
- *  - goal    : while a goal is `active`, keep waiting for its continuation
- *              turns (bounded by `ceilingS` as a safety net), regardless of
- *              the background mode; the goal summary drives the exit code.
- *  - cron    : while `cronNextFireAt` reports a future fire, keep waiting —
- *              the cron tick timer is unref'd, so the process must hold the
- *              event loop itself (v1 parity, independent of the mode). The
- *              fire steers a new turn; a steered turn that does not complete
- *              fails the run. Each round re-reads the next fire time, so a
- *              fired one-shot task ends the wait while a recurring one keeps
- *              it. A fire time that stays unchanged and in the past across
- *              two consecutive rounds means the tick is wedged: warn once and
- *              stop cron waiting instead of spinning.
- *  - mode    : 'exit'  → return immediately;
- *              'drain' → suppress + drain background tasks, then return;
- *              'steer' → while background tasks are still pending, stay alive
- *              so task completions steer new main turns; return once
- *              quiescent, or when the wall-clock ceiling (`ceilingS`) or the
- *              turn cap (`maxTurns`) is reached. A steered turn that does not
- *              complete fails the run.
- * The steer ceiling deadline is set once on entry, so goal/cron waiting
- * consumes the same budget.
- */
 export async function applyPrintBackgroundPolicy(
   input: PrintBackgroundPolicyInput,
 ): Promise<void> {
   const deadline = input.now() + input.ceilingS * 1000;
   let turns = 0;
-  // Cron anti-spin guard: the last fire time seen already in the past. Two
-  // consecutive rounds with the same past fire time mean the tick never ran.
   let lastPastFireAt: number | undefined;
   let cronWedged = false;
   for (;;) {
-    // (0) turn: an in-flight turn (e.g. steered by a cron fire) is pending
-    // work the schedule cannot represent — a fired one-shot task is gone
-    // from `cronNextFireAt`, and a recurring one reports a frozen past fire
-    // time while the tick waits for the loop to go idle. Wait the turn out
-    // before reading either signal as quiescence or a wedged tick.
     if (input.turnActive?.() === true) {
       const ended = await input.turnEndings.next(deadline - input.now(), input.skipTurnId);
       if (ended !== null && ended.reason !== 'completed') {
@@ -984,12 +828,6 @@ export async function applyPrintBackgroundPolicy(
       continue;
     }
 
-    // (a) goal: while a goal is `active`, keep waiting for its continuation
-    // turns. Also wake on a short poll: a goal can leave `active` without any
-    // further turn.ended (budget block at a turn boundary, or a pause after a
-    // continuation-launch failure), which would otherwise hang the run until
-    // the ceiling. A continuation turn that does not complete pauses/blocks
-    // the goal, so the condition exits on the next check.
     while (input.goalActive?.() === true) {
       const ended = await input.turnEndings.next(
         Math.min(deadline - input.now(), GOAL_WAIT_POLL_MS),
@@ -1001,9 +839,6 @@ export async function applyPrintBackgroundPolicy(
       }
     }
 
-    // (b) cron: keep the process alive until the pending fire steered a turn
-    // (one-shot tasks vanish after firing; recurring ones advance their next
-    // fire), then re-evaluate from the top.
     if (!cronWedged && input.cronNextFireAt !== undefined) {
       const fireAt = input.cronNextFireAt();
       if (fireAt !== null) {
@@ -1021,21 +856,17 @@ export async function applyPrintBackgroundPolicy(
           if (ended !== null && ended.reason !== 'completed') {
             throw new PrintSteeredTurnFailedError(formatTurnEndingFailure(ended));
           }
-          // Fire observed (or its grace elapsed without a turn): re-read the
-          // next fire time from the top.
           continue;
         }
       }
     }
 
-    // (c) background-task mode.
     if (input.mode === 'exit') return;
     if (input.mode === 'drain') {
       await input.drain();
       return;
     }
 
-    // 'steer'
     turns += 1;
     if (input.now() >= deadline) {
       input.warn(`print steer ceiling reached (${input.ceilingS}s), finishing`);
@@ -1076,7 +907,6 @@ function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
   return count;
 }
 
-/** Every agent handle in the session; the main agent is included explicitly since the lifecycle list skips `closing` agents. */
 function collectSessionAgentHandles(
   session: ISessionScopeHandle,
   mainAgent: IAgentScopeHandle,
@@ -1090,10 +920,6 @@ function collectSessionAgentHandles(
   return [...handles];
 }
 
-/**
- * Stop producers, drain prompts, and cancel turns so closing records exist
- * before the wire flush; returns a release holding a guard per loop.
- */
 async function quiesceSessionAgents(
   session: ISessionScopeHandle,
   mainAgent: IAgentScopeHandle,
@@ -1103,12 +929,9 @@ async function quiesceSessionAgents(
     try {
       return [handle.accessor.get(IAgentLoopService)];
     } catch {
-      // A torn-down agent scope has no loop to quiesce.
       return [];
     }
   });
-  // Task producers bypass the prompt queue and dispatch termination records
-  // straight to the wire; stop them first so the flush can persist those.
   await Promise.allSettled(
     handles.flatMap((handle) => {
       try {
@@ -1119,8 +942,6 @@ async function quiesceSessionAgents(
       }
     }),
   );
-  // Repeat until every queue is empty and every loop freezable: a prompt can
-  // still surface from the launch window or a cancelled turn's settle chain.
   for (;;) {
     for (const loop of loops) {
       for (const queueId of loop.snapshot().queue.map((item) => item.attributes?.promptId)) {
@@ -1136,7 +957,6 @@ async function quiesceSessionAgents(
       try {
         guard = loop.tryAcquireQuiescence();
       } catch {
-        // A disposed loop cannot accept new submissions; it needs no guard.
         continue;
       }
       if (guard === undefined) {
@@ -1165,7 +985,6 @@ async function quiesceSessionAgents(
   }
 }
 
-/** Flush every session agent's wire journal; each flush settles independently. */
 async function flushSessionWires(
   session: ISessionScopeHandle,
   mainAgent: IAgentScopeHandle,

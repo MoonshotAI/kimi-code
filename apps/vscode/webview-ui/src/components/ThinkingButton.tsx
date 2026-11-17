@@ -11,8 +11,6 @@ interface ThinkingButtonProps {
   efforts?: string[];
   alwaysOn?: boolean;
   disabled?: boolean;
-  /** When set, rendered as a muted wrapping note below the effort options
-   * (e.g. the mid-conversation switch cache-cost notice). */
   cacheNote?: string;
   onToggle: () => void;
   onSelectEffort: (effort: string) => void;

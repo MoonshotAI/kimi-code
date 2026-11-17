@@ -377,9 +377,7 @@ class MultilineGoalInput {
     }
   }
 
-  invalidate(): void {
-    // No cached layout.
-  }
+  invalidate(): void {}
 
   render(width: number): string[] {
     const safeWidth = Math.max(4, width);

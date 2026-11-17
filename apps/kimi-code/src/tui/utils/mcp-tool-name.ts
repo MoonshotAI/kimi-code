@@ -1,6 +1,3 @@
-// Decodes the `mcp__<server>__<tool>` qualified names produced by kimi-core's
-// `qualifyMcpToolName`. Returns null for non-MCP tools and for hash-truncated
-// qualified names (where the trailing `__<tool>` segment has been collapsed).
 export function decodeMcpToolName(
   name: string,
 ): { readonly serverName: string; readonly toolName: string } | null {

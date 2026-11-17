@@ -1,18 +1,3 @@
-/**
- * Self-tests for `DaemonClient` against a live server at
- * `process.env.KIMI_SERVER_URL ?? http://127.0.0.1:58627`.
- *
- * Every test gates on a `daemonReachable()` check so CI / dev machines
- * without a running server stay green. Run a server (`pnpm dev:server` from
- * repo root) to exercise these locally.
- *
- * Coverage:
- *   1. HTTP envelope unwrap throws on `code !== 0`.
- *   2. WS connects without a handshake.
- *   3. Subscribe succeeds for a real session id.
- *   4. `waitForFrame` times out cleanly (no zombie waiters).
- *   5. Created session is observable via `getSession`.
- */
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
@@ -48,18 +33,13 @@ const describeLive = reachable ? describe : describe.skip;
 const created: { client: DaemonClient; sid: string }[] = [];
 
 afterEach(async () => {
-  // Best-effort cleanup so reruns don't accumulate phantom sessions.
   for (const { client, sid } of created.splice(0)) {
     try {
       await client.archiveSession(sid);
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       await client.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 });
 

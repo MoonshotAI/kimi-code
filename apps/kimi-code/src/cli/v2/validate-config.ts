@@ -1,28 +1,3 @@
-/**
- * V2 config.toml validation for `kimi doctor`.
- *
- * Loaded lazily (dynamic import) by the doctor command on the default
- * agent-core-v2 path, so the v2 module graph stays off the legacy doctor path.
- * Validation uses the engine's own section registry instead of the legacy
- * whole-document strict schema:
- * importing the package root runs every built-in section's side-effect
- * registration ("import = register"), and `ConfigRegistry` is then
- * constructed directly — no DI container, no `ConfigService`, no file IO.
- *
- * Semantics deliberately mirror the v2 engine rather than v1:
- *  - a registered section that fails schema validation is an error (the
- *    engine would silently ignore that section at runtime; surfacing it is
- *    doctor's job);
- *  - a top-level key with no registered section passes through the engine
- *    untouched, so it is reported as a non-fatal warning — except the known
- *    schema-less domains the engine consumes directly (`default_model`, …);
- *  - section-declared key renames (`deprecations`) and renamed env vars
- *    (`deprecatedEnv` bindings actually supplying a value) surface as
- *    non-fatal warnings, reusing the engine's own detection
- *    (`collectKeyDeprecations`) and mirroring `ConfigService`'s env-fallback
- *    warning rule.
- */
-
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 
@@ -39,13 +14,6 @@ import {
   transformTomlData,
 } from '@moonshot-ai/agent-core-v2/app/config/toml';
 
-/**
- * Top-level domains the v2 engine reads via `IConfigService.get` / `inspect`
- * without registering a schema (free-form values, structurally validated
- * nowhere): `defaultModel` / `defaultProvider` (`kosongConfig` default
- * pointers), `modelOverrides` (`llmRequester` / `profile`), and `telemetry`
- * (read by the CLI itself).
- */
 const SCHEMALESS_DOMAINS: ReadonlySet<string> = new Set([
   'defaultModel',
   'defaultProvider',
@@ -58,11 +26,6 @@ interface V2ConfigValidationIssue {
   readonly message: string;
 }
 
-/**
- * Matches the shape `handleDoctor` extracts from `error.details` (the SDK's
- * `KimiConfigValidationIssue` list), so the doctor formatter renders v2
- * issues exactly like v1 ones.
- */
 class V2ConfigValidationError extends Error {
   readonly details: { readonly validationIssues: readonly V2ConfigValidationIssue[] };
 
@@ -72,12 +35,6 @@ class V2ConfigValidationError extends Error {
   }
 }
 
-/**
- * Validate `text` as config.toml against the v2 engine's section registry.
- * Throws on TOML syntax errors and on any registered section failing its
- * schema; returns non-fatal warnings (one per line) for unknown top-level
- * keys, deprecated config keys, and deprecated env vars in use.
- */
 export function validateConfigTomlV2(
   text: string,
   filePath: string,
@@ -137,11 +94,6 @@ export function validateConfigTomlV2(
   return warnings.length > 0 ? warnings.join('\n') : undefined;
 }
 
-/**
- * Warn about renamed env vars that actually supply a value, mirroring
- * `ConfigService`'s `resolveBinding`: the deprecated name only resolves (and
- * thus only warns) when the primary var is absent or fails to parse.
- */
 function collectEnvDeprecations(
   registry: ConfigRegistry,
   getEnv: (name: string) => string | undefined,

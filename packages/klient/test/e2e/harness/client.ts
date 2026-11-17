@@ -1,16 +1,3 @@
-/**
- * `DaemonClient` — wire-level test client for the kimi-code server.
- *
- * Wraps the server's HTTP REST + WS surfaces (`/api/v1/...` + `/api/v1/ws`)
- * into a single, typed object that scenarios can drive. Handles:
- *   - Envelope unwrap + typed REST helpers
- *   - WS `subscribe` / `unsubscribe` response correlation
- *   - Approval + question reverse-RPC auto-resolve via per-event handlers
- *   - `waitForFrame` / `waitForSessionBusy` / `runUntilIdle` convenience waits
- *
- * **What it is NOT**: a server bootstrap helper. Connect to a server process
- * that's already running at `baseUrl` (default `http://127.0.0.1:58627`).
- */
 import type {
   FsBrowseResponse,
   FsHomeResponse,
@@ -67,28 +54,22 @@ import { DEFAULT_FRAME_TIMEOUT_MS, waitForSessionBusy } from './wait.js';
 import { type AnyFrame, WsClient } from './ws.js';
 
 export interface DaemonClientOptions {
-  /** Default `http://127.0.0.1:58627`. */
   baseUrl?: string;
-  /** Default `/api/v1`. WS endpoint is `${apiPrefix}/ws`. */
   apiPrefix?: string;
   fetchImpl?: typeof fetch;
   wsImpl?: typeof WsWebSocket;
   logger?: (level: 'info' | 'warn' | 'error' | 'debug', msg: string, meta?: unknown) => void;
-  /** Directory for JSONL trace events and generated HTML reports. */
   reportDir?: string;
-  /** Default 5s. Applies to subscribe and unsubscribe responses. */
   controlAckTimeoutMs?: number;
 }
 
 export interface SubmitAndWaitOptions {
-  /** Default 60s. */
   timeoutMs?: number;
 }
 
 export interface SubmitAndWaitResult {
   prompt_id: string;
   user_message_id: string;
-  /** The `event.session.work_changed` frame that reported the session idle again. */
   finalFrame: AnyFrame;
 }
 
@@ -98,16 +79,6 @@ const DEFAULT_BASE_URL = 'http://127.0.0.1:58627';
 const DEFAULT_API_PREFIX = '/api/v1';
 const DEFAULT_CONTROL_ACK_TIMEOUT_MS = 5_000;
 
-/**
- * Per-request stateless session controls that the server REST surface
- * requires on every prompt submission. Scenarios that don't care about
- * these can leave them at the defaults; tests that exercise switching
- * model / thinking / permission / plan mode override only the field
- * they need.
- *
- * `model` matches what the existing server-e2e scenarios assume (the
- * default provider exposes `kimi-code/kimi-for-coding`).
- */
 export const DEFAULT_PROMPT_CONTROLS = {
   model: 'kimi-code/kimi-for-coding',
   thinking: 'off' as PromptThinking,
@@ -115,12 +86,6 @@ export const DEFAULT_PROMPT_CONTROLS = {
   plan_mode: false,
 } as const;
 
-/**
- * Looser input shape for `submitPrompt` / `submitAndWait`. `content` is
- * required; the four stateless controls fall back to
- * `DEFAULT_PROMPT_CONTROLS` when omitted. `metadata` carries through
- * verbatim.
- */
 export type PromptSubmitInput =
   Pick<PromptSubmission, 'content'>
   & Partial<Pick<PromptSubmission, 'metadata' | 'model' | 'thinking' | 'permission_mode' | 'plan_mode'>>;
@@ -162,7 +127,6 @@ export class DaemonClient {
     });
   }
 
-  // ── Probes + model catalog ─────────────────────────────────────────────
   getAuth(): Promise<AuthSummary> {
     return this.http.getAuth();
   }
@@ -179,7 +143,6 @@ export class DaemonClient {
     return this.http.getProvider(providerId);
   }
 
-  // ── HTTP convenience surface ────────────────────────────────────────────
   createSession(body: SessionCreate): Promise<Session> {
     return this.http.createSession(body);
   }
@@ -213,7 +176,6 @@ export class DaemonClient {
     return this.http.archiveSession(sid);
   }
 
-  // ── Workspaces + folder picker ──────────────────────────────────────────
   listWorkspaces(): Promise<{ items: Workspace[] }> {
     return this.http.listWorkspaces();
   }
@@ -249,13 +211,6 @@ export class DaemonClient {
   submitPrompt(sid: string, input: PromptSubmitInput): Promise<PromptSubmitResult> {
     return this.http.submitPrompt(sid, fillPromptDefaults(input));
   }
-  /**
-   * Stateful-session submit — sends `body` to `POST /sessions/{sid}/prompts`
-   * verbatim, with NO default controls injected. Pair with
-   * `updateSession(sid, {agent_config: {...}})` (or `submitPrompt` with the
-   * legacy default-filled path) to first establish session state, then
-   * exercise the "content-only prompt inherits session state" contract.
-   */
   submitPromptStateful(
     sid: string,
     body: PromptSubmission,
@@ -282,11 +237,6 @@ export class DaemonClient {
     return this.http.respondInteraction(sid, interactionId, body);
   }
 
-  // ── WS lifecycle ────────────────────────────────────────────────────────
-  /**
-   * Open the WS socket. There is no handshake: every connection receives the
-   * global events, including `event.session.work_changed`, without subscribing.
-   */
   connect(): Promise<void> {
     this._connecting ??= this._open().catch((error: unknown) => {
       this._connecting = null;
@@ -307,11 +257,6 @@ export class DaemonClient {
     this._ws = ws;
   }
 
-  /**
-   * Send `subscribe` for the session's main agent and await its response.
-   * Throws when the server rejects it, for example with 40401 for an unknown
-   * session.
-   */
   async subscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (this._subscribed.has(sid)) return;
@@ -325,7 +270,6 @@ export class DaemonClient {
     this._subscribed.add(sid);
   }
 
-  /** Send `unsubscribe` and await its response. */
   async unsubscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (!this._subscribed.has(sid)) return;
@@ -339,14 +283,11 @@ export class DaemonClient {
     this._subscribed.delete(sid);
   }
 
-  /** Close the socket. Idempotent. */
   async close(): Promise<void> {
     for (const dispose of this._disposers.splice(0)) {
       try {
         dispose();
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     const connecting = this._connecting;
     this._connecting = null;
@@ -358,13 +299,10 @@ export class DaemonClient {
     this._subscribed.clear();
   }
 
-  // ── WS observation ──────────────────────────────────────────────────────
-  /** Subscribe to ALL incoming frames. Returns an unsubscribe handle. */
   onFrame(handler: (frame: AnyFrame) => void): () => void {
     return this._requireWs().onFrame(handler);
   }
 
-  /** Wait for the next frame satisfying `predicate`. */
   waitForFrame(
     predicate: (frame: AnyFrame) => boolean,
     opts?: { timeoutMs?: number },
@@ -375,7 +313,6 @@ export class DaemonClient {
     );
   }
 
-  /** Poll `/sessions/{sid}` until its aggregate work flag reaches `busy`. */
   waitForSessionBusy(
     sid: string,
     busy: boolean,
@@ -384,12 +321,6 @@ export class DaemonClient {
     return waitForSessionBusy(this.http, sid, busy, opts);
   }
 
-  // ── High-level convenience ──────────────────────────────────────────────
-  /**
-   * Run `action` and wait until the session goes busy and then idle again,
-   * as reported by `event.session.work_changed`. The frame listener is
-   * attached before `action` runs, so a fast turn cannot slip past it.
-   */
   async runUntilIdle<T>(
     sid: string,
     action: () => Promise<T>,
@@ -431,10 +362,6 @@ export class DaemonClient {
     }
   }
 
-  /**
-   * Submit a prompt and wait for the session to finish the resulting work.
-   * The final frame's `last_turn_reason` tells how the turn ended.
-   */
   async submitAndWait(
     sid: string,
     input: PromptSubmitInput,
@@ -443,13 +370,6 @@ export class DaemonClient {
     return this.submitAndWaitStateful(sid, fillPromptDefaults(input), opts);
   }
 
-  /**
-   * Stateful-session companion to `submitAndWait` — POSTs `body` verbatim
-   * (NO default controls injected), then waits for the session to go idle.
-   * Use after `updateSession(sid, {agent_config: {...}})` to verify the
-   * session's shadow drives the next prompt without the body needing to
-   * redeclare any controls.
-   */
   async submitAndWaitStateful(
     sid: string,
     body: PromptSubmission,
@@ -463,7 +383,6 @@ export class DaemonClient {
     return { prompt_id: result.prompt_id, user_message_id: result.user_message_id, finalFrame };
   }
 
-  // ── internals ───────────────────────────────────────────────────────────
   private _requireWs(): WsClient {
     if (!this._ws) {
       throw new Error('ws not connected — call `await client.connect()` first');
@@ -472,6 +391,4 @@ export class DaemonClient {
   }
 }
 
-function noopLogger(): void {
-  // intentionally blank
-}
+function noopLogger(): void {}

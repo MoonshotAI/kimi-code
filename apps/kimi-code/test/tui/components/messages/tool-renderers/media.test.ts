@@ -28,7 +28,6 @@ function result(output: string, isError = false): ToolResultBlockData {
 const ctx = { expanded: false, colors: darkColors };
 const expandedCtx = { expanded: true, colors: darkColors };
 
-// 1x1 transparent png base64 (≈70 bytes once decoded)
 const PNG_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 const PNG_DATA_URL = `data:image/png;base64,${PNG_B64}`;
@@ -119,7 +118,6 @@ describe('readMediaSummary renderer', () => {
     );
     expect(out).toContain('/tmp/a.png');
     expect(out).toContain('image/png');
-    // Crucially: the base64 must never reach the screen.
     expect(out).not.toContain(PNG_B64);
     expect(out).not.toContain(PNG_DATA_URL);
   });
@@ -138,7 +136,6 @@ describe('readMediaSummary renderer', () => {
   });
 
   it('falls back to truncated renderer when the output is not the media envelope', () => {
-    // Collapsed: the fallback renderer's outcome row is the first output line.
     const collapsed = strip(
       joinRender(
         readMediaSummary(call('ReadMediaFile'), result('"some plain string output"'), ctx),

@@ -52,11 +52,6 @@ export interface ThinkingFacts {
 
 export type TurnOutcome = 'completed' | 'stopped';
 
-/**
- * `endedAtMs` is `Date.now()` read at `end`, for showing when the turn finished. It is read
- * then because the monotonic clock can pause while the machine sleeps, so `end` cannot be
- * turned into wall time later.
- */
 export type TurnFacts =
   | { readonly kind: 'live'; readonly start: Instant }
   | {

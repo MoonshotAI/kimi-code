@@ -1,11 +1,3 @@
-/**
- * Submit user feedback to the managed Kimi Code platform.
- *
- * POSTs a JSON body to `{kimiCodeBaseUrl}/feedback` with a Bearer access
- * token. The client tags `version` with a `kimi-code-` prefix so the
- * backend can identify this client.
- */
-
 import { readApiErrorMessage } from './api-error';
 import { kimiCodeBaseUrl } from './managed-usage';
 

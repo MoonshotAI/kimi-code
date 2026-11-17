@@ -1,7 +1,3 @@
-/**
- * `createRequester`: an immutable builder whose `.with()` fills request dimensions by deep-merging
- * plain-object fields; `generate` completes the request and runs it through `runLlmRequest`.
- */
 import {
   createLlmRequesterExecution,
   runLlmRequest,

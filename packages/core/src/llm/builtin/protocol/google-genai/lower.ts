@@ -1,7 +1,3 @@
-/**
- * Google GenAI encoding: lowers core messages, tools, and params to `generateContent` parameters
- * (including thought signatures), and defines the protocol's media support and pipeline spec.
- */
 import type { GenerateContentParameters } from '@google/genai';
 import { shake } from 'radashi';
 

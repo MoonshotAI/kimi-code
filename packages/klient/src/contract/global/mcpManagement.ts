@@ -1,11 +1,3 @@
-/**
- * `mcpManagementService` — the unified MCP management plane. Mirrors
- * `agent-core-v2/app/mcpManagement/mcpManagement.ts`; `McpServerSource` /
- * `McpRegistryPluginOrigin` / `McpRegistryQuery` mirror
- * `agent-core-v2/app/mcpRegistry/mcpRegistry.ts`, and the redacted config
- * shape mirrors `agent-core-v2/mcpCore/configView.ts`.
- */
-
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';
@@ -20,7 +12,6 @@ export const mcpServerSourceSchema = z.enum(['global', 'plugin', 'caller']);
 
 export const mcpRegistryPluginOriginSchema = z.object({
   id: z.string(),
-  /** Manifest-local server name (without the runtime prefix). */
   name: z.string(),
 });
 
@@ -33,20 +24,12 @@ export const mcpAuthStatusQuerySchema = z.object({
   verify: z.boolean().optional(),
 });
 
-/** `GlobalMcpServerConfig` — a named full config (add/update, inline test target). */
 export const globalMcpServerConfigSchema = z.discriminatedUnion('transport', [
   mcpServerStdioConfigSchema.extend({ name: z.string().min(1) }),
   mcpServerHttpConfigSchema.extend({ name: z.string().min(1) }),
   mcpServerSseConfigSchema.extend({ name: z.string().min(1) }),
 ]);
 
-/**
- * The wire config of a managed/inspected server: mutable entries carry the
- * full config (edit UIs prefill from it); read-only entries are redacted —
- * `env` / `headers` values are replaced by the sorted key lists `envKeys` /
- * `headerKeys`. One schema covers both shapes, mirroring the engine's
- * `McpServerConfig | McpServerConfigView` union.
- */
 export const mcpServerConfigDataSchema = z.discriminatedUnion('transport', [
   mcpServerStdioConfigSchema.extend({ envKeys: z.array(z.string()).optional() }),
   mcpServerHttpConfigSchema.extend({ headerKeys: z.array(z.string()).optional() }),
@@ -92,7 +75,6 @@ export const mcpServerAuthStateSchema = z.enum([
 ]);
 
 export const mcpServerDescriptorSchema = z.object({
-  /** `global:<name>` / `plugin:<pluginId>:<serverName>`, URL-encoded. */
   serverId: z.string(),
   locator: mcpServerLocatorSchema,
   runtimeName: z.string(),
@@ -125,8 +107,6 @@ export const mcpServerAuthBeginResultSchema = z.discriminatedUnion('status', [
 
 export const mcpServerAuthFlowHandleSchema = z.object({
   flowId: z.string().min(1),
-  // Node overflows setTimeout delays above 2^31-1 into ~1ms; the REST schema
-  // and the engine reject the same range.
   timeoutMs: z.number().int().min(1).max(2 ** 31 - 1).optional(),
 });
 

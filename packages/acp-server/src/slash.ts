@@ -1,11 +1,3 @@
-// Slash-command detection for ACP `session/prompt`.
-//
-// ACP only intercepts commands the host can answer directly: skills plus the
-// small ACP-owned built-in command set. Other slash inputs classify as
-// `unknown` and are answered locally with an "Unknown ACP command" notice
-// (see `AcpSession.driveUnknownCommand`) — they never reach the model as
-// prompt text. Non-slash input classifies as `passthrough` and does.
-
 import { isUserActivatableSkillType, type SkillSummary } from '@moonshot-ai/agent-core-v2';
 
 import {
@@ -64,15 +56,6 @@ export interface SkillSlashCommands {
   readonly commandMap: ReadonlyMap<string, string>;
 }
 
-/**
- * Project the session skill summaries into slash commands. Mirrors the TUI's
- * `buildSkillSlashCommands` (apps/kimi-code/src/tui/commands/skills.ts):
- * user-activatable skills only, builtin-source skills and sub-skills get the
- * bare name, everything else the `skill:` prefix, builtin-source group first.
- * One ACP-specific deviation: a skill whose command name collides with an ACP
- * builtin is dropped — the locally-executed builtin must always win (the
- * intent check consults the skill map first).
- */
 export function buildAcpSkillSlashCommands(
   skills: readonly SkillSummary[],
   reservedNames: ReadonlySet<string> = ACP_BUILTIN_SLASH_COMMAND_NAMES,

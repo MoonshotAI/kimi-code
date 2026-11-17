@@ -21,7 +21,6 @@ export function registerImportSessionsCommand(
     });
 }
 
-/** `kimi import-sessions`: show only the import page in a bare terminal UI, then exit. */
 export async function runImportSessionsCommand(): Promise<number> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     process.stderr.write('kimi import-sessions needs an interactive terminal.\n');

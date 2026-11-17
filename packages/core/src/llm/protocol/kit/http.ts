@@ -1,7 +1,3 @@
-/**
- * HTTP helpers for protocol clients: header normalization, request id lookup by header name, and
- * `Retry-After` parsing.
- */
 import { headerValue } from '#/llm/endpoint';
 
 export function headersToRecord(headers: unknown): Record<string, string> | null {

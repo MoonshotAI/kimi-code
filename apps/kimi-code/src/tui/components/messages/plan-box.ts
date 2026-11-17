@@ -1,9 +1,3 @@
-/**
- * PlanBoxComponent — renders an ExitPlanMode plan inside a full box
- * border, width-aware. The plan text is parsed as Markdown so headings,
- * lists, bold, inline code etc. render the same way assistant messages do.
- */
-
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -14,8 +8,8 @@ import { Markdown } from '#/tui/components/markdown/markdown';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 
-const LEFT_MARGIN = 2; // two-space indent matching other tool call children
-const SIDE_PADDING = 1; // space between the │ and the content on each side
+const LEFT_MARGIN = 2;
+const SIDE_PADDING = 1;
 const TITLE_PREFIX = ' plan: ';
 const TITLE_SUFFIX = ' ';
 
@@ -39,10 +33,6 @@ export class PlanBoxComponent implements Component {
     private readonly planPath?: string,
     opts?: PlanBoxOptions,
   ) {
-    // Build the Markdown instance once — pi-tui's Markdown caches its own
-    // parse + wrap output keyed on (text, width), so reusing the same
-    // instance means repeated render() calls from the parent Container
-    // hit the cache instead of re-parsing on every frame.
     this.markdown = new Markdown(plan.trim(), 0, 0, markdownTheme, undefined, createMarkdownOptions());
     this.status = opts?.status;
   }
@@ -64,11 +54,6 @@ export class PlanBoxComponent implements Component {
       return this.cachedLines;
     }
 
-    // Box layout: "  ┌──...──┐"
-    //             "  │ <content> │"
-    //             "  └──...──┘"
-    // width = LEFT_MARGIN + 1 + horzLen + 1 ⇒ horzLen = width - 4
-    // content width = horzLen - 2 * SIDE_PADDING = width - 6
     const horzLen = Math.max(2, safeWidth - LEFT_MARGIN - 2);
     const contentWidth = Math.max(1, horzLen - 2 * SIDE_PADDING);
 

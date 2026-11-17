@@ -1,7 +1,3 @@
-/**
- * Hook failure reporting: failure text and causes, the user message that tells the model a hook failed,
- * and the `hook.failed` event.
- */
 import { createUserMessage, type UserMessage } from '#/llm/message';
 import { errorText } from '#/llm/protocol/errors';
 import type { HookPoint as LoopHookPoint, ToolHookPoint } from '../contract/hook';

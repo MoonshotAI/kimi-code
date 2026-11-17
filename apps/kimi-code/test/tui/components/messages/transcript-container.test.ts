@@ -694,8 +694,6 @@ describe('TranscriptGroupComponent', () => {
   it('fades the highlight in and out by elapsed time whatever the animation frame length', () => {
     const turnEndsAt = 1_200;
     const intensityAt = (time: number, frameMs: number): number => {
-      // Every frame length also gets a frame when the turn ends and one at the sampled time, so the
-      // three runs turn off at the same moment and are read at the same moment.
       const frames = new Set([time]);
       for (let frame = frameMs; frame < time; frame += frameMs) frames.add(frame);
       if (turnEndsAt < time) frames.add(turnEndsAt);

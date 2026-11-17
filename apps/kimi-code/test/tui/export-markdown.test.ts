@@ -15,10 +15,6 @@ import {
   isInternalMessage,
 } from '../../src/tui/utils/export-markdown';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function userMsg(text: string, origin?: PromptOrigin): ContextMessage {
   return {
     role: 'user',
@@ -63,10 +59,6 @@ function makeToolCall(id: string, name: string, args: Record<string, unknown>): 
   };
 }
 
-// ---------------------------------------------------------------------------
-// extractToolCallHint
-// ---------------------------------------------------------------------------
-
 describe('extractToolCallHint', () => {
   it('extracts path from arguments', () => {
     expect(extractToolCallHint(JSON.stringify({ path: '/foo/bar.ts' }))).toBe('/foo/bar.ts');
@@ -95,13 +87,9 @@ describe('extractToolCallHint', () => {
   it('truncates long values', () => {
     const long = 'a'.repeat(100);
     const hint = extractToolCallHint(JSON.stringify({ path: long }));
-    expect(hint.length).toBeLessThanOrEqual(63); // 60 + "…"
+    expect(hint.length).toBeLessThanOrEqual(63);
   });
 });
-
-// ---------------------------------------------------------------------------
-// formatContentPartMd
-// ---------------------------------------------------------------------------
 
 describe('formatContentPartMd', () => {
   it('renders text part', () => {
@@ -138,10 +126,6 @@ describe('formatContentPartMd', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// formatToolCallMd
-// ---------------------------------------------------------------------------
-
 describe('formatToolCallMd', () => {
   it('renders tool call with hint', () => {
     const tc = makeToolCall('c1', 'Bash', { command: 'ls' });
@@ -159,10 +143,6 @@ describe('formatToolCallMd', () => {
     expect(md).not.toContain('(`');
   });
 });
-
-// ---------------------------------------------------------------------------
-// isInternalMessage
-// ---------------------------------------------------------------------------
 
 describe('isInternalMessage', () => {
   it('marks injection origin as internal', () => {
@@ -223,10 +203,6 @@ describe('isInternalMessage', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// groupIntoTurns
-// ---------------------------------------------------------------------------
-
 describe('groupIntoTurns', () => {
   it('groups messages into turns starting at user messages', () => {
     const msgs: ContextMessage[] = [
@@ -269,10 +245,6 @@ describe('groupIntoTurns', () => {
     expect(turns[0]).toHaveLength(4);
   });
 });
-
-// ---------------------------------------------------------------------------
-// buildExportMarkdown
-// ---------------------------------------------------------------------------
 
 describe('buildExportMarkdown', () => {
   const now = new Date('2026-05-27T10:00:00+08:00');
@@ -321,9 +293,6 @@ describe('buildExportMarkdown', () => {
   });
 
   it('renders an uploaded image daemon ref as [image] in the exported user message', () => {
-    // An uploaded image persists as a self-contained `kimi-file://` part —
-    // the export keeps the real text and `[image]`, never the materialization
-    // path or the internal url.
     const msgs: ContextMessage[] = [
       {
         role: 'user',

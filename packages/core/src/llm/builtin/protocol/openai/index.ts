@@ -1,7 +1,3 @@
-/**
- * The OpenAI Chat Completions protocol: SDK client setup, send/sendStream transport, and the request id
- * header, assembled with `defineProtocol`.
- */
 import OpenAI from 'openai';
 
 import type { ResolvedEndpoint } from '#/llm/endpoint';

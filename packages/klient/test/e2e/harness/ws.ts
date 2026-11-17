@@ -1,24 +1,7 @@
-/**
- * WS layer for `DaemonClient` — owns the socket, queues incoming frames so
- * fast tests don't race the first frames after `open`, exposes a
- * `waitForFrame` with timeouts, and routes command responses back to the
- * original sender via `request_id` correlation.
- *
- * Frame shapes:
- *   - global event envelope: `{type, session_id, timestamp, payload}`
- *   - session frames       : flat `{type, session_id, agent_id, ...}`
- *   - `response`           : `{type:'response', request_id, code, msg?, task?}`
- *   - `ping`               : `{type:'ping'}`, answered with `{type:'pong'}`
- *
- * We don't Zod-validate frames here — preserving forward-compat ("unknown
- * fields pass through") and avoiding double-work since the server emits the
- * shapes already.
- */
 import { WebSocket as WsWebSocket } from 'ws';
 
 import { recordReportEvent } from './report.js';
 
-/** Wire frame shape — kept loose because the server adds new event types. */
 export interface AnyFrame {
   readonly type: string;
   readonly session_id?: string;
@@ -46,15 +29,6 @@ interface PendingWaiter {
   timer?: NodeJS.Timeout;
 }
 
-/**
- * Thin WS wrapper. Two-tier delivery:
- *   - All frames also fan out to subscribers added with `onFrame()`.
- *   - `waitForFrame(predicate)` consumes the *first matching* frame; matching
- *     frames already in `_queue` are dispatched immediately.
- *
- * Both queue and waiters are needed because a frame can land in the same tick
- * as `open`, before the test has a chance to register its first waiter.
- */
 export class WsClient {
   private ws: WsWebSocket | null = null;
   private readonly _queue: AnyFrame[] = [];
@@ -66,7 +40,6 @@ export class WsClient {
 
   constructor(private readonly opts: WsClientOptions) {}
 
-  /** Open the socket; resolves once `open` fires. */
   async open(): Promise<void> {
     if (this.ws) return;
     await new Promise<void>((resolve, reject) => {
@@ -98,7 +71,6 @@ export class WsClient {
     });
   }
 
-  /** JSON-stringifies and sends a frame. */
   send(frame: object): void {
     if (!this.ws) throw new Error('ws not open');
     this.ws.send(JSON.stringify(frame));
@@ -108,7 +80,6 @@ export class WsClient {
     );
   }
 
-  /** Register a frame subscriber. Returns an unsubscribe handle. */
   onFrame(handler: (f: AnyFrame) => void): () => void {
     this._subscribers.add(handler);
     return () => {
@@ -116,13 +87,8 @@ export class WsClient {
     };
   }
 
-  /**
-   * Wait for the next frame matching `predicate`. Drains queued frames first;
-   * the first matching frame is consumed and returned. Times out cleanly.
-   */
   waitForFrame(predicate: FrameWaiter, timeoutMs: number): Promise<AnyFrame> {
     return new Promise((resolve, reject) => {
-      // Drain queue.
       for (let i = 0; i < this._queue.length; i++) {
         const frame = this._queue[i];
         if (frame === undefined) continue;
@@ -157,7 +123,6 @@ export class WsClient {
     });
   }
 
-  /** Send a command and wait for its `response` (matched by `request_id`). */
   async sendCommand(
     frame: { type: string; request_id: string; [field: string]: unknown },
     timeoutMs: number,
@@ -169,7 +134,6 @@ export class WsClient {
     );
   }
 
-  /** Resolves when the socket closes (or immediately if already closed). */
   closed(): Promise<{ code: number; reason: string }> {
     if (this._closeReason) return Promise.resolve(this._closeReason);
     return new Promise((resolve) => {
@@ -177,7 +141,6 @@ export class WsClient {
     });
   }
 
-  /** Initiate close from the client side. */
   async close(): Promise<void> {
     if (!this.ws || this._closed) return;
     this.ws.close();
@@ -212,8 +175,6 @@ export class WsClient {
       this.send({ type: 'pong' });
     }
 
-    // Dispatch to subscribers first — they observe every frame, regardless of
-    // whether a `waitForFrame` consumed it.
     for (const sub of this._subscribers) {
       try {
         sub(frame);
@@ -222,7 +183,6 @@ export class WsClient {
       }
     }
 
-    // Find the FIRST waiter whose predicate matches. A waiter is single-shot.
     for (let i = 0; i < this._waiters.length; i++) {
       const w = this._waiters[i];
       if (w === undefined) continue;

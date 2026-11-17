@@ -1,15 +1,5 @@
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
-/**
- * Recover the UI display attached to a legacy top-level ToolResult.
- *
- * Legacy context.jsonl carries the model-facing tool exchange, but the
- * user-facing diff/todo/command display only exists in wire.jsonl. Both files
- * use the same tool-call id, so the migrator can safely join an unambiguous
- * single display block back onto the assistant message that owns the call.
- * Nested SubagentEvent payloads are deliberately ignored here: their child
- * transcript needs a separate agent migration, not a main-context join.
- */
 export function extractToolCallDisplays(
   wireText: string,
 ): ReadonlyMap<string, ToolInputDisplay> {
@@ -35,8 +25,6 @@ export function extractToolCallDisplays(
     const toolCallId = payload?.['tool_call_id'];
     if (typeof toolCallId !== 'string' || toolCallId === '') continue;
 
-    // A duplicate result makes the id-to-display join ambiguous. Do not let a
-    // later line silently replace the display chosen from an earlier result.
     if (seenToolCallIds.has(toolCallId)) {
       displays.delete(toolCallId);
       continue;

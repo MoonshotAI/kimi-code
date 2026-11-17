@@ -165,7 +165,6 @@ describe('applyCatalogProvider', () => {
   });
 
   it('writes declared effort levels from reasoning_options into the model alias', () => {
-    // The models.dev `kimi-for-coding` provider shape for `k3`.
     const models = catalogProviderModels({
       id: 'kimi-for-coding',
       models: {
@@ -204,9 +203,6 @@ describe('applyCatalogProvider', () => {
   });
 
   it('writes per-model protocol/baseUrl overrides and the input-limited context size', () => {
-    // The zenmux gateway shape: provider defaults to the OpenAI wire, one
-    // model is served over Anthropic on its own endpoint; plus a gpt-5-style
-    // input cap below the total context window.
     const models = catalogProviderModels({
       id: 'gateway',
       npm: '@ai-sdk/openai-compatible',
@@ -281,7 +277,6 @@ describe('applyCatalogProvider', () => {
       thinking: true,
     });
 
-    // No off option: thinking is locked on for a model that always reasons.
     expect(config.models?.['gateway/gpt-5']).toMatchObject({
       capabilities: ['thinking', 'tool_use'].map((c) => (c === 'thinking' ? 'always_thinking' : c)),
       supportEfforts: ['low', 'medium', 'high'],
@@ -289,7 +284,6 @@ describe('applyCatalogProvider', () => {
     expect(config.models?.['gateway/gpt-5']?.capabilities).not.toContain('thinking');
     expect(config.models?.['gateway/gpt-5']?.offEffort).toBeUndefined();
 
-    // 'none' becomes the off encoding; the level list stays selectable-only.
     expect(config.models?.['gateway/grok-4']).toMatchObject({
       capabilities: ['thinking', 'tool_use'],
       supportEfforts: ['low', 'medium', 'high'],

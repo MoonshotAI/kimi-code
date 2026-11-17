@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ErrorCode } from '../src/protocol/error-codes';
 
-import { listSessionsAcrossHosts, type SessionsListOutcome } from '../src/routes/sessionsAcrossHosts';
+import { listAllSessionsAcrossHosts, listSessionsAcrossHosts, type SessionsListOutcome } from '../src/routes/sessionsAcrossHosts';
 import type { ListSessionsQuery } from '../src/protocol/rest-session';
 import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
 import { HostSourceError, type HostSources } from '../src/services/hosts/hostFanout';
@@ -286,6 +286,28 @@ describe('sessions across hosts', () => {
     }
   });
 
+  it('sorts all unpaginated sessions by the requested timestamp before projecting ids', async () => {
+    const local = [{ id: 'l1', workspace: 'wd_local', updated: 90 }];
+    const remote = [
+      { id: 'r1', workspace: 'wm_dev', updated: 100 },
+      { id: 'r2', workspace: 'wm_dev', updated: 80 },
+    ];
+    const hosts = sourcesOf([{ id: 'dev', session: fakeHost(projects, remote) }]);
+    const all = async (query: Partial<ListSessionsQuery>) => {
+      const outcome = await listAllSessionsAcrossHosts({ view: 'flat', sort: 'updated_at_desc', ...query }, hosts, localList(local));
+      if (!outcome.ok) throw new Error(outcome.message);
+      return outcome.data as Record<string, unknown>;
+    };
+    const page = await all({ fields: 'id,archived', sort: 'updated_at_asc' });
+    expect(ids(page)).toEqual(['r2', 'l1', 'r1']);
+    expect(page['items']).toEqual(expect.arrayContaining([
+      { id: 'r1', archived: false, host_id: 'dev' },
+      { id: 'l1', archived: false },
+    ]));
+    expect(ids(await all({ sort: 'created_at_desc' }))).toEqual(['l1', 'r1', 'r2']);
+    expect(ids(await all({}))).toEqual(['r1', 'l1', 'r2']);
+  });
+
   it('rejects stale tokens and reports an unavailable source during a continuation', async () => {
     const first = await list({ page_size: 2 }, sourcesOf([{ id: 'dev', session }]), local);
     const token = first['next_page_token'] as string;
@@ -361,6 +383,7 @@ function sessionHost(projects: FakeProject[], sessions: Array<Record<string, unk
           id: String(session['id']),
           workspace: String(session['workspace_id']),
           updated: Date.parse(String(session['updated_at'])),
+          archived: session['archived'] === true,
         }));
         return reply(200, { code: 0, msg: 'success', data: serve(fake, query) });
       }
@@ -414,6 +437,13 @@ describe('v1 sessions across hosts', () => {
       expect(archived.get('archived_only')).toBe('true');
       expect(archived.getAll('workspace_id')).toEqual(['wm_dev']);
       expect(Number(archived.get('page_size'))).toBeLessThanOrEqual(100);
+
+      const projected = await call('/api/v1/sessions?hosts=include&fields=id,archived');
+      expect(projected).toMatchObject({ code: 0, data: { has_more: false } });
+      expect(projected.data['items']).toEqual(expect.arrayContaining([
+        { id: remoteId, archived: false, host_id: 'dev' },
+        { id: local['id'], archived: false },
+      ]));
 
       expect((await call(`/api/v1/sessions/${remoteId}`)).code).toBe(40401);
       expect(await call(`/api/v1/sessions/${remoteId}?hosts=include`)).toMatchObject({ code: 0, data: { id: remoteId, host_id: 'dev' } });

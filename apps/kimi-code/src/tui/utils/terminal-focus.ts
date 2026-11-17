@@ -15,7 +15,6 @@ export {
   TERMINAL_FOCUS_OUT,
 } from '#/tui/constant/terminal';
 
-/** Whether a click lands too soon after a prompt appeared to be deliberate. */
 export function isSettlingClick(since: number, now = Date.now()): boolean {
   return now - since < CLICK_GUARD_MS;
 }

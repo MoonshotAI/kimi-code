@@ -1,7 +1,3 @@
-/**
- * Events emitted by the loop: prompt acknowledgements, turn and step lifecycle, appended messages, LLM
- * run events, tool events, hook events, and context and profile settlements.
- */
 import type { ContentPart, Message, ToolCall, ToolDescription, UserMessage } from '#/llm/message';
 import type { LlmRunEvent, LlmTiming } from '#/llm/response';
 import type { HookLifecycleEvent, HookPoint, ToolHookPoint } from './hook';

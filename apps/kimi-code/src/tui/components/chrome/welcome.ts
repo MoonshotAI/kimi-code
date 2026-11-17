@@ -1,8 +1,3 @@
-/**
- * Welcome panel shown at the top of the TUI.
- * Renders a round-bordered box with the logo, session, model, and version.
- */
-
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
@@ -46,7 +41,6 @@ export class WelcomeComponent implements Component {
     const innerWidth = Math.max(1, safeWidth - 4);
     const pad = '  ';
 
-    // Logo + side-by-side text.
     const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;
     const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
     const gap = '  ';

@@ -233,8 +233,6 @@ export class BtwPanelController {
         prompt, this.imageStore, MEDIA_INGESTION_SUBMIT_WAIT_MS,
       );
       if (ingestionWait !== undefined) await ingestionWait;
-      // Ctrl-C during the media wait: no child turn existed for cancel() to
-      // stop, so settle the question here instead of dispatching it anyway.
       if (this.cancelledAgentIds.delete(agentId)) {
         panel.markFailed('Interrupted by user');
         return;

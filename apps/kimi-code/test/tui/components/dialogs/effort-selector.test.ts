@@ -21,12 +21,10 @@ describe('EffortSelectorComponent', () => {
       onCancel: vi.fn(),
     });
     const out = text(picker);
-    // All efforts are rendered on a single row.
     expect(out).toContain('Off');
     expect(out).toContain('Low');
     expect(out).toContain('High');
     expect(out).toContain('Max');
-    // The active level is wrapped in brackets; the rest are not.
     expect(out).toContain('[ High ]');
     expect(out).not.toContain('[ Off ]');
     expect(out).not.toContain('[ Max ]');
@@ -53,24 +51,20 @@ describe('EffortSelectorComponent', () => {
       onCancel: vi.fn(),
     });
 
-    // index 2 (high) -> 3 (max).
     picker.handleInput(RIGHT);
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenLastCalledWith('max');
 
-    // Already at the right edge — another Right stays put.
     picker.handleInput(RIGHT);
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenLastCalledWith('max');
 
-    // Walk back to the left edge (max -> high -> low -> off).
     picker.handleInput(LEFT);
     picker.handleInput(LEFT);
     picker.handleInput(LEFT);
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenLastCalledWith('off');
 
-    // Already at the left edge — another Left stays put.
     picker.handleInput(LEFT);
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenLastCalledWith('off');
@@ -171,7 +165,6 @@ describe('EffortSelectorComponent', () => {
     const hintIdx = lines.findIndex((l) => l.includes('←→ switch'));
     expect(lines[hintIdx + 1]).not.toBe('');
     expect(lines[hintIdx + 2]).not.toBe('');
-    // Word-wrapped: nothing dropped — the full warning survives across lines.
     const squashed = lines.join('').replaceAll(/\s+/g, '');
     expect(squashed).toContain(warning.replaceAll(/\s+/g, ''));
   });

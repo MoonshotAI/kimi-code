@@ -1,6 +1,3 @@
-/**
- * Builtin loop hooks.
- */
 import type { HookRegistration, StepContinuingEvent } from '../contract/hook';
 
 export const MAX_STEPS_REASON = 'max_steps';

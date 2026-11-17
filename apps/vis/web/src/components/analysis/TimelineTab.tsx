@@ -18,17 +18,9 @@ interface TimelineTabProps {
   sessionId: string;
 }
 
-/** Timeline tab — the agent's execution folded into turns → steps → tool
- *  calls, with the derived metrics the flat record list does not surface:
- *  durations, per-turn token cost, context-window growth, cache-hit rate,
- *  tool latency, truncation, and idle gaps. All computed client-side from
- *  the same wire the Wire tab fetches. */
 export function TimelineTab({ sessionId }: TimelineTabProps) {
   const { data: detail } = useSession(sessionId);
   const [agentId, setAgentId] = useState('main');
-  // Reset the selected agent when navigating to another session while this tab
-  // stays mounted; otherwise a previously-selected subagent would 404 against
-  // the new session (mirrors WireTab/ContextTab).
   useEffect(() => {
     setAgentId('main');
   }, [sessionId]);

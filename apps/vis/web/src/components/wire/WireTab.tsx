@@ -15,10 +15,6 @@ interface PairRecord {
   resultTime: number | null;
 }
 
-/** Scan all entries and pair every `tool.call` with its `tool.result`
- *  by `toolCallId`. Used to render the inline "→ #N" / "← #N" cross-
- *  references, the call→result duration, and to drive the hover-pair
- *  highlight. */
 function computePairMap(entries: readonly WireEntry[]): Map<string, PairRecord> {
   const map = new Map<string, PairRecord>();
   const ensure = (id: string): PairRecord => {
@@ -64,17 +60,11 @@ function pairInfoFor(record: AgentRecord, map: Map<string, PairRecord>): PairHin
 
 interface WireTabProps {
   sessionId: string;
-  /** Override starting agentId; defaults to 'main'. */
   initialAgentId?: string;
 }
 
 export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
   const [agentId, setAgentId] = useState<string>(initialAgentId);
-  // Re-sync when the route changes either the session or the agent id
-  // while this component stays mounted. Without `sessionId` in the deps,
-  // navigating /sessions/A → /sessions/B (with default initialAgentId)
-  // would preserve a subagent selection from the previous session and
-  // 404 on the new one.
   useEffect(() => {
     setAgentId(initialAgentId);
   }, [sessionId, initialAgentId]);
@@ -93,9 +83,6 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
   const warnings = wire?.warnings ?? [];
 
   const pairMap = useMemo(() => computePairMap(entries), [entries]);
-  // Precompute the per-entry PairHint so the object identity is stable
-  // across hover state changes. Without this, every hover would create
-  // fresh pair objects and bust WireRow's memo for every tool row.
   const pairByLineNo = useMemo(() => {
     const m = new Map<number, PairHint>();
     for (const entry of entries) {
@@ -171,7 +158,6 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      {/* Toolbar */}
       <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface-1 px-3 py-2">
         <label className="flex items-center gap-2 font-mono text-[11px] text-fg-2">
           <span className="text-fg-3">agent</span>

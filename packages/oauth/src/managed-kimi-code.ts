@@ -21,13 +21,6 @@ export function parseModelProtocol(value: unknown): ManagedKimiCodeProtocol | un
   return undefined;
 }
 
-/**
- * Server-declared thinking toggle support from `/models`:
- *  - 'only' — thinking cannot be turned off (always-thinking)
- *  - 'no'   — thinking is not supported at all
- *  - 'both' — thinking can be toggled on and off
- * Absent on older servers — callers fall back to `supportsReasoning`.
- */
 export type SupportsThinkingType = 'only' | 'no' | 'both';
 
 export interface ManagedKimiCodeModelInfo {
@@ -58,12 +51,6 @@ export interface FetchManagedKimiCodeModelsOptions {
   readonly baseUrl?: string | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
   readonly headers?: Record<string, string> | undefined;
-  /**
-   * What `accessToken` actually is; only affects auth-error wording. Defaults
-   * to 'oauth' (the managed login flow); api-key providers refreshed against
-   * the managed endpoint pass 'apiKey' so a 401 doesn't tell the user their
-   * "OAuth credentials" were rejected.
-   */
   readonly credentialKind?: 'oauth' | 'apiKey' | undefined;
 }
 
@@ -232,8 +219,6 @@ interface SelectedDefaultModel {
 
 function capabilitiesForModel(model: ManagedKimiCodeModelInfo): string[] | undefined {
   const caps = new Set<string>();
-  // supportsThinkingType is the full three-state declaration and wins over
-  // the supportsReasoning boolean; absent falls back to the boolean.
   switch (model.supportsThinkingType) {
     case 'only':
       caps.add('thinking');
@@ -316,7 +301,6 @@ export function kimiCodeEnvOAuthHost(env: ManagedKimiEnv = process.env): string 
   return env.KIMI_CODE_OAUTH_HOST ?? env.KIMI_OAUTH_HOST;
 }
 
-// Base URLs that share the default `oauth/kimi-code` credential slot.
 const SHARED_DEFAULT_BASE_URLS: ReadonlySet<string> = new Set([
   normalizeEndpoint(DEFAULT_KIMI_CODE_BASE_URL),
 ]);
@@ -340,16 +324,6 @@ export function resolveKimiCodeOAuthKey(options: {
   return `${KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX}${digest}`;
 }
 
-/**
- * Resolve the full managed-Kimi-Code OAuth ref (credential storage key +
- * persisted host) for an (oauthHost, baseUrl) environment.
- *
- * Single source of truth for "which credential slot does this environment map
- * to". Login, provisioning, and the runtime provider all derive their ref
- * through here, so the slot a token is written to always matches the slot it
- * is later read from — preventing the env-mismatch credential mix-ups this
- * scoping is meant to fix.
- */
 export function resolveKimiCodeOAuthRef(options: {
   readonly oauthHost?: string | undefined;
   readonly baseUrl?: string | undefined;
@@ -456,15 +430,6 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   };
 }
 
-/**
- * Parse the unified `reasoning` object from `/models`:
- *   { "type": "only", "effort": { "valid": ["low", "high", "max"], "default": "max" } }
- * A missing object and `type: "none"` both mean the model cannot think and map
- * to the internal 'no' state so a stale thinking default gets cleared;
- * `undefined` is reserved for a present object whose type is unrecognized.
- * The effort block is absent on models without adjustable effort; a default
- * that is not listed in `valid` is dropped.
- */
 function parseModelReasoning(value: unknown): {
   supportsReasoning: boolean;
   supportsThinkingType: SupportsThinkingType | undefined;
@@ -479,8 +444,6 @@ function parseModelReasoning(value: unknown): {
       defaultEffort: undefined,
     };
   }
-  // The unified schema names the non-thinking state 'none'; the internal
-  // three-state keeps the legacy 'no'.
   const rawType = value['type'];
   const supportsThinkingType: SupportsThinkingType | undefined =
     rawType === 'only' || rawType === 'both'
@@ -514,19 +477,10 @@ export function parseStringArray(value: unknown): readonly string[] | undefined 
   return out.length > 0 ? out : undefined;
 }
 
-// Unknown or missing values resolve to undefined so callers fall back to the
-// legacy supports_reasoning boolean instead of guessing.
 export function parseSupportsThinkingType(value: unknown): SupportsThinkingType | undefined {
   return value === 'only' || value === 'no' || value === 'both' ? value : undefined;
 }
 
-/**
- * Parse the nested `think_efforts` object from `/models`:
- *   { "support": true, "valid_efforts": ["low", "high", "max"], "default_effort": "high" }
- * Returns the effort list and default effort, or undefineds when absent so
- * callers can fall back to the legacy flat `support_efforts` / `default_effort`
- * fields on older servers.
- */
 export function parseThinkEfforts(value: unknown): {
   supportEfforts: readonly string[] | undefined;
   defaultEffort: string | undefined;
@@ -535,8 +489,6 @@ export function parseThinkEfforts(value: unknown): {
     return { supportEfforts: undefined, defaultEffort: undefined };
   }
   const record = value as Record<string, unknown>;
-  // `support` gates the whole object: when it is not true, ignore
-  // valid_efforts / default_effort entirely.
   if (record['support'] !== true) {
     return { supportEfforts: undefined, defaultEffort: undefined };
   }
@@ -585,23 +537,11 @@ export async function fetchManagedKimiCodeModels(
     .filter((item): item is ManagedKimiCodeModelInfo => item !== undefined);
 }
 
-/**
- * Builds the upstream-owned alias record for one `/models` entry. Shared by
- * `applyManagedKimiCodeConfig` (OAuth provisioning/refresh) and
- * `applyManagedApiKeyProviderModels` (api-key provider refresh) so both write
- * identical upstream-owned fields for the same model payload.
- */
 export function toManagedModelAlias(
   providerId: string,
   model: ManagedKimiCodeModelInfo,
 ): ManagedKimiModelAlias {
   const capabilities = capabilitiesForModel(model);
-  // Kimi's Anthropic-compatible endpoint only accepts adaptive thinking
-  // (`thinking: { type: 'adaptive' }`); the kosong adapter otherwise infers
-  // budget-based thinking from the model name, which fails for Kimi model ids.
-  // Restrict the override to thinking-capable models: the UI treats
-  // `adaptiveThinking === true` as "supports a thinking toggle", so marking a
-  // non-thinking model would misrepresent it.
   const supportsAdaptiveThinking =
     model.protocol === 'anthropic' &&
     (capabilities?.includes('thinking') === true ||
@@ -615,10 +555,6 @@ export function toManagedModelAlias(
     ...(model.supportEfforts !== undefined ? { supportEfforts: model.supportEfforts } : {}),
     ...(model.defaultEffort !== undefined ? { defaultEffort: model.defaultEffort } : {}),
     protocol: model.protocol,
-    // Kimi's anthropic-compatible endpoint is served behind the beta Messages
-    // API (`/v1/messages?beta=true`), so route anthropic-protocol models
-    // through `client.beta.messages.create`. Cleared on refresh when the
-    // server stops declaring anthropic so stale routing never lingers.
     betaApi: model.protocol === 'anthropic' ? true : undefined,
     adaptiveThinking: supportsAdaptiveThinking ? true : undefined,
   };
@@ -658,11 +594,6 @@ export function applyManagedKimiCodeConfig(
     oauth,
   };
 
-  // Selectively merge upstream models into the existing config so any fields
-  // the user added by hand (or that upstream does not declare) survive a
-  // refresh. Managed models that upstream no longer lists are removed; the
-  // rest are merged field-by-field — upstream-owned fields are overwritten,
-  // everything else is preserved.
   const upstreamKeys = new Set(options.models.map((m) => managedModelKey(m.id)));
   for (const [key, model] of Object.entries(existingModels)) {
     if (
@@ -705,21 +636,6 @@ export function applyManagedKimiCodeConfig(
   };
 }
 
-/**
- * Merge refreshed `/models` entries into the aliases of an api-key provider
- * pointing at the managed Kimi Code endpoint (a hand-configured provider using
- * a distributed API key instead of OAuth). Unlike `applyManagedKimiCodeConfig`
- * this touches ONLY `config.models`: the provider record (type / baseUrl /
- * apiKey and any hand-written extras), `services`, `defaultModel`, and
- * `thinking` are all left untouched — the provider is user-owned, only its
- * model catalog is upstream-owned.
- *
- * `aliasPrefix` scopes which aliases count as refresh-generated:
- * `${providerId}/` for ordinary providers, `kimi-code/` for a hand-written
- * `managed:kimi-code` entry so its aliases line up with the OAuth provisioned
- * shape. Aliases outside the prefix are the caller's responsibility (the
- * refresh orchestrator preserves them via `preserveUserProviderAliases`).
- */
 export function applyManagedApiKeyProviderModels(
   config: ManagedKimiConfigShape,
   providerId: string,
@@ -731,9 +647,6 @@ export function applyManagedApiKeyProviderModels(
   }
 
   const existingModels = config.models ?? {};
-  // Same merge contract as `applyManagedKimiCodeConfig`: upstream-owned fields
-  // are overwritten, hand-written extras survive, and aliases upstream no
-  // longer lists are removed (the orchestrator restores non-prefix ones).
   const upstreamKeys = new Set(models.map((m) => `${aliasPrefix}${m.id}`));
   for (const [key, model] of Object.entries(existingModels)) {
     if (isRecord(model) && model['provider'] === providerId && !upstreamKeys.has(key)) {
@@ -782,10 +695,6 @@ export function applyManagedKimiCodeLogoutConfig(config: ManagedKimiConfigShape)
   }
 }
 
-// The server's three-state declaration overrides any stale thinking.enabled
-// being preserved from an earlier config: an always-thinking model ('only')
-// must never end up with thinking off, and a non-thinking model ('no') must
-// never end up with thinking on.
 function forcedThinking(
   model: ManagedKimiCodeModelInfo | undefined,
   fallback: boolean,

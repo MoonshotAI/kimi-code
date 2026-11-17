@@ -14,8 +14,6 @@ const FIXTURE_CONFIG = join(SOURCE_HOME, 'config.toml');
 let tgt: string;
 beforeEach(async () => {
   tgt = await mkdtemp(join(tmpdir(), 'integration-'));
-  // Clean any leftover artifacts that previous failed runs might have left in
-  // the committed fixture directory.
   await rm(MARKER_PATH, { recursive: true, force: true });
   await rm(FIXTURE_CONFIG, { force: true });
 });
@@ -52,7 +50,6 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
   });
 
   it('completes the migration even when the source marker cannot be written', async () => {
-    // Block the marker path with a directory so writeMarker()'s writeFile fails.
     await mkdir(MARKER_PATH, { recursive: true });
     const plan = await detectMigration({ sourcePath: SOURCE_HOME });
     const report = await runMigration({
@@ -61,7 +58,6 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
       source: SOURCE_HOME,
       target: tgt,
     });
-    // All data migrated — a completed run must return a report, not reject.
     expect(report.summary.sessions.sessionsMigrated).toBeGreaterThan(0);
   });
 
@@ -87,7 +83,6 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
   });
 
   it('config-only scope writes config but skips sessions', async () => {
-    // Materialize a config.toml in the fixture; afterEach cleans it up.
     await writeFile(FIXTURE_CONFIG, 'default_thinking = true\n');
 
     const plan = await detectMigration({ sourcePath: SOURCE_HOME });
@@ -108,9 +103,6 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
   });
 
   it('migrates user skills bundles end-to-end and surfaces them in the report', async () => {
-    // Drive the full pipeline against a synthetic source so the assertion
-    // tests integration (run-migration wiring + paths + summary plumbing),
-    // not just the step in isolation.
     const src = await mkdtemp(join(tmpdir(), 'skills-e2e-src-'));
     try {
       await mkdir(join(src, 'skills', 'my-bundle'), { recursive: true });
@@ -236,11 +228,6 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
   });
 
   it('does not copy OAuth credentials into the target', async () => {
-    // OAuth refresh tokens rotate server-side: they are single-use and
-    // single-owner. Copying a credential to a second install breaks login
-    // for whichever side refreshes second. The migration must NOT copy
-    // credentials — it leaves the legacy login alone and asks the user to
-    // run /login in kimi-code instead.
     const src = await mkdtemp(join(tmpdir(), 'oauth-src-'));
     try {
       await mkdir(join(src, 'credentials'), { recursive: true });
@@ -261,11 +248,9 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
         source: src,
         target: tgt,
       });
-      // The credential must not be copied into the target.
       await expect(
         readFile(join(tgt, 'credentials', 'kimi-code.json'), 'utf-8'),
       ).rejects.toThrow();
-      // The report tells the user to sign in again in kimi-code.
       expect(report.notices.oauthLoginsRequiringRelogin).toContain('kimi-code');
     } finally {
       await rm(src, { recursive: true, force: true });

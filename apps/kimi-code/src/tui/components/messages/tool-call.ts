@@ -1,8 +1,3 @@
-/**
- * Renders a tool call entry in the transcript.
- * Supports expand/collapse via Ctrl+O.
- */
-
 import { isAbsolute, relative, sep } from 'node:path';
 
 import chalk from 'chalk';
@@ -82,8 +77,6 @@ import { buildWaitForHeader, parseWaitForOutput } from './tool-renderers/wait-fo
 
 const MAX_ARG_LENGTH = 60;
 const MAX_SUB_TOOL_CALLS_SHOWN = 4;
-// Cap the Agent `description` in the single-subagent header so a long prompt
-// cannot wrap the header onto a second row and break the card's stable height.
 const MAX_SUBAGENT_DESCRIPTION_LENGTH = 60;
 const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const AUTO_APPROVED_PLAN_MARKER = '## Plan (auto-approved, not user-reviewed):';
@@ -92,9 +85,6 @@ const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const ABORTED_MARK = '⊘';
 const MAX_LIVE_OUTPUT_CHARS = 50_000;
 const CARD_PREAMBLE_CHILDREN = 2;
-// One shared reference: the header line compares segment styles by identity
-// to keep its render cache across rebuilds, and the palette is read at call
-// time so theme switches still apply.
 const dimHeaderStyle = (text: string): string => currentTheme.dim(text);
 const notifyTitleStyle = (text: string): string => currentTheme.boldFg('textStrong', text);
 
@@ -123,24 +113,12 @@ interface SubToolActivity {
   readonly orderSeq: number;
 }
 
-/**
- * Immutable subagent state snapshot. `AgentGroupComponent` reads one-time
- * views via `ToolCallComponent.getSubagentSnapshot()` and renders its own
- * branch lines; `onSnapshotChange` notifies it when state changes.
- *
- * `latestActivity` priority, used only while running:
- *   1. latest ongoing sub-tool (`Using {name} ({keyArg})`)
- *   2. latest finished sub-tool (`Used {name} ({keyArg})`)
- *   3. last non-empty line from accumulated subagent text
- */
 export interface ToolCallSubagentSnapshot {
   readonly toolCallId: string;
   readonly toolName: string;
   readonly toolCallDescription: string;
   readonly agentName: string | undefined;
-  /** Display name of the model the subagent is bound to, when known (live only). */
   readonly model?: string;
-  /** Thinking effort, present only for concrete levels (on/off hidden). */
   readonly effort?: string;
   readonly phase: SubagentPhase | undefined;
   readonly toolCount: number;
@@ -151,12 +129,6 @@ export interface ToolCallSubagentSnapshot {
   readonly latestActivity: string | undefined;
 }
 
-/**
- * Immutable Read tool state snapshot. `ReadGroupComponent` reads one-time
- * views via `ToolCallComponent.getReadSnapshot()` and sums lines for the group
- * header. `lines` is 0 while pending or failed, and the non-empty result line
- * count when done, matching the single-card chip.
- */
 export interface ToolCallReadSnapshot {
   readonly toolCallId: string;
   readonly filePath: string | undefined;
@@ -242,25 +214,6 @@ const PLAN_REJECT_PREFIX = 'Plan rejected by user.';
 const SELECTED_APPROACH_RE = /^Exited plan mode\. Selected approach: ([^\n]+)\n/;
 const PLAN_SAVED_TO_RE = /\nPlan saved to: ([^\n]+)\n/;
 
-/**
- * Parses the ExitPlanMode result content string to recover the approval outcome
- * and optional plan path. Core-side templates live in
- * `packages/agent-core-v2/src/features/plan/tools/exit-plan-mode/exitPlanModeTool.ts` and
- * `packages/agent-core-v2/src/features/plan/exitPlanModeReview.ts`:
- *   - Approved output starts with 'Exited plan mode.' and selected options
- *     are reported as 'Selected approach: <label>'. Older outputs may start
- *     with 'User approved option "<label>".' Plan-file mode may include
- *     'Plan saved to: <path>'.
- *   - Auto-approved output (auto permission mode skips the review ask) also
- *     starts with 'Exited plan mode.' but marks the plan body with
- *     '## Plan (auto-approved, not user-reviewed):' instead of
- *     '## Approved Plan:' — the user never saw or approved the plan.
- *   - Rejected output starts with 'Plan rejected by user.' or older
- *     'User rejected the plan.'; feedback uses 'User rejected the plan.
- *     Feedback:\n\n<text>'.
- * This is a string protocol rather than a structured payload. Prefer a
- * structured event payload if core starts emitting one.
- */
 function interpretExitPlanModeOutcome(output: string): ExitPlanModeOutcome {
   if (output.startsWith(REJECT_PREFIX)) {
     if (output.startsWith(REJECT_FEEDBACK_PREFIX)) {
@@ -324,13 +277,6 @@ function unescapeJsonString(s: string): string {
   });
 }
 
-/**
- * Pull the live value of a JSON string field out of partially-streamed
- * arguments, even if the closing quote hasn't arrived yet. Handles the
- * common JSON string escapes so `\n` in a streamed `content` becomes a
- * real newline we can highlight. Returns `undefined` if the field hasn't
- * started streaming yet.
- */
 export function extractPartialStringField(text: string, key: string): string | undefined {
   const opener = new RegExp(`"${key}"\\s*:\\s*"`);
   const match = opener.exec(text);
@@ -402,9 +348,7 @@ function parseArgsPreview(value: string): Record<string, unknown> {
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>;
       }
-    } catch {
-      // fall through to partial scan
-    }
+    } catch {}
   }
   const result: Record<string, unknown> = {};
   for (const match of previewText.matchAll(STREAMING_ARGS_FIELD_RE)) {
@@ -421,8 +365,6 @@ const PATH_KEYS = new Set(['path', 'file_path']);
 function truncateArgValue(key: string, value: string): string {
   if (value.length <= MAX_ARG_LENGTH) return value;
   if (PATH_KEYS.has(key)) {
-    // Preserve the tail (filename) — drop the prefix so the user can
-    // still tell which file is being touched.
     return '…' + value.slice(value.length - (MAX_ARG_LENGTH - 1));
   }
   return value.slice(0, MAX_ARG_LENGTH - 1) + '…';
@@ -455,21 +397,11 @@ function displayKeyArgument(
     : value;
 }
 
-/**
- * The header's key argument, untruncated: the width-aware header line sizes
- * it to the terminal. `keep` says which end must survive a cut — paths keep
- * their file name, everything else keeps its start.
- */
 export interface KeyArgument {
   readonly text: string;
   readonly keep: 'head' | 'tail';
 }
 
-/**
- * Capped variant for contexts without a width-aware header (subagent
- * summaries, the activity viewer): the first {@link MAX_ARG_LENGTH}
- * characters, keeping a path's file name.
- */
 export function extractKeyArgument(
   toolName: string,
   args: Record<string, unknown>,
@@ -494,14 +426,10 @@ export function extractKeyArgumentDetail(
     Glob: ['pattern'],
     FetchURL: ['url'],
     WebSearch: ['query'],
-    // Prefer the short `description` so the header preview never spills a
-    // multi-line `prompt` into the TUI chrome.
     Agent: ['description', 'prompt'],
     NotifyUser: ['title', 'message'],
   };
 
-  // Glob: concatenate multiple args into a single summary so the header
-  // shows pattern, optional explicit path, and ignored-file inclusion.
   if (toolName === 'Glob') {
     const pattern = args['pattern'];
     if (typeof pattern !== 'string' || pattern.length === 0) return null;
@@ -557,12 +485,6 @@ function tailNonEmptyLines(text: string, maxLines: number): string[] {
   return lines.toReversed();
 }
 
-/**
- * The last `maxLines` source lines without splitting the whole string —
- * the cards below only ever show a two-row window, so scanning back from the
- * end keeps the cost proportional to what is displayed rather than to the
- * accumulated subagent output.
- */
 function tailSourceLines(text: string, maxLines: number): string {
   let end = text.length;
   for (let seen = 0; seen < maxLines; seen++) {
@@ -574,29 +496,16 @@ function tailSourceLines(text: string, maxLines: number): string {
   return text.slice(end + 1);
 }
 
-/**
- * Keeps the trailing slice of streamed subagent text that the card can show.
- * The cut drops the first, partial line so every retained line starts at a
- * line boundary: wrapping is then identical to the unbounded text, and no
- * escape sequence is left half-open. A single logical line longer than the cap
- * has no boundary to align to, so it keeps its raw tail.
- */
 function tailPreviewText(text: string): string {
   if (text.length <= SUBAGENT_PREVIEW_TEXT_MAX_CHARS) return text;
   const tail = text.slice(text.length - SUBAGENT_PREVIEW_TEXT_MAX_CHARS);
   const lineBreak = tail.indexOf('\n');
   if (lineBreak !== -1) {
     const aligned = tail.slice(lineBreak + 1);
-    // Only drop the partial first line when two non-empty lines remain: those
-    // wrap exactly as they would unbounded. A trailing blank does not count —
-    // the finished window filters empty lines — and otherwise the partial line
-    // is what fills the window, so the raw tail is the better answer.
     if (tailNonEmptyLines(aligned, 2).length === 2) {
       return stripTerminalSequences(aligned);
     }
   }
-  // The card applies its own styling, so control sequences carried in the
-  // streamed text are dropped rather than replayed without their opener.
   return stripTerminalSequences(tail);
 }
 
@@ -618,13 +527,7 @@ class PrefixedWrappedLine implements Component {
     private readonly firstPrefix: string,
     private readonly continuationPrefix: string,
     private readonly text: string,
-    // When set, only the last N wrapped display rows are kept, so a long
-    // unwrapped paragraph scrolls within a fixed window instead of growing
-    // unbounded. The first kept row still gets `firstPrefix`.
     private readonly tailLines?: number,
-    // When set, the output is padded with empty continuation rows until it
-    // reaches this many display rows, so a short paragraph still fills a
-    // fixed-height window. Applied after `tailLines`.
     private readonly minLines?: number,
   ) { }
 
@@ -808,12 +711,7 @@ export class ToolCallComponent extends Container {
   private expanded = false;
   private toolCall: ToolCallBlockData;
   private readonly markdownTheme = createMarkdownTheme();
-  /**
-   * Memo for hasHiddenContent(); reset whenever the body or the result-driven
-   * content is rebuilt, or live output grows.
-   */
   private hiddenContent: boolean | undefined = undefined;
-  /** Width-dependent half of hasHiddenContent(); recomputed on every collapsed render. */
   private truncatedAtLastRender = false;
   readonly startedAtMs = Date.now();
 
@@ -822,24 +720,10 @@ export class ToolCallComponent extends Container {
   private projectionVersion = 0;
   private ui: TUI | undefined;
   private planPath: string | undefined;
-  /**
-   * Fallback plan body used when the LLM uses plan-file mode and
-   * `args.plan` is empty. `KimiTUI` calls `setPlanInfo` with
-   * `session.getPlan()` content so the plan box can render while
-   * approval is pending, and so rejected or revised results still show
-   * the plan body even without a `## Approved Plan:` marker.
-   */
   private currentPlan: string | undefined;
   private headerText: TruncatedHeaderLine;
   private callPreviewEndIndex = 0;
 
-  // ── Subagent state ───────────────────────────────────────────────
-  //
-  // Populated by `setSubagentMeta` / `appendSubToolCall` / `finishSubToolCall`
-  // when KimiTUI routes a `subagent.event` with this tool call
-  // id as its `parent_tool_call_id`. Rendered at the tail of
-  // buildContent so it shows up both during streaming and after the
-  // parent tool call resolves.
   private subagentAgentId: string | undefined;
   private subagentAgentName: string | undefined;
   private readonly ongoingSubCalls = new Map<string, OngoingSubCall>();
@@ -847,41 +731,15 @@ export class ToolCallComponent extends Container {
   private readonly subToolActivities = new Map<string, SubToolActivity>();
   private subToolOrderSeq = 0;
   private hiddenSubCallCount = 0;
-  /**
-   * Recent normal-output lines from the child agent. Historical replay can also
-   * store mixed text here.
-   */
   private subagentText = '';
   private subagentThinkingText = '';
-  /** Tracks whether the child agent's latest streamed delta was text or thinking,
-   *  so the active window can follow whichever is currently live. */
   private lastSubagentStreamKind: SubagentTextKind = 'text';
-  // ── Subagent lifecycle state from subagent.spawned/started/completed/failed ──
   private subagentPhase: SubagentPhase | undefined;
-  /**
-   * Distinguishes a foreground subagent that the user detached via Ctrl+B from
-   * one that started in the background. Both set `subagentPhase = 'backgrounded'`,
-   * but only the detached one should keep showing `◐ backgrounded` after its
-   * spawn-success ToolResult lands — a started-in-background agent reads as
-   * `done` once its result arrives.
-   */
   private detachedFromForeground = false;
-  /**
-   * Authoritative terminal phase for a backgrounded subagent. Set from
-   * `BackgroundTaskInfo.status` via `setBackgroundTaskTerminalStatus` once
-   * the backing task reaches a terminal state — either live (a bg agent
-   * fails / is killed) or on resume (reconcile reclassifies a still-running
-   * task as `lost`). Beats the spawn-success ToolResult in both render
-   * paths (`getDerivedSubagentPhase` for standalone, `getSubagentSnapshot`
-   * for grouped), which would otherwise mislabel every terminated
-   * background agent — including lost ones — as `✓ Completed`.
-   */
   private backgroundTaskTerminalPhase: 'done' | 'failed' | undefined;
   private subagentContextTokens: number | undefined;
   private subagentUsage: TokenUsage | undefined;
-  /** Display name of the model the subagent is bound to (from its `agent.status.updated`). */
   private subagentModel: string | undefined;
-  /** Thinking effort, set only for concrete levels (boolean on/off hidden). */
   private subagentEffort: string | undefined;
   private subagentResultSummary: string | undefined;
   private subagentError: string | undefined;
@@ -891,34 +749,14 @@ export class ToolCallComponent extends Container {
   private subagentEndedAtMs: number | undefined;
   private subagentSpinnerFrame = 0;
 
-  // ── Live progress lines ──────────────────────────────────────────
-  //
-  // Populated by `appendProgress` whenever the tool emits an
-  // `onUpdate({kind:'status', text})` while still running. Used by
-  // long-blocking tools (e.g. the MCP `authenticate` synthetic tool
-  // whose 15-minute browser wait would otherwise display only a
-  // spinner). Cleared when the result lands — the result is the
-  // authoritative final state.
   private progressLines: string[] = [];
   private progressStatusRows = 0;
   private static readonly MAX_PROGRESS_LINES = 24;
   private liveOutput = '';
 
-  /**
-   * Advertises `Ctrl+B` on a foreground Bash/Agent card that has been running
-   * for {@link FOREGROUND_BASH_HINT_DELAY_MS}. Cleared when the result lands.
-   */
   private detachHintTimer: ReturnType<typeof setTimeout> | undefined;
   private detachHintVisible = false;
 
-  /**
-   * Registered by a group container (`AgentGroupComponent` or
-   * `ReadGroupComponent`) when this component is borrowed as a hidden state
-   * container. Any state change (subagent meta, phase, sub-tool, result, etc.)
-   * triggers a throttled group re-render. `undefined` means no group is
-   * subscribed and standalone rendering is unaffected. A ToolCallComponent can
-   * only belong to one group at a time, so one listener slot is enough.
-   */
   private onSnapshotChange: (() => void) | undefined;
 
   constructor(
@@ -978,12 +816,6 @@ export class ToolCallComponent extends Container {
       i++;
     }
 
-    // An outcome row cut to this width hides the remainder of a long line, and
-    // an error preview cut to its row cap hides the rest of a wrapped error;
-    // ctrl+o reveals both. The header (child 1) is excluded — a cut key
-    // argument is not what ctrl+o reveals for most tools; Bash is the
-    // exception, its full command renders in the body once expanded. The
-    // value is kept while expanded so the footer can still offer collapse.
     if (!this.expanded) {
       this.truncatedAtLastRender = this.children.some(
         (child, index) =>
@@ -1063,20 +895,9 @@ export class ToolCallComponent extends Container {
     if (this.expanded === expanded) return;
     this.expanded = expanded;
     if (this.headerText instanceof NotifyUserHeader) this.headerText.setExpanded(expanded);
-    // rebuildBody (not rebuildContent) so the args-driven call preview
-    // — which is what carries Write content / Edit diff — re-renders
-    // with the new line cap. rebuildContent only touches result-driven
-    // children and would leave the call preview stuck at its initial
-    // collapsed size.
     this.rebuildBody();
   }
 
-  /**
-   * Whether ctrl+o would reveal anything this card keeps out of its collapsed
-   * form. Mirrors the collapsed rules of buildCallPreview and the result
-   * renderers (short output shown whole, bodies that only render expanded);
-   * the footer reads it to decide whether to advertise ctrl+o.
-   */
   hasHiddenContent(): boolean {
     this.hiddenContent ??= this.computeHiddenContent();
     return this.hiddenContent || this.truncatedAtLastRender;
@@ -1112,19 +933,13 @@ export class ToolCallComponent extends Container {
     return clips;
   }
 
-  /** Whether the global ctrl+o toggle currently has this card expanded. */
   isExpanded(): boolean {
     return this.expanded;
   }
 
   private computeHiddenContent(): boolean {
     const { name, args } = this.toolCall;
-    // A solo Agent card with subagent state never renders its result body and
-    // its subagent block is a fixed-height window either way, so ctrl+o
-    // changes nothing there.
     if (this.isSingleSubagentView()) return false;
-    // Arguments cut off by max_tokens: the card shows a fixed "call never
-    // executed" note in place of any preview, so there is nothing to expand.
     if (this.toolCall.truncated === true && this.result === undefined) return false;
     if (
       name === 'NotifyUser' &&
@@ -1134,8 +949,6 @@ export class ToolCallComponent extends Container {
       return str(notifyUserLiveArgs(this.toolCall)['message']).trim().length > 0;
     }
     if (this.result === undefined && this.toolCall.streamingArguments !== undefined) {
-      // While the arguments stream, the Write tail and the Edit progress row
-      // ignore the toggle; only Bash reveals its partial command when expanded.
       return (
         name === 'Bash' &&
         (extractPartialStringField(this.toolCall.streamingArguments, 'command') ?? '').length > 0
@@ -1146,36 +959,23 @@ export class ToolCallComponent extends Container {
     if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;
     if (result.output.length === 0) return false;
     if (result.output.trimStart().startsWith('<system-reminder>')) return false;
-    // Mirror the error preview's fold threshold: the hint row replaces the
-    // hidden rows, so a single hidden row leaves nothing for ctrl+o to gain.
-    // Count rows the way the preview does — internal blanks included, only
-    // trailing empties dropped (nonEmptyLines would skip interior blanks);
-    // Bash's preview renders sanitized output, so control-only rows (e.g. a
-    // trailing reset) must not count either.
     if (result.is_error === true) {
       const output = name === 'Bash' ? sanitizeShellOutput(result.output) : result.output;
       return trimTrailingEmptyLines(output.split('\n')).length > RESULT_PREVIEW_LINES + 1;
     }
     switch (name) {
       case 'ReadMediaFile':
-        // A media envelope renders its body only when expanded; anything else
-        // falls back to the generic renderer and its line-count rule.
         return (
           parseReadMediaOutput(result.output) !== null ||
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
       case 'Grep':
       case 'Glob':
-        // A notice-only search (cut short, or only filtered sensitive files)
-        // shows that notice the same way in both states; every other result
-        // hides its body.
         return (
           !searchNoticeOnly(this.toolCall, result.output) ||
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
       case 'WaitFor':
-        // A parsed wait renders its glance in both states but appends the raw
-        // result only when expanded; anything else follows the line-count rule.
         return (
           parseWaitForOutput(result.output) !== undefined ||
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
@@ -1186,33 +986,22 @@ export class ToolCallComponent extends Container {
       case 'Think':
         return true;
       case 'ExitPlanMode':
-        // An approved plan is fully rendered by the call preview and the
-        // outcome body is expansion-independent; only a non-outcome result
-        // (an error message) can have more to show behind ctrl+o.
         return (
           !isExitPlanModeOutcomeOutput(result.output) &&
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
       case 'AskUserQuestion':
-        // A foreground question renders its answers in an expansion-independent
-        // view; a background one returns a metadata block through the generic
-        // renderer and follows the line-count rule (the legacy engine's block
-        // runs past the outcome rows).
         return (
           args['background'] === true && nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
       case 'CreateGoal':
       case 'GetGoal':
-        // A parsed goal renders the same fixed snapshot in both states; only an
-        // unparsable result falls back to the line-count rule.
         return (
           parseGoalToolOutput(result.output) === undefined &&
           nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
       case 'Edit':
       case 'Write':
-        // The result body renders the same way in both states (the call
-        // preview is checked above), so only the preview can hide content.
         return false;
       case 'TodoList':
         return todoCardHidesItems(todoListFromResult(result.output));
@@ -1226,12 +1015,6 @@ export class ToolCallComponent extends Container {
     }
   }
 
-  /**
-   * Whether the args-driven call preview keeps content out of the collapsed
-   * card whatever the result: a multi-line Bash command shows only its first
-   * line in the header, and the Edit diff and Write content previews are
-   * capped, so a failed call can still have more to show behind ctrl+o.
-   */
   private callPreviewHidesContent(): boolean {
     const { name, args } = this.toolCall;
     switch (name) {
@@ -1243,10 +1026,6 @@ export class ToolCallComponent extends Container {
         const oldStr = str(args['old_string']);
         const newStr = str(args['new_string']);
         if (oldStr.length === 0 && newStr.length === 0) return false;
-        // Mirror buildCallPreview exactly by rendering both ways: the cap
-        // applies to body rows at cluster boundaries under a header row, so
-        // the capped render differs from the full one only when it cut rows
-        // (its trailer then replaces them).
         const filePath = str(args['file_path'] ?? args['path']);
         const full = renderDiffLinesClustered(oldStr, newStr, filePath, { contextLines: 3 });
         const capped = renderDiffLinesClustered(oldStr, newStr, filePath, {
@@ -1256,10 +1035,6 @@ export class ToolCallComponent extends Container {
         return capped.length !== full.length || capped.at(-1) !== full.at(-1);
       }
       case 'Write': {
-        // Mirror buildCallPreview's cap exactly: highlightLines keeps a
-        // trailing empty entry for a final newline (computeWriteStats strips
-        // it), and the hint row replaces the hidden rows, so a single hidden
-        // row would leave nothing for ctrl+o to gain.
         const content = str(args['content']);
         const filePath = str(args['file_path'] ?? args['path']);
         return highlightLines(content, langFromPath(filePath)).length > COMMAND_PREVIEW_LINES + 1;
@@ -1273,9 +1048,6 @@ export class ToolCallComponent extends Container {
     this.result = result;
     this.elapsed = elapsed;
     this.projectionVersion += 1;
-    // Result supersedes any live progress chatter; the result body is the
-    // authoritative final state. Without this clear, a finished tool would
-    // show both the streamed status lines and the final output stacked.
     this.progressLines = [];
     this.progressStatusRows = 0;
     this.liveOutput = '';
@@ -1285,12 +1057,7 @@ export class ToolCallComponent extends Container {
     this.syncStreamingProgressTimer();
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
-    // rebuildBody (not rebuildContent) so the call preview re-renders
-    // with the collapsed cap applied — Write streaming previews and
-    // Edit's progress placeholder needs to snap to the final preview on
-    // result.
     this.rebuildBody();
-    // Final results affect group summaries, especially failed/done counts.
     this.notifySnapshotChange();
   }
 
@@ -1304,16 +1071,6 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  /**
-   * Append a live progress line emitted by the tool via
-   * `onUpdate({kind:'status', text})`. Splits on newlines so multi-line
-   * status payloads render row-by-row. With `options.replace`, the previous
-   * replaceable status block is swapped out first — periodic "still
-   * waiting" updates would otherwise pile up to the cap with stale rows.
-   * Old lines are dropped once the
-   * buffer fills past {@link ToolCallComponent.MAX_PROGRESS_LINES} so a
-   * misbehaving tool can't grow the box unboundedly.
-   */
   appendProgress(text: string, options?: { readonly replace?: boolean }): void {
     if (this.result !== undefined) return;
     if (options?.replace === true && this.progressStatusRows > 0) {
@@ -1355,12 +1112,6 @@ export class ToolCallComponent extends Container {
     this.stopDetachHintTimer();
   }
 
-  /**
-   * Injects plan body/path asynchronously. Only ExitPlanMode cards use
-   * this: plan-file mode leaves `args.plan` empty, so `KimiTUI` fetches
-   * the plan via `session.getPlan()` and calls this method to render the
-   * plan box.
-   */
   setPlanInfo(info: { plan?: string; path?: string }): void {
     if (this.toolCall.name !== 'ExitPlanMode') return;
     let changed = false;
@@ -1408,8 +1159,6 @@ export class ToolCallComponent extends Container {
     }
   }
 
-  // ── Subagent API (called by KimiTUI event routing) ───────────────
-
   setSubagentMeta(agentId: string, agentName?: string): void {
     if (this.subagentAgentId === agentId && this.subagentAgentName === agentName) return;
     this.subagentAgentId = agentId;
@@ -1420,12 +1169,6 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  /**
-   * Lets group containers (AgentGroup or ReadGroup) subscribe to this card's
-   * state changes. Registration immediately calls back so the group receives
-   * the current snapshot without separately calling getSubagentSnapshot or
-   * getReadSnapshot. Pass `undefined` to unsubscribe.
-   */
   setSnapshotListener(cb: (() => void) | undefined): void {
     this.onSnapshotChange = cb;
     if (cb !== undefined) cb();
@@ -1444,20 +1187,6 @@ export class ToolCallComponent extends Container {
       this.getCombinedSubagentText(),
       this.workspaceDir,
     );
-    // Terminal-state priority: SDK `tool.result` is authoritative for Agent
-    // tool calls. Once it arrives, force done/failed over intermediate
-    // spawning/running states for two reasons:
-    //   1. Replay does not replay spawned/completed/failed events, so
-    //      `subagentPhase` stays undefined and result must be used.
-    //   2. Live type-validation failures may skip `subagent.failed`, or
-    //      `tool.result` may arrive first; otherwise the UI can stay stuck at
-    //      'spawning' and keep showing `Initializing...`.
-    // Intermediate states without a result still use `subagentPhase`.
-    // `backgrounded` has no result because background agents do not enter the
-    // transcript — but a foreground subagent detached via Ctrl+B keeps
-    // `subagentPhase === 'backgrounded'` even after its ToolResult lands, so
-    // the group card shows `◐ backgrounded` rather than `✓ Completed`. Reuse
-    // the standalone derivation so both paths agree.
     const derivedPhase = this.getDerivedSubagentPhase();
     const errorText =
       this.subagentError ?? (derivedPhase === 'failed' ? this.result?.output : undefined);
@@ -1478,12 +1207,6 @@ export class ToolCallComponent extends Container {
     };
   }
 
-  /**
-   * Used by `ReadGroupComponent` to sum line counts across same-step Read
-   * cards. `lines` matches the single-card chip
-   * (`pluralize(countNonEmptyLines(...), 'line')`) so group and card counts do
-   * not drift.
-   */
   getReadSnapshot(): ToolCallReadSnapshot {
     const args = this.toolCall.args;
     const filePathRaw = args['file_path'] ?? args['path'];
@@ -1505,7 +1228,6 @@ export class ToolCallComponent extends Container {
     };
   }
 
-  // Readonly view for group access to toolCall metadata (id, name, description).
   get toolCallView(): Readonly<ToolCallBlockData> {
     return this.toolCall;
   }
@@ -1522,7 +1244,6 @@ export class ToolCallComponent extends Container {
     return this.projectionVersion;
   }
 
-  /** Notifies the listener when internal state changes, if a group is attached. */
   private notifySnapshotChange(): void {
     this.onSnapshotChange?.();
   }
@@ -1586,7 +1307,6 @@ export class ToolCallComponent extends Container {
     this.streamingProgressTimer = undefined;
   }
 
-  /** Only foreground Bash/Agent calls can be detached via Ctrl+B. */
   private isDetachHintEligible(): boolean {
     return this.toolCall.name === 'Bash' || this.toolCall.name === 'Agent';
   }
@@ -1596,8 +1316,6 @@ export class ToolCallComponent extends Container {
     if (this.result !== undefined) return;
     if (this.ui === undefined) return;
     if (this.toolCall.name === 'Agent') {
-      // Subagents are long-running by nature; advertise Ctrl+B immediately
-      // instead of waiting out the delay used for short Bash commands.
       if (this.detachHintVisible) return;
       this.detachHintVisible = true;
       this.rebuildBody();
@@ -1643,9 +1361,6 @@ export class ToolCallComponent extends Container {
         this.stopSubagentElapsedTimer();
         return;
       }
-      // Drives both the braille spinner in the header and the elapsed-seconds
-      // refresh. Only the header text changes on a tick, so we avoid rebuilding
-      // the body (which would defeat the per-component render caches).
       this.subagentSpinnerFrame = (this.subagentSpinnerFrame + 1) % BRAILLE_SPINNER_FRAMES.length;
       this.headerText.setText(this.buildHeader());
       this.notifySnapshotChange();
@@ -1669,12 +1384,6 @@ export class ToolCallComponent extends Container {
     }
   }
 
-  /**
-   * Handles SDK `subagent.spawned`. The child agent is registered with the
-   * parent call, but its prompt may still be queued behind other subagents.
-   * `subagent.started` moves it to 'running' when the child turn actually
-   * begins.
-   */
   onSubagentSpawned(meta: {
     agentId: string;
     agentName?: string | undefined;
@@ -1693,7 +1402,6 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  /** Handles SDK `subagent.started` once a queued child turn begins. */
   onSubagentStarted(meta: {
     agentId: string;
     agentName?: string | undefined;
@@ -1714,10 +1422,6 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  /**
-   * Handles SDK `subagent.completed`. Moves the phase to 'done' and records
-   * token usage plus the result summary for the header chip and tail summary.
-   */
   onSubagentCompleted(payload: {
     contextTokens?: number | undefined;
     usage?: TokenUsage | undefined;
@@ -1742,7 +1446,6 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  /** Handles SDK `agent.status.updated` from the child agent. */
   updateSubagentMetrics(payload: {
     contextTokens?: number | undefined;
     usage?: TokenUsage | undefined;
@@ -1767,7 +1470,6 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  /** Handles SDK `subagent.failed`. */
   onSubagentFailed(payload: { error: string }): void {
     this.subagentPhase = 'failed';
     this.projectionVersion += 1;
@@ -1780,13 +1482,6 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  /**
-   * Records the actual terminal status of the backing background task so
-   * the snapshot phase no longer relies on the spawn-success ToolResult.
-   * Called for `agent-*` background tasks both live (when the bg agent
-   * terminates non-successfully) and on resume (when reconcile
-   * reclassifies a previously-running task as `lost`).
-   */
   setBackgroundTaskTerminalStatus(
     status: 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost',
     options: { errorText?: string | undefined } = {},
@@ -1796,17 +1491,6 @@ export class ToolCallComponent extends Container {
     const phaseUnchanged = this.backgroundTaskTerminalPhase === phase;
     let errorChanged = false;
     if (phase === 'failed') {
-      // Surface the failure line through the same `subagentError` slot that
-      // `onSubagentFailed` writes. The standalone card reads this in
-      // `buildSingleSubagentBlock`; the group card reads it via `errorText`
-      // in `getSubagentSnapshot`. Priority:
-      //   1. Explicit `errorText` from the caller (the real message from a
-      //      live `subagent.failed` event) always wins — it is the most
-      //      informative.
-      //   2. Existing `subagentError` (could be from a prior
-      //      `onSubagentFailed` or an earlier explicit override) is kept.
-      //   3. Fall back to a friendly generic so the failure has SOME
-      //      visible explanation when no source has supplied one.
       if (errorText !== undefined && this.subagentError !== errorText) {
         this.subagentError = errorText;
         errorChanged = true;
@@ -1828,12 +1512,6 @@ export class ToolCallComponent extends Container {
     this.notifySnapshotChange();
   }
 
-  /**
-   * Mark a foreground subagent as detached-to-background. Called when a
-   * `background.task.started` event arrives for this agent (i.e. the user
-   * pressed Ctrl+B). Keeps the card showing `◐ backgrounded` instead of
-   * flipping to `✓ Completed` when the spawn-success ToolResult lands.
-   */
   markBackgrounded(): void {
     if (this.detachedFromForeground) return;
     this.detachedFromForeground = true;
@@ -1845,27 +1523,6 @@ export class ToolCallComponent extends Container {
     this.ui?.requestRender();
   }
 
-  /**
-   * Subagent id for the backing AgentTool call, used by routing to find a
-   * tool call's backing subagent when reconciling background task lifecycle
-   * events.
-   *
-   * Two writers, in priority order:
-   *   1. In-memory `subagentAgentId` — wired by `setSubagentMeta` /
-   *      `onSubagentSpawned` for foreground agents. For backgrounded agents
-   *      this stays undefined: `handleSubagentSpawned` early-returns before
-   *      calling `tc.onSubagentSpawned`, and `applySubagentReplay` early-
-   *      returns when the wire payload omits the `subagent` block — which
-   *      it does for every replayed Agent call.
-   *   2. The spawn-success ToolResult body — AgentTool unconditionally
-   *      emits `agent_id: agent-N` for every Agent call (foreground and
-   *      background). Parsing it gives the stable identifier even when the
-   *      in-memory field is empty, which is the only way the resume path
-   *      can reliably route a `background.task.terminated` to the right
-   *      card and the only way the live path avoids matching by description
-   *      and accidentally updating an unrelated Agent card that happens to
-   *      share the same `args.description`.
-   */
   getSubagentAgentId(): string | undefined {
     if (this.subagentAgentId !== undefined) return this.subagentAgentId;
     if (this.toolCall.name !== 'Agent' || this.result === undefined) return undefined;
@@ -1873,9 +1530,6 @@ export class ToolCallComponent extends Container {
     return match?.[1];
   }
 
-  /** `args.description` for `Agent` tool calls, used as a resume-path
-   *  fallback when the wire format pre-dates persisted subagent ids and
-   *  the only stable cross-restart identifier is the description string. */
   getAgentToolDescription(): string | undefined {
     if (this.toolCall.name !== 'Agent') return undefined;
     const desc = this.toolCall.args['description'];
@@ -1884,17 +1538,11 @@ export class ToolCallComponent extends Container {
 
   appendSubagentText(text: string, kind: SubagentTextKind = 'text'): void {
     this.lastSubagentStreamKind = kind;
-    // The preview window only ever shows a small tail, so keep the retained
-    // buffer bounded instead of concatenating the whole history. Trimming the
-    // merged buffer on each append costs O(cap + delta) regardless of how long
-    // the agent has been running, and the text still ends with the newest
-    // output.
     if (kind === 'thinking') {
       this.subagentThinkingText = tailPreviewText(this.subagentThinkingText + text);
     } else {
       this.subagentText = tailPreviewText(this.subagentText + text);
     }
-    // Child-agent activity means it is running unless already terminal/backgrounded.
     if (
       this.subagentPhase === undefined ||
       this.subagentPhase === 'queued' ||
@@ -2031,8 +1679,6 @@ export class ToolCallComponent extends Container {
         return `${label}${currentTheme.fg('success', ` · ${chipText}`)}`;
       }
       if (outcome.kind === 'auto_approved') {
-        // Auto permission mode let the plan through without user review —
-        // a warning-toned chip keeps "the user approved this" out of the UI.
         return `${label}${currentTheme.fg('warning', ' · Auto-approved')}`;
       }
       return label;
@@ -2054,12 +1700,7 @@ export class ToolCallComponent extends Container {
     }
 
     if (toolCall.name === 'NotifyUser' && isExperimentalFlagEnabled('notify_user')) {
-      // Stream the title and message while arguments arrive. Delivered
-      // updates remain as a durable transcript trace: the header carries
-      // the title (or the message's first line) and ctrl+o shows the message.
       if (isTruncated) {
-        // max_tokens cut the arguments short: the call never ran and the
-        // panel entry was dropped, so the card must not read as in flight.
         return `${bullet}${currentTheme.boldFg('error', 'Update cut off')}${currentTheme.dim(' (arguments truncated by max_tokens)')}`;
       }
       const delivery = notifyResultState(result?.output);
@@ -2092,10 +1733,6 @@ export class ToolCallComponent extends Container {
     }
 
     if (toolCall.name === 'Bash') {
-      // The collapsed card is this header plus its outcome rows, so the header
-      // carries the command's first line; the full command and its output only
-      // render in the body once expanded (ctrl+o). Wording mirrors the other label-only
-      // headers (e.g. AskUserQuestion): the whole label takes the tone colour.
       if (isTruncated) {
         return `${bullet}${currentTheme.fg('error', 'Truncated')} ${currentTheme.boldFg('primary', 'Bash')}`;
       }
@@ -2105,8 +1742,6 @@ export class ToolCallComponent extends Container {
       const chipStr = isFinished && result !== undefined ? this.buildHeaderChip(result) : '';
       const head = `${bullet}${currentTheme.boldFg(tone, label)}`;
       if (command === null) return `${head}${chipStr}`;
-      // The command takes whatever width the label and the chip leave over,
-      // so it fills a wide terminal and the chip survives a narrow one.
       return {
         head: `${head}${currentTheme.dim(' · $ ')}`,
         flex: { text: command.text, style: dimHeaderStyle, keep: 'head' },
@@ -2192,16 +1827,6 @@ export class ToolCallComponent extends Container {
     this.buildSubagentBlock();
   }
 
-  /**
-   * Render the accumulated `progressLines` between the call preview and
-   * the result body. URLs inside a line are wrapped in an OSC 8 hyperlink
-   * sequence so terminals that support it (iTerm2, Ghostty, kitty, modern
-   * Terminal.app, VS Code) make the URL Cmd-clickable and expose
-   * "Copy Link" via the context menu — even when pi-tui soft-wraps the
-   * URL across multiple rows (pi-tui's wrapTextWithAnsi re-opens the
-   * active OSC 8 link on each continuation line). Each embedded URL is
-   * styled individually so surrounding prose keeps its default dim tone.
-   */
   private buildProgressBlock(): void {
     if (this.progressLines.length === 0) return;
     if (this.result !== undefined) return;
@@ -2225,14 +1850,9 @@ export class ToolCallComponent extends Container {
   private buildLiveOutputBlock(): void {
     if (this.result !== undefined) return;
     if (this.liveOutput.length === 0) return;
-    // Collapsed: the newest output line is the card's outcome row while the
-    // command runs, so progress stays visible; the result's last line takes
-    // the same row once it lands. ctrl+o shows the whole live tail.
     if (!this.expanded) {
       const lines = nonEmptyLines(this.liveOutput);
       const latest = lines.at(-1);
-      // With earlier output above it, the newest line carries the same
-      // leading ellipsis the finished card's last-line row uses.
       if (latest !== undefined) {
         this.addChild(outcomeLine(latest, lines.length > 1 ? 'above' : undefined));
       }
@@ -2310,7 +1930,6 @@ export class ToolCallComponent extends Container {
       }
     }
 
-    // Result summary from subagent.completed.
     if (this.subagentPhase === 'done' && this.subagentResultSummary !== undefined) {
       const summaryLines = this.subagentResultSummary.split('\n').slice(0, 2);
       for (const line of summaryLines) {
@@ -2318,7 +1937,6 @@ export class ToolCallComponent extends Container {
       }
     }
 
-    // Full error text from subagent.failed; do not collapse it.
     if (this.subagentPhase === 'failed' && this.subagentError !== undefined) {
       const errLines = this.subagentError.split('\n');
       for (const line of errLines) {
@@ -2327,15 +1945,6 @@ export class ToolCallComponent extends Container {
     }
   }
 
-  /**
-   * Header phase/token chip. No chip is shown when phase is undefined.
-   *   queued        -> queued
-   *   spawning      -> starting
-   *   running       -> running
-   *   done          -> N tools, 8.4k tok
-   *   failed        -> failed
-   *   backgrounded  -> backgrounded
-   */
   private formatPhaseChip(): string {
     if (this.subagentPhase === undefined) return '';
     const parts: string[] = [];
@@ -2395,11 +2004,6 @@ export class ToolCallComponent extends Container {
     if (this.backgroundTaskTerminalPhase !== undefined) {
       return this.backgroundTaskTerminalPhase;
     }
-    // A foreground subagent detached via Ctrl+B keeps showing `backgrounded`
-    // even after its spawn-success ToolResult lands, so the card doesn't flip
-    // to `✓ Completed` and look like the work actually finished. Agents that
-    // started in the background (`detachedFromForeground === false`) read as
-    // `done` once their result lands.
     if (this.detachedFromForeground && this.subagentPhase === 'backgrounded') {
       return 'backgrounded';
     }
@@ -2474,8 +2078,6 @@ export class ToolCallComponent extends Container {
     if (phase === 'failed') return currentTheme.fg('error', '✗ ');
     if (phase === 'done') return currentTheme.fg('success', STATUS_BULLET);
     if (phase === 'backgrounded') return currentTheme.dim('◐ ');
-    // Active (queued / spawning / running): a braille spinner reads as alive
-    // where a static bullet looked frozen.
     const frame = BRAILLE_SPINNER_FRAMES[this.subagentSpinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0];
     return currentTheme.fg('primary', `${frame} `);
   }
@@ -2483,9 +2085,6 @@ export class ToolCallComponent extends Container {
   private buildSingleSubagentBlock(): void {
     const phase = this.getDerivedSubagentPhase();
 
-    // Every state shares the same skeleton — header, a one-line tool summary,
-    // and a fixed two-row content window — so the card height is identical
-    // while running and after it finishes (no end-of-run shrink).
     this.addChild(new Text(this.buildSingleSubagentSummaryLine(), 0, 0));
 
     if (phase === 'failed') {
@@ -2499,7 +2098,6 @@ export class ToolCallComponent extends Container {
     this.addChild(this.buildSingleSubagentActiveWindow());
   }
 
-  /** Most-recently-started sub-tool, preferring one that is still running. */
   private getCurrentSubToolActivity(): SubToolActivity | undefined {
     let latestOngoing: SubToolActivity | undefined;
     let latest: SubToolActivity | undefined;
@@ -2515,11 +2113,6 @@ export class ToolCallComponent extends Container {
     return latestOngoing ?? latest;
   }
 
-  /**
-   * The single live stream shown in the active window. A running sub-tool with
-   * previewable output (Bash or any tool without a dedicated renderer) wins;
-   * otherwise the most-recently-updated of the child agent's text / thinking.
-   */
   private getActiveSubagentContent(): { text: string; tone: 'text' | 'thinking' } | undefined {
     const current = this.getCurrentSubToolActivity();
     if (
@@ -2565,8 +2158,6 @@ export class ToolCallComponent extends Container {
   private buildSingleSubagentActiveWindow(): Component {
     const gutter = currentTheme.dim('│');
     const content = this.getActiveSubagentContent();
-    // Keep both tones muted: a bright `fg('text')` here flashed white whenever
-    // the window flipped between thinking and a brief text/tool-output segment.
     const text =
       content === undefined ? '…' : tailSourceLines(content.text, THINKING_PREVIEW_LINES * 4);
     const styled =
@@ -2575,8 +2166,6 @@ export class ToolCallComponent extends Container {
         : content.tone === 'thinking'
           ? currentTheme.dim(text)
           : currentTheme.fg('textDim', text);
-    // Always exactly two rows (padded when short) so the live window matches
-    // the finished card's height.
     return new PrefixedWrappedLine(
       `  ${gutter} `,
       `  ${gutter} `,
@@ -2618,8 +2207,6 @@ export class ToolCallComponent extends Container {
       return;
     }
     if (name === 'NotifyUser' && isExperimentalFlagEnabled('notify_user')) {
-      // Collapsed cards always keep one title row. Expansion reveals the
-      // message, including its live stream while the call is in flight.
       if (!this.expanded) return;
       const inFlight = this.result === undefined;
       const args = inFlight ? notifyUserLiveArgs(this.toolCall) : this.toolCall.args;
@@ -2642,13 +2229,6 @@ export class ToolCallComponent extends Container {
       this.buildStreamingPreview(this.toolCall.streamingArguments);
       return;
     }
-    // Cap Edit's diff as soon as args finalize, not only when the result
-    // lands — mirroring Write's writeShouldCap below. Otherwise the render
-    // tick between finalized args (streamingArguments cleared by the
-    // `tool.call.started` payload) and the result draws the full diff, then
-    // snaps back to the cap: a height collapse that triggers pi-tui's full
-    // redraw and wipes scrollback. Streaming frames (streamingArguments set)
-    // still take buildStreamingPreview above and never reach here.
     const shouldCap = !this.expanded;
     if (name === 'Write') {
       const content = str(this.toolCall.args['content']);
@@ -2656,12 +2236,6 @@ export class ToolCallComponent extends Container {
       const filePath = str(this.toolCall.args['file_path'] ?? this.toolCall.args['path']);
       const lang = langFromPath(filePath);
       const allLines = highlightLines(content, lang);
-      // Cap as soon as args finalize, not just when result lands. Otherwise the
-      // brief render tick between finalized args and result draws the full file,
-      // and the snap back to the collapsed cap triggers pi-tui's full-redraw
-      // path which wipes the terminal scrollback (pre-TUI history). The cap
-      // swaps the hidden rows for a one-line hint, so capping a single row
-      // would render at the same height as the full preview.
       const writeShouldCap = !this.expanded && allLines.length > COMMAND_PREVIEW_LINES + 1;
       const shown = writeShouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
       const remaining = allLines.length - shown.length;
@@ -2694,20 +2268,10 @@ export class ToolCallComponent extends Container {
         this.addChild(index === 0 ? new CardOnly(text) : text);
       }
     } else if (name === 'Bash') {
-      // The engine stamps the cwd the command actually executes in (the bound
-      // environment's resolved path) into display.cwd; show it whenever it says
-      // something the card does not already — a remote environment's path or an
-      // explicit cwd argument. A stamp equal to the local workspace dir is
-      // the default local case and keeps the card's current shape.
       const executionCwd = this.stampedExecutionCwd();
       if (executionCwd !== undefined) {
         this.addChild(new Text(currentTheme.dim(`cwd: ${executionCwd}`), 2, 0));
       }
-      // Collapsed: the header already carries the command's first line, so no
-      // command body is added; the outcome row comes from the live tail or the
-      // result renderer. Expanded: the full command, across the whole lifecycle.
-      // Owned solely by buildCallPreview so the command never renders twice;
-      // shellExecutionResultRenderer renders the result only.
       if (!this.expanded) return;
       const command = str(this.toolCall.args['command']);
       if (command.length === 0) return;
@@ -2731,16 +2295,6 @@ export class ToolCallComponent extends Container {
     return cwd;
   }
 
-  /**
-   * Live-rendering during the `tool.call.delta` streaming window.
-   *
-   * For tools we recognise, we reach into the partial JSON (via
-   * `extractPartialStringField`) and render a stable high-signal
-   * preview: Write's `content` as highlighted code, Edit's argument
-   * receive progress, Bash's `$ command`, etc. While args are still
-   * streaming we render from a bounded preview buffer; once the result lands,
-   * the preview snaps to the collapsed cap unless the user has expanded.
-   */
   private buildStreamingPreview(streamText: string): void {
     const name = this.toolCall.name;
     const previewText = streamText.slice(0, STREAMING_ARGS_PREVIEW_MAX_CHARS);
@@ -2797,14 +2351,9 @@ export class ToolCallComponent extends Container {
         ),
       );
     }
-    // Unknown tools: nothing sensible to stream without a schema, so
-    // leave the body blank and let the header do the talking.
   }
 
   private buildPlanPreview(): void {
-    // Priority: inline `args.plan`, approved plan parsed from result, then
-    // asynchronously injected currentPlan used while approval is in flight.
-    // Once a plan is found, PlanBoxComponent renders it.
     const plan = this.resolvePlanForPreview();
     if (plan.length === 0) return;
     const path = this.resolvePlanPath();
@@ -2825,8 +2374,6 @@ export class ToolCallComponent extends Container {
     return this.currentPlan ?? '';
   }
 
-  // Priority: approved result.output with 'Plan saved to: <path>', then the
-  // planPath asynchronously injected by setPlanInfo while approval is in flight.
   private resolvePlanPath(): string | undefined {
     if (this.result !== undefined && !this.result.is_error) {
       const fromResult = interpretExitPlanModeOutcome(this.result.output).path;
@@ -2859,21 +2406,11 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    // Outputs that start with a `<system-reminder>` tag are harness-injected
-    // reminders piggy-backing on a tool result (e.g. a finalize hook rewrote
-    // the output). They are noise for the user, so suppress the body while
-    // keeping the header chip intact. Match the full reminder tag only: tool
-    // metadata no longer travels inside `output` (it rides the result's
-    // `note` side channel), so real output starting with a literal `<system>`
-    // is user data and must stay visible.
     if (result.output.trimStart().startsWith('<system-reminder>')) {
       return;
     }
 
     if (this.toolCall.name === 'ExitPlanMode' && isExitPlanModeOutcomeOutput(result.output)) {
-      // Approved plans are already rendered by buildCallPreview via
-      // resolvePlanForPreview. Rejected or revise feedback uses a warning label
-      // plus normal body text so it remains visible in the transcript.
       const outcome = interpretExitPlanModeOutcome(result.output);
       if (outcome.kind === 'rejected' && outcome.feedback !== undefined) {
         const trimmed = outcome.feedback.trim();
@@ -2888,8 +2425,6 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    // TodoList: the card shows the reported list instead of the text dump,
-    // for reads and writes alike.
     if (this.toolCall.name === 'TodoList' && !result.is_error) {
       const todos = todoListFromResult(result.output);
       if (todos.length > 0) this.addChild(new TodoCardBody(todos, this.expanded));
@@ -2900,8 +2435,6 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    // NotifyUser: the message is the call's argument (rendered by
-    // buildCallPreview when expanded); the acknowledgement output is noise.
     if (
       this.toolCall.name === 'NotifyUser' &&
       isExperimentalFlagEnabled('notify_user') &&
@@ -2965,11 +2498,6 @@ export class ToolCallComponent extends Container {
     this.addChild(new Text(`${dim('Agent swarm: ')}${currentTheme.fg(colorToken, label)}`, 2, 0));
   }
 
-  /**
-   * Render AskUserQuestion's JSON payload as a friendly Q/A list.
-   * Returns true on success (caller skips the default JSON dump);
-   * false on parse failure (caller falls back to raw display).
-   */
   private renderAskUserQuestionResult(output: string): boolean {
     let parsed: unknown;
     try {
@@ -3003,12 +2531,6 @@ export class ToolCallComponent extends Container {
   }
 }
 
-/**
- * Computes the second-level "latest activity" line for group rows:
- *   1. latest ongoing sub-tool (`Using {name} ({keyArg})`)
- *   2. latest finished sub-tool (`Used {name} ({keyArg})`)
- *   3. last non-empty line from accumulated subagent text
- */
 function computeLatestActivity(
   ongoing: ReadonlyMap<string, OngoingSubCall>,
   finished: readonly FinishedSubCall[],

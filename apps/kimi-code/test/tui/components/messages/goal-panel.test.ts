@@ -34,7 +34,7 @@ function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
     status: 'active',
     turnsUsed: 7,
     tokensUsed: 128_400,
-    wallClockMs: 252_000, // 4m12s
+    wallClockMs: 252_000,
     budget: {
       turnBudget: null,
       tokenBudget: null,
@@ -55,7 +55,7 @@ describe('buildGoalReportLines', () => {
     expect(out).toContain('Running');
     expect(out).toContain('4m 12s');
     expect(out).toContain('Turns');
-    expect(out).toContain('125k'); // formatTokenCount
+    expect(out).toContain('125k');
   });
 
   it('shows a no-stop-condition note for an unbounded active goal', () => {
@@ -103,7 +103,6 @@ describe('buildGoalReportLines', () => {
 describe('GoalSetMessageComponent', () => {
   it('renders a marker-style lifecycle line without repeating the objective', () => {
     const rendered = new GoalSetMessageComponent().render(60);
-    // Leading blank line separates it from the line above.
     expect(rendered[0]).toBe('');
     expect(strip(rendered)).toBe('\n● Goal set');
   });

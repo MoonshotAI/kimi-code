@@ -10,26 +10,13 @@ import { BUILT_IN_CATALOG_JSON } from '#/built-in-catalog';
 
 export interface FetchCatalogOrBuiltInResult {
   readonly catalog: Catalog;
-  /** True when the network fetch failed and the release-build snapshot was used. */
   readonly fromBuiltIn: boolean;
 }
 
 export interface FetchCatalogOrBuiltInOptions extends FetchCatalogOptions {
-  /**
-   * Override the built-in snapshot JSON (tests). Defaults to the tsdown-injected
-   * `__KIMI_CODE_BUILT_IN_CATALOG__` constant.
-   */
   readonly builtInJson?: string;
 }
 
-/**
- * Fetches a models.dev-style catalog, falling back to the release-build
- * snapshot when the public default URL is unreachable.
- *
- * Custom `--url` overrides never fall back — a private registry must fail
- * loudly rather than silently substitute models.dev. User abort
- * (`signal.aborted`) also skips the fallback so Cancel stays Cancel.
- */
 export async function fetchCatalogOrBuiltIn(
   url: string,
   options: FetchCatalogOrBuiltInOptions = {},

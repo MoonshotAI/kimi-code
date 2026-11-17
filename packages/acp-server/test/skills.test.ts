@@ -18,7 +18,6 @@ interface AvailableCommand {
   readonly input?: { readonly hint?: string } | null;
 }
 
-/** The update payload's command list, typed loosely for assertions. */
 function commandsOf(notification: unknown): readonly AvailableCommand[] {
   const params = (notification as { params?: { update?: { availableCommands?: unknown } } })
     .params;
@@ -108,12 +107,6 @@ describe('acp-server skills / available commands', () => {
     return client;
   }
 
-  /**
-   * Boot with the scripted LLM and a project skill fixture at
-   * `<cwd>/.kimi-code/skills/acp-fixture/SKILL.md` (the engine's project
-   * skill discovery root; the temp cwd has no `.git`, so it IS the project
-   * root).
-   */
   async function bootWithFixtureSkill(): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-skills-turn-'));
     await writeFakeModelConfig(homeDir);
@@ -143,10 +136,8 @@ describe('acp-server skills / available commands', () => {
 
     const notification = await c.waitForSessionUpdate('available_commands_update', 10_000);
     const commands = commandsOf(notification);
-    // The six ACP builtins (executed locally by the host) stay first…
     expect(commands.slice(0, ACP_BUILTIN_SLASH_COMMANDS.length).map((command) => command.name))
       .toEqual(ACP_BUILTIN_SLASH_COMMANDS.map((command) => command.name));
-    // …followed by the engine's builtin skills (bare command names).
     expect(commands.length).toBeGreaterThan(ACP_BUILTIN_SLASH_COMMANDS.length);
     expect(commands.some((command) => command.name === 'write-goal')).toBe(true);
     const compact = commands.find((command) => command.name === 'compact');
@@ -158,9 +149,6 @@ describe('acp-server skills / available commands', () => {
     await c.send('session/new', { cwd: homeDir, mcpServers: [] });
     await c.waitForSessionUpdate('available_commands_update', 10_000);
 
-    // Clients register the session when the response lands and silently drop
-    // `session/update` notifications that arrive earlier (Zed), so the slash
-    // commands push must come after the `session/new` response on the wire.
     const responseIndex = c.received.findIndex(
       (m) => (m.result as { sessionId?: string } | undefined)?.sessionId !== undefined,
     );
@@ -201,8 +189,6 @@ describe('acp-server skills / available commands', () => {
     expect(result.stopReason).toBe('end_turn');
     expect(scripted!.callCount()).toBe(1);
 
-    // The model received the rendered skill activation (content + args), not
-    // the raw slash text.
     const history = JSON.stringify(scripted!.callHistory()[0]);
     expect(history).toContain('skill-loaded');
     expect(history).toContain('Always answer with the word FIXTURE');
@@ -239,7 +225,6 @@ describe('acp-server skills / available commands', () => {
     })) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
 
-    // No LLM turn was launched — the notice is a local agent_message_chunk.
     expect(scripted!.callCount()).toBe(0);
     type Update = { sessionUpdate?: string; content?: { text?: string } };
     const chunk = c

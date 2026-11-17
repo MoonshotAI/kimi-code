@@ -1,22 +1,3 @@
-/**
- * Read media from the system clipboard with graceful platform fallbacks.
- *
- * Every model provider accepts PNG/JPEG/GIF/WebP (the engine widens the set
- * per provider, e.g. BMP/HEIC/HEIF for Kimi), and the clipboard sources we
- * query already emit those baseline formats on supported platforms — so we
- * deliberately do not include a BMP→PNG converter.
- *
- * Lookup order:
- *   macOS file clipboard       -> osascript/AppKit file URLs
- *   macOS / Windows            -> native `@mariozechner/clipboard`
- *   Linux Wayland              -> wl-paste
- *   Linux X11                  -> xclip
- *   WSL (image not on Linux cb) -> PowerShell fallback via wslpath
- *
- * Returns `null` when no supported media is available, the format isn't
- * supported, or every fallback fails.
- */
-
 import { randomUUID } from 'node:crypto';
 import { readFileSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -217,7 +198,6 @@ function readVideoPath(path: string): ClipboardVideo | null {
 }
 
 function readMediaPath(path: string): ClipboardMedia | null {
-  // Video files are never opened as images.
   const video = readVideoPath(path);
   if (video !== null) return video;
   return readImagePath(path);
@@ -305,12 +285,6 @@ function readClipboardImageViaXclip(): ClipboardImage | null {
   return null;
 }
 
-/**
- * Windows clipboard images (Win+Shift+S) don't bridge into the WSL
- * Linux clipboard. PowerShell reaches the Windows clipboard directly;
- * we round-trip via a temp PNG because binary stdout is unreliable
- * across the WSL interop boundary.
- */
 function readClipboardImageViaPowerShell(): ClipboardImage | null {
   const tmpFile = join(tmpdir(), `kimi-wsl-clip-${randomUUID()}.png`);
   try {
@@ -344,9 +318,7 @@ function readClipboardImageViaPowerShell(): ClipboardImage | null {
   } finally {
     try {
       unlinkSync(tmpFile);
-    } catch {
-      // ignore cleanup errors
-    }
+    } catch {}
   }
 }
 
@@ -410,8 +382,6 @@ export async function readClipboardMedia(options?: {
   const clip = options?.clipboard ?? clipboard;
   const run = options?.runCommand ?? runCommand;
 
-  // Termux on Android has no desktop clipboard; skip early rather than
-  // churn through every fallback.
   if (env['TERMUX_VERSION'] !== undefined) return null;
 
   let image: ClipboardImage | null = null;
@@ -442,9 +412,6 @@ export async function readClipboardMedia(options?: {
     const nativeFileMedia = await readClipboardFileMediaViaNativeText(clip);
     if (nativeFileMedia.media !== null) return nativeFileMedia.media;
 
-    // Finder exposes file icons/thumbnails as image data. If the clipboard
-    // looks file-like but we could not read a real file path, do not consume
-    // that icon as an image attachment.
     if (platform === 'darwin' && nativeFileMedia.lookedFileLike) {
       return null;
     }

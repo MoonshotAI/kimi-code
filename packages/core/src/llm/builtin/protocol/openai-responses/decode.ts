@@ -1,7 +1,3 @@
-/**
- * OpenAI Responses decoding: the stream decoder that turns response events into streamed parts,
- * usage, and finish info, and replay of a non-streaming response as stream events.
- */
 import {
   NO_FINISH,
   type FinishInfo,
