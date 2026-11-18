@@ -9,7 +9,7 @@ import {
   decidePassiveUpdate,
   isRolloutBypassedByExperimentalEnv,
   isRolloutEligible,
-  MAX_ROLLOUT_DELAY_SECONDS,
+  UNCOVERED_ROLLOUT_DELAY_SECONDS,
   rolloutBucket,
   rolloutDelayForBucket,
   rolloutDelaySeconds,
@@ -72,16 +72,16 @@ describe('rolloutDelayForBucket', () => {
     expect(rolloutDelayForBucket(STANDARD_ROLLOUT, 99)).toBe(86_400);
   });
 
-  it('clamps oversized delays to 24h', () => {
+  it('honors plan delays beyond 24h', () => {
     const rollout: readonly RolloutBatch[] = [{ percent: 100, delaySeconds: 999_999 }];
-    expect(rolloutDelayForBucket(rollout, 50)).toBe(MAX_ROLLOUT_DELAY_SECONDS);
+    expect(rolloutDelayForBucket(rollout, 50)).toBe(999_999);
   });
 
   it('assigns buckets not covered by the plan to the slowest cohort', () => {
     const rollout: readonly RolloutBatch[] = [{ percent: 30, delaySeconds: 0 }];
     expect(rolloutDelayForBucket(rollout, 29)).toBe(0);
-    expect(rolloutDelayForBucket(rollout, 30)).toBe(MAX_ROLLOUT_DELAY_SECONDS);
-    expect(rolloutDelayForBucket(rollout, 99)).toBe(MAX_ROLLOUT_DELAY_SECONDS);
+    expect(rolloutDelayForBucket(rollout, 30)).toBe(UNCOVERED_ROLLOUT_DELAY_SECONDS);
+    expect(rolloutDelayForBucket(rollout, 99)).toBe(UNCOVERED_ROLLOUT_DELAY_SECONDS);
   });
 
   it('tolerates percents summing past 100', () => {
@@ -141,9 +141,10 @@ describe('isRolloutEligible', () => {
     expect(isRolloutEligible(manifest, 'device-a', secondsAfterPublish(-3_600))).toBe(false);
   });
 
-  it('is always eligible 24h after publish regardless of the plan', () => {
+  it('honors eligibility delays beyond 24h', () => {
     const manifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 999_999 }] });
-    expect(isRolloutEligible(manifest, 'device-a', secondsAfterPublish(86_400))).toBe(true);
+    expect(isRolloutEligible(manifest, 'device-a', secondsAfterPublish(86_400))).toBe(false);
+    expect(isRolloutEligible(manifest, 'device-a', secondsAfterPublish(999_999))).toBe(true);
   });
 
   it('fails open when publishedAt cannot be parsed', () => {
