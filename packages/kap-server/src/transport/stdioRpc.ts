@@ -69,6 +69,8 @@ export interface RpcStreamOptions {
   readonly wssDebug?: WebSocketServer;
 }
 
+const RPC_FRAME_FIRST_BYTE = 0x7b;
+
 class RpcBodyTooLargeError extends Error {
   constructor() {
     super(`HTTP body exceeds the ${String(DEVICE_RPC_MAX_BODY_BYTES)} byte device proxy limit`);
@@ -267,7 +269,18 @@ export async function startUnixRpcServer(
   const server = createServer((socket) => {
     clients.add(socket);
     socket.on('close', () => clients.delete(socket));
-    attachRpcStream(socket, opts);
+    const destroyBeforeFirstChunk = (): void => {
+      socket.destroy();
+    };
+    socket.on('error', destroyBeforeFirstChunk);
+    socket.once('data', (firstChunk: Buffer) => {
+      socket.off('error', destroyBeforeFirstChunk);
+      socket.pause();
+      socket.unshift(firstChunk);
+      if (firstChunk[0] === RPC_FRAME_FIRST_BYTE) attachRpcStream(socket, opts);
+      else opts.app.server.emit('connection', socket);
+      socket.resume();
+    });
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

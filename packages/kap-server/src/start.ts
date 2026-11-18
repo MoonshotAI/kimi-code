@@ -611,7 +611,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       return;
     }
 
-    if (opts.disableAuth !== true) {
+    if (!disableAuth) {
       const authHeader = req.headers.authorization;
       const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);

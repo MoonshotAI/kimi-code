@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { setCapabilities } from '@moonshot-ai/pi-tui';
-
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import {
@@ -9,11 +7,10 @@ import {
   handleWebCommand,
   webSessionUrl,
 } from '#/tui/commands/web';
-import { renderTerminalQr } from '#/utils/remote-control-qr';
 
 const mocks = vi.hoisted(() => ({
   startServerForeground: vi.fn(),
-  startRemoteControl: vi.fn(),
+  runRemoteControl: vi.fn(),
   tryResolveServerToken: vi.fn(),
   getDataDir: vi.fn(() => '/tmp/kimi-home'),
   openUrl: vi.fn(),
@@ -21,7 +18,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('#/cli/sub/web/remote-control', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/cli/sub/web/remote-control')>();
-  return { ...actual, startRemoteControl: mocks.startRemoteControl };
+  return { ...actual, runRemoteControl: mocks.runRemoteControl };
 });
 
 vi.mock('#/cli/sub/web/run', async (importOriginal) => {
@@ -46,9 +43,6 @@ vi.mock('#/utils/paths', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/utils/paths')>();
   return { ...actual, getDataDir: mocks.getDataDir };
 });
-
-const indentedQr = (url: string): string =>
-  renderTerminalQr(url).trimEnd().replaceAll(/^/gm, '    ');
 
 function makeHost() {
   const host = {
@@ -178,145 +172,67 @@ describe('handleRemoteControlCommand', () => {
       expect(host.setExitForegroundTask).not.toHaveBeenCalled();
       expect(host.stop).not.toHaveBeenCalled();
       expect(mocks.startServerForeground).not.toHaveBeenCalled();
+      expect(mocks.runRemoteControl).not.toHaveBeenCalled();
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it('starts the tunnel and saves a token-free session QR code', async () => {
+  it('hands the active session to Remote Control on the background server after the TUI exits', async () => {
     vi.clearAllMocks();
-    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
-    const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { isAbsolute, join } = await import('node:path');
-    const QRCode = await import('qrcode');
-    const tempRoot = mkdtempSync(join(tmpdir(), 'kimi-rc-qrcode-'));
-    const dataDir = join(tempRoot, 'custom-home');
-    const entryUrl =
-      'https://code-rc.kimi.com/devices/device-1/?rc=1&from=kimi_code_cli';
-    const sessionUrl =
-      'https://code-rc.kimi.com/devices/device-1/sessions/ses-1?rc=1&from=kimi_code_cli';
-    const pngPath = join(dataDir, 'rc-qrcode.png');
-    mocks.getDataDir.mockReturnValue(dataDir);
-    mocks.tryResolveServerToken.mockReturnValue('local-server-token');
-    const close = vi.fn(async () => {});
-    mocks.startRemoteControl.mockResolvedValue({
-      deviceId: 'device-1',
-      deviceName: 'example-device',
-      url: entryUrl,
-      relayOrigin: 'https://code-rc.kimi.com',
-      closed: new Promise(() => {}),
-      close,
-    });
-    mocks.startServerForeground.mockImplementation(
-      async (
-        _options: unknown,
-        hooks: {
-          onReady?: (origin: string) => void | Promise<void>;
-          onShutdown?: (reason: string) => void | Promise<void>;
-        },
-      ) => {
-        await hooks.onReady?.('http://127.0.0.1:58627');
-        await hooks.onShutdown?.('SIGINT');
-      },
-    );
-    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    mocks.getDataDir.mockReturnValue('/tmp/kimi-home-without-lock');
+    mocks.runRemoteControl.mockResolvedValue(undefined);
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     const host = makeHost();
 
     try {
       await handleRemoteControlCommand(host);
+      expect(host.setExitForegroundTask).toHaveBeenCalledOnce();
+      expect(host.stop).toHaveBeenCalledOnce();
+      expect(mocks.runRemoteControl).not.toHaveBeenCalled();
+
       const task = host.setExitForegroundTask.mock.calls[0]![0] as () => Promise<void>;
       await task();
 
-      expect(mocks.startRemoteControl).toHaveBeenCalledWith(
-        expect.objectContaining({
-          homeDir: dataDir,
-          localOrigin: 'http://127.0.0.1:58627',
-          localServerToken: 'local-server-token',
-        }),
+      expect(mocks.runRemoteControl).toHaveBeenCalledWith(
+        { open: true, sessionId: 'ses-1' },
+        expect.objectContaining({ attachServer: expect.any(Function) }),
       );
-      expect(mocks.openUrl).toHaveBeenCalledWith(sessionUrl);
-      const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
-      expect(written).toContain('Kimi Remote Control ready');
-      expect(written).toContain(indentedQr(sessionUrl));
-      expect(written).not.toContain(indentedQr(entryUrl));
-      expect(isAbsolute(pngPath)).toBe(true);
-      expect(written).toContain(`QR code PNG: ${pngPath}`);
-      const png = readFileSync(pngPath);
-      expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-      expect(png).toEqual(await QRCode.toBuffer(sessionUrl));
-      expect(written).toContain(
-        'Local UI: http://127.0.0.1:58627/#token=local-server-token',
-      );
-      expect(written).not.toContain(`${entryUrl}#token=`);
-      expect(written).not.toContain(`${sessionUrl}#token=`);
-      expect(close).toHaveBeenCalledOnce();
+      expect(mocks.startServerForeground).not.toHaveBeenCalled();
+      expect(exit).toHaveBeenCalledWith(0);
     } finally {
-      writeSpy.mockRestore();
-      rmSync(tempRoot, { recursive: true, force: true });
+      exit.mockRestore();
     }
   });
 
-  it('opens the device entry URL without a session instead of creating one', async () => {
+  it('opens the device entry without a session and exits non-zero when Remote Control fails', async () => {
     vi.clearAllMocks();
-    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
-    const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const QRCode = await import('qrcode');
-    const tempRoot = mkdtempSync(join(tmpdir(), 'kimi-rc-entry-'));
-    const dataDir = join(tempRoot, 'custom-home');
-    const entryUrl =
-      'https://code-rc.kimi.com/devices/device-1/?rc=1&from=kimi_code_cli';
-    mocks.getDataDir.mockReturnValue(dataDir);
-    mocks.tryResolveServerToken.mockReturnValue('local-server-token');
-    const close = vi.fn(async () => {});
-    mocks.startRemoteControl.mockResolvedValue({
-      deviceId: 'device-1',
-      deviceName: 'example-device',
-      url: entryUrl,
-      relayOrigin: 'https://code-rc.kimi.com',
-      closed: new Promise(() => {}),
-      close,
-    });
-    mocks.startServerForeground.mockImplementation(
-      async (
-        _options: unknown,
-        hooks: {
-          onReady?: (origin: string) => void | Promise<void>;
-          onShutdown?: (reason: string) => void | Promise<void>;
-        },
-      ) => {
-        await hooks.onReady?.('http://127.0.0.1:58627');
-        await hooks.onShutdown?.('SIGINT');
-      },
-    );
-    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    mocks.getDataDir.mockReturnValue('/tmp/kimi-home-without-lock');
+    mocks.runRemoteControl.mockRejectedValue(new Error('The background Kimi server stopped'));
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const errors = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const host = makeHost();
     host.session = undefined;
 
     try {
       await handleRemoteControlCommand(host);
-
       expect(host.waitForSessionAssembly).toHaveBeenCalledOnce();
       expect(host.showError).not.toHaveBeenCalled();
-      expect(host.setExitForegroundTask).toHaveBeenCalledOnce();
-      expect(host.stop).toHaveBeenCalledOnce();
 
       const task = host.setExitForegroundTask.mock.calls[0]![0] as () => Promise<void>;
       await task();
 
-      expect(mocks.openUrl).toHaveBeenCalledWith(entryUrl);
-      const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
-      expect(written).toContain(indentedQr(entryUrl));
-      expect(written).not.toContain('/sessions/');
-      expect(readFileSync(join(dataDir, 'rc-qrcode.png'))).toEqual(
-        await QRCode.toBuffer(entryUrl),
+      expect(mocks.runRemoteControl).toHaveBeenCalledWith(
+        { open: true, sessionId: undefined },
+        expect.anything(),
       );
-      expect(close).toHaveBeenCalledOnce();
+      expect(errors.mock.calls.map((call) => String(call[0])).join('')).toContain(
+        'Remote Control failed: The background Kimi server stopped',
+      );
+      expect(exit.mock.calls[0]).toEqual([1]);
     } finally {
-      writeSpy.mockRestore();
-      rmSync(tempRoot, { recursive: true, force: true });
+      errors.mockRestore();
+      exit.mockRestore();
     }
   });
 });

@@ -1,6 +1,12 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer, type IncomingHttpHeaders, type IncomingMessage, type OutgoingHttpHeaders } from 'node:http';
+import {
+  createServer,
+  request as httpRequest,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type OutgoingHttpHeaders,
+} from 'node:http';
 import { createConnection } from 'node:net';
 import { Duplex } from 'node:stream';
 import { tmpdir } from 'node:os';
@@ -1592,7 +1598,105 @@ function rpcClient(socketPath: string) {
   };
 }
 
+function socketRequest(
+  socketPath: string,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; body: unknown }> {
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        socketPath,
+        method,
+        path,
+        headers: payload === undefined ? {} : { 'content-type': 'application/json' },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.once('end', () => {
+          resolve({
+            status: response.statusCode ?? 0,
+            body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown,
+          });
+        });
+      },
+    );
+    request.once('error', reject);
+    request.end(payload);
+  });
+}
+
+async function openSocketWebSocket(socketPath: string, path: string): Promise<NodeWebSocket> {
+  const ws = new WebSocketClient(`ws://localhost${path}`, {
+    createConnection: () => createConnection(socketPath),
+  });
+  await new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
+  return ws;
+}
+
 describe('stdio rpc transport', () => {
+  it.skipIf(process.platform === 'win32')('serves HTTP requests and WebSocket upgrades on the same unix domain socket as the RPC stream', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-http-'));
+    const socketPath = join(dir, 'daemon.sock');
+    const app = Fastify();
+    app.post('/api/v1/echo', async (req) => ({ body: req.body, host: req.headers.host }));
+    const wssV1 = new WebSocketServer({ noServer: true });
+    wssV1.on('connection', (ws) => {
+      ws.on('message', (data, isBinary) => {
+        ws.send(isBinary ? data : `ack:${Buffer.isBuffer(data) ? data.toString('utf8') : ''}`, { binary: isBinary });
+      });
+    });
+    app.server.on('upgrade', (req, socket, head) => {
+      wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
+    });
+    await app.ready();
+
+    const rpcServer = await startUnixRpcServer(socketPath, { app, wssV1 });
+    const rpc = rpcClient(socketPath);
+    let ws: NodeWebSocket | undefined;
+    try {
+      await expect(socketRequest(socketPath, 'POST', '/api/v1/echo', { ping: 1 })).resolves.toEqual({
+        status: 200,
+        body: { body: { ping: 1 }, host: 'localhost' },
+      });
+
+      ws = await openSocketWebSocket(socketPath, '/api/v1/ws');
+      const text = new Promise<string>((resolve) => ws!.once('message', (data: Buffer) => resolve(data.toString('utf8'))));
+      ws.send('hi');
+      await expect(text).resolves.toBe('ack:hi');
+      const binary = new Promise<number>((resolve) => ws!.once('message', (data: Buffer) => resolve(data.length)));
+      ws.send(Buffer.alloc(70_000, 1), { binary: true });
+      await expect(binary).resolves.toBe(70_000);
+
+      rpc.send({
+        type: 'http.req',
+        id: 'rpc-1',
+        method: 'POST',
+        path: '/api/v1/echo',
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify({ ping: 2 })).toString('base64'),
+      });
+      const rpcRes = await rpc.next();
+      expect(rpcRes['status']).toBe(200);
+      expect(JSON.parse(Buffer.from(rpcRes['body'] as string, 'base64').toString('utf8'))).toEqual({
+        body: { ping: 2 },
+        host: '127.0.0.1',
+      });
+    } finally {
+      ws?.terminate();
+      rpc.socket.destroy();
+      await rpcServer.close();
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform === 'win32')('routes HTTP requests and WebSocket frames over a unix domain socket', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-sock-'));
     const socketPath = join(dir, 'daemon.sock');
@@ -1756,4 +1860,45 @@ describe('stdio rpc transport', () => {
       vi.useRealTimers();
     }
   });
+});
+
+describe('managed daemon socket', () => {
+  it.skipIf(process.platform === 'win32')('serves HTTP without a bearer token and stays busy while a front end holds a WebSocket lease', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-daemon-'));
+    const socketPath = join(homeDir, 'daemon.sock');
+    const daemon = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      homeDir,
+      logLevel: 'silent',
+      socketPath,
+      managedBy: 'ensure-daemon',
+      env: { KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START: '0', KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: '0' },
+    });
+    const lease = rpcClient(socketPath);
+    let ws: NodeWebSocket | undefined;
+    try {
+      await expect(socketRequest(socketPath, 'GET', '/api/v1/meta')).resolves.toMatchObject({
+        status: 200,
+        body: { data: { server_version: expect.any(String) } },
+      });
+      ws = await openSocketWebSocket(socketPath, '/api/v1/ws');
+      await vi.waitFor(() => expect(daemon.connectionRegistry.size()).toBe(1));
+      ws.close();
+      await vi.waitFor(() => expect(daemon.connectionRegistry.size()).toBe(0));
+
+      lease.send({ type: 'ws.open', id: 'lease', path: '/api/v1/ws' });
+      await vi.waitFor(() => expect(daemon.connectionRegistry.size()).toBe(1));
+      await expect(socketRequest(socketPath, 'POST', '/api/v1/shutdown?if_idle=true')).resolves.toMatchObject({
+        status: 200,
+        body: { data: { ok: false } },
+      });
+      lease.socket.destroy();
+      await vi.waitFor(() => expect(daemon.connectionRegistry.size()).toBe(0));
+    } finally {
+      ws?.terminate();
+      lease.socket.destroy();
+      await daemon.close();
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

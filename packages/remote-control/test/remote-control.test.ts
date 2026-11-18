@@ -27,6 +27,7 @@ import {
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
   startRemoteControl,
+  unixSocketOrigin,
   type HttpTunnelLimits,
   type RemoteControlHandle,
 } from '../src/remote-control';
@@ -702,6 +703,85 @@ describe('Remote Control tunnel', () => {
       }),
     ).rejects.toThrow(/responseChunkBytes/);
     expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+
+  it('requires a local server token for TCP origins before acquiring the instance lock', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    for (const localServerToken of [undefined, '', () => '']) {
+      await expect(
+        startRemoteControl({
+          homeDir,
+          localOrigin: 'http://127.0.0.1:1',
+          localServerToken,
+          clientVersion: CLIENT_VERSION,
+          urlSource: 'kimi_code_cli',
+          relayOrigin: 'http://127.0.0.1:1/coding-relay',
+          stderr: { write: () => true },
+        }),
+      ).rejects.toThrow('Remote Control requires local server authentication.');
+    }
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+
+  it('forwards HTTP and WebSocket streams to a Unix socket server without local credentials', async () => {
+    const scenario = await startTunnelScenario({ localSocket: true });
+
+    expect(
+      (scenario.registrations[0] as { payload?: Record<string, unknown> }).payload?.['local_base_url'],
+    ).toBe('http://localhost');
+    const lock = JSON.parse(await readFile(remoteControlLockPath(scenario.homeDir), 'utf8')) as {
+      local_origin?: string;
+    };
+    expect(lock.local_origin).toBe(scenario.localOrigin);
+    expect(scenario.localOrigin).toMatch(/^unix:\/.+\.sock$/);
+
+    const responsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-unix', probeRawRequest(), true));
+    const response = frameBody(await responsePromise).toString();
+    expect(response).toContain('HTTP/1.1 200 OK');
+    expect(response).toContain(`/coding-relay/devices/${scenario.handle.deviceId}/boot.js`);
+    expect(scenario.state.localHttpRequest?.headers.host).toBe('localhost');
+    expect(scenario.state.localHttpRequest?.headers.authorization).toBeUndefined();
+    expect(scenario.state.localHttpRequest?.headers.cookie).toBeUndefined();
+    expect(scenario.state.localHttpRequest?.headers['x-keep']).toBe('yes');
+
+    const uploadBody = Buffer.alloc(96 * 1024, 0x75);
+    const uploadResponsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(
+      tunnelRequestFrame(
+        'request-unix-upload',
+        Buffer.concat([
+          Buffer.from(
+            `POST /upload-unix HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${uploadBody.length}\r\n\r\n`,
+          ),
+          uploadBody,
+        ]),
+        true,
+      ),
+    );
+    expect(frameBody(await uploadResponsePromise).toString()).toContain('HTTP/1.1 200 OK');
+    expect(scenario.uploadBodyBytes.get('/upload-unix')).toBe(uploadBody.length);
+
+    const wsPath = '/api/v1/ws?since=2026-01-01T00:00:00Z';
+    scenario.managementConnections[0]!.send(
+      JSON.stringify({
+        type: 'open_ws',
+        payload: { stream_id: 'stream-unix', path: wsPath, headers: { 'X-Keep': 'yes' } },
+      }),
+    );
+    await waitFor(() => scenario.streamConnections.length === 1 && scenario.state.localWs !== undefined);
+    expect(scenario.state.localWsRequest?.url).toBe(wsPath);
+    expect(scenario.state.localWsRequest?.headers.host).toBe('localhost');
+    expect(scenario.state.localWsRequest?.headers['sec-websocket-protocol']).toBeUndefined();
+    expect(scenario.state.localWsRequest?.headers.authorization).toBeUndefined();
+    expect(scenario.state.localWsRequest?.headers['x-keep']).toBe('yes');
+    await waitFor(() => scenario.streamMessages.includes('server-hello-frame'));
+    const localMessage = nextTextMessage(scenario.state.localWs!);
+    scenario.streamConnections[0]!.send('from-relay');
+    await expect(localMessage).resolves.toBe('from-relay');
+    const relayMessage = nextTextMessage(scenario.streamConnections[0]!);
+    scenario.state.localWs!.send('from-local');
+    await expect(relayMessage).resolves.toBe('from-local');
   });
 
   it('aborts in-flight requests without breaking the tunnel', async () => {
@@ -1995,6 +2075,8 @@ interface TunnelScenarioState {
 
 interface TunnelScenario {
   handle: RemoteControlHandle;
+  homeDir: string;
+  localOrigin: string;
   registrations: unknown[];
   httpCapabilities: Array<string | null>;
   managementConnections: WebSocket[];
@@ -2022,6 +2104,7 @@ async function startTunnelScenario(
   options: {
     limits?: Partial<HttpTunnelLimits>;
     localServerToken?: string | (() => string);
+    localSocket?: boolean;
     bigBytes?: number;
     alignedResponseBytes?: number;
     earlyHttpProbe?: string;
@@ -2134,7 +2217,16 @@ async function startTunnelScenario(
       localWsServer.emit('connection', ws, request),
     );
   });
-  const localPort = await listen(localServer);
+  let localOrigin: string;
+  if (options.localSocket === true) {
+    const socketDir = mkdtempSync(join(tmpdir(), 'kimi-rc-sock-'));
+    cleanups.push(() => rmSync(socketDir, { recursive: true, force: true }));
+    const socketPath = join(socketDir, 'daemon.sock');
+    await new Promise<void>((resolve) => localServer.listen(socketPath, resolve));
+    localOrigin = unixSocketOrigin(socketPath);
+  } else {
+    localOrigin = `http://127.0.0.1:${await listen(localServer)}`;
+  }
   cleanups.push(() => closeServer(localServer));
 
   const managementServer = new WebSocketServer({ noServer: true });
@@ -2199,8 +2291,11 @@ async function startTunnelScenario(
   let logs = '';
   handle = await startRemoteControl({
     homeDir,
-    localOrigin: `http://127.0.0.1:${localPort}`,
-    localServerToken: options.localServerToken ?? 'local-server-token',
+    localOrigin,
+    localServerToken:
+      options.localSocket === true
+        ? options.localServerToken
+        : (options.localServerToken ?? 'local-server-token'),
     clientVersion: CLIENT_VERSION,
     urlSource: 'kimi_code_cli',
     relayOrigin: `http://127.0.0.1:${relayPort}/coding-relay`,
@@ -2210,6 +2305,8 @@ async function startTunnelScenario(
 
   return {
     handle,
+    homeDir,
+    localOrigin,
     get logs() {
       return logs;
     },

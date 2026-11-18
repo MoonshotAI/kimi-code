@@ -51,7 +51,7 @@
     "apps/kimi-code/test/cli/update/native-swap.test.ts": 1,
     "apps/kimi-code/test/cli/update/preflight.test.ts": 1,
     "apps/kimi-code/test/cli/v2-run-print.test.ts": 10,
-    "apps/kimi-code/test/cli/web/web.test.ts": 2,
+    "apps/kimi-code/test/cli/web/web.test.ts": 1,
     "apps/kimi-code/test/migration/migration-screen.test.ts": 1,
     "apps/kimi-code/test/postinstall/takeover.test.ts": 2,
     "apps/kimi-code/test/tui/commands/reload.test.ts": 1,
@@ -635,9 +635,7 @@
     "packages/node-sdk/examples/runtime-smoke-helpers.ts": 1
   },
   "typescript/use-unknown-in-catch-callback-variable": {
-    "apps/kimi-code/src/cli/sub/web/run.ts": 1,
     "apps/kimi-code/src/migration/migration-screen.ts": 1,
-    "apps/kimi-code/src/tui/commands/web.ts": 1,
     "apps/kimi-code/src/tui/kimi-tui.ts": 1,
     "apps/vscode/src/bridge-handler.ts": 1,
     "apps/vscode/src/extension.ts": 2,

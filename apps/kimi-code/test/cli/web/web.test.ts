@@ -1,6 +1,8 @@
 import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { PassThrough } from 'node:stream';
 
 import chalk, { Chalk } from 'chalk';
@@ -13,15 +15,19 @@ import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from '@moonshot-ai/kap-serv
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
+  attachDaemon,
+  DaemonBusyError,
   daemonSocketPath,
+  defaultEnsureDaemonDeps,
   ensureDaemon,
   type DaemonConnection,
+  type DaemonLease,
   type EnsureDaemonDeps,
 } from '#/cli/sub/web/ensure-daemon';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type {
   RemoteControlCloseReason,
-  RemoteControlStatus,
+  RemoteControlOptions,
 } from '#/cli/sub/web/remote-control';
 import type { WebCommandDeps } from '#/cli/sub/web/run';
 import type { ParsedServerOptions } from '#/cli/sub/web/shared';
@@ -433,113 +439,6 @@ describe('`kimi web` opens the browser', () => {
     }
   });
 
-  it('rejects Remote Control on a non-loopback host', async () => {
-    const { handleWebCommand } = await import('#/cli/sub/web/run');
-    const { runner } = makeRunner();
-    const { stdout, stderr } = makeIo();
-
-    await expect(
-      handleWebCommand(
-        { remoteControl: true, host: '0.0.0.0', open: false },
-        { startServerForeground: runner, openUrl: vi.fn(), stdout, stderr },
-      ),
-    ).rejects.toThrow('--remote-control requires a loopback host.');
-  });
-
-  it('requests foreground shutdown when the relay takes the device offline', async () => {
-    const { handleWebCommand } = await import('#/cli/sub/web/run');
-    const home = mkdtempSync(join(tmpdir(), 'kimi-web-rc-'));
-    vi.stubEnv('KIMI_CODE_HOME', home);
-    const { stdout, stderr, readStdout } = makeIo();
-    const requestShutdown = vi.fn();
-    const runner: ForegroundRunner = async (_options, hooks) => {
-      await hooks?.onReady?.('http://127.0.0.1:58627', { requestShutdown });
-      return undefined as never;
-    };
-    let emitStatus: ((status: RemoteControlStatus) => void) | undefined;
-    let resolveClosed: ((reason: RemoteControlCloseReason) => void) | undefined;
-    const startRemoteControl: WebCommandDeps['startRemoteControl'] = async (options) => {
-      emitStatus = options.onStatus;
-      return {
-        deviceId: 'device-1',
-        deviceName: 'example-device',
-        url: 'https://example.test/devices/device-1/?rc=1&from=kimi_code_cli',
-        relayOrigin: 'https://example.test',
-        closed: new Promise<RemoteControlCloseReason>((resolve) => {
-          resolveClosed = resolve;
-        }),
-        close: async () => {},
-      };
-    };
-
-    try {
-      await handleWebCommand(
-        { remoteControl: true, open: false },
-        {
-          startServerForeground: runner,
-          startRemoteControl,
-          resolveToken: () => 'tok',
-          openUrl: vi.fn(),
-          stdout,
-          stderr,
-        },
-      );
-
-      emitStatus?.('relay_terminated');
-      resolveClosed?.('user_requested');
-      await vi.waitFor(() => {
-        expect(requestShutdown).toHaveBeenCalledWith('remote_control_user_requested');
-      });
-      expect(readStdout()).toContain('offline');
-      expect(readStdout()).not.toContain('reconnecting');
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it('does not request shutdown when the tunnel closes locally', async () => {
-    const { handleWebCommand } = await import('#/cli/sub/web/run');
-    const home = mkdtempSync(join(tmpdir(), 'kimi-web-rc-'));
-    vi.stubEnv('KIMI_CODE_HOME', home);
-    const { stdout, stderr } = makeIo();
-    const requestShutdown = vi.fn();
-    const runner: ForegroundRunner = async (_options, hooks) => {
-      await hooks?.onReady?.('http://127.0.0.1:58627', { requestShutdown });
-      return undefined as never;
-    };
-    let resolveClosed: ((reason: RemoteControlCloseReason) => void) | undefined;
-    const startRemoteControl: WebCommandDeps['startRemoteControl'] = async () => ({
-      deviceId: 'device-1',
-      deviceName: 'example-device',
-      url: 'https://example.test/devices/device-1/?rc=1&from=kimi_code_cli',
-      relayOrigin: 'https://example.test',
-      closed: new Promise<RemoteControlCloseReason>((resolve) => {
-        resolveClosed = resolve;
-      }),
-      close: async () => {},
-    });
-
-    try {
-      await handleWebCommand(
-        { remoteControl: true, open: false },
-        {
-          startServerForeground: runner,
-          startRemoteControl,
-          resolveToken: () => 'tok',
-          openUrl: vi.fn(),
-          stdout,
-          stderr,
-        },
-      );
-
-      resolveClosed?.('local_close');
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(requestShutdown).not.toHaveBeenCalled();
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
   it('shows --remote-control in help', () => {
     const remoteControlOption = makeProgram()
       .commands.find((command) => command.name() === 'web')!
@@ -581,13 +480,188 @@ describe('kimi rc', () => {
         .spyOn(process, 'exit')
         .mockImplementation(() => undefined as never);
       try {
-        await program.parseAsync(['node', 'kimi', name, '--host', '0.0.0.0']);
+        await program.parseAsync(['node', 'kimi', name, '--dangerous-bypass-auth']);
+        expect(exitSpy).toHaveBeenCalledWith(1);
       } finally {
         errSpy.mockRestore();
         exitSpy.mockRestore();
       }
-      expect(stderr).toContain('--remote-control requires a loopback host.');
+      expect(stderr).toContain('--remote-control cannot be combined with --dangerous-bypass-auth.');
     }
+  });
+});
+
+describe('Remote Control on the background server', () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'kimi-web-rc-'));
+    vi.stubEnv('KIMI_CODE_HOME', home);
+    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function makeRemoteControl(): {
+    deps: WebCommandDeps;
+    lease: DaemonLease & { close: ReturnType<typeof vi.fn> };
+    startServerForeground: ReturnType<typeof vi.fn>;
+    startRemoteControl: ReturnType<typeof vi.fn>;
+    tunnelClose: ReturnType<typeof vi.fn>;
+    terminate(): void;
+    readStdout(): string;
+  } {
+    const { stdout, stderr, readStdout } = makeIo();
+    let markClosed!: () => void;
+    const lease = {
+      closed: new Promise<void>((resolve) => {
+        markClosed = resolve;
+      }),
+      close: vi.fn(() => markClosed()),
+    };
+    let endTunnel!: (reason: RemoteControlCloseReason) => void;
+    const tunnelClose = vi.fn(async () => endTunnel('local_close'));
+    const startRemoteControl = vi.fn(async (_options: RemoteControlOptions) => ({
+      deviceId: 'device-1',
+      deviceName: 'example-device',
+      url: 'https://example.test/devices/device-1/?rc=1&from=kimi_code_cli',
+      relayOrigin: 'https://example.test',
+      closed: new Promise<RemoteControlCloseReason>((resolve) => {
+        endTunnel = resolve;
+      }),
+      close: tunnelClose,
+    }));
+    let terminate: (() => void) | undefined;
+    const startServerForeground = vi.fn(async () => undefined as never);
+    return {
+      deps: {
+        startServerForeground,
+        attachDaemon: async () => ({
+          socketPath: daemonSocketPath(home),
+          logPath: join(home, 'server', 'ensure-daemon.log'),
+          lease,
+        }),
+        platform: 'linux',
+        startRemoteControl,
+        onTerminate: (listener) => {
+          terminate = listener;
+          return () => {};
+        },
+        wait: async () => {},
+        openUrl: vi.fn(),
+        stdout,
+        stderr,
+      },
+      lease,
+      startServerForeground,
+      startRemoteControl,
+      tunnelClose,
+      terminate: () => terminate?.(),
+      readStdout: () => stripAnsi(readStdout()),
+    };
+  }
+
+  it('runs `kimi rc` through the daemon socket without a foreground server and leaves the daemon on Ctrl+C', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+
+    const running = handleWebCommand({ remoteControl: true, open: true }, rc.deps);
+    await vi.waitFor(() => expect(rc.deps.openUrl).toHaveBeenCalledOnce());
+    expect(rc.startServerForeground).not.toHaveBeenCalled();
+    expect(rc.startRemoteControl).toHaveBeenCalledOnce();
+    const options = rc.startRemoteControl.mock.calls[0]![0] as RemoteControlOptions;
+    expect(options.localOrigin).toBe(`unix:${daemonSocketPath(home)}`);
+    expect(options.localServerToken).toBeUndefined();
+    expect(rc.deps.openUrl).toHaveBeenCalledWith(
+      'https://example.test/devices/device-1/?rc=1&from=kimi_code_cli',
+    );
+    expect(rc.readStdout()).not.toContain('Local UI');
+    expect(rc.readStdout()).not.toContain('Ignoring');
+
+    rc.terminate();
+    await expect(running).resolves.toBeUndefined();
+    expect(rc.tunnelClose).toHaveBeenCalledOnce();
+    expect(rc.lease.close).toHaveBeenCalledOnce();
+    expect(rc.readStdout()).toContain('sessions keep running in the background Kimi server');
+  });
+
+  it('prints one notice for flags that only configure a foreground server', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+
+    const running = handleWebCommand(
+      { remoteControl: true, port: '59000', host: '0.0.0.0', open: false },
+      rc.deps,
+    );
+    await vi.waitFor(() => expect(rc.startRemoteControl).toHaveBeenCalledOnce());
+    rc.terminate();
+    await running;
+
+    const notices = rc.readStdout().match(/^.*Ignoring.*\n/gm);
+    expect(notices).toEqual([
+      '  ! Ignoring --port, --host: Remote Control runs on the background Kimi server.\n',
+    ]);
+    expect(rc.startServerForeground).not.toHaveBeenCalled();
+  });
+
+  it('retries while a busy daemon of another version finishes its work', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+    let attempts = 0;
+    const wait = vi.fn(async () => {});
+    const attachDaemon = rc.deps.attachDaemon!;
+    const running = handleWebCommand(
+      { remoteControl: true, open: false },
+      {
+        ...rc.deps,
+        wait,
+        attachDaemon: async () => {
+          attempts += 1;
+          if (attempts === 1) throw new DaemonBusyError('0.9.0');
+          return attachDaemon();
+        },
+      },
+    );
+    await vi.waitFor(() => expect(rc.startRemoteControl).toHaveBeenCalledOnce());
+    expect(attempts).toBe(2);
+    expect(wait).toHaveBeenCalledOnce();
+    expect(rc.readStdout()).toContain('Kimi server 0.9.0 is still running work on this device');
+
+    rc.terminate();
+    await running;
+  });
+
+  it('keeps the loopback check and flags on Windows, where the background server is unavailable', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+    const attachDaemon = vi.fn(rc.deps.attachDaemon!);
+
+    await expect(
+      handleWebCommand(
+        { remoteControl: true, host: '0.0.0.0', port: '59000' },
+        { ...rc.deps, attachDaemon, platform: 'win32' },
+      ),
+    ).rejects.toThrow('--remote-control requires a loopback host.');
+    expect(rc.readStdout()).not.toContain('Ignoring');
+    expect(attachDaemon).not.toHaveBeenCalled();
+    expect(rc.startRemoteControl).not.toHaveBeenCalled();
+  });
+
+  it('rejects Remote Control combined with --socket or --dangerous-bypass-auth', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+
+    await expect(
+      handleWebCommand({ remoteControl: true, socket: '/tmp/daemon.sock' }, rc.deps),
+    ).rejects.toThrow('--remote-control cannot be combined with --socket.');
+    await expect(
+      handleWebCommand({ remoteControl: true, dangerousBypassAuth: true }, rc.deps),
+    ).rejects.toThrow('--remote-control cannot be combined with --dangerous-bypass-auth.');
+    expect(rc.startRemoteControl).not.toHaveBeenCalled();
+    expect(rc.startServerForeground).not.toHaveBeenCalled();
   });
 });
 
@@ -1145,16 +1219,128 @@ describe('`kimi server ensure-daemon`', () => {
     };
   }
 
+  function lease(): DaemonLease {
+    return { closed: new Promise(() => {}), close: () => {} };
+  }
+
   function makeDeps(overrides: Partial<EnsureDaemonDeps> = {}): EnsureDaemonDeps {
     return {
       homeDir,
       version: '1.0.0',
       connectSocket: async () => connection(),
+      leaseSocket: async () => lease(),
       spawnServer: vi.fn(),
       wait: async () => {},
       ...overrides,
     };
   }
+
+  async function listenRpcSocket(
+    onLine: (frame: Record<string, unknown>, socket: Socket) => void,
+  ): Promise<{ socketPath: string; client(): Socket | undefined }> {
+    const socketPath = join(homeDir, 'daemon.sock');
+    let client: Socket | undefined;
+    const server = createServer((socket) => {
+      client = socket;
+      createInterface({ input: socket }).on('line', (line) => {
+        onLine(JSON.parse(line) as Record<string, unknown>, socket);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    cleanupServers.push(server);
+    return { socketPath, client: () => client };
+  }
+
+  const cleanupServers: Array<ReturnType<typeof createServer>> = [];
+
+  afterEach(async () => {
+    for (const server of cleanupServers.splice(0)) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('attaches Remote Control under the lock and returns the daemon socket instead of a stdio stream', async () => {
+    const lockPath = join(homeDir, 'server', 'ensure-daemon.lock');
+    const close = vi.fn();
+    const held = lease();
+    let lockedWhileLeasing = false;
+    const leaseSocket = vi.fn(async () => {
+      lockedWhileLeasing = existsSync(lockPath);
+      return held;
+    });
+    const deps = makeDeps({ connectSocket: async () => connection({ close }), leaseSocket });
+
+    await expect(attachDaemon(deps)).resolves.toEqual({
+      socketPath: daemonSocketPath(homeDir),
+      logPath: join(homeDir, 'server', 'ensure-daemon.log'),
+      lease: held,
+    });
+    expect(leaseSocket).toHaveBeenCalledWith(daemonSocketPath(homeDir));
+    expect(lockedWhileLeasing).toBe(true);
+    expect(close).toHaveBeenCalledOnce();
+    expect(existsSync(lockPath)).toBe(false);
+    expect(deps.spawnServer).not.toHaveBeenCalled();
+  });
+
+  it('reports the running version when a busy daemon blocks Remote Control', async () => {
+    const leaseSocket = vi.fn(async () => lease());
+    const failure = attachDaemon(
+      makeDeps({
+        connectSocket: async () => connection({ version: '0.9.0', stopIfIdle: async () => false }),
+        leaseSocket,
+      }),
+    );
+
+    await expect(failure).rejects.toBeInstanceOf(DaemonBusyError);
+    await expect(failure).rejects.toMatchObject({
+      code: 'version_mismatch_busy',
+      runningVersion: '0.9.0',
+    });
+    expect(leaseSocket).not.toHaveBeenCalled();
+  });
+
+  it('fails Remote Control when the daemon stops before the lease attaches', async () => {
+    await expect(attachDaemon(makeDeps({ leaseSocket: async () => undefined }))).rejects.toThrow(
+      'stopped before Remote Control could attach',
+    );
+    expect(existsSync(join(homeDir, 'server', 'ensure-daemon.lock'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('holds the daemon with a KAP WebSocket over its RPC socket and answers heartbeats', async () => {
+    const received: Array<Record<string, unknown>> = [];
+    const rpc = await listenRpcSocket((frame, socket) => {
+      received.push(frame);
+      if (frame['type'] !== 'http.req') return;
+      socket.write(`${JSON.stringify({ type: 'ws.msg', id: 'lease', data: '{"type":"session.changed"}' })}\n`);
+      socket.write(`${JSON.stringify({ type: 'http.res', id: frame['id'], status: 200, headers: {} })}\n`);
+    });
+
+    const held = await defaultEnsureDaemonDeps().leaseSocket(rpc.socketPath);
+    expect(held).toBeDefined();
+    expect(received[0]).toEqual({ type: 'ws.open', id: 'lease', path: '/api/v1/ws' });
+    expect(received[1]).toMatchObject({ type: 'http.req', method: 'GET', path: '/api/v1/healthz' });
+
+    rpc.client()!.write(`${JSON.stringify({ type: 'ws.msg', id: 'lease', data: '{"type":"ping"}' })}\n`);
+    await vi.waitFor(() => {
+      expect(received).toContainEqual({ type: 'ws.msg', id: 'lease', data: '{"type":"pong"}' });
+    });
+    expect(received.filter((frame) => frame['type'] === 'ws.msg')).toHaveLength(1);
+
+    let closed = false;
+    void held!.closed.then(() => {
+      closed = true;
+    });
+    rpc.client()!.write(`${JSON.stringify({ type: 'ws.close', id: 'lease', code: 1001 })}\n`);
+    await vi.waitFor(() => expect(closed).toBe(true));
+  });
+
+  it.skipIf(process.platform === 'win32')('does not hand out a lease when the daemon closes the stream before confirming it', async () => {
+    const rpc = await listenRpcSocket((_frame, socket) => {
+      socket.destroy();
+    });
+
+    await expect(defaultEnsureDaemonDeps().leaseSocket(rpc.socketPath)).resolves.toBeUndefined();
+  });
 
   it('reuses a live daemon socket of the same version without spawning', async () => {
     const conn = connection();
