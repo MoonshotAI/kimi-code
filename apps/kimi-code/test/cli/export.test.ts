@@ -1,10 +1,3 @@
-/**
- * `kimi export`
- *
- * Verifies the CLI layer: argument handling, previous-session confirmation,
- * error reporting, and delegation to the session export implementation.
- */
-
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -98,8 +91,6 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
 }));
 
 beforeEach(() => {
-  // Pin region to cn: the telemetry endpoint assertion must not follow the
-  // dev machine's own login/marker state.
   vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
   resetKimiRegionCache();
   tmp = mkdtempSync(join(tmpdir(), 'kimi-export-'));
@@ -431,7 +422,6 @@ describe('kimi export', () => {
       getAccessToken: expect.any(Function),
       onUnexpectedError: expect.any(Function),
     });
-    // The endpoint resolver defers to the active region profile at flush time.
     const telemetryOptions = mocks.initializeTelemetry.mock.calls[0]![0] as {
       endpoint: () => string;
     };

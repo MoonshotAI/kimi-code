@@ -41,10 +41,6 @@ export function AppShell({ children }: AppShellProps) {
       </header>
       <div className="flex min-h-0 flex-1">
         <SessionRail />
-        {/* min-w-0 lets the main column shrink below its content's intrinsic
-            width; without it a flex child defaults to min-width:auto and wide
-            tab content (e.g. the Timeline's flex-wrap rows) blows the layout
-            out horizontally instead of wrapping. */}
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
       </div>
       <ZipDropOverlay />

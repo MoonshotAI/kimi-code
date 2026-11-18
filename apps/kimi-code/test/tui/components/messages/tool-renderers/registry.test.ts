@@ -141,7 +141,6 @@ describe('tool-result registry', () => {
         40,
       ),
     );
-    // The samples are cut to fit; the count in the fixed tail always survives.
     expect(out.endsWith(', +2 more')).toBe(true);
     expect(out).toContain('…');
   });
@@ -159,6 +158,18 @@ describe('tool-result registry', () => {
     );
     expect(out).toContain('src/a.ts, src/b.ts, src/c.ts, +2 more');
     expect(out).toContain('src/d.ts');
+  });
+
+  it('keeps the expanded Grep glance indented when it wraps', () => {
+    const renderer = pickResultRenderer('Grep');
+    const [glance] = renderer(
+      call('Grep', { pattern: 'foo' }),
+      result('src/alpha.ts\nsrc/beta.ts\nsrc/gamma.ts\nsrc/delta.ts'),
+      expandedCtx,
+    );
+    const lines = glance!.render(24).map((line) => strip(line).trimEnd());
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) expect(line).toMatch(/^ {2}\S/);
   });
 
   it('Grep glance strips trailing :line:text in content mode', () => {

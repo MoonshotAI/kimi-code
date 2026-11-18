@@ -75,6 +75,10 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元：可以添
 }
 ```
 
+Marketplace 条目还可以通过 `clients`（`desktop`、`cli` 或两者）和 `platforms`（`macos`、`windows`、`linux` 或 `cloud`）限制可用范围。`clients` 选择产品宿主，`platforms` 选择 server 操作系统，两个条件必须同时满足。未声明 `clients` 时，条目对两种宿主均可用。Web 和 Remote Control 跟随所连接 server 的宿主，不使用浏览器所在设备的操作系统判断。
+
+安装记录仍共享在 `$KIMI_CODE_HOME` 下。某个宿主不可见的条目也不会出现在该宿主的已安装列表和运行能力中。最近一次成功获取的可用性配置缓存在 `$KIMI_CODE_HOME/plugins/availability.json`；目录配置变化后，成功刷新即可隐藏或恢复已有安装，无需重新安装，也不会删除插件文件。
+
 ## 官方插件
 
 官方插件是 Kimi 官方维护的 plugin 和内置产品能力，目前有以下三种：

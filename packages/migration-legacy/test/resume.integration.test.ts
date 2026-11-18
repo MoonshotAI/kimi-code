@@ -5,8 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
-import { reduceContextTranscript } from '@moonshot-ai/agent-core-v2';
-import { groupMessagesIntoSnapshot } from '@moonshot-ai/transcript';
+import { reduceContextTranscript, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import { migrateOneSession, type MigrateOneResult } from '../src/sessions/migrate-one.js';
 import { importedSessionDir, writeImportedSession } from '../src/imported-session.js';
@@ -14,6 +13,10 @@ import { computeWorkdirBucket } from '../src/sessions/workdir-bucket.js';
 import { listSessionsV2, readSessionSummaryV2 } from './v2-session-scan.js';
 
 const FIXTURES = fileURLToPath(new URL('./fixtures', import.meta.url));
+
+function openedTurns(messages: readonly ContextMessage[]): number {
+  return messages.filter((message) => message.role === 'user' && message.origin?.kind !== 'injection').length;
+}
 const WORK_DIR = '/Users/example/proj';
 
 let targetHome: string;
@@ -101,7 +104,7 @@ describe('migrated session is discoverable by agent-core-v2', () => {
     expect(wire).toContain('汇报结论');
   });
 
-  it('turn structure survives a v2 context-transcript round trip and aligns with transcript grouping', async () => {
+  it('turn structure survives a v2 context-transcript round trip and opens one turn per prompt', async () => {
     const result = await migrateFixture('turn-structure', 'with-tool-calls');
 
     const wire = await readFile(join(result.targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
@@ -110,9 +113,6 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       .filter((l) => l.length > 0)
       .map((l) => JSON.parse(l) as { type: string; [key: string]: unknown });
 
-    // Content round trip: the v2 context transcript preserves the imported
-    // messages. Compare their native role/content shape while dropping UI-only
-    // displays and optional usage/timing metadata.
     const transcript = reduceContextTranscript(records);
     const imported = records
       .filter((r) => r.type === 'context.append_message')
@@ -131,24 +131,14 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       });
     expect(stripDisplays([...transcript.entries])).toEqual(stripDisplays(imported));
 
-    // The invariant that keeps a live turn from hijacking an imported one:
-    // every turn.prompt advances the restored turn clock by one, so the number
-    // of synthesized turn.prompt records must equal the number of turns the
-    // transcript grouping derives from the same messages. The first live turn
-    // after resume then gets an id past every imported turn.
     const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
-    const groupedTurns = groupMessagesIntoSnapshot([...transcript.entries]).items.filter(
-      (item) => item.kind === 'turn',
-    ).length;
-    expect(promptCount).toBe(groupedTurns);
+    expect(promptCount).toBe(openedTurns(transcript.entries));
     expect(promptCount).toBeGreaterThan(0);
 
     const endedTurnIds = records
       .filter((r) => r.type === 'turn.ended')
       .map((r) => r['turnId'])
       .filter((id): id is number => typeof id === 'number');
-    // Turns without assistant content (e.g. an unanswered user message) get no
-    // turn.ended; the rest carry sequential ids within the imported range.
     expect(endedTurnIds).toEqual([...endedTurnIds].toSorted((a, b) => a - b));
     expect(new Set(endedTurnIds).size).toBe(endedTurnIds.length);
     expect(Math.max(...endedTurnIds)).toBeLessThan(promptCount);
@@ -201,10 +191,7 @@ describe('imported external session is discoverable by agent-core-v2', () => {
     const transcript = reduceContextTranscript(records);
     expect([...transcript.entries]).toEqual(messages.map((message) => ({ ...message, toolCalls: [] })));
     const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
-    const groupedTurns = groupMessagesIntoSnapshot([...transcript.entries]).items.filter(
-      (item) => item.kind === 'turn',
-    ).length;
     expect(promptCount).toBe(3);
-    expect(groupedTurns).toBe(promptCount);
+    expect(openedTurns(transcript.entries)).toBe(promptCount);
   });
 });

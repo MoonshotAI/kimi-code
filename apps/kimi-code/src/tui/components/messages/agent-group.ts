@@ -1,23 +1,7 @@
-/**
- * AgentGroupComponent renders 2+ Agent tool calls from the same step as one group.
- *
- * Design:
- * - State container: each child Agent keeps its real state in its
- *   `ToolCallComponent` (subagent meta, phase, sub-tool calls, tokens, text).
- *   AgentGroup only stores references and does not copy state. Event handlers
- *   still route through `state.pendingToolComponents.get(parent_tool_call_id)`.
- * - Subscription: `attach` registers a snapshot listener on each child so the
- *   group can refresh when child state changes.
- * - Throttling: normal changes are coalesced into one render every 200ms.
- *   Phase transitions (spawning -> running -> done/failed) flush immediately.
- * - Mounting: `KimiTUI` attaches the group to the transcript at the
- *   right time; the group handles `invalidate` plus `ui.requestRender`.
- * - Ungrouping is not implemented. Once formed, a group stays grouped.
- */
-
 import type { TUI } from '@moonshot-ai/pi-tui';
 import { Container, Spacer, Text } from '@moonshot-ai/pi-tui';
 
+import { DETACH_HINT_TEXT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { formatTokenCount } from '#/utils/usage/usage-format';
@@ -25,8 +9,6 @@ import { formatTokenCount } from '#/utils/usage/usage-format';
 import type { ToolCallComponent, ToolCallSubagentSnapshot } from './tool-call';
 
 const THROTTLE_MS = 200;
-
-const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 
 interface AgentEntry {
   readonly toolCallId: string;
@@ -50,6 +32,7 @@ export class AgentGroupComponent extends Container {
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushPhases = new Map<string, ToolCallSubagentSnapshot['phase']>();
   private _invalidating = false;
+  private projectionVersion = 0;
 
   constructor(private readonly ui: TUI | undefined) {
     super();
@@ -64,35 +47,27 @@ export class AgentGroupComponent extends Container {
     return this.entries.length;
   }
 
-  /**
-   * Exposes the borrowed tool call components so external code (e.g.
-   * routing background task terminal events back to the corresponding
-   * Agent card) can reach them — the group renders the tcs' snapshots
-   * but never mounts the tcs as Container children, so a plain tree
-   * walk of `transcriptContainer` cannot discover them.
-   */
   getToolComponents(): readonly ToolCallComponent[] {
     return this.entries.map((entry) => entry.tc);
   }
 
-  /**
-   * Borrows a standalone `ToolCallComponent` into the group as a hidden state
-   * container. Snapshot changes trigger throttled refreshes. Re-attaching the
-   * same toolCallId is a no-op.
-   */
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion + this.entries.reduce(
+      (version, entry) => version + entry.tc.transcriptProjectionVersion,
+      0,
+    );
+  }
+
   attach(toolCallId: string, tc: ToolCallComponent): void {
     if (this.entries.some((e) => e.toolCallId === toolCallId)) return;
     this.entries.push({ toolCallId, tc });
+    this.projectionVersion += 1;
     tc.setSnapshotListener(() => {
       this.scheduleRender();
     });
     this.flushRender();
   }
 
-  /**
-   * Schedules a repaint. Real phase transitions force an immediate refresh;
-   * other changes such as latestActivity, tokens, or toolCount are throttled.
-   */
   private scheduleRender(): void {
     if (this.detectPhaseTransition()) {
       this.flushRender();
@@ -105,10 +80,6 @@ export class AgentGroupComponent extends Container {
     }, THROTTLE_MS);
   }
 
-  /**
-   * Compares each child's current phase with the phase captured at the last
-   * flush. Any change is treated as a phase transition.
-   */
   private detectPhaseTransition(): boolean {
     let changed = false;
     for (const e of this.entries) {
@@ -180,7 +151,6 @@ export class AgentGroupComponent extends Container {
   private appendLines(snap: ToolCallSubagentSnapshot, isLast: boolean): void {
     const dim = (text: string) => currentTheme.dim(text);
 
-    // First-level branch line.
     const branch1 = isLast ? '└─' : '├─';
     const agentType = snap.agentName ?? 'agent';
     const desc = snap.toolCallDescription || '(no description)';
@@ -191,29 +161,20 @@ export class AgentGroupComponent extends Container {
     const line1 = `  ${branch1} ${namePart} ${descPart}${stats}${tail}`;
     this.bodyContainer.addChild(new Text(line1, 0, 0));
 
-    // Second-level line: latest activity, or Error for failures.
     const branch2 = isLast ? '   ' : '│  ';
     if (snap.phase === 'failed') {
-      // Show one error line; error messages can be long.
       const errLine = (snap.errorText ?? 'Failed').split('\n').at(0) ?? 'Failed';
       const errStr = currentTheme.fg('error', `Error: ${errLine}`);
       this.bodyContainer.addChild(new Text(`  ${branch2}    ${errStr}`, 0, 0));
       return;
     }
     if (snap.phase === 'done' || snap.phase === 'backgrounded') {
-      // Terminal states omit the second line.
       return;
     }
-    // Running or not-yet-started agents show latest activity, with a fallback.
     const activity = snap.latestActivity ?? fallbackActivityForPhase(snap.phase);
     this.bodyContainer.addChild(new Text(`  ${branch2}    ${dim(activity)}`, 0, 0));
   }
 
-  /**
-   * Show the Ctrl+B hint while at least one agent in the group is still
-   * running in the foreground (i.e. can be detached). Hide it once every
-   * agent is done, failed, or already backgrounded.
-   */
   private shouldShowDetachHint(snapshots: readonly ToolCallSubagentSnapshot[]): boolean {
     return snapshots.some(
       (s) =>
@@ -224,7 +185,6 @@ export class AgentGroupComponent extends Container {
     );
   }
 
-  /** Releases throttle timers so destroyed components cannot refresh later. */
   override invalidate(): void {
     if (this._invalidating) {
       super.invalidate();

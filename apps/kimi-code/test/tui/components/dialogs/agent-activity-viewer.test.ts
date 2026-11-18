@@ -10,10 +10,8 @@ function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
 }
 
-/** Kitty CSI-u form of Ctrl+O (codepoint 111, modifier 1+4). */
 const CTRL_O = '\u001B[111;5u';
 
-/** Minimal Terminal stub — only `rows` is read by the component. */
 function fakeTerminal(rows: number, columns = 120): Terminal {
   return {
     start: () => {},
@@ -145,8 +143,6 @@ describe('AgentActivityViewer', () => {
     expect(text).toContain('── step 0 ──');
     expect(text).toContain('Looking for the event bus definition.');
     expect(text).toContain('Used Grep (IEventBus) · 2 matches across 2 files');
-    // The grep glance (path samples in `path:line` form) is the collapsed
-    // card's outcome row.
     expect(text).toContain('src/a.ts:1, src/b.ts:2');
     viewer.handleInput(CTRL_O);
     expect(renderPlain(viewer)).toContain('src/a.ts:1, src/b.ts:2');
@@ -177,7 +173,6 @@ describe('AgentActivityViewer', () => {
 
     const collapsed = makeViewer({ record: makeRecord() });
     const collapsedText = renderPlain(collapsed);
-    // Collapsed: the last output line is the outcome row, nothing else.
     expect(collapsedText).toContain('Bash');
     expect(collapsedText).toContain('line 10');
     expect(collapsedText).not.toContain('line 9');
@@ -196,11 +191,8 @@ describe('AgentActivityViewer', () => {
     const rec = record({ steps, totalSteps: 8 });
     const viewer = makeViewer({ record: rec }, 12);
 
-    // Initial render follows the tail: the last step is visible.
     expect(renderPlain(viewer)).toContain('step 7 text');
 
-    // User scrolls to the top, then new activity arrives (version bump):
-    // the view must stay where the user parked it.
     viewer.handleInput('g');
     expect(renderPlain(viewer)).toContain('step 0 text');
     rec.steps.push({ step: 8, textTail: 'step 8 text', toolCalls: [] });
@@ -278,10 +270,9 @@ describe('formatSubagentActivityPreview', () => {
     expect(text).toContain('Looking around.');
     expect(text).toContain('✓ Used Grep (IEventBus) · 2 matches across 2 files');
     expect(text).toContain('● Using Read (/repo/src/a.ts)');
-    expect(text).toContain('│ reading…'); // live tail for the in-flight call
+    expect(text).toContain('│ reading…');
     expect(text).toContain('Result:');
     expect(text).toContain('Found 3 call sites.');
-    // The preview frame styles whole lines itself — the preview stays ANSI-free.
     expect(text).not.toMatch(/\[[0-9;]*m/);
   });
 

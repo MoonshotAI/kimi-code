@@ -14,13 +14,18 @@ export const capabilityInstallProgressSchema = z.object({
   percent: z.number().min(0).max(100).optional(),
   error: z.string().optional(),
   note: z.string().optional(),
+  confirmation_required: z.literal('stop-processes').optional(),
+});
+
+export const capabilityInstallOptionsSchema = z.object({
+  stop_running_processes: z.boolean().optional(),
 });
 export type CapabilityInstallProgressWire = z.infer<typeof capabilityInstallProgressSchema>;
 
 export const capabilityStatusSchema = z.object({
   id: z.string(),
-  pluginId: z.string().optional(),
-  displayName: z.string(),
+  plugin_id: z.string().optional(),
+  display_name: z.string(),
   description: z.string(),
   supported: z.boolean(),
   state: z.enum(['not_installed', 'partial', 'ready', 'unsupported']),

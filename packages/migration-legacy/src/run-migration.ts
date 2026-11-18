@@ -28,7 +28,6 @@ export interface RunMigrationInput {
   readonly scope: MigrationScope;
   readonly source: string;
   readonly target: string;
-  /** Legacy plans dir; defaults to `~/.kimi/plans` per kimi-cli's hardcode. */
   readonly plansSourceDir?: string;
   readonly migratorVersion?: string;
   readonly onProgress?: (msg: string) => void;
@@ -126,9 +125,6 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 
   await writeReport(input.target, report);
 
-  // Append this run's outcome (per-session diagnostics on failure, a marker
-  // on success) to `migration-errors.log` — append-only cross-run record so a
-  // user can share one log covering every retry attempt.
   await writeMigrationErrorsLog(input.target, {
     startedAt,
     failures: sessions.sessionsFailed,
@@ -142,11 +138,6 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
     sessions,
   };
 
-  // Do not suppress a later retry while anything in the chosen scope remains
-  // unresolved: unmigrated/uninspectable sessions, target conflicts, or a
-  // legacy config/MCP file that exists but could not be parsed. Successful
-  // marker persistence remains best-effort: the data and report are already
-  // complete, so a marker write failure must not reject.
   const scopeComplete =
     sessions.sessionsFailed.length === 0 &&
     sessions.sessionsConflicts.length === 0 &&
@@ -172,9 +163,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
           targetPath: input.target,
         });
       }
-    } catch {
-      // best-effort — see comment above
-    }
+    } catch {}
   }
 
   return report;

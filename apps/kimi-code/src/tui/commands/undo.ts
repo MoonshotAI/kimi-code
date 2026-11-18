@@ -27,10 +27,6 @@ import { getTranscriptComponentEntry } from '../utils/transcript-component-metad
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SlashCommandHost } from './dispatch';
 
-// ---------------------------------------------------------------------------
-// Undo command
-// ---------------------------------------------------------------------------
-
 interface UndoAvailability {
   readonly maxCount: number;
   readonly stoppedAtCompaction: boolean;
@@ -91,9 +87,6 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
     showUndoLimitStatus(host, 'Nothing to undo.');
     return false;
   }
-  // When the anchor is a bundled prompt, its skill activation cards sit
-  // before it (contiguous, marked at submission/replay time) and are removed
-  // together with it.
 
   try {
     await session.undoHistory(count);
@@ -119,12 +112,6 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
   if (lastUserComponentIndex !== undefined) {
-    // A hook result may interleave between the bundle's cards and its prompt
-    // and survives undo in the engine, so it is skipped (kept) while the
-    // cards around it are removed. Only the contiguous marked run belongs to
-    // this submission: a standalone `/skill` card is unmarked and never
-    // swept. Structural removal only: the container's ref-checked render
-    // cache detects the child-list change; no tree-wide invalidate needed.
     const groupChildIndices = new Set<number>();
     for (let i = lastUserComponentIndex - 1; i >= 0; i--) {
       const entry = getTranscriptComponentEntry(children[i]!);
@@ -135,7 +122,7 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
       if (entry?.hookResult === true) continue;
       break;
     }
-    removeUndoContextComponents(children, lastUserComponentIndex, groupChildIndices);
+    removeUndoContextComponents(host, children, lastUserComponentIndex, groupChildIndices);
   }
 
   const groupEntryIndices = new Set<number>();
@@ -188,7 +175,7 @@ async function showUndoSelector(host: SlashCommandHost): Promise<void> {
       onSelect: (choice) => {
         void undoByCount(host, choice.count).then((undone) => {
           if (undone) {
-            host.restoreInputText(choice.input);
+            host.restoreInputText(choice.input, choice.inlineSkillActivations);
             return;
           }
           host.restoreEditor();
@@ -296,6 +283,7 @@ function createUndoChoices(
     id: entry.id,
     count: anchors.length - index,
     input: formatUndoChoiceInput(entry),
+    inlineSkillActivations: entry.inlineSkillActivations,
     label: formatUndoChoiceLabel(entry),
   }));
 }
@@ -488,7 +476,8 @@ function findUndoAnchorComponentIndex(
 }
 
 function removeUndoContextComponents(
-  children: Component[],
+  host: SlashCommandHost,
+  children: readonly Component[],
   startIndex: number,
   additionalIndices: ReadonlySet<number>,
 ): void {
@@ -499,7 +488,7 @@ function removeUndoContextComponents(
       (i >= startIndex || additionalIndices.has(i)) &&
       isUndoContextComponent(child)
     ) {
-      children.splice(i, 1);
+      host.state.transcriptContainer.removeChild(child);
     }
   }
 }

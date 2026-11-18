@@ -44,10 +44,11 @@ export async function projectRoots(
   fs: SkillRootsFs = nodeFs,
 ): Promise<readonly SkillRoot[]> {
   const projectRoot = await findProjectRoot(fs, workDir);
+  const workspaceDir = await realpathOrSelf(fs, projectRoot);
   const roots: SkillRoot[] = [];
   const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
-  await pushBrandGroup(fs, roots, PROJECT_BRAND_DIRS, projectRoot, 'project', mergeAllAvailableSkills);
-  await pushFirstExisting(fs, roots, PROJECT_GENERIC_DIRS, projectRoot, 'project');
+  await pushBrandGroup(fs, roots, PROJECT_BRAND_DIRS, projectRoot, 'project', mergeAllAvailableSkills, workspaceDir);
+  await pushFirstExisting(fs, roots, PROJECT_GENERIC_DIRS, projectRoot, 'project', workspaceDir);
   return roots;
 }
 
@@ -90,12 +91,21 @@ export async function configuredRoots(
   source: SkillSource,
   fs: SkillRootsFs = nodeFs,
 ): Promise<readonly SkillRoot[]> {
-  const projectRoot = await findProjectRoot(fs, workDir);
   const roots: SkillRoot[] = [];
-  for (const dir of dirs) {
-    await pushExistingRoot(fs, roots, resolveConfiguredDir(dir, projectRoot, osHomeDir), source);
+  for (const dir of await configuredRootCandidates(dirs, workDir, osHomeDir, fs)) {
+    await pushExistingRoot(fs, roots, dir, source);
   }
   return roots;
+}
+
+export async function configuredRootCandidates(
+  dirs: readonly string[],
+  workDir: string,
+  osHomeDir: string,
+  fs: SkillRootsFs = nodeFs,
+): Promise<readonly string[]> {
+  const projectRoot = await findProjectRoot(fs, workDir);
+  return dirs.map((dir) => resolveConfiguredDir(dir, projectRoot, osHomeDir));
 }
 
 async function findProjectRoot(fs: SkillRootsFs, workDir: string): Promise<string> {
@@ -111,9 +121,10 @@ async function pushFirstExisting(
   dirs: readonly string[],
   base: string,
   source: SkillSource,
+  workspaceDir?: string,
 ): Promise<void> {
   for (const dir of dirs) {
-    if (await pushExistingRoot(fs, out, path.join(base, dir), source)) return;
+    if (await pushExistingRoot(fs, out, path.join(base, dir), source, workspaceDir)) return;
   }
 }
 
@@ -124,13 +135,14 @@ async function pushBrandGroup(
   base: string,
   source: SkillSource,
   mergeAllAvailableSkills: boolean,
+  workspaceDir?: string,
 ): Promise<void> {
   if (!mergeAllAvailableSkills) {
-    await pushFirstExisting(fs, out, dirs, base, source);
+    await pushFirstExisting(fs, out, dirs, base, source, workspaceDir);
     return;
   }
   for (const dir of dirs) {
-    await pushExistingRoot(fs, out, path.join(base, dir), source);
+    await pushExistingRoot(fs, out, path.join(base, dir), source, workspaceDir);
   }
 }
 
@@ -139,10 +151,11 @@ async function pushExistingRoot(
   out: SkillRoot[],
   dir: string,
   source: SkillSource,
+  workspaceDir?: string,
 ): Promise<boolean> {
   if (!(await isDir(fs, dir))) return false;
   const resolved = await realpath(fs, dir);
-  if (!out.some((root) => root.path === resolved)) out.push({ path: resolved, source });
+  if (!out.some((root) => root.path === resolved)) out.push({ path: resolved, source, workspaceDir });
   return true;
 }
 

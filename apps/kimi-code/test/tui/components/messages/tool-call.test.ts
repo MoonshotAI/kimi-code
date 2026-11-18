@@ -4,8 +4,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import { TruncatedHeaderLine } from '#/tui/components/messages/truncated-header-line';
 import { NOTIFY_USER_MARK, STATUS_BULLET } from '#/tui/constant/symbols';
 import { darkColors } from '#/tui/theme/colors';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { captureProcessWrite } from '../../../helpers/process';
 
@@ -18,8 +20,9 @@ function strip(text: string): string {
     .replaceAll(new RegExp(`${ESC}\\]8;;[^${BEL}]*${BEL}`, 'g'), '');
 }
 
-function stubTui(rows: number): TUI {
+function stubTui(rows: number, mode: TUI['mode'] = 'regular'): TUI {
   return {
+    mode,
     terminal: { rows },
     requestRender: () => {},
   } as unknown as TUI;
@@ -80,7 +83,6 @@ describe('ToolCallComponent', () => {
         stubTui(30),
       );
 
-      // No timer advancement — Agents advertise Ctrl+B immediately.
       expect(strip(component.render(100).join('\n'))).toContain(
         'Press Ctrl+B to run in background',
       );
@@ -113,7 +115,7 @@ describe('ToolCallComponent', () => {
       );
 
       vi.advanceTimersByTime(5_000);
-      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false });
+      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false }, { known: false });
       vi.advanceTimersByTime(10_000);
 
       expect(strip(component.render(100).join('\n'))).not.toContain(
@@ -159,8 +161,6 @@ describe('ToolCallComponent', () => {
       },
     );
 
-    // Collapsed: the header (command + hidden-line chip) plus one outcome row
-    // holding the last output line, marked as standing in for the rest.
     const collapsedLines = component.render(100).map(strip).filter((line) => line.trim().length > 0);
     expect(collapsedLines).toHaveLength(2);
     expect(collapsedLines[0]).toContain('Ran a command');
@@ -238,9 +238,6 @@ describe('ToolCallComponent', () => {
   });
 
   it('counts error rows like the preview does, interior blanks included', () => {
-    // Four non-empty rows plus an interior blank: the preview folds (five
-    // rendered rows > cap + 1), so the predicate must not count non-empty
-    // lines only.
     const component = new ToolCallComponent(
       {
         id: 'call_shell_err_blank',
@@ -259,8 +256,6 @@ describe('ToolCallComponent', () => {
   });
 
   it('does not count control-only rows the preview strips from Bash errors', () => {
-    // Four visible rows plus a trailing reset: the sanitized preview shows
-    // all four without folding, so ctrl+o must stay off.
     const component = new ToolCallComponent(
       {
         id: 'call_shell_err_ansi',
@@ -291,9 +286,6 @@ describe('ToolCallComponent', () => {
     component.appendLiveOutput('line1\n');
     component.appendLiveOutput('line2\n');
 
-    // Collapsed: the header plus the newest live line as the outcome row,
-    // marked as standing in for the lines above it; the whole live tail waits
-    // for ctrl+o.
     const rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain('Running a command');
@@ -321,7 +313,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_shell_live_done',
       output: 'final-only\n',
       is_error: false,
-    });
+    }, { known: false });
     component.setExpanded(true);
 
     const out = strip(component.render(100).join('\n'));
@@ -364,7 +356,7 @@ describe('ToolCallComponent', () => {
         tool_call_id: 'call_bash_done',
         output: 'step a\nstep b\nstep c\ndone',
         is_error: false,
-      });
+      }, { known: false });
 
       const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(collapsed).toHaveLength(2);
@@ -374,14 +366,10 @@ describe('ToolCallComponent', () => {
       expect(collapsed[1]).toBe('  … done');
 
       component.setExpanded(true);
-      // The command is owned by buildCallPreview, so it appears exactly once —
-      // the result renderer renders the output only.
       const expanded = strip(component.render(100).join('\n'));
       expect(expanded).toContain('echo step11');
       expect(expanded).toContain('echo step15');
       expect(expanded).toContain('done');
-      // Header keeps the truncated first line (`$ echo step1…`); the full
-      // command body must appear exactly once below it.
       expect(expanded.match(/\$ echo step1(?!…)/g)).toHaveLength(1);
     });
 
@@ -430,15 +418,51 @@ describe('ToolCallComponent', () => {
       expect(component.hasHiddenContent()).toBe(true);
     });
 
-    it('renders the Update badge with a primary background and white text', () => {
+    it('renders the Update badge with a primary background and white text in regular mode', () => {
       const component = new ToolCallComponent(
         { id: 'call_notify_brand', name: 'NotifyUser', args: { message } },
         { tool_call_id: 'call_notify_brand', output: 'Update shown to the user.', is_error: false },
+        stubTui(24, 'regular'),
       );
 
       const output = component.render(100).join('\n');
       const expectedMark = chalk.bgHex(darkColors.primary)(chalk.hex('#FFFFFF')(NOTIFY_USER_MARK));
       expect(output).toContain(expectedMark);
+    });
+
+    it('replaces the Update badge with a primary bullet in fullscreen mode across collapsed and expanded states', () => {
+      const title = 'x'.repeat(114);
+      const component = new ToolCallComponent(
+        { id: 'call_notify_fullscreen', name: 'NotifyUser', args: { title, message } },
+        {
+          tool_call_id: 'call_notify_fullscreen',
+          output: 'Update shown to the user.',
+          is_error: false,
+        },
+        stubTui(24, 'fullscreen'),
+      );
+
+      const collapsedRaw = component.render(100).join('\n');
+      expect(collapsedRaw).toContain(chalk.hex(darkColors.primary)(STATUS_BULLET));
+      expect(collapsedRaw).not.toContain(NOTIFY_USER_MARK);
+
+      const collapsed = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]?.startsWith(STATUS_BULLET)).toBe(true);
+      expect(collapsed[0]).toContain('…');
+      expect(visibleWidth(collapsed[0]!)).toBeLessThanOrEqual(60);
+
+      component.setExpanded(true);
+      const expandedRaw = component.render(60).join('\n');
+      expect(expandedRaw).toContain(chalk.hex(darkColors.primary)(STATUS_BULLET));
+      expect(expandedRaw).not.toContain(NOTIFY_USER_MARK);
+
+      const rows = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows[0]).toBe(`${STATUS_BULLET}${'x'.repeat(58)}`);
+      expect(rows[1]).toBe(`  ${'x'.repeat(56)}`);
+      expect(rows[2]).toBe('  Login module is clean.');
+      expect(rows.at(-1)).toBe('  The bug must be in session expiry.');
+      for (const row of rows) expect(visibleWidth(row)).toBeLessThanOrEqual(60);
     });
 
     it('uses the title as the header and keeps the message behind ctrl+o', () => {
@@ -683,7 +707,7 @@ describe('ToolCallComponent', () => {
         tool_call_id: 'call_notify_transition',
         output: 'Update shown to the user.',
         is_error: false,
-      });
+      }, { known: false });
       rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause`]);
       expect(component.hasHiddenContent()).toBe(true);
@@ -792,7 +816,6 @@ describe('ToolCallComponent', () => {
       );
       for (const width of [40, 60, 80]) {
         const rows = component.render(width).map(strip).filter((line) => line.trim().length > 0);
-        // Header plus the outcome row holding the command's output ("ok").
         expect(rows).toHaveLength(2);
         expect(visibleWidth(rows[0]!)).toBeLessThanOrEqual(width);
         expect(rows[0]).toContain('Ran a command');
@@ -823,15 +846,12 @@ describe('ToolCallComponent', () => {
         { id: 'call_bash_cached', name: 'Bash', args: { command: 'ls' } },
         undefined,
       );
-      // children[0] is the leading spacer; the header line follows it. The
-      // card and the gutter reuse a child's output by array identity, so an
-      // unchanged header must return the very same array across frames.
       const header = component.children[1]!;
       const first = header.render(100);
       expect(header.render(100)).toBe(first);
       expect(header.render(80)).not.toBe(first);
 
-      component.setResult({ tool_call_id: 'call_bash_cached', output: 'ok', is_error: false });
+      component.setResult({ tool_call_id: 'call_bash_cached', output: 'ok', is_error: false }, { known: false });
       const finished = header.render(100);
       expect(finished).not.toBe(first);
       expect(strip(finished[0]!)).toContain('Ran a command');
@@ -845,8 +865,6 @@ describe('ToolCallComponent', () => {
         { id: 'call_bash_wide', name: 'Bash', args: { command } },
         { tool_call_id: 'call_bash_wide', output: 'ok\nok\nok\nok', is_error: false },
       );
-      // The command is the flexible middle segment: on a wide terminal it is
-      // shown in full, on a narrow one it is cut with an ellipsis before the chip.
       const wide = component.render(160).map(strip).filter((line) => line.trim().length > 0);
       expect(wide).toHaveLength(2);
       expect(wide[0]).toContain(`$ ${command}`);
@@ -855,7 +873,6 @@ describe('ToolCallComponent', () => {
       const narrow = component.render(70).map(strip).filter((line) => line.trim().length > 0);
       expect(narrow).toHaveLength(2);
       expect(visibleWidth(narrow[0]!)).toBeLessThanOrEqual(70);
-      // The command is cut to the remaining width; the hidden-line chip survives.
       expect(narrow[0]).toMatch(/\$ git log .*… · 3 more lines$/);
     });
 
@@ -922,9 +939,6 @@ describe('ToolCallComponent', () => {
   });
 
   it('renders output that merely starts with a literal <system> tag', () => {
-    // Tool metadata no longer travels inside `output` (it rides the result's
-    // `note` side channel), so real output starting with the literal tag —
-    // a file that contains it, an MCP tool's text — must stay visible.
     const component = new ToolCallComponent(
       {
         id: 'call_literal',
@@ -1011,8 +1025,6 @@ describe('ToolCallComponent', () => {
       },
     );
 
-    // Successful output only renders once expanded; the point here is that a
-    // reminder tag mid-body must not suppress the whole output.
     component.setExpanded(true);
     const out = strip(component.render(100).join('\n'));
     expect(out).toContain('first line');
@@ -1053,7 +1065,6 @@ describe('ToolCallComponent', () => {
       undefined,
     );
 
-    // A fresh tool card only shows the 'Current plan' title; no plan box renders yet.
     const before = strip(component.render(100).join('\n'));
     expect(before).toContain('Current plan');
     expect(before).not.toContain('Refactor session');
@@ -1064,7 +1075,6 @@ describe('ToolCallComponent', () => {
     expect(after).toContain('Refactor session');
     expect(after).toContain('plan:');
     expect(after).toContain('refactor.md');
-    // Directory portion of the path must not leak into the visible header.
     expect(after).not.toContain('/tmp/refactor.md');
   });
 
@@ -1186,8 +1196,6 @@ describe('ToolCallComponent', () => {
     const out = strip(component.render(100).join('\n'));
     const header = out.split('\n')[1] ?? '';
     expect(header).toMatch(/Current plan · Auto-approved\s*$/);
-    // The plan body renders from the auto-approved marker; the engine-side
-    // note above the marker must not leak into the rendered plan box.
     expect(out).toContain('Auto Plan');
     expect(out).toContain('1. Do the thing.');
     expect(out).not.toContain('Note: this plan was auto-approved');
@@ -1327,7 +1335,6 @@ describe('ToolCallComponent', () => {
 
     const collapsed = strip(component.render(100).join('\n'));
     expect(collapsed).toContain('Started background question');
-    // Three lines of output fit the collapsed card whole.
     expect(collapsed).toContain('task_id: question-aaaaaaaa');
     expect(collapsed).toContain('description: Which database?');
     expect(collapsed).toContain('status: running');
@@ -1607,8 +1614,6 @@ describe('ToolCallComponent', () => {
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('Explore Agent Running (explore project xxx) · 1 tool · 10s');
     expect(out).toContain('Using Read (apps/kimi-code/src/tui/utils/background-agent-status.ts)');
-    // Thinking and text are mutually exclusive in the active window: the most
-    // recently streamed (text) wins, so thinking is hidden entirely.
     expect(out).not.toContain('think1');
     expect(out).not.toContain('think2');
     expect(out).not.toContain('think3');
@@ -1623,7 +1628,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_agent',
       output: 'parent duplicate result',
       is_error: false,
-    });
+    }, { known: false });
     vi.setSystemTime(30_000);
 
     out = strip(component.render(120).join('\n'));
@@ -1686,7 +1691,6 @@ describe('ToolCallComponent', () => {
       runInBackground: false,
     });
 
-    // Sanity: running before detach.
     expect(strip(component.render(120).join('\n'))).toContain('Running');
 
     component.markBackgrounded();
@@ -1694,12 +1698,11 @@ describe('ToolCallComponent', () => {
     expect(out).toContain('Backgrounded');
     expect(out).not.toContain('Completed');
 
-    // The spawn-success ToolResult landing must NOT flip the card to Completed.
     component.setResult({
       tool_call_id: 'call_agent_detach',
       output: 'agent_id: sub_detach_1\nactual_subagent_type: explore\n',
       is_error: false,
-    });
+    }, { known: false });
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('Backgrounded');
     expect(out).not.toContain('Completed');
@@ -1737,9 +1740,7 @@ describe('ToolCallComponent', () => {
 
     const out = strip(component.render(120).join('\n'));
     expect(out).toContain('Explore Agent Running (inspect tools) · 5 tools · 0s');
-    // Only the current (most recent ongoing) tool appears in the summary line.
     expect(out).toContain('Using Grep (auth)');
-    // No per-tool activity rows are rendered.
     expect(out).not.toContain('file1.ts');
     expect(out).not.toContain('file2.ts');
     expect(out).not.toContain('file3.ts');
@@ -1783,12 +1784,10 @@ describe('ToolCallComponent', () => {
     });
 
     const out = strip(component.render(120).join('\n'));
-    // The updated/finished older tool must not surface in the summary.
     expect(out).not.toContain('file1-updated.ts');
     expect(out).not.toContain('file2.ts');
     expect(out).not.toContain('file3.ts');
     expect(out).not.toContain('file4.ts');
-    // Only the most recent ongoing tool is shown.
     expect(out).toContain('Using Read (file5.ts)');
   });
 
@@ -1814,9 +1813,7 @@ describe('ToolCallComponent', () => {
     );
 
     const joined = strip(component.render(34).join('\n'));
-    // The two-row window drops the head of the wrapped paragraph.
     expect(joined).not.toContain('output words that should');
-    // Every kept row carries the `│` gutter as a hanging indent.
     expect(joined).toContain('│ wrap with a clean hanging');
     expect(joined).toContain('│ indent');
   });
@@ -1837,8 +1834,6 @@ describe('ToolCallComponent', () => {
       agentName: 'explore',
       runInBackground: false,
     });
-    // A single long logical line (no newlines) wraps to many display rows;
-    // only the last THINKING_PREVIEW_LINES (2) should remain visible.
     const segs = Array.from({ length: 30 }, (_, i) => `seg${String(i).padStart(2, '0')}`);
     component.appendSubagentText(segs.join(' '), 'thinking');
 
@@ -1892,14 +1887,12 @@ describe('ToolCallComponent', () => {
       agentName: 'explore',
       runInBackground: false,
     });
-    // Well past SUBAGENT_PREVIEW_TEXT_MAX_CHARS.
     const text = Array.from({ length: 900 }, (_, i) => `line ${String(i)} with a few words`).join('\n');
     component.appendSubagentText(text, 'text');
 
     const rows = strip(component.render(60).join('\n'))
       .split('\n')
       .filter((line) => line.includes('│'));
-    // The reference is the unbounded render: the preview cap must not move rows.
     const reference = new Text(text, 0, 0).render(56).slice(-2);
     expect(rows.map((line) => line.trimEnd())).toEqual(
       reference.map((line) => strip(`  │ ${line}`).trimEnd()),
@@ -1929,7 +1922,6 @@ describe('ToolCallComponent', () => {
       .split('\n')
       .filter((line) => line.includes('│'));
     expect(rows).toHaveLength(2);
-    // The partial first line still fills the upper row; the short line stays.
     expect(rows[0]).toContain('x');
     expect(rows[1]).toContain('done');
     component.dispose();
@@ -1951,14 +1943,11 @@ describe('ToolCallComponent', () => {
       agentName: 'explore',
       runInBackground: false,
     });
-    // Past the cap, so the tail is trimmed; the SGR codes sit inside it.
     const text = `${'plain line\n'.repeat(900)}${ESC}[31mfinal answer${ESC}[0m`;
     component.appendSubagentText(text, 'text');
 
     const raw = component.render(60).join('\n');
     expect(raw).toContain('final answer');
-    // The retained tail carries no source styling, so its colour code is gone
-    // instead of being replayed without the matching reset.
     expect(raw).not.toContain(`${ESC}[31m`);
     component.dispose();
   });
@@ -1986,8 +1975,6 @@ describe('ToolCallComponent', () => {
       .split('\n')
       .filter((line) => line.includes('│'));
     expect(rows).toHaveLength(2);
-    // The finished window filters blank lines, so the trailing blank must not
-    // be counted as the second retained line.
     expect(rows[0]).toContain('x');
     expect(rows[1]).toContain('done');
     component.dispose();
@@ -2012,7 +1999,6 @@ describe('ToolCallComponent', () => {
     const error = `boom: request failed\n${'stack line\n'.repeat(2000)}`;
     component.onSubagentFailed({ error });
 
-    // AgentGroup renders errorText.split('\n').at(0).
     expect(component.getSubagentSnapshot().errorText?.split('\n').at(0)).toBe(
       'boom: request failed',
     );
@@ -2073,14 +2059,11 @@ describe('ToolCallComponent', () => {
 
     let out = strip(component.render(120).join('\n'));
     expect(out).toContain('Using Bash (ls -la)');
-    // The active window keeps only the last two rows of live output.
     expect(out).toContain('bash-line-8');
     expect(out).toContain('bash-line-9');
     expect(out).not.toContain('bash-line-7');
-    // No ctrl+o promise for the subagent window.
     expect(out).not.toContain('ctrl+o');
 
-    // The global ctrl+o expand toggle must NOT expand the window.
     component.setExpanded(true);
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('bash-line-9');
@@ -2103,7 +2086,6 @@ describe('ToolCallComponent', () => {
       agentName: 'explore',
       runInBackground: false,
     });
-    // A finished recognized tool: its output body never reaches the window.
     component.appendSubToolCall({
       id: 'sub_mixed:read',
       name: 'Read',
@@ -2114,7 +2096,6 @@ describe('ToolCallComponent', () => {
       output: 'recognized-read-body\nhidden-read-line',
       is_error: false,
     });
-    // An ongoing generic (MCP) tool: its live output is the active stream.
     component.appendSubToolCall({
       id: 'sub_mixed:mcp',
       name: 'mcp__server__do',
@@ -2124,9 +2105,7 @@ describe('ToolCallComponent', () => {
     component.appendSubToolLiveOutput('sub_mixed:mcp', mcpOut);
 
     const out = strip(component.render(120).join('\n'));
-    // Recognized tool output never appears.
     expect(out).not.toContain('recognized-read-body');
-    // Generic tool output shows as the two-row active window tail.
     expect(out).toContain('mcp-line-3');
     expect(out).toContain('mcp-line-4');
     expect(out).not.toContain('mcp-line-2');
@@ -2182,7 +2161,7 @@ describe('ToolCallComponent', () => {
     const runningLines = strip(component.render(120).join('\n')).split('\n').length;
 
     component.onSubagentCompleted({ resultSummary: 'short answer' });
-    component.setResult({ tool_call_id: 'call_agent_height', output: 'done', is_error: false });
+    component.setResult({ tool_call_id: 'call_agent_height', output: 'done', is_error: false }, { known: false });
 
     const doneLines = strip(component.render(120).join('\n')).split('\n').length;
 
@@ -2190,12 +2169,6 @@ describe('ToolCallComponent', () => {
   });
 
   describe('background agent terminal state vs spawn-success ToolResult', () => {
-    // The Agent tool returns a "task spawned" result the moment a
-    // run_in_background=true call lands. That result is not an error and its
-    // body says `status: running`, so for backgrounded agents `this.result`
-    // alone cannot distinguish a successful completion from a failure / lost
-    // task. The fix is `setBackgroundTaskTerminalStatus`, which overrides the
-    // result-based derivation with the actual BackgroundTaskInfo status.
     const spawnSuccessResult = {
       tool_call_id: 'call_bg_agent',
       output: [
@@ -2229,9 +2202,6 @@ describe('ToolCallComponent', () => {
     }
 
     it('reads as "done" by default after spawn — the existing behavior the fix replaces', () => {
-      // This pins the legacy behavior. Without overrides the snapshot
-      // trusts the spawn-success result and reports phase='done'. The
-      // 'lost' / 'killed' / 'failed' overrides below must beat this.
       const component = makeBackgroundAgentComponent();
       expect(component.getSubagentSnapshot().phase).toBe('done');
     });
@@ -2241,8 +2211,6 @@ describe('ToolCallComponent', () => {
       component.setBackgroundTaskTerminalStatus('lost');
       const snap = component.getSubagentSnapshot();
       expect(snap.phase).toBe('failed');
-      // The agent-group renderer uses snap.errorText for the "Error:" line.
-      // The spawn-success ToolResult must NOT leak as the failure message.
       expect(snap.errorText).toContain('lost');
       expect(snap.errorText).not.toContain('task_id:');
     });
@@ -2274,8 +2242,6 @@ describe('ToolCallComponent', () => {
     });
 
     it('overrides win even when set before the spawn-success result is recorded', () => {
-      // Order-independence guard: reconcile may run before tool result
-      // has been replayed back into the component on some boot paths.
       const component = new ToolCallComponent(
         {
           id: 'call_bg_agent',
@@ -2285,24 +2251,16 @@ describe('ToolCallComponent', () => {
         undefined,
       );
       component.setBackgroundTaskTerminalStatus('lost');
-      // Now the spawn-success result lands.
-      component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' });
+      component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' }, { known: false });
       expect(component.getSubagentSnapshot().phase).toBe('failed');
     });
 
-    // Standalone render path — when only ONE Agent tool call lands in a
-    // step, the card is never upgraded into an `AgentGroupComponent` and is
-    // mounted on its own. The standalone header derives its label from
-    // `getDerivedSubagentPhase()` (separate from `getSubagentSnapshot`).
-    // Without the override threading into that path AND a header rebuild,
-    // a lost bg agent keeps the green "✓ Completed" label.
     it('standalone render: lost bg agent must show Failed/Lost, not Completed', () => {
       const component = makeBackgroundAgentComponent();
       component.setBackgroundTaskTerminalStatus('lost');
       const out = strip(component.render(120).join('\n'));
       expect(out).not.toContain('Completed');
       expect(out).toMatch(/Failed|Lost/);
-      // Friendly failure message must reach the rendered card.
       expect(out).toContain('lost');
       expect(out).not.toContain('task_id:');
     });
@@ -2316,15 +2274,6 @@ describe('ToolCallComponent', () => {
       expect(out).not.toContain('task_id:');
     });
 
-    // Stable id routing — `tc.subagentAgentId` is left undefined for
-    // backgrounded agents both live (`handleSubagentSpawned` early-returns
-    // for `runInBackground`, never calling tc.onSubagentSpawned) and on
-    // resume (the wire format does not carry a `subagent` block back into
-    // `applySubagentReplay`). The AgentTool's spawn-success ToolResult,
-    // however, always carries `agent_id: agent-N` — fall back to parsing
-    // that so callers asking `getSubagentAgentId` always get the right id,
-    // and `applyBackgroundTaskTerminalStatus` can route by id instead of
-    // by description (which collides between unrelated cards).
     it('getSubagentAgentId parses agent_id from the spawn-success ToolResult', () => {
       const component = new ToolCallComponent(
         {
@@ -2334,15 +2283,10 @@ describe('ToolCallComponent', () => {
         },
         spawnSuccessResult,
       );
-      // No spawn metadata was wired in — exactly the resume / backgrounded
-      // case we are guarding against.
       expect(component.getSubagentAgentId()).toBe('agent-0');
     });
 
     it('getSubagentAgentId still prefers in-memory subagent metadata when set', () => {
-      // If `setSubagentMeta` / `onSubagentSpawned` did wire an id, that one
-      // is authoritative — it survived the in-flight phase before any
-      // ToolResult landed and can disambiguate concurrent calls.
       const component = new ToolCallComponent(
         {
           id: 'call_bg_agent',
@@ -2372,11 +2316,6 @@ describe('ToolCallComponent', () => {
     });
 
     it('setBackgroundTaskTerminalStatus errorText overwrites the friendly generic', () => {
-      // Live failures arrive via `subagent.failed` with the real error from
-      // the subagent loop. That string is far more informative than the
-      // generic "Background agent failed" fallback the friendly path emits.
-      // When the caller supplies errorText it must win, regardless of
-      // whether the friendly message was written first.
       const component = makeBackgroundAgentComponent();
       component.setBackgroundTaskTerminalStatus('failed');
       expect(component.getSubagentSnapshot().errorText).toBe('Background agent failed');
@@ -2398,8 +2337,6 @@ describe('ToolCallComponent', () => {
     it('setBackgroundTaskTerminalStatus does not overwrite a real onSubagentFailed error with the generic', () => {
       const component = makeBackgroundAgentComponent();
       component.onSubagentFailed({ error: 'real crash from subagent' });
-      // background.task.terminated event arrives later without an errorText
-      // override; the friendly generic must NOT clobber the real message.
       component.setBackgroundTaskTerminalStatus('failed');
       expect(component.getSubagentSnapshot().errorText).toBe('real crash from subagent');
     });
@@ -2421,12 +2358,10 @@ describe('ToolCallComponent', () => {
 
     const out = strip(component.render(100).join('\n'));
     expect(out).toContain('Using Write');
-    // Streaming preview caps at COMMAND_PREVIEW_LINES (10) and shows the tail.
     expect(out).not.toContain('line1');
     expect(out).not.toContain('line20');
     expect(out).toContain('line21');
     expect(out).toContain('line30');
-    // Line numbers should reflect actual file positions.
     expect(out).toContain('  21');
     expect(out).toContain('  30');
     expect(out).not.toContain('ctrl+o to expand');
@@ -2451,9 +2386,6 @@ describe('ToolCallComponent', () => {
     expect(out).toContain('Truncated Write');
     expect(out).not.toContain('Preparing Write');
     expect(out).toContain('Tool call arguments truncated by max_tokens');
-    // The live argument preview must NOT render once the call is
-    // truncated — leaving the half-streamed Write content on screen
-    // was the original "preparing write" bug.
     expect(out).not.toContain('line1');
     expect(out).not.toContain('line10');
   });
@@ -2498,14 +2430,6 @@ describe('ToolCallComponent', () => {
   });
 
   it('caps the Write preview between finalized args and result to keep transcript height stable', () => {
-    // The wire sequence is: tool.call.delta → ... → tool.call (final
-    // args, no streamingArguments) → tool.result. Between tool.call and
-    // tool.result we briefly sit with finalized args and no result yet —
-    // even without an approval panel, at least one render tick can land
-    // in this state. The preview must stay capped so the transcript
-    // height does not balloon and then snap back when the result lands;
-    // a big shrink triggers pi-tui's full-redraw path which wipes the
-    // terminal scrollback (history before TUI start).
     const lines: string[] = [];
     for (let i = 1; i <= 30; i++) lines.push(`line${String(i)}`);
     const component = new ToolCallComponent(
@@ -2513,7 +2437,6 @@ describe('ToolCallComponent', () => {
         id: 'call_write_pending',
         name: 'Write',
         args: { file_path: 'foo.ts', content: lines.join('\n') },
-        // No streamingArguments → finalized args; no result yet.
       },
       undefined,
     );
@@ -2544,7 +2467,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_write_snap',
       output: 'Wrote big.txt',
       is_error: false,
-    });
+    }, { known: false });
 
     const after = strip(component.render(100).join('\n'));
     expect(after).toContain('line1');
@@ -2590,9 +2513,6 @@ describe('ToolCallComponent', () => {
   });
 
   it('keeps the Write cap and the expand predicate consistent for a trailing newline', () => {
-    // highlightLines keeps a trailing empty entry for content ending in '\n',
-    // so the renderer counts 12 rows for 11 visible lines; the predicate must
-    // count the same way or ctrl+o is refused while the hint stays.
     const lines: string[] = [];
     for (let i = 1; i <= 11; i++) lines.push(`line${String(i)}`);
     const component = new ToolCallComponent(
@@ -2609,7 +2529,6 @@ describe('ToolCallComponent', () => {
   });
 
   it('refreshes the header when file_path arrives in a later streaming delta', () => {
-    // First delta: only an opening brace, no file_path yet.
     const component = new ToolCallComponent(
       {
         id: 'call_write_path',
@@ -2623,7 +2542,6 @@ describe('ToolCallComponent', () => {
     expect(before).toContain('Using Write');
     expect(before).not.toContain('foo.ts');
 
-    // Later delta: file_path is now parseable from streamingArguments.
     component.updateToolCall({
       id: 'call_write_path',
       name: 'Write',
@@ -2635,7 +2553,6 @@ describe('ToolCallComponent', () => {
   });
 
   it('builds the call preview when finalized args arrive after streaming', () => {
-    // Mimic the wire sequence: tool.call.delta → ... → tool.call (finalized).
     const component = new ToolCallComponent(
       {
         id: 'call_write_seq',
@@ -2645,11 +2562,8 @@ describe('ToolCallComponent', () => {
       },
       undefined,
     );
-    // While streaming, body is rendered live from streamingArguments.
     expect(strip(component.render(100).join('\n'))).toMatch(/^\s*1\s+a\s*$/m);
 
-    // Finalized tool.call: streamingArguments is undefined; the body
-    // re-renders from finalized args, content unchanged.
     component.updateToolCall({
       id: 'call_write_seq',
       name: 'Write',
@@ -2711,7 +2625,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_edit_timer',
       output: 'Replaced 1 occurrence in foo.ts',
       is_error: false,
-    });
+    }, { known: false });
     vi.advanceTimersByTime(1000);
     expect(ui.requestRender).not.toHaveBeenCalled();
 
@@ -3033,7 +2947,7 @@ describe('ToolCallComponent hasHiddenContent', () => {
     expect(component.hasHiddenContent()).toBe(false);
     component.appendLiveOutput('one\ntwo\n');
     expect(component.hasHiddenContent()).toBe(true);
-    component.setResult({ tool_call_id: 'tc', output: 'one\ntwo', is_error: false });
+    component.setResult({ tool_call_id: 'tc', output: 'one\ntwo', is_error: false }, { known: false });
     expect(component.hasHiddenContent()).toBe(false);
     component.dispose();
   });
@@ -3041,9 +2955,7 @@ describe('ToolCallComponent hasHiddenContent', () => {
   it('counts a width-cut outcome row as hidden at that width', () => {
     const longLine = 'x'.repeat(120);
     const component = card('Bash', { command: 'ls' }, `${longLine}\nshort`);
-    // Two lines are shown whole, so by line count nothing is hidden…
     expect(component.hasHiddenContent()).toBe(false);
-    // …but at 40 columns the first row is cut and ctrl+o reveals it wrapped.
     component.render(40);
     expect(component.hasHiddenContent()).toBe(true);
     component.render(200);
@@ -3054,14 +2966,11 @@ describe('ToolCallComponent hasHiddenContent', () => {
   it('counts a width-cut Bash command header as hidden, but not a cut key argument', () => {
     const bash = card('Bash', { command: `echo ${'a'.repeat(150)}` }, 'ok');
     bash.render(40);
-    // The full command renders in the body once expanded.
     expect(bash.hasHiddenContent()).toBe(true);
     bash.dispose();
 
     const generic = card('TaskOutput', { task_id: `bg-${'x'.repeat(150)}` }, 'ok');
     generic.render(40);
-    // The output is shown whole and a cut header argument is not what ctrl+o
-    // reveals for a generic tool.
     expect(generic.hasHiddenContent()).toBe(false);
     generic.dispose();
   });
@@ -3075,10 +2984,7 @@ describe('ToolCallComponent hasHiddenContent', () => {
       '2. port the tests',
       '3. run the suite',
     ].join('\n');
-    // The plan is fully rendered by the call preview and the outcome body is
-    // expansion-independent, so ctrl+o would change nothing.
     expect(card('ExitPlanMode', {}, approved).hasHiddenContent()).toBe(false);
-    // A non-outcome result (an error message) still counts by lines.
     expect(card('ExitPlanMode', {}, 'a\nb\nc\nd').hasHiddenContent()).toBe(true);
   });
 
@@ -3088,8 +2994,6 @@ describe('ToolCallComponent hasHiddenContent', () => {
     const distant = [...lines];
     distant[0] = 'line1 changed';
     distant[29] = 'line30 changed';
-    // Two changed rows far apart: context rows and the inter-hunk separator
-    // push the clustered preview past the cap even though added+removed is 2.
     expect(
       card('Edit', { file_path: 'a.ts', old_string: oldStr, new_string: distant.join('\n') }, 'ok').hasHiddenContent(),
     ).toBe(true);
@@ -3114,7 +3018,7 @@ describe('ToolCallComponent hasHiddenContent for a solo subagent card', () => {
       tool_call_id: 'call_agent',
       output: 'line 1\nline 2\nline 3\nline 4\nline 5',
       is_error: false,
-    });
+    }, { known: false });
     expect(component.hasHiddenContent()).toBe(false);
     component.dispose();
   });
@@ -3240,7 +3144,6 @@ describe('ToolCallComponent hasHiddenContent for a call truncated by max_tokens'
 
 describe('ToolCallComponent hasHiddenContent for goal cards', () => {
   it('reports nothing to expand for a parsed goal snapshot or a bodiless goal update', () => {
-    // The tool wraps the snapshot in a `goal` envelope (null when there is no goal).
     const snapshot = JSON.stringify(
       {
         goal: {
@@ -3283,11 +3186,9 @@ describe('ToolCallComponent hasHiddenContent at the Edit preview cap', () => {
   }
 
   it('is false when the body fills the cap exactly, since the header row is not capped', () => {
-    // 5 replaced lines render as 5 deletions plus 5 additions: 10 body rows.
     const exact = editCard(5);
     expect(exact.hasHiddenContent()).toBe(false);
     exact.dispose();
-    // 6 replaced lines are 12 body rows: the capped preview cuts two of them.
     const over = editCard(6);
     expect(over.hasHiddenContent()).toBe(true);
     over.dispose();
@@ -3372,5 +3273,114 @@ describe('ToolCallComponent hasHiddenContent while arguments stream', () => {
     );
     expect(bash.hasHiddenContent()).toBe(true);
     bash.dispose();
+  });
+});
+
+describe('ToolCallComponent render cache', () => {
+  const readCall = { id: 'call_cache', name: 'Read', args: { path: 'foo.ts' } };
+  const readResult = { tool_call_id: 'call_cache', output: 'content', is_error: false };
+
+  it('returns the same array when nothing changed between renders', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const first = component.render(100);
+    expect(component.render(100)).toBe(first);
+    component.dispose();
+  });
+
+  it('renders the same text as a fresh card after a width change and back', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const wide = component.render(100);
+    const narrow = component.render(20);
+    expect(narrow).toEqual(new ToolCallComponent(readCall, readResult).render(20));
+    expect(component.render(100)).toEqual(wide);
+    component.dispose();
+  });
+
+  it('re-renders when the result arrives', () => {
+    const component = new ToolCallComponent(readCall, undefined);
+    const pending = component.render(100);
+    component.setResult(readResult, { known: false });
+    const done = component.render(100);
+    expect(done).not.toBe(pending);
+    expect(done).toEqual(new ToolCallComponent(readCall, readResult).render(100));
+    component.dispose();
+  });
+
+  describe('with the render cache disabled', () => {
+    beforeEach(() => setRenderCacheEnabled(false));
+    afterEach(() => setRenderCacheEnabled(true));
+
+    it('renders the card again with equal text', () => {
+      const component = new ToolCallComponent(readCall, readResult);
+      const first = component.render(100);
+      const second = component.render(100);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+      component.dispose();
+    });
+
+    it('renders the spacer again with equal text', () => {
+      const component = new ToolCallComponent(readCall, readResult);
+      const spacer = component.children.find((child) => child.constructor.name === 'StableSpacer');
+      if (spacer === undefined) throw new Error('spacer not found');
+      const first = spacer.render(100);
+      const second = spacer.render(100);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+      component.dispose();
+    });
+  });
+});
+
+describe('ToolCallComponent expanded clip detection', () => {
+  const bashCall = { id: 'call_clip', name: 'Bash', args: { command: 'echo hi' } };
+  const longLine = 'x'.repeat(200);
+  const bashResult = { tool_call_id: 'call_clip', output: longLine, is_error: false };
+
+  it('tracks the render width instead of keeping the first answer', () => {
+    const component = new ToolCallComponent(bashCall, bashResult);
+    component.setExpanded(true);
+    component.render(400);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+
+  it('forgets the answer when the result changes', () => {
+    const component = new ToolCallComponent(bashCall, { ...bashResult, output: 'short' });
+    component.setExpanded(true);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.setResult(bashResult, { known: false });
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+
+  it('measures the output again on every render when the render cache is disabled', () => {
+    const measure = vi.spyOn(TruncatedHeaderLine.prototype, 'render');
+    const countRenderCalls = (cacheEnabled: boolean): number[] => {
+      setRenderCacheEnabled(cacheEnabled);
+      const component = new ToolCallComponent(bashCall, { ...bashResult, output: 'short' });
+      component.setExpanded(true);
+      const counts: number[] = [];
+      for (let pass = 0; pass < 2; pass += 1) {
+        measure.mockClear();
+        component.render(60);
+        counts.push(measure.mock.calls.length);
+      }
+      component.dispose();
+      return counts;
+    };
+    try {
+      const [first, second] = countRenderCalls(true);
+      expect(first).toBeGreaterThan(0);
+      expect(second).toBeLessThan(first!);
+      expect(countRenderCalls(false)).toEqual([first, first]);
+    } finally {
+      setRenderCacheEnabled(true);
+      measure.mockRestore();
+    }
   });
 });

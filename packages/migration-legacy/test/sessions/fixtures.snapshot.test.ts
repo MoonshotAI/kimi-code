@@ -36,7 +36,6 @@ describe.each(SCENARIOS)('migration snapshot: %s', (name) => {
       targetHome: target,
     });
     if (name === 'broken-state-json') {
-      // Defaults should kick in; still succeed or fail gracefully.
       expect(['migrated', 'failed']).toContain(result.outcome);
       return;
     }
@@ -45,10 +44,6 @@ describe.each(SCENARIOS)('migration snapshot: %s', (name) => {
 
     const wire = await readFile(join(result.targetDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
     const state = await readFile(join(result.targetDir, 'state.json'), 'utf-8');
-    // Redact clock-dependent fields (createdAt/updatedAt/imported_at) and the
-    // machine-dependent source/target paths so the snapshot is stable across
-    // hosts. `agents.main.homedir` is an absolute path under the temp target
-    // dir — replace that prefix so only the stable suffix is snapshotted.
     const stableState = state
       .replace(/"createdAt":\s*("[^"]*"|\d+)/, '"createdAt": "<REDACTED>"')
       .replace(/"updatedAt":\s*("[^"]*"|\d+)/, '"updatedAt": "<REDACTED>"')
@@ -57,7 +52,6 @@ describe.each(SCENARIOS)('migration snapshot: %s', (name) => {
       .replaceAll('\\\\', '/')
       .split(target.replaceAll('\\', '/'))
       .join('<TARGET>');
-    // Redact wire created_at timestamp (derived from wire_mtime or Date.now()).
     const stableWire = wire
       .replace(/"created_at":\s*\d+/, '"created_at":<REDACTED>')
       .replaceAll(/"time":\s*\d+/g, '"time":<REDACTED>');

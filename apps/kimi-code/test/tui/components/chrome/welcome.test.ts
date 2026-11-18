@@ -34,6 +34,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
+  transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
@@ -47,7 +48,6 @@ function truecolorCodes(text: string): Set<string> {
   return codes;
 }
 
-/** The two header rows (logo + title) of the rendered welcome box. */
 function headerOf(lines: string[]): string {
   return [lines[3], lines[4]].join('\n');
 }
@@ -78,7 +78,6 @@ describe('WelcomeComponent', () => {
   it('renders the banner in a single brand color by default', () => {
     const codes = truecolorCodes(headerOf(new WelcomeComponent(appState).render(80)));
 
-    // No rainbow by default — just the brand primary (plus the dim tagline).
     expect(codes.size).toBeLessThanOrEqual(2);
   });
 
@@ -95,6 +94,22 @@ describe('WelcomeComponent', () => {
     const off = headerOf(new WelcomeComponent(appState).render(80));
 
     expect(off).toBe(base);
+  });
+
+  it('shows the remote environment cwd instead of the local work directory', () => {
+    const lines = new WelcomeComponent({
+      ...appState,
+      workDir: '/Users/local/project',
+      environment: {
+        environmentId: 'remote-env',
+        type: 'ssh',
+        status: 'ready',
+        cwd: '/home/remote/project',
+      },
+    }).render(80);
+
+    expect(lines.some((line) => line.includes('/home/remote/project'))).toBe(true);
+    expect(lines.some((line) => line.includes('/Users/local/project'))).toBe(false);
   });
 
   it('keeps every line within the requested width on narrow terminals', () => {

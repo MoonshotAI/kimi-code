@@ -13,5 +13,5 @@ Guidelines:
 - With `task_id`, the wait ends when that task finishes. An unknown `task_id` is an error; a task that has already finished returns immediately.
 - When no background tasks are running, WaitFor returns immediately without waiting.
 - Waiting has no side effects on the waited tasks: WaitFor never stops a task, and interrupting the wait (for example, a new user message) leaves every task running.
-- A finished task's result is delivered exactly once: tasks reported by WaitFor do not also produce an automatic completion notification.
+- WaitFor returns only the wait outcome. Use TaskOutput to read task output; completion notifications still arrive automatically.
 - You can only wait for background tasks started by this agent; task IDs belonging to other agents are unknown here.

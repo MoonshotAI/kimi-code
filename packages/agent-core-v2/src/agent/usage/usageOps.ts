@@ -1,10 +1,10 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-import { type TokenUsage } from '#human/llm-requester/usage';
+import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
 
-export type UsageRecordScope = 'session' | 'turn';
+export type UsageRecordScope = 'session' | 'turn' | 'prediction';
 
 export interface UsageModelState {
   readonly byModel: Record<string, TokenUsage>;

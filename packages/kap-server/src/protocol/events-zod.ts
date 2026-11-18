@@ -1,52 +1,44 @@
 import { z } from 'zod';
 
+import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
+
+import { capabilityInstallProgressSchema } from './rest-capability';
 import { configResponseSchema } from './rest-config';
-import { sessionPendingInteractionSchema, sessionSchema } from './session';
+import { sessionSchema } from './session';
 import { workspaceSchema } from './workspace';
 
-export const sessionMetaUpdatedEventSchema = z.object({
-  type: z.literal('session.meta.updated'),
-  title: z.string().optional(),
-  patch: z.record(z.string(), z.unknown()).optional(),
-});
+const eventCreatedAt = { event_created_at: isoDateTimeSchema };
 
-export const sessionCreatedEventSchema = z.object({
-  type: z.literal('event.session.created'),
+export const sessionGlobalEventSchema = z.object({
+  type: z.literal('session'),
+  change: z.enum(['created', 'updated', 'archived', 'restored', 'deleted']),
   session: sessionSchema,
+  ...eventCreatedAt,
 });
 
-export const sessionArchivedEventSchema = z.object({
-  type: z.literal('event.session.archived'),
-  workspace_id: z.string().min(1),
-});
-
-export const sessionDeletedEventSchema = z.object({
-  type: z.literal('event.session.deleted'),
-  workspace_id: z.string().min(1),
-});
-
-export const workspaceCreatedEventSchema = z.object({
-  type: z.literal('event.workspace.created'),
+export const workspaceGlobalEventSchema = z.object({
+  type: z.literal('workspace'),
+  change: z.enum(['created', 'updated', 'deleted']),
   workspace: workspaceSchema,
+  ...eventCreatedAt,
 });
 
-export const workspaceUpdatedEventSchema = z.object({
-  type: z.literal('event.workspace.updated'),
-  workspace: workspaceSchema,
+export const configWarningSchema = z.object({
+  domain: z.string().optional(),
+  message: z.string(),
 });
 
-export const workspaceDeletedEventSchema = z.object({
-  type: z.literal('event.workspace.deleted'),
-  workspace_id: z.string().min(1),
-  root: z.string().min(1),
+export const configGlobalEventSchema = z.object({
+  type: z.literal('config'),
+  config: configResponseSchema,
+  warnings: z.array(configWarningSchema).optional(),
+  ...eventCreatedAt,
 });
 
-export const sessionWorkChangedEventSchema = z.object({
-  type: z.literal('event.session.work_changed'),
-  busy: z.boolean(),
-  main_turn_active: z.boolean().optional(),
-  pending_interaction: sessionPendingInteractionSchema.optional(),
-  last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
+export const invalidatedGlobalEventSchema = z.object({
+  type: z.literal('invalidated'),
+  kind: z.enum(['models', 'plugins']),
+  ...eventCreatedAt,
 });
 
 export const environmentStatusSchema = z.enum([
@@ -57,20 +49,18 @@ export const environmentStatusSchema = z.enum([
   'disposed',
 ]);
 
+export const capabilityChangedEventSchema = z.object({
+  type: z.literal('event.capability.changed'),
+  capability_id: z.string(),
+  install: capabilityInstallProgressSchema,
+});
+
+export const capabilityGlobalEventSchema = capabilityChangedEventSchema.extend(eventCreatedAt);
+
 export const configChangedEventSchema = z.object({
   type: z.literal('event.config.changed'),
   changedFields: z.array(z.string().min(1)),
   config: configResponseSchema,
-});
-
-export const configWarningEventSchema = z.object({
-  type: z.literal('event.config.warning'),
-  warnings: z.array(
-    z.object({
-      domain: z.string().optional(),
-      message: z.string(),
-    }),
-  ),
 });
 
 export const modelCatalogChangedEventSchema = z.object({
@@ -99,48 +89,33 @@ export const modelCatalogChangedEventSchema = z.object({
     .optional(),
 });
 
-export const pluginChangedEventSchema = z.object({
-  type: z.literal('event.plugin.changed'),
+export const hostSnapshotSchema = z.object({
+  id: z.string(),
+  host: z.string(),
+  identity_file: z.string().optional(),
+  remote_bin: z.string().optional(),
+  name: z.string().optional(),
+  enabled: z.boolean().optional(),
+  status: z.enum(['pending', 'connecting', 'ready', 'disconnected']),
+  remote_version: z.string().optional(),
+  connect_error: z.string().optional(),
+  connect_failure: z.string().optional(),
 });
 
-export const capabilityChangedEventSchema = z.object({
-  type: z.literal('event.capability.changed'),
-  capability_id: z.string(),
-  install: z.object({
-    running: z.boolean(),
-    step: z.string().optional(),
-    percent: z.number().optional(),
-    error: z.string().optional(),
-    note: z.string().optional(),
-  }),
+export type HostSnapshot = z.infer<typeof hostSnapshotSchema>;
+
+export const hostChangedEventSchema = z.object({
+  type: z.literal('event.host.changed'),
+  hosts: z.array(hostSnapshotSchema),
 });
 
-export const diUnitChangedEventSchema = z.object({
-  type: z.literal('event.di.unit_changed'),
-  scope: z.string().min(1),
-  token: z.string().min(1),
-  state: z.enum(['Pending', 'Activating', 'Active', 'Unloading', 'Failed']),
-  error: z.string().optional(),
-});
+export const hostGlobalEventSchema = hostChangedEventSchema.extend(eventCreatedAt);
 
 export const pushEventSchema = z.discriminatedUnion('type', [
-  sessionMetaUpdatedEventSchema,
-  sessionCreatedEventSchema,
-  sessionArchivedEventSchema,
-  sessionDeletedEventSchema,
-  workspaceCreatedEventSchema,
-  workspaceUpdatedEventSchema,
-  workspaceDeletedEventSchema,
-  sessionWorkChangedEventSchema,
-  configChangedEventSchema,
-  configWarningEventSchema,
-  modelCatalogChangedEventSchema,
-  diUnitChangedEventSchema,
-  pluginChangedEventSchema,
-  capabilityChangedEventSchema,
-]).and(
-  z.object({
-    agentId: z.string(),
-    sessionId: z.string(),
-  }),
-);
+  sessionGlobalEventSchema,
+  workspaceGlobalEventSchema,
+  configGlobalEventSchema,
+  invalidatedGlobalEventSchema,
+  capabilityGlobalEventSchema,
+  hostGlobalEventSchema,
+]);

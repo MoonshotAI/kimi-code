@@ -1,26 +1,3 @@
-/**
- * ReadGroupComponent renders 2+ Read tool calls from the same step as one group.
- *
- * It follows the same structure as `AgentGroupComponent`, with a smaller
- * surface:
- * - one summary header and a tree body listing each file path and status;
- * - permanently grouped; the body is shown only while expanded (ctrl+o),
- *   the collapsed group is the header line alone;
- * - 200ms throttling, matching AgentGroup;
- * - state stays in each `ToolCallComponent`; the group only reads snapshots.
- *
- * Header forms:
- *   pending > 0: Reading {N} files
- *   all done:    Read {N} files · {L} lines
- *   some failed: append · {F} failed
- *   all failed:  Read {N} files · failed
- *
- * Body lines follow AgentGroup's branch style:
- *   src/main.ts · 51 lines
- *   src/cli.ts · reading
- *   src/missing.ts · failed
- */
-
 import type { TUI } from '@moonshot-ai/pi-tui';
 import { Container, Spacer, Text } from '@moonshot-ai/pi-tui';
 
@@ -31,8 +8,6 @@ import type { ToolCallComponent, ToolCallReadSnapshot } from './tool-call';
 import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line';
 
 const THROTTLE_MS = 200;
-// One shared reference: the header line compares segment styles by identity
-// to keep its render cache across rebuilds; the palette is read at call time.
 const dimHeaderStyle = (text: string): string => currentTheme.dim(text);
 
 interface ReadEntry {
@@ -48,6 +23,7 @@ export class ReadGroupComponent extends Container {
   private lastFlushPhases = new Map<string, ToolCallReadSnapshot['phase']>();
   private _invalidating = false;
   private expanded = false;
+  private projectionVersion = 0;
 
   constructor(private readonly ui: TUI | undefined) {
     super();
@@ -62,14 +38,23 @@ export class ReadGroupComponent extends Container {
     return this.entries.length;
   }
 
-  /** Global ctrl+o toggle: the per-file body is only rendered while expanded. */
+  getToolComponents(): readonly ToolCallComponent[] {
+    return this.entries.map((entry) => entry.tc);
+  }
+
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion + this.entries.reduce(
+      (version, entry) => version + entry.tc.transcriptProjectionVersion,
+      0,
+    );
+  }
+
   setExpanded(expanded: boolean): void {
     if (this.expanded === expanded) return;
     this.expanded = expanded;
     this.flushRender();
   }
 
-  /** The per-file bodies only render while expanded, so any attached Read is hidden content. */
   hasHiddenContent(): boolean {
     return this.entries.length > 0;
   }
@@ -78,24 +63,16 @@ export class ReadGroupComponent extends Container {
     return this.expanded;
   }
 
-  /**
-   * Borrows a standalone `ToolCallComponent` into the group as a hidden state
-   * container. Snapshot changes trigger throttled refreshes. Re-attaching the
-   * same toolCallId is a no-op.
-   */
   attach(toolCallId: string, tc: ToolCallComponent): void {
     if (this.entries.some((e) => e.toolCallId === toolCallId)) return;
     this.entries.push({ toolCallId, tc });
+    this.projectionVersion += 1;
     tc.setSnapshotListener(() => {
       this.scheduleRender();
     });
     this.flushRender();
   }
 
-  /**
-   * The pending -> done/failed transition is the important visible change, so
-   * it refreshes immediately. Other changes are throttled.
-   */
   private scheduleRender(): void {
     if (this.detectPhaseTransition()) {
       this.flushRender();
@@ -166,16 +143,12 @@ export class ReadGroupComponent extends Container {
       return `${bullet}${label}`;
     }
 
-    // All reads have finished, either successfully or with failures.
     if (failed === total) {
       const bullet = currentTheme.fg('error', '✗ ');
       const label = currentTheme.boldFg('error', `Read ${String(total)} files`);
       return `${bullet}${label}${currentTheme.fg('error', ' · failed')}`;
     }
 
-    // Three segments so a narrow row drops the line count before the failure
-    // count: with the per-file body hidden while collapsed, that tail is the
-    // only sign that some of the reads failed.
     const bullet = currentTheme.fg('success', STATUS_BULLET);
     const label = currentTheme.boldFg('primary', `Read ${String(total)} files`);
     return {
@@ -216,7 +189,6 @@ export class ReadGroupComponent extends Container {
     this._invalidating = false;
   }
 
-  /** Releases throttle timers so destroyed components cannot refresh later. */
   dispose(): void {
     if (this.throttleTimer !== null) {
       clearTimeout(this.throttleTimer);

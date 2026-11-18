@@ -4,6 +4,8 @@ import type { TUIState } from "#/tui/kimi-tui";
 import { darkColors, lightColors } from "#/tui/theme/colors";
 import { getBuiltInPalette } from "#/tui/theme";
 import { deriveHoverBackground } from "#/tui/theme/hover-color";
+import { colorDistance, mixColors } from "#/tui/theme/color-mix";
+import { Theme } from "#/tui/theme/theme";
 import { parseOsc11Background } from "#/tui/theme/terminal-background";
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
@@ -199,6 +201,27 @@ describe("terminal hover colors", () => {
 
   it("reduces the lightness shift when needed to preserve text contrast", () => {
     expect(deriveHoverBackground("#888888", "#1A1A1A")).toBe("#838383");
+  });
+});
+
+describe('transcript group colors', () => {
+  it('mixes existing colors and measures their distance', () => {
+    expect(mixColors('#000000', '#FFFFFF', 0.45)).toBe('#737373');
+    expect(mixColors('#454545', '#FFFFFF', 0.35)).toBe('#868686');
+    expect(mixColors('#454545', '#FFFFFF', 0.65)).toBe('#bebebe');
+    expect(colorDistance('#888888', '#1E1E1E')).toBeCloseTo(183.60, 2);
+  });
+
+  it('uses the detected background and falls back from the palette brightness', () => {
+    const light = new Theme(lightColors);
+    expect(light.terminalBackground()).toBe('#FFFFFF');
+    light.setTerminalBackground('#FAFBFC');
+    expect(light.terminalBackground()).toBe('#FAFBFC');
+
+    const dark = new Theme(darkColors);
+    expect(dark.terminalBackground()).toBe('#000000');
+    dark.setTerminalBackground('#1E1E1E');
+    expect(dark.terminalBackground()).toBe('#1E1E1E');
   });
 });
 

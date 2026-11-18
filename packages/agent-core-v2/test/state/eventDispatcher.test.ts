@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
@@ -12,7 +12,8 @@ import {
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { ILogService } from '#/_base/log/log';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
-import '#/agent/contextMemory/conversationTime';
+import { TurnPrompt } from '#/agent/loop/turnOps';
+import { ContextUndo } from '#/agent/contextMemory/contextEvents';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -52,6 +53,8 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     },
     readRestoreChains: async () => ({ restorable: [...journal], journal: [...journal] }),
     readHumanChain: () => [],
+    readLoopChain: () => [],
+    readHumanJournal: () => [],
     read: async function* () {
       for (const record of journal) yield record;
     },
@@ -684,6 +687,84 @@ describe('EventDispatcherService', () => {
     expect(state.items).toEqual(['a']);
   });
 
+  it('hands undo anchors and legacy undo records to a participant with a custom onUndo', async () => {
+    const isolated = new TestInstantiationService();
+    const records: WireRecord[] = [];
+    isolated.set(IEventBus, new SyncDescriptor(EventBusService));
+    isolated.set(IAgentBlobService, noopBlob);
+    isolated.set(IWireService, stubWireJournal(records));
+    isolated.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }));
+    isolated.set(IAgentStateService, new AgentStateService());
+    isolated.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const scoped = isolated.get(IEventDispatcher);
+    const prompt = (text: string): TurnPrompt =>
+      new TurnPrompt({
+        agentId: 'main',
+        input: [{ type: 'text', text }],
+        origin: { kind: 'user' },
+      });
+    records.push(
+      prompt('a').serialize(),
+      prompt('b').serialize(),
+      new ContextUndo({ agentId: 'main', count: 1 }).serialize(),
+      prompt('c').serialize(),
+    );
+    let state: CheckpointedState = { items: [] };
+    scoped.attach({
+      id: 'runtime.test.custom-undo',
+      events: [TurnPrompt],
+      undoable: true,
+      transition: (draft, event) => {
+        const part = (event as TurnPrompt).input[0];
+        if (part?.type === 'text') draft.items.push(part.text);
+      },
+      onUndo: (current, count) => ({ items: current.items.slice(0, -count) }),
+      getState: () => state,
+      commit: (next) => { state = next; },
+    });
+
+    await scoped.restore();
+
+    expect(state.items).toEqual(['a', 'c']);
+    isolated.dispose();
+  });
+
+  it('brackets every restore pass with the replay hooks of runtime participants, failed passes included', async () => {
+    journal.push(new ItemAdd({ item: 'a' }).serialize());
+    const calls: string[] = [];
+    let state: CheckpointedState = { items: [] };
+    dispatcher.attach({
+      id: 'runtime.test.replay-hooks',
+      events: [ItemAdd],
+      undoable: true,
+      transition: (draft, event) => {
+        if (event instanceof ItemAdd) draft.items.push(event.item);
+      },
+      onWillReplay: () => {
+        calls.push(`will:${state.items.join(',')}`);
+      },
+      onDidReplay: (replayed, { ok }) => {
+        calls.push(`did:${ok}:${replayed.items.join(',')}`);
+        state = ok ? { items: [...replayed.items, 'settled'] } : replayed;
+      },
+      getState: () => state,
+      commit: (next) => { state = next; },
+    });
+
+    await dispatcher.restore();
+    expect(calls).toEqual(['did:true:a']);
+    expect(state.items).toEqual(['a', 'settled']);
+
+    journal.push(new ItemAdd({ item: 'b' }).serialize());
+    await dispatcher.restore();
+    expect(calls).toEqual(['did:true:a', 'will:a,settled', 'did:true:a,b']);
+    expect(state.items).toEqual(['a', 'b', 'settled']);
+
+    journal.push(new FailingEvent({}).serialize());
+    await expect(dispatcher.restore()).rejects.toThrow('fold failure');
+    expect(calls.slice(3)).toEqual(['will:a,b,settled', 'did:false:a,b']);
+  });
+
   it('replays journal history into a late-attached participant and folds live events after', async () => {
     await dispatcher.dispatch(new ItemAdd({ item: 'a' }));
     await dispatcher.dispatch(new AnchorEvent({}));
@@ -814,5 +895,111 @@ describe('EventDispatcherService', () => {
     expect(agentState.replayableKeys()).not.toContain(removableKey);
     await expect(dispatcher.dispatch(new CounterAdd({ by: 3 }))).resolves.toBeUndefined();
     expect(agentState.get(counterKey).value).toBe(5);
+  });
+
+  it('supports opt-in mutableReplay on durable participants across restore, reruns, failures, and attachLate', async () => {
+    expect(() =>
+      dispatcher.attach({
+        id: 'runtime.test.invalid-mutable',
+        events: [ItemAdd],
+        undoable: true,
+        mutableReplay: true,
+        transition: () => {},
+        getState: () => ({ items: [] }),
+        commit: () => {},
+      }),
+    ).toThrow(/requires custom onUndo for mutable replay/);
+
+    interface MutableParticipantState {
+      count: number;
+      items: string[];
+      lookup: Record<string, number>;
+    }
+    const initial: MutableParticipantState = { count: 0, items: [], lookup: {} };
+    let state: MutableParticipantState = initial;
+    let commits = 0;
+    const frozenReplacement = Object.freeze({
+      count: 0,
+      items: Object.freeze(['reset']) as unknown as string[],
+      lookup: Object.freeze({ reset: 1 }) as Record<string, number>,
+    });
+    dispatcher.attach({
+      id: 'runtime.test.mutable-participant',
+      events: [CounterAdd, ItemAdd, ClearEvent],
+      undoable: true,
+      mutableReplay: true,
+      transition: (draft, event) => {
+        if (event instanceof ClearEvent) return frozenReplacement;
+        if (event instanceof CounterAdd) {
+          draft.count += event.by;
+          return;
+        }
+        if (event instanceof ItemAdd) {
+          draft.items.push(event.item);
+          draft.lookup[event.item] = draft.items.length;
+        }
+        return undefined;
+      },
+      onUndo: (draft, count) => {
+        draft.items.splice(Math.max(0, draft.items.length - count));
+        return draft;
+      },
+      getState: () => state,
+      commit: (next) => {
+        commits += 1;
+        state = next;
+      },
+    });
+
+    journal.push(new CounterAdd({ by: 2 }).serialize());
+    for (let i = 0; i < 200; i += 1) {
+      journal.push(new ItemAdd({ item: `m-${i}` }).serialize());
+    }
+    journal.push(new ClearEvent({}).serialize(), new ItemAdd({ item: 'tail' }).serialize());
+
+    await dispatcher.restore();
+
+    expect(initial).toEqual({ count: 0, items: [], lookup: {} });
+    expect(frozenReplacement.items).toEqual(['reset']);
+    expect(state).toEqual({ count: 0, items: ['reset', 'tail'], lookup: { reset: 1, tail: 2 } });
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Object.isFrozen(state.items)).toBe(true);
+    expect(commits).toBe(1);
+
+    journal.push(new FailingEvent({}).serialize());
+    await expect(dispatcher.restore()).rejects.toThrow('fold failure');
+    expect(state).toBe(initial);
+
+    journal.length = 0;
+    journal.push(new ItemAdd({ item: 'recovered' }).serialize());
+    await dispatcher.restore();
+    expect(state).toEqual({ count: 0, items: ['recovered'], lookup: { recovered: 1 } });
+
+    let lateState: CheckpointedState = { items: ['seed'] };
+    let lateCommits = 0;
+    for (let i = 0; i < 100; i += 1) {
+      journal.push(new ItemAdd({ item: `late-${i}` }).serialize());
+    }
+    await dispatcher.attachLate({
+      id: 'runtime.test.mutable-late',
+      events: [ItemAdd],
+      undoable: false,
+      mutableReplay: true,
+      transition: (draft, event) => {
+        if (event instanceof ItemAdd) draft.items.push(event.item);
+      },
+      getState: () => lateState,
+      commit: (next) => {
+        lateCommits += 1;
+        lateState = next;
+      },
+    });
+
+    expect(lateCommits).toBe(1);
+    expect(lateState.items).toHaveLength(102);
+    expect(Object.isFrozen(lateState)).toBe(true);
+
+    await dispatcher.dispatch(new ItemAdd({ item: 'live' }));
+    expect(lateState.items.at(-1)).toBe('live');
   });
 });

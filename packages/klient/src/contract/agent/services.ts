@@ -1,11 +1,3 @@
-/**
- * Agent-scope domain service contracts. These mirror the signatures of the
- * engine's domain Services (prompt / skill / loop / permissionMode / command /
- * contextMemory / tokenCounting / shellCommand / profile / usage / plan /
- * task) that the agent facade calls directly; payload and result schemas are
- * shared in `agent/schemas.ts` (they mirror the same wire shapes).
- */
-
 import { z } from 'zod';
 
 import { maybe, noResult } from '../helpers.js';
@@ -24,21 +16,10 @@ import {
   environmentBindingSchema,
   setModelResultSchema,
   shellCommandResultSchema,
-  steerPayloadSchema,
   steerResultSchema,
+  steerEntrySchema,
   usageStatusSchema,
 } from './schemas.js';
-
-export const agentPromptContract = {
-  submit: {
-    input: z.tuple([promptPayloadSchema]),
-    output: maybe(promptLaunchResultSchema),
-  },
-  submitSteer: {
-    input: z.tuple([steerPayloadSchema]),
-    output: steerResultSchema,
-  },
-} satisfies ServiceContract;
 
 export const agentSkillContract = {
   activate: { input: z.tuple([activateSkillPayloadSchema]), output: promptLaunchResultSchema },
@@ -49,6 +30,14 @@ export const agentSkillContract = {
 } satisfies ServiceContract;
 
 export const agentLoopContract = {
+  submit: {
+    input: z.tuple([promptPayloadSchema]),
+    output: maybe(promptLaunchResultSchema),
+  },
+  notifyClient: {
+    input: z.tuple([steerEntrySchema]),
+    output: steerResultSchema,
+  },
   cancelFromUser: { input: z.tuple([z.number().optional()]), output: noResult },
 } satisfies ServiceContract;
 
@@ -65,7 +54,6 @@ export const agentEnvironmentBindingContract = {
   current: { input: z.tuple([]), output: environmentBindingSchema },
 } satisfies ServiceContract;
 
-/** `history` items are full `ContextMessage`s, mirrored as `unknown`. */
 export const agentContextMemoryContract = {
   get: { input: z.tuple([]), output: z.array(z.unknown()) },
 } satisfies ServiceContract;
@@ -100,7 +88,6 @@ export const agentPlanContract = {
   cancel: { input: z.tuple([z.string().optional()]), output: noResult },
 } satisfies ServiceContract;
 
-/** `McpServerEntry` from the engine's `mcpCore/connection-manager`. */
 export const mcpServerEntrySchema = z.object({
   name: z.string(),
   transport: z.enum(['stdio', 'http', 'sse']),
@@ -114,7 +101,6 @@ export const agentMcpContract = {
   list: { input: z.tuple([]), output: z.array(mcpServerEntrySchema) },
 } satisfies ServiceContract;
 
-/** `FullCompactionInput` from the engine's `agent/fullCompaction`. */
 export const fullCompactionInputSchema = z.object({
   source: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),

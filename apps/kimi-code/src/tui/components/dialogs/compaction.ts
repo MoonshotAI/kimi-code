@@ -1,18 +1,3 @@
-/**
- * Renders a compaction block in the transcript.
- *
- * Lifecycle:
- *   - constructed on `compaction.started` → blinking white bullet +
- *     "Compacting context..." and optional custom instruction
- *   - `markDone()` on `compaction.completed` → solid green bullet +
- *     "Compaction complete (X → Y tokens)"
- *   - `markCanceled()` on `compaction.cancelled` → solid warning bullet +
- *     "Compaction cancelled"
- *
- * Bullet animation mirrors `ToolCallComponent` (500ms blink) so the user
- * reads the same "work in progress" signal across the UI.
- */
-
 import { Container, Text, Spacer } from '@moonshot-ai/pi-tui';
 import type { TUI } from '@moonshot-ai/pi-tui';
 
@@ -37,14 +22,12 @@ export class CompactionComponent extends Container {
   private summaryText: Text | undefined;
   private expanded = false;
 
-  constructor(ui?: TUI, instruction?: string | undefined, tip?: string) {
+  constructor(ui?: TUI, instruction?: string, tip?: string) {
     super();
     this.ui = ui;
     this.instruction = instruction;
     this.tip = tip;
 
-    // Top margin so the block isn't glued to the previous transcript
-    // entry (status line, tool result, etc.).
     this.addChild(new Spacer(1));
     this.headerText = new Text(this.buildHeader(), 0, 0);
     this.addChild(this.headerText);
@@ -70,10 +53,7 @@ export class CompactionComponent extends Container {
   }
 
   override invalidate(): void {
-    // Repaint the header with the active palette (it caches ANSI codes).
     this.headerText.setText(this.buildHeader());
-    // Rebuild instruction and summary text with fresh theme colours, preserving
-    // header → instruction → summary child order.
     const expanded = this.expanded;
     this.removeInstructionChild();
     if (expanded) {

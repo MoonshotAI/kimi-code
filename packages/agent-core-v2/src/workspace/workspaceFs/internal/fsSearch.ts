@@ -169,6 +169,7 @@ export interface SuggestCandidate {
   readonly path: string;
   readonly name: string;
   readonly kind: 'file' | 'directory' | 'symlink';
+  readonly ignored: boolean;
   readonly tier: number;
   readonly depth: number;
   readonly span: number;
@@ -246,6 +247,7 @@ export function evaluateSuggestCandidate(
   relPath: string,
   kind: 'file' | 'directory' | 'symlink',
   query: SuggestQuery,
+  ignored = false,
 ): SuggestCandidate | null {
   const segments = relPath.split('/');
   if (segments.some((s) => VCS_METADATA_DIRS.has(s))) return null;
@@ -273,6 +275,7 @@ export function evaluateSuggestCandidate(
     path: relPath,
     name,
     kind,
+    ignored,
     tier: match.tier,
     depth: segments.length,
     span: match.span,
@@ -283,6 +286,7 @@ export function evaluateSuggestCandidate(
 
 export function compareSuggestCandidates(a: SuggestCandidate, b: SuggestCandidate): number {
   if (a.tier !== b.tier) return b.tier - a.tier;
+  if (a.ignored !== b.ignored) return Number(a.ignored) - Number(b.ignored);
   if (a.depth !== b.depth) return a.depth - b.depth;
   if (a.name.length !== b.name.length) return a.name.length - b.name.length;
   if (a.span !== b.span) return a.span - b.span;
@@ -298,6 +302,10 @@ export class SuggestTopHeap {
 
   get size(): number {
     return this.heap.length;
+  }
+
+  get worst(): SuggestCandidate | undefined {
+    return this.heap[0];
   }
 
   push(candidate: SuggestCandidate): void {

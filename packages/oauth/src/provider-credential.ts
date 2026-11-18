@@ -1,12 +1,3 @@
-/**
- * Shared provider-credential rules for every layer that reads or rewrites a
- * provider record: this package's refresh orchestrator, the agent-core-v2
- * runtime (model-auth / catalog / auth readiness), and the kap-server provider
- * write routes. The precedence chain (inline `apiKey` vs declared `apiKeyEnv`),
- * the mutual-exclusion conflicts, and the user-facing messages live here once
- * so no layer re-derives — and silently diverges on — the same rules.
- */
-
 export interface ProviderCredentialView {
   readonly apiKey?: unknown;
   readonly apiKeyEnv?: unknown;
@@ -19,12 +10,6 @@ export type DeclaredProviderCredential =
   | { readonly kind: 'none' }
   | { readonly kind: 'conflict'; readonly message: string };
 
-/**
- * Reads the credential a provider record declares, without resolving any
- * environment variable. Conflict kinds mirror what the chat path rejects:
- * `apiKey`+`apiKeyEnv`, `apiKeyEnv`+`oauth`, and `apiKey`+`oauth` — refresh
- * and write paths must not honor a configuration the runtime would refuse.
- */
 export function declaredProviderCredential(
   provider: ProviderCredentialView,
   providerName: string,
@@ -77,12 +62,6 @@ export type ProviderCredentialReconciliation =
   | { readonly ok: true; readonly apiKey?: string; readonly apiKeyEnv?: string }
   | { readonly ok: false; readonly message: string };
 
-/**
- * Merges a submitted credential update into a provider's existing credential.
- * Submitted values are trimmed; a non-empty `apiKey` replaces any `apiKeyEnv`
- * (and vice versa), submitting both is a conflict, and an explicit empty/
- * whitespace value clears its own field while an omitted field is preserved.
- */
 export function reconcileProviderCredentialUpdate(
   existing: ProviderCredentialUpdate,
   submitted: ProviderCredentialUpdate,

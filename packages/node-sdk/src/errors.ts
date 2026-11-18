@@ -61,6 +61,7 @@ export const ErrorCodes = {
   SKILL_NAME_EMPTY: 'skill.name_empty',
 
   RECORDS_WRITE_FAILED: 'records.write_failed',
+  WIRE_VERSION_TOO_LOW: 'wire.version_too_low',
   COMPACTION_FAILED: 'compaction.failed',
   COMPACTION_UNABLE: 'compaction.unable',
 
@@ -373,6 +374,12 @@ export const KIMI_ERROR_INFO = {
     retryable: true,
     public: true,
     action: 'Check disk space and permissions on the session directory.',
+  },
+  'wire.version_too_low': {
+    title: 'Kimi Code upgrade required',
+    retryable: false,
+    public: true,
+    action: 'Upgrade Kimi Code to the latest version to read this session.',
   },
   'compaction.failed': {
     title: 'Compaction failed',

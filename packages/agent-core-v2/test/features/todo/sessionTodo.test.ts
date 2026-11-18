@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KeyedResourceLeasePool } from '#/_base/lifecycle/keyedResource';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { appendContext } from '../../agent/contextMemory/stubs';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
@@ -21,16 +22,16 @@ import {
   type TestAgentContext,
 } from '../../harness';
 
-function reminderCount(memory: IAgentContextMemoryService): number {
-  return memory.get().filter(
+function reminderCount(memory: IAgentLoopService): number {
+  return memory.history().filter(
     (message) =>
       message.origin?.kind === 'injection' && message.origin.variant === TODO_LIST_REMINDER_VARIANT,
   ).length;
 }
 
-function appendAssistantTurns(memory: IAgentContextMemoryService, count: number): void {
+function appendAssistantTurns(memory: IAgentLoopService, count: number): void {
   for (let i = 0; i < count; i += 1) {
-    memory.append({
+    appendContext(memory, {
       role: 'assistant',
       content: [{ type: 'text', text: `turn ${i}` }],
       toolCalls: [],
@@ -204,11 +205,12 @@ describe('AgentTodoService', () => {
     const sub = await lifecycle.create({ agentId: 'agent-1' });
     const subTodo = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentTodoService);
     const subReminder = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentReminderService);
-    const subMemory = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentContextMemoryService);
+    const subMemory = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentLoopService);
+    const remindersBeforeSubTodo = reminderCount(subMemory);
     await subTodo.replace([{ title: 'sub task', status: 'pending' }]);
     appendAssistantTurns(subMemory, 10);
     await subReminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
-    expect(reminderCount(subMemory)).toBe(0);
+    expect(reminderCount(subMemory)).toBe(remindersBeforeSubTodo);
     await lifecycle.remove(sub);
   });
 

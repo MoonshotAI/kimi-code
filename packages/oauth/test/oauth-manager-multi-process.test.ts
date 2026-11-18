@@ -1,29 +1,3 @@
-/**
- * OAuthManager cross-process refresh lock.
- *
- * Spawns N Node worker processes that each call `ensureFresh(force=true)`
- * on the same OAuth provider. With the `proper-lockfile`-backed
- * cross-process mutex around `doEnsureFresh`, only one worker actually
- * hits the refresh endpoint (`refreshImpl`); the others re-read storage
- * and see the rotated token produced by the winner.
- *
- * Workers run as inline `.mjs` scripts via `spawnInlineWorkers`. Each
- * worker:
- *   1. Dynamically imports `OAuthManager` from the current package source.
- *   2. Constructs it with a file-backed TokenStorage pointing at
- *      `{shareDir}/token.json` and a `refreshTokenImpl` that increments
- *      `{shareDir}/refresh-count.txt` atomically before returning a
- *      rotated token (refreshToken changes every refresh).
- *   3. Calls `ensureFresh({force:true})` and exits.
- *
- * Oracle: after all workers exit, `refresh-count.txt` contains exactly
- * `1` (when the lock is in place); `N` (when it is not).
- *
- * **Platform**: macOS / Linux only. Windows path quirks for
- * `proper-lockfile` are bypassed via the `KIMI_DISABLE_OAUTH_LOCK=1`
- * env-var escape hatch; this test skips on `process.platform === 'win32'`.
- */
-
 import { mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -33,17 +7,6 @@ import { createTempWorkDir, spawnInlineWorkers, type TempDirHandle } from './hel
 
 const skipOnWindows = process.platform === 'win32';
 const OAUTH_ENTRY_URL = new URL('../src/index.ts', import.meta.url).href;
-
-// ─────────────────────────────────────────────────────────────────────
-// Worker body — dedicated inline .mjs script.
-// ─────────────────────────────────────────────────────────────────────
-//
-// One worker = one ensureFresh(force=true) invocation. All workers race
-// against the same on-disk lock file and the same refresh-count.txt.
-//
-// `refresh-count.txt` starts empty (or missing). Workers atomically
-// append a single byte per observed refresh using O_APPEND semantics;
-// the final byte count equals the number of refreshes that took place.
 
 const WORKER_SCRIPT = `
   import { readFile, writeFile, appendFile, mkdir, stat } from 'node:fs/promises';
@@ -161,7 +124,7 @@ async function seedInitialToken(shareDir: string): Promise<void> {
     'test-provider': {
       accessToken: 'at-initial',
       refreshToken: 'rt-initial',
-      expiresAt: nowSec + 60, // inside refresh threshold → force refresh hits
+      expiresAt: nowSec + 60,
       scope: '',
       tokenType: 'Bearer',
       expiresIn: 3600,
@@ -208,29 +171,16 @@ describe.skipIf(skipOnWindows)('OAuthManager cross-process refresh lock', () => 
       },
     });
 
-    // All workers exit cleanly.
     for (const w of workers) {
       expect(w.exitCode, `worker ${String(w.id)} stderr: ${w.stderr}`).toBe(0);
       expect(w.stdout.startsWith('ok:')).toBe(true);
     }
 
-    // Refresh count = 1 → exactly one refresh happened across the 5
-    // processes. Without the lock the count equals N (or any value > 1).
     const count = await readRefreshCount(dir.path);
     expect(count).toBe(1);
   }, 45_000);
 
   it('stale lock (held by a killed worker) is reclaimed after stale timeout', async () => {
-    // Scenario: worker A takes the lock and crashes without releasing
-    // (SIGKILL). Worker B arrives 6+ seconds later and must reclaim
-    // the stale lock via `proper-lockfile`'s `stale: 5_000ms` policy.
-    //
-    // BLK-2 fix: proper-lockfile represents the lock as a DIRECTORY
-    // at `{target}.lock/`. The staleness probe is `stat().mtimeMs`
-    // on that directory, so we must `mkdir` + `utimes` (not
-    // `writeFile`, which would put a regular file where a dir is
-    // expected — `proper-lockfile` would then blow up or
-    // mis-interpret it).
     const dir = await createTempWorkDir();
     tmpHandles.push(dir);
     await seedInitialToken(dir.path);
@@ -239,7 +189,6 @@ describe.skipIf(skipOnWindows)('OAuthManager cross-process refresh lock', () => 
     const { utimes } = await import('node:fs/promises');
     const lockDir = join(dir.path, 'oauth', 'test-provider.lock');
     await mkdir(lockDir, { recursive: true });
-    // 10 seconds ago — past the 5 s stale threshold.
     const tenSecondsAgo = (Date.now() - 10_000) / 1000;
     await utimes(lockDir, tenSecondsAgo, tenSecondsAgo);
 
@@ -259,7 +208,6 @@ describe.skipIf(skipOnWindows)('OAuthManager cross-process refresh lock', () => 
   }, 30_000);
 });
 
-// Prevent "no tests in file" when running on Windows.
 describe.skipIf(!skipOnWindows)('OAuthManager cross-process refresh lock (Windows skip)', () => {
   it('skipped on Windows — covered by KIMI_DISABLE_OAUTH_LOCK=1 env escape hatch', () => {
     expect(skipOnWindows).toBe(true);

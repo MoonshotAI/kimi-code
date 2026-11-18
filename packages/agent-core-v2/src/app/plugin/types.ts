@@ -143,6 +143,7 @@ export interface PluginRecord {
   readonly source: PluginSource;
   readonly origin: PluginOrigin;
   readonly catalogId?: string;
+  readonly marketplaceSource?: string;
   readonly enabled: boolean;
   readonly state: PluginState;
   readonly installedAt: string;
@@ -164,6 +165,9 @@ export interface PluginRecord {
 export interface PluginSummary {
   readonly id: string;
   readonly displayName: string;
+  readonly description?: string;
+  readonly shortDescription?: string;
+  readonly longDescription?: string;
   readonly version?: string;
   readonly enabled: boolean;
   readonly state: PluginState;

@@ -3,14 +3,8 @@ import { z } from 'zod';
 import { getPluginUpdateNoticeStateFile } from '#/utils/paths';
 import { readJsonFile, writeJsonFile } from '#/utils/persistence';
 
-/**
- * Records, per plugin, the newest marketplace version an update notice was
- * already shown for. A plugin is re-notified only when the marketplace
- * advertises a version different from the recorded one.
- */
 export type PluginUpdateNoticeState = {
   version: 1;
-  /** pluginId -> latest marketplace version already notified. */
   notified: Record<string, string>;
 };
 

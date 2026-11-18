@@ -51,6 +51,7 @@ export function registerInteractionsRoutes(app: InteractionRouteHost, core: Scop
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.INTERACTION_NOT_FOUND]: {},
         [ErrorCode.INTERACTION_ENDED]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Respond to a pending approval or question',
       tags: ['interactions'],

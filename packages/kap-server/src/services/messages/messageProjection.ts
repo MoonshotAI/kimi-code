@@ -1,6 +1,8 @@
 import { daemonFileRefFromPart, parseDaemonFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import { stripBundledSkillBlocks, type SteerMessage } from '@moonshot-ai/core/llm/origin';
 import { fromCorePart } from '@moonshot-ai/agent-core-v2/human/message';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -41,9 +43,14 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
   }
 }
 
-function isCoreMediaPart(
-  part: unknown,
-): part is Extract<ContentPart, { type: 'image_url' | 'audio_url' | 'video_url' }> {
+interface CoreMediaPart {
+  readonly type: 'image_url' | 'audio_url' | 'video_url';
+  readonly source:
+    | { readonly kind: 'url'; readonly url: string }
+    | { readonly kind: 'inline' | 'file' | 'store' };
+}
+
+function isCoreMediaPart(part: unknown): part is CoreMediaPart {
   if (typeof part !== 'object' || part === null || !('type' in part) || !('source' in part)) {
     return false;
   }
@@ -60,9 +67,41 @@ function isCoreMediaPart(
   );
 }
 
-export function projectToolResultOutput(output: unknown): unknown {
+function projectToolResultMediaPart(part: unknown): unknown {
+  if (isCoreMediaPart(part)) {
+    if (part.source.kind !== 'url' || part.type === 'audio_url') return part;
+    const ref = parseDaemonFileUrl(part.source.url);
+    if (ref === undefined) return part;
+    return {
+      type: part.type === 'image_url' ? 'image' : 'video',
+      source: { kind: 'session_media', file_id: ref.fileId },
+      name: (part as { name?: unknown }).name,
+    };
+  }
+  const legacy = part as ContentPart;
+  if (typeof legacy !== 'object' || legacy === null) return legacy;
+  const ref = daemonFileRefFromPart(legacy);
+  if (ref === undefined) return legacy;
+  if (legacy.type === 'image_url') {
+    return {
+      type: 'image',
+      source: { kind: 'session_media', file_id: ref.ref.fileId },
+      name: legacy.imageUrl.name,
+    };
+  }
+  if (legacy.type === 'video_url') {
+    return {
+      type: 'video',
+      source: { kind: 'session_media', file_id: ref.ref.fileId },
+      name: legacy.videoUrl.name,
+    };
+  }
+  return legacy;
+}
+
+function projectToolResultOutput(output: unknown): unknown {
   if (!Array.isArray(output)) return output;
-  return output.map((part) => (isCoreMediaPart(part) ? fromCorePart(part) : part));
+  return output.map((part) => projectToolResultMediaPart(part));
 }
 
 function buildProtocolContent(msg: ContextMessage): MessageContent[] {
@@ -150,6 +189,12 @@ export function projectPromptContentParts(content: readonly ContentPart[]): Mess
     }
   }
   return parts;
+}
+
+export function projectUserContent(message: SteerMessage): MessageContent[] {
+  const origin = message.origin as { readonly kind: string; readonly name?: unknown } | undefined;
+  if (origin?.kind === 'retry' || (origin?.kind === 'system_trigger' && origin.name !== 'subagent')) return [];
+  return projectPromptContentParts(stripBundledSkillBlocks(message).filter((part) => !isUserPromptSubmitHookPart(part)));
 }
 
 export function toProtocolMessage(

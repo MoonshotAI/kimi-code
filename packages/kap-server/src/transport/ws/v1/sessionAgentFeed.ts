@@ -12,23 +12,34 @@ import {
 import type {
   AgentEventMessage,
   AgentFeedMessage,
+  AgentState,
+  ContextEventMessage,
+  ContextState,
   GoalEventMessage,
   GoalState,
   TodoEventMessage,
-  UsageEventMessage,
-  UsageState,
 } from '../../../protocol/ws-agent';
 import {
   optionalService,
   readAgentState,
+  readContextState,
   readGoalState,
   readTodoItems,
-  readUsageState,
 } from './agentState';
 
-export const USAGE_FRAME_INTERVAL_MS = 250;
+export const CONTEXT_FRAME_INTERVAL_MS = 250;
+export const USAGE_FRAME_INTERVAL_MS = CONTEXT_FRAME_INTERVAL_MS;
 
-const STATE_EVENT_TYPES = ['turn.started', 'turn.ended', 'agent.status.updated', 'goal.updated'] as const;
+const STATE_EVENT_TYPES = [
+  'turn.started',
+  'turn.ended',
+  'compaction.started',
+  'compaction.completed',
+  'compaction.cancelled',
+  'compaction.blocked',
+  'agent.status.updated',
+  'goal.updated',
+] as const;
 
 export type AgentFeedSend = (agentId: string, message: AgentFeedMessage) => void;
 
@@ -40,15 +51,18 @@ export class SessionAgentFeed implements IDisposable {
     private readonly sessionId: string,
     private readonly agents: IAgentLifecycleService,
     private readonly send: AgentFeedSend,
-    private readonly usageIntervalMs = USAGE_FRAME_INTERVAL_MS,
+    private readonly contextIntervalMs = CONTEXT_FRAME_INTERVAL_MS,
   ) {
     for (const agent of agents.list()) this.watch(agent.agentId, false);
     this.lifecycleWatches = [
       agents.onDidCreate((agent) => {
         this.watch(agent.agentId, true);
       }),
+      agents.onWillClose((agent) => {
+        this.watches.get(agent.agentId)?.captureBeforeClose();
+      }),
       agents.onDidClose((agent) => {
-        this.unwatch(agent.agentId);
+        this.close(agent.agentId);
       }),
     ];
   }
@@ -73,13 +87,15 @@ export class SessionAgentFeed implements IDisposable {
     if (handle === undefined) return;
     this.watches.set(
       agentId,
-      new AgentWatch(this.sessionId, agentId, handle, this.send, this.usageIntervalMs, announce),
+      new AgentWatch(this.sessionId, agentId, handle, this.send, this.contextIntervalMs, announce),
     );
   }
 
-  private unwatch(agentId: string): void {
-    this.watches.get(agentId)?.dispose();
+  private close(agentId: string): void {
+    const watch = this.watches.get(agentId);
+    if (watch === undefined) return;
     this.watches.delete(agentId);
+    watch.close();
   }
 }
 
@@ -87,12 +103,13 @@ class AgentWatch implements IDisposable {
   private running: boolean;
   private flushQueued = false;
   private disposed = false;
+  private lastState: AgentState;
   private lastAgent?: string;
   private lastGoal?: string;
   private lastTodo?: string;
-  private lastUsage?: string;
-  private pendingUsage?: UsageState;
-  private usageTimer?: ReturnType<typeof setTimeout>;
+  private lastContext?: string;
+  private pendingContext?: ContextState;
+  private contextTimer?: ReturnType<typeof setTimeout>;
   private readonly subscriptions: IDisposable[] = [];
 
   constructor(
@@ -100,10 +117,11 @@ class AgentWatch implements IDisposable {
     private readonly agentId: string,
     private readonly handle: IAgentScopeHandle,
     private readonly send: AgentFeedSend,
-    private readonly usageIntervalMs: number,
+    private readonly contextIntervalMs: number,
     announce: boolean,
   ) {
     this.running = loopRunning(handle);
+    this.lastState = readAgentState(handle, this.running);
     const bus = optionalService(handle, IEventBus);
     if (bus !== undefined) {
       for (const type of STATE_EVENT_TYPES) {
@@ -128,8 +146,8 @@ class AgentWatch implements IDisposable {
 
   snapshot(): AgentFeedMessage[] {
     const messages: AgentFeedMessage[] = [this.agentMessage()];
-    const usage = readUsageState(this.handle);
-    if (usage !== undefined) messages.push(this.usageMessage(usage));
+    const context = readContextState(this.handle);
+    if (context !== undefined) messages.push(this.contextMessage(context));
     if (this.agentId === MAIN_AGENT_ID) messages.push(this.goalMessage(readGoalState(this.handle)));
     messages.push(this.todoMessage());
     return messages;
@@ -139,8 +157,24 @@ class AgentWatch implements IDisposable {
     this.disposed = true;
     for (const subscription of this.subscriptions) subscription.dispose();
     this.subscriptions.length = 0;
-    if (this.usageTimer !== undefined) clearTimeout(this.usageTimer);
-    this.usageTimer = undefined;
+    if (this.contextTimer !== undefined) clearTimeout(this.contextTimer);
+    this.contextTimer = undefined;
+  }
+
+  captureBeforeClose(): void {
+    if (this.disposed) return;
+    this.lastState = readAgentState(this.handle, false);
+  }
+
+  close(): void {
+    this.dispose();
+    this.send(this.agentId, {
+      type: 'agent',
+      ...this.frameFields(),
+      ...this.lastState,
+      status: 'ended',
+      compacting: false,
+    });
   }
 
   private onEvent(event: Event2<unknown>): void {
@@ -162,8 +196,8 @@ class AgentWatch implements IDisposable {
     this.lastAgent = agentKey(this.agentMessage());
     if (this.agentId === MAIN_AGENT_ID) this.lastGoal = goalKey(readGoalState(this.handle));
     this.lastTodo = todoKey(this.todoMessage());
-    const usage = readUsageState(this.handle);
-    this.lastUsage = usage === undefined ? undefined : JSON.stringify(usage);
+    const context = readContextState(this.handle);
+    this.lastContext = context === undefined ? undefined : JSON.stringify(context);
   }
 
   private flush(): void {
@@ -190,32 +224,35 @@ class AgentWatch implements IDisposable {
       this.send(this.agentId, todo);
     }
 
-    const usage = readUsageState(this.handle);
-    if (usage === undefined) return;
-    const nextUsage = JSON.stringify(usage);
-    if (nextUsage === this.lastUsage) return;
-    this.lastUsage = nextUsage;
-    this.pendingUsage = usage;
-    if (this.usageTimer !== undefined) return;
-    this.usageTimer = setTimeout(() => {
-      this.usageTimer = undefined;
-      const pending = this.pendingUsage;
-      this.pendingUsage = undefined;
-      if (pending !== undefined && !this.disposed) this.send(this.agentId, this.usageMessage(pending));
-    }, this.usageIntervalMs);
-    this.usageTimer.unref?.();
+    const context = readContextState(this.handle);
+    if (context === undefined) return;
+    const nextContext = JSON.stringify(context);
+    if (nextContext === this.lastContext) return;
+    this.lastContext = nextContext;
+    this.pendingContext = context;
+    if (this.contextTimer !== undefined) return;
+    this.contextTimer = setTimeout(() => {
+      this.contextTimer = undefined;
+      const pending = this.pendingContext;
+      this.pendingContext = undefined;
+      if (pending !== undefined && !this.disposed) {
+        this.send(this.agentId, this.contextMessage(pending));
+      }
+    }, this.contextIntervalMs);
+    this.contextTimer.unref?.();
   }
 
   private agentMessage(): AgentEventMessage {
+    this.lastState = readAgentState(this.handle, this.running);
     return {
       type: 'agent',
       ...this.frameFields(),
-      ...readAgentState(this.handle, this.running),
+      ...this.lastState,
     };
   }
 
-  private usageMessage(usage: UsageState): UsageEventMessage {
-    return { type: 'usage', ...this.frameFields(), ...usage };
+  private contextMessage(context: ContextState): ContextEventMessage {
+    return { type: 'context', ...this.frameFields(), ...context };
   }
 
   private goalMessage(goal: GoalState | undefined): GoalEventMessage {

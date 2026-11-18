@@ -54,12 +54,6 @@ async function writeSeaConfig(target) {
       Object.entries(seaAssets).sort(([a], [b]) => a.localeCompare(b)),
     ),
     disableExperimentalSEAWarning: true,
-    // Compiles main.cjs at build time so startup skips the parse of the whole
-    // bundle. The Node docs list dynamic `import()` as unsupported with a code
-    // cache, but that limitation is in the ESM main-script path; a CommonJS
-    // main script keeps a working `import()` (verified on Node 24, and relied
-    // on by `__plugin_run_node` to load plugin scripts), so the bundle keeps
-    // its dynamic imports as-is.
     useCodeCache: seaCodeCacheEnabled(target),
     useSnapshot: false,
     execArgv: [...SEA_EXEC_ARGV],

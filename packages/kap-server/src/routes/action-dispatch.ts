@@ -1,3 +1,4 @@
+import { Error2, ErrorCodes } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
 
 import { parseActionSuffix } from './action-suffix';
@@ -46,8 +47,11 @@ export async function runAction<TAction extends string, TExtra>(opts: {
   if (entry === undefined) {
     return false;
   }
-  const body = entry.body === undefined ? opts.body : entry.body.parse(opts.body);
-  await entry.handle({ ...opts.extra, id: opts.id, body });
+  const parsed = entry.body?.safeParse(opts.body);
+  if (parsed !== undefined && !parsed.success) {
+    throw new Error2(ErrorCodes.VALIDATION_FAILED, z.prettifyError(parsed.error));
+  }
+  await entry.handle({ ...opts.extra, id: opts.id, body: parsed === undefined ? opts.body : parsed.data });
   return true;
 }
 

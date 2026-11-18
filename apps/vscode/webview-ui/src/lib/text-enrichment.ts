@@ -1,17 +1,13 @@
 import { bridge } from "@/services";
 
-// Color Regex
 const HEX_COLOR = /#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![0-9a-fA-F\w])/;
 const RGB_COLOR = /rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*[\d.]+)?\s*\)/;
 const HSL_COLOR = /hsla?\(\s*\d{1,3}\s*,\s*[\d.]+%\s*,\s*[\d.]+%(?:\s*,\s*[\d.]+)?\s*\)/;
 
-// File Path Regex
 const FILE_PATH = /(?:@|\.\/)?(?:[a-zA-Z_][\w-]*\/)*[a-zA-Z_][\w-]*\.[a-zA-Z0-9]+/;
 
-// Combined Regex
 const ENRICHMENT_PATTERN = new RegExp(`(${HEX_COLOR.source}|${RGB_COLOR.source}|${HSL_COLOR.source})|(${FILE_PATH.source})`, "g");
 
-// Color Regex for recognizing colors only within code tags
 const COLOR_ONLY_PATTERN = new RegExp(`(${HEX_COLOR.source}|${RGB_COLOR.source}|${HSL_COLOR.source})`, "g");
 
 export type Segment = { type: "text"; value: string } | { type: "color"; value: string } | { type: "file"; value: string; path: string };
@@ -103,7 +99,6 @@ export function hasColors(text: string): boolean {
   return COLOR_ONLY_PATTERN.test(text);
 }
 
-// File Existence Cache
 const CACHE_TTL = 10_000;
 const fileExistsCache = new Map<string, { exists: boolean; ts: number }>();
 

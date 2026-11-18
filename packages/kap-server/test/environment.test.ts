@@ -1,9 +1,13 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
+import {
+  closeSessionById,
+  ISessionIndex,
+  IWorkspaceInstanceManager,
+} from '@moonshot-ai/agent-core-v2';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -120,6 +124,25 @@ describe('server-v2 /api/v1 environment routes', () => {
       expect(binding.body.code).toBe(0);
       expect(binding.body.data.environment_id).toBe('local');
       expect(binding.body.data.cwd).toBeUndefined();
+
+      const summary = await server!.core.accessor.get(ISessionIndex).get(id);
+      await closeSessionById(server!.core.accessor, id);
+      const wirePath = join(home as string, 'sessions', summary!.workspaceId, id, 'agents', 'main', 'wire.jsonl');
+      const sourceWire = await readFile(wirePath, 'utf-8');
+      expect(sourceWire).toContain('"min_protocol_version":"1.5"');
+      await writeFile(
+        wirePath,
+        sourceWire
+          .replace('"protocol_version":"1.5"', '"protocol_version":"9.9"')
+          .replace('"min_protocol_version":"1.5"', '"min_protocol_version":"9.9"'),
+        'utf-8',
+      );
+      const incompatible = await call<null>('GET', `/api/v1/sessions/${id}/environment`);
+      expect(incompatible.body.code).toBe(40930);
+      expect(incompatible.body.msg).toContain('Upgrade Kimi Code');
+      const incompatibleList = await call<null>('GET', `/api/v1/sessions/${id}/environments`);
+      expect(incompatibleList.body.code).toBe(40930);
+      expect(incompatibleList.body.msg).toContain('Upgrade Kimi Code');
     });
 
     it('creates a session bound to a declared environment via POST /sessions', async () => {

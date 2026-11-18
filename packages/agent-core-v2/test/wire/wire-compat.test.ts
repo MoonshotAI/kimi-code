@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,7 +20,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { defineState } from '#/state/state';
-import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
+import { WIRE_MIN_READER_VERSION, WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { humanEventType } from '#/wire/human';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
@@ -245,7 +245,12 @@ describe('wire.jsonl round-trip', () => {
     ]);
 
     expect(await collect(makeReader(storage), 'legacy')).toEqual([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
+        created_at: 1,
+      },
       {
         type: 'tools.update_store',
         key: 'todo',

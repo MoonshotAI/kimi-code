@@ -14,6 +14,8 @@ import { EnvironmentError } from '#/environment/environmentRegistry';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
@@ -56,6 +58,7 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     @IAgentEnvironmentBindingSeed private readonly seed: IAgentEnvironmentBindingSeed,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceContext: ISessionWorkspaceContext,
+    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
     @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
@@ -89,7 +92,19 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
 
   private applySessionWorkDir(binding: EnvironmentBinding): void {
     if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
-    this.workspaceContext.setWorkDir(binding.cwd ?? this.session.cwd);
+    this.workspaceContext.setWorkDir(this.effectiveRoots(binding).workDir);
+  }
+
+  private effectiveRoots(binding: EnvironmentBinding, host?: HostEnvironmentInfo) {
+    let resolvedHost = host;
+    if (resolvedHost === undefined && binding.cwd === undefined && binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
+      try {
+        resolvedHost = this.resolver.inspect(binding).host;
+      } catch {
+        resolvedHost = undefined;
+      }
+    }
+    return resolveEffectiveWorkspaceRoots(this.session, binding, this.workspaceInfo, resolvedHost);
   }
 
   get current(): EnvironmentBinding {
@@ -132,9 +147,10 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     } catch {
       return;
     }
-    this.reminder.notify(environmentReminderText(binding, environment, this.session.cwd), {
-      variant: ENVIRONMENT_BINDING_REMINDER_VARIANT,
-    });
+    this.reminder.notify(
+      environmentReminderText(binding, environment, this.effectiveRoots(binding, environment).workDir),
+      { variant: ENVIRONMENT_BINDING_REMINDER_VARIANT },
+    );
   }
 
   private emitProjectContextReminder(binding: EnvironmentBinding): void {
@@ -155,9 +171,10 @@ export class AgentEnvironmentBindingService implements IAgentEnvironmentBindingS
     try {
       const fs = lease.environment.fs;
       if (fs === undefined) return;
-      const homeDir = lease.environment.host?.homeDir;
+      const host = lease.environment.host;
+      const homeDir = host?.homeDir;
       if (homeDir === undefined) return;
-      const cwd = binding.cwd ?? this.session.cwd;
+      const cwd = this.effectiveRoots(binding, host).workDir;
       const { paths } = await loadAgentsMdDetailed(
         { fs, homeDir },
         cwd,

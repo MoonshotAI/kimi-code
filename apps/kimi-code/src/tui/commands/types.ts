@@ -1,4 +1,5 @@
 import type { AutocompleteItem, SlashCommand } from '@moonshot-ai/pi-tui';
+import type { SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 
 export type SlashCommandAvailability = 'always' | 'idle-only';
 
@@ -6,17 +7,13 @@ export interface KimiSlashCommand<Name extends string = string> extends SlashCom
   readonly name: Name;
   readonly aliases: readonly string[];
   readonly description: string;
+  readonly skillPath?: string;
+  readonly skillSource?: SkillSummary['source'];
+  readonly isSkill?: boolean;
+  readonly workspaceDir?: string;
   readonly priority?: number;
   readonly availability?: SlashCommandAvailability | ((args: string) => SlashCommandAvailability);
-  /** When set, the command is hidden from the palette and blocked unless this flag is enabled.
-   * A plain string: the gating flag may live in either engine's registry (v1 core or v2 domain). */
   readonly experimentalFlag?: string;
-  /**
-   * Generic argument autocompletion. `argumentPrefix` is the text typed after
-   * `/<command> `; return suggestions or `null`. Declared as a plain function
-   * property (not a method) so passing it around is `this`-free. Adapted to
-   * pi-tui's `getArgumentCompletions` in the autocomplete setup.
-   */
   readonly completeArgs?: (argumentPrefix: string) => AutocompleteItem[] | null;
 }
 

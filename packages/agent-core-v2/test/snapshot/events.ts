@@ -50,7 +50,13 @@ export function recordAgentEvents() {
   const onceAnyWaiters: OnceAnyWaiter[] = [];
   const takeWaiters: TakeWaiter[] = [];
 
-  const snapshotFrom = (start: number): EventSnapshot => snapshot(entries.slice(start));
+  const snapshotFrom = (start: number, end = entries.length): EventSnapshot =>
+    snapshot(entries.slice(start, end));
+
+  const recordedRpc = (event: string, start: number): number =>
+    entries.findIndex(
+      (entry, index) => index >= start && entry.type === '[rpc]' && entry.event === event,
+    );
 
   const emit = (entry: RecordedEventEntry): RecordedEventEntry => {
     entries.push(entry);
@@ -104,8 +110,14 @@ export function recordAgentEvents() {
     },
 
     until(event: string): Promise<EventSnapshot> {
+      const start = cursor;
+      const found = recordedRpc(event, start);
+      if (found >= 0) {
+        cursor = found + 1;
+        return Promise.resolve(snapshotFrom(start, found + 1));
+      }
       return new Promise((resolve) => {
-        eventWaiters.push({ event, start: cursor, resolve });
+        eventWaiters.push({ event, start, resolve });
       });
     },
 

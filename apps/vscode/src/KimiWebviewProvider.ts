@@ -12,10 +12,6 @@ function getNonce(): string {
   return nonce;
 }
 
-/**
- * Manages webview instances (sidebar and panels).
- * Each webview gets a unique viewId for session isolation.
- */
 export class KimiWebviewProvider implements vscode.WebviewViewProvider {
   private webviews = new Map<string, vscode.Webview>();
   private bridgeHandler: BridgeHandler;

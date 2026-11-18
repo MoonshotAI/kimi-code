@@ -70,13 +70,13 @@ describe('translateProviderError — classification', () => {
 
   it('maps status errors to their codes at birth and preserves wire details', () => {
     const cases: ReadonlyArray<[APIStatusError, string]> = [
-      [new APIStatusError(429, 'too many requests'), 'provider.rate_limit'],
-      [new APIStatusError(529, 'overloaded'), 'provider.overloaded'],
+      [new APIStatusError(429, 'too many requests', true), 'provider.rate_limit'],
+      [new APIStatusError(529, 'overloaded', true), 'provider.overloaded'],
       [new APIProviderOverloadedError(503, 'overloaded'), 'provider.overloaded'],
       [new APIContextOverflowError(400, 'context length exceeded'), 'context.overflow'],
-      [new APIStatusError(401, 'bad key'), 'provider.auth_error'],
-      [new APIStatusError(403, 'forbidden'), 'provider.auth_error'],
-      [new APIStatusError(500, 'boom'), 'provider.api_error'],
+      [new APIStatusError(401, 'bad key', false), 'provider.auth_error'],
+      [new APIStatusError(403, 'forbidden', false), 'provider.auth_error'],
+      [new APIStatusError(500, 'boom', true), 'provider.api_error'],
     ];
     for (const [error, code] of cases) {
       const translated = translateProviderError(error);
@@ -88,7 +88,7 @@ describe('translateProviderError — classification', () => {
 
   it('keeps requestId and diagnostics in the details', () => {
     const translated = translateProviderError(
-      new APIStatusError(429, 'too many requests', 'req-1', null, { requestId: 'trace-1' }),
+      new APIStatusError(429, 'too many requests', true, 'req-1', null, { requestId: 'trace-1' }),
     );
     expect(translated.details).toMatchObject({
       statusCode: 429,

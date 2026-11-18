@@ -7,7 +7,12 @@ import type { WireRecord } from '#/wire/record';
 import { fromCoreMessage } from '#human/message';
 import { fromLlmMessage } from '#/llm-adapter/contract/message';
 
-const METADATA: WireRecord = { type: 'metadata', protocol_version: '1.5', created_at: 0 };
+const METADATA: WireRecord = {
+  type: 'metadata',
+  protocol_version: '1.5',
+  min_protocol_version: '1.0',
+  created_at: 0,
+};
 
 function fold(records: readonly WireRecord[]) {
   return foldWireRecords([METADATA, ...records]);
@@ -55,6 +60,7 @@ describe('foldWireRecords', () => {
           type: 'tool.call',
           stepUuid: 's1',
           toolCallId: 'tc1',
+          rawId: 'call_native',
           name: 'Shell',
           args: { command: 'ls' },
           display,
@@ -76,7 +82,14 @@ describe('foldWireRecords', () => {
     if (assistant.message.role !== 'assistant') throw new Error('expected assistant message');
     expect(assistant.message.content).toEqual([{ type: 'text', text: 'working' }]);
     expect(assistant.message.toolCalls).toEqual([
-      { type: 'function', id: 'tc1', name: 'Shell', arguments: '{"command":"ls"}', extras: undefined },
+      {
+        type: 'function',
+        id: 'tc1',
+        rawId: 'call_native',
+        name: 'Shell',
+        arguments: '{"command":"ls"}',
+        extras: undefined,
+      },
     ]);
     expect(assistant.message.toolCallDisplays).toEqual({ tc1: display });
     if (tool?.type !== 'message') throw new Error('expected message record');
@@ -410,7 +423,7 @@ describe('foldWireRecords', () => {
       { type: 'turn.prompt', input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' }, time: 6 },
       appendMessage(userMessage('next', { kind: 'user' }), 7),
     ]);
-    expect(messageRecords(turnClock.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([4, 4, 6]);
+    expect(messageRecords(turnClock.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([4, 5, 6]);
 
     const mixed = fold([
       { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'persistent' }], origin: { kind: 'user' }, time: 1 },
@@ -429,7 +442,7 @@ describe('foldWireRecords', () => {
     expect(messageRecords(ordered.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([undefined, 7]);
   });
 
-  it('migrates older protocol journals before folding', () => {
+  it('validates reader compatibility and migrates older protocol journals before folding', () => {
     const legacy: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.0', created_at: 0 },
       {
@@ -464,6 +477,16 @@ describe('foldWireRecords', () => {
     expect(decoded[2]?.['message']).toMatchObject({
       toolCalls: [{ id: 'call_legacy', name: 'Bash', arguments: '{}' }],
     });
+    expect(() =>
+      foldWireRecords([
+        {
+          type: 'metadata',
+          protocol_version: '9.9',
+          min_protocol_version: '9.9',
+          created_at: 0,
+        },
+      ]),
+    ).toThrow('Upgrade Kimi Code');
   });
 
   it('clears replay-visible state on context.clear without touching earlier replay records', () => {

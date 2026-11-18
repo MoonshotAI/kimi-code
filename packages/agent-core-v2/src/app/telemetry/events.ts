@@ -1,3 +1,4 @@
+import type { PromptPredictionCancelReason } from '#/features/promptPrediction/promptPrediction';
 import type { TowerExitReason } from '#/features/tower/tower';
 import type { SessionCloseReason } from '#/workspace/sessionLifecycle/sessionLifecycle';
 
@@ -262,6 +263,34 @@ export interface PluginToggleEvent {
   enabled_plugins?: string;
 }
 
+export interface PredictionRequestedEvent {
+  prediction_id: string;
+  turn_id: number;
+}
+
+export interface PredictionGeneratedEvent {
+  prediction_id: string;
+  turn_id: number;
+  status: 'generated' | 'empty' | 'invalid' | 'tool_call' | 'timeout' | 'cancelled' | 'stale' | 'error';
+  reason?: PromptPredictionCancelReason;
+  duration_ms: number;
+  prediction_chars?: number;
+  input_tokens?: number;
+  input_other?: number;
+  output_tokens?: number;
+  input_cache_read?: number;
+  input_cache_creation?: number;
+  cache_read_pct?: number;
+  ttft_ms?: number;
+  stream_duration_ms?: number;
+  request_build_ms?: number;
+  server_first_token_ms?: number;
+  server_decode_ms?: number;
+  client_consume_ms?: number;
+  client_blocked_ms?: number;
+  request_id?: string;
+}
+
 export interface CompactionFinishedEvent {
   turn_id?: number;
   source: 'manual' | 'auto';
@@ -405,11 +434,6 @@ export interface ToolCallTurnRepeatEvent {
   request_id?: string;
 }
 
-export interface ToolCallRepeatHandoffEvent {
-  turn_id?: number;
-  outcome: 'text' | 'vetoed';
-}
-
 export interface AgentsMdReminderShownEvent {
   turn_id: number;
   tool_name: string;
@@ -481,7 +505,7 @@ export interface SubagentCreatedEvent {
   parent_agent_id: string;
   parent_tool_call_id: string;
   model?: string;
-  model_source?: 'primary_override' | 'inherited' | 'secondary_pool';
+  model_source?: 'inherited' | 'secondary_pool';
 }
 
 export interface McpConnectedEvent {
@@ -569,6 +593,25 @@ export interface VideoUploadEvent {
 export interface SessionStartedEvent {
   resumed: boolean;
   experimental_flags: string;
+}
+
+export interface SessionTitleGenerationFinishedEvent {
+  trigger: 'auto' | 'manual';
+  source: 'user_prompts' | 'first_turn' | 'digest';
+  outcome: 'success' | 'unavailable' | 'error';
+  duration_ms: number;
+  reason?:
+    | 'custom_title'
+    | 'no_agent'
+    | 'no_input'
+    | 'provider_unavailable'
+    | 'token_unavailable'
+    | 'oauth_unavailable'
+    | 'request_failed'
+    | 'unexpected';
+  error_type?: string;
+  title_chars?: number;
+  title_outcome?: 'ok' | 'truncated';
 }
 
 export interface SessionLoadFailedEvent {
@@ -988,6 +1031,40 @@ export const telemetryEventDefinitions = {
         'Comma-separated sorted ids of enabled, loaded plugins after the toggle commits; empty string for a known empty set',
     },
   }),
+  prediction_requested: defineAgentTelemetryEvent<PredictionRequestedEvent>({
+    owner: 'kimi-code',
+    comment: 'A side-channel next-prompt prediction request starts.',
+    properties: {
+      prediction_id: 'Caller-generated prediction identifier; contains no prompt content',
+      turn_id: 'Completed main-agent turn used as the prediction source',
+    },
+  }),
+  prediction_generated: defineAgentTelemetryEvent<PredictionGeneratedEvent>({
+    owner: 'kimi-code',
+    comment: 'A side-channel next-prompt prediction request settles.',
+    properties: {
+      prediction_id: 'Caller-generated prediction identifier; contains no prompt content',
+      turn_id: 'Completed main-agent turn used as the prediction source',
+      status: 'Bounded prediction outcome; stale covers lifecycle, context, and handle changes',
+      reason: 'Cancellation source when status is cancelled; never contains prompt text',
+      duration_ms: 'Prediction wall-clock time in milliseconds',
+      prediction_chars: 'Length of the accepted prediction in UTF-16 code units, never its text',
+      input_tokens: 'Total prediction input tokens including cache usage',
+      input_other: 'Uncached prediction input tokens excluding cache creation',
+      output_tokens: 'Prediction output tokens',
+      input_cache_read: 'Prediction cache-read input tokens',
+      input_cache_creation: 'Prediction cache-creation input tokens',
+      cache_read_pct: 'Cache-read input tokens as a percentage of total input tokens, from 0 to 100',
+      ttft_ms: 'Client-observed time to the first response token in milliseconds',
+      stream_duration_ms: 'Response streaming duration in milliseconds',
+      request_build_ms: 'Provider request construction time in milliseconds when available',
+      server_first_token_ms: 'Server-reported time to the first response token in milliseconds when available',
+      server_decode_ms: 'Server-reported decode time in milliseconds when available',
+      client_consume_ms: 'Client stream consumption time in milliseconds when available',
+      client_blocked_ms: 'Client time blocked by downstream rendering in milliseconds when available',
+      request_id: 'Provider request trace identifier when available',
+    },
+  }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({
     owner: 'kimi-code',
     comment: 'Context compaction completes.',
@@ -1185,14 +1262,6 @@ export const telemetryEventDefinitions = {
         'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
     },
   }),
-  tool_call_repeat_handoff: defineAgentTelemetryEvent<ToolCallRepeatHandoffEvent>({
-    owner: 'kimi-code',
-    comment: 'The text-only handoff step that follows a repeat-breaker force stop finished.',
-    properties: {
-      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
-      outcome: 'Whether the model answered in text or its tool calls were vetoed',
-    },
-  }),
   agents_md_reminder_shown: defineAgentTelemetryEvent<AgentsMdReminderShownEvent>({
     owner: 'kimi-code',
     comment: 'An AGENTS.md discovery reminder is queued for context injection after a tool call.',
@@ -1295,7 +1364,7 @@ export const telemetryEventDefinitions = {
       parent_tool_call_id: "Tool call id of the launching call in the parent agent; '' when not launched from a tool call",
       model: 'Model alias the subagent binds to (secondary-model choice or inherited caller model); omitted when no binding was resolved',
       model_source:
-        "How the bound model was chosen: 'primary_override' = Tower spawn bound the caller's own model (reviewer default or explicit \"primary\" request), 'inherited' = caller's own model (no pool or fork), 'secondary_pool' = [secondary_model.models] pool pick; omitted when no binding resolution happened (e.g. resume)",
+        "How the bound model was chosen: 'inherited' = caller's own model (no pool or fork), 'secondary_pool' = [secondary_model.models] pool pick; omitted when no binding resolution happened (e.g. resume)",
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({
@@ -1399,6 +1468,20 @@ export const telemetryEventDefinitions = {
       resumed: 'Whether the session was resumed from disk',
       experimental_flags:
         'Sorted comma-separated ids of enabled experimental flags, empty when none are enabled',
+    },
+  }),
+  session_title_generation_finished: defineTelemetryEvent<SessionTitleGenerationFinishedEvent>({
+    owner: 'kimi-code',
+    comment: 'An actual session title generation attempt reaches a terminal result.',
+    properties: {
+      trigger: 'Automatic or explicitly forced manual generation',
+      source: 'Conversation excerpt used for generation',
+      outcome: 'Generation result; skipped calls for existing titles are not recorded',
+      duration_ms: 'Wall-clock time from the generation attempt to its terminal result',
+      reason: 'Bounded unavailable or error category',
+      error_type: 'Error class name for an unexpected failure',
+      title_chars: 'Applied title length in UTF-16 code units; the title text is not recorded',
+      title_outcome: 'Whether the generated title was truncated before being applied',
     },
   }),
   session_load_failed: defineTelemetryEvent<SessionLoadFailedEvent>({

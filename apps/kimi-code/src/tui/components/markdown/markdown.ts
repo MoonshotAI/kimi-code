@@ -1,4 +1,5 @@
 import {
+  type Component,
   Container,
   Marked,
   Markdown as PiMarkdown,
@@ -12,6 +13,7 @@ import {
 
 import type { KimiMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { getMarkdownMermaidMode, type MermaidRenderMode } from '#/tui/utils/markdown-options';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { MermaidBlock } from './mermaid-block';
 
@@ -76,6 +78,7 @@ export class Markdown extends Container {
   private readonly defaultTextStyle?: DefaultTextStyle;
   private readonly options: KimiMarkdownOptions;
   private structure: MarkdownStructure | undefined;
+  private childCache: { width: number; refs: Component[]; childLines: string[][]; lines: string[] } | undefined;
 
   constructor(
     text: string,
@@ -101,13 +104,31 @@ export class Markdown extends Container {
 
   override invalidate(): void {
     this.structure = undefined;
+    this.childCache = undefined;
     super.invalidate();
+  }
+
+  private renderChildren(width: number): string[] {
+    const cache = this.childCache;
+    const refs = this.children;
+    const childLines = refs.map((child) => child.render(width));
+    if (
+      isRenderCacheEnabled() &&
+      cache?.width === width &&
+      cache.refs.length === refs.length &&
+      cache.refs.every((child, index) => child === refs[index] && cache.childLines[index] === childLines[index])
+    ) {
+      return cache.lines;
+    }
+    const lines = childLines.flat();
+    if (isRenderCacheEnabled()) this.childCache = { width, refs: [...refs], childLines, lines };
+    return lines;
   }
 
   override render(width: number): string[] {
     if (this.sourceText.trim() === '') return [];
     this.ensureStructure();
-    const lines = super.render(width);
+    const lines = this.renderChildren(width);
     if (this.paddingY === 0) return lines;
     const bgFn = this.defaultTextStyle?.bgColor;
     const empty = ' '.repeat(Math.max(0, width));

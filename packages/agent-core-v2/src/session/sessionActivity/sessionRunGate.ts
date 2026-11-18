@@ -1,9 +1,12 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { SessionLockLease } from '#/persistence/interface/sessionLock';
 
 export interface ISessionRunGate {
   readonly _serviceBrand: undefined;
 
   begin(): void;
+  acquire(): SessionLockLease;
+  tryAcquire(): SessionLockLease | undefined;
 }
 
 export const ISessionRunGate: ServiceIdentifier<ISessionRunGate> =

@@ -8,9 +8,6 @@ interface CronTabProps {
   sessionId: string;
 }
 
-/** Cron tab — scheduled prompts persisted under the session's `cron/`
- *  directory. Like background tasks, none of this is in the wire, so it is
- *  the only place to see what a session has scheduled. */
 export function CronTab({ sessionId }: CronTabProps) {
   const { data, isLoading, error } = useCron(sessionId);
 
@@ -46,7 +43,6 @@ export function CronTab({ sessionId }: CronTabProps) {
 }
 
 function CronCard({ job }: { job: CronTask }) {
-  // `recurring` is undefined/true → recurring by convention; false → one-shot.
   const oneShot = job.recurring === false;
   return (
     <div className="border border-border bg-surface-0">

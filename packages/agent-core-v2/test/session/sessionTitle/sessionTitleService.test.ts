@@ -10,6 +10,7 @@ import { Emitter } from '#/_base/event';
 import { IOAuthService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
 import type { Event2 } from '#/app/event/event2';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
 import {
   IProviderService,
@@ -39,6 +40,7 @@ import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents'
 
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 const SESSION_ID = 'sess-1';
 const MANAGED_PROVIDER: ProviderConfig = {
@@ -66,6 +68,7 @@ class FakeEventService implements IEventService {
 class FakeSessionMetadata implements ISessionMetadata {
   declare readonly _serviceBrand: undefined;
   readonly ready = Promise.resolve();
+  readonly effectiveCwd = '/tmp';
   private readonly emitter = new Emitter<SessionMetadataChangedEvent>();
   readonly onDidChangeMetadata = this.emitter.event;
   meta: SessionMeta;
@@ -144,6 +147,7 @@ describe('SessionTitleService', () => {
   let ix: TestInstantiationService;
   let events: FakeEventService;
   let metadata: FakeSessionMetadata;
+  let telemetry: TelemetryRecord[];
   let providers: Record<string, ProviderConfig>;
   let fetchMock: Mock<(url: string, init?: RequestInit) => Promise<Response>>;
   let tokenError: Error | undefined;
@@ -167,6 +171,7 @@ describe('SessionTitleService', () => {
     providers = { 'managed:kimi-code': MANAGED_PROVIDER };
     metadata = new FakeSessionMetadata();
     events = new FakeEventService();
+    telemetry = [];
     fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
       async () =>
         new Response(JSON.stringify({ title: '生成的标题' }), {
@@ -227,6 +232,7 @@ describe('SessionTitleService', () => {
           headers: { 'User-Agent': 'test' },
           thirdPartyHeaders: {},
         });
+        reg.defineInstance(ITelemetryService, recordingTelemetry(telemetry));
         reg.define(ISessionTitleService, SessionTitleService);
       },
     });
@@ -235,6 +241,7 @@ describe('SessionTitleService', () => {
 
   afterEach(() => {
     disposables.dispose();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
@@ -263,6 +270,124 @@ describe('SessionTitleService', () => {
         (event as SessionMetaUpdated).payload.patch.title === '生成的标题',
     );
     expect(rebroadcast).toBeDefined();
+  });
+
+  it('reports a successful generation with timing and title length, not its content', async () => {
+    ix.get(ISessionTitleService);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    fetchMock.mockImplementationOnce(async () => {
+      now.mockReturnValue(1125);
+      return new Response(JSON.stringify({ title: '生成的标题' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    turnExcerpt = { user: '最初的问题', assistant: '第一轮的回答' };
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ source: 'first_turn' }),
+    ).resolves.toBe('生成的标题');
+
+    expect(telemetry).toEqual([
+      {
+        event: 'session_title_generation_finished',
+        properties: {
+          trigger: 'auto',
+          source: 'first_turn',
+          outcome: 'success',
+          duration_ms: 125,
+          title_chars: 5,
+          title_outcome: 'ok',
+        },
+      },
+    ]);
+    expect(JSON.stringify(telemetry)).not.toContain('生成的标题');
+  });
+
+  it('reports manual generation and truncation', async () => {
+    ix.get(ISessionTitleService);
+    vi.spyOn(Date, 'now').mockReturnValue(1000);
+    digestExcerpt = { turns: [{ user: 'hello', assistant: 'world' }] };
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ title: 'x'.repeat(201) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ force: true, source: 'digest' }),
+    ).resolves.toBe('x'.repeat(200));
+
+    expect(telemetry.map((record) => record.properties)).toEqual([
+      {
+        trigger: 'manual',
+        source: 'digest',
+        outcome: 'success',
+        duration_ms: 0,
+        title_chars: 200,
+        title_outcome: 'truncated',
+      },
+    ]);
+  });
+
+  it('reports request failures without exposing the error message', async () => {
+    titlePrompts = ['hello'];
+    fetchMock.mockResolvedValueOnce(new Response('sensitive response', { status: 500 }));
+
+    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
+
+    expect(telemetry.map((record) => record.properties)).toEqual([
+      {
+        trigger: 'auto',
+        source: 'user_prompts',
+        outcome: 'unavailable',
+        reason: 'request_failed',
+        duration_ms: expect.any(Number),
+      },
+    ]);
+    expect(JSON.stringify(telemetry)).not.toContain('sensitive response');
+  });
+
+  it('reports unexpected errors and preserves their propagation', async () => {
+    titlePrompts = ['hello'];
+    tokenError = new TypeError('unexpected failure');
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ force: true }),
+    ).rejects.toThrow('unexpected failure');
+
+    expect(telemetry.map((record) => record.properties)).toEqual([
+      {
+        trigger: 'manual',
+        source: 'user_prompts',
+        outcome: 'error',
+        reason: 'unexpected',
+        error_type: 'TypeError',
+        duration_ms: expect.any(Number),
+      },
+    ]);
+  });
+
+  it('skips telemetry for existing titles and reports when no input is available', async () => {
+    await metadata.setTitle('user 取的标题');
+    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
+    expect(telemetry).toEqual([]);
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ force: true, source: 'first_turn' }),
+    ).resolves.toBeUndefined();
+    expect(telemetry).toHaveLength(1);
+    expect(telemetry[0]).toMatchObject({
+      event: 'session_title_generation_finished',
+      properties: {
+        trigger: 'manual',
+        source: 'first_turn',
+        outcome: 'unavailable',
+        reason: 'no_input',
+      },
+    });
+    expect(telemetry[0]!.properties?.['duration_ms']).toEqual(expect.any(Number));
   });
 
   it('composes the title input from the recorded prompts in order', async () => {

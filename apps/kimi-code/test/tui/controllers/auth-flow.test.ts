@@ -123,9 +123,6 @@ describe('activateModelAfterLogin', () => {
     const { host, session } = makeHost({ withSession: true, boundModel: 'k2' });
     const authFlow = new AuthFlowController(host);
 
-    // setModel is an alias no-op here, so neither engine emits model_switch —
-    // callers must stay the producer. The effort still goes through
-    // setThinking, whose thinking_toggle is the engine's own event.
     const engineTrackedSwitch = await authFlow.activateModelAfterLogin('k2', 'high');
 
     expect(engineTrackedSwitch).toBe(false);
@@ -237,8 +234,6 @@ describe('refreshConfigAfterLogin with a matching cloud rule', () => {
 
   it('gates an alias introduced by this login that the stale catalog lacks', async () => {
     const { host, session, appState, mountEditorReplacement } = await makeGateHost();
-    // The pre-refresh catalog knows nothing about k2 — only the freshly loaded
-    // config introduces it, so the match must run against the new catalog.
     (appState as Record<string, unknown>)['availableModels'] = {
       'old-model': { model: 'upstream-old', displayName: 'Old' },
     };
@@ -286,9 +281,6 @@ describe('refreshConfigAfterLogin with a matching cloud rule', () => {
 
 describe('refreshProviderModels', () => {
   it('reloads app-state providers and models even when the engine reports no model change', async () => {
-    // A config-only registry change (type, baseUrl, …) is persisted by the
-    // engine while the provider lands in `unchanged` — the TUI must still
-    // reload, or appState keeps the stale provider record.
     const { host } = makeHost();
     const refreshProviderModels = vi.fn(async () => ({
       changed: [],

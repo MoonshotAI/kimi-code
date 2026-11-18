@@ -82,11 +82,7 @@ function v2AgentsToV1(agents: Readonly<Record<string, V2AgentMeta>>): Record<str
   for (const [agentId, agent] of Object.entries(agents)) {
     mapped[agentId] = {
       homedir: agent.homedir,
-      // v2 registers every agent with a type; the fallbacks only cover
-      // documents written before that registration existed.
       type: agent.type ?? (agentId === 'main' ? 'main' : 'sub'),
-      // v1 persists an explicit null for a parentless agent where v2 leaves
-      // the field unset.
       parentAgentId: agent.parentAgentId ?? null,
       swarmItem: agent.labels?.['swarmItem'] ?? agent.swarmItem,
       profileName: agent.labels?.['profileName'],

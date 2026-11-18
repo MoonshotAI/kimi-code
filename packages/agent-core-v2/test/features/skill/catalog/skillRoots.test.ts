@@ -88,7 +88,9 @@ describe('skillRoots', () => {
 
       const roots = await projectRoots(remoteRoot, {}, fs);
 
-      expect(roots).toEqual([{ path: '/remote/project/.kimi-code/skills', source: 'project' }]);
+      expect(roots).toEqual([
+        { path: '/remote/project/.kimi-code/skills', source: 'project', workspaceDir: remoteRoot },
+      ]);
     });
   });
 
@@ -106,6 +108,10 @@ describe('skillRoots', () => {
       expect(roots.map((entry) => entry.path)).toEqual([
         await realpath(primarySkills),
         await realpath(secondarySkills),
+      ]);
+      expect(roots.map((entry) => entry.workspaceDir)).toEqual([
+        await realpath(primary),
+        await realpath(secondary),
       ]);
     });
   });

@@ -1,4 +1,4 @@
-import type { HostUiCapability } from '@moonshot-ai/agent-core-v2';
+import type { HostUiCapability, ContentPart } from '@moonshot-ai/agent-core-v2';
 import type {
   ExportSessionManifest,
   ShellEnvironment,
@@ -6,7 +6,6 @@ import type {
 import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
 import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
 import type { ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
@@ -56,7 +55,7 @@ export interface SessionEnvironmentsInfo {
 
 export type { RemoteEnvironmentEntry };
 
-export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+export type { CapabilityInstallOptions, CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 export type {
   AgentReplayRecord,
@@ -129,6 +128,7 @@ export type {
   MarketplaceLocation,
   MarketplaceUpdateStatus,
   PluginMarketplace,
+  PluginClient,
   PluginMarketplaceClassification,
   PluginMarketplaceDistribution,
   PluginMarketplaceEntry,
@@ -160,13 +160,9 @@ export interface GetCronTasksResult {
 }
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
-// Host UI capabilities are an agent-core-v2 seam (`BootstrapInput.args.uiCapabilities`);
-// hosts name them through `KimiHarnessOptions.uiCapabilities`, so the type is public here.
 export type { HostUiCapability };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/agent-core-v2';
-// Contributed commands are an agent-core-v2 seam; the type is re-exported
-// from the v2 engine (v1 sessions report an empty command set).
 export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 
 export type { PermissionMode };
@@ -221,6 +217,7 @@ export interface WorkspaceTrustInfoOptions {
 export interface SuggestFilesInput {
   readonly query: string;
   readonly limit?: number;
+  readonly followGitignore?: boolean;
   /** Complete against this live session's working directory, on the environment the session runs on. */
   readonly sessionId?: string;
 }
@@ -237,6 +234,28 @@ export interface SuggestFilesResult {
   readonly items: readonly SuggestFilesItem[];
   readonly truncated: boolean;
 }
+
+/** Git query against a workspace root, or a live session's working directory. */
+export interface GitQueryInput {
+  /** Query this live session's working directory, on the environment the session runs on. */
+  readonly sessionId?: string;
+}
+
+/** Working-tree summary of the repository containing the queried directory. */
+export interface GitStatusSummary {
+  /** Current branch; empty on a detached HEAD. */
+  readonly branch: string;
+  readonly dirty: boolean;
+  readonly ahead: number;
+  readonly behind: number;
+  /** Uncommitted line additions against HEAD. */
+  readonly additions: number;
+  /** Uncommitted line deletions against HEAD. */
+  readonly deletions: number;
+}
+
+/** Pull request of the current branch, as reported by `gh`. */
+export type { FsPullRequest as GitPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
 
 /** Metadata of one upload in the engine's daemon file store. */
 export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
@@ -265,6 +284,7 @@ export type PromptInput = readonly PromptPart[];
 
 export interface PromptSkillActivation {
   readonly name: string;
+  readonly path?: string;
   readonly args?: string;
 }
 

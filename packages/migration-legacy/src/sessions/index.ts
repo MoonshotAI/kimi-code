@@ -13,7 +13,6 @@ import { oldMd5BucketName } from './workdir-bucket.js';
 export interface SessionsStepInput {
   readonly sourceHome: string;
   readonly targetHome: string;
-  /** Invoked after each session is processed, with the running count and total. */
   readonly onSessionProgress?: (done: number, total: number) => void;
 }
 
@@ -44,7 +43,7 @@ export async function migrateSessionsStep(
   let bucketsSkippedNoWorkdirFound = 0;
   let sessionsSkippedPlaceholder = 0;
   let sessionsSkippedEmpty = 0;
-  let sessionsSkippedMalformed = 0;
+  const sessionsSkippedMalformed = 0;
   const sessionsFailed: Array<{ sourcePath: string; reason: string }> = [];
   const sessionsConflicts: Array<{ sourcePath: string; targetPath: string }> = [];
 
@@ -83,7 +82,6 @@ export async function migrateSessionsStep(
       });
       continue;
     }
-    // workdir.kind === 'local'
     let refs: LegacySessionRef[];
     try {
       refs = await listBucketSessions(bucketPath);
@@ -120,8 +118,6 @@ export async function migrateSessionsStep(
     }
   }
 
-  // Stable, deterministic order so progress events emit "newest first" — the
-  // user sees their most recent work move across the counter first.
   candidates.sort((a, b) => b.wireMtime - a.wireMtime);
 
   let migrated = 0;
@@ -137,9 +133,6 @@ export async function migrateSessionsStep(
     input.onSessionProgress?.(processedCount, candidates.length);
     if (result.outcome === 'migrated') {
       try {
-        // `ensureSessionIndexEntry` is idempotent — if a stale index line for
-        // this session survived a deleted target dir, re-migrating it must not
-        // append a second line for the same id.
         await ensureSessionIndexEntry(input.targetHome, {
           sessionId: `ses_${c.source.uuid}`,
           sessionDir: result.targetDir,
@@ -147,19 +140,12 @@ export async function migrateSessionsStep(
         });
         migrated++;
       } catch (error) {
-        // The session dir is written, but resume-by-id needs the index entry —
-        // without it the session is unopenable. Record it as failed so the run
-        // summary is honest; one bad index write must not abort the batch.
         sessionsFailed.push({
           sourcePath: sessionReportPath(c.source, ''),
           reason: `session migrated but index append failed: ${String(error)}`,
         });
       }
     } else if (result.outcome === 'already-migrated') {
-      // The session dir exists from a prior run, but that run may have crashed
-      // before appending the index entry. `ensureSessionIndexEntry` is
-      // idempotent — it adds the entry only when absent — so a rerun
-      // self-heals an index that is missing this session.
       try {
         await ensureSessionIndexEntry(input.targetHome, {
           sessionId: `ses_${c.source.uuid}`,
@@ -168,8 +154,6 @@ export async function migrateSessionsStep(
         });
         alreadyMigrated++;
       } catch (error) {
-        // The index entry is genuinely missing and could not be added — the
-        // session stays unreachable by id, so record it as failed.
         sessionsFailed.push({
           sourcePath: sessionReportPath(c.source, ''),
           reason: `session already migrated but index entry could not be ensured: ${String(error)}`,
@@ -181,10 +165,6 @@ export async function migrateSessionsStep(
         targetPath: result.targetDir,
       });
     } else if (result.outcome === 'empty') {
-      // No migratable conversation (empty or user-cleared session). Counted
-      // as skipped, not failed — `classifyLegacySession` usually catches these
-      // before they become candidates, but a translator/classifier edge can
-      // still land one here.
       sessionsSkippedEmpty++;
     } else {
       sessionsFailed.push({
@@ -219,7 +199,6 @@ function resolveBucket(
   bucketName: string,
   md5ToWorkdir: ReadonlyMap<string, WorkdirMeta>,
 ): BucketResolution {
-  // Pure md5 hex (32 chars) → look up directly.
   if (MD5_HEX_RE.test(bucketName)) {
     const meta = md5ToWorkdir.get(bucketName);
     if (meta === undefined) {
@@ -230,8 +209,6 @@ function resolveBucket(
     }
     return { kind: 'local', path: meta.path };
   }
-  // Non-local pattern: `<kaos>_<md5>`. Use the last `_` so kaos names that
-  // contain underscores still resolve.
   const idx = bucketName.lastIndexOf('_');
   if (idx > 0 && MD5_HEX_RE.test(bucketName.slice(idx + 1))) {
     return { kind: 'nonlocal-kaos' };
@@ -257,16 +234,12 @@ async function readWireMtime(ref: LegacySessionRef): Promise<number> {
   if (ref.sessionDir !== undefined) {
     try {
       return (await stat(join(ref.sessionDir, 'wire.jsonl'))).mtimeMs;
-    } catch {
-      // fall through to the context payload's mtime
-    }
+    } catch {}
   }
   if (ref.contextPath !== undefined) {
     try {
       return (await stat(ref.contextPath)).mtimeMs;
-    } catch {
-      // fall through
-    }
+    } catch {}
   }
   return 0;
 }

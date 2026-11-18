@@ -1,4 +1,3 @@
-import type { KimiHarnessEnvironmentOptions } from '#/kimi-harness';
 export { KimiHarness } from '#/kimi-harness';
 export type { KimiHarnessEnvironmentOptions, KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
@@ -71,11 +70,17 @@ export {
   isTrustedPluginMarketplaceUrl,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
   parsePluginMarketplace,
+  marketplaceEntryInstallableOnHost,
+  marketplaceEntrySupportsClient,
+  marketplaceEntryVisibleOnHost,
+  pluginClientForIdentity,
   PLUGIN_MARKETPLACE_CLASSIFICATIONS,
+  PLUGIN_MARKETPLACE_CLIENTS,
   PLUGIN_MARKETPLACE_TIERS,
   readPluginMarketplace,
   withLatestVersions,
 } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+export { PluginAvailabilityStore } from '@moonshot-ai/agent-core-v2/app/plugin/availability';
 export { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
 export type { LogContext, LogLevel, LogPayload, Logger } from '#/logging/index';
 
@@ -84,7 +89,6 @@ export { resolveConfigPath } from '@moonshot-ai/agent-core-v2';
 export { limitAgentReplayByTurns } from '#/replay';
 export { parseAgentFileText, resolveAgentPath } from '@moonshot-ai/agent-core-v2';
 export { SECONDARY_DERIVED_MODEL_ALIAS } from '#/config/index';
-export { PRIMARY_SUBAGENT_MODEL_CHOICE } from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
 
 export { installGlobalProxyDispatcher } from '#/proxy';
 
@@ -132,16 +136,13 @@ export type {
 } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 
 export type {
-  KimiAuthCompleteFeedbackUploadInput,
-  KimiAuthCompleteFeedbackUploadPart,
-  KimiAuthCreateFeedbackUploadUrlInput,
-  KimiAuthCreateFeedbackUploadUrlOk,
-  KimiAuthCreateFeedbackUploadUrlResult,
-  KimiAuthFeedbackUploadPart,
-  KimiAuthLoginResult,
-  KimiAuthLogoutResult,
-  KimiAuthSubmitFeedbackInput,
-} from '#/auth';
+  FeedbackAttachmentLevel,
+  FeedbackAvailability,
+  FeedbackSessionPreview,
+  FeedbackSubmitInput,
+  FeedbackSubmitResult,
+} from '@moonshot-ai/agent-core-v2/app/auth/feedback';
+export type { KimiAuthLoginResult, KimiAuthLogoutResult } from '#/auth';
 
 export * from '#/events';
 export type * from '#/types';

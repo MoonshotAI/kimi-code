@@ -2,7 +2,6 @@ import { NPM_PACKAGE_NAME } from '#/constant/app';
 
 export { NPM_PACKAGE_NAME };
 
-/** Where the running CLI was installed from. Drives update command + spawn. */
 export type InstallSource =
   | 'npm-global'
   | 'pnpm-global'
@@ -19,7 +18,6 @@ export interface UpdateTarget {
 
 export const UPDATE_CHANNELS = ['stable', 'canary'] as const;
 
-/** Release line selected after resolving install source, installed version, and environment. */
 export type UpdateChannel = (typeof UPDATE_CHANNELS)[number];
 
 export interface UpdatePointer {
@@ -31,10 +29,6 @@ export interface UpdateFeed extends UpdatePointer {
   readonly manifest: UpdateManifest | null;
 }
 
-/**
- * The channel resolved once at the env boundary. `default` means the variable
- * is unset or empty; `invalid` keeps the rejected raw value for the warning.
- */
 export type ChannelSelection =
   | { readonly channel: UpdateChannel; readonly origin: 'default' }
   | { readonly channel: UpdateChannel; readonly origin: 'env' }
@@ -54,16 +48,11 @@ export type ActionableUpdatePlan = Exclude<UpdatePlan, { readonly kind: 'none' }
 export type UpgradePlan = Extract<UpdatePlan, { readonly kind: 'upgrade' }>;
 export type InstallIntent = ActionableUpdatePlan['kind'];
 
-/** One gradual-rollout cohort: `percent` of devices delayed by `delaySeconds`. */
 export interface RolloutBatch {
   readonly percent: number;
   readonly delaySeconds: number;
 }
 
-/**
- * Parsed CDN `latest.json`. `rollout` batches claim bucket ranges in array
- * order; an empty array means the release is fully rolled out immediately.
- */
 export interface UpdateManifest {
   readonly version: string;
   readonly publishedAt: string;

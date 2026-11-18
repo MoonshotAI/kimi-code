@@ -2,10 +2,6 @@ export interface Expandable {
   setExpanded(expanded: boolean): void;
 }
 
-/**
- * An expandable component that can say whether ctrl+o would change what it
- * shows — content it keeps out of its collapsed form.
- */
 export interface HidesContent extends Expandable {
   hasHiddenContent(): boolean;
   isExpanded(): boolean;
@@ -13,6 +9,14 @@ export interface HidesContent extends Expandable {
 
 export interface OmitsExpandHint {
   omitsExpandHint(): boolean;
+}
+
+export interface HasRowDetail {
+  renderRowDetail(width: number): string[];
+}
+
+export interface HasStatusMarker {
+  statusMarker(): string;
 }
 
 export interface Disposable {
@@ -52,13 +56,30 @@ function omitsExpandHint(obj: unknown): boolean {
   );
 }
 
-/** Whether an expandable component currently shows its expanded form. */
 export function isExpandedComponent(obj: unknown): boolean {
   return (
     isExpandable(obj) &&
     'isExpanded' in obj &&
     typeof (obj as HidesContent).isExpanded === 'function' &&
     (obj as HidesContent).isExpanded()
+  );
+}
+
+export function hasRowDetail(obj: unknown): obj is HasRowDetail {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'renderRowDetail' in obj &&
+    typeof (obj as HasRowDetail).renderRowDetail === 'function'
+  );
+}
+
+export function hasStatusMarker(obj: unknown): obj is HasStatusMarker {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'statusMarker' in obj &&
+    typeof obj.statusMarker === 'function'
   );
 }
 

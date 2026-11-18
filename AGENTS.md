@@ -18,10 +18,10 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - the browser web UI: **its source no longer lives in this repo.** It is developed in the code-app repo (`apps/web`) and shipped as the committed, prebuilt bundle `apps/kimi-code/dist-web` (gitignored, force-added), synced from code-app with `KIMI_CODE_REPO=<this checkout> pnpm run sync:web` — sync and commit the bundle in the same change whenever the web UI should ship differently. `apps/kimi-code/scripts/check-web-assets.mjs` guards packaging against a missing bundle. To hack on the web UI against this repo's server, run `pnpm dev:server` here and point code-app's `pnpm dev:web` at it via `KIMI_SERVER_URL`.
 - `apps/vis`, `apps/vis/server`, `apps/vis/web`: visual debugging tools for sessions and replays.
 - `packages/agent-core-v2`: the DI × Scope agent engine (the v2 port behind kap-server). Three `LifecycleScope` tiers — `App` / `Session` / `Agent` (`app/scopes.ts`) — plus the L3 unit layer (`Service`/`Fiber` units, collection contribution points, the Feature seam in `src/features/`); `WorkspaceInstance`/`Program` graphs are materialized at runtime through `IWorkspaceInstanceManager`, with the App-scoped `ISessionManager` creating per-workspace session controllers through `Program`.
+- `packages/core`: the DI-free Loop, LLM, and tool runtime. LLM documentation is organized by reader: [consume outcomes and events](packages/core/docs/llm/calling.md), [build requests](packages/core/docs/llm/building.md) plus the [request contract reference](packages/core/docs/llm/building-reference.md), and [understand the architecture](packages/core/docs/llm/maintaining.md) before following the [maintenance guide](packages/core/docs/llm/maintenance-guide.md).
 - `packages/node-sdk`: the public TypeScript SDK and harness.
 - `packages/oauth`: Kimi OAuth and managed auth utilities.
 - `packages/telemetry`: shared client-side telemetry infrastructure.
-- `packages/transcript`: the isomorphic transcript rendering data layer — L1 agent-granular store, L2 idempotent operations, L3 `off/turn/block/delta` subscription granularity, L4 framework-free view registry, plus turn-cursor pagination. Pure TypeScript (browser-safe, no engine imports); the sole owner of the transcript contract types (`src/contract/`) and the op-batch sequencing contract.
 - `packages/session-import`: standalone Node.js conversion of external sessions into a single user message that carries the conversation, full effective-history attachments, and image references. It has no engine or UI dependency; callers provide the destination session attachment directory and context budget.
 - `packages/kap-server`: the Kimi Code server, backed by `@moonshot-ai/agent-core-v2`; exposes sessions over REST + WebSocket (`/api/v1` + `/api/v1/ws`), plus the `/api/v1/debug/*` reflection RPC surface (`--debug-endpoints`, loopback bind + bearer auth).
 - `packages/remote-control`: the Kimi Remote Control tunnel client — registers this machine with the relay and forwards HTTP/WebSocket traffic to the local server, with a machine-wide single-instance lock; consumed by kap-server (the `/api/v1/remote-control` toggle) and by the CLI (`kimi web --remote-control`).
@@ -47,7 +47,8 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 ## General Coding Rules
 
-- `packages/agent-core-v2`, `packages/kap-server`, and `packages/transcript` are comment-free zones: no comments of any kind — no line/block comments, no JSDoc (not even on exported symbols); the only exception is load-bearing lint-suppression directives (`oxlint-disable` / `eslint-disable`), while other tooling directives (`@ts-expect-error`, …) stay banned. Enforced by `scripts/check-no-comments.mjs` over `.ts`/`.tsx`/`.mts`/`.mjs` under `src/`/`test/`/`scripts/`, which runs as part of `pnpm lint`.
+- Do not write comments in JS/TS code. `pnpm lint` (`scripts/check-comments.mjs`) rejects every comment except tool directives (`@ts-*`, `oxlint-`/`eslint-` disables, `prettier-ignore`, and the like), the shebang, `/// <reference>`, and single-tag JSDoc `@type` casts in JS files. Let names, types, and structure say what the code does, and turn a constraint into a type, a test, or a lint rule instead of a note.
+- Paths listed in `.commentignore` (gitignore syntax) are exempt from that check. Leave their existing comments alone unless the user asks, and add an entry only when the user asks.
 - For optional object properties, pass `undefined` directly instead of using conditional spread.
   - YES: `{ user }`
   - NO: `{ ...(user ? { user } : undefined) }`
@@ -82,6 +83,10 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 - Prefer `rg` / `rg --files` when reading code.
 - When designing changes, follow existing boundaries and local patterns first.
+- Before finishing any code change, run `pnpm lint`; it must exit with status 0. It runs the comment check, oxlint, the agent-core-v2 import-boundary check, and the guards and ratchet in `scripts/checks/`. If it reports errors in code you did not touch, run `pnpm install` and lint again: type-aware rules on an install older than the lockfile report errors that do not exist.
+- Fix lint errors in the code. Do not add a disable directive, edit `.oxlintrc.json` or `.oxlintrc.ratchet.json`, rewrite the lint snapshot, or raise the ratchet baseline in `scripts/checks/baselines/` just to get a passing run; if a rule is wrong for your case, stop and report it. A directive that is truly needed names the rule and gives its reason after ` -- `.
+- Rules in `.oxlintrc.ratchet.json` already have findings in existing code, frozen per file in `scripts/checks/baselines/oxlint-ratchet.json`. New code must not add to them; after fixing existing findings, run `node scripts/checks/ratchet.mjs --update` to lower the baseline.
+- Do not run `pnpm lint:fix`: some oxlint auto-fixes change behavior (for example `unicorn/no-unnecessary-await` removes an `await`, which changes when the code after it runs).
 - In public text and test data, replace real internal identifiers with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY`. Before opening a PR, ask a read-only agent to audit the diff for context-specific internal identifiers.
 - When creating a PR, use the `write-pr` skill (`.agents/skills/write-pr/SKILL.md`) to write the PR description. The PR title must follow Conventional Commit style, e.g. `chore: remove legacy format commands`.
 - When an AI agent opens or updates a PR, fill in `.github/pull_request_template.md` — link the related issue or explain the problem, then describe what changed. Do not leave placeholder text or submit a generic summary of the diff.
@@ -105,7 +110,7 @@ These rules apply to every pull request review, automated or human. The user pop
 - Report a class of issues in one pass: when a finding generalizes to several locations in the diff, list all of them at once instead of raising them across successive rounds.
 - No pure style or personal-preference findings. Every finding carries a severity: P0 blocking / P1 should-fix / P2 suggestion.
 - Re-reviews are incremental: review only what changed since the previous review; do not restate findings on unchanged code or re-raise resolved threads. Before treating a resolved thread as settled, verify the current code: suppress a finding only when the problem is actually fixed or the finding no longer holds.
-- Domain-specific rules keep their own canonical homes — changesets (`.agents/skills/gen-changesets/SKILL.md`), comment-free zones (General Coding Rules), PR text (`write-pr` skill); review against those, not ad-hoc taste.
+- Domain-specific rules keep their own canonical homes — changesets (`.agents/skills/gen-changesets/SKILL.md`), comments (General Coding Rules), PR text (`write-pr` skill); review against those, not ad-hoc taste.
 
 ### Enumerate changed behavior, not just bugs
 

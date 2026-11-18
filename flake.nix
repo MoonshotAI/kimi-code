@@ -2,10 +2,9 @@
   description = "Kimi Code CLI";
 
   inputs = {
-    # Pinned to the 25.11 release channel because nixpkgs-unstable currently
-    # ships nodejs_24 = 24.14.1, which trips the >= 24.15.0 floor that the
-    # native SEA build enforces (see apps/kimi-code/scripts/native/build.mjs).
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    # nixos-unstable provides fetchPnpmDeps fetcherVersion 5. The nodejsFor
+    # check below enforces the native SEA build's >= 24.15.0 Node.js floor.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
   outputs =
@@ -50,7 +49,7 @@
       pnpmFor =
         pkgs:
         pkgs.pnpm_10.override {
-          nodejs = nodejsFor pkgs;
+          nodejs-slim = nodejsFor pkgs;
         };
 
       # -------------------------------------------------------------------
@@ -64,6 +63,7 @@
       workspacePaths = [
         ./packages/acp-server
         ./packages/agent-core-v2
+        ./packages/core
         ./packages/kap-server
         ./packages/klient
         ./packages/migration-legacy
@@ -75,7 +75,6 @@
         ./packages/remote-control
         ./packages/session-import
         ./packages/telemetry
-        ./packages/transcript
         ./packages/tree-sitter-bash
         ./apps/kimi-code
         ./apps/vscode
@@ -88,6 +87,7 @@
       workspaceNames = [
         "@moonshot-ai/acp-server"
         "@moonshot-ai/agent-core-v2"
+        "@moonshot-ai/core"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/minidb"
@@ -99,7 +99,6 @@
         "@moonshot-ai/remote-control"
         "@moonshot-ai/session-import"
         "@moonshot-ai/kimi-telemetry"
-        "@moonshot-ai/transcript"
         "@moonshot-ai/tree-sitter-bash"
         "@moonshot-ai/kimi-code"
         "kimi-code"
@@ -155,8 +154,8 @@
             pnpmDeps = pkgs.fetchPnpmDeps {
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
-              fetcherVersion = 3;
-              hash = "sha256-S7kwWgHbN5ZH4xIH7W/9sbOXi7/JhaitX/ONsLmRr9E=";
+              fetcherVersion = 5;
+              hash = "sha256-CSe6uqTDxjuljspokul3gdNOeHAv9tsQwnoj8WmxAVI=";
             };
 
             nativeBuildInputs = [

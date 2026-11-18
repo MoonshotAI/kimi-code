@@ -51,8 +51,8 @@ describe('CustomRegistryImportDialogComponent', () => {
 
   it('submits with an empty Bearer token for public registries', () => {
     const { dialog, onDone } = makeDialog();
-    dialog.handleInput('\r'); // url -> token
-    dialog.handleInput('\r'); // submit with an empty token
+    dialog.handleInput('\r');
+    dialog.handleInput('\r');
 
     expect(onDone).toHaveBeenCalledWith({
       kind: 'ok',
@@ -62,9 +62,9 @@ describe('CustomRegistryImportDialogComponent', () => {
 
   it('submits the url and token once both are provided', () => {
     const { dialog, onDone } = makeDialog();
-    dialog.handleInput('\r'); // url -> token
+    dialog.handleInput('\r');
     for (const ch of 'sk-tok') dialog.handleInput(ch);
-    dialog.handleInput('\r'); // submit from the token field
+    dialog.handleInput('\r');
 
     expect(onDone).toHaveBeenCalledWith({
       kind: 'ok',

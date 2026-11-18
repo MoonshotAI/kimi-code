@@ -38,7 +38,7 @@ kimi <subcommand> [options]
 
 以下组合会在启动时被拒绝：
 
-- `--continue` 与 `--session` 互斥——两者都表示"恢复历史会话"
+- `--continue` 与 `--session` 互斥——两者都表示 "恢复历史会话"
 - `--yolo` 和 `--auto` 互斥——两种权限模式互斥
 - `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
@@ -119,7 +119,7 @@ kimi -p --agent reviewer "审查这个分支上的改动"
 kimi -p "Summarize the current repository status"
 ```
 
-输出采用 transcript 样式：thinking 内容和 Assistant 正文都以 `• ` 开头，换行后两个空格缩进。Assistant 正文输出到 stdout；thinking、工具进度和"恢复会话"提示输出到 stderr。`-p` 模式不会请求人工审批，普通工具调用按 `auto` 权限策略处理，静态 deny 规则仍然生效。
+输出采用 transcript 样式：thinking 内容和 Assistant 正文都以 `• ` 开头，换行后两个空格缩进。Assistant 正文输出到 stdout；thinking、工具进度和 "恢复会话" 提示输出到 stderr。`-p` 模式不会请求人工审批，普通工具调用按 `auto` 权限策略处理，静态 deny 规则仍然生效。
 
 临时切换模型：
 
@@ -183,10 +183,6 @@ kimi web --port 58628    # 指定绑定端口
 | `--no-open` | 就绪后不自动打开浏览器 |
 
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
-
-::: info 提示
-`kimi server` 命令树已废弃：任何 `kimi server …` 调用（含全部旧子命令）只会打印弃用提示并以退出码 1 结束，请改用 `kimi web`。唯一的例外是 `kimi server kill`，它仍然可用，仅用于停止 0.28.0 之前版本启动的服务。该提示将在 Kimi Code 下个大版本移除。
-:::
 
 ::: danger 警告
 `--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后按 `Ctrl+C` 停止服务。

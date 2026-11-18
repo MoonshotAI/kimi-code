@@ -41,7 +41,6 @@ interface SearchPageWire {
     total_sessions: number;
     documents: number;
   };
-  source: string;
 }
 
 const WS = 'ws_route';
@@ -139,18 +138,28 @@ describe('server-v2 /api/v1/search', () => {
     return (await res.json()) as Envelope<SearchPageWire>;
   }
 
-  it('searches across sessions and returns the wire-shaped page', { timeout: 20_000 }, async () => {
-    let body: Envelope<SearchPageWire> | undefined;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      body = await postSearch({ query: '苹果' });
-      expect(body.code).toBe(0);
-      if (body.data.items.length > 0) break;
+  async function postSearchWhenReady(queryBody: unknown): Promise<Envelope<SearchPageWire>> {
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const probe = await postSearch(queryBody);
+      expect(probe.code).toBe(0);
+      if (probe.data.index_state.state === 'ready') {
+        const settled = await postSearch(queryBody);
+        expect(settled.code).toBe(0);
+        return settled;
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    expect(body).toBeDefined();
-    expect(body!.data.items.length).toBeGreaterThan(0);
+    const last = await postSearch(queryBody);
+    expect(last.code).toBe(0);
+    return last;
+  }
 
-    const hit = body!.data.items.find((h) => h.role === 'user');
+  it('searches across sessions and returns the wire-shaped page', { timeout: 20_000 }, async () => {
+    const body = await postSearchWhenReady({ query: '苹果' });
+    expect(body.data.index_state.state).toBe('ready');
+    expect(body.data.items.length).toBeGreaterThan(0);
+
+    const hit = body.data.items.find((h) => h.role === 'user');
     expect(hit).toBeDefined();
     expect(hit!.session_id).toBe('s1');
     expect(hit!.workspace_id).toBe(WS);
@@ -158,14 +167,13 @@ describe('server-v2 /api/v1/search', () => {
     expect(hit!.agent_id).toBe('main');
     expect(hit!.snippet).toContain('苹果');
     expect(hit!.step_id).toBeUndefined();
-    const assistant = body!.data.items.find((h) => h.role === 'assistant');
+    const assistant = body.data.items.find((h) => h.role === 'assistant');
     expect(assistant).toBeDefined();
     expect(assistant!.turn).toBe(0);
     expect(assistant!.step_id).toBe('t0.1');
-    expect(body!.data.items.some((h) => h.role === 'title')).toBe(true);
-    expect(body!.data.has_more).toBe(false);
-    expect(['building', 'ready', 'readonly']).toContain(body!.data.index_state.state);
-    expect(body!.data.source).toBe('index');
+    expect(body.data.items.some((h) => h.role === 'title')).toBe(true);
+    expect(body.data.has_more).toBe(false);
+    expect(body.data).not.toHaveProperty('source');
   });
 
   it('rejects invalid bodies with 40001', async () => {
@@ -193,20 +201,14 @@ describe('server-v2 /api/v1/search', () => {
   });
 
   it('serves literal mode through the wire', { timeout: 20_000 }, async () => {
-    let body: Envelope<SearchPageWire> | undefined;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      body = await postSearch({ query: '的价格', mode: 'literal' });
-      expect(body.code).toBe(0);
-      if (body.data.items.length > 0) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    expect(body).toBeDefined();
-    const hit = body!.data.items.find((h) => h.role === 'user');
+    const body = await postSearchWhenReady({ query: '的价格', mode: 'literal' });
+    expect(body.data.index_state.state).toBe('ready');
+    const hit = body.data.items.find((h) => h.role === 'user');
     expect(hit).toBeDefined();
     expect(hit!.snippet).toContain('的价格');
     expect(hit!.score).toBe(0);
-    expect(body!.data.items.some((h) => h.role === 'assistant')).toBe(false);
-    expect(body!.data.incomplete).toBeUndefined();
+    expect(body.data.items.some((h) => h.role === 'assistant')).toBe(false);
+    expect(body.data.incomplete).toBeUndefined();
   });
 });
 
@@ -277,8 +279,8 @@ describe('server-v2 session routes with the global search DB unavailable', () =>
     expect(coldList.data.items.map((item) => item.id)).toContain(id);
     const got = await getJson<{ id: string }>(`/api/v1/sessions/${id}`);
     expect(got.code).toBe(0);
-    const messages = await getJson<{ items: unknown[] }>(`/api/v1/sessions/${id}/messages`);
-    expect(messages.code).toBe(0);
+    const turns = await getJson<{ turns: unknown[] }>(`/api/v1/sessions/${id}/agents/main/turns`);
+    expect(turns.code).toBe(0);
 
     const probe = await stat(join(home as string, 'search-index'));
     expect(probe.isFile()).toBe(true);

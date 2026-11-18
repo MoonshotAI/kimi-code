@@ -41,7 +41,6 @@ function mouse(
   };
 }
 
-/** Press, release and click on `label` in the head; returns the click's result. */
 function click(panel: NotifyPanelComponent, label: string): unknown {
   const x = titleOf(panel).indexOf(label);
   expect(x).toBeGreaterThanOrEqual(0);

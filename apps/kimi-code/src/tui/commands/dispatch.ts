@@ -13,6 +13,7 @@ import type { ModelMigrationController } from '../controllers/model-migration';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
+import type { FollowUpDelivery } from '../config';
 import type { ResolvedTheme } from '../theme/colors';
 import type { TUIState } from '../tui-state';
 import type {
@@ -24,6 +25,7 @@ import type {
   TranscriptEntry,
 } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import type { ExtractionResult } from '../utils/image-placeholder';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
 import { handleCopyCommand } from './copy';
@@ -37,7 +39,6 @@ import {
   handleSecondaryModelCommand,
   handleThemeCommand,
   showExperimentsPanel,
-  showModelPicker,
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
@@ -74,10 +75,6 @@ import { handleTowerCommand } from './tower';
 import { handleUndoCommand } from './undo';
 import { handleRemoteControlCommand, handleWebCommand } from './web';
 
-// ---------------------------------------------------------------------------
-// Re-exports — keep existing consumers working
-// ---------------------------------------------------------------------------
-
 export { handleLoginCommand, handleLogoutCommand } from './auth';
 export { handleBtwCommand } from './btw';
 export { handleCopyCommand } from './copy';
@@ -112,10 +109,6 @@ export {
 export { handleUndoCommand } from './undo';
 export { handleRemoteControlCommand, handleWebCommand } from './web';
 
-// ---------------------------------------------------------------------------
-// Host interface
-// ---------------------------------------------------------------------------
-
 export interface SlashCommandHost {
   state: TUIState;
   session: Session | undefined;
@@ -137,38 +130,15 @@ export interface SlashCommandHost {
     owner?: ReverseRpcModalOwner,
   ): void;
   restoreEditor(): void;
-  restoreInputText(text: string): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   refreshSlashCommandAutocomplete(): void;
-  /**
-   * Rebuild the plugin slash-command list. With no session (v2 session-less
-   * startup) this reads the app-global plugin commands instead, so `/plugins`
-   * mutations apply before the first session exists.
-   */
   refreshPluginCommands(session?: Session): Promise<void>;
-  /**
-   * Rebuild the skill slash-command list. With no session (v2 session-less
-   * startup) this reads the workspace skills instead.
-   */
   refreshSkillCommands(session?: SkillListSession): Promise<void>;
-  /**
-   * Seed appState with the config defaults the v2 engine would apply at
-   * createSession time (model, permission, plan mode, thinking effort,
-   * context cap). Only call it while session-less; `includeModel: false`
-   * refreshes the other defaults without changing the pending model choice.
-   */
   hydrateLazyConfigDefaults(includeModel?: boolean): Promise<void>;
 
-  // Session
   requireSession(): Session;
-  /**
-   * Lazy-create the session on first use (v2 engine). Returns the existing
-   * session, or undefined (with the error already surfaced) when creation
-   * fails.
-   */
   ensureSession(): Promise<Session | undefined>;
-  /** Await in-flight session assembly — lazy creation or a `/new` replacement — if any; no-op otherwise. */
   waitForSessionAssembly(): Promise<void>;
-  /** True while a `/new` replacement is assembling; idle checks must treat it as busy. */
   readonly sessionReplacementInFlight: boolean;
   switchToSession(session: Session, message: string): Promise<void>;
   reloadCurrentSessionView(session: Session, message: string): Promise<void>;
@@ -177,7 +147,6 @@ export interface SlashCommandHost {
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   drainQueueIfIdle(): void;
   completedCompactionSerial: number;
-  /** Queue a `/compact` for FIFO dispatch; false when one is already queued. */
   enqueueCompactCommand(args: string): boolean;
   enqueueModelSwitch(
     alias: string,
@@ -186,37 +155,28 @@ export interface SlashCommandHost {
   ): void;
   requestQueuedGoalPromotion?(): void;
 
-  // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle;
   beginAuthBlock(): () => void;
   setAuthRequired(required: boolean): void;
   showProgressSpinner(label: string): LoginProgressSpinnerHandle;
 
-  // Theme
   applyTheme(theme: ThemeName, resolved?: ResolvedTheme): Promise<void>;
   refreshTerminalThemeTracking(): void;
 
-  // Dispatch
   stop(exitCode?: number): Promise<void>;
   setExitOpenUrl(url: string): void;
-  /**
-   * Register a task that takes over the process after the TUI has shut down
-   * (instead of exiting): the runner awaits it and only exits when it returns.
-   * Used by `/web` to keep a freshly started server attached to this terminal
-   * until Ctrl+C.
-   */
   setExitForegroundTask(task: (exitCode: number) => Promise<void>): void;
   showHelpPanel(): void;
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
-  sendNormalUserInput(text: string): void;
-  /**
-   * Submit a prompt that explicitly activates one or more skills inline
-   * (v2 engine only): all activations ride the same submission as the prompt
-   * and launch as a single turn.
-   */
-  sendInlineSkillUserInput(text: string, activations: readonly InlineSkillActivation[]): Promise<void>;
+  sendNormalUserInput(text: string, preExtracted?: ExtractionResult, delivery?: FollowUpDelivery): void;
+  sendInlineSkillUserInput(
+    text: string,
+    activations: readonly InlineSkillActivation[],
+    preExtracted?: ExtractionResult,
+    delivery?: FollowUpDelivery,
+  ): Promise<void>;
   activatePluginCommand(
     session: Session,
     pluginId: string,
@@ -225,8 +185,9 @@ export interface SlashCommandHost {
   ): void;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
 
-  // Controller refs
   readonly streamingUI: StreamingUIController;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
@@ -234,19 +195,25 @@ export interface SlashCommandHost {
   readonly modelMigration: ModelMigrationController;
 }
 
-// ---------------------------------------------------------------------------
-// Dispatch — entry point from handleUserInput
-// ---------------------------------------------------------------------------
-
-export function dispatchInput(host: SlashCommandHost, text: string): void {
+export function dispatchInput(
+  host: SlashCommandHost,
+  text: string,
+  delivery: FollowUpDelivery = 'default',
+): void {
   const { intent, activations } = resolveUserInput({
     input: text,
     skillCommandMap: host.skillCommandMap,
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
+    skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
+      ? undefined
+      : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
+    defaultSkillPathForCommand: host.defaultSkillPathForCommand === undefined
+      ? undefined
+      : (commandName) => host.defaultSkillPathForCommand!(commandName),
   });
-  if (intent.kind === 'skill' || activations.length > 0) {
+  if (intent.kind === 'skill' || (activations.length > 0 && intent.kind !== 'builtin')) {
     const leading = activations[0];
     if (intent.kind === 'skill' && leading?.args !== undefined && host.state.appState.model.trim().length > 0) {
       host.track('input_command', {
@@ -254,20 +221,22 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
         skill_name: leading.skillName,
       });
     }
-    void host.sendInlineSkillUserInput(text, activations);
+    void host.sendInlineSkillUserInput(text, activations, undefined, delivery);
     return;
   }
   if (intent.kind !== 'not-command') {
-    void executeSlashCommand(host, text, intent);
+    void executeSlashCommand(host, text, intent, activations, delivery);
     return;
   }
-  host.sendNormalUserInput(text);
+  host.sendNormalUserInput(text, undefined, delivery);
 }
 
 async function executeSlashCommand(
   host: SlashCommandHost,
   input: string,
   intent: Exclude<SlashCommandIntent, { readonly kind: 'skill' | 'not-command' }>,
+  activations: readonly InlineSkillActivation[],
+  delivery: FollowUpDelivery,
 ): Promise<void> {
   const parsedCommand = parseSlashInput(input);
 
@@ -275,8 +244,6 @@ async function executeSlashCommand(
     case 'blocked':
       host.track('input_command_invalid', { reason: 'blocked', command: intent.commandName });
       host.showError(slashBusyMessage(intent.commandName, intent.reason));
-      // The editor buffer was already cleared on submit; give the rejected
-      // command line back so hand-typed input is not lost.
       host.restoreInputText(input);
       return;
     case 'invalid':
@@ -309,13 +276,10 @@ async function executeSlashCommand(
       return;
     }
     case 'message':
-      // Unknown slash command: let /dance claim it before it falls through to
-      // the model as a normal message. This runs *after* builtin and skill
-      // resolution, so a real command or a same-named skill always wins.
       if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
         return;
       }
-      host.sendNormalUserInput(intent.input);
+      host.sendNormalUserInput(intent.input, undefined, delivery);
       return;
     case 'builtin':
       if (intent.enqueue === true) {
@@ -333,7 +297,7 @@ async function executeSlashCommand(
         host.track('clear');
       }
       try {
-        await handleBuiltInSlashCommand(host, intent.name, intent.args, input);
+        await handleBuiltInSlashCommand(host, intent.name, intent.args, input, activations);
       } catch (error) {
         host.showError(formatErrorMessage(error));
       }
@@ -341,16 +305,10 @@ async function executeSlashCommand(
   }
 }
 
-/**
- * Lazy-create the session for a slash command that needs one (v2 engine). A
- * missing session means the TUI started session-less, so commands create it
- * on first use. Returns undefined (error already shown) when creation fails.
- */
 async function ensureSessionForCommand(host: SlashCommandHost): Promise<Session | undefined> {
   return host.ensureSession();
 }
 
-/** Builtin commands that need an active session; lazy-created on the v2 engine. */
 const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set([
   'btw',
   'compact',
@@ -370,18 +328,14 @@ async function handleBuiltInSlashCommand(
   name: BuiltinSlashCommandName,
   args: string,
   input: string,
+  activations: readonly InlineSkillActivation[],
 ): Promise<void> {
   if (host.session === undefined && SESSION_REQUIRING_COMMANDS.has(name)) {
     const session = await ensureSessionForCommand(host);
     if (session === undefined) {
-      // Creation failed after submit cleared the buffer; give the input
-      // back unless the user moved on — a newer draft or an opened panel.
-      if (canRestoreSubmittedInput(host)) host.restoreInputText(input);
+      if (canRestoreSubmittedInput(host)) host.restoreInputText(input, activations);
       return;
     }
-    // A first prompt may have started a turn while the session was being
-    // created; re-check the availability gate that was resolved before the
-    // await (idle-only commands are blocked while a turn is active).
     const command = findBuiltInSlashCommand(name);
     const busyReason = slashCommandBusyReason({
       isStreaming: host.state.appState.streamingPhase !== 'idle',
@@ -392,20 +346,14 @@ async function handleBuiltInSlashCommand(
       command !== undefined &&
       resolveSlashCommandAvailability(command, args) === 'idle-only'
     ) {
-      // Same enqueue semantics as the dispatch builtin branch: a /compact
-      // submitted before the session existed joins the queue when the
-      // awaited creation lands on a running turn.
       if (name === 'compact' && busyReason === 'streaming' && !host.state.appState.isCompacting) {
         if (!host.enqueueCompactCommand(args)) {
           host.showError('A /compact is already queued.');
-          // Same restore as the adjacent blocked path, guarded the same way.
           if (canRestoreSubmittedInput(host)) host.restoreInputText(input);
         }
         return;
       }
       host.showError(slashBusyMessage(name, busyReason));
-      // Same as the dispatch blocked branch: give the cleared input back,
-      // guarded the same way — session creation awaited above.
       if (canRestoreSubmittedInput(host)) host.restoreInputText(input);
       return;
     }
@@ -421,11 +369,7 @@ async function handleBuiltInSlashCommand(
       host.showStatus(`Kimi Code v${host.state.appState.version}`);
       return;
     case 'new': {
-      // A first-use lazy creation may still be in flight: wait it out so /new
-      // never races a second createSession against the pending prompt.
       await host.waitForSessionAssembly();
-      // The waited-out prompt may have started a turn meanwhile; /new is
-      // idle-only, so re-run the busy gate resolved before the await.
       const busyReason = slashCommandBusyReason({
         isStreaming: host.state.appState.streamingPhase !== 'idle',
         isCompacting: host.state.appState.isCompacting,
@@ -448,9 +392,6 @@ async function handleBuiltInSlashCommand(
       void showMcpServers(host);
       return;
     case 'plugins':
-      // `handlePluginsCommand` throws when no session is active (its own
-      // requireSession), so catch here instead of letting the `void` call
-      // reject unhandled.
       try {
         await handlePluginsCommand(host, args);
       } catch (error) {
@@ -503,7 +444,7 @@ async function handleBuiltInSlashCommand(
       await handleFeedbackCommand(host);
       return;
     case 'btw':
-      await handleBtwCommand(host, args);
+      await handleBtwCommand(host, args, activations);
       return;
     case 'title':
       await handleTitleCommand(host, args);

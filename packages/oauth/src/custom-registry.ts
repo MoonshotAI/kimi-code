@@ -12,26 +12,12 @@ import { isRecord } from './utils';
 
 export type { ManagedKimiConfigShape };
 
-/**
- * Identifies where a custom-registry-managed provider came from. The same
- * URL may produce multiple providers (one per top-level entry in the api.json
- * document). Refresh treats the URL as the stable registry identity and may try
- * more than one API key when existing provider records drift during key
- * rotation.
- */
 export interface CustomRegistrySource {
   readonly kind: 'apiJson';
   readonly url: string;
   readonly apiKey: string;
 }
 
-/**
- * Parses the `source` blob parked on a provider record back into a
- * {@link CustomRegistrySource}, returning undefined when the record did not
- * come from a custom registry (manual providers, managed login, other kinds).
- * Used both to rediscover refresh candidates and to check whether a provider
- * is owned by a given registry URL.
- */
 function customRegistrySourceUrl(provider: unknown): string | undefined {
   if (!isRecord(provider)) return undefined;
   const candidate = provider['source'];
@@ -55,14 +41,11 @@ export interface FetchCustomRegistryOptions {
   readonly userAgent?: string;
 }
 
-/**
- * `kimi` is included because the api.json schema permits it even though kokub
- * itself only emits the other three.
- */
 export type CustomRegistryProviderType =
   | 'anthropic'
   | 'openai'
   | 'openai_responses'
+  | 'google-genai'
   | 'kimi';
 
 export interface CustomRegistryModelUpgrade {
@@ -92,14 +75,11 @@ export interface CustomRegistryProviderEntry {
   readonly api: string;
   readonly type: CustomRegistryProviderType;
   readonly env?: readonly string[];
+  readonly search_url?: string;
+  readonly feedback_url?: string;
   readonly models: Record<string, CustomRegistryModelEntry>;
 }
 
-/**
- * Tuned slightly below typical real values so the local compactor kicks in
- * before the upstream rejects with a context-overflow 4xx. Users can override
- * by editing `~/.kimi-code/config.toml`.
- */
 export const CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT = 131072;
 export const CUSTOM_REGISTRY_DEFAULT_CAPABILITIES = ['tool_use'] as const;
 
@@ -107,6 +87,7 @@ const ALLOWED_PROVIDER_TYPES: ReadonlySet<CustomRegistryProviderType> = new Set(
   'anthropic',
   'openai',
   'openai_responses',
+  'google-genai',
   'kimi',
 ]);
 
@@ -116,12 +97,6 @@ const RESERVED_PROVIDER_IDS: ReadonlySet<string> = new Set([
   ...OPEN_PLATFORMS.map((platform) => platform.id),
 ]);
 
-/**
- * Provider ids a custom registry may never claim: the managed Kimi Code slots
- * and the first-party open platforms. Shared by the import-time guard and the
- * refresh orchestrator so the rejection rule — and its message — lives in one
- * place.
- */
 export function isReservedProviderId(providerId: string): boolean {
   return RESERVED_PROVIDER_IDS.has(providerId);
 }
@@ -286,25 +261,31 @@ function toProviderEntry(value: unknown): CustomRegistryProviderEntry | undefine
   }
 
   const env = toStringArrayOrUndefined(value['env']);
-
-  return {
+  const searchUrl = nonEmptyString(value['search_url']);
+  const feedbackUrl = nonEmptyString(value['feedback_url']);
+  const entry: {
+    id: string;
+    name: string;
+    api: string;
+    type: CustomRegistryProviderType;
+    env?: readonly string[];
+    search_url?: string;
+    feedback_url?: string;
+    models: Record<string, CustomRegistryModelEntry>;
+  } = {
     id,
     name,
     api,
     type,
-    ...(env !== undefined ? { env } : {}),
     models: parsedModels,
   };
+  if (env !== undefined) entry.env = env;
+  if (searchUrl !== undefined) entry.search_url = searchUrl;
+  if (feedbackUrl !== undefined) entry.feedback_url = feedbackUrl;
+
+  return entry;
 }
 
-/**
- * Fetches and validates an api.json document. The returned record is keyed by
- * the top-level provider key in the document (which may differ from
- * `entry.id`); callers should iterate `Object.values` to apply each entry.
- *
- * `userAgent` identifies the host product (e.g. `kimi-code-cli/1.2.3`); when
- * omitted the request falls back to the runtime default (`User-Agent: node`).
- */
 export async function fetchCustomRegistry(
   source: CustomRegistrySource,
   options: FetchCustomRegistryOptions = {},
@@ -343,10 +324,6 @@ export async function fetchCustomRegistry(
   for (const [key, raw] of Object.entries(payload)) {
     const entry = toProviderEntry(raw);
     if (entry === undefined) {
-      // Skip invalid/unknown provider entries instead of aborting the whole
-      // fetch, mirroring `toModelEntry`'s skip-on-invalid behavior. This keeps
-      // existing providers working when kokub adds a new provider type that
-      // this client doesn't yet recognize.
       console.warn(
         `[custom-registry] Skipping invalid entry "${key}" at ${source.url}: missing required fields or unsupported type (id, name, api, type, models).`,
       );
@@ -358,17 +335,9 @@ export async function fetchCustomRegistry(
   return out;
 }
 
-/**
- * Derives kosong capability strings from the rich (optional) fields on a
- * custom-registry model entry. Returns an empty array when none of the rich
- * fields are present; callers are responsible for substituting the default
- * (`CUSTOM_REGISTRY_DEFAULT_CAPABILITIES`) when this returns `[]`.
- */
 export function capabilitiesFromCustomEntry(model: CustomRegistryModelEntry): string[] {
   const caps = new Set<string>();
   if (model.tool_call === true) caps.add('tool_use');
-  // Declaring concrete effort levels implies thinking support even when the
-  // legacy `reasoning` boolean is absent.
   if (model.reasoning === true || (model.support_efforts?.length ?? 0) > 0) {
     caps.add('thinking');
   }
@@ -415,23 +384,11 @@ function resolveCapabilities(model: CustomRegistryModelEntry): string[] {
   return [...CUSTOM_REGISTRY_DEFAULT_CAPABILITIES];
 }
 
-/**
- * Writes one custom-registry provider entry into the managed config in place.
- * Mirrors `applyOpenPlatformConfig`'s shape: provider goes to `config.providers`
- * keyed by `entry.id`, each model in `entry.models` becomes an alias under
- * `config.models[\`${entry.id}/${modelId}\`]`. The `source` blob is parked on the
- * provider object via `ManagedKimiProviderConfig`'s index signature so the
- * refresh dispatcher can rediscover it later.
- *
- * The entry's `env` field is deliberately NOT consumed here: the registry
- * controls both the variable name and the endpoint the credential is sent to,
- * so the binding is left for the user to declare explicitly. A hand-edited
- * `apiKeyEnv` on the existing record is preserved instead, without
- * resurrecting an inline `apiKey` that would conflict with it — but only when
- * the existing record belongs to the same registry and its endpoint is
- * unchanged. Reserved ids and endpoint changes are rejected before mutation so
- * a registry cannot redirect the environment-backed credential.
- */
+function changedActiveEndpoint(previous: unknown, next: string | undefined): boolean {
+  const nextNorm = normalizedEndpoint(next);
+  return nextNorm !== undefined && normalizedEndpoint(previous) !== nextNorm;
+}
+
 function retainedApiKeyEnv(
   existing: unknown,
   entry: CustomRegistryProviderEntry,
@@ -447,7 +404,9 @@ function retainedApiKeyEnv(
   const apiKeyEnv = nonEmptyString(existing['apiKeyEnv']);
   if (
     apiKeyEnv !== undefined &&
-    normalizedEndpoint(existing['baseUrl']) !== normalizedEndpoint(entry.api)
+    (normalizedEndpoint(existing['baseUrl']) !== normalizedEndpoint(entry.api) ||
+      changedActiveEndpoint(existing['searchUrl'], entry.search_url) ||
+      changedActiveEndpoint(existing['feedbackUrl'], entry.feedback_url))
   ) {
     throw new Error(
       `Custom registry provider "${entry.id}" changed endpoint while api_key_env is configured. Remove api_key_env, re-import the registry, verify the new endpoint, then restore api_key_env.`,
@@ -465,7 +424,7 @@ export function applyCustomRegistryProvider(
   const providerKey = entry.id;
   const existing = priorProviders?.[providerKey] ?? config.providers[providerKey];
   const existingApiKeyEnv = retainedApiKeyEnv(existing, entry, source);
-  config.providers[providerKey] =
+  const providerRecord: Record<string, unknown> =
     existingApiKeyEnv === undefined
       ? {
           type: entry.type,
@@ -479,12 +438,11 @@ export function applyCustomRegistryProvider(
           apiKeyEnv: existingApiKeyEnv,
           source,
         };
+  if (entry.search_url !== undefined) providerRecord['searchUrl'] = entry.search_url;
+  if (entry.feedback_url !== undefined) providerRecord['feedbackUrl'] = entry.feedback_url;
+  config.providers[providerKey] = providerRecord as ManagedKimiConfigShape['providers'][string];
 
   const existingModels = config.models ?? {};
-  // Selectively merge upstream models into the existing config so any fields
-  // the user added by hand (or that upstream does not declare) survive a
-  // refresh. Models that upstream no longer lists are removed; the rest are
-  // merged field-by-field.
   const upstreamKeys = new Set(
     Object.keys(entry.models).map((modelKey) => `${providerKey}/${modelKey}`),
   );
@@ -520,8 +478,6 @@ export function applyCustomRegistryProvider(
       maxOutputSize,
       supportEfforts: model.support_efforts,
       defaultEffort: model.default_effort,
-      // `{model_from}` / `{model_to}` belong to the registry format, so store
-      // the final text: every client then renders the same explanation.
       upgrade:
         targetAlias === undefined || upgrade === undefined
           ? undefined
@@ -543,11 +499,6 @@ export function applyCustomRegistryProvider(
   config.models = existingModels;
 }
 
-/**
- * Removes a custom-registry provider and every model alias that referenced it.
- * Clears `defaultModel` if it pointed at a removed alias. Mirrors
- * `removeOpenPlatformConfig`.
- */
 export function removeCustomRegistryProvider(
   config: ManagedKimiConfigShape,
   providerId: string,
@@ -572,11 +523,6 @@ export function removeCustomRegistryProvider(
   }
 }
 
-/**
- * The replacement alias that a stored model alias declared through registry
- * `upgrade` metadata. Registries retire a model by dropping it after declaring
- * this, so callers follow it when the alias it belongs to disappears.
- */
 export function declaredUpgradeTarget(
   config: ManagedKimiConfigShape,
   alias: string | undefined,
@@ -587,13 +533,6 @@ export function declaredUpgradeTarget(
     : undefined;
 }
 
-/**
- * Surfaces the credential env var each entry declares via its `env` field, as
- * `{ [entry.id]: varName }` — a hint only. The binding is never applied
- * automatically: the registry controls both the variable name and the endpoint
- * the credential is sent to, so the user must opt in by setting `api_key_env`
- * in config.toml.
- */
 export function credentialEnvHints(
   entries: readonly CustomRegistryProviderEntry[],
 ): Record<string, string> {
@@ -617,17 +556,6 @@ export interface CustomRegistryRemoval {
   readonly previousDefaultProvider: string | undefined;
 }
 
-/**
- * Removes the providers a re-import of `source.url` will replace: entries that
- * vanished upstream (same-registry only — a colliding manual or other-registry
- * provider is left alone) plus every entry's current record, so the follow-up
- * apply rebuilds them fresh and state upstream no longer declares cannot
- * linger. The returned snapshot is captured BEFORE anything is removed — pass
- * it to `applyCustomRegistryEntries` so its provenance check can preserve
- * hand-edited `apiKeyEnv` declarations and its defaults restore still sees the
- * pre-removal `defaultModel` (with its declared `upgrade` target) and
- * `defaultProvider`.
- */
 export function removeCustomRegistryEntries(
   config: ManagedKimiConfigShape,
   entries: Record<string, CustomRegistryProviderEntry>,
@@ -684,30 +612,6 @@ export function customRegistryReplacementKeys(
   };
 }
 
-/**
- * Applies every entry from a single api.json import in memory. Pass the
- * snapshot returned by {@link removeCustomRegistryEntries} when a caller has
- * already removed the records in memory; without it, the removals are
- * performed here first.
- *
- * Re-import semantics: providers previously imported from the same source URL
- * but no longer present in `entries` are removed (along with their aliases and
- * any `defaultModel` pointing at them). Without this, deleting a provider
- * upstream and re-importing the registry leaves orphaned provider records and
- * model aliases behind. Matching is by `source.url` only — the apiKey commonly
- * rotates between imports, but the URL is the stable identity of "the same
- * registry".
- *
- * Surviving entries are rebuilt from scratch (their records and aliases are
- * removed first, so state upstream no longer declares does not linger), while
- * `applyCustomRegistryProvider` still sees the pre-removal snapshot — its
- * provenance check is the single mechanism that preserves a hand-edited
- * `apiKeyEnv`. Defaults (`defaultModel`/`defaultProvider`) that still resolve
- * after the rebuild are restored from the snapshot; a `defaultModel` left
- * dangling moves to the replacement it declared through `upgrade` when that
- * still resolves, keeping `thinking`, and is cleared together with `thinking`
- * otherwise (mirroring the refresh path).
- */
 export function applyCustomRegistryEntries(
   config: ManagedKimiConfigShape,
   entries: Record<string, CustomRegistryProviderEntry>,

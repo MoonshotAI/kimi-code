@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage } from 'node:http';
+import { connect } from 'node:net';
 import { spawn } from 'node:child_process';
 import type { Duplex } from 'node:stream';
 import { existsSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
@@ -210,7 +211,7 @@ describe('Remote Control tunnel', () => {
     ).rejects.toThrow(/DEVICE_LIMIT_EXCEEDED.*membership allows 3 devices/);
   });
 
-  it('uses only Authorization when the refresh token is not a valid subprotocol token', async () => {
+  it('uses HTTP_PROXY for relay WebSockets and only Authorization when the refresh token is not a valid subprotocol token', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-auth-'));
     cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
     const oauthRef = resolveKimiCodeOAuthRef({
@@ -222,6 +223,12 @@ describe('Remote Control tunnel', () => {
       { ...TOKEN, refreshToken: 'invalid/token=' },
     );
     const relay = await startAuthRelay();
+    const proxy = await startConnectProxy(relay.port);
+    const proxyOrigin = `http://127.0.0.1:${proxy.port}`;
+    vi.stubEnv('HTTP_PROXY', proxyOrigin);
+    vi.stubEnv('http_proxy', proxyOrigin);
+    vi.stubEnv('NO_PROXY', '');
+    vi.stubEnv('no_proxy', '');
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
 
@@ -233,10 +240,11 @@ describe('Remote Control tunnel', () => {
       urlSource: 'kimi_code_cli',
       configuredOAuthKey: oauthRef.key,
       configuredOAuthHost: oauthRef.oauthHost,
-      relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
+      relayOrigin: `http://relay.test:${relay.port}/coding-relay`,
       stderr: { write: () => true },
     });
 
+    expect(proxy.requests).toEqual([`relay.test:${relay.port}`, `relay.test:${relay.port}`]);
     expect(relay.requests).toHaveLength(2);
     expect(relay.requests.every((request) => request.protocol === undefined)).toBe(true);
     expect(relay.requests.every((request) => request.authorization === 'Bearer invalid/token=')).toBe(
@@ -834,7 +842,7 @@ describe('Remote Control tunnel', () => {
   });
 
   it('reconnects the tunnel pair after the relay drops it', async () => {
-    const scenario = await startTunnelScenario();
+    const scenario = await startTunnelScenario({ earlyHttpProbe: 'request-20' });
 
     try {
       scenario.httpConnections[0]!.terminate();
@@ -843,10 +851,14 @@ describe('Remote Control tunnel', () => {
         'request_chunk,response_chunk,abort',
         'request_chunk,response_chunk,abort',
       ]);
-      const reconnectResponsePromise = nextJsonMessage(scenario.httpConnections[1]!);
-      scenario.httpConnections[1]!.send(tunnelRequestFrame('request-20', probeRawRequest(), true));
-      const reconnectResponse = frameBody(await reconnectResponsePromise).toString();
-      expect(reconnectResponse).toContain('HTTP/1.1 200 OK');
+      await waitFor(
+        () => scenario.httpMessages.some((message) => message['request_id'] === 'request-20'),
+        10_000,
+      );
+      const reconnectResponse = scenario.httpMessages.find(
+        (message) => message['request_id'] === 'request-20',
+      )!;
+      expect(frameBody(reconnectResponse).toString()).toContain('HTTP/1.1 200 OK');
 
       await scenario.handle.close();
       await waitFor(() =>
@@ -1865,6 +1877,7 @@ interface TunnelScenario {
   managementConnections: WebSocket[];
   managementMessages: unknown[];
   httpConnections: WebSocket[];
+  httpMessages: Array<Record<string, unknown>>;
   streamConnections: WebSocket[];
   streamMessages: string[];
   uploadBodyBytes: Map<string, number>;
@@ -1888,6 +1901,7 @@ async function startTunnelScenario(
     localServerToken?: string | (() => string);
     bigBytes?: number;
     alignedResponseBytes?: number;
+    earlyHttpProbe?: string;
   } = {},
 ): Promise<TunnelScenario> {
   const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
@@ -2006,6 +2020,7 @@ async function startTunnelScenario(
   const relayServer = createServer();
   const managementConnections: WebSocket[] = [];
   const httpConnections: WebSocket[] = [];
+  const httpMessages: Array<Record<string, unknown>> = [];
   const streamConnections: WebSocket[] = [];
   const registrations: unknown[] = [];
   const managementMessages: unknown[] = [];
@@ -2023,7 +2038,15 @@ async function startTunnelScenario(
       }
     });
   });
-  httpTunnelServer.on('connection', (ws) => httpConnections.push(ws));
+  httpTunnelServer.on('connection', (ws) => {
+    httpConnections.push(ws);
+    ws.on('message', (data) => {
+      httpMessages.push(JSON.parse(rawDataText(data)) as Record<string, unknown>);
+    });
+    if (options.earlyHttpProbe !== undefined && httpConnections.length === 2) {
+      ws.send(tunnelRequestFrame(options.earlyHttpProbe, probeRawRequest(), true));
+    }
+  });
   streamServer.on('connection', (ws) => {
     streamConnections.push(ws);
     ws.on('message', (data) => streamMessages.push(rawDataText(data)));
@@ -2072,6 +2095,7 @@ async function startTunnelScenario(
     managementConnections,
     managementMessages,
     httpConnections,
+    httpMessages,
     streamConnections,
     streamMessages,
     uploadBodyBytes,
@@ -2185,6 +2209,28 @@ async function startAuthRelay(
   const port = await listen(relayServer);
   cleanups.push(() => closeServer(relayServer));
   return { port, requests, registrations, managementSockets, httpSockets };
+}
+
+async function startConnectProxy(
+  targetPort: number,
+): Promise<{ port: number; requests: string[] }> {
+  const requests: string[] = [];
+  const proxyServer = createServer();
+  proxyServer.on('connect', (request, socket, head) => {
+    requests.push(request.url ?? '');
+    const target = connect(targetPort, '127.0.0.1');
+    target.once('connect', () => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head.length > 0) target.write(head);
+      socket.pipe(target);
+      target.pipe(socket);
+    });
+    target.on('error', () => socket.destroy());
+    socket.on('error', () => target.destroy());
+  });
+  const port = await listen(proxyServer);
+  cleanups.push(() => closeServer(proxyServer));
+  return { port, requests };
 }
 
 function requestText(request: IncomingMessage): Promise<string> {

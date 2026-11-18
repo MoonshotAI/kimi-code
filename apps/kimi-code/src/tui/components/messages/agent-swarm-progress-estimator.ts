@@ -301,9 +301,6 @@ export class AgentSwarmProgressEstimator {
   private buildPrior(): EstimatePrior | undefined {
     const cache = this.priorCache;
     if (cache !== undefined && cache.version === this.samplesVersion) return cache.prior;
-    // The prior depends only on completed members' terminal samples, so it is
-    // reused across every estimate until a mutation bumps the sample version
-    // instead of being rebuilt per running cell per frame.
     const prior = this.computePrior();
     this.priorCache = { version: this.samplesVersion, prior };
     return prior;

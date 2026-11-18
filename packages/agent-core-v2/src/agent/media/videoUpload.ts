@@ -1,6 +1,6 @@
 import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
-import { errorStatusCode } from '#human/llm-requester/errors';
-import type { VideoURLPart } from '#human/llm/message';
+import { errorStatusCode } from '@moonshot-ai/core/llm/protocol/errors';
+import type { VideoURLPart } from '@moonshot-ai/core/llm/message';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { ProtocolErrors } from '#/llm-adapter/protocol/errors';
 

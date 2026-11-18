@@ -1,12 +1,22 @@
 import {
   computeUpdateStatus,
   ErrorCodes as DomainErrorCodes,
+  IBootstrapService,
   ICapabilityService,
   IPluginMarketplaceService,
   IPluginService,
   PluginErrors,
   isError2,
+  marketplaceEntryVisibleOnHost,
+  pluginClientForIdentity,
+  type PluginCapabilities,
+  type PluginInfo,
   type PluginMarketplace,
+  type PluginMarketplaceDistribution,
+  type PluginMarketplaceLocale,
+  type PluginMcpServerInfo,
+  type PluginSkillInfo,
+  type PluginSummary,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
@@ -24,7 +34,13 @@ import {
   pluginInfoQuerySchema,
   pluginSummarySchema,
   previewPluginRequestSchema,
+  type PluginCapabilitiesWire,
+  type PluginInfoWire,
   type PluginMarketplaceEntryWire,
+  type PluginMarketplaceLocalizedTextWire,
+  type PluginMcpServerInfoWire,
+  type PluginSkillInfoWire,
+  type PluginSummaryWire,
 } from '../protocol/rest-plugin';
 import { type ActionTable, dispatchAction } from './action-dispatch';
 
@@ -77,6 +93,123 @@ const CAPABILITY_ROW_IDS: Readonly<Record<string, string>> = {
   'kimi-browser-extension': 'kimi-webbridge',
 };
 
+function toPluginSummaryWire(summary: PluginSummary): PluginSummaryWire {
+  return {
+    id: summary.id,
+    display_name: summary.displayName,
+    description: summary.description,
+    short_description: summary.shortDescription,
+    long_description: summary.longDescription,
+    version: summary.version,
+    enabled: summary.enabled,
+    state: summary.state,
+    skill_count: summary.skillCount,
+    mcp_server_count: summary.mcpServerCount,
+    enabled_mcp_server_count: summary.enabledMcpServerCount,
+    hook_count: summary.hookCount,
+    command_count: summary.commandCount,
+    has_errors: summary.hasErrors,
+    source: summary.source,
+    origin: summary.origin,
+    catalog_id: summary.catalogId,
+    installed_at: summary.installedAt,
+    original_source: summary.originalSource,
+    github:
+      summary.github === undefined
+        ? undefined
+        : {
+            owner: summary.github.owner,
+            repo: summary.github.repo,
+            ref: { kind: summary.github.ref.kind, value: summary.github.ref.value },
+            installed_sha: summary.github.installedSha,
+          },
+  };
+}
+
+function toPluginSkillInfoWire(skill: PluginSkillInfo): PluginSkillInfoWire {
+  return {
+    name: skill.name,
+    display_name: skill.displayName,
+    description: skill.description,
+  };
+}
+
+function toPluginMcpServerInfoWire(server: PluginMcpServerInfo): PluginMcpServerInfoWire {
+  return {
+    name: server.name,
+    display_name: server.displayName,
+    description: server.description,
+    icon_url: server.iconUrl,
+    runtime_name: server.runtimeName,
+    enabled: server.enabled,
+    transport: server.transport,
+    command: server.command,
+    args: server.args === undefined ? undefined : [...server.args],
+    cwd: server.cwd,
+    url: server.url,
+    env_keys: server.envKeys === undefined ? undefined : [...server.envKeys],
+    header_keys: server.headerKeys === undefined ? undefined : [...server.headerKeys],
+  };
+}
+
+function toPluginCapabilitiesWire(capabilities: PluginCapabilities): PluginCapabilitiesWire {
+  return {
+    skills: capabilities.skills.map(toPluginSkillInfoWire),
+    mcp_servers: capabilities.mcpServers.map(toPluginMcpServerInfoWire),
+  };
+}
+
+function toPluginInfoWire(info: PluginInfo): PluginInfoWire {
+  return {
+    ...toPluginSummaryWire(info),
+    root: info.root,
+    updated_at: info.updatedAt,
+    manifest_kind: info.manifestKind,
+    manifest_path: info.manifestPath,
+    skills: info.skills.map(toPluginSkillInfoWire),
+    mcp_servers: info.mcpServers.map(toPluginMcpServerInfoWire),
+    shadowed_manifest_path: info.shadowedManifestPath,
+    diagnostics: info.diagnostics.map((d) => ({ severity: d.severity, message: d.message })),
+  };
+}
+
+function toMarketplaceLocaleWire(
+  locale: PluginMarketplaceLocale | undefined,
+): Record<string, string | PluginMarketplaceLocalizedTextWire | undefined> | undefined {
+  if (locale === undefined) return undefined;
+  const out: Record<string, string | PluginMarketplaceLocalizedTextWire | undefined> = {};
+  for (const [key, value] of Object.entries(locale)) {
+    if (key === 'defaultLocale') {
+      if (typeof value === 'string') out['default_locale'] = value;
+      continue;
+    }
+    if (typeof value === 'string' || value === undefined) {
+      out[key] = value;
+      continue;
+    }
+    out[key] = {
+      display_name: value.displayName,
+      cli_description: value.cliDescription,
+      long_description: value.longDescription,
+      short_description: value.shortDescription,
+    };
+  }
+  return out;
+}
+
+function toMarketplaceDistributionWire(
+  dist: PluginMarketplaceDistribution | undefined,
+): PluginMarketplaceEntryWire['distribution'] {
+  if (dist === undefined) return undefined;
+  return {
+    category: dist.category,
+    region: dist.region,
+    default_install: dist.defaultInstall,
+    weight: dist.weight,
+    user_level: dist.userLevel,
+  };
+}
+
 export function registerPluginsRoutes(
   app: PluginsRouteHost,
   core: Scope,
@@ -106,19 +239,20 @@ export function registerPluginsRoutes(
         return;
       }
       const marketplaceIsDefault = await core.accessor.get(IPluginMarketplaceService).isDefaultMarketplace();
-      const installed = await core.accessor.get(IPluginService).listPlugins();
+      const plugins = core.accessor.get(IPluginService);
+      await plugins.reconcileAvailability(marketplace);
+      const installed = await plugins.listPlugins();
       const byId = new Map(installed.map((p) => [p.id, p]));
       const byCatalogId = new Map(
         installed.filter((p) => p.catalogId !== undefined).map((p) => [p.catalogId, p]),
       );
       const capabilities = core.accessor.get(ICapabilityService).describeCapabilities();
+      const bootstrap = core.accessor.get(IBootstrapService);
+      const client = pluginClientForIdentity(bootstrap.clientIdentity.platform);
       const entries: PluginMarketplaceEntryWire[] = [];
       for (const entry of marketplace.plugins) {
         if (entry.id === 'kimi-webbridge') continue;
-        const supportsLocal =
-          entry.platforms?.some((platform) => platform === process.platform) === true;
-        const cloudOnly = entry.platforms?.every((platform) => platform === 'cloud') === true;
-        if (entry.platforms !== undefined && !supportsLocal && !cloudOnly) continue;
+        if (!marketplaceEntryVisibleOnHost(entry, client, bootstrap.platform)) continue;
         const capabilityId =
           marketplaceIsDefault ? CAPABILITY_ROW_IDS[entry.id] : undefined;
         const capability = capabilities.find(
@@ -148,24 +282,26 @@ export function registerPluginsRoutes(
           id: entry.id,
           classification: entry.classification ?? (entry.tier === 'official' ? 'official' : 'third_party'),
           tier: entry.tier ?? 'third-party',
-          displayName: entry.displayName,
+          display_name: entry.displayName,
           description: entry.description,
+          short_description: entry.shortDescription,
+          long_description: entry.longDescription,
           homepage: entry.homepage,
           keywords: entry.keywords === undefined ? undefined : [...entry.keywords],
           version: entry.version,
           source: entry.source,
-          iconUrl: entry.iconUrl,
+          icon_url: entry.iconUrl,
           sha256sum: entry.sha256sum,
           filename: entry.filename,
-          cliDescription: entry.cliDescription,
-          locale: entry.locale,
-          defaultLocale: entry.locale?.defaultLocale,
+          cli_description: entry.cliDescription,
+          locale: toMarketplaceLocaleWire(entry.locale),
+          default_locale: entry.locale?.defaultLocale,
           platforms: entry.platforms === undefined ? undefined : [...entry.platforms],
-          distribution: entry.distribution,
+          distribution: toMarketplaceDistributionWire(entry.distribution),
           billing: entry.billing,
           installed: installedInfo,
-          updateAvailable: updateAvailable ? true : undefined,
-          capabilityId: capability?.id,
+          update_available: updateAvailable ? true : undefined,
+          capability_id: capability?.id,
         });
       }
       reply.send(okEnvelope({ entries }, req.id));
@@ -189,7 +325,7 @@ export function registerPluginsRoutes(
     },
     async (req, reply) => {
       const plugins = await core.accessor.get(IPluginService).listPlugins();
-      reply.send(okEnvelope({ plugins }, req.id));
+      reply.send(okEnvelope({ plugins: plugins.map(toPluginSummaryWire) }, req.id));
     },
   );
   app.get(
@@ -216,7 +352,7 @@ export function registerPluginsRoutes(
           id: req.params.tail,
           locale: req.query.locale,
         });
-        reply.send(okEnvelope({ ...info, manifest: undefined }, req.id));
+        reply.send(okEnvelope(toPluginInfoWire(info), req.id));
       } catch (error) {
         reply.send(mapPluginError(error, req.id));
       }
@@ -245,8 +381,13 @@ export function registerPluginsRoutes(
     },
     async (req, reply) => {
       try {
-        const capabilities = await core.accessor.get(IPluginService).previewPlugin(req.body);
-        reply.send(okEnvelope(capabilities, req.id));
+        const capabilities = await core.accessor.get(IPluginService).previewPlugin({
+          marketplaceId: req.body.marketplace_id,
+          expectedVersion: req.body.expected_version,
+          expectedSha256: req.body.expected_sha256,
+          locale: req.body.locale,
+        });
+        reply.send(okEnvelope(toPluginCapabilitiesWire(capabilities), req.id));
       } catch (error) {
         reply.send(mapPluginError(error, req.id));
       }
@@ -276,8 +417,16 @@ export function registerPluginsRoutes(
     },
     async (req, reply) => {
       try {
-        const plugin = await core.accessor.get(IPluginService).installPlugin(req.body);
-        reply.send(okEnvelope(plugin, req.id));
+        const input =
+          'source' in req.body
+            ? { source: req.body.source }
+            : {
+                marketplaceId: req.body.marketplace_id,
+                expectedVersion: req.body.expected_version,
+                expectedSha256: req.body.expected_sha256,
+              };
+        const plugin = await core.accessor.get(IPluginService).installPlugin(input);
+        reply.send(okEnvelope(toPluginSummaryWire(plugin), req.id));
       } catch (error) {
         reply.send(mapPluginError(error, req.id));
       }
@@ -341,12 +490,11 @@ const PLUGIN_ERROR_MAP: Readonly<Record<string, ErrorCode>> = {
 function mapPluginError(error: unknown, requestId: string) {
   const mapped = isError2(error) ? PLUGIN_ERROR_MAP[error.code] : undefined;
   if (mapped !== undefined && isError2(error)) {
-    return errEnvelope(mapped, error.message, requestId, error.stack);
+    return errEnvelope(mapped, error.message, requestId);
   }
   return errEnvelope(
     ErrorCode.INTERNAL_ERROR,
     error instanceof Error ? error.message : String(error),
     requestId,
-    error instanceof Error ? error.stack : undefined,
   );
 }

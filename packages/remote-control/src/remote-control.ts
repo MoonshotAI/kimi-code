@@ -1,17 +1,28 @@
 import { createHash } from 'node:crypto';
 import { hostname, platform } from 'node:os';
 import { join } from 'node:path';
-import { request as httpRequest, validateHeaderName, validateHeaderValue } from 'node:http';
+import {
+  request as httpRequest,
+  validateHeaderName,
+  validateHeaderValue,
+  type Agent,
+} from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { gzip } from 'node:zlib';
 
+import {
+  makeNoProxyMatcher,
+  resolveHttpProxyUrls,
+  resolveNoProxy,
+} from '@moonshot-ai/agent-core-v2/_base/utils/proxy';
 import {
   createKimiDeviceId,
   FileTokenStorage,
   resolveKimiRemoteControlAuth,
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { WebSocket, type RawData } from 'ws';
 
 import { acquireRemoteControlLock } from './lock';
@@ -419,6 +430,7 @@ class RemoteControlClient {
   private readonly deviceId: string;
   private readonly refreshToken: string;
   private readonly stderr: Pick<NodeJS.WriteStream, 'write'>;
+  private readonly relayAgent?: Agent;
   private readonly onStatus: (status: RemoteControlStatus) => void;
   private readonly streams = new Map<string, ActiveStream>();
   private readonly pendingSockets = new Set<WebSocket>();
@@ -455,6 +467,7 @@ class RemoteControlClient {
     this.deviceId = options.deviceId;
     this.refreshToken = options.refreshToken;
     this.stderr = options.stderr ?? process.stderr;
+    this.relayAgent = createRelayProxyAgent(this.relayOrigin, process.env, this.stderr);
     this.onStatus = options.onStatus ?? (() => {});
     this.pingIntervalMs = options.pingIntervalMs ?? RELAY_PING_INTERVAL_MS;
     this.silenceTimeoutMs = options.silenceTimeoutMs ?? RELAY_SILENCE_TIMEOUT_MS;
@@ -555,8 +568,10 @@ class RemoteControlClient {
     }
 
     const managementEnd = waitForSocketEnd(management);
+    const earlyHttpFrames: [RawData, boolean][] = [];
     const http = await this.connectRelay(
       `/v1/remote/http?device_id=${encodeURIComponent(this.deviceId)}&capabilities=${HTTP_TUNNEL_CAPABILITIES}`,
+      earlyHttpFrames,
     );
     this.http = http;
     const tunnel = new HttpTunnel(
@@ -574,12 +589,14 @@ class RemoteControlClient {
       this.httpTunnelLimits,
     );
     this.httpTunnel = tunnel;
-    this.watchSocket(http, 'http');
     if (management.readyState !== WebSocket.OPEN) {
       throw new Error('management connection closed');
     }
     management.on('message', (data) => this.handleManagementMessage(data));
+    http.removeAllListeners('message');
+    for (const [data] of earlyHttpFrames) tunnel.handleMessage(data);
     http.on('message', (data) => tunnel.handleMessage(data));
+    this.watchSocket(http, 'http');
     this.reconnectAttempt = 0;
     this.relayOnline = true;
     this.onStatus('relay_connected');
@@ -595,14 +612,15 @@ class RemoteControlClient {
     if (!this.stopped) throw new Error('relay connection closed');
   }
 
-  private connectRelay(path: string): Promise<WebSocket> {
+  private connectRelay(path: string, earlyFrames?: [RawData, boolean][]): Promise<WebSocket> {
     return connectWebSocket(
       relayWebSocketUrl(this.relayOrigin, path),
       this.refreshToken,
       undefined,
-      undefined,
+      earlyFrames,
       this.pendingSockets,
       () => this.stopped,
+      this.relayAgent,
     );
   }
 
@@ -980,6 +998,26 @@ function sendFrame(socket: WebSocket, data: string): Promise<boolean> {
   });
 }
 
+function createRelayProxyAgent(
+  origin: string,
+  env: Readonly<Record<string, string | undefined>>,
+  stderr: Pick<NodeJS.WriteStream, 'write'>,
+): Agent | undefined {
+  const url = new URL(origin);
+  const port = url.port || (url.protocol === 'https:' ? 443 : 80);
+  if (makeNoProxyMatcher(resolveNoProxy(env))(url.hostname, port)) return undefined;
+  const { httpProxy, httpsProxy } = resolveHttpProxyUrls(env);
+  const proxy = url.protocol === 'https:' ? httpsProxy : httpProxy;
+  try {
+    return proxy === undefined ? undefined : new HttpsProxyAgent(proxy);
+  } catch (error) {
+    stderr.write(
+      `kimi: ignoring invalid proxy configuration (${errorMessage(error)}); connecting directly\n`,
+    );
+    return undefined;
+  }
+}
+
 async function connectWebSocket(
   url: string,
   token: string,
@@ -987,11 +1025,19 @@ async function connectWebSocket(
   earlyFrames?: [RawData, boolean][],
   pendingSockets?: Set<WebSocket>,
   isStopped?: () => boolean,
+  agent?: Agent,
 ): Promise<WebSocket> {
   const protocol = `kimi-code.bearer.${token}`;
   if (isWebSocketProtocolToken(protocol)) {
     try {
-      return await connectWebSocketAttempt(url, [protocol], headers, earlyFrames, pendingSockets);
+      return await connectWebSocketAttempt(
+        url,
+        [protocol],
+        headers,
+        earlyFrames,
+        pendingSockets,
+        agent,
+      );
     } catch (error) {
       if (isStopped?.() === true) throw error;
     }
@@ -1005,6 +1051,7 @@ async function connectWebSocket(
     },
     earlyFrames,
     pendingSockets,
+    agent,
   );
 }
 
@@ -1014,11 +1061,13 @@ function connectWebSocketAttempt(
   headers: Record<string, string>,
   earlyFrames?: [RawData, boolean][],
   pendingSockets?: Set<WebSocket>,
+  agent?: Agent,
 ): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, protocols, {
       headers,
       handshakeTimeout: REGISTER_TIMEOUT_MS,
+      agent,
     });
     pendingSockets?.add(socket);
     if (earlyFrames !== undefined) {

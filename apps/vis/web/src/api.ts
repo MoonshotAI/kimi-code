@@ -71,9 +71,7 @@ async function request<T>(path: string, method: 'GET' | 'POST' | 'DELETE'): Prom
     let err: ApiError | null = null;
     try {
       err = (await res.json()) as ApiError;
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     throw new Error(err?.error ?? `HTTP ${res.status} ${res.statusText}`);
   }
   return (await res.json()) as T;
@@ -117,27 +115,21 @@ export const api = {
   getAgentTree: (id: string) =>
     get<AgentTreeResponse>(`/api/sessions/${enc(id)}/agents`),
 
-  /** Background tasks (process / agent / question) persisted under the
-   *  session's `tasks/` directory, each with `output.log` metadata. */
   getTasks: (id: string) =>
     get<BackgroundTasksResponse>(`/api/sessions/${enc(id)}/tasks`),
 
-  /** A byte-window of a single task's `output.log`. */
   getTaskOutput: (id: string, taskId: string, offset = 0, limit?: number) =>
     get<TaskOutputResponse>(
       `/api/sessions/${enc(id)}/tasks/${enc(taskId)}/output?offset=${offset}` +
         (limit !== undefined ? `&limit=${limit}` : ''),
     ),
 
-  /** Cron jobs persisted under the session's `cron/` directory. */
   getCron: (id: string) =>
     get<CronTasksResponse>(`/api/sessions/${enc(id)}/cron`),
 
-  /** Parsed diagnostic log for a session (works for local and imported). */
   getLogs: (id: string, which: 'session' | 'global' = 'session') =>
     get<LogsResponse>(`/api/sessions/${enc(id)}/logs?which=${which}`),
 
-  /** Import a `/export-debug-zip` bundle. Sends the raw file as the body. */
   importZip: async (file: File): Promise<ImportResult> => {
     const headers: Record<string, string> = { accept: 'application/json' };
     const token = authToken();
@@ -151,9 +143,7 @@ export const api = {
       let err: ApiError | null = null;
       try {
         err = (await res.json()) as ApiError;
-      } catch {
-        /* ignore */
-      }
+      } catch {}
       throw new Error(err?.error ?? `HTTP ${res.status} ${res.statusText}`);
     }
     return (await res.json()) as ImportResult;
@@ -161,9 +151,6 @@ export const api = {
 
   deleteSession: (id: string) => del<DeleteSessionResponse>(`/api/sessions/${enc(id)}`),
 
-  /** Open the session's on-disk folder in the OS file manager. Side
-   *  effect runs on the server, so this only makes sense for local
-   *  development against a loopback vis-server. */
   revealSession: (id: string) =>
     post<{ sessionId: string; opened: string }>(`/api/sessions/${enc(id)}/reveal`),
 };

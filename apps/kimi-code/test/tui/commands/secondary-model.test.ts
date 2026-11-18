@@ -1,10 +1,3 @@
-/**
- * Scenario: /secondary-model command behavior in the interactive TUI.
- * Responsibilities: picker filtering, persistence of `[secondary_model] default_model`
- * (keeping existing pool descriptions), and error paths.
- * Wiring: real command and selector with the SDK/session boundaries stubbed by a small host rig.
- * Run: pnpm -C apps/kimi-code exec vitest run test/tui/commands/secondary-model.test.ts
- */
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -37,7 +30,6 @@ function makeHost(options?: {
     availableModels: {
       k2: model('k2'),
       cheap: model('cheap'),
-      // The pool's reserved symbolic choice must never be selectable either.
       'primary': model('primary'),
     } as Record<string, ModelAlias>,
     availableProviders: {},
@@ -92,11 +84,9 @@ describe('handleSecondaryModelCommand', () => {
     await handleSecondaryModelCommand(host, '');
 
     const opts = mountedPicker(host);
-    expect(Object.keys(opts.models)).toEqual(['k2', 'cheap']);
+    expect(Object.keys(opts.models)).toEqual(['k2', 'cheap', 'primary']);
     expect(opts.currentValue).toBe('cheap');
     expect(opts.title).toContain('secondary model');
-    // Pool bindings carry no explicit thinking level — the picker hides the
-    // Thinking footer instead of offering a no-op choice.
     expect(opts.thinkingControl).toBe(false);
   });
 
@@ -177,24 +167,25 @@ describe('handleSecondaryModelCommand', () => {
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
   });
 
-  it('rejects the reserved primary alias as an argument', async () => {
+  it('accepts primary as an ordinary model alias', async () => {
     const { host } = makeHost();
 
     await handleSecondaryModelCommand(host, 'primary');
 
-    expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('reserved'));
-    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+    const opts = mountedPicker(host);
+    expect(opts.selectedValue).toBe('primary');
+    expect(host.showError).not.toHaveBeenCalled();
   });
 
-  it('reports the reserved error for primary even when it is the only configured model', async () => {
+  it('opens the picker when primary is the only configured model', async () => {
     const { host } = makeHost();
     host.state.appState.availableModels = { primary: model('primary') };
 
-    await handleSecondaryModelCommand(host, 'primary');
+    await handleSecondaryModelCommand(host, '');
 
-    expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('reserved'));
+    const opts = mountedPicker(host);
+    expect(Object.keys(opts.models)).toEqual(['primary']);
     expect(host.showNotice).not.toHaveBeenCalled();
-    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
   });
 
   it('shows a notice when no models are configured', async () => {

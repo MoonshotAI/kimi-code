@@ -1,12 +1,12 @@
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FooterComponent } from '#/tui/components/chrome/footer';
+import { buildWeightedTips, FooterComponent } from '#/tui/components/chrome/footer';
+import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP } from '#/tui/constant/tips';
 import { BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
@@ -15,12 +15,10 @@ import type { AppState } from '#/tui/types';
 
 const gitStatusMocks = vi.hoisted(() => ({
   createGitStatusCache: vi.fn(),
-  actual: null as null | typeof import('#/utils/git/git-status').createGitStatusCache,
 }));
 
 vi.mock('#/utils/git/git-status', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/utils/git/git-status')>();
-  gitStatusMocks.actual = actual.createGitStatusCache;
   return { ...actual, createGitStatusCache: gitStatusMocks.createGitStatusCache };
 });
 
@@ -33,6 +31,15 @@ beforeEach(() => {
   }));
 });
 
+const gitSource = {
+  status: async () => null,
+  pullRequest: async () => null,
+};
+
+function plainText(text: string): string {
+  return text.replaceAll(/\[[0-9;]*m/g, '');
+}
+
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
 
 function truecolorCodes(text: string): Set<string> {
@@ -43,7 +50,6 @@ function truecolorCodes(text: string): Set<string> {
   return codes;
 }
 
-// Dark dance colors the footer never uses outside of /dance.
 const RAINBOW_CYAN = '91,192,190';
 const RAINBOW_GREEN = '78,200,126';
 
@@ -83,6 +89,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
+  transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
@@ -99,9 +106,67 @@ describe('FooterComponent', () => {
     }));
     const footer = new FooterComponent(appState);
     footer.refreshGitStatus();
+    expect(gitStatusMocks.createGitStatusCache).not.toHaveBeenCalled();
+    footer.setGitBinding((state) => ({ key: state.sessionId, source: gitSource }));
+    footer.refreshGitStatus();
     expect(refresh).toHaveBeenCalledTimes(1);
     footer.dispose();
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the git cache through a disconnect and refreshes it once the environment is ready again', () => {
+    const refresh = vi.fn();
+    const dispose = vi.fn();
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({ getStatus: () => null, refresh, dispose }));
+    const remote = (status: 'ready' | 'disconnected'): AppState => ({
+      ...appState,
+      environment: { environmentId: 'dev-box', type: 'ssh', status },
+    });
+    const footer = new FooterComponent(remote('ready'));
+    footer.setGitBinding((state) => ({ key: state.sessionId, source: gitSource }));
+
+    footer.setState(remote('disconnected'));
+    expect(dispose).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+
+    footer.setState(remote('ready'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    footer.setState(remote('ready'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(1);
+    footer.dispose();
+  });
+
+  it('keeps the git cache for the same binding key and replaces it on a new one', () => {
+    const dispose = vi.fn();
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+      getStatus: () => ({
+        branch: 'main',
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        diffAdded: 0,
+        diffDeleted: 0,
+        pullRequest: null,
+      }),
+      refresh: vi.fn(),
+      dispose,
+    }));
+    const footer = new FooterComponent(appState);
+    footer.setGitBinding((state) => (state.sessionId === 'none' ? null : { key: state.sessionId, source: gitSource }));
+    expect(plainText(footer.render(160)[0] ?? '')).toContain('main');
+
+    footer.setState({ ...appState, model: 'other' });
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(1);
+
+    footer.setState({ ...appState, sessionId: 'ses-2' });
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(2);
+    expect(dispose).toHaveBeenCalledTimes(1);
+
+    footer.setState({ ...appState, sessionId: 'none' });
+    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(plainText(footer.render(160)[0] ?? '')).not.toContain('main');
+    footer.dispose();
   });
 
   const previousChalkLevel = chalk.level;
@@ -121,8 +186,6 @@ describe('FooterComponent', () => {
 
     const codes = truecolorCodes(footer.render(120).join('\n'));
 
-    // "kimi-k2" spreads across the palette, pulling in colors the footer
-    // never renders on its own.
     expect(codes.has(RAINBOW_CYAN)).toBe(true);
     expect(codes.has(RAINBOW_GREEN)).toBe(true);
   });
@@ -143,7 +206,6 @@ describe('FooterComponent', () => {
     currentTheme.setPalette(lightColors);
     try {
       const after = footer.render(120).join('\n');
-      // Reads currentTheme live, so a palette swap changes the emitted colours.
       expect(after).not.toBe(before);
     } finally {
       currentTheme.setPalette(darkColors);
@@ -300,7 +362,6 @@ describe('FooterComponent ctrl+o hint', () => {
   });
 
   it('keeps the hint and drops the rotating tip when only one of them fits', () => {
-    // Same left-hand slots without the tips: measures the space the hint competes for.
     const noTips = new FooterComponent({
       ...appState,
       statusLine: { items: ['mode', 'model', 'cwd'], command: null },
@@ -336,6 +397,60 @@ describe('FooterComponent ctrl+o hint with a status_line command', () => {
   });
 });
 
+describe('transcript grouping tip', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('appears only when the running fullscreen UI has settings that create groups', () => {
+    const rotation = buildWeightedTips([...ALL_TIPS, TRANSCRIPT_GROUPING_TIP]);
+    const index = rotation.findIndex((tip) => tip.text === TRANSCRIPT_GROUPING_TIP.text);
+    expect(index).toBeGreaterThanOrEqual(0);
+    vi.setSystemTime(index * 10_000);
+
+    const fullscreenFooter = (state: AppState) => new FooterComponent(state, undefined, true);
+    const fullscreenState = { ...appState, tuiMode: 'fullscreen' as const };
+    const grouping = fullscreenFooter(fullscreenState);
+    expect(grouping.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    grouping.dispose();
+
+    const toolGroups = fullscreenFooter({
+      ...fullscreenState,
+      transcript: { toolCallDensity: 'detailed', thinking: 'ungrouped' },
+    });
+    expect(toolGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    toolGroups.dispose();
+
+    const noGroups = fullscreenFooter({
+      ...fullscreenState,
+      transcript: { toolCallDensity: 'ungrouped', thinking: 'ungrouped' },
+    });
+    expect(noGroups.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
+    noGroups.dispose();
+
+    const thoughtGroups = fullscreenFooter({
+      ...fullscreenState,
+      transcript: { toolCallDensity: 'ungrouped', thinking: 'grouped' },
+    });
+    expect(thoughtGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    thoughtGroups.dispose();
+
+    const regularMode = new FooterComponent({ ...appState, tuiMode: 'regular' });
+    expect(regularMode.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
+    regularMode.dispose();
+
+    const switchedToFullscreen = new FooterComponent({ ...appState, tuiMode: 'regular' });
+    switchedToFullscreen.setState({ ...appState, tuiMode: 'fullscreen' });
+    expect(switchedToFullscreen.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
+    switchedToFullscreen.dispose();
+
+    const switchedToRegular = fullscreenFooter(fullscreenState);
+    switchedToRegular.setState({ ...fullscreenState, tuiMode: 'regular' });
+    expect(switchedToRegular.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    switchedToRegular.dispose();
+  });
+});
+
 describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
   function plain(text: string): string {
     return text.replaceAll(/\[[0-9;]*m/g, '');
@@ -363,7 +478,7 @@ describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
 });
 
 describe('FooterComponent environment slot', () => {
-  const ERROR = '38;2;232;84;84'; // colors.error #E85454
+  const ERROR = '38;2;232;84;84';
   let repoDir: string;
   const previousChalkLevel = chalk.level;
 
@@ -385,17 +500,7 @@ describe('FooterComponent environment slot', () => {
   }
 
   beforeEach(() => {
-    // A real repo so the local git slot has a branch to render when visible.
-    gitStatusMocks.createGitStatusCache.mockImplementation((workDir, options) =>
-      gitStatusMocks.actual!(workDir, options),
-    );
     repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-environment-'));
-    spawnSync('git', ['init', '-b', 'main'], { cwd: repoDir });
-    writeFileSync(join(repoDir, 'a.txt'), 'a');
-    spawnSync('git', ['add', '.'], { cwd: repoDir });
-    spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'init'], {
-      cwd: repoDir,
-    });
   });
 
   afterEach(() => {
@@ -406,12 +511,11 @@ describe('FooterComponent environment slot', () => {
     return new FooterComponent({ ...appState, workDir: repoDir, environment });
   }
 
-  it('renders the remote identifier ahead of the cwd without a type prefix and hides the local git slot', () => {
+  it('renders the remote identifier ahead of the cwd without a type prefix', () => {
     const ssh = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
     const sshRendered = line1(ssh);
     expect(sshRendered).toContain('dev-box');
     expect(sshRendered.indexOf('dev-box')).toBeLessThan(sshRendered.indexOf('kimi-footer-environment'));
-    expect(sshRendered).not.toContain('main');
     ssh.dispose();
 
     const command = footerWith({ environmentId: 'kimi-dev', type: 'command', status: 'ready' });

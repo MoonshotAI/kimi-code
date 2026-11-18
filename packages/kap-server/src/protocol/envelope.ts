@@ -7,7 +7,6 @@ export const envelopeSchema = <T extends z.ZodTypeAny>(data: T) =>
     data: data.nullable(),
     request_id: z.string(),
     details: z.unknown().optional(),
-    stack: z.string().optional(),
   });
 
 export interface Envelope<T> {
@@ -16,7 +15,6 @@ export interface Envelope<T> {
   data: T | null;
   request_id: string;
   details?: unknown;
-  stack?: string;
 }
 
 export function okEnvelope<T>(data: T, requestId: string): Envelope<T> {
@@ -27,8 +25,7 @@ export function errEnvelope(
   code: number,
   msg: string,
   requestId: string,
-  stack?: string,
   details?: unknown,
 ): Envelope<null> {
-  return { code, msg, data: null, request_id: requestId, stack, details };
+  return { code, msg, data: null, request_id: requestId, details };
 }

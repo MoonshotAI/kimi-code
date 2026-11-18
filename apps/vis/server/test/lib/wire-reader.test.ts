@@ -17,7 +17,7 @@ describe('wire-reader', () => {
     cleanup = c;
     const result = await readAgentWire(join(sessionDir, 'agents', 'main', 'wire.jsonl'));
     expect(result.metadata.protocolVersion).toBe('1.1');
-    expect(result.records[0]!.lineNo).toBe(2); // metadata is line 1, first record is line 2
+    expect(result.records[0]!.lineNo).toBe(2);
     expect(result.records.at(-1)!.lineNo).toBe(10);
     expect(result.records.map((r) => r.data.type)).toEqual([
       'config.update',
@@ -30,7 +30,6 @@ describe('wire-reader', () => {
       'context.append_loop_event',
       'usage.record',
     ]);
-    // No vis annotation should leak into the data/raw bodies.
     for (const entry of result.records) {
       expect(entry.data).not.toHaveProperty('_lineNo');
       expect(entry.raw as object).not.toHaveProperty('_lineNo');
@@ -64,7 +63,6 @@ describe('wire-reader', () => {
       const entry = result.records[0]!;
       expect(entry.data.type).toBe('context.append_message');
 
-      // `data` carries the migrated (flat) shape.
       const dataMsg = (entry.data as { message: { toolCalls: unknown[] } }).message;
       expect(dataMsg.toolCalls[0]).toEqual({
         type: 'function',
@@ -74,8 +72,6 @@ describe('wire-reader', () => {
       });
       expect(dataMsg.toolCalls[0]).not.toHaveProperty('function');
 
-      // `raw` keeps the on-disk (nested) shape — this is what the "as
-      // written" view in the detail panel relies on.
       const rawMsg = (entry.raw as { message: { toolCalls: Array<{ function: unknown; name?: unknown }> } }).message;
       expect(rawMsg.toolCalls[0]).toHaveProperty('function');
       expect(rawMsg.toolCalls[0]!.function).toEqual({ name: 'Read', arguments: '{"path":"/x"}' });

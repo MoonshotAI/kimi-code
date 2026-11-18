@@ -1,5 +1,5 @@
 import { toDisposable } from '#/_base/di/lifecycle';
-import type { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { appendContext } from '../../agent/contextMemory/stubs';
 import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { IAgentLoopService } from '#/agent/loop/loop';
@@ -29,7 +29,7 @@ export function createReminderStub(input: {
 
 export function createReminderHarness(
   loop: IAgentLoopService,
-  context: IAgentContextMemoryService,
+  context: IAgentLoopService,
   eventBus?: IEventBus,
 ): IAgentReminderService {
   const entries = new Map<string, ContextInjectionProvider>();
@@ -41,7 +41,7 @@ export function createReminderHarness(
     const isNewTurn = firstStepOfTurn || rearm;
     rearm = false;
     for (const [variant, provider] of entries) {
-      const history = context.get();
+      const history = context.history();
       const positions = history.flatMap((message, index) =>
         message.origin?.kind === 'injection' && message.origin.variant === variant ? [index] : [],
       );
@@ -65,7 +65,7 @@ export function createReminderHarness(
       const content = result.content;
       if (typeof content === 'string') {
         if (content.trim().length === 0) continue;
-        context.append({
+        appendContext(context,{
           role: 'user',
           content: [{ type: 'text', text: wrapSystemReminder(content) }],
           origin,
@@ -74,7 +74,7 @@ export function createReminderHarness(
       }
       if (Array.isArray(content)) {
         if (content.length === 0) continue;
-        context.append({ role: 'user', content: [...content], origin });
+        appendContext(context,{ role: 'user', content: [...content], origin });
         continue;
       }
       const message = (content as { readonly message: ContextInjectionMessage }).message;
@@ -82,14 +82,14 @@ export function createReminderHarness(
         continue;
       }
       if (message.role === 'system') {
-        context.append({
+        appendContext(context,{
           role: 'system',
           content: [...message.content],
           tools: message.tools === undefined ? undefined : [...message.tools],
           origin,
         });
       } else {
-        context.append({ role: 'user', content: [...message.content], origin });
+        appendContext(context,{ role: 'user', content: [...message.content], origin });
       }
     }
     await next();
@@ -98,6 +98,17 @@ export function createReminderHarness(
     register: (variant, provider) => {
       entries.set(variant, provider as ContextInjectionProvider);
       return toDisposable(() => { entries.delete(variant); });
+    },
+    notify: (content, notification) => {
+      appendContext(context, {
+        role: 'user',
+        content: [{ type: 'text', text: wrapSystemReminder(content) }],
+        origin: {
+          kind: 'injection',
+          variant: notification.variant,
+          ownerPromptId: notification.ownerPromptId,
+        },
+      });
     },
   });
 }

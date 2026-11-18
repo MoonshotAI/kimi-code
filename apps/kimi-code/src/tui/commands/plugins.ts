@@ -16,6 +16,7 @@ import {
   PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
   PluginRemoveConfirmComponent,
+  PluginStopProcessesConfirmComponent,
   PluginsPanelComponent,
   type PluginInstallTrustConfirmResult,
   type PluginMcpSelection,
@@ -72,7 +73,6 @@ interface ShowPluginMcpPickerOptions {
   readonly serverHint?: PluginMcpServerHint;
 }
 
-/** The plugin-management surface `/plugins` operates on. */
 type PluginApi = Pick<
   Session,
   | 'listPlugins'
@@ -84,11 +84,6 @@ type PluginApi = Pick<
   | 'getPluginInfo'
 >;
 
-/**
- * Resolve the plugin-management API. Plugin state is app-global, so a
- * session-less startup still gets a working `/plugins` through the harness's
- * global facade; once a session exists the session's own API is used.
- */
 async function resolvePluginApi(host: SlashCommandHost): Promise<PluginApi> {
   if (host.session !== undefined) return host.session;
   return {
@@ -141,10 +136,6 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
     if (sub === 'marketplace') {
       const marketplaceSource = rest.join(' ').trim() || undefined;
       await showPluginsPicker(host, {
-        // Custom marketplaces often omit `tier`, so their entries land on the
-        // Curated tab (entry.tier !== 'official'). Open there when a custom
-        // source is supplied; otherwise the default catalog's official entries
-        // make Official the right landing tab.
         initialTab: marketplaceSource === undefined ? 'official' : 'third-party',
         marketplaceSource,
       });
@@ -210,12 +201,6 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
   }
 }
 
-/**
- * Resolve the capability API. Like plugin state, capability state is
- * app-global on the v2 engine, so a session-less startup still gets
- * readiness and installs through the harness's global facade; with a live
- * session the session's own API is used.
- */
 type CapabilityApi = Pick<Session, 'listCapabilities' | 'getCapability' | 'installCapability'>;
 
 async function resolveCapabilityApi(host: SlashCommandHost): Promise<CapabilityApi> {
@@ -330,6 +315,13 @@ async function loadMarketplaceCatalog(
     const catalog = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
+      reconcileAvailability: async (changed) => {
+        if (!changed) return;
+        const plugins = await resolvePluginApi(host);
+        await plugins.reloadPlugins();
+        await host.refreshPluginCommands(host.session);
+        panel.setInstalled(await plugins.listPlugins());
+      },
     });
     panel.setMarketplace(catalog.plugins, catalog.source);
     panel.setMarketplaceCatalogVersions(catalog.plugins);
@@ -366,8 +358,6 @@ async function showPluginMcpPicker(
       selectedServer: options?.selectedServer,
       serverHint: options?.serverHint,
       onSelect: (selection) => {
-        // Every MCP action re-mounts a picker, so let the handler do the
-        // mounting — pre-restoring the editor here would flash on toggle.
         void handlePluginMcpSelection(host, selection).catch((error: unknown) => {
           host.showError(`/plugins mcp failed: ${formatErrorMessage(error)}`);
         });
@@ -384,9 +374,7 @@ async function confirmRemovePlugin(host: SlashCommandHost, id: string): Promise<
   let displayName = id;
   try {
     displayName = (await (await resolvePluginApi(host)).getPluginInfo(id)).displayName;
-  } catch {
-    // Keep the confirmation available even when plugin details cannot be loaded.
-  }
+  } catch {}
 
   return new Promise((resolveConfirmed) => {
     host.mountEditorReplacement(
@@ -407,8 +395,6 @@ async function confirmInstallTrust(
   label: string,
   official: boolean,
 ): Promise<boolean> {
-  // Kimi-built official plugins are trusted implicitly; anything else requires
-  // the user to explicitly opt in via the trust prompt.
   if (official) return true;
   return new Promise((resolveConfirmed) => {
     host.mountEditorReplacement(
@@ -424,7 +410,7 @@ async function confirmInstallTrust(
 }
 
 const CAPABILITY_POLL_INTERVAL_MS = 700;
-const CAPABILITY_POLL_ATTEMPTS = 260; // ~3 minutes of runtime setup budget
+const CAPABILITY_POLL_ATTEMPTS = 260;
 
 async function pollCapabilityInstall(
   host: SlashCommandHost,
@@ -456,6 +442,7 @@ export const __pluginsCommandInternals = {
   installMarketplaceEntryFromPanel,
   installPluginFromSource,
   isDefaultMarketplaceCatalog,
+  loadMarketplaceCatalog,
   pollCapabilityInstall,
   removePlugin,
 };
@@ -491,6 +478,30 @@ async function installCapabilityFromPanel(
   let result: CapabilityStatus | undefined;
   try {
     result = await pollCapabilityInstall(host, capabilityId);
+    if (result?.install.confirmationRequired === 'stop-processes') {
+      panel.clearInstalling();
+      const confirmed = await new Promise<boolean>((resolveConfirmed) => {
+        host.mountEditorReplacement(
+          new PluginStopProcessesConfirmComponent({ label, onDone: resolveConfirmed }),
+        );
+      });
+      if (!confirmed) {
+        host.restoreEditor();
+        host.showStatus(`Install cancelled: ${label}.`);
+        return;
+      }
+      panel.setInstalling(truncateForStatus(label));
+      host.mountEditorReplacement(panel);
+      try {
+        await api.installCapability(capabilityId, { stopRunningProcesses: true });
+      } catch (error) {
+        panel.clearInstalling();
+        host.restoreEditor();
+        host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
+        return;
+      }
+      result = await pollCapabilityInstall(host, capabilityId);
+    }
   } catch (error) {
     log.warn('capability install polling failed', { capabilityId, error });
     result = undefined;
@@ -502,6 +513,12 @@ async function installCapabilityFromPanel(
     return;
   }
   logCapabilityStatus(result);
+  if (result.install.confirmationRequired !== undefined) {
+    host.showError(
+      `${label} installation did not complete. Processes are still running; install again from /plugins.`,
+    );
+    return;
+  }
   if (result.install.error !== undefined) {
     host.showError(`${label} installation failed: ${result.install.error}`);
     host.showStatus('Fix the reported error, then install again from /plugins.', 'warning');
@@ -812,8 +829,6 @@ function showPluginInstallResult(
   const action = describeInstallAction(previous, summary);
   host.showStatus(`${action} (${summary.id}).${mcpHint}`);
   host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
-  // Gate on provenance, not just the id: a local/GitHub fork whose manifest
-  // reuses a billed plugin's id is not the official quota-consuming build.
   if (QUOTA_CONSUMING_PLUGIN_IDS.includes(summary.id) && isOfficialPluginInstall(summary)) {
     host.showStatus(PLUGIN_QUOTA_NOTE, 'warning');
   }
@@ -838,8 +853,6 @@ function describeInstallAction(
   return `Updated ${next.displayName}${versionFromTo(previous.version, next.version)} ${sourcePhrase(sourceLabel)}`;
 }
 
-// formatPluginSourceLabel already prefixes zip-url hosts with "via", so adding
-// "from" would read as "from via <host>". Only prepend "from" otherwise.
 function sourcePhrase(sourceLabel: string): string {
   return sourceLabel.startsWith('via ') ? sourceLabel : `from ${sourceLabel}`;
 }
@@ -861,8 +874,6 @@ async function reloadPlugins(host: SlashCommandHost): Promise<void> {
   const line = `Reload: +${summary.added.length} -${summary.removed.length}` +
     (summary.errors.length > 0 ? ` (${summary.errors.length} errors)` : '');
   host.showStatus(line);
-  // Rebuild the TUI's plugin slash-command list from the reloaded service so
-  // newly added/enabled commands resolve in this session-less UI right away.
   await host.refreshPluginCommands(host.session);
 }
 

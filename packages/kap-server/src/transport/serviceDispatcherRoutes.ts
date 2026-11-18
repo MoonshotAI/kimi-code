@@ -1,7 +1,7 @@
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 
 import { requestLog } from '../lib/requestLog';
-import { reservePromptId, type PromptIdReservation } from '../routes/prompts';
+import { beginPromptAttempt, type PromptAttempt } from '../routes/prompts';
 import { okEnvelope } from '../protocol/envelope';
 import { ErrorCode } from '../protocol/error-codes';
 import type { ScopeKind } from './channel';
@@ -11,7 +11,7 @@ import {
   resolveAnyScopedServiceId,
 } from './channelRegistry';
 import { type ChannelLookup, dispatch } from './dispatcher';
-import { mapError, validationEnvelope, withTimeout } from './errors';
+import { mapDebugError, validationEnvelope, withTimeout } from './errors';
 
 interface RpcRequest {
   readonly id: string;
@@ -85,15 +85,17 @@ function makeHandler(
       );
     }
 
-    let promptReservation: PromptIdReservation | undefined;
+    let promptAttempt: PromptAttempt | undefined;
     try {
-      promptReservation =
-        scopeKind === 'agent' && service === 'agentPromptService' && method === 'submit'
-          ? reservePromptId(
+      promptAttempt =
+        scopeKind === 'agent' && service === 'agentLoopService' && method === 'submit'
+          ? beginPromptAttempt(
               (req.params as Record<string, string>)['session_id'] ?? '',
               (arg as { promptId?: string } | undefined)?.promptId,
+              { route: 'rpc', arg },
             )
           : undefined;
+      if (promptAttempt?.earlier !== undefined) return reply.send(okEnvelope(await promptAttempt.earlier, requestId));
       const result = await withTimeout(
         dispatch(
           core,
@@ -101,16 +103,17 @@ function makeHandler(
           req.params as Record<string, string>,
           service,
           method,
-          promptReservation === undefined ? arg : { ...(arg as object), promptId: promptReservation.id },
+          promptAttempt === undefined ? arg : { ...(arg as object), promptId: promptAttempt.id },
           lookup,
         ),
         opts.callTimeoutMs ?? 30_000,
       );
-      promptReservation?.submit();
+      promptAttempt?.enqueued();
+      promptAttempt?.succeed(result);
       return reply.send(okEnvelope(result, requestId));
     } catch (error) {
-      promptReservation?.dispose();
-      const envelope = mapError(error, requestId);
+      promptAttempt?.fail(error);
+      const envelope = mapDebugError(error, requestId);
       const log = requestLog(req);
       if (envelope.code === ErrorCode.INTERNAL_ERROR) {
         log?.error({ err: error, service, method }, 'rpc dispatch failed');

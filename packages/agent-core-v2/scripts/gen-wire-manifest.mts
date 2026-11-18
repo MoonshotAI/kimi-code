@@ -94,7 +94,7 @@ interface ReplayableStateScan {
 
 const ON_FOLD_RE = /\.on\(\s*([A-Za-z_$][\w$]*)/g;
 const KEY_ON_RE = /\b([A-Za-z_$][\w$]*)\.on\(\s*([A-Za-z_$][\w$]*)/g;
-const PROTOCOL_EVENT_RE = /(?:appendMessage|applyCompaction|clear|undo):\s*([A-Za-z_$][\w$]*)/g;
+const PROTOCOL_EVENT_RE = /(?:appendLoopEvent|turnPrompt|turnSteer|turnEnded|applyCompaction|clear|undo):\s*([A-Za-z_$][\w$]*)/g;
 
 function readCallArguments(text: string, parenIndex: number): string {
   let depth = 0;
@@ -892,15 +892,20 @@ export async function buildWireManifest(): Promise<string> {
   for (const file of importFiles) {
     await import(relative(join(PKG, 'scripts'), file));
   }
-  const { WIRE_PROTOCOL_VERSION } = (await import('#/wire/migration/migration')) as {
+  const { WIRE_MIN_READER_VERSION, WIRE_PROTOCOL_VERSION } = (await import(
+    '#/wire/migration/migration'
+  )) as {
+    WIRE_MIN_READER_VERSION: string;
     WIRE_PROTOCOL_VERSION: string;
   };
 
-  const entries = [...EVENT2_REGISTRY.values()].toSorted((a, b) => a.type.localeCompare(b.type));
+  const protocolTypes = scanUndoableProtocolTypes(classTypes);
+  const entries = [...EVENT2_REGISTRY.values()]
+    .filter((cls) => cls.durable || protocolTypes.includes(cls.type))
+    .toSorted((a, b) => a.type.localeCompare(b.type));
   const migrationChain = scanMigrationChain();
 
   const folding = new Map<string, { states: string[]; blobs: string[] }>();
-  const protocolTypes = scanUndoableProtocolTypes(classTypes);
   for (const state of scanReplayableStates()) {
     const eventTypes = new Set<string>();
     for (const cls of state.foldClasses) {
@@ -944,21 +949,23 @@ export async function buildWireManifest(): Promise<string> {
     '// Regenerate with: pnpm --filter @moonshot-ai/agent-core-v2 gen:wire-manifest',
     '//',
     `// protocol_version: "${WIRE_PROTOCOL_VERSION}" (migrations: ${migrationChain})`,
+    `// min_protocol_version: "${WIRE_MIN_READER_VERSION}"`,
     '//',
-    '// One declaration per durable record type — an Event2 subclass declaring',
-    '// `static type` + `static durable = true` + `static schema` — drained from the',
-    '// runtime EVENT2_REGISTRY ("import = register"). Every payload declaration',
+    '// One declaration per persisted record type — durable Event2 classes and',
+    '// manually persisted undoable protocol events — drained from the runtime',
+    '// EVENT2_REGISTRY ("import = register"). Every payload declaration',
     '// carries its record type in a `_name` field. Payload sketches use TypeScript',
     '// type syntax; when a named type is expanded inline, its name appears as a doc',
     '// comment (`/** ContextMessage */`). Bare type names (ContentPart,',
     '// ContextMessage, …) refer to the real types in src/ — they are intentionally',
     '// not resolved here. On disk (wire.jsonl)',
     '// the journal opens with a metadata line {"type": "metadata",',
-    '// "protocol_version", "created_at"}; each record is {"type", ...payload,',
+    '// "protocol_version", "min_protocol_version", "created_at"}; each record is',
+    '// {"type", ...payload,',
     '// "time"} — object payloads spread at the top level.',
     '//',
-    '// Every listed type is durable by construction — transient Event2 classes',
-    '// never enter EVENT2_REGISTRY, so there is no persisted flag. Declaration',
+    '// Every listed type is persisted by the dispatcher or a journal adapter;',
+    '// transient Event2 classes outside that protocol are excluded. Declaration',
     '// header lines: states (every state folding this record type on dispatch and',
     '// replay; any state beyond the first is what the retired format listed as',
     '// cross-reducers), blobs (the folding states whose blob codec offloads inline',

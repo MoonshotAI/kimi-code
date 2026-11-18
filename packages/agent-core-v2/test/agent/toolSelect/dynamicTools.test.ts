@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectCurrentDynamicTools,
   collectLoadedDynamicToolNames,
   foldAnnouncedToolNames,
   isDynamicToolSchemaMessage,
@@ -155,7 +156,7 @@ describe('shapeUnsupportedDynamicToolContext', () => {
   });
 
   it('drops snapshots and schemas while preserving runtime changes as reminders', () => {
-    const delta = deltaAnnouncement([tool('t')], []);
+    const delta = deltaAnnouncement([tool('t')], [tool('removed')]);
     const original = delta.content;
     const history = [
       userMessage('a'),
@@ -170,6 +171,12 @@ describe('shapeUnsupportedDynamicToolContext', () => {
       type: 'text',
       text: expect.stringContaining('The available tools changed during this session.'),
     });
+    const reminder = shaped[1]?.content.map((part) => part.type === 'text' ? part.text : '').join('') ?? '';
+    expect(reminder).toContain('Use the tool definitions provided in this request.');
+    expect(reminder).toContain('cannot load runtime tool additions with select_tools. Do not call select_tools.');
+    expect(reminder).toContain('Removed tools may be unavailable or fail when called.');
+    expect(reminder).toContain('<tools_removed>\nremoved\n</tools_removed>');
+    expect(reminder).not.toContain('replaced definitions');
     expect(delta.content).toBe(original);
   });
 
@@ -195,10 +202,17 @@ describe('predicates and ledger scan', () => {
     expect(isLoadableToolsAnnouncement(userMessage('x'))).toBe(false);
   });
 
-  it('collects only current loaded versions and does not resurrect A after A-B-A', () => {
+  it('separates ordered history folding from current execution validation', () => {
     const history = [schemaMessage(['a', 'b']), userMessage('x'), schemaMessage(['b', 'c'])];
-    expect([...collectLoadedDynamicToolNames(history, [tool('a'), tool('b'), tool('c')])].toSorted())
+    expect([...collectLoadedDynamicToolNames(history)].toSorted()).toEqual(['a', 'b', 'c']);
+    expect([...collectCurrentDynamicTools(history, [tool('a'), tool('b'), tool('c')]).keys()].toSorted())
       .toEqual(['a', 'b', 'c']);
+    expect([...collectCurrentDynamicTools(history, [
+      { ...tool('a'), description: 'updated a desc' },
+      tool('b'),
+      tool('c'),
+    ]).keys()].toSorted()).toEqual(['b', 'c']);
+    expect(collectCurrentDynamicTools(history, []).size).toBe(0);
 
     const a = tool('a');
     const b = tool('b');
@@ -208,6 +222,6 @@ describe('predicates and ledger scan', () => {
       schemaMessage(['b']),
       deltaAnnouncement([a], [b], 2),
     ];
-    expect(collectLoadedDynamicToolNames(aba, [a]).size).toBe(0);
+    expect(collectLoadedDynamicToolNames(aba).size).toBe(0);
   });
 });

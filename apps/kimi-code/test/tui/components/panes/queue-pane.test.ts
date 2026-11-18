@@ -102,7 +102,7 @@ describe('QueuePaneComponent', () => {
     });
 
     const lines = component.render(30);
-    expect(lines).toHaveLength(3); // border + message + hint
+    expect(lines).toHaveLength(3);
     const messageLine = stripAnsi(lines[1] as string);
     expect(messageLine).not.toContain('a'.repeat(30));
     expect(messageLine.endsWith('…')).toBe(true);
@@ -117,7 +117,7 @@ describe('QueuePaneComponent', () => {
     });
 
     const lines = component.render(120);
-    expect(lines).toHaveLength(3); // border + message + hint
+    expect(lines).toHaveLength(3);
     const messageLine = stripAnsi(lines[1] as string);
     expect(messageLine).toContain('line one line two line three');
     expect(messageLine).not.toContain('\n');

@@ -1,8 +1,3 @@
-/**
- * `workspaceService` — process-wide catalog of known workspaces. Mirrors
- * `agent-core-v2/app/workspace/workspace.ts`.
- */
-
 import { z } from 'zod';
 
 import { maybe, noResult } from '../helpers.js';

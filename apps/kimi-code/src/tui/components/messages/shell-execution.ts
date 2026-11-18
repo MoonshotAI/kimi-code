@@ -3,6 +3,7 @@ import { Container, Text } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 
 import type { ResultRenderer } from './tool-renderers/types';
@@ -15,16 +16,15 @@ export interface ShellExecutionOptions {
   readonly result?: ToolResultBlockData;
   readonly expanded?: boolean;
   readonly showCommand?: boolean;
-  /**
-   * Max command lines to render. `undefined` means no cap — used by the
-   * ctrl+o expanded view so the user can see the full multi-line command
-   * even when the header preview was truncated.
-   */
   readonly commandPreviewLines?: number;
   readonly expandHint?: boolean;
 }
 
 export class ShellExecutionComponent extends Container {
+  private renderCache:
+    | { width: number; lines: string[]; childRefs: Component[]; childLines: string[][] }
+    | undefined;
+
   constructor(options: ShellExecutionOptions) {
     super();
 
@@ -37,15 +37,35 @@ export class ShellExecutionComponent extends Container {
     }
   }
 
+  override invalidate(): void {
+    this.renderCache = undefined;
+    super.invalidate();
+  }
+
+  override render(width: number): string[] {
+    const cache = this.renderCache;
+    const childRefs = this.children;
+    const childLines = childRefs.map((child) => child.render(width));
+    if (
+      isRenderCacheEnabled() &&
+      cache?.width === width &&
+      cache.childRefs.length === childRefs.length &&
+      cache.childRefs.every(
+        (child, index) => child === childRefs[index] && cache.childLines[index] === childLines[index],
+      )
+    ) {
+      return cache.lines;
+    }
+    const lines = childLines.flat();
+    if (isRenderCacheEnabled()) this.renderCache = { width, lines, childRefs: [...childRefs], childLines };
+    return lines;
+  }
+
   private addCommandPreview(command: string, previewLines: number | undefined): void {
     if (command.length === 0) return;
     const allLines = command.split('\n');
     const lines = previewLines === undefined ? allLines : allLines.slice(0, previewLines);
     for (const [i, line] of lines.entries()) {
-      // Distinguish the command (input) from the result (output): the `$`
-      // prompt uses the dedicated shell-mode hue, the command body uses
-      // `textDim`, and the result below is rendered one step dimmer in
-      // `textMuted` so the two stay separable without a connecting glyph.
       const text =
         i === 0
           ? currentTheme.fg('shellMode', '$ ') + currentTheme.dim(line)
@@ -60,8 +80,6 @@ export class ShellExecutionComponent extends Container {
     expandHint: boolean,
   ): void {
     if (!result.output) return;
-    // Untrusted bytes: sanitize the whole buffer, not each chunk, so escape
-    // sequences split across live-output chunks cannot reach the terminal.
     this.addChild(
       new TruncatedOutputComponent(sanitizeShellOutput(result.output), {
         expanded,
@@ -73,7 +91,6 @@ export class ShellExecutionComponent extends Container {
     );
   }
 
-  /** Whether the collapsed result preview last cut rows away; drives the footer's ctrl+o hint. */
   wasTruncated(): boolean {
     return this.children.some(
       (child) => child instanceof TruncatedOutputComponent && child.wasTruncated(),
@@ -86,23 +103,11 @@ export const shellExecutionResultRenderer: ResultRenderer = (
   result: ToolResultBlockData,
   ctx,
 ): Component[] => {
-  // Collapsed: short output is shown whole; longer output contributes its
-  // last line (most commands conclude on their last line) and the rest waits
-  // for ctrl+o. A background or detached start returns a metadata block
-  // (task_id first, internal next_step/human_shell_hint lines last), so it
-  // shows its first line to identify the task instead of the trailing hint;
-  // an oversized result's truncation envelope likewise leads with the line
-  // that says the output was saved to a file.
-  // A failing command keeps its multi-line preview so the error is visible.
   if (!ctx.expanded && result.is_error !== true) {
     const leadsWithMetadata =
       result.output.startsWith('task_id:') || isSpilledToolOutput(result.output);
     return outcomeRows(result.output, leadsWithMetadata ? 'first' : 'last');
   }
-  // Result only. The command preview is owned by ToolCallComponent's
-  // buildCallPreview across the whole lifecycle (streaming, running, and
-  // done); rendering it here too would duplicate the command once the result
-  // lands.
   return [
     new ShellExecutionComponent({
       result,

@@ -15,10 +15,13 @@ import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, PluginErrors } from '#/errors';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 
+import { PluginAvailabilityStore, pluginAvailabilitySourceKey } from './availability';
 import {
   isMissingMarketplaceTokenError,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  marketplaceEntryInstallableOnHost,
   parsePluginMarketplace,
+  pluginClientForIdentity,
   pluginMarketplaceUrl,
   readPluginMarketplace,
   type PluginMarketplace,
@@ -34,6 +37,7 @@ export interface MarketplacePluginInstall {
   readonly version?: string;
   readonly sha256sum?: string;
   readonly catalogId: string;
+  readonly marketplaceSource?: string;
   readonly origin: Extract<PluginOrigin, 'marketplace'>;
   readonly expectedPluginId: string;
   readonly fetchImpl: typeof fetch;
@@ -63,12 +67,16 @@ interface MarketplaceContext {
 
 export class PluginMarketplaceService implements IPluginMarketplaceService {
   declare readonly _serviceBrand: undefined;
+  private readonly availability: PluginAvailabilityStore;
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IProviderService private readonly providers: IProviderService,
     @IRegionService private readonly regions: IRegionService,
-  ) {}
+    availability?: PluginAvailabilityStore,
+  ) {
+    this.availability = availability ?? new PluginAvailabilityStore(bootstrap.homeDir);
+  }
 
   async listMarketplace(): Promise<PluginMarketplace> {
     return (await this.load()).marketplace;
@@ -126,14 +134,12 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
         { details: { marketplaceId } },
       );
     }
-    if (
-      entry.platforms !== undefined &&
-      !entry.platforms.some((platform) => platform === this.bootstrap.platform)
-    ) {
+    const client = pluginClientForIdentity(this.bootstrap.clientIdentity.platform);
+    if (!marketplaceEntryInstallableOnHost(entry, client, this.bootstrap.platform)) {
       throw new Error2(
         ErrorCodes.VALIDATION_FAILED,
-        `Marketplace plugin "${marketplaceId}" does not support platform ${this.bootstrap.platform}`,
-        { details: { marketplaceId, platform: this.bootstrap.platform } },
+        `Marketplace plugin "${marketplaceId}" does not support ${client} on ${this.bootstrap.platform}`,
+        { details: { marketplaceId, client, platform: this.bootstrap.platform } },
       );
     }
     return {
@@ -141,6 +147,7 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
       version: entry.version,
       sha256sum: sourceKind === 'zip-url' ? entry.sha256sum : undefined,
       catalogId: entry.id,
+      marketplaceSource: pluginAvailabilitySourceKey(marketplace.source),
       origin: 'marketplace',
       expectedPluginId: entry.id,
       fetchImpl: this.artifactFetch(context),
@@ -163,6 +170,7 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
     if (context.managed) {
       for (const entry of marketplace.plugins) assertManagedMarketplaceEntry(entry);
     }
+    await this.availability.update(marketplace);
     return { marketplace, context };
   }
 

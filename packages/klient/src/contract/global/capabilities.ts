@@ -1,8 +1,3 @@
-/**
- * `capabilityService` — built-in product capability readiness and install
- * orchestration. Mirrors `agent-core-v2/app/capability/types.ts`.
- */
-
 import { z } from 'zod';
 
 import type { ServiceContract } from '../types.js';
@@ -20,6 +15,7 @@ export const capabilityInstallProgressSchema = z.object({
   percent: z.number().optional(),
   error: z.string().optional(),
   note: z.string().optional(),
+  confirmationRequired: z.literal('stop-processes').optional(),
 });
 
 export const capabilityStatusSchema = z.object({
@@ -37,5 +33,8 @@ export const capabilityStatusSchema = z.object({
 export const capabilitiesContract = {
   listCapabilities: { input: z.tuple([]), output: z.array(capabilityStatusSchema) },
   getCapability: { input: z.tuple([z.string()]), output: capabilityStatusSchema },
-  installCapability: { input: z.tuple([z.string()]), output: capabilityStatusSchema },
+  installCapability: {
+    input: z.tuple([z.string(), z.object({ stopRunningProcesses: z.boolean().optional() }).optional()]),
+    output: capabilityStatusSchema,
+  },
 } satisfies ServiceContract;

@@ -153,9 +153,7 @@ function formatToolCallMarkdown(call: ToolCall, hint: string): string {
   let args = call.arguments ?? "{}";
   try {
     args = JSON.stringify(JSON.parse(args), null, 2);
-  } catch {
-    // Preserve malformed arguments exactly as recorded.
-  }
+  } catch {}
   const suffix = hint ? ` (\`${hint}\`)` : "";
   return `#### Tool Call: ${call.name}${suffix}\n<!-- call_id: ${call.id} -->\n\`\`\`json\n${args}\n\`\`\``;
 }
@@ -179,9 +177,7 @@ function stringifyToolCall(call: ToolCall): string {
   let args = call.arguments ?? "{}";
   try {
     args = JSON.stringify(JSON.parse(args));
-  } catch {
-    // Preserve malformed arguments exactly as recorded.
-  }
+  } catch {}
   return `Tool Call: ${call.name}(${args})`;
 }
 

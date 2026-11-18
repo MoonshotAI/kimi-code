@@ -50,8 +50,8 @@ pnpm install
 - `pnpm dev:cli` — 开发模式运行 CLI
 - `pnpm test` — 运行测试（vitest）
 - `pnpm typecheck` — TypeScript 检查（注意：会先构建各包）
-- `pnpm lint` — oxlint
-- `pnpm lint:fix` — oxlint 自动修复
+- `pnpm lint` — 注释检查、oxlint、agent-core-v2 的 import 边界检查、lint 守卫，以及冻结存量问题的基线检查
+- `pnpm lint:fix` — 应用 oxlint 的自动修复；其中一些会改变行为（例如删掉一个 `await`，后面代码的执行时机就变了），改完要看 diff
 - `pnpm build` — 构建全部包
 
 ## 提交规范
@@ -69,7 +69,7 @@ pnpm install
 | ci       | CI / 构建流水线变更                      | ci: cache pnpm store                   |
 | build    | 构建系统 / 产物变更                      | build(native): add win32-arm64 target  |
 | perf     | 性能优化                                 | perf(session): batch event flushes     |
-| style    | 仅格式化（无逻辑变更）                   | style: apply oxlint --fix              |
+| style    | 仅格式化（无逻辑变更）                   | style(tui): fix indentation in the footer |
 
 PR 标题由 `pr-title-checker` 工作流强制校验——不合规的标题会阻止合并。
 
@@ -90,7 +90,7 @@ PR 会自动套用 [PR 模板](.github/pull_request_template.md)。PR 标题必�
 
 - 全仓库 TypeScript。
 - 使用 `oxlint`（配置见 `.oxlintrc.json`）。
-- 用 `pnpm lint:fix` 自动格式化。
+- 仓库目前没有强制的格式化工具。`pnpm lint:fix` 应用的是 oxlint 的自动修复，不是格式化，其中一些会改变行为，改完要看 diff。
 - lint 规则未覆盖的风格选择，跟随周边现有写法。
 
 ## 报告安全问题

@@ -1,9 +1,13 @@
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
+import {
+  IEnvironmentService,
+  IModelCatalog,
+  IWorkspaceInstanceManager,
+  IWorkspaceService,
+} from '@moonshot-ai/agent-core-v2';
 import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { IModelCatalog, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
@@ -413,25 +417,72 @@ describe('server-v2 /api/v1 fs:content', () => {
   it('rejects a relative path (40001)', async () => {
     const res = await getContent('relative/path.txt');
     const body = (await res.json()) as Envelope<null>;
+    expect(res.status).toBe(400);
     expect(body.code).toBe(40001);
   });
 
   it('rejects a nonexistent path (40409)', async () => {
     const res = await getContent(join(dir as string, 'does-not-exist.txt'));
     const body = (await res.json()) as Envelope<null>;
+    expect(res.status).toBe(404);
     expect(body.code).toBe(40409);
   });
 
   it('rejects a directory path (40906)', async () => {
     const res = await getContent(dir as string);
     const body = (await res.json()) as Envelope<null>;
+    expect(res.status).toBe(409);
     expect(body.code).toBe(40906);
   });
 
   it.skipIf(process.platform === 'win32')('rejects non-regular files (40001)', async () => {
     const res = await getContent('/dev/null');
     const body = (await res.json()) as Envelope<null>;
+    expect(res.status).toBe(400);
     expect(body.code).toBe(40001);
+  });
+
+  it('returns HTTP 400 when the required path query is missing', async () => {
+    const res = await fetch(`${base}/api/v1/fs:content`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const body = (await res.json()) as Envelope<null>;
+    expect(res.status).toBe(400);
+    expect(body.code).toBe(40001);
+  });
+
+  it('returns HTTP 500 for an unmapped filesystem failure', async () => {
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: 'broken-fs-provider',
+      attach: async (host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { environmentId: 'broken-fs', generation: 'broken-generation' },
+            { capabilities: ['fs'] },
+          ),
+          {
+            fs: {
+              ...mappingHostFs(dir as string),
+              realpath: async () => {
+                throw new Error('remote I/O failed');
+              },
+            },
+          },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+    try {
+      const res = await fetch(`${base}/api/v1/fs:content?path=${encodeURIComponent('/broken.png')}&environment_id=broken-fs`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      const body = (await res.json()) as Envelope<null>;
+      expect(res.status).toBe(500);
+      expect(body.code).toBe(50001);
+    } finally {
+      await provider.dispose();
+    }
   });
 
   it('does not serve the double-colon URL', async () => {

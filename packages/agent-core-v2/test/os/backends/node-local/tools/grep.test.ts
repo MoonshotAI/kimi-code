@@ -13,7 +13,8 @@ import type {
 } from '#/tool/toolContract';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { stubLoopWithHooks } from '../../../../agent/loop/stubs';
 import {
   _clearAgentToolContributionsForTests,
   AgentToolContribution,
@@ -364,9 +365,7 @@ describe('GrepTool', () => {
             disabledTools: [],
             onDidChange: Event.None as Event<void>,
           } satisfies ISessionToolPolicyGate);
-          reg.definePartialInstance(IAgentProfileService, {
-            data: () => ({}) as unknown as ProfileData,
-          });
+          reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           reg.definePartialInstance(IEventBus, {
             subscribe: () => toDisposable(() => {}),
           });

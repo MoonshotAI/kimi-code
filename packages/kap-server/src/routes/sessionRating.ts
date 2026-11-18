@@ -1,4 +1,3 @@
-import { resumeSessionById, type Scope } from '@moonshot-ai/agent-core-v2';
 import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/session-rating/node';
 import { z } from 'zod';
 
@@ -9,7 +8,7 @@ import {
   sessionRatingRequestSchema,
   sessionRatingResultSchema,
 } from '../protocol/rest-session-rating';
-import type { TranscriptService } from '../services/transcript/transcriptService';
+import type { ConversationService } from '../services/conversation/conversationService';
 
 interface SessionRatingRouteHost {
   post(
@@ -25,8 +24,7 @@ interface SessionRatingRouteHost {
 export function registerSessionRatingRoutes(
   app: SessionRatingRouteHost,
   sessionRating: SessionRatingHost,
-  transcripts: TranscriptService,
-  core: Scope,
+  conversations: ConversationService,
 ): void {
   const route = defineRoute(
     {
@@ -39,6 +37,7 @@ export function registerSessionRatingRoutes(
         [ErrorCode.VALIDATION_FAILED]: {
           detailsSchema: z.array(z.object({ path: z.string(), message: z.string() })),
         },
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description:
         'Evaluate the latest completed transcript turn, or report a displayed rating and its final answer',
@@ -48,16 +47,10 @@ export function registerSessionRatingRoutes(
       const { session_id } = req.params;
       const request = req.body;
       if (request.op === 'evaluate') {
-        const store = transcripts.forSessionLive(session_id);
-        const items = store === undefined
-          ? (await transcripts.readColdSnapshot(session_id))?.items
-          : store.getAgent('main')?.getItems();
-        const latest = items?.findLast((item) => item.kind === 'turn');
-        const completed = latest?.turnId === request.turn_id && latest.state !== 'running';
-        if (completed && store === undefined) {
-          await resumeSessionById(core.accessor, session_id);
-          await sessionRating.whenReady(session_id);
-        }
+        const turns = await conversations.mainTurns(session_id);
+        const latest = turns?.findLast((turn) => turn.kind === 'agent');
+        const completed = latest?.turn_id === request.turn_id && latest.status === 'ended';
+        if (completed) await sessionRating.whenReady(session_id);
         const offer = completed ? sessionRating.evaluate(session_id) : undefined;
         reply.send(okEnvelope({
           appearance: offer === undefined

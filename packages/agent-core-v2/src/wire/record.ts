@@ -1,9 +1,13 @@
 import type { Message } from '#/llm-adapter/contract/message';
 import type { ContextMessageTiming, PromptOrigin } from '#/agent/contextMemory/types';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
-import { WIRE_PROTOCOL_VERSION } from './migration/migration';
+import {
+  assertWireReaderVersion,
+  WIRE_MIN_READER_VERSION,
+  WIRE_PROTOCOL_VERSION,
+} from './migration/migration';
 
 export type PersistentContextMessage = Message & {
   readonly id?: string;
@@ -40,6 +44,7 @@ export interface WireRecord {
 export interface WireMetadataRecord extends WireRecord {
   readonly type: 'metadata';
   readonly protocol_version: string;
+  readonly min_protocol_version?: string;
   readonly created_at: number;
 }
 
@@ -57,13 +62,26 @@ export function createWireMetadataRecord(now = Date.now()): WireMetadataRecord {
     type: 'metadata',
     protocol_version: WIRE_PROTOCOL_VERSION,
     created_at: now,
+    min_protocol_version: WIRE_MIN_READER_VERSION,
   };
 }
 
 export function isWireMetadataRecord(record: WireRecord): record is WireMetadataRecord {
+  const minReaderVersion = record['min_protocol_version'];
   return (
     record.type === 'metadata' &&
     typeof record['protocol_version'] === 'string' &&
-    typeof record['created_at'] === 'number'
+    typeof record['created_at'] === 'number' &&
+    (minReaderVersion === undefined ||
+      (typeof minReaderVersion === 'string' && /^\d+(\.\d+)*$/.test(minReaderVersion)))
   );
+}
+
+export function assertWireRecordsReaderVersion(records: readonly WireRecord[]): void {
+  const first = records[0];
+  if (first?.type !== 'metadata') return;
+  if (!isWireMetadataRecord(first)) {
+    throw new Error('Agent wire metadata is malformed');
+  }
+  assertWireReaderVersion(first.min_protocol_version);
 }

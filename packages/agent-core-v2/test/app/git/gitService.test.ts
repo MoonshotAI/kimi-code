@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, delimiter, isAbsolute, join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -99,7 +99,7 @@ describe('GitService', () => {
 
       expect(result.branch).not.toBe('');
       expect(result.pullRequest).toBeNull();
-      expect(spawn.mock.calls.some(([command]) => command === 'gh')).toBe(false);
+      expect(spawn.mock.calls.some(([command]) => basename(command) === 'gh')).toBe(false);
     });
 
     it('reports a modified file with numstat', async () => {
@@ -196,6 +196,27 @@ describe('GitService', () => {
       expect(result.entries).toEqual({ '新名字.md': 'renamed' });
     });
 
+    it('spawns git through its resolved PATH entry and never one inside the working directory', async () => {
+      writeFileSync(join(repo, 'a.txt'), 'hello\n');
+      commitAll('init');
+      const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+
+      await service.status(repo, { includePullRequest: false });
+      expect(spawn.mock.calls.every(([command]) => isAbsolute(command))).toBe(true);
+
+      const planted = join(repo, 'bin');
+      mkdirSync(planted);
+      writeFileSync(join(planted, 'git'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      vi.stubEnv('PATH', planted);
+      spawn.mockClear();
+      try {
+        await expect(service.status(repo)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it('throws FS_GIT_UNAVAILABLE when not a repo', async () => {
       const notRepo = mkdtempSync(join(tmpdir(), 'not-repo-'));
       try {
@@ -209,6 +230,37 @@ describe('GitService', () => {
   });
 
   describe('pullRequest', () => {
+    it('re-reads the pull request after a branch switch and skips gh on a detached HEAD', async () => {
+      writeFileSync(join(repo, 'a.txt'), 'hello\n');
+      commitAll('init');
+      const fakeBin = mkdtempSync(join(tmpdir(), 'fake-gh-'));
+      writeFileSync(
+        join(fakeBin, 'gh'),
+        `#!/bin/sh\necho '{"number":7,"url":"https://github.com/acme/repo/pull/7","state":"OPEN","isDraft":false}'\n`,
+        { mode: 0o755 },
+      );
+      vi.stubEnv('PATH', `${fakeBin}${delimiter}${process.env['PATH'] ?? ''}`);
+      onTestFinished(() => {
+        vi.unstubAllEnvs();
+        rmSync(fakeBin, { recursive: true, force: true });
+      });
+      const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+      const ghCalls = (): number => spawn.mock.calls.filter(([command]) => basename(command) === 'gh').length;
+
+      await expect(service.pullRequest(repo)).resolves.toMatchObject({ number: 7 });
+      await service.status(repo);
+      expect(ghCalls()).toBe(1);
+
+      git(repo, 'checkout', '-q', '-b', 'feature');
+      await service.pullRequest(repo);
+      expect(ghCalls()).toBe(2);
+
+      git(repo, 'checkout', '-q', '--detach');
+      await expect(service.pullRequest(repo)).resolves.toBeNull();
+      await expect(service.status(repo)).resolves.toMatchObject({ branch: '', pullRequest: null });
+      expect(ghCalls()).toBe(2);
+    }, 15000);
+
     it('throws FS_GIT_UNAVAILABLE when not a repo', async () => {
       const notRepo = mkdtempSync(join(tmpdir(), 'not-repo-'));
       try {

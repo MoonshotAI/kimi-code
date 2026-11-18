@@ -8,8 +8,10 @@ import {
   type TUI,
 } from '@moonshot-ai/pi-tui';
 
+import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
 import { TranscriptView } from '#/tui/components/messages/transcript-view';
 import { clipboard } from '#/utils/clipboard/clipboard-native';
+import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
 
 import { DockSection } from './components/chrome/dock-section';
@@ -34,6 +36,7 @@ import {
   type TranscriptEntry,
   type TUIStartupState,
 } from './types';
+import { formatErrorMessage } from './utils/event-payload';
 import {
   setMarkdownAltScreenActive,
   setMarkdownMermaidMode,
@@ -45,7 +48,8 @@ import { createTerminalState, type TerminalState } from './utils/terminal-state'
 export interface TUIState {
   ui: TUI;
   terminal: ProcessTerminal;
-  transcriptContainer: GutterContainer;
+  transcriptContainer: TranscriptContainer;
+  transcriptView?: TranscriptView;
   activityContainer: Container;
   notifyPanelContainer: Container;
   notifyPanel: NotifyPanelComponent;
@@ -54,18 +58,7 @@ export interface TUIState {
   btwPanelContainer: Container;
   surveyContainer: Container;
   editorContainer: Container;
-  /**
-   * Fullscreen mode only: the bottom dock (activity/todo/notify/queue/btw/editor +
-   * footer) stacked under the transcript ScrollView. Undefined in regular
-   * mode, where all chrome is a direct child of the root container.
-   */
   dockContainer: VStack | undefined;
-  /**
-   * Fullscreen mode only: the dock slot holding either `editorContainer` (the
-   * editor or a panel standing in for it) or a docked section such as the
-   * approval panel, which must join the layout itself to scroll. See
-   * {@link setEditorSlot}.
-   */
   editorSlot: VStack | undefined;
   footer: FooterComponent;
   editor: CustomEditor;
@@ -76,12 +69,9 @@ export interface TUIState {
   transcriptEntries: TranscriptEntry[];
   terminalState: TerminalState;
   activitySpinner: { instance: MoonLoader; style: SpinnerStyle } | null;
-  toolOutputExpanded: boolean;
   sessions: SessionRow[];
   loadingSessions: boolean;
-  /** Keyset cursor for the next older page; `undefined` when the listing is exhausted. */
   sessionsNextCursor: string | undefined;
-  /** A follow-up session page fetch is in flight. */
   sessionsLoadingMore: boolean;
   sessionsScope: 'cwd' | 'all';
   activeDialog:
@@ -92,21 +82,10 @@ export interface TUIState {
     | 'model-switch-confirm'
     | 'goal-start'
     | null;
-  /**
-   * True while an editor-replacement panel (help, trust prompt, goal queue
-   * manager, …) is mounted in place of the editor. Delayed input restores
-   * must not run in that state — they would displace the newer panel.
-   */
   editorReplacementMounted: boolean;
   tasksBrowser: TasksBrowserState | undefined;
   externalEditorRunning: boolean;
   queuedMessages: QueuedMessage[];
-  /**
-   * True while a queued user message has been shifted out of
-   * {@link queuedMessages} but its deferred send has not run yet. The queue
-   * looks empty during this window, so queued-goal promotion must also check
-   * this flag to avoid starting a goal ahead of the user's earlier message.
-   */
   queuedMessageDispatchPending: boolean;
   swarmModeEntry: 'manual' | 'task' | undefined;
 }
@@ -118,16 +97,13 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const terminal = new ProcessTerminal();
   setMarkdownRenderLatex(initialAppState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true);
   setMarkdownMermaidMode(initialAppState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid);
-  const fullscreen = initialAppState.tuiMode === 'fullscreen';
+  const fullscreen = (options.resolvedTuiMode ?? initialAppState.tuiMode) === 'fullscreen';
   const ui = fullscreen
       ? new TuiAltScreen(terminal, undefined, undefined, {
-          // Mouse capture takes over the terminal's native link activation, so
-          // route OSC 8 clicks through our own opener.
           openUrl,
           refocusMouseGuardMs: CLICK_GUARD_MS,
-          // Likewise, on Windows the terminal's native right-click paste is
-          // intercepted; feed the clipboard to the focused component as a
-          // bracketed paste instead (renderer only calls this on win32).
+          copyOnSelect:
+            initialAppState.copyOnSelect ?? DEFAULT_TUI_CONFIG.copyOnSelect,
           onRightClickPaste: () => {
             const target = ui.getFocusedComponent();
             if (!target?.handleInput || clipboard?.getText === undefined) return;
@@ -140,22 +116,26 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
               })
               .catch(() => {});
           },
-          // Clickable pill centered on the transcript's last row while it is
-          // scrolled away from the end.
           scrollToEndIndicator: () => currentTheme.fg('primary', ' ↓ Jump to bottom '),
+          copySelection: async (text) => {
+            try {
+              const method = await copyTextToClipboard(text);
+              return method === 'native' ? true : 'Copied via terminal';
+            } catch (error) {
+              return formatErrorMessage(error);
+            }
+          },
         })
       : new TuiMainScreen(terminal);
+  if (options.animationFrameRate !== undefined) ui.setAnimationFrameRate(options.animationFrameRate);
 
   setMarkdownAltScreenActive(ui instanceof TuiAltScreen);
   setMarkdownRenderRequester(() => {
     ui.requestRender(true);
   });
 
-  const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const transcriptContainer = new TranscriptContainer(CHROME_GUTTER, CHROME_GUTTER, ui);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  // Docked panels carry their own gutter, so their fullscreen slot is a
-  // layout node rather than a GutterContainer (which the layout treats as one
-  // opaque block and could only clip, not scroll).
   const queueContainer = fullscreen ? new VStack() : new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const queuePane = new QueuePaneComponent(fullscreen ? { maxBodyRows: DOCK_QUEUE_ROWS } : undefined);
   const notifyPanelContainer = fullscreen ? new VStack() : new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
@@ -168,26 +148,23 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const editor = new CustomEditor(ui, {
     disablePasteBurst: initialAppState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
   });
-  const footer = new FooterComponent({ ...initialAppState }, () => {
-    ui.requestRender();
-  });
+  const footer = new FooterComponent(
+    { ...initialAppState },
+    () => {
+      ui.requestRender();
+    },
+    fullscreen,
+  );
 
+  let transcriptView: TranscriptView | undefined;
   let dockContainer: VStack | undefined;
   let editorSlot: VStack | undefined;
   if (ui instanceof TuiAltScreen) {
-    // Fullscreen (alternate screen): the transcript scrolls inside the primary
-    // ScrollView while the rest of the chrome stays docked at the bottom. The
-    // footer joins the dock later via mountFooter().
-    // Sizing contract (mirrors pi's interactive layout): the transcript starts
-    // from basis 0 and grows; the dock keeps its intrinsic height, with the
-    // editor never squeezed below its 3 rows (top border / input / bottom
-    // border) and the footer below 1 — otherwise the box outline gets clipped.
-    const transcriptView = new TranscriptView(transcriptContainer);
+    const fullscreenView = new TranscriptView(transcriptContainer);
+    transcriptView = fullscreenView;
     dockContainer = new VStack();
     dockContainer.addChild(activityContainer, { shrink: 1, minSize: 0 });
     dockContainer.addChild(notifyPanelContainer, { shrink: 1, minSize: 0 });
-    // A blocking prompt (approval or question) takes the space of the queue,
-    // the btw panel and the footer, so its options stay on screen.
     const unlessBlocked = (): boolean => !isBlockingPromptPending(state);
     dockContainer.addChild(queueContainer, { shrink: 1, minSize: 0, visible: unlessBlocked });
     dockContainer.addChild(btwPanelContainer, { shrink: 1, minSize: 0, visible: unlessBlocked });
@@ -196,11 +173,11 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     editorSlot.addChild(editorContainer, EDITOR_SLOT_ENTRY);
     dockContainer.addChild(editorSlot, EDITOR_SLOT_ENTRY);
     const root = new VStack();
-    root.addChild(transcriptView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+    root.addChild(fullscreenView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
     root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
     ui.setLayoutRoot(root);
     ui.addLayoutEffect(() => {
-      if (ui.getLayoutRoot() === root && transcriptView.updateStickyMessage()) ui.requestRender();
+      if (ui.getLayoutRoot() === root && fullscreenView.updateStickyMessage()) ui.requestRender();
     });
   }
 
@@ -208,6 +185,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     ui,
     terminal,
     transcriptContainer,
+    transcriptView,
     activityContainer,
     notifyPanelContainer,
     notifyPanel,
@@ -227,7 +205,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     transcriptEntries: [],
     terminalState: createTerminalState(),
     activitySpinner: null,
-    toolOutputExpanded: false,
     sessions: [],
     loadingSessions: false,
     sessionsNextCursor: undefined,
@@ -244,13 +221,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   return state;
 }
 
-/**
- * Footer is the only chrome with content before a session is ready, so
- * mounting it at construction lets a stray pre-start render leak it to the
- * terminal — e.g. above the error when resuming a missing session. The host
- * mounts it only once init() succeeds. FooterComponent isn't a Container, so
- * wrap it to pick up the same outer gutter as the panels above.
- */
 export function mountFooter(state: TUIState): void {
   const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   footerWrap.addChild(state.footer);
@@ -259,8 +229,6 @@ export function mountFooter(state: TUIState): void {
     state.ui.addChild(footerWrap);
     return;
   }
-  // Dock sizing contract: the footer may shrink to 1 row under extreme height
-  // pressure, and only gives way to a blocking prompt.
   dock.addChild(footerWrap, {
     shrink: 1,
     minSize: 1,
@@ -268,15 +236,8 @@ export function mountFooter(state: TUIState): void {
   });
 }
 
-// The editor never shrinks below its 3 rows (top border / input / bottom
-// border), and neither does whatever stands in for it.
 const EDITOR_SLOT_ENTRY = { shrink: 1, minSize: 3 } as const;
 
-/**
- * Show `component` where the editor sits. A docked section (fullscreen) joins
- * the layout directly so its body can scroll; anything else goes through
- * `editorContainer`, which pads it like the rest of the chrome.
- */
 export function setEditorSlot(
   state: Pick<TUIState, 'editorContainer' | 'editorSlot'>,
   component: Component,
@@ -296,7 +257,6 @@ export function setEditorSlot(
   editorSlot.addChild(editorContainer, EDITOR_SLOT_ENTRY);
 }
 
-/** What stands where the editor sits: the editor itself or a panel that replaced it. */
 export function editorSlotComponent(
   state: Pick<TUIState, 'editorContainer' | 'editorSlot'>,
 ): Component | undefined {
@@ -306,7 +266,6 @@ export function editorSlotComponent(
     : slotted;
 }
 
-/** An approval, question, or local goal prompt has replaced the editor and waits for the user. */
 export function isBlockingPromptPending(state: Pick<TUIState, 'livePane' | 'activeDialog'>): boolean {
   return (
     state.livePane.pendingApproval !== null ||

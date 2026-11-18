@@ -1,4 +1,5 @@
 import { createControlledPromise } from '@antfu/utils';
+import { appendContext, compactContext } from '../../agent/contextMemory/stubs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { userCancellationReason } from '#/_base/utils/abort';
@@ -8,18 +9,13 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentTaskService } from '#/agent/task/task';
-import type {
-  LlmRequestContent,
-  LlmRequestControl,
-  LlmRequester,
-} from '#human/llm-requester/requester';
+import type { LlmRequestContent } from '@moonshot-ai/core/llm/request';
+import type { MockProvider } from '../../harness/scripted-generate';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -36,7 +32,7 @@ import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IFlagService } from '#/app/flag/flag';
@@ -50,7 +46,8 @@ import {
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
-import { SUBAGENT_BACKGROUND_TASK_NOTICE } from '#/agent/task/taskService';
+const SUBAGENT_BACKGROUND_TASK_NOTICE =
+  'You are running as a subagent: ending your turn is your final hand-off to the parent agent, and completion notifications that arrive after it reach no one. Do not end your turn while a background task whose result you need is still running. Keep waiting for it with WaitFor, calling it again after a timeout if needed, or run the command in the foreground with a suitable timeout instead. Still use the waiting time for other useful work on your task when you can.';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -59,6 +56,7 @@ import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment
 import {
   appService,
   agentServices,
+  createMockProvider,
   createScriptedGenerate,
   llmGenerateServices,
   sessionServices,
@@ -181,24 +179,13 @@ function requestTexts(content: LlmRequestContent, role?: string): string[] {
     .flatMap((part) => (part.type === 'text' ? [part.text] : []));
 }
 
-async function streamTextUntilAborted(
-  control: LlmRequestControl,
-  text: string,
-  onStreaming: () => void,
-): Promise<void> {
-  control.onEvent?.({ type: 'llm.streaming.headers', headers: {} });
-  control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text } });
-  onStreaming();
-  await new Promise<never>((_resolve, reject) => {
-    const abort = (): void => {
-      reject(control.signal.reason);
-    };
-    if (control.signal.aborted) {
-      abort();
-      return;
-    }
-    control.signal.addEventListener('abort', abort, { once: true });
-  });
+async function waitForAbortReason(signal: AbortSignal): Promise<unknown> {
+  if (!signal.aborted) {
+    await new Promise<void>((resolve) => {
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+  }
+  return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
 }
 
 describe('subagent task reminders and fork request parity', () => {
@@ -226,15 +213,21 @@ describe('subagent task reminders and fork request parity', () => {
     );
 
     const agentLifecycle = ctx.get(IAgentLifecycleService);
-    const parentContext = await agentLifecycle.create({ agentId: 'parent' });
-    const parent = agentLifecycle.handleOf(parentContext.agentId)!;
-    const profile = parent.accessor.get(IAgentProfileService);
-    profile.update({
-      modelAlias: 'mock-model',
-      systemPrompt: PARENT_SYSTEM_PROMPT,
-      thinkingLevel: 'off',
+    const parentContext = await agentLifecycle.create({
+      agentId: 'parent',
+      initialProfile: {
+        modelAlias: 'mock-model',
+        systemPrompt: PARENT_SYSTEM_PROMPT,
+        thinkingLevel: 'off',
+        activeToolNames: [...ACTIVE_TOOL_NAMES],
+        disallowedTools: [],
+      },
     });
-    profile.update({ activeToolNames: [...ACTIVE_TOOL_NAMES] });
+    const parent = agentLifecycle.handleOf(parentContext.agentId)!;
+    const profile = parent.accessor.get(IAgentLoopService);
+    expect(profile.data().activeToolNames).toEqual([...ACTIVE_TOOL_NAMES]);
+    expect(parent.accessor.get(IAgentToolSelectService).initialTools().map((tool) => tool.name))
+      .toEqual([...ACTIVE_TOOL_NAMES].toSorted());
     parent.accessor.get(IAgentPermissionModeService).setMode('yolo');
 
     ctx.mockNextResponse({
@@ -252,8 +245,9 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = parent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'start the parity probe' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      role: 'user',
+      content: [{ type: 'text', text: 'start the parity probe' }],
+      attributes: { origin: { kind: 'user' } },
     });
     const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
@@ -283,12 +277,12 @@ describe('subagent task reminders and fork request parity', () => {
     expect('partial' in assistant ? assistant.partial : undefined).toBeUndefined();
     expect(toolResult.toolCallId).toBe('call_fork');
     expect(toolResult.content).toEqual([{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }]);
-    const notice = tail[2]?.content[0];
-    expect(notice?.type).toBe('text');
-    expect(notice?.type === 'text' && notice.text).toBe(wrapSystemReminder(FORK_CONTEXT_NOTICE));
-    const prompt = tail[3]?.content[0];
+    const prompt = tail[2]?.content[0];
     expect(prompt?.type).toBe('text');
     expect(prompt?.type === 'text' && prompt.text).toBe('finish the inherited task');
+    const notice = tail[3]?.content[0];
+    expect(notice?.type).toBe('text');
+    expect(notice?.type === 'text' && notice.text).toBe(wrapSystemReminder(FORK_CONTEXT_NOTICE));
 
     expect(parentFollowup.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
     expect(parentFollowup.history[parentReq.history.length]).toEqual(tail[0]);
@@ -298,24 +292,6 @@ describe('subagent task reminders and fork request parity', () => {
       .map((agent) => agent.agentId)
       .find((id) => id !== 'parent' && id !== 'main');
     expect(childId).toBeDefined();
-    const scopeOf = (agentId: string) =>
-      `sessions/test-workspace/test-session/agents/${agentId}`;
-    const firstLlmRequest = (agentId: string): WireRecord | undefined =>
-      store
-        .recordsFor(scopeOf(agentId), AGENT_WIRE_RECORD_KEY)
-        .find((record) => record.type === 'llm.request');
-    const parentWire = firstLlmRequest('parent');
-    const childWire = firstLlmRequest(childId!);
-    expect(parentWire).toBeDefined();
-    expect(childWire).toBeDefined();
-    expect(childWire).toMatchObject({
-      model: parentWire?.['model'],
-      modelAlias: parentWire?.['modelAlias'],
-      thinkingEffort: parentWire?.['thinkingEffort'],
-      systemPromptHash: parentWire?.['systemPromptHash'],
-      toolsHash: parentWire?.['toolsHash'],
-    });
-
     const probes = telemetry.filter((record) => record.event === 'prompt_cache_probe');
     expect(probes).toHaveLength(1);
     expect(probes[0]?.properties).toMatchObject({
@@ -330,7 +306,7 @@ describe('subagent task reminders and fork request parity', () => {
   function createMainForkCtx(
     flags: IFlagService = stubFlag(true),
     telemetry: TelemetryRecord[] = [],
-    requester?: LlmRequester,
+    requester?: MockProvider,
   ): void {
     store = new ScopedAppendLogStore();
     ctx = testAgent(
@@ -371,15 +347,16 @@ describe('subagent task reminders and fork request parity', () => {
     ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
     const loop = agent.accessor.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'continue the task' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      role: 'user',
+      content: [{ type: 'text', text: 'continue the task' }],
+      attributes: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
   }
 
   async function runMainAgentFork(options?: { readonly disallowedTools?: readonly string[] }): Promise<void> {
-    const profile = ctx.get(IAgentProfileService);
-    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    const profile = ctx.get(IAgentLoopService);
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
     if (options?.disallowedTools !== undefined) {
       profile.update({ disallowedTools: [...options.disallowedTools] });
@@ -401,8 +378,9 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'start the main fork probe' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      role: 'user',
+      content: [{ type: 'text', text: 'start the main fork probe' }],
+      attributes: { origin: { kind: 'user' } },
     });
     const completion = await loop.promptHandle(id)!.completion;
     expect(completion.state).toBe('completed');
@@ -508,7 +486,7 @@ describe('subagent task reminders and fork request parity', () => {
         expect(request.tools.some((tool) => tool.name === 'WaitFor')).toBe(true);
         expect(taskReminders(request.history)).toEqual([wrapSystemReminder(SUBAGENT_BACKGROUND_TASK_NOTICE)]);
       }
-      expect(taskReminders(child.accessor.get(IAgentContextMemoryService).get())).toHaveLength(1);
+      expect(taskReminders(child.accessor.get(IAgentLoopService).history())).toHaveLength(1);
     },
   );
 
@@ -517,7 +495,7 @@ describe('subagent task reminders and fork request parity', () => {
     async (hasReminder) => {
       createMainForkCtx();
       const original = await createDirectChild();
-      original.accessor.get(IAgentContextMemoryService).append({
+      appendContext(original.accessor.get(IAgentLoopService),{
         role: 'user',
         content: [{ type: 'text', text: 'task from the previous session' }],
         origin: { kind: 'user' },
@@ -530,17 +508,25 @@ describe('subagent task reminders and fork request parity', () => {
       const lifecycle = ctx.get(IAgentLifecycleService);
       const originalContext = lifecycle.get(original.id)!;
       await lifecycle.remove(originalContext);
+      expect(
+        store
+          .recordsFor('sessions/test-workspace/test-session/agents/direct-child', AGENT_WIRE_RECORD_KEY)
+          .some((record) =>
+            record.type === 'context.append_message' &&
+            JSON.stringify(record).includes(SUBAGENT_BACKGROUND_TASK_NOTICE)
+          ),
+      ).toBe(hasReminder);
       const restoredContext = await lifecycle.create({ agentId: original.id });
       const restored = lifecycle.handleOf(restoredContext.agentId)!;
       expect(restoredContext.generation).not.toBe(originalContext.generation);
-      expect(restored.accessor.get(IAgentProfileService).data().profileName).toBe('coder');
-      const history = restored.accessor.get(IAgentContextMemoryService).get();
+      expect(restored.accessor.get(IAgentLoopService).data().profileName).toBe('coder');
+      const history = restored.accessor.get(IAgentLoopService).history();
       expect(taskReminders(history)).toHaveLength(hasReminder ? 1 : 0);
 
       await runPrompt(restored);
 
       expect(taskReminders(ctx.llmCalls[0]!.history)).toHaveLength(1);
-      expect(restored.accessor.get(IAgentContextMemoryService).get().slice(0, history.length)).toEqual(history);
+      expect(restored.accessor.get(IAgentLoopService).history().slice(0, history.length)).toEqual(history);
     },
   );
 
@@ -549,16 +535,16 @@ describe('subagent task reminders and fork request parity', () => {
     async (insideStep) => {
       createMainForkCtx();
       const child = await createDirectChild();
-      const context = child.accessor.get(IAgentContextMemoryService);
+      const context = child.accessor.get(IAgentLoopService);
       await runPrompt(child);
-      expect(taskReminders(context.get())).toHaveLength(1);
+      expect(taskReminders(context.history())).toHaveLength(1);
       const compact = (): void => {
-        context.applyCompaction({
+        compactContext(context,{
           summary: 'The child still needs to finish the task.',
-          compactedCount: context.get().length,
+          compactedCount: context.history().length,
           tokensBefore: 1000,
         });
-        expect(taskReminders(context.get())).toHaveLength(0);
+        expect(taskReminders(context.history())).toHaveLength(0);
       };
       if (insideStep) {
         child.accessor.get(IAgentLoopService).hooks.onWillBeginStep.register(
@@ -577,7 +563,7 @@ describe('subagent task reminders and fork request parity', () => {
 
       expect(ctx.llmCalls).toHaveLength(2);
       expect(taskReminders(ctx.llmCalls[1]!.history)).toHaveLength(1);
-      expect(taskReminders(context.get())).toHaveLength(1);
+      expect(taskReminders(context.history())).toHaveLength(1);
     },
   );
 
@@ -591,7 +577,7 @@ describe('subagent task reminders and fork request parity', () => {
       if (restriction === 'flag') {
         waitForEnabled = false;
       } else if (restriction === 'profile') {
-        child.accessor.get(IAgentProfileService).update({ disallowedTools: ['WaitFor'] });
+        child.accessor.get(IAgentLoopService).update({ disallowedTools: ['WaitFor'] });
       } else {
         await child.accessor.get(IAgentToolPolicyService).setSessionDisabledTools(['WaitFor']);
       }
@@ -625,44 +611,64 @@ describe('subagent task reminders and fork request parity', () => {
     await child.accessor.get(IAgentReminderService).reconcileWhenIdle('subagent_background_task');
 
     expect(list).not.toHaveBeenCalled();
-    expect(taskReminders(child.accessor.get(IAgentContextMemoryService).get())).toHaveLength(1);
+    expect(taskReminders(child.accessor.get(IAgentLoopService).history())).toHaveLength(1);
   });
 
   it('keeps btw system, tools and inherited history identical to main', async () => {
     createMainForkCtx();
-    await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
-    ctx.get(IAgentProfileService).update({ activeToolNames: contributedToolNames() });
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
+    ctx.get(IAgentLoopService).update({ activeToolNames: contributedToolNames() });
     const lifecycle = ctx.get(IAgentLifecycleService);
-    await runPrompt(lifecycle.handleOf('main')!);
+    const main = lifecycle.handleOf('main')!;
+    main.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_write',
+      name: 'Write',
+      arguments: JSON.stringify({ path: '/tmp/fork-tool-result-note.txt', content: 'probe' }),
+    });
+    await runPrompt(main);
+    const projectedToolResult = main.accessor.get(IAgentLoopService).history()
+      .find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(projectedToolResult?.note).toBeDefined();
+    expect(projectedToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(false);
+    main.accessor.get(IAgentLoopService).update({ activeToolNames: ['Read', 'Grep', 'Glob'] });
     const childId = await ctx.get(ISessionBtwService).start();
     const child = lifecycle.handleOf(childId)!;
 
     await runPrompt(child);
 
-    const parentReq = ctx.llmCalls[0]!;
-    const childReq = ctx.llmCalls[1]!;
+    const childToolResult = child.accessor.get(IAgentLoopService).history()
+      .find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(childToolResult?.note).toBeDefined();
+    expect(childToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(false);
+
+    const parentReq = ctx.llmCalls[1]!;
+    const childReq = ctx.llmCalls[2]!;
     expect(parentReq.tools.some((tool) => tool.name === 'WaitFor')).toBe(true);
+    const parentToolResult = parentReq.history.find((message) => message.role === 'tool' && message.toolCallId === 'call_write');
+    expect(parentToolResult?.content.some((part) => part.type === 'text' && part.text.includes('<system>'))).toBe(true);
     expect(childReq.tools).toEqual(parentReq.tools);
     expect(childReq.systemPrompt).toBe(parentReq.systemPrompt);
     expect(childReq.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
-    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(3);
   });
 
   it('keeps btw cache probes usage-driven when main compacts', async () => {
     const telemetry: TelemetryRecord[] = [];
     createMainForkCtx(stubFlag(true), telemetry);
-    await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
-    ctx.get(IAgentProfileService).update({ activeToolNames: contributedToolNames() });
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
+    ctx.get(IAgentLoopService).update({ activeToolNames: contributedToolNames() });
     const lifecycle = ctx.get(IAgentLifecycleService);
     const main = lifecycle.handleOf('main')!;
     await runPrompt(main);
 
     const beforeCompaction = await ctx.get(ISessionBtwService).start();
     await runPrompt(lifecycle.handleOf(beforeCompaction)!);
-    const context = main.accessor.get(IAgentContextMemoryService);
-    context.applyCompaction({
+    const context = main.accessor.get(IAgentLoopService);
+    compactContext(context,{
       summary: 'The main agent still needs to finish the task.',
-      compactedCount: context.get().length,
+      compactedCount: context.history().length,
       tokensBefore: 1000,
     });
     const afterCompaction = await ctx.get(ISessionBtwService).start();
@@ -686,22 +692,33 @@ describe('subagent task reminders and fork request parity', () => {
     const childScript = createScriptedGenerate();
     const childStreaming = createControlledPromise<void>();
     let childRequests = 0;
-    createMainForkCtx(stubFlag(true), [], {
-      async generate(config, content, control) {
-        if (requestTexts(content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
+    createMainForkCtx(stubFlag(true), [], createMockProvider(async (request, signal) => {
+        if (requestTexts(request.content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
           childRequests += 1;
           if (childRequests === 2) {
-            await streamTextUntilAborted(control, STOPPED_CHILD_DRAFT, () => {
-              childStreaming.resolve();
-            });
-            return;
+            return {
+              request,
+              result: {
+                id: 'stopped-child',
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: STOPPED_CHILD_DRAFT }],
+                  toolCalls: [],
+                },
+                usage: null,
+                finishReason: null,
+                rawFinishReason: null,
+              },
+              parts: [{ type: 'text', text: STOPPED_CHILD_DRAFT }],
+              error: waitForAbortReason(signal),
+              onStream: childStreaming.resolve,
+            };
           }
-          await childScript.requester.generate(config, content, control);
-          return;
+          return childScript.provider.respond(request, signal);
         }
         if (parentScript.calls.length === 1) {
           await childStreaming;
-          const taskId = /task_id: (agent-[0-9a-z]+)/.exec(requestTexts(content).join('\n'))?.[1];
+          const taskId = /task_id: (agent-[0-9a-z]+)/.exec(requestTexts(request.content).join('\n'))?.[1];
           parentScript.mockNextResponse({
             type: 'function',
             id: 'call_stop',
@@ -711,11 +728,10 @@ describe('subagent task reminders and fork request parity', () => {
         } else if (parentScript.calls.length === 2) {
           parentScript.mockNextResponse({ type: 'text', text: 'Stopped the subagent.' });
         }
-        await parentScript.requester.generate(config, content, control);
-      },
-    });
-    const profile = ctx.get(IAgentProfileService);
-    await profile.bind({ profile: 'agent', model: 'mock-model' });
+        return parentScript.provider.respond(request, signal);
+    }));
+    const profile = ctx.get(IAgentLoopService);
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
     ctx.get(IAgentPermissionModeService).setMode('yolo');
     parentScript.mockNextResponse({
@@ -740,10 +756,12 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop in the background' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      role: 'user',
+      content: [{ type: 'text', text: 'investigate the parser loop in the background' }],
+      attributes: { origin: { kind: 'user' } },
     });
     expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
+    await loop.settled();
 
     expect(parentScript.calls).toHaveLength(3);
     expect(childRequests).toBe(2);
@@ -753,11 +771,8 @@ describe('subagent task reminders and fork request parity', () => {
       .map((part) => (part.type === 'text' ? part.text : ''))
       .join('\n');
     expect(stopResult).toContain('status: killed');
-    expect(stopResult).toContain('[partial output]');
-    expect(stopResult).toContain(STOPPED_CHILD_FINDING);
-    expect(stopResult).toContain(STOPPED_CHILD_DRAFT);
     expect(stopResult).not.toContain(STOPPED_CHILD_PROMPT);
-    expect(JSON.stringify(parentScript.calls[2]!.history)).not.toContain('<notification id=');
+    expect(JSON.stringify(parentScript.calls[2]!.history)).toContain('<notification id=');
 
     const tasks = ctx.get(IAgentTaskService);
     const [task] = tasks.list(false);
@@ -773,20 +788,34 @@ describe('subagent task reminders and fork request parity', () => {
     const parentScript = createScriptedGenerate();
     const childStreaming = createControlledPromise<void>();
     let childRequests = 0;
-    createMainForkCtx(stubFlag(true), [], {
-      async generate(config, content, control) {
-        if (requestTexts(content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
+    createMainForkCtx(stubFlag(true), [], createMockProvider(async (request, signal) => {
+        if (requestTexts(request.content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
           childRequests += 1;
-          await streamTextUntilAborted(control, STOPPED_CHILD_FINDING, () => {
-            childStreaming.resolve();
-          });
-          return;
+          return {
+            request,
+            result: {
+              id: 'stopped-child',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: STOPPED_CHILD_FINDING }],
+                toolCalls: [],
+              },
+              usage: null,
+              finishReason: null,
+              rawFinishReason: null,
+            },
+            parts: [{ type: 'text', text: STOPPED_CHILD_FINDING }],
+            error: waitForAbortReason(signal),
+            onStream: () => {
+              childStreaming.resolve();
+              loop.cancel(undefined, userCancellationReason());
+            },
+          };
         }
-        await parentScript.requester.generate(config, content, control);
-      },
-    });
-    const profile = ctx.get(IAgentProfileService);
-    await profile.bind({ profile: 'agent', model: 'mock-model' });
+        return parentScript.provider.respond(request, signal);
+    }));
+    const profile = ctx.get(IAgentLoopService);
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
     ctx.get(IAgentPermissionModeService).setMode('yolo');
     parentScript.mockNextResponse({
@@ -798,18 +827,18 @@ describe('subagent task reminders and fork request parity', () => {
 
     const loop = ctx.get(IAgentLoopService);
     const { id } = loop.submit({
-      message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      role: 'user',
+      content: [{ type: 'text', text: 'investigate the parser loop' }],
+      attributes: { origin: { kind: 'user' } },
     });
     await childStreaming;
-    loop.cancel(undefined, userCancellationReason());
     expect((await loop.promptHandle(id)!.completion).state).toBe('cancelled');
 
     expect(parentScript.calls).toHaveLength(1);
     expect(childRequests).toBe(1);
     const agentResult = ctx
-      .get(IAgentContextMemoryService)
-      .get()
+      .get(IAgentLoopService)
+      .history()
       .filter((message) => message.role === 'tool' && message.toolCallId === 'call_agent')
       .flatMap((message) => message.content)
       .map((part) => (part.type === 'text' ? part.text : ''))

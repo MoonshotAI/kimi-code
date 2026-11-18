@@ -5,6 +5,7 @@ import { ErrorCode } from '../protocol/error-codes';
 import { mapError } from '../transport/errors';
 
 export const sessionConflictErrors = {
+  [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
   [ErrorCode.SESSION_OCCUPIED]: {},
   [ErrorCode.SESSION_STALE]: {},
 } as const;
@@ -20,7 +21,6 @@ export function sendMappedError(
       msg: error.message,
       data: error.details ?? null,
       request_id: req.id,
-      stack: error.stack,
     });
     return;
   }

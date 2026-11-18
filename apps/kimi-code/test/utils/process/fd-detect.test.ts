@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('#/utils/process/resolve-command', () => ({
   resolveCommandPath: mocks.resolveCommandPath,
 }));
-vi.mock('node:child_process', () => ({ spawnSync: mocks.spawnSync }));
+vi.mock('node:child_process', () => ({ execFile: vi.fn(), spawnSync: mocks.spawnSync }));
 
 const originalEnv = { ...process.env };
 let tempHome: string | undefined;
@@ -75,8 +75,6 @@ describe('detectFdPath', () => {
 
     const binaryPath = join(getBinDir(), process.platform === 'win32' ? 'fd.exe' : 'fd');
     if (process.platform === 'win32') {
-      // Creating a real Windows PE executable in a unit test is not practical;
-      // the asset-name tests still cover Windows selection logic.
       return;
     }
 

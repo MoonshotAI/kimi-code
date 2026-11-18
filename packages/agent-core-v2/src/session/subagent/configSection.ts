@@ -17,8 +17,8 @@ import {
   modelSupportsThinking,
   modelSupportsThinkingEffort,
   normalizeRequestedThinkingEffort,
-  type ThinkingConfig,
-} from '#/llm-adapter/model/thinking';
+} from '@moonshot-ai/core/llm/thinking';
+import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
 
 export const SUBAGENT_SECTION = 'subagent';
 export const SECONDARY_MODEL_SECTION = 'secondaryModel';
@@ -107,8 +107,6 @@ export function resolveSubagentTimeoutMs(config: IConfigService): number {
   );
 }
 
-export const PRIMARY_SUBAGENT_MODEL_CHOICE = 'primary';
-
 export interface SubagentModelPool {
   readonly defaultModel?: string;
   readonly models: Record<string, string>;
@@ -136,21 +134,10 @@ export function exposesSubagentModelChoice(config: IConfigService): boolean {
 export const SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE =
   '[secondary_model].default_model is required when [secondary_model.models] is configured';
 
-export const SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE = `[secondary_model.models] key "${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved. Rename the pool entry.`;
-
 export function assertValidSubagentModelPool(
   pool: SubagentModelPool,
   modelCatalog: IModelCatalog,
 ): void {
-  if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
-      details: {
-        section: SECONDARY_MODEL_SECTION,
-        field: 'models',
-        model: PRIMARY_SUBAGENT_MODEL_CHOICE,
-      },
-    });
-  }
   const aliases = Object.keys(pool.models);
   if (pool.defaultModel === undefined) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
@@ -199,7 +186,7 @@ function assertValidSubagentDefaultEffort(
   if (effort === undefined || pool === undefined) return;
   for (const alias of Object.keys(pool.models)) {
     const model = modelCatalog.get(alias);
-    if (effort === 'off' && model.alwaysThinking === true) {
+    if (effort === 'off' && model.spec.thinking?.alwaysThinking === true) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `[secondary_model].default_effort "off" cannot disable thinking for model "${alias}", which always reasons. Choose a concrete thinking effort instead of "off".`,
@@ -213,8 +200,8 @@ function assertValidSubagentDefaultEffort(
         },
       );
     }
-    if (modelSupportsThinkingEffort(effort, model, true)) continue;
-    if (!modelSupportsThinking(model)) {
+    if (modelSupportsThinkingEffort(effort, model.spec, true)) continue;
+    if (!modelSupportsThinking(model.spec)) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `[secondary_model].default_effort "${effort}" is set but model "${alias}" does not support thinking.`,
@@ -230,7 +217,7 @@ function assertValidSubagentDefaultEffort(
     }
     throw new Error2(
       ErrorCodes.CONFIG_INVALID,
-      `[secondary_model].default_effort "${effort}" is not supported by model "${alias}". Supported efforts: ${model.supportEfforts?.join(', ')}.`,
+      `[secondary_model].default_effort "${effort}" is not supported by model "${alias}". Supported efforts: ${model.spec.thinking?.supportEfforts?.join(', ')}.`,
       {
         details: {
           section: SECONDARY_MODEL_SECTION,
@@ -243,7 +230,7 @@ function assertValidSubagentDefaultEffort(
   }
 }
 
-export type SubagentModelSource = 'primary_override' | 'inherited' | 'secondary_pool';
+export type SubagentModelSource = 'inherited' | 'secondary_pool';
 
 type SubagentBinding = { model: string; thinking?: string; modelSource: SubagentModelSource };
 
@@ -252,25 +239,13 @@ export function resolveSubagentBinding(
   own: { modelAlias: string; thinkingLevel: string },
   requested?: string,
 ): SubagentBinding {
-  return bindSubagentModel(config, own, requested, []);
-}
-
-export function resolveSubagentBindingWithPrimary(
-  config: IConfigService,
-  own: { modelAlias: string; thinkingLevel: string },
-  requested?: string,
-): SubagentBinding {
-  if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
-    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'primary_override' };
-  }
-  return bindSubagentModel(config, own, requested, [PRIMARY_SUBAGENT_MODEL_CHOICE]);
+  return bindSubagentModel(config, own, requested);
 }
 
 function bindSubagentModel(
   config: IConfigService,
   own: { modelAlias: string; thinkingLevel: string },
   requested: string | undefined,
-  extraChoices: readonly string[],
 ): SubagentBinding {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   const pool = resolveSubagentModelPool(config);
@@ -284,15 +259,6 @@ function bindSubagentModel(
     }
     return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
   }
-  if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
-      details: {
-        section: SECONDARY_MODEL_SECTION,
-        field: 'models',
-        model: PRIMARY_SUBAGENT_MODEL_CHOICE,
-      },
-    });
-  }
   const choice = requested ?? pool.defaultModel;
   if (choice === undefined) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
@@ -300,7 +266,7 @@ function bindSubagentModel(
     });
   }
   if (!Object.hasOwn(pool.models, choice)) {
-    const available = [...Object.keys(pool.models), ...extraChoices];
+    const available = Object.keys(pool.models);
     throw new Error2(
       ErrorCodes.CONFIG_INVALID,
       `Invalid model "${choice}". Available models: ${available.join(', ')}.`,
@@ -317,29 +283,12 @@ export function resolveSubagentThinking(
 ): string | undefined {
   if (explicit !== undefined) return explicit;
   if (config.get<ThinkingConfig>(THINKING_SECTION)?.enabled === false) return undefined;
-  return declaredDefaultEffortForModel(model);
+  return declaredDefaultEffortForModel(model?.spec);
 }
 
 export function buildSubagentModelDescriptions(config: IConfigService): string | undefined {
   if (!exposesSubagentModelChoice(config)) return undefined;
   return poolDescriptionLines(resolveSubagentModelPool(config)!).join('\n');
-}
-
-export function buildSubagentModelDescriptionsWithPrimary(
-  config: IConfigService,
-  callerModelAlias: string | undefined,
-): string | undefined {
-  const pool = resolveSubagentModelPool(config);
-  if (pool === undefined) return undefined;
-  const primaryLabel =
-    callerModelAlias === undefined
-      ? PRIMARY_SUBAGENT_MODEL_CHOICE
-      : `${PRIMARY_SUBAGENT_MODEL_CHOICE} (= ${callerModelAlias})`;
-  return [
-    ...poolDescriptionLines(pool),
-    `- ${primaryLabel}: your current model and thinking level`,
-    "Pool entries don't inherit your thinking level.",
-  ].join('\n');
 }
 
 export function buildSubagentModelSummary(config: IConfigService): string | undefined {

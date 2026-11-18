@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { Container } from '@moonshot-ai/pi-tui';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ShellExecutionComponent,
   shellExecutionResultRenderer,
 } from '#/tui/components/messages/shell-execution';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -69,7 +71,7 @@ describe('ShellExecutionComponent', () => {
     const component = new ShellExecutionComponent({
       result: {
         tool_call_id: 'call_shell',
-        output: 'hello\n\n\n', // 1 content line + 2 trailing empty lines
+        output: 'hello\n\n\n',
         is_error: false,
       },
     });
@@ -83,7 +85,7 @@ describe('ShellExecutionComponent', () => {
     const component = new ShellExecutionComponent({
       result: {
         tool_call_id: 'call_shell',
-        output: 'a\n\nb\n\n\n', // 1 internal empty line + 2 trailing empty lines
+        output: 'a\n\nb\n\n\n',
         is_error: false,
       },
     });
@@ -196,9 +198,6 @@ describe('ShellExecutionComponent', () => {
         .flatMap((c) => c.render(100))
         .map(strip)
         .join('\n');
-      // Command is owned by ToolCallComponent.buildCallPreview, not the
-      // renderer — rendering it here too would duplicate it once the result
-      // lands.
       expect(rendered).not.toContain('$ echo');
       expect(rendered).toContain('boom');
     });
@@ -225,6 +224,54 @@ describe('ShellExecutionComponent', () => {
       expect(rendered).not.toContain('$ echo');
       expect(rendered).toContain('line4');
       expect(rendered).toContain('line5');
+    });
+  });
+});
+
+describe('ShellExecutionComponent render cache', () => {
+  const options = {
+    command: 'printf hello',
+    showCommand: true,
+    result: {
+      tool_call_id: 'call_shell',
+      output: ['line1', 'line2', 'line3', 'line4', 'line5'].join('\n'),
+      is_error: false,
+    },
+  };
+
+  it('returns the same array when nothing changed between renders', () => {
+    const component = new ShellExecutionComponent(options);
+    const first = component.render(80);
+    expect(component.render(80)).toBe(first);
+  });
+
+  it('matches a fresh component after a width change and back', () => {
+    const component = new ShellExecutionComponent(options);
+    const wide = component.render(80);
+    expect(component.render(12)).toEqual(Container.prototype.render.call(component, 12));
+    expect(component.render(80)).toEqual(wide);
+  });
+
+  it('drops the cached lines on invalidate', () => {
+    const component = new ShellExecutionComponent(options);
+    const first = component.render(80);
+    component.invalidate();
+    const second = component.render(80);
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first);
+    expect(second).toEqual(Container.prototype.render.call(component, 80));
+  });
+
+  describe('with the render cache disabled', () => {
+    afterEach(() => setRenderCacheEnabled(true));
+
+    it('renders again with equal text', () => {
+      setRenderCacheEnabled(false);
+      const component = new ShellExecutionComponent(options);
+      const first = component.render(80);
+      const second = component.render(80);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
     });
   });
 });

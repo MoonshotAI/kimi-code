@@ -3,7 +3,6 @@ import type {
   ContentPart,
   Message as LlmMessage,
   Role,
-  StreamedMessagePart,
   ToolCall,
   ToolDescription,
 } from '#human/message';

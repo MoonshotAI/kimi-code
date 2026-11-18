@@ -1,0 +1,128 @@
+{
+  "extends": [
+    "./.oxlintrc.json"
+  ],
+  "options": {
+    "reportUnusedDisableDirectives": "error"
+  },
+  "rules": {
+    "eslint/array-callback-return": "error",
+    "eslint/no-empty": ["error", { "allowEmptyCatch": true }],
+    "eslint/no-fallthrough": "error",
+    "eslint/no-regex-spaces": "error",
+    "eslint/no-sequences": "error",
+    "eslint/no-useless-constructor": "error",
+    "eslint/prefer-const": "error",
+    "import/no-named-as-default": "error",
+    "import/no-named-as-default-member": "error",
+    "oxc/bad-comparison-sequence": "error",
+    "oxc/no-accumulating-spread": "error",
+    "promise/no-callback-in-promise": "error",
+    "promise/no-promise-in-callback": "error",
+    "typescript/no-deprecated": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-namespace": "error",
+    "typescript/no-require-imports": "error",
+    "typescript/no-unnecessary-boolean-literal-compare": "error",
+    "typescript/no-unnecessary-template-expression": "error",
+    "typescript/no-unnecessary-type-conversion": "error",
+    "typescript/no-unsafe-enum-comparison": "error",
+    "typescript/no-unsafe-function-type": "error",
+    "typescript/no-useless-default-assignment": "error",
+    "typescript/prefer-promise-reject-errors": "error",
+    "typescript/related-getter-setter-pairs": "error",
+    "typescript/switch-exhaustiveness-check": "error",
+    "typescript/use-unknown-in-catch-callback-variable": "error",
+    "unicorn/no-array-reverse": "error",
+    "unicorn/no-array-sort": "error"
+  },
+  "overrides": [
+    {
+      "files": [
+        "packages/*/src/**",
+        "apps/*/src/**"
+      ],
+      "rules": {
+        "eslint/no-console": "error"
+      }
+    },
+    {
+      "files": [
+        "packages/*/src/**/*.ts",
+        "packages/*/src/**/*.tsx",
+        "apps/*/src/**/*.ts",
+        "apps/*/src/**/*.tsx",
+        "apps/vis/*/src/**/*.ts",
+        "apps/vis/*/src/**/*.tsx",
+        "apps/vscode/webview-ui/src/**/*.ts",
+        "apps/vscode/webview-ui/src/**/*.tsx"
+      ],
+      "rules": {
+        "typescript/no-unnecessary-type-parameters": "error",
+        "typescript/no-unsafe-argument": "error",
+        "typescript/no-unsafe-assignment": "error",
+        "typescript/no-unsafe-call": "error",
+        "typescript/no-unsafe-member-access": "error",
+        "typescript/no-unsafe-return": "error"
+      }
+    },
+    {
+      "files": [
+        "apps/vis/web/**",
+        "apps/vscode/webview-ui/**"
+      ],
+      "plugins": [
+        "react"
+      ],
+      "rules": {
+        "react/exhaustive-deps": "error"
+      }
+    },
+    {
+      "files": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/test/**/*.ts",
+        "**/test/**/*.tsx"
+      ],
+      "plugins": [
+        "vitest"
+      ],
+      "rules": {
+        "vitest/no-conditional-expect": "error",
+        "vitest/no-disabled-tests": "error",
+        "vitest/valid-title": "error",
+        "eslint/no-unused-vars": "error",
+        "eslint/no-unsafe-optional-chaining": "error",
+        "eslint/no-console": "off",
+        "typescript/no-unnecessary-type-parameters": "off",
+        "typescript/no-unsafe-argument": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-return": "off"
+      }
+    },
+    {
+      "files": [
+        "**/examples/**/*.ts",
+        "**/examples/**/*.tsx"
+      ],
+      "rules": {
+        "eslint/no-console": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "dist/",
+    "dist-web/",
+    "coverage/",
+    "node_modules/",
+    "apps/*/scripts/",
+    "docs/smoke-archive/",
+    "packages/pi-tui/",
+    "*.generated.ts"
+  ]
+}

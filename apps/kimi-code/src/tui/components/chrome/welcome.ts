@@ -1,8 +1,3 @@
-/**
- * Welcome panel shown at the top of the TUI.
- * Renders a round-bordered box with the logo, session, model, and version.
- */
-
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
@@ -12,6 +7,7 @@ import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { isRainbowDancing, renderDanceWelcomeHeader } from '#/tui/easter-eggs/dance';
 import type { AppState } from '#/tui/types';
 import { currentTheme } from '#/tui/theme';
+import { sessionWorkDir } from '#/tui/utils/session-work-dir';
 
 export class WelcomeComponent implements Component {
   private state: AppState;
@@ -45,7 +41,6 @@ export class WelcomeComponent implements Component {
     const innerWidth = Math.max(1, safeWidth - 4);
     const pad = '  ';
 
-    // Logo + side-by-side text.
     const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;
     const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
     const gap = '  ';
@@ -77,7 +72,7 @@ export class WelcomeComponent implements Component {
       : (effectiveActiveModel?.displayName ?? effectiveActiveModel?.model ?? this.state.model);
 
     const infoLines = [
-      labelStyle('Directory: ') + this.state.workDir,
+      labelStyle('Directory: ') + sessionWorkDir(this.state),
       labelStyle('Session:   ') + this.state.sessionId,
       labelStyle('Model:     ') + modelValue,
       labelStyle('Version:   ') + this.state.version,
