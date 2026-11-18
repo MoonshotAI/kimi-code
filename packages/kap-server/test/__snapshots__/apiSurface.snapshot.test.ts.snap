@@ -290,6 +290,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/workspaces/{workspace_id}/worktree-setup-script",
+    ],
+    [
+      "GET",
       "/api/v1/workspaces/project-config-dirs",
     ],
     [
@@ -623,6 +627,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "PUT",
       "/api/v1/providers/{provider_id}",
+    ],
+    [
+      "PUT",
+      "/api/v1/workspaces/{workspace_id}/worktree-setup-script",
     ],
   ],
 }

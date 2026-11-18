@@ -608,6 +608,29 @@ describe('server-v2 session worktrees', () => {
       (await patchSessionMetadata(server.core.accessor, plain.data.id, () => undefined))?.custom,
     );
     expect(stored?.pending).toBeUndefined();
+
+    await patchSessionMetadata(server.core.accessor, created.id, (meta) => ({
+      custom: {
+        ...meta.custom,
+        worktree: {
+          ...(meta.custom?.['worktree'] as object),
+          setup: {
+            ...ready.worktree!.setup,
+            status: 'running',
+            ended_at: undefined,
+            script: 'pending',
+            steps: [...ready.worktree!.setup.steps, { kind: 'script', state: 'running' }],
+          },
+        },
+      },
+    }));
+    await new SessionWorktreeService(server.core).recoverInterrupted();
+    const paused = await get<SessionWire>(`/sessions/${created.id}`);
+    expect(paused.data.worktree?.setup).toMatchObject({ status: 'stopped', stopped_step: 'script' });
+    expect(paused.data.worktree?.path).toBe(ready.worktree!.path);
+    expect(existsSync(ready.worktree!.path!)).toBe(true);
+    const resumed = await post<SessionWire>(`/sessions/${created.id}/worktree:skip_script`);
+    expect(resumed.data.worktree?.setup).toMatchObject({ status: 'ready', script: 'skipped' });
   });
 
   it('lists local branches by latest commit with their remote branch and the dirty flag', async () => {
@@ -1063,5 +1086,188 @@ describe('server-v2 session worktrees', () => {
       include_pull_request: false,
     });
     expect(status.data.branch).toBe('main');
+  });
+
+  interface ScriptWire {
+    path: string;
+    exists: boolean;
+    content?: string;
+    needs_confirmation?: boolean;
+  }
+
+  async function saveScript(workspaceId: string, content: string): Promise<Envelope<ScriptWire>> {
+    const res = await fetch(`${base}/api/v1/workspaces/${workspaceId}/worktree-setup-script`, {
+      method: 'PUT',
+      headers: authHeaders(server, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ content }),
+    } as never);
+    return (await res.json()) as Envelope<ScriptWire>;
+  }
+
+  it('runs a setup script saved on this machine as the last step', async () => {
+    const root = await createRepo('script-saved');
+    const workspaceId = await createWorkspace(root);
+    const none = await get<ScriptWire>(`/workspaces/${workspaceId}/worktree-setup-script`);
+    expect(none.data).toEqual({ path: join(root, '.kimi', 'setup.sh'), exists: false });
+    const content = '#!/bin/sh\necho "$KIMI_PROJECT_DIR" > project-dir.txt\npwd -P > cwd.txt\n';
+
+    const saved = await saveScript(workspaceId, content);
+
+    expect(saved.data).toEqual({
+      path: join(root, '.kimi', 'setup.sh'),
+      exists: true,
+      content,
+      needs_confirmation: false,
+    });
+    expect(await readFile(join(root, '.kimi', 'setup.sh'), 'utf-8')).toBe(content);
+    expect((await get<ScriptWire>(`/workspaces/${workspaceId}/worktree-setup-script`)).data).toEqual(saved.data);
+
+    const created = await createWorktreeSession(workspaceId, { source_branch: 'main' });
+    expect(created.worktree?.setup.script).toBe('pending');
+    expect(created.worktree?.setup.steps).toMatchObject([
+      { kind: 'create', state: 'pending' },
+      { kind: 'script', state: 'pending', command: `/bin/sh ${join(root, '.kimi', 'setup.sh')}` },
+    ]);
+    const ready = await settled(created.id);
+
+    expect(ready.worktree?.setup).toMatchObject({ status: 'ready', script: 'ran', commands_ran: 2 });
+    expect(ready.worktree?.setup.steps.map((step) => step.state)).toEqual(['done', 'done']);
+    const path = ready.worktree!.path!;
+    expect((await readFile(join(path, 'project-dir.txt'), 'utf-8')).trim()).toBe(root);
+    expect((await readFile(join(path, 'cwd.txt'), 'utf-8')).trim()).toBe(path);
+
+    const skipped = await settled(
+      (await createWorktreeSession(workspaceId, { source_branch: 'main', run_setup_script: false })).id,
+    );
+    expect(skipped.worktree?.setup).toMatchObject({ status: 'ready', script: 'skipped', commands_ran: 1 });
+    expect(skipped.worktree?.setup.steps.map((step) => step.kind)).toEqual(['create']);
+    expect(existsSync(join(skipped.worktree!.path!, 'cwd.txt'))).toBe(false);
+
+    const cleared = await saveScript(workspaceId, '');
+    expect(cleared.data).toEqual({ path: join(root, '.kimi', 'setup.sh'), exists: false });
+    expect(existsSync(join(root, '.kimi', 'setup.sh'))).toBe(false);
+    const without = await settled(
+      (await createWorktreeSession(workspaceId, { source_branch: 'main' })).id,
+    );
+    expect(without.worktree?.setup).toMatchObject({ status: 'ready', script: 'none' });
+  });
+
+  it('asks before running a setup script that came from the repository', async () => {
+    const root = await createRepo('script-repository');
+    await mkdir(join(root, '.kimi'));
+    const content = 'echo ran >> script.log\n';
+    await writeFile(join(root, '.kimi', 'setup.sh'), content);
+    git(root, 'add', '.');
+    git(root, 'commit', '-q', '-m', 'add setup script');
+    const workspaceId = await createWorkspace(root);
+    expect((await get<ScriptWire>(`/workspaces/${workspaceId}/worktree-setup-script`)).data).toMatchObject({
+      exists: true,
+      needs_confirmation: true,
+    });
+
+    const waiting = await settled(
+      (await createWorktreeSession(workspaceId, { source_branch: 'main' })).id,
+    );
+
+    expect(waiting.worktree?.setup).toMatchObject({
+      status: 'awaiting_script_confirmation',
+      script: 'pending',
+      script_content: content,
+      commands_ran: 1,
+    });
+    expect(waiting.worktree?.setup.steps).toMatchObject([
+      { kind: 'create', state: 'done' },
+      { kind: 'script', state: 'pending', command: `sh ${join(root, '.kimi', 'setup.sh')}` },
+    ]);
+    const path = waiting.worktree!.path!;
+    expect(waiting.cwd).toBe(path);
+    expect(existsSync(join(path, 'script.log'))).toBe(false);
+    for (const action of ['retry', 'cancel', 'use_local']) {
+      const refused = await post<SessionWire>(`/sessions/${waiting.id}/worktree:${action}`);
+      expect(refused.code, action).toBe(ErrorCode.WORKTREE_STATE_INVALID);
+    }
+
+    const running = await post<SessionWire>(`/sessions/${waiting.id}/worktree:run_script`);
+    expect(running.data.worktree?.setup).toMatchObject({ status: 'running', script: 'pending' });
+    expect(running.data.worktree?.setup.script_content).toBeUndefined();
+    const ready = await settled(waiting.id);
+    expect(ready.worktree?.setup).toMatchObject({ status: 'ready', script: 'ran', commands_ran: 2 });
+    expect(await readFile(join(path, 'script.log'), 'utf-8')).toBe('ran\n');
+
+    const trusted = await settled(
+      (await createWorktreeSession(workspaceId, { source_branch: 'main' })).id,
+    );
+    expect(trusted.worktree?.setup).toMatchObject({ status: 'ready', script: 'ran' });
+
+    await writeFile(join(root, '.kimi', 'setup.sh'), 'echo changed >> script.log\n');
+    const changed = await settled(
+      (await createWorktreeSession(workspaceId, { source_branch: 'main' })).id,
+    );
+    expect(changed.worktree?.setup).toMatchObject({
+      status: 'awaiting_script_confirmation',
+      script_content: 'echo changed >> script.log\n',
+    });
+    await writeFile(join(root, '.kimi', 'setup.sh'), 'echo changed again >> script.log\n');
+    const stale = await post<SessionWire>(`/sessions/${changed.id}/worktree:run_script`);
+    expect(stale.code).toBe(0);
+    expect((await settled(changed.id)).worktree?.setup).toMatchObject({
+      status: 'awaiting_script_confirmation',
+      script_content: 'echo changed again >> script.log\n',
+    });
+    const skipped = await post<SessionWire>(`/sessions/${changed.id}/worktree:skip_script`);
+    expect(skipped.data.worktree?.setup).toMatchObject({ status: 'ready', script: 'skipped' });
+    expect(skipped.data.worktree?.setup.script_content).toBeUndefined();
+    expect(skipped.data.worktree?.setup.steps.at(-1)).toMatchObject({ kind: 'script', state: 'skipped' });
+    expect(existsSync(join(changed.worktree!.path!, 'script.log'))).toBe(false);
+  });
+
+  it('keeps the worktree when the setup script fails or is stopped', async () => {
+    const root = await createRepo('script-failure');
+    const workspaceId = await createWorkspace(root);
+    await saveScript(workspaceId, 'echo "no lockfile" >&2\nexit 3\n');
+
+    const failed = await settled(
+      (await createWorktreeSession(workspaceId, { source_branch: 'main' })).id,
+    );
+
+    expect(failed.worktree?.setup).toMatchObject({
+      status: 'failed',
+      stopped_step: 'script',
+      failure: { kind: 'script_failed', exit_code: 3 },
+      script: 'pending',
+    });
+    expect(failed.worktree?.setup.steps.at(-1)).toMatchObject({
+      kind: 'script',
+      state: 'failed',
+      output: 'no lockfile\n',
+    });
+    const path = failed.worktree!.path!;
+    expect(existsSync(path)).toBe(true);
+    expect(failed.cwd).toBe(path);
+    for (const action of ['retry', 'use_local']) {
+      const refused = await post<SessionWire>(`/sessions/${failed.id}/worktree:${action}`);
+      expect(refused.code, action).toBe(ErrorCode.WORKTREE_STATE_INVALID);
+    }
+
+    await saveScript(workspaceId, 'echo started > started.txt\nsleep 30\n');
+    const rerun = await post<SessionWire>(`/sessions/${failed.id}/worktree:run_script`);
+    expect(rerun.data.worktree?.setup).toMatchObject({ status: 'running' });
+    expect(rerun.data.worktree?.setup.failure).toBeUndefined();
+    await expect.poll(() => existsSync(join(path, 'started.txt')), { timeout: 5_000 }).toBe(true);
+    const stopped = await post<SessionWire>(`/sessions/${failed.id}/worktree:cancel`);
+    expect(stopped.data.worktree?.setup).toMatchObject({ status: 'stopped', stopped_step: 'script' });
+    expect(stopped.data.worktree?.setup.steps.at(-1)).toMatchObject({ kind: 'script', state: 'stopped' });
+    expect(existsSync(path)).toBe(true);
+    expect(stopped.data.cwd).toBe(path);
+
+    await saveScript(workspaceId, 'echo ok > ok.txt\n');
+    await post<SessionWire>(`/sessions/${failed.id}/worktree:run_script`);
+    const ready = await settled(failed.id);
+    expect(ready.worktree?.setup).toMatchObject({ status: 'ready', script: 'ran' });
+    expect(ready.worktree?.setup.failure).toBeUndefined();
+    expect(ready.worktree?.setup.stopped_step).toBeUndefined();
+    expect(existsSync(join(path, 'ok.txt'))).toBe(true);
+    const done = await post<SessionWire>(`/sessions/${failed.id}/worktree:skip_script`);
+    expect(done.code).toBe(ErrorCode.WORKTREE_STATE_INVALID);
   });
 });
