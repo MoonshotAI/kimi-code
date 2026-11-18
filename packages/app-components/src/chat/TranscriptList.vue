@@ -17,7 +17,7 @@ const props = withDefaults(defineProps<{
   tail?: number;
   overscan?: number;
   renderAll?: boolean;
-}>(), { tail: 2, overscan: 3, renderAll: false });
+}>(), { tail: 2, overscan: 1.5, renderAll: false });
 
 type Slot = { key: string; index: number; gapBefore: boolean };
 type View = { slots: Slot[]; trailing: boolean };
@@ -25,6 +25,7 @@ type View = { slots: Slot[]; trailing: boolean };
 const ROW_STATE_SCOPES = 4;
 const TOUCH_OVERSCAN = 3;
 const MIN_OVERSCAN_PX = 400;
+const MAX_CASCADE = 8;
 
 const { t } = useI18n();
 const host = inject(TranscriptScrollKey, null);
@@ -41,12 +42,15 @@ if (props.state) {
 const root = ref<HTMLElement | null>(null);
 const measure = ref<HTMLElement | null>(null);
 const rows = new Map<string, HTMLElement>();
+const fresh = new Set<string>();
 const spacers = new Map<string, HTMLElement>();
 const interaction = shallowRef(new Set<string>());
 const requested = ref<string | null>(null);
 const modelRevision = ref(0);
 let keys: string[] = [];
 let deferredFrame = 0;
+let cascade = 0;
+let cascadeReset = false;
 let disposed = false;
 let detach: (() => void) | null = null;
 
@@ -91,6 +95,22 @@ function domTop(): number | null {
   return scroller.getBoundingClientRect().top - list.getBoundingClientRect().top;
 }
 
+function modelViewTop(): number | null {
+  const scroller = host?.scroller.value;
+  if (!host || !scroller) return null;
+  const top = scroller.getBoundingClientRect().top;
+  let last: { index: number; el: HTMLElement } | null = null;
+  for (const slot of view.value.slots) {
+    const el = rows.get(slot.key);
+    if (!el?.isConnected) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom > top) return host.model.top(slot.index) + top - rect.top;
+    last = { index: slot.index, el };
+  }
+  if (!last) return domTop();
+  return host.model.top(last.index + 1) + top - last.el.getBoundingClientRect().bottom;
+}
+
 function anchorTop(anchor: AnchorPath, offset: number): number | null {
   const model = host!.model;
   const index = model.indexOf(anchor.row);
@@ -112,7 +132,7 @@ function computeView(source: TranscriptRefreshSource): View {
   const mode = host.controller.value?.state.mode ?? { kind: 'follow' as const };
   const keep = new Set(interaction.value);
   if (requested.value !== null) keep.add(requested.value);
-  const scrolled = source === 'scroll' ? domTop() : null;
+  const scrolled = source === 'scroll' ? modelViewTop() : null;
   let top: number;
   if (mode.kind === 'follow') {
     const bottom = Math.max(0, model.total() - viewport);
@@ -162,6 +182,14 @@ function setView(next: View): void {
 
 function refresh(source: TranscriptRefreshSource, defer = false): void {
   if (disposed) return;
+  if (!defer && ++cascade > MAX_CASCADE) defer = true;
+  if (!cascadeReset) {
+    cascadeReset = true;
+    requestAnimationFrame(() => {
+      cascade = 0;
+      cascadeReset = false;
+    });
+  }
   if (defer) {
     if (!deferredFrame) {
       deferredFrame = requestAnimationFrame(() => {
@@ -225,9 +253,11 @@ function registerRow(key: string, value: unknown): void {
   if (el instanceof HTMLElement) {
     if (previous === el) return;
     rows.set(key, el);
+    fresh.add(key);
     host?.observeRow(key, el);
   } else if (previous) {
     rows.delete(key);
+    fresh.delete(key);
     host?.observeRow(key, null);
   }
 }
@@ -245,9 +275,25 @@ watch(() => props.items, () => {
 
 watch(() => props.renderAll, () => refresh('scroll'));
 
+function measureFresh(): void {
+  if (!host || !fresh.size) return;
+  for (const key of fresh) {
+    const el = rows.get(key);
+    if (el?.isConnected) host.model.measure(key, el.getBoundingClientRect().height);
+  }
+  fresh.clear();
+  host.model.refreshEstimates();
+}
+
 watch([view, modelRevision], () => {
-  if (root.value) root.value.style.minHeight = '';
+  measureFresh();
   writeSpacers();
+  if (root.value) root.value.style.minHeight = '';
+  const next = computeView('model');
+  if (!sameView(next, view.value) && ++cascade <= MAX_CASCADE) {
+    setView(next);
+    return;
+  }
   host?.sync();
 }, { flush: 'post' });
 

@@ -222,9 +222,9 @@ afterEach(() => {
 describe('TranscriptList', () => {
   it('renders only the rows around the viewport and sizes the placeholder from the model', async () => {
     expect(rawTop).toBe(50 * 100 - VIEWPORT);
-    expect(renderedKeys()).toEqual(keys('a', 38, 50));
+    expect(renderedKeys()).toEqual(keys('a', 42, 50));
     const spacer = list()!.querySelector<HTMLElement>('.transcript-space')!;
-    expect(spacer.style.height).toBe('3800px');
+    expect(spacer.style.height).toBe('4200px');
     expect(scroll.following.value).toBe(true);
   });
 
@@ -284,6 +284,21 @@ describe('TranscriptList', () => {
     expect(FakeResizeObserver.instances).toHaveLength(1);
     expect(selectionListeners).toBe(1);
   });
+
+  it('measures newly mounted rows into the model before the resize observer reports them', async () => {
+    for (const key of props.items) rowHeights.set(key, 400);
+    await settle();
+    const measured = new Set(renderedKeys());
+    scroll.onInput(new WheelEvent('wheel', { deltaY: -100 }));
+    rawTop = Math.max(0, rawTop - 3600);
+    scroll.onScroll();
+    await nextTick();
+    await nextTick();
+    const model = scroll.host.model;
+    const fresh = renderedKeys().filter(key => !measured.has(key) && Number(key.slice(1)) < 42);
+    expect(fresh.length).toBeGreaterThan(0);
+    for (const key of fresh) expect(model.height(model.indexOf(key)!)).toBe(400);
+  });
 });
 
 describe('useTranscriptScroll', () => {
@@ -314,5 +329,17 @@ describe('useTranscriptScroll', () => {
     expect(flushResize()).toBeGreaterThan(0);
     expect(rowEl(anchor)!.getBoundingClientRect().top).toBe(before);
     expect(scroll.following.value).toBe(false);
+  });
+
+  it('publishes state changed inside a resize callback on the next frame', async () => {
+    await userScrollTo(2000);
+    const top = renderedKeys().find(key => rowEl(key)!.getBoundingClientRect().bottom > 0)!;
+    const before = scroll.activeRowKey.value;
+    expect(before).not.toBe(top);
+    rowHeights.set(top, 1000);
+    flushResize();
+    expect(scroll.activeRowKey.value).toBe(before);
+    await settle();
+    expect(scroll.activeRowKey.value).toBe(top);
   });
 });

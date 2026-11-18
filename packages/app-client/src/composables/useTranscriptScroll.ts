@@ -90,6 +90,33 @@ export function useTranscriptScroll(options: TranscriptScrollOptions): Transcrip
   let quiet = false;
   let syncQueued = false;
   let scrollingTimer: ReturnType<typeof setTimeout> | null = null;
+  let publishFrame = 0;
+  const published = { following: true, showJump: false, activeRowKey: null as string | null, dockHeight: 0, scrollbarWidth: 0 };
+
+  function publish(): void {
+    if (publishFrame) {
+      cancelAnimationFrame(publishFrame);
+      publishFrame = 0;
+    }
+    following.value = published.following;
+    showJump.value = published.showJump;
+    activeRowKey.value = published.activeRowKey;
+    dockHeight.value = published.dockHeight;
+    scrollbarWidth.value = published.scrollbarWidth;
+  }
+
+  function schedulePublish(): void {
+    if (!inLayout) {
+      publish();
+      return;
+    }
+    if (!publishFrame) {
+      publishFrame = requestAnimationFrame(() => {
+        publishFrame = 0;
+        publish();
+      });
+    }
+  }
 
   function applyLayout(layout: TranscriptLayout): void {
     inLayout = true;
@@ -97,22 +124,27 @@ export function useTranscriptScroll(options: TranscriptScrollOptions): Transcrip
       inLayout = false;
     });
     const el = scroller.value;
-    if (layout.dockHeight !== dockHeight.value) {
-      dockHeight.value = layout.dockHeight;
+    if (layout.dockHeight !== published.dockHeight) {
+      published.dockHeight = layout.dockHeight;
       const wrap = el?.firstElementChild;
       if (wrap instanceof HTMLElement) wrap.style.paddingBottom = `${layout.dockHeight + dockFadePx}px`;
+      schedulePublish();
     }
     if (el) {
       const width = Math.max(0, el.offsetWidth - el.clientWidth);
-      if (width !== scrollbarWidth.value) scrollbarWidth.value = width;
+      if (width !== published.scrollbarWidth) {
+        published.scrollbarWidth = width;
+        schedulePublish();
+      }
     }
     list?.applyLayout();
   }
 
   function onChange(state: Readonly<ScrollState>): void {
-    following.value = state.following;
-    showJump.value = state.showJump;
-    activeRowKey.value = state.activeRowKey;
+    published.following = state.following;
+    published.showJump = state.showJump;
+    published.activeRowKey = state.activeRowKey;
+    schedulePublish();
     if (!quiet) list?.refresh('scroll', inLayout);
   }
 
@@ -273,6 +305,7 @@ export function useTranscriptScroll(options: TranscriptScrollOptions): Transcrip
     document.removeEventListener('pointerup', onInput, true);
     document.removeEventListener('pointercancel', onInput, true);
     if (scrollingTimer) clearTimeout(scrollingTimer);
+    if (publishFrame) cancelAnimationFrame(publishFrame);
     bindScroller(null);
   });
 
