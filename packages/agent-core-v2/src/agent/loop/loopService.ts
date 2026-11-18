@@ -430,7 +430,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.turns.history(source);
   }
 
-  requestContent(): LoopRequestContent {
+  previewRequestContent(): LoopRequestContent {
     const capabilities = this.data().modelCapabilities;
     const disclosure = this.toolSelect.enabled(capabilities);
     const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];

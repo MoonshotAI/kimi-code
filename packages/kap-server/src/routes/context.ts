@@ -243,7 +243,7 @@ function readAgentContextSources(agent: IAgentScopeHandle) {
   const legacyStatus = readLegacyStatus(agent);
   const loopData = loop.data();
   const profileData = profile.data();
-  const request = loop.requestContent();
+  const request = loop.previewRequestContent();
   const modelAlias = loopData.modelAlias || profileData.modelAlias || legacyStatus?.model || undefined;
   return {
     systemPrompt: request.systemPrompt || profile.getSystemPrompt(),

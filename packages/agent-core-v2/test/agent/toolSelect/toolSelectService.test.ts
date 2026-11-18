@@ -255,7 +255,7 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return [];
   }
 
-  requestContent(): LoopRequestContent {
+  previewRequestContent(): LoopRequestContent {
     return { systemPrompt: '', tools: [], messages: this.history() };
   }
 
