@@ -251,7 +251,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'tasks',
     aliases: ['task'],
-    description: 'Browse background tasks',
+    description: 'Browse background tasks and running foreground agents',
     priority: 80,
     availability: 'always',
   },

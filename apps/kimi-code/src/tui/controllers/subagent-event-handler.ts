@@ -395,7 +395,7 @@ export class SubAgentEventHandler {
   private handleSubagentCancelled(
     event: SubagentLifecycleEventOf<'subagent.cancelled'>,
   ): void {
-    this.activityStore.markFailed(event.subagentId);
+    this.activityStore.markCancelled(event.subagentId);
     this.pruneForegroundOnlyRecord(event.subagentId);
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {

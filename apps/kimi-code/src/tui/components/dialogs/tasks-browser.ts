@@ -111,13 +111,9 @@ function fitExactly(line: string, width: number): string {
   return padToWidth(s, width);
 }
 
-function visibleTasks(
-  tasks: readonly BackgroundTaskInfo[],
-  filter: TasksFilter,
-): BackgroundTaskInfo[] {
-  const backgroundOnly = tasks.filter((t) => t.detached !== false);
-  if (filter === 'all') return [...backgroundOnly];
-  return backgroundOnly.filter((t) => !isTerminal(t.status));
+export function isVisibleTask(task: BackgroundTaskInfo, filter: TasksFilter): boolean {
+  if (task.detached === false) return task.kind === 'agent' && !isTerminal(task.status);
+  return filter === 'all' || !isTerminal(task.status);
 }
 
 function compareTasks(a: BackgroundTaskInfo, b: BackgroundTaskInfo): number {
@@ -170,13 +166,17 @@ export class TasksBrowserApp extends Container implements Focusable {
     super();
     this.props = props;
     this.terminal = terminal;
-    this.sortedVisible = visibleTasks(props.tasks, props.filter).toSorted(compareTasks);
+    this.sortedVisible = props.tasks
+      .filter((task) => isVisibleTask(task, props.filter))
+      .toSorted(compareTasks);
     this.syncSelectionFromProps();
   }
 
   setProps(next: TasksBrowserProps): void {
     this.props = next;
-    this.sortedVisible = visibleTasks(next.tasks, next.filter).toSorted(compareTasks);
+    this.sortedVisible = next.tasks
+      .filter((task) => isVisibleTask(task, next.filter))
+      .toSorted(compareTasks);
     this.syncSelectionFromProps();
     if (this.pendingStopTaskId !== undefined) {
       const task = next.tasks.find((t) => t.taskId === this.pendingStopTaskId);
@@ -260,7 +260,7 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
     if (k === 's' || k === 'S') {
       const task = this.sortedVisible[this.selectedIndex];
-      if (task === undefined) return;
+      if (task === undefined || task.detached === false) return;
       if (isTerminal(task.status)) {
         this.props.onStopIgnored?.(task.taskId, 'terminal');
         return;
@@ -313,7 +313,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       'textMuted',
       ` filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'} `,
     );
-    const visible = visibleTasks(this.props.tasks, this.props.filter);
+    const visible = this.sortedVisible;
     const counts = countByStatus(visible);
     const countSegments: string[] = [];
     if (counts.running > 0)
@@ -345,11 +345,14 @@ export class TasksBrowserApp extends Container implements Focusable {
     const parts = [
       ` ${key('↑↓')} ${dim('select')}`,
       `${key('Enter/O')} ${dim('output')}`,
-      `${key('S')} ${dim('stop')}`,
       `${key('R')} ${dim('refresh')}`,
       `${key('Tab')} ${dim('filter')}`,
       `${key('Q/Esc')} ${dim('cancel')} `,
     ];
+    const task = this.sortedVisible[this.selectedIndex];
+    if (task !== undefined && task.detached !== false) {
+      parts.splice(2, 0, `${key('S')} ${dim('stop')}`);
+    }
     const left = parts.join('  ');
     const flash = this.props.flashMessage;
     if (flash !== undefined && flash.length > 0) {
@@ -408,7 +411,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       const empty =
         this.props.filter === 'active'
           ? 'No active tasks. Tab = show all.'
-          : 'No background tasks in this session.';
+          : 'No tasks in this session.';
       const lines: string[] = [currentTheme.fg('textMuted', empty)];
       while (lines.length < innerHeight) lines.push('');
       return this.renderFrame(title, lines, width, height);
@@ -533,6 +536,9 @@ export class TasksBrowserApp extends Container implements Focusable {
       `${label('Status:')}${currentTheme.fg(statusColor(task.status), STATUS_LABEL[task.status])}`,
       `${label('Description:')}${value(singleLine(task.description) || '—')}`,
     ];
+    if (task.detached === false) {
+      lines.push(`${label('Mode:')}${value('Foreground')}`);
+    }
     if (task.kind === 'process' && task.command && task.command !== task.description) {
       lines.push(`${label('Command:')}${value(singleLine(task.command))}`);
     }
