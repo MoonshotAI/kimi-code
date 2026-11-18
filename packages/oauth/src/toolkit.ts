@@ -347,8 +347,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     body: UpdateFeedbackBody,
     providerName?: string | undefined,
     options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
-      readonly baseUrl?: string | undefined;
+      readonly oauthRef?: KimiOAuthTokenRef;
+      readonly baseUrl?: string;
     } = {},
   ): Promise<FetchUpdateFeedbackResult> {
     return this.withAccessToken(

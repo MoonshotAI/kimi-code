@@ -10,18 +10,12 @@ import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   FeedbackModelRequestRecorded,
   ISessionFeedbackContextService,
+  type FeedbackModelRequest,
   type FeedbackParticipantModel,
   type FeedbackTurnContext,
 } from './feedbackContext';
 
-interface OrderedFact {
-  readonly agentId: string;
-  readonly rootTurnId: number;
-  readonly turnId: number;
-  readonly step: number;
-  readonly model: string;
-  readonly provider: string;
-  readonly traceId?: string;
+interface OrderedModelRequest extends FeedbackModelRequest {
   readonly time: number;
   readonly index: number;
 }
@@ -43,25 +37,25 @@ export class SessionFeedbackContextService extends Service implements ISessionFe
       MAIN_AGENT_ID,
       ...Object.keys((await this.metadata.read()).agents ?? {}),
     ]);
-    const facts: OrderedFact[] = [];
+    const requests: OrderedModelRequest[] = [];
     for (const agentId of agents) {
       const scope = this.context.scope(`agents/${agentId}`);
       let index = 0;
       for await (const record of this.logs.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
-        const fact = readFact(record, agentId, index);
+        const request = readModelRequest(record, agentId, index);
         index += 1;
-        if (fact?.rootTurnId === rootTurnId) facts.push(fact);
+        if (request?.rootTurnId === rootTurnId) requests.push(request);
       }
     }
-    const main = facts
-      .filter((fact) => fact.agentId === MAIN_AGENT_ID)
-      .toSorted(compareMainFacts)
+    const main = requests
+      .filter((request) => request.agentId === MAIN_AGENT_ID)
+      .toSorted(compareMainModelRequests)
       .at(-1);
     if (main === undefined) return undefined;
     const participants = new Map<string, FeedbackParticipantModel>();
-    for (const fact of facts.toSorted(compareFacts)) {
-      const key = JSON.stringify([fact.model, fact.provider]);
-      if (!participants.has(key)) participants.set(key, { model: fact.model, provider: fact.provider });
+    for (const request of requests.toSorted(compareModelRequests)) {
+      const key = JSON.stringify([request.model, request.provider]);
+      if (!participants.has(key)) participants.set(key, { model: request.model, provider: request.provider });
     }
     return {
       model: main.model,
@@ -72,7 +66,7 @@ export class SessionFeedbackContextService extends Service implements ISessionFe
   }
 }
 
-function readFact(record: WireRecord, agentId: string, index: number): OrderedFact | undefined {
+function readModelRequest(record: WireRecord, agentId: string, index: number): OrderedModelRequest | undefined {
   if (record.type !== FeedbackModelRequestRecorded.type) return undefined;
   const { type: _type, time, ...payload } = record;
   const parsed = FeedbackModelRequestRecorded.schema.safeParse(payload);
@@ -80,11 +74,11 @@ function readFact(record: WireRecord, agentId: string, index: number): OrderedFa
   return { ...parsed.data, time: typeof time === 'number' ? time : 0, index };
 }
 
-function compareMainFacts(a: OrderedFact, b: OrderedFact): number {
+function compareMainModelRequests(a: OrderedModelRequest, b: OrderedModelRequest): number {
   return a.step - b.step || a.time - b.time || a.index - b.index;
 }
 
-function compareFacts(a: OrderedFact, b: OrderedFact): number {
+function compareModelRequests(a: OrderedModelRequest, b: OrderedModelRequest): number {
   return a.time - b.time || a.agentId.localeCompare(b.agentId) || a.index - b.index;
 }
 

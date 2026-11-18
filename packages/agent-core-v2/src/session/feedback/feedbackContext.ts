@@ -13,9 +13,9 @@ const feedbackModelRequestRecordedSchema = z.object({
   traceId: z.string().optional(),
 });
 
-export class FeedbackModelRequestRecorded extends AgentEvent2<
-  z.infer<typeof feedbackModelRequestRecordedSchema>
-> {
+export type FeedbackModelRequest = z.infer<typeof feedbackModelRequestRecordedSchema>;
+
+export class FeedbackModelRequestRecorded extends AgentEvent2<FeedbackModelRequest> {
   static override readonly type = 'feedback.model_request_recorded';
   static override readonly durable = true;
   static override readonly schema = feedbackModelRequestRecordedSchema;
