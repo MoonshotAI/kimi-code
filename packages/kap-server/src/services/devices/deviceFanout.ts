@@ -1,4 +1,3 @@
-import type { DeviceManager } from './deviceManager';
 import type { DeviceSession } from './deviceSession';
 
 export type DeviceQuery = Readonly<Record<string, string | number | boolean | readonly string[] | undefined>>;
@@ -20,18 +19,6 @@ export class DeviceSourceError extends Error {
     super(message);
     this.name = 'DeviceSourceError';
   }
-}
-
-export function deviceSources(manager: DeviceManager): DeviceSources {
-  return {
-    sources: () => {
-      manager.activate();
-      return manager.list().map((info) => ({
-        id: info.id,
-        session: info.entry.enabled === false ? undefined : info.bridge?.session,
-      }));
-    },
-  };
 }
 
 function queryString(query: DeviceQuery): string {

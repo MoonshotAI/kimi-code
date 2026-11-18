@@ -27,6 +27,11 @@ export interface RemoteControlDeviceList {
   readonly max_devices?: number;
 }
 
+export interface RemoteControlRelayAccess {
+  readonly relayOrigin: string;
+  readonly cookie: string;
+}
+
 export class RemoteControlDeviceClientError extends Error {
   constructor(
     message: string,
@@ -34,6 +39,13 @@ export class RemoteControlDeviceClientError extends Error {
   ) {
     super(message);
     this.name = 'RemoteControlDeviceClientError';
+  }
+}
+
+export class RemoteControlLoginRequiredError extends RemoteControlDeviceClientError {
+  constructor() {
+    super('Remote Control requires a Kimi login.');
+    this.name = 'RemoteControlLoginRequiredError';
   }
 }
 
@@ -73,6 +85,19 @@ export class RemoteControlDeviceClient {
     this.exchanges.clear();
     this.abortController.abort();
     this.abortController = new AbortController();
+  }
+
+  async relayAccess(refresh = false): Promise<RemoteControlRelayAccess> {
+    try {
+      const context = await this.context();
+      if (refresh) this.cookies.delete(context.cacheKey);
+      return { relayOrigin: context.relayOrigin, cookie: await this.sessionCookie(context, refresh) };
+    } catch (error) {
+      if (error instanceof RemoteControlDeviceClientError) throw error;
+      throw new RemoteControlDeviceClientError(
+        `Remote Control session exchange failed: ${errorMessage(error)}`,
+      );
+    }
   }
 
   async listDevices(): Promise<RemoteControlDeviceList> {
@@ -130,7 +155,7 @@ export class RemoteControlDeviceClient {
       resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }),
     );
     if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
-      throw new RemoteControlDeviceClientError('Remote Control requires a Kimi login.');
+      throw new RemoteControlLoginRequiredError();
     }
     return {
       auth,

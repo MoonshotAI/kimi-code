@@ -7,43 +7,94 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import type { DeviceSnapshot } from '../../protocol/events-zod';
+import { AccountDeviceBridge, type RemoteControlRelay } from './accountDeviceBridge';
+import { DeviceConnectError, type DeviceBridge } from './deviceBridge';
+import type { DeviceSources } from './deviceFanout';
 import {
   collectSharedProviders,
   sendSharedProviders,
   type ProviderCopyResult,
 } from './deviceProviders';
-import { DeviceConnectError, SshDeviceBridge } from './sshDeviceBridge';
 import type { DeviceSession } from './deviceSession';
+import { SshDeviceBridge } from './sshDeviceBridge';
 
 interface BridgeRecord {
   readonly fingerprint: string;
-  readonly bridge: SshDeviceBridge;
+  readonly bridge: DeviceBridge;
+  started: boolean;
 }
+
+export type DeviceConflict =
+  | { readonly failure: 'self' }
+  | { readonly failure: 'duplicate'; readonly duplicateOf: string };
 
 export interface DeviceInfo {
   readonly id: string;
   readonly entry: DeviceEntry;
-  readonly bridge: SshDeviceBridge | undefined;
+  readonly bridge: DeviceBridge | undefined;
+  readonly conflict?: DeviceConflict;
+}
+
+export interface DeviceManagerOptions {
+  readonly relay: RemoteControlRelay;
+  readonly localDeviceId: string;
+  readonly onChange?: () => void;
+}
+
+function machineId(info: Omit<DeviceInfo, 'conflict'>): string | undefined {
+  return info.bridge?.identity?.deviceId ?? (info.entry.connection === 'account' ? info.id : undefined);
+}
+
+function conflictMessage(id: string, conflict: DeviceConflict): string {
+  return conflict.failure === 'self'
+    ? `device "${id}" is this computer`
+    : `device "${id}" is the same computer as device "${conflict.duplicateOf}"`;
 }
 
 export function toDeviceSnapshot(info: DeviceInfo): DeviceSnapshot {
-  const disabled = info.entry.enabled === false;
+  const { id, entry, bridge, conflict } = info;
+  const disabled = entry.enabled === false;
+  const ssh = entry.connection === 'account' ? undefined : entry;
+  const registration = bridge instanceof AccountDeviceBridge ? bridge.registration : undefined;
   return {
-    id: info.id,
-    host: info.entry.host,
-    identity_file: info.entry.identityFile,
-    remote_bin: info.entry.remoteBin,
-    name: info.entry.name,
-    enabled: info.entry.enabled,
-    status: disabled ? 'disconnected' : info.bridge?.status ?? 'pending',
-    remote_version: info.bridge?.remoteVersion,
-    connect_error: disabled ? `device "${info.id}" is disabled` : info.bridge?.error,
-    connect_failure: disabled ? 'unknown' : info.bridge?.failure,
+    id,
+    connection: entry.connection ?? 'ssh',
+    host: ssh?.host,
+    identity_file: ssh?.identityFile,
+    remote_bin: ssh?.remoteBin,
+    name: entry.name,
+    enabled: entry.enabled,
+    status: disabled || conflict !== undefined ? 'disconnected' : bridge?.status ?? 'pending',
+    remote_version: bridge?.remoteVersion,
+    connect_error: disabled
+      ? `device "${id}" is disabled`
+      : conflict === undefined ? bridge?.error : conflictMessage(id, conflict),
+    connect_failure: disabled ? 'unknown' : conflict?.failure ?? bridge?.failure,
+    device_id: machineId(info),
+    product_name: bridge?.identity?.productName,
+    platform: registration?.platform,
+    alias: registration?.alias,
+    duplicate_of: conflict?.failure === 'duplicate' ? conflict.duplicateOf : undefined,
   };
 }
 
 export function deviceSnapshots(manager: DeviceManager): DeviceSnapshot[] {
   return manager.list().map(toDeviceSnapshot);
+}
+
+export function deviceSources(manager: DeviceManager): DeviceSources {
+  return {
+    sources: () => {
+      manager.activate();
+      return manager
+        .list()
+        .filter((info) => info.conflict === undefined)
+        .map((info) => ({
+          id: info.id,
+          session: info.entry.enabled === false ? undefined : info.bridge?.session,
+        }));
+    },
+  };
 }
 
 export class DeviceManager {
@@ -53,7 +104,7 @@ export class DeviceManager {
 
   constructor(
     private readonly core: Scope,
-    private readonly onChange?: () => void,
+    private readonly options: DeviceManagerOptions,
   ) {
     this.subscription = core.accessor.get(IConfigService).onDidSectionChange((event) => {
       if (event.domain === DEVICES_SECTION) this.reconcile();
@@ -65,11 +116,28 @@ export class DeviceManager {
   }
 
   list(): readonly DeviceInfo[] {
-    return Object.entries(this.section()).map(([id, entry]) => ({
+    const infos = Object.entries(this.section()).map(([id, entry]) => ({
       id,
       entry,
       bridge: this.records.get(id)?.bridge,
     }));
+    const owners = new Map<string, string>();
+    return infos.map((info): DeviceInfo => {
+      const machine = info.entry.enabled === false ? undefined : machineId(info);
+      if (machine === undefined) return info;
+      if (machine === this.options.localDeviceId) return { ...info, conflict: { failure: 'self' } };
+      const owner = owners.get(machine);
+      if (owner !== undefined) return { ...info, conflict: { failure: 'duplicate', duplicateOf: owner } };
+      owners.set(machine, info.id);
+      return info;
+    });
+  }
+
+  accountDeviceRejection(id: string): string | undefined {
+    if (id === this.options.localDeviceId) return 'this device cannot be added to itself';
+    if (this.section()[id] !== undefined) return undefined;
+    const existing = this.list().find((info) => info.id !== id && machineId(info) === id);
+    return existing === undefined ? undefined : `this device is already added as device "${existing.id}"`;
   }
 
   async connect(id: string): Promise<DeviceSession> {
@@ -77,7 +145,12 @@ export class DeviceManager {
     const entry = this.section()[id];
     if (entry === undefined) throw new DeviceConnectError('unknown', `device "${id}" is not configured`);
     if (entry.enabled === false) throw new DeviceConnectError('unknown', `device "${id}" is disabled`);
-    return this.record(id, entry).bridge.connect();
+    const record = this.record(id, entry);
+    this.assertUsable(id);
+    record.started = true;
+    const session = await record.bridge.connect();
+    this.assertUsable(id);
+    return session;
   }
 
   activate(): void {
@@ -89,6 +162,9 @@ export class DeviceManager {
   }
 
   async copyProviders(id: string): Promise<ProviderCopyResult> {
+    if (this.section()[id]?.connection === 'account') {
+      throw new Error('Copying model providers is only available for SSH devices');
+    }
     const session = await this.connect(id);
     const shared = await collectSharedProviders(this.core);
     if (Object.keys(shared.providers).length === 0) return { providers: [] };
@@ -96,7 +172,7 @@ export class DeviceManager {
   }
 
   session(id: string): DeviceSession | undefined {
-    return this.records.get(id)?.bridge.session;
+    return this.conflictOf(id) === undefined ? this.records.get(id)?.bridge.session : undefined;
   }
 
   close(): void {
@@ -106,20 +182,31 @@ export class DeviceManager {
     this.records.clear();
   }
 
+  private conflictOf(id: string): DeviceConflict | undefined {
+    return this.list().find((info) => info.id === id)?.conflict;
+  }
+
+  private assertUsable(id: string): void {
+    const conflict = this.conflictOf(id);
+    if (conflict !== undefined) throw new DeviceConnectError(conflict.failure, conflictMessage(id, conflict));
+  }
+
   private record(id: string, entry: DeviceEntry): BridgeRecord {
     const fingerprint = JSON.stringify({ ...entry, enabled: undefined, name: undefined });
     const existing = this.records.get(id);
     if (existing?.fingerprint === fingerprint) return existing;
     existing?.bridge.dispose();
-    const created = {
-      fingerprint,
-      bridge: new SshDeviceBridge(entry, {
-        onChange: () => this.onChange?.(),
-      }),
-    };
+    const created = { fingerprint, bridge: this.createBridge(id, entry), started: false };
     this.records.set(id, created);
-    this.onChange?.();
+    this.options.onChange?.();
     return created;
+  }
+
+  private createBridge(id: string, entry: DeviceEntry): DeviceBridge {
+    const onChange = (): void => this.options.onChange?.();
+    return entry.connection === 'account'
+      ? new AccountDeviceBridge(id, this.options.relay, { onChange })
+      : new SshDeviceBridge(entry, { onChange });
   }
 
   private reconcile(): void {
@@ -133,15 +220,18 @@ export class DeviceManager {
       changed = true;
       bridge.dispose();
     }
-    if (changed) this.onChange?.();
+    if (changed) this.options.onChange?.();
     this.startPending();
   }
 
   private startPending(): void {
     if (!this.active) return;
     for (const [id, entry] of Object.entries(this.section())) {
-      if (entry.enabled === false || this.records.has(id)) continue;
-      this.record(id, entry).bridge.start();
+      if (entry.enabled === false) continue;
+      const record = this.record(id, entry);
+      if (record.started || this.conflictOf(id) !== undefined) continue;
+      record.started = true;
+      record.bridge.start();
     }
   }
 }

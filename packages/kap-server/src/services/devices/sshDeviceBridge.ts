@@ -2,26 +2,19 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import type { DeviceEntry } from '@moonshot-ai/agent-core-v2';
+import type { SshDeviceEntry } from '@moonshot-ai/agent-core-v2';
 
+import {
+  DeviceConnectError,
+  readRemoteMeta,
+  type DeviceBridge,
+  type DeviceConnectFailure,
+  type DeviceStatus,
+  type RemoteDeviceIdentity,
+} from './deviceBridge';
 import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from './deviceProtocol';
 import type { DeviceSession } from './deviceSession';
 import { StdioDeviceSession } from './stdioDeviceSession';
-
-export type DeviceStatus = 'pending' | 'connecting' | 'ready' | 'disconnected';
-
-export type DeviceConnectFailure =
-  | 'host_not_found'
-  | 'connection_refused'
-  | 'host_unreachable'
-  | 'connect_timeout'
-  | 'authentication_failed'
-  | 'host_key_changed'
-  | 'executor_not_found'
-  | 'executor_outdated'
-  | 'remote_busy'
-  | 'remote_start_failed'
-  | 'unknown';
 
 interface BootstrapMarker {
   readonly protocol: number | undefined;
@@ -29,17 +22,6 @@ interface BootstrapMarker {
   readonly version?: string;
   readonly error?: string;
   readonly message?: string;
-}
-
-export class DeviceConnectError extends Error {
-  constructor(
-    readonly failure: DeviceConnectFailure,
-    message: string,
-    readonly remoteVersion?: string,
-  ) {
-    super(message);
-    this.name = 'DeviceConnectError';
-  }
 }
 
 const BOOTSTRAP_MARKER = '__KIMI_ENSURE_DAEMON__';
@@ -98,7 +80,7 @@ export function classifySshFailure(stderr: string, exitCode: number | null): Dev
   if (/No route to host|Network is unreachable/i.test(stderr)) return 'host_unreachable';
   if (/timed out/i.test(stderr)) return 'connect_timeout';
   if (exitCode === 126 || exitCode === 127) return 'executor_not_found';
-  if (/unknown command|unknown option|too many arguments|excess arguments|has been deprecated/i.test(stderr)) return 'executor_outdated';
+  if (/unknown command|unknown option|too many arguments|excess arguments|has been deprecated/i.test(stderr)) return 'outdated';
   return 'unknown';
 }
 
@@ -122,7 +104,7 @@ function readMarker(stdout: string): BootstrapMarker | undefined {
 
 function outdatedError(version: string | undefined): DeviceConnectError {
   return new DeviceConnectError(
-    'executor_outdated',
+    'outdated',
     `kimi ${version ?? '(unknown version)'} on this device is too old for this app; run \`kimi upgrade\` on the device`,
     version,
   );
@@ -158,7 +140,7 @@ function sshFailure(result: SshResult): DeviceConnectError {
   );
 }
 
-function identityArgs(entry: DeviceEntry): string[] {
+function identityArgs(entry: SshDeviceEntry): string[] {
   return entry.identityFile === undefined
     ? []
     : ['-i', entry.identityFile, '-o', 'IdentitiesOnly=yes'];
@@ -226,11 +208,12 @@ export interface SshDeviceBridgeOptions {
   readonly onChange?: () => void;
 }
 
-export class SshDeviceBridge {
+export class SshDeviceBridge implements DeviceBridge {
   private statusValue: DeviceStatus = 'pending';
   private failureValue: DeviceConnectFailure | undefined;
   private errorValue: string | undefined;
   private remoteVersionValue: string | undefined;
+  private identityValue: RemoteDeviceIdentity | undefined;
   private sessionValue: ActiveDeviceSession | undefined;
   private connecting: Promise<DeviceSession> | undefined;
   private readonly children = new Set<ChildProcess>();
@@ -241,7 +224,7 @@ export class SshDeviceBridge {
   private readonly env: NodeJS.ProcessEnv;
 
   constructor(
-    private readonly entry: DeviceEntry,
+    private readonly entry: SshDeviceEntry,
     private readonly options: SshDeviceBridgeOptions = {},
   ) {
     this.sshProgram = options.sshProgram ?? 'ssh';
@@ -266,6 +249,10 @@ export class SshDeviceBridge {
 
   get session(): DeviceSession | undefined {
     return this.sessionValue?.session;
+  }
+
+  get identity(): RemoteDeviceIdentity | undefined {
+    return this.identityValue;
   }
 
   connect(): Promise<DeviceSession> {
@@ -321,6 +308,7 @@ export class SshDeviceBridge {
     if (this.statusValue !== 'ready') this.update('connecting');
     try {
       const active = await this.openSession();
+      await this.identify(active);
       if (this.disposed) {
         active.session.close(new Error('device bridge disposed'));
         active.child.kill();
@@ -342,6 +330,23 @@ export class SshDeviceBridge {
       this.update('disconnected', failure, message);
       if (RETRYABLE.has(failure)) void this.reconnect();
       throw error instanceof DeviceConnectError ? error : new DeviceConnectError(failure, message);
+    }
+  }
+
+  private async identify(active: ActiveDeviceSession): Promise<void> {
+    try {
+      const meta = await readRemoteMeta(active.session);
+      if (meta.identity === undefined) throw outdatedError(meta.serverVersion);
+      this.identityValue = meta.identity;
+      this.remoteVersionValue = meta.serverVersion;
+    } catch (error) {
+      active.session.close();
+      active.child.kill();
+      if (error instanceof DeviceConnectError) throw error;
+      throw new DeviceConnectError(
+        'unknown',
+        `could not read the device server metadata: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 

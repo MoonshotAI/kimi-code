@@ -36,6 +36,8 @@ export const metaResponseSchema = z.object({
   kimi_agent_protocol_version: z.string().min(1),
   server_version: z.string().min(1),
   product: z.string().min(1).optional(),
+  device_id: z.string().min(1),
+  device_api_level: z.number().int(),
   capabilities: metaCapabilitiesSchema,
   server_id: z.string().min(1),
   started_at: isoDateTimeSchema,

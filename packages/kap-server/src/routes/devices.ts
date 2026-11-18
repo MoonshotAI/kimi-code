@@ -12,11 +12,12 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { deviceSnapshotSchema } from '../protocol/events-zod';
+import { DeviceConnectError } from '../services/devices/deviceBridge';
 import { deviceSnapshots, toDeviceSnapshot, type DeviceManager } from '../services/devices/deviceManager';
-import { deviceWireSchema } from '../services/devices/devicesConfig';
+import { deviceWireSchema, sshDeviceWireSchema } from '../services/devices/devicesConfig';
 import { providerCopyResultSchema } from '../services/devices/deviceProviders';
 import { readSshConfigHosts } from '../services/devices/sshConfigHosts';
-import { DeviceConnectError, SshDeviceBridge } from '../services/devices/sshDeviceBridge';
+import { SshDeviceBridge } from '../services/devices/sshDeviceBridge';
 
 interface DevicesRouteHost {
   get(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
@@ -104,10 +105,10 @@ export function registerDevicesRoutes(app: DevicesRouteHost, core: Scope, manage
     {
       method: 'POST',
       path: '/devices::test',
-      body: deviceWireSchema,
+      body: sshDeviceWireSchema,
       success: { data: testResultSchema },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },
-      description: 'Check SSH connectivity and the remote kimi version without starting a server',
+      description: 'Check SSH connectivity and the remote kimi version of an SSH device without starting a server',
       tags: ['devices'],
     },
     async (req, reply) => {
@@ -204,11 +205,20 @@ export function registerDevicesRoutes(app: DevicesRouteHost, core: Scope, manage
       body: deviceWireSchema,
       success: { data: z.object({ ok: z.literal(true) }) },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },
-      description: 'Create or replace a device',
+      description: 'Create or replace a device; an account device is keyed by its Remote Control device id',
       tags: ['devices'],
     },
     async (req, reply) => {
-      await mutateDevices(() => config.replace(DEVICES_SECTION, { ...manager.section(), [req.params.id]: req.body }));
+      const { id } = req.params;
+      const rejection = await mutateDevices(async () => {
+        const reason = req.body.connection === 'account' ? manager.accountDeviceRejection(id) : undefined;
+        if (reason === undefined) await config.replace(DEVICES_SECTION, { ...manager.section(), [id]: req.body });
+        return reason;
+      });
+      if (rejection !== undefined) {
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, rejection, req.id));
+        return;
+      }
       reply.send(okEnvelope({ ok: true as const }, req.id));
     },
   );

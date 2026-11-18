@@ -145,13 +145,18 @@ default_plan_mode = false
 
 [devices]
 
-# one [devices."<name>"] table per entry:
+# one [devices."<name>"] table per entry, in one of these shapes:
 # [devices."<name>"]
+  # connection: "ssh"
   # host: string
   # name: string
   # enabled: boolean
   # identity_file: string
   # remote_bin: string
+# [devices."<name>"]
+  # connection: "account"
+  # name: string
+  # enabled: boolean
 
 # ##########################################################################
 # environments

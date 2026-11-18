@@ -29,7 +29,7 @@ import {
   type HttpTunnelLimits,
   type RemoteControlHandle,
 } from '../src/remote-control';
-import { RemoteControlDeviceClient } from '../src/device-client';
+import { RemoteControlDeviceClient, RemoteControlLoginRequiredError } from '../src/device-client';
 import { remoteControlLockPath } from '../src/lock';
 import { createRemoteControlManager } from '../src/manager';
 
@@ -1293,6 +1293,53 @@ describe('Remote Control device client', () => {
 
     expect(exchanges).toBe(2);
     expect(deviceCookies).toEqual(['rc_session=1', 'rc_session=2']);
+  });
+
+  it('shares the cached relay session with device operations and re-exchanges on refresh', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    let exchanges = 0;
+    const deviceCookies: Array<string | undefined> = [];
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/coding-relay/auth/exchange') {
+        exchanges += 1;
+        response.writeHead(204, { 'Set-Cookie': `rc_session=${exchanges}; Path=/; HttpOnly` });
+        response.end();
+        return;
+      }
+      deviceCookies.push(
+        Array.isArray(request.headers.cookie) ? request.headers.cookie[0] : request.headers.cookie,
+      );
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ devices: [] }));
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}/coding-relay/`,
+    });
+    const relayOrigin = `http://127.0.0.1:${port}/coding-relay`;
+
+    await expect(client.relayAccess()).resolves.toEqual({ relayOrigin, cookie: 'rc_session=1' });
+    await client.listDevices();
+    await expect(client.relayAccess()).resolves.toEqual({ relayOrigin, cookie: 'rc_session=1' });
+    await expect(client.relayAccess(true)).resolves.toEqual({ relayOrigin, cookie: 'rc_session=2' });
+    await client.listDevices();
+
+    expect(exchanges).toBe(2);
+    expect(deviceCookies).toEqual(['rc_session=1', 'rc_session=2']);
+  });
+
+  it('reports a missing Kimi login as a login-required error', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-device-signed-out-'));
+    cleanups.push(() => {
+      rmSync(homeDir, { recursive: true, force: true });
+    });
+    const client = new RemoteControlDeviceClient({ homeDir, relayOrigin: 'http://127.0.0.1:1' });
+
+    await expect(client.relayAccess()).rejects.toBeInstanceOf(RemoteControlLoginRequiredError);
+    await expect(client.listDevices()).rejects.toThrow('Remote Control requires a Kimi login.');
   });
 
   it('does not retry more than once after re-exchange', async () => {

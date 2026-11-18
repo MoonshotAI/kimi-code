@@ -32,7 +32,7 @@ import { registerSessionRatingRoutes } from './sessionRating';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionListAndBatchRoutes } from './sessionList';
 import { registerSessionsRoutes } from './sessions';
-import type { DeviceManager } from '../services/devices/deviceManager';
+import { deviceSources, type DeviceManager } from '../services/devices/deviceManager';
 import { registerImportProvidersRoute } from '../services/devices/deviceProviders';
 import { registerDevicesRoutes } from './devices';
 import { registerShutdownRoutes } from './shutdown';
@@ -41,7 +41,6 @@ import { registerToolsRoutes } from './tools';
 import { registerConversationRoutes } from './conversation';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
-import { deviceSources } from '../services/devices/deviceFanout';
 
 interface ApiV1AppHost {
   register(
@@ -62,6 +61,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly serverId?: string;
   readonly serverVersion: string;
   readonly hostIdentity: KimiHostIdentity;
+  readonly deviceId: string;
   readonly debugEndpoints?: boolean;
   readonly enableShutdown?: boolean;
   readonly onShutdown: () => void;
@@ -91,6 +91,7 @@ export async function registerApiV1Routes(
       registerMetaRoute(apiV1, {
         serverVersion: opts.serverVersion,
         product: opts.hostIdentity.productName,
+        deviceId: opts.deviceId,
         serverId: opts.serverId ?? ulid(),
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,

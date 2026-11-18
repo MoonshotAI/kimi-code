@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import { IConfigService } from '@moonshot-ai/agent-core-v2';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { getFeatureRecipes } from '@moonshot-ai/agent-core-v2/features/featureRegistry';
+import { readKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { DEVICE_API_LEVEL } from '../src/services/devices/deviceProtocol';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
@@ -235,13 +237,15 @@ describe('/api/v1/meta features', () => {
     expect(after).toHaveLength(before.length - 1);
   });
 
-  it('surfaces hostIdentity.productName as product on /api/v1/meta', async () => {
+  it('surfaces hostIdentity.productName as product and the device identity on /api/v1/meta', async () => {
     const base = await boot();
     const res = await authedFetch(server as RunningServer, base, '/api/v1/meta');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { code: number; data: { product?: string } };
+    const body = (await res.json()) as { code: number; data: { product?: string; device_id?: string; device_api_level?: number } };
     expect(body.code).toBe(0);
     expect(body.data.product).toBe(TEST_HOST_IDENTITY.productName);
+    expect(body.data.device_id).toBe(readKimiDeviceId(home as string));
+    expect(body.data.device_api_level).toBe(DEVICE_API_LEVEL);
   });
 
   it('advertises interactions_list and session_wait capabilities and serves authenticated GET /api/v1/kap.md', async () => {

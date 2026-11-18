@@ -34,6 +34,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import {
   createKimiDefaultHeaders,
+  createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -214,6 +215,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
+  const localDeviceId = createKimiDeviceId(homeDir);
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
   const { app: core } = bootstrap(
@@ -424,7 +426,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const connectionRegistry = new ConnectionRegistry();
   let notifyDevices = (): void => {};
   let deviceNotifyTimer: ReturnType<typeof setTimeout> | undefined;
-  const deviceManager = new DeviceManager(core, () => notifyDevices());
+  const deviceManager = new DeviceManager(core, {
+    relay: remoteControlDevices,
+    localDeviceId,
+    onChange: () => notifyDevices(),
+  });
   const requestClose = (): void => {
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
   };
@@ -537,6 +543,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     serverId: registration.serverId,
     serverVersion,
     hostIdentity: opts.hostIdentity,
+    deviceId: localDeviceId,
     debugEndpoints,
     enableShutdown,
     remoteControl: {

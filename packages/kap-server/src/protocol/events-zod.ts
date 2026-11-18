@@ -91,7 +91,8 @@ export const modelCatalogChangedEventSchema = z.object({
 
 export const deviceSnapshotSchema = z.object({
   id: z.string(),
-  host: z.string(),
+  connection: z.enum(['ssh', 'account']),
+  host: z.string().optional(),
   identity_file: z.string().optional(),
   remote_bin: z.string().optional(),
   name: z.string().optional(),
@@ -100,6 +101,11 @@ export const deviceSnapshotSchema = z.object({
   remote_version: z.string().optional(),
   connect_error: z.string().optional(),
   connect_failure: z.string().optional(),
+  device_id: z.string().optional(),
+  product_name: z.string().optional(),
+  platform: z.string().optional(),
+  alias: z.string().optional(),
+  duplicate_of: z.string().optional(),
 });
 
 export type DeviceSnapshot = z.infer<typeof deviceSnapshotSchema>;

@@ -1,30 +1,41 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type OutgoingHttpHeaders } from 'node:http';
 import { createConnection } from 'node:net';
 import { Duplex } from 'node:stream';
-import type { OutgoingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { gzipSync } from 'node:zlib';
 
 import Fastify from 'fastify';
 import { FileTokenStorage, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
-import { IConfigService, IOAuthService, deviceIdSchema, devicesSectionSchema } from '@moonshot-ai/agent-core-v2';
+import {
+  IConfigService,
+  IOAuthService,
+  accountDeviceEntrySchema,
+  deviceIdSchema,
+  devicesSectionSchema,
+  type DeviceEntry,
+} from '@moonshot-ai/agent-core-v2';
+import { RemoteControlLoginRequiredError, type RemoteControlDevice } from '@moonshot-ai/remote-control';
 import { describe, expect, it, vi } from 'vitest';
-import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
+import WebSocketClient, { WebSocketServer, type RawData, type WebSocket as NodeWebSocket } from 'ws';
 
+import { AccountDeviceBridge } from '../src/services/devices/accountDeviceBridge';
+import { DeviceConnectError, type RemoteDeviceIdentity } from '../src/services/devices/deviceBridge';
 import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from '../src/services/devices/deviceProtocol';
 import { matchDeviceProxyPath, proxyDeviceWebSocket, registerDeviceProxyRoutes, upstreamHeaders } from '../src/services/devices/deviceProxy';
-import { DeviceManager } from '../src/services/devices/deviceManager';
-import { deviceWireSchema } from '../src/services/devices/devicesConfig';
+import { DeviceManager, deviceSources, toDeviceSnapshot } from '../src/services/devices/deviceManager';
+import { deviceWireSchema, sshDeviceWireSchema } from '../src/services/devices/devicesConfig';
 import { DeviceRequestError, type DeviceHttpRequest, type DeviceHttpResponse, type DeviceSession } from '../src/services/devices/deviceSession';
+import { RelayDeviceSession, relayRequestHeaders } from '../src/services/devices/relayDeviceSession';
 import { StdioDeviceSession } from '../src/services/devices/stdioDeviceSession';
 import { JsonlRpcStream, RPC_BACKPRESSURE_TIMEOUT_MS } from '../src/transport/jsonlRpcStream';
-import { startServer } from '../src/start';
+import { startServer, type RunningServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import {
-  DeviceConnectError,
   SshDeviceBridge,
   classifySshFailure,
   checkBootstrapOutput,
@@ -36,6 +47,15 @@ import {
   DEVICE_RPC_MAX_BODY_BYTES,
   startUnixRpcServer,
 } from '../src/transport/stdioRpc';
+
+const SSH_REMOTE_META = { server_version: '1.2.3', product: 'kimi-code-cli', device_id: 'ssh-remote', device_api_level: DEVICE_API_LEVEL };
+
+function metaFrame(id: string, meta: Record<string, unknown> = SSH_REMOTE_META): string {
+  const body = Buffer.from(JSON.stringify({ code: 0, msg: 'success', data: meta, request_id: 'meta' })).toString('base64');
+  return JSON.stringify({ type: 'http.res', id, status: 200, headers: { 'content-type': 'application/json' }, body });
+}
+
+const ANSWER_META = `read line\necho '${metaFrame('1')}'`;
 
 function thrown(run: () => unknown): DeviceConnectError {
   try {
@@ -104,12 +124,25 @@ describe('device configuration', () => {
     expect(devicesSectionSchema.safeParse({ dev: { host: '-oProxyCommand=x' } }).success).toBe(false);
   });
 
+  it('accepts account entries without SSH fields and keeps SSH as the default connection', () => {
+    expect(devicesSectionSchema.safeParse({
+      ssh: { connection: 'ssh', host: 'dev-box' },
+      'a1b2c3d4-0000-4000-8000-000000000001': { connection: 'account', name: 'Laptop', enabled: false },
+    }).success).toBe(true);
+    expect(accountDeviceEntrySchema.safeParse({ connection: 'account', host: 'dev-box' }).success).toBe(false);
+    expect(devicesSectionSchema.safeParse({ dev: { connection: 'account', remoteBin: 'kimi' } }).success).toBe(false);
+    expect(devicesSectionSchema.safeParse({ dev: { connection: 'tunnel', host: 'dev-box' } }).success).toBe(false);
+  });
+
   it('maps the wire entry to the config entry through one schema', () => {
     expect(deviceWireSchema.parse({ host: 'dev-box', identity_file: '~/.ssh/key', remote_bin: 'kimi' })).toEqual({
       host: 'dev-box',
       identityFile: '~/.ssh/key',
       remoteBin: 'kimi',
     });
+    expect(deviceWireSchema.parse({ connection: 'account', name: 'Laptop' })).toEqual({ connection: 'account', name: 'Laptop' });
+    expect(deviceWireSchema.safeParse({ connection: 'account', identity_file: '~/.ssh/key' }).success).toBe(false);
+    expect(sshDeviceWireSchema.safeParse({ connection: 'account' }).success).toBe(false);
   });
 
   it('keeps device ids safe for URL path segments', () => {
@@ -137,7 +170,7 @@ describe('ssh bootstrap', () => {
     const error = thrown(() =>
       checkBootstrapOutput('__KIMI_ENSURE_DAEMON__{"version":"0.40.0"}\n'),
     );
-    expect(error.failure).toBe('executor_outdated');
+    expect(error.failure).toBe('outdated');
     expect(error.remoteVersion).toBe('0.40.0');
     expect(error.message).toContain('kimi upgrade');
     expect(thrown(() => checkBootstrapOutput('0.40.0\n__KIMI_ENSURE_DAEMON__{"protocol":0}\n')).remoteVersion).toBe('0.40.0');
@@ -148,7 +181,7 @@ describe('ssh bootstrap', () => {
       `__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: DEVICE_PROTOCOL_VERSION, api_level: apiLevel, version: '2.5.2' })}\n`;
     for (const apiLevel of [undefined, DEVICE_API_LEVEL - 1]) {
       const error = thrown(() => checkBootstrapOutput(marker(apiLevel)));
-      expect(error.failure).toBe('executor_outdated');
+      expect(error.failure).toBe('outdated');
       expect(error.remoteVersion).toBe('2.5.2');
       expect(error.message).toContain('kimi upgrade');
     }
@@ -176,7 +209,7 @@ describe('ssh bootstrap', () => {
       const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
       const error = await bridge.probe().catch((error: unknown) => error);
       expect(error).toBeInstanceOf(DeviceConnectError);
-      expect((error as DeviceConnectError).failure).toBe('executor_outdated');
+      expect((error as DeviceConnectError).failure).toBe('outdated');
       expect((error as DeviceConnectError).remoteVersion).toBe('0.40.0');
     }),
   );
@@ -188,15 +221,38 @@ describe('ssh bootstrap', () => {
     ['user@dev: Permission denied (publickey).', 255, 'authentication_failed'],
     ['Host key verification failed.', 255, 'host_key_changed'],
     ['bash: kimi: command not found', 127, 'executor_not_found'],
-    ["error: unknown command 'ensure-daemon'", 1, 'executor_outdated'],
-    ['`kimi server` has been deprecated and no longer works.', 1, 'executor_outdated'],
-    ["error: unknown command 'web'. See 'kimi --help'.", 1, 'executor_outdated'],
-    ["error: too many arguments for 'web'. Expected 0 arguments but got 1.", 1, 'executor_outdated'],
-    ["error: unknown option '--probe'", 1, 'executor_outdated'],
+    ["error: unknown command 'ensure-daemon'", 1, 'outdated'],
+    ['`kimi server` has been deprecated and no longer works.', 1, 'outdated'],
+    ["error: unknown command 'web'. See 'kimi --help'.", 1, 'outdated'],
+    ["error: too many arguments for 'web'. Expected 0 arguments but got 1.", 1, 'outdated'],
+    ["error: unknown option '--probe'", 1, 'outdated'],
     ['something else', 1, 'unknown'],
   ] as const)('classifies %s', (stderr, code, failure) => {
     expect(classifySshFailure(stderr, code)).toBe(failure);
   });
+
+  it.skipIf(process.platform === 'win32')('reports a device whose server metadata predates device identity as outdated', () =>
+    withFakeSsh(
+      `#!/bin/sh
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
+read line
+echo '${metaFrame('1', { server_version: '1.2.3' })}'
+while IFS= read -r line; do :; done
+`,
+      async (ssh) => {
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
+        try {
+          await expect(bridge.connect()).rejects.toMatchObject({ failure: 'outdated', remoteVersion: '1.2.3' });
+          expect(bridge.status).toBe('disconnected');
+          expect(bridge.remoteVersion).toBe('1.2.3');
+          expect(bridge.session).toBeUndefined();
+          expect(bridge.identity).toBeUndefined();
+        } finally {
+          bridge.dispose();
+        }
+      },
+    ),
+  );
 
   it.skipIf(process.platform === 'win32')('kills a bootstrap ssh when disposed before it finishes', () =>
     withFakeSsh(
@@ -221,8 +277,9 @@ describe('ssh bootstrap', () => {
     withFakeSsh(
       `#!/bin/sh
 printf '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}\\n{"type":"http.res","id":"early","status":200,"headers":{},"body":"e30="}\\n'
+${ANSWER_META}
 read line
-printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
+printf '{"type":"http.res","id":"2","status":200,"headers":{},"body":"e30="}\\n'
 `,
       async (ssh) => {
         const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
@@ -246,10 +303,11 @@ process.stdout.write(output.subarray(0, split));
 setImmediate(() => {
   process.stdout.write(output.subarray(split));
 });
-process.stdin.once('data', () => {
-  process.stdout.write(JSON.stringify(${JSON.stringify({ type: 'ws.msg', id: '1', data: '你好' })}) + '\\n');
+let requests = 0;
+require('node:readline').createInterface({ input: process.stdin }).on('line', () => {
+  requests += 1;
+  process.stdout.write((requests === 1 ? ${JSON.stringify(metaFrame('1'))} : JSON.stringify(${JSON.stringify({ type: 'ws.msg', id: '2', data: '你好' })})) + '\\n');
 });
-process.stdin.resume();
 `,
       async (ssh) => {
         const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
@@ -276,14 +334,16 @@ process.stdin.resume();
       (dir) => `#!/bin/sh
 echo x >> '${join(dir, 'count')}'
 echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
+${ANSWER_META}
 while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed 's/.*"id":"\\([^"]*\\)".*/\\1/')
   case "$line" in
     *'"type":"http.req"'*)
       body=$(printf '{"ok":true}' | base64 | tr -d '\\n')
-      echo "{\\"type\\":\\"http.res\\",\\"id\\":\\"1\\",\\"status\\":200,\\"headers\\":{\\"content-type\\":\\"application/json\\"},\\"body\\":\\"$body\\"}"
+      echo "{\\"type\\":\\"http.res\\",\\"id\\":\\"$id\\",\\"status\\":200,\\"headers\\":{\\"content-type\\":\\"application/json\\"},\\"body\\":\\"$body\\"}"
       ;;
     *'"type":"ws.open"'*)
-      echo '{"type":"ws.msg","id":"2","data":"hello"}'
+      echo "{\\"type\\":\\"ws.msg\\",\\"id\\":\\"$id\\",\\"data\\":\\"hello\\"}"
       exit 0
       ;;
   esac
@@ -294,7 +354,8 @@ done
         try {
           const session = await bridge.connect();
           expect(bridge.status).toBe('ready');
-          expect(bridge.remoteVersion).toBeUndefined();
+          expect(bridge.remoteVersion).toBe('1.2.3');
+          expect(bridge.identity).toEqual({ deviceId: 'ssh-remote', productName: 'kimi-code-cli' } satisfies RemoteDeviceIdentity);
           const res = await session.request({ method: 'GET', path: '/api/v1/healthz', headers: {} });
           expect(res.status).toBe(200);
           expect(JSON.parse(res.body.toString('utf8'))).toEqual({ ok: true });
@@ -334,6 +395,7 @@ if [ "$attempt" = 2 ]; then
   exit 255
 fi
 echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
+${ANSWER_META}
 if [ "$attempt" = 1 ]; then exit 1; fi
 while IFS= read -r line; do :; done
 `,
@@ -364,6 +426,7 @@ if [ -e '${join(dir, 'down')}' ]; then
   exit 255
 fi
 echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
+${ANSWER_META}
 while IFS= read -r line; do :; done
 `,
       async (ssh, dir) => {
@@ -413,7 +476,7 @@ while IFS= read -r line; do :; done
 });
 
 describe('device auto-connect', () => {
-  function managerWith(section: Record<string, { host: string; enabled?: boolean }>) {
+  function managerWith(section: Record<string, DeviceEntry>) {
     let listener: ((event: { domain: string }) => void) | undefined;
     const config = {
       ready: Promise.resolve(),
@@ -432,7 +495,10 @@ describe('device auto-connect', () => {
         },
       },
     };
-    const manager = new DeviceManager(core as never);
+    const manager = new DeviceManager(core as never, {
+      relay: { relayAccess: vi.fn(), listDevices: vi.fn() },
+      localDeviceId: 'local-device',
+    });
     return { manager, changeDevices: () => listener?.({ domain: 'devices' }) };
   }
 
@@ -465,6 +531,35 @@ describe('device auto-connect', () => {
       manager.close();
     }
   });
+
+  it('reports this computer as self and never starts or proxies it', async () => {
+    const sshStart = vi.spyOn(SshDeviceBridge.prototype, 'start').mockImplementation(() => {});
+    const accountStart = vi.spyOn(AccountDeviceBridge.prototype, 'start').mockImplementation(() => {});
+    const { manager } = managerWith({ 'local-device': { connection: 'account', name: 'Here' }, dev: { host: 'dev-box' } });
+    try {
+      manager.activate();
+      await vi.waitFor(() => expect(sshStart).toHaveBeenCalledOnce());
+      expect(accountStart).not.toHaveBeenCalled();
+      expect(manager.list().map((info) => toDeviceSnapshot(info))).toEqual([
+        {
+          id: 'local-device',
+          connection: 'account',
+          name: 'Here',
+          status: 'disconnected',
+          connect_error: 'device "local-device" is this computer',
+          connect_failure: 'self',
+          device_id: 'local-device',
+        },
+        { id: 'dev', connection: 'ssh', host: 'dev-box', status: 'pending' },
+      ]);
+      expect(manager.session('local-device')).toBeUndefined();
+      await expect(manager.connect('local-device')).rejects.toMatchObject({ failure: 'self' });
+      expect(deviceSources(manager).sources().map((source) => source.id)).toEqual(['dev']);
+    } finally {
+      vi.restoreAllMocks();
+      manager.close();
+    }
+  });
 });
 
 describe('device HTTP session', () => {
@@ -486,11 +581,12 @@ describe('device HTTP session', () => {
     withFakeSsh(
       (dir) => `#!/bin/sh
 echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
+${ANSWER_META}
 while IFS= read -r line; do
   case "$line" in
     *'"type":"http.cancel"'*)
       echo "$line" > '${join(dir, 'cancel')}'
-      echo '{"type":"http.res","id":"1","status":200,"headers":{}}'
+      echo '{"type":"http.res","id":"2","status":200,"headers":{}}'
       ;;
   esac
 done
@@ -595,6 +691,8 @@ describe('device management routes', () => {
       const tested = await request('POST', '/api/v1/devices:test', { host: 'dev@example.test' });
       expect(tested.status).toBe(200);
       expect(await tested.json()).toMatchObject({ code: 0, data: { connected: true } });
+      const accountTest = await request('POST', '/api/v1/devices:test', { connection: 'account' });
+      expect(await accountTest.json()).toMatchObject({ code: 40001 });
       expect(probe).toHaveBeenCalledOnce();
       const created = await request('PUT', '/api/v1/devices/dev', { host: 'dev@example.test', name: 'Dev' });
       expect(created.status).toBe(200);
@@ -610,7 +708,7 @@ describe('device management routes', () => {
       ] } });
       expect((await request('DELETE', '/api/v1/devices/dev')).status).toBe(200);
       const remaining = await request('GET', '/api/v1/devices');
-      expect(await remaining.json()).toEqual({ code: 0, msg: 'success', data: { devices: [{ id: 'other', host: 'other.example.test', status: 'pending' }] }, request_id: expect.any(String) });
+      expect(await remaining.json()).toEqual({ code: 0, msg: 'success', data: { devices: [{ id: 'other', connection: 'ssh', host: 'other.example.test', status: 'pending' }] }, request_id: expect.any(String) });
     } finally {
       vi.restoreAllMocks();
       await server.close();
@@ -845,6 +943,631 @@ describe('device model providers', () => {
         await expect(manager.copyProviders('missing')).rejects.toThrow(/not configured/);
       },
     );
+  }, 30_000);
+});
+
+const REMOTE_DEVICE_ID = '7d3f2a10-5b6c-4e8f-9a01-23456789abcd';
+const RELAY_ACCESS = { relayOrigin: 'http://relay.example.test', cookie: 'rc_session=one' };
+
+function registration(deviceId: string, status: 'online' | 'offline'): RemoteControlDevice {
+  return {
+    device_id: deviceId,
+    alias: 'Laptop',
+    status,
+    platform: 'darwin',
+    client_version: 'test-host/0.0.0-test',
+    local_base_url: 'http://127.0.0.1:58627',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    last_remote_access_at: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+async function listenOn(server: ReturnType<typeof createServer>): Promise<string> {
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('missing test server address');
+  return `http://127.0.0.1:${String(address.port)}`;
+}
+
+function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+  server.closeAllConnections();
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+  });
+}
+
+function readBody(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.once('error', reject);
+    req.once('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+function wsText(data: RawData): string {
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  return Array.isArray(data) ? Buffer.concat(data).toString('utf8') : Buffer.from(data).toString('utf8');
+}
+
+describe('relay device session', () => {
+  it('drops hop-by-hop, local credential and fetch-managed request headers', () => {
+    expect(relayRequestHeaders({
+      authorization: 'Bearer local',
+      cookie: 'local=1',
+      origin: 'http://example.test',
+      referer: 'http://example.test/app',
+      host: '127.0.0.1',
+      connection: 'keep-alive',
+      'keep-alive': 'timeout=5',
+      'content-length': '2',
+      'accept-encoding': 'zstd',
+      expect: '100-continue',
+      'x-kimi-client-id': 'client',
+      'x-multi': ['a', 'b'],
+    }, 'rc_session=one')).toEqual({
+      'x-kimi-client-id': 'client',
+      'x-multi': 'a, b',
+      cookie: 'rc_session=one',
+    });
+  });
+
+  it('sends requests under the relay device path and drops the headers fetch already applied to the body', async () => {
+    let seenUrl = '';
+    let seenHeaders: IncomingHttpHeaders = {};
+    const server = createServer((req, res) => {
+      seenUrl = req.url ?? '';
+      seenHeaders = req.headers;
+      const body = gzipSync(JSON.stringify({ ok: true }));
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'content-encoding': 'gzip',
+        'content-length': String(body.length),
+        'set-cookie': 'relay_session=rotated; Path=/',
+        'x-device-header': 'kept',
+      });
+      res.end(body);
+    });
+    const origin = await listenOn(server);
+    const session = new RelayDeviceSession('dev/one', {
+      relayAccess: vi.fn(async () => ({ relayOrigin: `${origin}/coding-relay/`, cookie: 'rc_session=one' })),
+    });
+    try {
+      const response = await session.request({
+        method: 'GET',
+        path: '/api/v1/sessions?page_size=1',
+        headers: { authorization: 'Bearer local', origin: 'http://example.test', host: '127.0.0.1', 'x-kimi-client-id': 'client' },
+      });
+      expect(seenUrl).toBe('/coding-relay/devices/dev%2Fone/api/v1/sessions?page_size=1');
+      expect(seenHeaders).toMatchObject({ cookie: 'rc_session=one', 'x-kimi-client-id': 'client', host: origin.slice('http://'.length) });
+      expect(seenHeaders).not.toHaveProperty('authorization');
+      expect(seenHeaders).not.toHaveProperty('origin');
+      expect(response.status).toBe(200);
+      expect(JSON.parse(response.body.toString('utf8'))).toEqual({ ok: true });
+      expect(response.headers).toMatchObject({ 'content-type': 'application/json', 'x-device-header': 'kept' });
+      for (const header of ['content-encoding', 'content-length', 'set-cookie']) expect(response.headers).not.toHaveProperty(header);
+    } finally {
+      session.close();
+      await closeServer(server);
+    }
+  });
+
+  it('renews the relay session once on 401, follows the client sign-in, and reports relay failures to its owner', async () => {
+    let acceptedCookie = 'rc_session=two';
+    let status = 200;
+    const server = createServer((req, res) => {
+      if (req.url?.endsWith('/held') === true) return;
+      if (req.headers.cookie !== acceptedCookie) {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end('{"code":0}');
+    });
+    const origin = await listenOn(server);
+    let cookie = 'rc_session=one';
+    const relayAccess = vi.fn(async (refresh?: boolean) => {
+      if (refresh === true) cookie = 'rc_session=two';
+      return { relayOrigin: origin, cookie };
+    });
+    const renewals = () => relayAccess.mock.calls.filter(([refresh]) => refresh === true).length;
+    const failures: string[] = [];
+    const session = new RelayDeviceSession('dev', { relayAccess }, (error) => {
+      failures.push(error.message);
+    });
+    const get = (path = '/api/v1/meta', extra: Partial<DeviceHttpRequest> = {}) => session.request({ method: 'GET', path, headers: {}, ...extra });
+    try {
+      expect((await get()).status).toBe(200);
+      expect((await get()).status).toBe(200);
+      expect(renewals()).toBe(1);
+
+      await expect(get('/held', { timeoutMs: 50 })).rejects.toMatchObject({ failure: 'timeout' });
+      const cancellation = new AbortController();
+      const cancelled = get('/held', { signal: cancellation.signal });
+      cancellation.abort();
+      await expect(cancelled).rejects.toMatchObject({ failure: 'cancelled' });
+      expect(failures).toEqual([]);
+
+      status = 502;
+      await expect(get()).rejects.toMatchObject({ failure: 'unavailable' });
+      acceptedCookie = 'rc_session=three';
+      await expect(get()).rejects.toMatchObject({ failure: 'unavailable', message: 'Remote Control relay responded with HTTP 401' });
+      expect(renewals()).toBe(2);
+      relayAccess.mockRejectedValueOnce(new RemoteControlLoginRequiredError());
+      await expect(get()).rejects.toMatchObject({ failure: 'unavailable' });
+      await closeServer(server);
+      await expect(get()).rejects.toMatchObject({ failure: 'unavailable' });
+      expect(failures).toEqual([
+        'Remote Control relay responded with HTTP 502',
+        'Remote Control relay responded with HTTP 401',
+        'Remote Control relay request failed: Remote Control requires a Kimi login.',
+        expect.stringContaining('Remote Control relay request failed'),
+      ]);
+
+      session.close();
+      await expect(get()).rejects.toMatchObject({ failure: 'unavailable', message: 'device session is closed' });
+      expect(failures).toHaveLength(4);
+    } finally {
+      session.close();
+      await closeServer(server);
+    }
+  });
+
+  it('queues WebSocket sends until open, retries the upgrade once with a renewed cookie, and applies backpressure', async () => {
+    const wss = new WebSocketServer({ noServer: true });
+    const upgrades: string[] = [];
+    const received: string[] = [];
+    let upstream: Duplex | undefined;
+    const server = createServer();
+    server.on('upgrade', (req, socket, head) => {
+      upgrades.push(String(req.headers.cookie));
+      if (req.headers.cookie !== 'rc_session=two') {
+        socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+        return;
+      }
+      upstream = socket;
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.send('welcome');
+        ws.on('message', (data) => received.push(wsText(data)));
+      });
+    });
+    const origin = await listenOn(server);
+    let cookie = 'rc_session=one';
+    const session = new RelayDeviceSession('dev', {
+      relayAccess: vi.fn(async (refresh?: boolean) => {
+        if (refresh === true) cookie = 'rc_session=two';
+        return { relayOrigin: origin, cookie };
+      }),
+    });
+    const messages: string[] = [];
+    const backpressure: boolean[] = [];
+    const closes: Array<number | undefined> = [];
+    try {
+      const channel = session.openWebSocket('/api/v1/ws', {
+        onMessage: (data) => messages.push(data),
+        onClose: (code) => closes.push(code),
+        onBackpressure: (blocked) => backpressure.push(blocked),
+      });
+      channel.send('queued');
+      await vi.waitFor(() => {
+        expect(received).toEqual(['queued']);
+        expect(messages).toEqual(['welcome']);
+      });
+      expect(upgrades).toEqual(['rc_session=one', 'rc_session=two']);
+
+      upstream!.pause();
+      const chunk = 'x'.repeat(256 * 1024);
+      for (let index = 0; index < 128; index += 1) channel.send(chunk);
+      await vi.waitFor(() => expect(backpressure).toEqual([true]), { timeout: 5_000 });
+      upstream!.resume();
+      await vi.waitFor(() => {
+        expect(received).toHaveLength(129);
+        expect(backpressure).toEqual([true, false]);
+      }, { timeout: 10_000 });
+
+      session.close();
+      expect(closes).toEqual([1001]);
+    } finally {
+      session.close();
+      wss.close();
+      await closeServer(server);
+    }
+  }, 20_000);
+});
+
+describe('account device bridge', () => {
+  it('backs off while offline, polls an outdated device every minute, and leaves a signed-out device alone until reconnected', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const devices = [registration('dev-id', 'offline')];
+    const relay = {
+      relayAccess: vi.fn(async () => RELAY_ACCESS),
+      listDevices: vi.fn(async () => ({ devices })),
+    };
+    let meta: Record<string, unknown> = { server_version: '0.9.0' };
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ code: 0, msg: 'success', data: meta })));
+    const bridge = new AccountDeviceBridge('dev-id', relay);
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+    try {
+      bridge.start();
+      await settle();
+      expect(bridge.status).toBe('disconnected');
+      expect(bridge.failure).toBe('offline');
+      expect(relay.listDevices).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(relay.listDevices).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(relay.listDevices).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(relay.listDevices).toHaveBeenCalledTimes(3);
+
+      devices[0] = registration('dev-id', 'online');
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(bridge.failure).toBe('outdated');
+      expect(bridge.remoteVersion).toBe('0.9.0');
+      expect(bridge.registration?.alias).toBe('Laptop');
+      const outdatedChecks = relay.listDevices.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(relay.listDevices).toHaveBeenCalledTimes(outdatedChecks);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(relay.listDevices).toHaveBeenCalledTimes(outdatedChecks + 1);
+
+      relay.relayAccess.mockRejectedValue(new RemoteControlLoginRequiredError());
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(bridge.failure).toBe('signed_out');
+      const signedOutAttempts = relay.relayAccess.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(relay.relayAccess).toHaveBeenCalledTimes(signedOutAttempts);
+
+      relay.relayAccess.mockResolvedValue(RELAY_ACCESS);
+      meta = { server_version: '2.0.0', product: 'kimi-code-desktop', device_id: 'dev-id', device_api_level: DEVICE_API_LEVEL };
+      await bridge.connect();
+      expect(bridge.status).toBe('ready');
+      expect(bridge.failure).toBeUndefined();
+      expect(bridge.remoteVersion).toBe('2.0.0');
+      expect(bridge.identity).toEqual({ deviceId: 'dev-id', productName: 'kimi-code-desktop' });
+    } finally {
+      bridge.dispose();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+});
+
+interface FakeRelay {
+  origin: string;
+  readonly devices: RemoteControlDevice[];
+  legacyMeta: boolean;
+  exchanges: number;
+  rejected: number;
+  expireSession(): void;
+  close(): Promise<void>;
+}
+
+const RELAY_UNFORWARDED_HEADERS = new Set(['host', 'cookie', 'connection', 'content-length', 'authorization', 'accept-encoding']);
+
+async function startFakeRelay(target: RunningServer): Promise<FakeRelay> {
+  let session: string | undefined;
+  const wss = new WebSocketServer({ noServer: true });
+  const server = createServer();
+  const relay: FakeRelay = {
+    origin: '',
+    devices: [],
+    legacyMeta: false,
+    exchanges: 0,
+    rejected: 0,
+    expireSession: () => {
+      session = undefined;
+    },
+    close: async () => {
+      for (const client of wss.clients) client.terminate();
+      wss.close();
+      await closeServer(server);
+    },
+  };
+  const authorized = (req: IncomingMessage): boolean => {
+    if (session !== undefined && req.headers.cookie === session) return true;
+    relay.rejected += 1;
+    return false;
+  };
+  const devicePath = (url: string): string | undefined => {
+    const match = /^\/devices\/([^/]+)(\/.*)$/.exec(url);
+    if (match === null) return undefined;
+    const deviceId = decodeURIComponent(match[1]!);
+    return relay.devices.some((device) => device.device_id === deviceId && device.status === 'online') ? match[2] : undefined;
+  };
+  const upstreamHeaders = (req: IncomingMessage): Record<string, string> => {
+    const headers: Record<string, string> = { authorization: `Bearer ${target.authTokenService.getToken()}` };
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (typeof value === 'string' && !RELAY_UNFORWARDED_HEADERS.has(name)) headers[name] = value;
+    }
+    return headers;
+  };
+  server.on('request', (req, res) => {
+    void (async () => {
+      const body = await readBody(req);
+      if (req.method === 'POST' && req.url === '/auth/exchange') {
+        relay.exchanges += 1;
+        session = `rc_session=s${String(relay.exchanges)}`;
+        res.writeHead(204, { 'set-cookie': `${session}; Path=/; HttpOnly` });
+        res.end();
+        return;
+      }
+      if (!authorized(req)) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'session expired' } }));
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/v1/remote/devices') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ devices: relay.devices }));
+        return;
+      }
+      const path = devicePath(req.url ?? '');
+      if (path === undefined) {
+        res.writeHead(502);
+        res.end();
+        return;
+      }
+      const upstream = await fetch(`http://127.0.0.1:${String(target.port)}${path}`, {
+        method: req.method,
+        headers: upstreamHeaders(req),
+        body: body.length > 0 ? body : undefined,
+      });
+      let payload = Buffer.from(await upstream.arrayBuffer());
+      if (relay.legacyMeta && path === '/api/v1/meta') {
+        const envelope = JSON.parse(payload.toString('utf8')) as { data: Record<string, unknown> };
+        delete envelope.data['device_id'];
+        delete envelope.data['device_api_level'];
+        payload = Buffer.from(JSON.stringify(envelope));
+      }
+      res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream' });
+      res.end(payload);
+    })().catch(() => {
+      res.writeHead(500);
+      res.end();
+    });
+  });
+  server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (!authorized(req)) {
+      socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
+    const path = devicePath(req.url ?? '');
+    if (path === undefined) {
+      socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
+    const upstream = new WebSocketClient(`ws://127.0.0.1:${String(target.port)}${path}`, {
+      headers: { authorization: `Bearer ${target.authTokenService.getToken()}` },
+    });
+    upstream.once('error', () => socket.destroy());
+    upstream.once('open', () => {
+      wss.handleUpgrade(req, socket, head, (client) => {
+        client.on('message', (data, isBinary) => upstream.send(wsText(data), { binary: isBinary }));
+        upstream.on('message', (data, isBinary) => client.send(wsText(data), { binary: isBinary }));
+        client.once('close', () => upstream.close());
+        upstream.once('close', () => client.close());
+      });
+    });
+  });
+  relay.origin = await listenOn(server);
+  return relay;
+}
+
+function directSession(server: RunningServer): DeviceSession {
+  return {
+    request: async (req) => {
+      const response = await fetch(`http://127.0.0.1:${String(server.port)}${req.path}`, {
+        method: req.method,
+        headers: { accept: 'application/json', authorization: `Bearer ${server.authTokenService.getToken()}` },
+        body: req.body,
+      });
+      return { status: response.status, headers: {}, body: Buffer.from(await response.arrayBuffer()) };
+    },
+    openWebSocket: () => {
+      throw new Error('not used');
+    },
+  };
+}
+
+interface Envelope {
+  readonly code: number;
+  readonly msg: string;
+  readonly data: Record<string, unknown>;
+}
+
+function request(server: RunningServer, method: string, path: string, body?: unknown): Promise<Response> {
+  return fetch(`http://127.0.0.1:${String(server.port)}${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${server.authTokenService.getToken()}`,
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+async function call(server: RunningServer, method: string, path: string, body?: unknown): Promise<Envelope> {
+  return (await (await request(server, method, path, body)).json()) as Envelope;
+}
+
+interface AccountDevicePair {
+  readonly local: RunningServer;
+  readonly remote: RunningServer;
+  readonly relay: FakeRelay;
+  readonly remoteProject: string;
+}
+
+async function withAccountDevicePair(run: (pair: AccountDevicePair) => Promise<void>): Promise<void> {
+  const localHome = await mkdtemp(join(tmpdir(), 'kimi-account-local-'));
+  const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-account-remote-'));
+  const remoteProject = join(remoteHome, 'project');
+  mkdirSync(remoteProject);
+  writeFileSync(join(remoteHome, 'device_id'), REMOTE_DEVICE_ID);
+  const now = Math.floor(Date.now() / 1000);
+  await new FileTokenStorage(join(localHome, 'credentials')).save('kimi-code', {
+    accessToken: 'local-access', refreshToken: 'local-refresh', expiresAt: now + 3600, expiresIn: 3600, scope: '', tokenType: 'Bearer',
+  });
+  const loopbackFetch = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    return url.startsWith('http://127.0.0.1:') ? loopbackFetch(input, init) : Promise.reject(new Error(`unexpected request ${url}`));
+  }));
+  const env = { KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START: '0', KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: '0' };
+  const remote = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: remoteHome, logLevel: 'silent', env });
+  const relay = await startFakeRelay(remote);
+  relay.devices.push(registration(REMOTE_DEVICE_ID, 'online'));
+  vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', relay.origin);
+  const local = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: localHome, logLevel: 'silent', env });
+  try {
+    await run({ local, remote, relay, remoteProject });
+  } finally {
+    vi.restoreAllMocks();
+    await local.close();
+    await relay.close();
+    await remote.close();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    await rm(localHome, { recursive: true, force: true });
+    await rm(remoteHome, { recursive: true, force: true });
+  }
+}
+
+describe('account devices', () => {
+  it('adds a device signed in to the same Kimi account and serves its projects, sessions, HTTP and WebSocket through the relay', async () => {
+    await withAccountDevicePair(async ({ local, remote, relay, remoteProject }) => {
+      const workspace = (await call(remote, 'POST', '/api/v1/workspaces', { root: remoteProject })).data;
+      const remoteSession = (await call(remote, 'POST', '/api/v1/sessions', { workspace_id: workspace['id'] })).data;
+      const remoteMeta = (await call(remote, 'GET', '/api/v1/meta')).data;
+      expect(remoteMeta).toMatchObject({ device_id: REMOTE_DEVICE_ID, device_api_level: DEVICE_API_LEVEL, product: TEST_HOST_IDENTITY.productName });
+
+      expect(await call(local, 'PUT', `/api/v1/devices/${REMOTE_DEVICE_ID}`, { connection: 'account', name: 'Work laptop' })).toMatchObject({ code: 0 });
+      expect(await call(local, 'POST', '/api/v1/devices:connect', { id: REMOTE_DEVICE_ID })).toMatchObject({
+        code: 0,
+        data: {
+          id: REMOTE_DEVICE_ID,
+          connection: 'account',
+          name: 'Work laptop',
+          status: 'ready',
+          device_id: REMOTE_DEVICE_ID,
+          product_name: TEST_HOST_IDENTITY.productName,
+          platform: 'darwin',
+          alias: 'Laptop',
+          remote_version: remoteMeta['server_version'],
+        },
+      });
+      const listed = (await call(local, 'GET', '/api/v1/devices')).data['devices'] as Array<Record<string, unknown>>;
+      expect(listed).toHaveLength(1);
+      expect(listed[0]).not.toHaveProperty('host');
+
+      const projects = await call(local, 'GET', '/api/v1/workspaces?devices=include');
+      expect(projects.data['items']).toContainEqual(expect.objectContaining({ id: workspace['id'], device_id: REMOTE_DEVICE_ID }));
+      const sessions = await call(local, 'GET', '/api/v1/sessions?devices=include');
+      expect(sessions.data['items']).toContainEqual(expect.objectContaining({ id: remoteSession['id'], device_id: REMOTE_DEVICE_ID }));
+      expect(sessions.data['unavailable_devices']).toEqual([]);
+
+      const proxied = await request(local, 'GET', `/api/v1/devices/${REMOTE_DEVICE_ID}/proxy/api/v1/sessions/${String(remoteSession['id'])}`);
+      expect(proxied.status).toBe(200);
+      expect(await proxied.json()).toMatchObject({ code: 0, data: { id: remoteSession['id'] } });
+
+      const { exchanges, rejected } = relay;
+      relay.expireSession();
+      const renewed = await request(local, 'GET', `/api/v1/devices/${REMOTE_DEVICE_ID}/proxy/api/v1/meta`);
+      expect(renewed.status).toBe(200);
+      expect(await renewed.json()).toMatchObject({ code: 0, data: { device_id: REMOTE_DEVICE_ID } });
+      expect(relay.rejected).toBe(rejected + 1);
+      expect(relay.exchanges).toBe(exchanges + 1);
+
+      const ws = new WebSocketClient(`ws://127.0.0.1:${String(local.port)}/api/v1/devices/${REMOTE_DEVICE_ID}/proxy/api/v1/ws`, {
+        headers: { authorization: `Bearer ${local.authTokenService.getToken()}` },
+      });
+      try {
+        const response = new Promise<Record<string, unknown>>((resolve) => {
+          ws.on('message', (data) => {
+            const frame = JSON.parse(wsText(data)) as Record<string, unknown>;
+            if (frame['type'] === 'response') resolve(frame);
+          });
+        });
+        ws.once('open', () => {
+          ws.send(JSON.stringify({ type: 'subscribe', request_id: 'subscribe-1', session_id: remoteSession['id'] }));
+        });
+        expect(await response).toMatchObject({ request_id: 'subscribe-1', code: 0 });
+      } finally {
+        ws.terminate();
+      }
+
+      expect(await call(local, 'POST', '/api/v1/oauth/logout', {})).toMatchObject({ code: 0 });
+      expect((await request(local, 'GET', `/api/v1/devices/${REMOTE_DEVICE_ID}/proxy/api/v1/meta`)).status).toBe(502);
+      expect(await call(local, 'POST', '/api/v1/devices:connect', { id: REMOTE_DEVICE_ID })).toMatchObject({
+        data: { status: 'disconnected', connect_failure: 'signed_out' },
+      });
+    });
+  }, 30_000);
+
+  it('reports offline and outdated devices and refuses to add this computer', async () => {
+    await withAccountDevicePair(async ({ local, remote, relay }) => {
+      relay.devices[0] = registration(REMOTE_DEVICE_ID, 'offline');
+      expect(await call(local, 'PUT', `/api/v1/devices/${REMOTE_DEVICE_ID}`, { connection: 'account' })).toMatchObject({ code: 0 });
+      await local.core.accessor.get(IConfigService).reload();
+      expect(local.deviceManager.section()).toEqual({ [REMOTE_DEVICE_ID]: { connection: 'account' } });
+      expect(await call(local, 'POST', '/api/v1/devices:connect', { id: REMOTE_DEVICE_ID })).toMatchObject({
+        data: { status: 'disconnected', connect_failure: 'offline', alias: 'Laptop' },
+      });
+      expect((await request(local, 'GET', `/api/v1/devices/${REMOTE_DEVICE_ID}/proxy/api/v1/meta`)).status).toBe(502);
+
+      relay.devices[0] = registration(REMOTE_DEVICE_ID, 'online');
+      relay.legacyMeta = true;
+      const remoteMeta = (await call(remote, 'GET', '/api/v1/meta')).data;
+      expect(await call(local, 'POST', '/api/v1/devices:connect', { id: REMOTE_DEVICE_ID })).toMatchObject({
+        data: { status: 'disconnected', connect_failure: 'outdated', remote_version: remoteMeta['server_version'] },
+      });
+
+      relay.legacyMeta = false;
+      expect(await call(local, 'POST', '/api/v1/devices:connect', { id: REMOTE_DEVICE_ID })).toMatchObject({ data: { status: 'ready' } });
+
+      const localDeviceId = String((await call(local, 'GET', '/api/v1/meta')).data['device_id']);
+      expect(await call(local, 'PUT', `/api/v1/devices/${localDeviceId}`, { connection: 'account' })).toMatchObject({
+        code: 40001,
+        msg: 'this device cannot be added to itself',
+      });
+      expect(Object.keys(local.deviceManager.section())).toEqual([REMOTE_DEVICE_ID]);
+      await expect(local.deviceManager.copyProviders(REMOTE_DEVICE_ID)).rejects.toThrow(/only available for SSH devices/);
+    });
+  }, 30_000);
+
+  it('keeps one entry per computer when an SSH device and an account device reach the same machine', async () => {
+    await withAccountDevicePair(async ({ local, remote, remoteProject }) => {
+      const workspace = (await call(remote, 'POST', '/api/v1/workspaces', { root: remoteProject })).data;
+      const ssh = directSession(remote);
+      vi.spyOn(SshDeviceBridge.prototype, 'connect').mockResolvedValue(ssh);
+      vi.spyOn(SshDeviceBridge.prototype, 'session', 'get').mockReturnValue(ssh);
+      vi.spyOn(SshDeviceBridge.prototype, 'status', 'get').mockReturnValue('ready');
+      vi.spyOn(SshDeviceBridge.prototype, 'identity', 'get').mockReturnValue({ deviceId: REMOTE_DEVICE_ID });
+      const remoteProjects = async () => {
+        const items = (await call(local, 'GET', '/api/v1/workspaces?devices=include')).data['items'] as Array<{ id: string; device_id?: string }>;
+        return items.filter((item) => item.id === workspace['id']).map((item) => item.device_id);
+      };
+
+      expect(await call(local, 'PUT', `/api/v1/devices/${REMOTE_DEVICE_ID}`, { connection: 'account' })).toMatchObject({ code: 0 });
+      expect(await call(local, 'PUT', '/api/v1/devices/dev', { host: 'dev.example.test' })).toMatchObject({ code: 0 });
+      expect(await call(local, 'POST', '/api/v1/devices:connect', { id: REMOTE_DEVICE_ID })).toMatchObject({ data: { status: 'ready' } });
+      expect(await call(local, 'POST', '/api/v1/devices:connect', { id: 'dev' })).toMatchObject({
+        data: { id: 'dev', status: 'disconnected', connect_failure: 'duplicate', duplicate_of: REMOTE_DEVICE_ID, device_id: REMOTE_DEVICE_ID },
+      });
+      expect(await remoteProjects()).toEqual([REMOTE_DEVICE_ID]);
+      expect((await request(local, 'GET', '/api/v1/devices/dev/proxy/api/v1/meta')).status).toBe(502);
+
+      expect(await call(local, 'DELETE', `/api/v1/devices/${REMOTE_DEVICE_ID}`)).toMatchObject({ code: 0 });
+      expect(await remoteProjects()).toEqual(['dev']);
+      expect(await call(local, 'PUT', `/api/v1/devices/${REMOTE_DEVICE_ID}`, { connection: 'account' })).toMatchObject({
+        code: 40001,
+        msg: 'this device is already added as device "dev"',
+      });
+    });
   }, 30_000);
 });
 

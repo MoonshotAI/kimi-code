@@ -9,20 +9,14 @@ import { ErrorCode } from '../../protocol/error-codes';
 import { DEVICE_RPC_MAX_BODY_BYTES } from '../../transport/jsonlRpcStream';
 import { selectWsBearerProtocol } from '../../transport/ws/bearerProtocol';
 import type { DeviceManager } from './deviceManager';
-import { DeviceRequestError, type DeviceSession } from './deviceSession';
+import {
+  DeviceRequestError,
+  HOP_BY_HOP_HEADERS,
+  STRIPPED_REQUEST_HEADERS,
+  type DeviceSession,
+} from './deviceSession';
 
 const PROXY_PATH = /^\/api\/v1\/devices\/([^/?]+)\/proxy(\/[^?]*)?(\?.*)?$/;
-const HOP_BY_HOP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
-]);
-const STRIPPED_REQUEST_HEADERS = new Set(['host', 'origin', 'referer', 'authorization', 'cookie']);
 
 function bodyTooLarge(): DeviceRequestError {
   return new DeviceRequestError(
@@ -52,7 +46,7 @@ export function upstreamHeaders(headers: IncomingHttpHeaders): IncomingHttpHeade
   const forwarded: IncomingHttpHeaders = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
-    if (!HOP_BY_HOP.has(lower) && !STRIPPED_REQUEST_HEADERS.has(lower)) forwarded[name] = value;
+    if (!HOP_BY_HOP_HEADERS.has(lower) && !STRIPPED_REQUEST_HEADERS.has(lower)) forwarded[name] = value;
   }
   forwarded['host'] = '127.0.0.1';
   return forwarded;
@@ -118,7 +112,7 @@ async function proxyHttp(
       timeoutMs: /^\/api\/v1\/sessions\/[^/]+\/export(?:\?|$)/.test(target.path) ? 5 * 60_000 : undefined,
     });
     for (const [name, value] of Object.entries(response.headers)) {
-      if (value !== undefined && !HOP_BY_HOP.has(name.toLowerCase())) {
+      if (value !== undefined && !HOP_BY_HOP_HEADERS.has(name.toLowerCase())) {
         reply.header(name, value);
       }
     }

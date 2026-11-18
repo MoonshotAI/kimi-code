@@ -3,6 +3,7 @@ import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
 import type { MetaFeature, MetaResponse } from '../protocol/rest-meta';
+import { DEVICE_API_LEVEL } from '../services/devices/deviceProtocol';
 
 interface RouteHost {
   get(
@@ -18,6 +19,7 @@ interface RouteHost {
 export interface MetaRouteOptions {
   readonly serverVersion: string;
   readonly product?: string;
+  readonly deviceId: string;
   readonly serverId: string;
   readonly startedAt: string;
   readonly dangerousBypassAuth: boolean;
@@ -34,6 +36,8 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
     kimi_agent_protocol_version: KIMI_AGENT_PROTOCOL_VERSION,
     server_version: opts.serverVersion,
     product,
+    device_id: opts.deviceId,
+    device_api_level: DEVICE_API_LEVEL,
     capabilities: Object.freeze({
       websocket: true as const,
       file_upload: true as const,

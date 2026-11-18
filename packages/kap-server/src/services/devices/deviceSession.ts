@@ -11,6 +11,19 @@ export interface DeviceHttpRequest {
 
 export const DEVICE_HTTP_TIMEOUT_MS = 30_000;
 
+export const HOP_BY_HOP_HEADERS: ReadonlySet<string> = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+export const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set(['host', 'origin', 'referer', 'authorization', 'cookie']);
+
 export interface DeviceHttpResponse {
   readonly status: number;
   readonly headers: OutgoingHttpHeaders;
