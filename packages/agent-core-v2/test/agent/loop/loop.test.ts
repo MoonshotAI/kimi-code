@@ -494,6 +494,7 @@ describe('Agent loop', () => {
       handle: async () => undefined,
     });
     const { turn } = submitTurn(loop, 'go');
+    await turn.ready;
     turn.cancel(new Error('stop'));
 
     const result = await turn.result;
