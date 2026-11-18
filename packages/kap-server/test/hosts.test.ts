@@ -1148,6 +1148,69 @@ describe('stdio rpc transport', () => {
     }
   });
 
+  it.skipIf(process.platform === 'win32')('stops the upload source when an early response arrives', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-early-response-'));
+    const app = Fastify();
+    app.addContentTypeParser('application/octet-stream', (_request, payload, done) => {
+      done(null, payload);
+    });
+    app.post('/api/v1/feedback/early/attachments', async (request, reply) => {
+      await new Promise<void>((resolve) => request.raw.once('data', () => { resolve(); }));
+      await reply.code(413).send({ error: 'stop upload' });
+    });
+    await app.ready();
+    const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), { app, wssV1: new WebSocketServer({ noServer: true }) });
+    const session = new StdioHostSession(createConnection(join(dir, 'daemon.sock')));
+    let finished = false;
+    const body = (async function* () {
+      try {
+        for (;;) yield new Uint8Array(256 * 1024);
+      } finally {
+        finished = true;
+      }
+    })();
+    try {
+      const response = await session.requestStream({
+        method: 'POST',
+        path: '/api/v1/feedback/early/attachments',
+        headers: { 'content-type': 'application/octet-stream' },
+        body,
+      });
+      expect(response.status).toBe(413);
+      for await (const chunk of response.body) expect(chunk.byteLength).toBeGreaterThan(0);
+      await vi.waitFor(() => { expect(finished).toBe(true); });
+    } finally {
+      session.close();
+      await rpcServer.close();
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('wakes drain waiters on abort, close and drain', async () => {
+    const stream = new Duplex({ highWaterMark: 1, read() {}, write() {} });
+    const rpc = new JsonlRpcStream<{ type: string }>(stream, () => {}, () => {}, () => {});
+    stream.cork();
+    rpc.write({ type: 'held' });
+    const cancellation = new AbortController();
+    const cancelled = rpc.waitForDrain(cancellation.signal);
+    cancellation.abort();
+    await expect(cancelled).rejects.toThrow('cancelled');
+    const closed = rpc.waitForDrain();
+    rpc.close();
+    await expect(closed).rejects.toThrow('closed');
+
+    const otherStream = new Duplex({ highWaterMark: 1, read() {}, write() {} });
+    const other = new JsonlRpcStream<{ type: string }>(otherStream, () => {}, () => {}, () => {});
+    otherStream.cork();
+    other.write({ type: 'held' });
+    const drained = other.waitForDrain();
+    otherStream.emit('drain');
+    await drained;
+    other.dispose();
+    otherStream.destroy();
+  });
+
   it.skipIf(process.platform === 'win32')('cancels and times out streams without closing ordinary requests', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-client-stream-'));
     const app = Fastify();
