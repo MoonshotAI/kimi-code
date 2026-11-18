@@ -234,4 +234,13 @@ describe('/api/v1/meta features', () => {
     expect(after.some((feature) => feature.name === 'plan')).toBe(false);
     expect(after).toHaveLength(before.length - 1);
   });
+
+  it('surfaces hostIdentity.productName as product on /api/v1/meta', async () => {
+    const base = await boot();
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { code: number; data: { product?: string } };
+    expect(body.code).toBe(0);
+    expect(body.data.product).toBe(TEST_HOST_IDENTITY.productName);
+  });
 });

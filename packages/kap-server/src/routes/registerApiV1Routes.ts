@@ -89,6 +89,7 @@ export async function registerApiV1Routes(
 
       registerMetaRoute(apiV1, {
         serverVersion: opts.serverVersion,
+        product: opts.hostIdentity.productName,
         serverId: ulid(),
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
