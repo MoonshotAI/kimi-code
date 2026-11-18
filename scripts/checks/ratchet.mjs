@@ -10,10 +10,11 @@ const MAIN_CONFIG = '.oxlintrc.json';
 const RATCHET_CONFIG = '.oxlintrc.ratchet.json';
 const BASELINE_FILE = 'scripts/checks/baselines/oxlint-ratchet.json';
 const UNUSED_DIRECTIVE = /^Unused (?:eslint|oxlint)-disable directive/;
+const DIAGNOSTIC_SCOPES = new Map([['react-hooks', 'react']]);
 
 export function ruleOf(code) {
   const match = /^([\w-]+)\((.+)\)$/.exec(code ?? '');
-  return match === null ? undefined : `${match[1]}/${match[2]}`;
+  return match === null ? undefined : `${DIAGNOSTIC_SCOPES.get(match[1]) ?? match[1]}/${match[2]}`;
 }
 
 export function ratchetRules(config) {
@@ -30,17 +31,21 @@ export function ratchetRules(config) {
 export function countFindings(diagnostics, rules) {
   const counts = {};
   const unused = [];
+  const unmatched = [];
   for (const diagnostic of diagnostics) {
     if (UNUSED_DIRECTIVE.test(diagnostic.message)) {
       unused.push(diagnostic);
       continue;
     }
     const rule = ruleOf(diagnostic.code);
-    if (rule === undefined || !rules.has(rule)) continue;
+    if (rule === undefined || !rules.has(rule)) {
+      unmatched.push(diagnostic);
+      continue;
+    }
     counts[rule] ??= {};
     counts[rule][diagnostic.filename] = (counts[rule][diagnostic.filename] ?? 0) + 1;
   }
-  return { counts, unused };
+  return { counts, unused, unmatched };
 }
 
 export function compareCounts(baseline, current) {
@@ -109,6 +114,17 @@ function describeLocation(diagnostic) {
   const span = diagnostic.labels?.[0]?.span;
   const help = diagnostic.help === undefined ? '' : ` ${diagnostic.help}`;
   return `    ${diagnostic.filename}:${span?.line}:${span?.column}  ${diagnostic.message}${help}`;
+}
+
+function formatUnmatched(unmatched) {
+  const shown = unmatched.slice(0, 20);
+  return [
+    `✗ ratchet: ${unmatched.length} finding(s) match no rule in ${RATCHET_CONFIG}`,
+    ...shown.flatMap((diagnostic) => [`  ${diagnostic.code ?? 'no rule code'}`, describeLocation(diagnostic)]),
+    ...(unmatched.length > shown.length ? [`  … and ${unmatched.length - shown.length} more`] : []),
+    '  Why: the ratchet counts a finding only under a rule it can find in its config, so it would drop these without a word.',
+    `  What to do: if oxlint reports a frozen rule under another plugin name (it reports the react hooks rules as react-hooks), map that name in DIAGNOSTIC_SCOPES in ${RATCHET_FILE}. Otherwise fix the findings: they come from rules that must have none.`,
+  ];
 }
 
 function formatReport(changes, unused, diagnostics) {
@@ -182,7 +198,11 @@ export function main(args) {
     return 1;
   }
   const rules = ratchetRules(JSON.parse(readFileSync(join(ROOT, RATCHET_CONFIG), 'utf8')));
-  const { counts, unused } = countFindings(diagnostics, rules);
+  const { counts, unused, unmatched } = countFindings(diagnostics, rules);
+  if (unmatched.length > 0) {
+    process.stderr.write(`${formatUnmatched(unmatched).join('\n')}\n`);
+    return 1;
+  }
   const baselinePath = join(ROOT, BASELINE_FILE);
   const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')) : {};
   const changes = compareCounts(baseline, counts);

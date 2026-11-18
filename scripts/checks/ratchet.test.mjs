@@ -6,6 +6,7 @@ import { compareCounts, countFindings, ratchetRules, ruleOf } from './ratchet.mj
 await test('ruleOf turns an oxlint diagnostic code into the config rule name', () => {
   assert.equal(ruleOf('typescript(no-explicit-any)'), 'typescript/no-explicit-any');
   assert.equal(ruleOf('eslint(no-empty)'), 'eslint/no-empty');
+  assert.equal(ruleOf('react-hooks(exhaustive-deps)'), 'react/exhaustive-deps');
   assert.equal(ruleOf(undefined), undefined);
   assert.equal(ruleOf(''), undefined);
 });
@@ -29,19 +30,27 @@ const UNUSED = {
   filename: 'packages/core/src/a.ts',
 };
 
-await test('countFindings counts frozen rules per file and separates unused directives', () => {
-  const { counts, unused } = countFindings(
+await test('countFindings counts frozen rules per file and keeps unused directives and unmatched findings apart', () => {
+  const NOT_FROZEN = { code: 'eslint(eqeqeq)', message: 'Expected ===.', filename: 'packages/core/src/a.ts' };
+  const NO_CODE = { message: 'Expected a semicolon.', filename: 'packages/core/src/c.ts' };
+  const { counts, unused, unmatched } = countFindings(
     [
       { code: 'eslint(no-empty)', message: 'Unexpected empty block.', filename: 'packages/core/src/a.ts' },
       { code: 'eslint(no-empty)', message: 'Unexpected empty block.', filename: 'packages/core/src/a.ts' },
       { code: 'eslint(no-empty)', message: 'Unexpected empty block.', filename: 'packages/core/src/b.ts' },
-      { code: 'eslint(eqeqeq)', message: 'Expected ===.', filename: 'packages/core/src/a.ts' },
+      { code: 'react-hooks(exhaustive-deps)', message: 'Missing dependency.', filename: 'apps/vis/web/src/a.tsx' },
+      NOT_FROZEN,
+      NO_CODE,
       UNUSED,
     ],
-    new Set(['eslint/no-empty']),
+    new Set(['eslint/no-empty', 'react/exhaustive-deps']),
   );
-  assert.deepEqual(counts, { 'eslint/no-empty': { 'packages/core/src/a.ts': 2, 'packages/core/src/b.ts': 1 } });
+  assert.deepEqual(counts, {
+    'eslint/no-empty': { 'packages/core/src/a.ts': 2, 'packages/core/src/b.ts': 1 },
+    'react/exhaustive-deps': { 'apps/vis/web/src/a.tsx': 1 },
+  });
   assert.deepEqual(unused, [UNUSED]);
+  assert.deepEqual(unmatched, [NOT_FROZEN, NO_CODE]);
 });
 
 const describeChange = (change) => `${change.kind} ${change.rule} ${change.file} ${change.from}→${change.to}`;
