@@ -1,7 +1,7 @@
 import { annotateBundledSkillParts, type UserPromptOrigin } from '#/llm/origin';
 import type { AssistantMessage, Message, ToolCall, ToolMessage, UserMessage } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
-import type { ToolExecutionHandler, ToolResult } from '#/tool/runtime';
+import type { ToolExecutionHandler, ToolResult } from '#/tool/types';
 import { withAbort, type AbortScope } from '#/utils/abort';
 import type { LoopInput } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';

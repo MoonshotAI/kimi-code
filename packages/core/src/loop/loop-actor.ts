@@ -1,7 +1,8 @@
 import type { Message, ToolDescription, UserMessage } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import { createPolicyRegistry, type PolicyRegistry } from '#/llm/policy/registry';
-import { isToolDetachAck, type ToolExecutionResponse, type ToolResult } from '#/tool/runtime';
+import { isToolDetachAck } from '#/tool/tool-executor';
+import type { ToolExecutionResponse, ToolResult } from '#/tool/types';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
 import { waitEvent, type WaitOpts } from '#/utils/wait';
 import type { CreateLoopOptions, Loop, LoopToolContext, LoopToolExecutor } from './create-loop';

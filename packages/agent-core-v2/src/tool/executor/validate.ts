@@ -1,1 +1,1 @@
-export * from '@moonshot-ai/core/tool/runtime/validate';
+export * from '@moonshot-ai/core/tool/validate';

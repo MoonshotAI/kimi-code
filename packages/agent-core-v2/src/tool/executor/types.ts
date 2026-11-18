@@ -1,1 +1,1 @@
-export * from '@moonshot-ai/core/tool/runtime/types';
+export * from '@moonshot-ai/core/tool/types';

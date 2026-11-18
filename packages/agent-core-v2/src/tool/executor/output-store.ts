@@ -1,1 +1,1 @@
-export * from '@moonshot-ai/core/tool/runtime/output-store';
+export * from '@moonshot-ai/core/tool/output-store';

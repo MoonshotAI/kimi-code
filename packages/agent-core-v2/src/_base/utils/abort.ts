@@ -25,7 +25,7 @@ export function isUserCancellation(value: unknown): value is UserCancellationErr
   return value instanceof UserCancellationError;
 }
 
-export { abortedToolOutput } from '@moonshot-ai/core/tool/abort';
+export { abortedToolOutput } from '@moonshot-ai/core/utils/abort';
 
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(abortReason(signal));
