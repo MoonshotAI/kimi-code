@@ -76,6 +76,20 @@
     {
       "env": null,
       "files": [
+        "apps/vis/web/**",
+        "apps/vscode/webview-ui/**"
+      ],
+      "globals": null,
+      "plugins": [
+        "react"
+      ],
+      "rules": {
+        "react/rules-of-hooks": "deny"
+      }
+    },
+    {
+      "env": null,
+      "files": [
         "**/*.test.ts",
         "**/*.test.tsx",
         "**/*.spec.ts",
@@ -91,7 +105,6 @@
         "import/no-cycle": "allow",
         "no-console": "allow",
         "no-control-regex": "allow",
-        "no-promise-executor-return": "allow",
         "no-shadow": "allow",
         "no-unsafe-optional-chaining": "allow",
         "no-unused-vars": "allow",
@@ -206,6 +219,7 @@
     "no-invalid-regexp": "deny",
     "no-irregular-whitespace": "deny",
     "no-iterator": "deny",
+    "no-loop-func": "allow",
     "no-loss-of-precision": "deny",
     "no-misleading-character-class": "deny",
     "no-new-native-nonconstructor": "deny",
@@ -213,6 +227,7 @@
     "no-nonoctal-decimal-escape": "deny",
     "no-obj-calls": "deny",
     "no-object-constructor": "deny",
+    "no-promise-executor-return": "allow",
     "no-prototype-builtins": "deny",
     "no-redeclare": "allow",
     "no-self-assign": "deny",
@@ -223,6 +238,7 @@
     "no-this-before-super": "deny",
     "no-unassigned-vars": "deny",
     "no-unexpected-multiline": "deny",
+    "no-unmodified-loop-condition": "allow",
     "no-unneeded-ternary": "deny",
     "no-unreachable": "deny",
     "no-unsafe-finally": "deny",
@@ -263,6 +279,7 @@
     "promise/no-new-statics": "deny",
     "promise/no-return-in-finally": "deny",
     "promise/valid-params": "deny",
+    "radix": "deny",
     "require-yield": "deny",
     "typescript/await-thenable": "deny",
     "typescript/ban-ts-comment": [
@@ -276,7 +293,6 @@
     "typescript/no-base-to-string": "deny",
     "typescript/no-confusing-non-null-assertion": "deny",
     "typescript/no-confusing-void-expression": "allow",
-    "typescript/no-deprecated": "allow",
     "typescript/no-duplicate-enum-values": "deny",
     "typescript/no-duplicate-type-constituents": "deny",
     "typescript/no-dynamic-delete": "allow",
@@ -318,6 +334,7 @@
     "typescript/prefer-as-const": "deny",
     "typescript/prefer-literal-enum-member": "deny",
     "typescript/prefer-namespace-keyword": "deny",
+    "typescript/prefer-nullish-coalescing": "allow",
     "typescript/prefer-ts-expect-error": "deny",
     "typescript/require-array-sort-compare": "deny",
     "typescript/require-await": "allow",
@@ -327,6 +344,7 @@
     "typescript/triple-slash-reference": "deny",
     "typescript/unbound-method": "deny",
     "typescript/use-unknown-in-catch-callback-variable": "allow",
+    "unicorn/no-abusive-eslint-disable": "deny",
     "unicorn/no-accessor-recursion": "deny",
     "unicorn/no-array-fill-with-reference-type": "deny",
     "unicorn/no-await-in-promise-methods": "deny",
@@ -352,6 +370,7 @@
     "unicorn/prefer-set-size": "deny",
     "unicorn/prefer-string-starts-ends-with": "deny",
     "unicorn/require-module-specifiers": "deny",
+    "unicorn/require-post-message-target-origin": "allow",
     "use-isnan": "deny",
     "valid-typeof": "deny"
   },

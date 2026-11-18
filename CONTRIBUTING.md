@@ -51,7 +51,7 @@ Useful scripts:
 - `pnpm test` — run tests (vitest)
 - `pnpm typecheck` — TypeScript check (note: builds packages first)
 - `pnpm lint` — the comment check, oxlint, the agent-core-v2 import-boundary check, the lint guards, and the ratchet that freezes rules with existing findings
-- `pnpm lint:fix` — apply oxlint auto-fixes; some of them change behavior (for example `||` → `??`), so review the diff
+- `pnpm lint:fix` — apply oxlint auto-fixes; some of them change behavior (for example removing an `await` changes when the following code runs), so review the diff
 - `pnpm build` — build all packages
 
 ## Commit Convention

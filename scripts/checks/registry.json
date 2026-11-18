@@ -71,7 +71,7 @@
     {
       "flags": ["--fix", "--fix-suggestions", "--fix-dangerously"],
       "in": "package.json#lint-staged",
-      "why": "lint-staged commits whatever its commands change. oxlint --fix also applies fixes from warn-level rules, and some of them change behavior (for example `sort()` becomes `toSorted()`), so the hook would rewrite code without telling anyone."
+      "why": "lint-staged commits whatever its commands change. Some oxlint fixes change behavior (for example `unicorn/no-unnecessary-await` removes an `await`, which changes when the code after it runs), so the hook would rewrite code without telling anyone."
     }
   ]
 }

@@ -88,6 +88,7 @@
     "eslint/prefer-rest-params": "error",
     "eslint/prefer-spread": "error",
     "eslint/preserve-caught-error": "error",
+    "eslint/radix": "error",
     "eslint/require-yield": "error",
     "eslint/use-isnan": "error",
     "eslint/valid-typeof": "error",
@@ -154,7 +155,8 @@
     "promise/no-return-in-finally": "error",
     "promise/valid-params": "error",
 
-    // unicorn: only rules that report likely bugs, not its style rules.
+    // unicorn: only rules that report likely bugs or blanket suppressions, not its style rules.
+    "unicorn/no-abusive-eslint-disable": "error",
     "unicorn/no-accessor-recursion": "error",
     "unicorn/no-array-fill-with-reference-type": "error",
     "unicorn/no-await-in-promise-methods": "error",
@@ -208,7 +210,6 @@
     "typescript/no-non-null-assertion": "off",
     "typescript/no-unnecessary-condition": "off",
     "typescript/require-await": "off",
-    "typescript/no-deprecated": "off",
     "typescript/no-invalid-void-type": "off",
     "typescript/no-dynamic-delete": "off",
     "typescript/use-unknown-in-catch-callback-variable": "off",
@@ -230,6 +231,21 @@
     "eslint/no-control-regex": "off",
     // no-floating-promises already reports unhandled promise chains.
     "promise/catch-or-return": "off",
+    // Meant for window.postMessage; every call here is a Worker, MessagePort, or VS Code
+    // webview postMessage, which takes no target origin.
+    "unicorn/require-post-message-target-origin": "off",
+    // Its findings here were one-line executors such as
+    // `new Promise((resolve) => setTimeout(resolve, ms))`, whose return value is harmless.
+    "eslint/no-promise-executor-return": "off",
+    // Its findings here were compound conditions whose other operand changes in the loop,
+    // or flags that a callback sets while the loop awaits.
+    "eslint/no-unmodified-loop-condition": "off",
+    // Its findings here were callbacks that run within the same iteration or share state
+    // with the loop on purpose.
+    "eslint/no-loop-func": "off",
+    // Its fix turns `||` into `??`, which changes the result for '' and 0, and many `||`
+    // here fall back on an empty string on purpose.
+    "typescript/prefer-nullish-coalescing": "off",
     // Team decisions.
     "promise/always-return": "off",
     "unicorn/prefer-add-event-listener": "off"
@@ -280,6 +296,14 @@
       }
     },
     {
+      // The React apps. Elsewhere a plain function named `use` would be reported as a hook.
+      "files": ["apps/vis/web/**", "apps/vscode/webview-ui/**"],
+      "plugins": ["react"],
+      "rules": {
+        "react/rules-of-hooks": "error"
+      }
+    },
+    {
       "files": [
         "**/*.test.ts",
         "**/*.test.tsx",
@@ -298,7 +322,6 @@
         "typescript/unbound-method": "off",
         "typescript/no-redundant-type-constituents": "off",
         "eslint/no-console": "off",
-        "eslint/no-promise-executor-return": "off",
         "typescript/no-unsafe-member-access": "off",
         "eslint/no-shadow": "off",
         "unicorn/prefer-event-target": "off",
