@@ -94,6 +94,6 @@ kimi --add-dir ../shared-types -p "对齐前后端接口类型定义"
 
 ## 下一步
 
-- [在其他 Agent 中使用](./other-agents.md) — 在 Claude Code、Codex、Cursor 等 Agent 中调用与交接 Kimi Code 会话
+- [在其他 Agent 中使用（Agent to Agent）](./other-agents.md) — 在 Claude Code、Codex、Cursor 等 Agent 中调用与交接 Kimi Code 会话
 - [Agent 与 subagent](../customization/agents.md#自定义-agent) — 编写 `--agent` / `--agent-file` 自定义角色
 - [`kimi` 命令参考](../reference/kimi-command.md) — 完整命令行参数列表
