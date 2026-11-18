@@ -52,28 +52,29 @@ function makeDialog(): {
 }
 
 describe('FeedbackInputDialogComponent', () => {
-  it('renders a blue rounded box with title, subtitle, and footer', () => {
+  it('renders the settings frame with a rounded input box', () => {
     const { dialog } = makeDialog();
-    const text = strip(dialog.render(60).join('\n'));
+    const rendered = dialog.render(60);
+    const plain = rendered.map((line) => strip(line));
 
-    expect(text).toContain('╭');
-    expect(text).toContain('╮');
-    expect(text).toContain('╰');
-    expect(text).toContain('╯');
-    expect(text).toContain('Send feedback to Kimi Code');
-    expect(text).toContain("Tell us what's working or what's not.");
-    expect(text).toContain('Enter submit');
-    expect(text).toContain('Shift-Enter/Ctrl-J newline');
-    expect(text).toContain('Esc cancel');
+    expect(plain[0]).toBe('─'.repeat(60));
+    expect(plain.at(-1)).toBe('─'.repeat(60));
+    expect(plain.some((line) => line.startsWith('╭'))).toBe(false);
+    expect(plain.join('\n')).toContain('Send feedback to Kimi Code');
+    expect(plain.join('\n')).toContain("Tell us what's working or what's not.");
+    expect(plain.join('\n')).toContain('Enter submit');
+    expect(plain.join('\n')).toContain('Shift-Enter/Ctrl-J newline');
+    expect(plain.join('\n')).toContain('Esc cancel');
   });
 
-  it('uses the primary color for the border', () => {
+  it('uses the primary color for the rules and the input box', () => {
     const { dialog } = makeDialog();
-    const rendered = dialog.render(60).join('\n');
+    const rendered = dialog.render(60);
     const sample = chalk.hex(darkColors.primary)('x');
     const ansiOpen = sample.split('x')[0]!;
-    expect(rendered).toContain(`${ansiOpen}╭`);
-    expect(rendered).toContain(`${ansiOpen}╰`);
+    expect(rendered[0]).toContain(`${ansiOpen}─`);
+    expect(rendered.find((line) => strip(line).includes('╭'))).toContain(`${ansiOpen}╭`);
+    expect(rendered.find((line) => strip(line).includes('╰'))).toContain(`${ansiOpen}╰`);
   });
 
   it('keeps every line within narrow widths', () => {
@@ -95,6 +96,18 @@ describe('FeedbackInputDialogComponent', () => {
     expect(collected).toEqual([{ kind: 'ok', value: 'hello world' }]);
   });
 
+  it('insets a three-line input box under the subtitle', () => {
+    const { dialog } = makeDialog();
+    const plain = dialog.render(60).map((line) => strip(line));
+    const top = plain.findIndex((line) => line.includes('╭'));
+    const bottom = plain.findIndex((line) => line.includes('╰'));
+
+    expect(plain[top]).toBe(` ╭${'─'.repeat(56)}╮`);
+    expect(bottom - top).toBe(4);
+    expect(plain[top - 1]).toContain("Tell us what's working or what's not.");
+    expect(plain.slice(top + 1, bottom).some((line) => line.includes('>'))).toBe(false);
+  });
+
   it('renders and submits multiple lines', () => {
     const { dialog, collected } = makeDialog();
     for (const ch of 'First line') dialog.handleInput(ch);
@@ -102,8 +115,9 @@ describe('FeedbackInputDialogComponent', () => {
     for (const ch of 'Second line') dialog.handleInput(ch);
 
     const text = strip(dialog.render(60).join('\n'));
-    expect(text).toContain('> First line');
-    expect(text).toContain('  Second line');
+    expect(text).toContain('First line');
+    expect(text).toContain('Second line');
+    expect(text).not.toContain('> First line');
 
     submit(dialog);
     expect(collected).toEqual([{ kind: 'ok', value: 'First line\nSecond line' }]);
