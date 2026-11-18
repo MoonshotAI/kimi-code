@@ -15,9 +15,9 @@ import {
   toLlmTransportErrorMessage,
 } from '#/llm/protocol/rules/status';
 import {
-  type LlmRemoteErrorMessage,
   NO_FINISH,
   type FinishInfo,
+  type LlmRemoteErrorMessage,
   type FinishReason,
   type TokenUsage,
 } from '#/llm/response';
