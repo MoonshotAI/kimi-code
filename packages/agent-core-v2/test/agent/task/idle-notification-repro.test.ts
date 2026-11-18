@@ -20,10 +20,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   taskServices,
   createTestAgent,
-  createMockProvider,
   homeDirServices,
   type TestAgentContext,
-  type TestAgentOptions,
 } from '../../harness';
 import {
   createAgentTaskPersistence,
