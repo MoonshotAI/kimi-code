@@ -9,6 +9,10 @@ export interface HostHttpRequest {
   readonly timeoutMs?: number;
 }
 
+export interface HostStreamHttpRequest extends Omit<HostHttpRequest, 'body'> {
+  readonly body?: AsyncIterable<Uint8Array>;
+}
+
 export const HOST_HTTP_TIMEOUT_MS = 30_000;
 
 export interface HostHttpResponse {
@@ -17,7 +21,13 @@ export interface HostHttpResponse {
   readonly body: Buffer;
 }
 
-export type HostRequestFailure = 'cancelled' | 'timeout' | 'body_too_large' | 'unavailable';
+export interface HostStreamHttpResponse {
+  readonly status: number;
+  readonly headers: OutgoingHttpHeaders;
+  readonly body: AsyncIterable<Uint8Array>;
+}
+
+export type HostRequestFailure = 'cancelled' | 'timeout' | 'body_too_large' | 'busy' | 'unavailable';
 
 export class HostRequestError extends Error {
   constructor(readonly failure: HostRequestFailure, message: string) {
@@ -39,5 +49,6 @@ export interface HostWsSession {
 
 export interface HostSession {
   request(req: HostHttpRequest): Promise<HostHttpResponse>;
+  requestStream?(req: HostStreamHttpRequest): Promise<HostStreamHttpResponse>;
   openWebSocket(path: string, handlers: HostWsHandlers): HostWsSession;
 }

@@ -19,6 +19,12 @@ export class JsonlRpcStream<Frame extends { type: string }> {
   private blockedTimer?: ReturnType<typeof setTimeout>;
   private lastFlushAt = 0;
   private cleaned = false;
+  private readonly drainWaiters = new Set<{
+    resolve(): void;
+    reject(error: Error): void;
+    onAbort: () => void;
+    signal?: AbortSignal;
+  }>();
 
   constructor(
     private readonly stream: Duplex,
@@ -65,6 +71,25 @@ export class JsonlRpcStream<Frame extends { type: string }> {
     return false;
   }
 
+  waitForDrain(signal?: AbortSignal): Promise<void> {
+    if (this.cleaned || this.stream.destroyed) return Promise.reject(new Error('RPC stream closed'));
+    if (!this.stream.writableNeedDrain) return Promise.resolve();
+    if (signal?.aborted === true) return Promise.reject(new Error('RPC drain wait cancelled'));
+    return new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        signal,
+        onAbort: () => {
+          this.drainWaiters.delete(waiter);
+          reject(new Error('RPC drain wait cancelled'));
+        },
+      };
+      this.drainWaiters.add(waiter);
+      signal?.addEventListener('abort', waiter.onAbort, { once: true });
+    });
+  }
+
   close(error?: Error): void {
     this.finish(error);
     if (!this.stream.destroyed) this.stream.destroy();
@@ -76,6 +101,11 @@ export class JsonlRpcStream<Frame extends { type: string }> {
     if (this.blockedTimer !== undefined) clearTimeout(this.blockedTimer);
     this.blockedTimer = undefined;
     this.lines.close();
+    for (const waiter of this.drainWaiters) {
+      waiter.signal?.removeEventListener('abort', waiter.onAbort);
+      waiter.reject(new Error('RPC stream closed'));
+    }
+    this.drainWaiters.clear();
     this.stream.off('drain', this.handleDrain);
     this.stream.off('end', this.handleEnd);
     this.stream.off('close', this.handleClose);
@@ -101,6 +131,11 @@ export class JsonlRpcStream<Frame extends { type: string }> {
   private readonly handleDrain = (): void => {
     if (this.blockedTimer !== undefined) clearTimeout(this.blockedTimer);
     this.blockedTimer = undefined;
+    for (const waiter of this.drainWaiters) {
+      waiter.signal?.removeEventListener('abort', waiter.onAbort);
+      waiter.resolve();
+    }
+    this.drainWaiters.clear();
     this.onDrain();
   };
 

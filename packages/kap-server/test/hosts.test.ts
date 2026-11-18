@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { Duplex } from 'node:stream';
+import { Duplex, Readable } from 'node:stream';
 import type { OutgoingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -668,6 +668,53 @@ describe('host HTTP proxy', () => {
       await app.close();
     }
   });
+  it.skipIf(process.platform === 'win32')('streams feedback attachments and session packages above the buffered limit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'feedback-host-stream-'));
+    const bytes = 17 * 1024 * 1024;
+    const chunkSize = 1024 * 1024;
+    const expected = Buffer.concat(Array.from({ length: 17 }, (_, index) => Buffer.alloc(chunkSize, index % 251)));
+    const remote = Fastify();
+    remote.addContentTypeParser('application/octet-stream', (_request, payload, done) => {
+      done(null, payload);
+    });
+    let received = 0;
+    remote.post('/api/v1/feedback/42/attachments', async (request) => {
+      for await (const chunk of request.raw as AsyncIterable<Buffer>) received += chunk.length;
+      return { received };
+    });
+    remote.get('/api/v1/sessions/session-1/feedback_package', async (_request, reply) => {
+      reply.header('content-length', bytes);
+      return Readable.from((async function* () {
+        for (let index = 0; index < 17; index += 1) yield Buffer.alloc(chunkSize, index % 251);
+      })());
+    });
+    await remote.ready();
+    const rpcServer = await startUnixRpcServer(join(directory, 'daemon.sock'), { app: remote, wssV1: new WebSocketServer({ noServer: true }) });
+    const session = new StdioHostSession(createConnection(join(directory, 'daemon.sock')));
+    const local = Fastify();
+    registerHostProxyRoutes(local, { session: () => session } as never);
+    await local.ready();
+    try {
+      const upload = await local.inject({
+        method: 'POST',
+        url: '/api/v1/hosts/dev/proxy/api/v1/feedback/42/attachments',
+        headers: { 'content-type': 'application/octet-stream' },
+        payload: expected,
+      });
+      expect(upload.statusCode).toBe(200);
+      expect(received).toBe(bytes);
+
+      const download = await local.inject({ method: 'GET', url: '/api/v1/hosts/dev/proxy/api/v1/sessions/session-1/feedback_package' });
+      expect(download.statusCode).toBe(200);
+      expect(download.rawPayload.equals(expected)).toBe(true);
+    } finally {
+      session.close();
+      await rpcServer.close();
+      await local.close();
+      await remote.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 interface ManagedHostPair {
@@ -860,10 +907,14 @@ function rpcClient(socketPath: string) {
     send(frame: Record<string, unknown>) {
       socket.write(`${JSON.stringify(frame)}\n`);
     },
-    async next(): Promise<Record<string, unknown>> {
-      await vi.waitFor(() => {
-        expect(frames.length).toBeGreaterThan(0);
-      });
+    async next(label = 'frame'): Promise<Record<string, unknown>> {
+      try {
+        await vi.waitFor(() => {
+          expect(frames.length).toBeGreaterThan(0);
+        });
+      } catch (error) {
+        throw new Error(`timed out waiting for ${label}`, { cause: error });
+      }
       return frames.shift()!;
     },
   };
@@ -1031,6 +1082,105 @@ describe('stdio rpc transport', () => {
       await app.close();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('applies stream credit, reset, concurrency and late-frame rules', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-stream-'));
+    const app = Fastify();
+    let failResponse!: () => void;
+    const responseFailure = new Promise<void>((resolve) => {
+      failResponse = resolve;
+    });
+    app.get('/api/v1/sessions/slow/feedback_package', async () => Readable.from((async function* () {
+      yield Buffer.alloc(512 * 1024);
+      await responseFailure;
+      throw new Error('response failed');
+    })()));
+    app.get('/api/v1/sessions/held/feedback_package', async () => new Promise(() => {}));
+    app.get('/healthz', async () => ({ ok: true }));
+    await app.ready();
+    const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), {
+      app,
+      wssV1: new WebSocketServer({ noServer: true }),
+    });
+    const client = rpcClient(join(dir, 'daemon.sock'));
+    try {
+      client.send({ type: 'stream.req.start', id: 'slow', method: 'GET', path: '/api/v1/sessions/slow/feedback_package', headers: {} });
+      client.send({ type: 'stream.req.end', id: 'slow' });
+      expect((await client.next('response headers'))['type']).toBe('stream.res.start');
+      expect((await client.next('first response chunk'))).toMatchObject({ type: 'stream.res.data', id: 'slow', seq: 0 });
+      await sleep(20);
+      expect(client.frames).toHaveLength(0);
+      client.send({ type: 'stream.res.credit', id: 'slow', seq: 0 });
+      expect((await client.next('second response chunk'))).toMatchObject({ type: 'stream.res.data', id: 'slow', seq: 1 });
+      client.send({ type: 'stream.res.credit', id: 'slow', seq: 1 });
+      failResponse();
+      expect((await client.next('response reset'))).toMatchObject({ type: 'stream.reset', id: 'slow' });
+      client.send({ type: 'stream.res.credit', id: 'slow', seq: 1 });
+      client.send({ type: 'stream.req.end', id: 'slow' });
+
+      client.send({
+        type: 'stream.req.start',
+        id: 'early',
+        method: 'POST',
+        path: '/api/v1/feedback/early/attachments',
+        headers: { 'content-length': String(500 * 1024 * 1024 + 1) },
+      });
+      client.send({ type: 'stream.req.end', id: 'early' });
+      expect((await client.next('early error'))).toMatchObject({ type: 'http.res', id: 'early', status: 413 });
+
+      for (let index = 0; index < 4; index += 1) {
+        client.send({ type: 'stream.req.start', id: `held-${String(index)}`, method: 'GET', path: '/api/v1/sessions/held/feedback_package', headers: {} });
+      }
+      client.send({ type: 'stream.req.start', id: 'overflow', method: 'GET', path: '/api/v1/sessions/held/feedback_package', headers: {} });
+      expect((await client.next('concurrency rejection'))).toMatchObject({ type: 'http.res', id: 'overflow', status: 503 });
+      for (let index = 0; index < 4; index += 1) client.send({ type: 'http.cancel', id: `held-${String(index)}` });
+      client.send({ type: 'stream.req.data', id: 'missing', seq: 0, data: '' });
+      client.send({ type: 'http.req', id: 'ordinary', method: 'GET', path: '/healthz', headers: {} });
+      expect((await client.next('ordinary request'))).toMatchObject({ type: 'http.res', id: 'ordinary', status: 200 });
+      expect(client.frames).toHaveLength(0);
+    } finally {
+      client.socket.destroy();
+      await rpcServer.close();
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('cancels and times out streams without closing ordinary requests', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-client-stream-'));
+    const app = Fastify();
+    app.get('/api/v1/sessions/held/feedback_package', async () => new Promise(() => {}));
+    app.get('/healthz', async () => ({ ok: true }));
+    await app.ready();
+    const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), {
+      app,
+      wssV1: new WebSocketServer({ noServer: true }),
+    });
+    const session = new StdioHostSession(createConnection(join(dir, 'daemon.sock')));
+    const input = { method: 'GET', path: '/api/v1/sessions/held/feedback_package', headers: {} };
+    try {
+      const cancellation = new AbortController();
+      const cancelled = session.requestStream({ ...input, signal: cancellation.signal });
+      cancellation.abort();
+      await expect(cancelled).rejects.toMatchObject({ failure: 'cancelled' });
+      await expect(session.requestStream({ ...input, timeoutMs: 20 })).rejects.toMatchObject({ failure: 'timeout' });
+      const held = Array.from({ length: 4 }, () => session.requestStream({ ...input, timeoutMs: 1_000 }));
+      await expect(session.requestStream(input)).rejects.toMatchObject({ failure: 'busy' });
+      session.close();
+      expect((await Promise.allSettled(held)).every((result) => result.status === 'rejected')).toBe(true);
+      const otherSession = new StdioHostSession(createConnection(join(dir, 'daemon.sock')));
+      try {
+        await expect(otherSession.request({ method: 'GET', path: '/healthz', headers: {} })).resolves.toMatchObject({ status: 200 });
+      } finally {
+        otherSession.close();
+      }
+    } finally {
+      session.close();
+      await rpcServer.close();
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

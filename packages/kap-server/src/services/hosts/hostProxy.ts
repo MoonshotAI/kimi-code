@@ -1,5 +1,5 @@
 import type { IncomingHttpHeaders, IncomingMessage } from 'node:http';
-import type { Duplex } from 'node:stream';
+import { Readable, type Duplex } from 'node:stream';
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { WebSocketServer, type RawData } from 'ws';
@@ -10,6 +10,7 @@ import { HOST_RPC_MAX_BODY_BYTES } from '../../transport/jsonlRpcStream';
 import { selectWsBearerProtocol } from '../../transport/ws/bearerProtocol';
 import type { HostBridgeManager } from './hostBridgeManager';
 import { HostRequestError, type HostSession } from './hostSession';
+import { hostStreamPolicy } from './hostStreamPolicy';
 
 const PROXY_PATH = /^\/api\/v1\/hosts\/([^/?]+)\/proxy(\/[^?]*)?(\?.*)?$/;
 const HOP_BY_HOP = new Set([
@@ -24,10 +25,10 @@ const HOP_BY_HOP = new Set([
 ]);
 const STRIPPED_REQUEST_HEADERS = new Set(['host', 'origin', 'referer', 'authorization', 'cookie']);
 
-function bodyTooLarge(): HostRequestError {
+function bodyTooLarge(limit = HOST_RPC_MAX_BODY_BYTES): HostRequestError {
   return new HostRequestError(
     'body_too_large',
-    `HTTP body exceeds the ${String(HOST_RPC_MAX_BODY_BYTES)} byte host proxy limit`,
+    `HTTP body exceeds the ${String(limit)} byte host proxy limit`,
   );
 }
 
@@ -76,12 +77,13 @@ async function proxyHttp(
     return;
   }
   const cancellation = new AbortController();
+  let responseStarted = false;
   const cancel = (): void => {
     cancellation.abort();
   };
   req.raw.once('aborted', cancel);
   req.raw.once('close', () => {
-    if (!req.raw.readableEnded) cancel();
+    if (!req.raw.readableEnded && !responseStarted) cancel();
   });
   reply.raw.once('close', () => {
     if (!reply.raw.writableFinished) cancel();
@@ -99,6 +101,28 @@ async function proxyHttp(
   }
   const request = async (): Promise<void> => {
     const declaredLength = Number(req.headers['content-length'] ?? 0);
+    const streamPolicy = hostStreamPolicy(target.path);
+    if (streamPolicy !== undefined) {
+      if (declaredLength > streamPolicy.maxBodyBytes) throw bodyTooLarge(streamPolicy.maxBodyBytes);
+      if (session.requestStream === undefined) {
+        throw new HostRequestError('unavailable', 'host session does not support streaming');
+      }
+      const response = await session.requestStream({
+        method: req.method,
+        path: target.path,
+        headers: upstreamHeaders(req.headers),
+        body: req.raw,
+        signal: cancellation.signal,
+      });
+      for (const [name, value] of Object.entries(response.headers)) {
+        if (value !== undefined && !HOP_BY_HOP.has(name.toLowerCase())) {
+          reply.header(name, value);
+        }
+      }
+      responseStarted = true;
+      if (!reply.raw.destroyed) await reply.code(response.status).send(Readable.from(response.body));
+      return;
+    }
     if (declaredLength > HOST_RPC_MAX_BODY_BYTES) throw bodyTooLarge();
     const chunks: Buffer[] = [];
     let size = 0;
@@ -129,11 +153,17 @@ async function proxyHttp(
   } catch (error) {
     if (reply.raw.destroyed) return;
     const message = error instanceof Error ? error.message : String(error);
+    if (reply.raw.headersSent) {
+      reply.raw.destroy(error instanceof Error ? error : new Error(message));
+      return;
+    }
     if (error instanceof HostRequestError && error.failure === 'body_too_large') {
       await reply.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, message, req.id));
       return;
     }
-    const status = error instanceof HostRequestError && error.failure === 'timeout' ? 504 : 502;
+    const status = error instanceof HostRequestError && error.failure === 'busy'
+      ? 503
+      : error instanceof HostRequestError && error.failure === 'timeout' ? 504 : 502;
     const cancelled = error instanceof HostRequestError && error.failure === 'cancelled';
     await reply.code(cancelled ? 499 : status).send(
       errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, message, req.id),
