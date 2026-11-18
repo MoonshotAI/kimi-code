@@ -180,6 +180,18 @@ describe('anchored mode', () => {
     expect(s.visualTop(el)).toBe(before);
   });
 
+  it.each([
+    ['grows', 230],
+    ['shrinks', 4],
+  ])('moves the anchor only by the user scroll when content above %s in the same frame', (_, height) => {
+    const { s, el, before } = readingAt();
+    s.setBlockHeight('r1', 'head', height);
+    s.userScroll(s.scrollTop + 50);
+    s.frame();
+    s.frame();
+    expect(s.visualTop(el)).toBe(before - 50);
+  });
+
   it('does not treat its own corrections as user scrolls', () => {
     const { s, mode } = readingAt();
     s.setBlockHeight('r0', 'head', 330);
@@ -385,6 +397,19 @@ describe('navigate', () => {
     expect(s.visualTop(s.blockEl('r4', 'head'))).toBe(185);
   });
 
+  it('keeps a target clamped at the top where it is visible when older rows are prepended', async () => {
+    const s = setup();
+    const target = { row: 'r0', block: 'md', child: 1 };
+    await s.controller.navigate(target, { align: 'center' });
+    const el = resolve(s, target);
+    const visible = s.visualTop(el);
+    expect(s.scrollTop).toBe(0);
+    s.insertRows(0, textRows(4, 300, 'old'));
+    s.frame();
+    s.frame();
+    expect(s.visualTop(el)).toBe(visible);
+  });
+
   it('uses the model position for an unmounted target and settles once it mounts', async () => {
     const s = setup();
     s.unmount('r1');
@@ -427,6 +452,17 @@ describe('navigate', () => {
     expect(s.writes.filter(w => w.reason === 'resize')).toHaveLength(1);
     expect(s.visualTop(s.rowEl('r2'))).toBe(0);
     expect(s.controller.state.mode).toMatchObject({ kind: 'anchored', anchor: { row: 'r2' }, offset: 0 });
+  });
+
+  it('keeps navigating when the browser clamps the position without user input', async () => {
+    const s = setup();
+    const done = s.controller.navigate({ row: 'r2' }, { smooth: true });
+    s.removeRow('r11');
+    void s.scrollTop;
+    s.insertRows(11, textRows(1, ROW, 'back'));
+    for (let i = 0; i < 40; i++) s.frame();
+    await done;
+    expect(s.visualTop(s.rowEl('r2'))).toBe(0);
   });
 
   it('stops animating when the user scrolls', async () => {

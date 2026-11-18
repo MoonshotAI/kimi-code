@@ -274,7 +274,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
 
   function write(top: number, reason: ScrollWriteReason): void {
     const next = Math.min(Math.max(0, top), maxTop());
-    if (Math.abs(next - scroller.scrollTop) < 0.5) return;
+    if (Math.abs(next - scroller.scrollTop) <= 0.5) return;
     scroller.scrollTop = next;
     expectedTop = scroller.scrollTop;
     scrollInput = false;
@@ -336,18 +336,43 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     if (disposed) return;
     if (isUnexpectedScroll(scroller.scrollTop, expectedTop) && !adoptClamp()) handleScroll();
     if (!animation && !dragging && !touching) {
+      const wasRestoring = restoring;
       restoring = false;
       const top = solve();
-      if (top !== null) write(top, reason);
+      if (top !== null) {
+        write(top, reason);
+        if (!wasRestoring) adoptTopClamp(top);
+      }
     }
     updateIndicators();
     emit();
   }
 
+  function adoptTopClamp(top: number): void {
+    const delta = scroller.scrollTop - top;
+    if (top >= 0 || delta <= 0.5) return;
+    if (held) {
+      held.offset -= delta;
+      return;
+    }
+    const mode = state.mode;
+    if (mode.kind !== 'anchored') return;
+    mode.offset -= delta;
+    if (mode.rowOffset !== undefined) mode.rowOffset -= delta;
+  }
+
   function adoptClamp(): boolean {
-    if (!restoring || scrollInput || dragging || touching) return false;
+    if ((!restoring && state.mode.kind !== 'navigating') || scrollInput || dragging || touching) return false;
     expectedTop = scroller.scrollTop;
     return true;
+  }
+
+  function pendingShift(): number {
+    const mode = state.mode;
+    if (dragging || touching || mode.kind !== 'anchored') return 0;
+    if (!held && !adapter.resolveAnchor(mode.anchor)) return 0;
+    const target = solve();
+    return target === null ? 0 : target - expectedTop;
   }
 
   function handleScroll(): void {
@@ -359,6 +384,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
       expectedTop = top;
       return;
     }
+    const shift = pendingShift();
     const direction = top > expectedTop ? 1 : -1;
     expectedTop = top;
     scrollInput = false;
@@ -367,7 +393,8 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
       finishNavigation();
     }
     held = null;
-    const distance = max - top;
+    if (Math.abs(shift) > 0.5) write(top + shift, 'resize');
+    const distance = maxTop() - scroller.scrollTop;
     if (state.mode.kind === 'follow') {
       if (direction < 0 || distance > options.followThreshold) anchorHere();
     } else if (direction > 0 && distance <= options.followThreshold) {
