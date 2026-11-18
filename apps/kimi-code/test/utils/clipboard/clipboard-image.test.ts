@@ -160,12 +160,9 @@ describe('readClipboardMedia', () => {
             '  }',
         );
         expect(script).toContain('if (-not $ok) {\n  $img = [System.Windows.Forms.Clipboard]::GetImage()');
-        // PowerShell writes via the Windows path; under WSL that is the same inode
-        // as the Linux temp file created before wslpath.
         writeFileSync(linuxTmpPath, imageBytes);
         return { ok: true, stdout: Buffer.from('ok\n') };
       }
-      // wl-paste / xclip miss on WSL so the PowerShell fallback runs.
       return { ok: false, stdout: Buffer.alloc(0) };
     });
 

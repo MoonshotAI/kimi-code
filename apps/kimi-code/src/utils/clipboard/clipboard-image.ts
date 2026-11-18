@@ -317,7 +317,6 @@ function readClipboardImageViaPowerShell(run: RunCommand): ClipboardImage | null
       "if ($ok) { Write-Output 'ok' } else { Write-Output 'empty' }",
     ].join('\n');
 
-    // `-STA` is required for WinForms clipboard access from powershell.exe.
     const result = run(
       'powershell.exe',
       ['-STA', '-NoProfile', '-NonInteractive', '-Command', psScript],
