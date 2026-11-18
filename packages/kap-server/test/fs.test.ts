@@ -21,7 +21,7 @@ interface Envelope<T> {
   msg: string;
   data: T;
   request_id: string;
-  details?: { path: string; message: string }[];
+  details?: unknown;
 }
 
 interface FsEntryWire {
@@ -717,6 +717,76 @@ describe('server-v2 /api/v1 fs routes', () => {
       await rm(extra, { recursive: true, force: true });
     }
   }, 20000);
+
+  it('fs:git_status reports the head, untracked additions and the pull request lookup outcome', async () => {
+    git(work!, 'init', '-b', 'main');
+    git(work!, 'config', 'user.email', 'test@example.com');
+    git(work!, 'config', 'user.name', 'Test');
+    await writeFile(join(work!, 'main.txt'), 'one\n');
+    git(work!, 'add', '-A');
+    git(work!, 'commit', '-m', 'init');
+    await writeFile(join(work!, 'fresh.txt'), 'one\ntwo\n');
+    const id = await createSession();
+
+    const status = await postFs<{
+      head?: string;
+      detached?: boolean;
+      upstream?: string;
+      additions: number;
+      pullRequest: null;
+      pull_request_status?: string;
+      stats_error?: string;
+    }>(id, 'git_status', {});
+    const pullRequest = await postFs<null>(id, 'pull_request', {});
+    const prBatch = await postFs<{
+      results: Record<string, null>;
+      statuses: Record<string, { status: string }>;
+    }>(id, 'pull_request:batch', { roots: [work] });
+
+    expect(status.code).toBe(0);
+    expect(status.data.head).toBe(execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: work! }).toString().trim());
+    expect(status.data.detached).toBe(false);
+    expect(status.data.upstream).toBeUndefined();
+    expect(status.data.additions).toBe(2);
+    expect(status.data.stats_error).toBeUndefined();
+    expect(status.data.pullRequest).toBeNull();
+    expect(['none', 'unavailable']).toContain(status.data.pull_request_status);
+    expect(pullRequest.code).toBe(0);
+    expect(pullRequest.data).toBeNull();
+    expect(pullRequest.details).toEqual({ pull_request_status: status.data.pull_request_status });
+    expect(prBatch.data.results).toEqual({ [work!]: null });
+    expect(prBatch.data.statuses).toEqual({ [work!]: { status: status.data.pull_request_status } });
+  }, 20000);
+
+  it('tells a directory that no longer exists apart from one that is not a repository', async () => {
+    const id = await createSession();
+    await mkdir(join(work!, 'plain'));
+
+    const gone = await postFs<null>(id, 'git_status', { root: 'gone' });
+    const plain = await postFs<null>(id, 'git_status', { root: 'plain' });
+    const gonePullRequest = await postFs<null>(id, 'pull_request', { root: 'gone' });
+    const batch = await postFs<{ errors: Record<string, { code: number }> }>(id, 'git_status:batch', {
+      roots: ['gone', 'plain'],
+    });
+    const prBatch = await postFs<{ errors: Record<string, { code: number }> }>(id, 'pull_request:batch', {
+      roots: ['gone'],
+    });
+
+    expect(gone.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+    expect(plain.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
+    expect(gonePullRequest.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+    expect(batch.data.errors['gone']?.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+    expect(batch.data.errors['plain']?.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
+    expect(prBatch.data.errors['gone']?.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+
+    await rm(work!, { recursive: true, force: true });
+    const rootGone = await postFs<null>(id, 'git_status', {});
+    const rootGoneBatch = await postFs<{ errors: Record<string, { code: number }> }>(id, 'git_status:batch', {
+      roots: [work],
+    });
+    expect(rootGone.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+    expect(rootGoneBatch.data.errors[work!]?.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
+  });
 
   it('rejects an unknown action with VALIDATION_FAILED', async () => {
     const id = await createSession();

@@ -1,5 +1,12 @@
 import { ref, type LiveRef } from '#/_base/di/instantiation';
-import { type FsDiffResponse, type FsGitStatusResponse, type FsPullRequest, type GitStatusOptions, IGitService } from '#/app/git/git';
+import {
+  type FsDiffResponse,
+  type FsGitStatusResponse,
+  type FsPullRequest,
+  type FsPullRequestLookup,
+  type GitStatusOptions,
+  IGitService,
+} from '#/app/git/git';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 
 import { IWorkspaceGitService } from './workspaceGit';
@@ -22,6 +29,10 @@ export class WorkspaceGitService implements IWorkspaceGitService {
 
   pullRequestAt(cwd: string): Promise<FsPullRequest | null> {
     return this.git.current!.pullRequest(cwd);
+  }
+
+  pullRequestLookupAt(cwd: string): Promise<FsPullRequestLookup> {
+    return this.git.current!.pullRequestLookup(cwd);
   }
 
   diff(relPath: string, absPath: string): Promise<FsDiffResponse> {

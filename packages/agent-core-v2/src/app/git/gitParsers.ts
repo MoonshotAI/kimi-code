@@ -9,6 +9,8 @@ export function parsePorcelain(
   let branch = '';
   let ahead = 0;
   let behind = 0;
+  let upstream: string | undefined;
+  let detached = false;
   const entries = Object.create(null) as Record<string, FsGitStatus>;
 
   for (let i = 0; i < records.length; i++) {
@@ -19,6 +21,8 @@ export function parsePorcelain(
       branch = parsed.branch;
       ahead = parsed.ahead;
       behind = parsed.behind;
+      upstream = parsed.upstream;
+      detached = parsed.detached;
       continue;
     }
 
@@ -37,7 +41,17 @@ export function parsePorcelain(
     entries[wirePath] = status;
   }
 
-  return { branch, ahead, behind, entries, additions: 0, deletions: 0, pullRequest: null };
+  return {
+    branch,
+    ahead,
+    behind,
+    entries,
+    additions: 0,
+    deletions: 0,
+    pullRequest: null,
+    upstream,
+    detached,
+  };
 }
 
 export function parseNumstat(stdout: string): {
@@ -55,6 +69,18 @@ export function parseNumstat(stdout: string): {
   return { additions, deletions };
 }
 
+const BINARY_PROBE_BYTES = 8_000;
+
+export function countTextLines(bytes: Uint8Array): number {
+  if (bytes.length === 0) return 0;
+  if (bytes.subarray(0, BINARY_PROBE_BYTES).includes(0)) return 0;
+  let lines = 0;
+  for (const byte of bytes) {
+    if (byte === 0x0a) lines++;
+  }
+  return bytes.at(-1) === 0x0a ? lines : lines + 1;
+}
+
 function parseNumstatCount(value: string | undefined): number {
   if (value === undefined || value === '-') return 0;
   const n = Number.parseInt(value, 10);
@@ -65,12 +91,16 @@ function parseBranchHeader(rest: string): {
   branch: string;
   ahead: number;
   behind: number;
+  upstream?: string;
+  detached: boolean;
 } {
   if (rest.startsWith('HEAD (no branch)')) {
-    return { branch: '', ahead: 0, behind: 0 };
+    return { branch: '', ahead: 0, behind: 0, detached: true };
   }
   if (rest.startsWith('No commits yet on ')) {
-    return { branch: rest.slice('No commits yet on '.length), ahead: 0, behind: 0 };
+    const unborn = rest.slice('No commits yet on '.length);
+    const dots = unborn.indexOf('...');
+    return { branch: dots >= 0 ? unborn.slice(0, dots) : unborn, ahead: 0, behind: 0, detached: false };
   }
   let branch = rest;
   let ahead = 0;
@@ -87,8 +117,12 @@ function parseBranchHeader(rest: string): {
   }
 
   const dots = branch.indexOf('...');
-  if (dots >= 0) branch = branch.slice(0, dots);
-  return { branch, ahead, behind };
+  let upstream: string | undefined;
+  if (dots >= 0) {
+    upstream = branch.slice(dots + 3);
+    branch = branch.slice(0, dots);
+  }
+  return { branch, ahead, behind, upstream, detached: false };
 }
 
 function collapseXY(xy: string): FsGitStatus {

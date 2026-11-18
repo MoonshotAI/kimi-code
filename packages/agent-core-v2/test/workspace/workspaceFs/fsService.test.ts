@@ -77,6 +77,7 @@ function workspaceGitStub(git: IGitService): IWorkspaceGitService {
     status: (pathFilter) => git.status(WORK_DIR, { pathFilter }),
     statusAt: (cwd, options) => git.status(cwd, options),
     pullRequestAt: (cwd) => git.pullRequest(cwd),
+    pullRequestLookupAt: (cwd) => git.pullRequestLookup(cwd),
     diff: (rel, abs) => git.diff(WORK_DIR, rel, abs),
     diffAt: (cwd, rel, abs) => git.diff(cwd, rel, abs),
   };
@@ -411,6 +412,7 @@ function defaultGitStub(): IGitService {
     }),
     diff: async () => ({ path: '', diff: '', truncated: false }),
     pullRequest: async () => null,
+    pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
     findWorkTree: async () => null,
   };
 }
@@ -545,6 +547,7 @@ describe('WorkspaceFsService.gitStatus', () => {
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       pullRequest: async () => null,
+      pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
       findWorkTree: async () => null,
     };
     const fs = makeSession({}, emptyHandler, [], git);
@@ -568,6 +571,7 @@ describe('WorkspaceFsService.gitStatus', () => {
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       pullRequest: async () => null,
+      pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
       findWorkTree: async () => null,
     };
     const fs = makeSession({ '/extra/placeholder': '' }, emptyHandler, [], git, [], undefined, {}, ['/extra']);
@@ -591,6 +595,7 @@ describe('WorkspaceFsService.gitStatus', () => {
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       pullRequest: async () => null,
+      pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
       findWorkTree: async () => null,
     };
     const fs = makeSession(
@@ -616,6 +621,22 @@ describe('WorkspaceFsService.gitStatus', () => {
     await expect(fs.gitStatus({ root: 'src/a.ts' })).rejects.toMatchObject({ code: 'fs.git_unavailable' });
   });
 
+  it('reports a directory that does not exist apart from one that is not a repository', async () => {
+    const fs = makeSession({ 'src/a.ts': '' }, emptyHandler);
+
+    await expect(fs.gitStatus({ root: 'gone' })).rejects.toMatchObject({ code: 'fs.directory_not_found' });
+    await expect(fs.pullRequest({ root: 'gone' })).rejects.toMatchObject({ code: 'fs.directory_not_found' });
+    await expect(fs.diff({ root: 'gone', path: 'a.ts' })).rejects.toMatchObject({
+      code: 'fs.directory_not_found',
+    });
+    const status = await fs.gitStatusBatch({ roots: ['gone', 'src/a.ts'] });
+    expect(status.errors['gone']).toMatchObject({ code: 40422 });
+    expect(status.errors['src/a.ts']).toMatchObject({ code: 40908 });
+    const pullRequests = await fs.pullRequestBatch({ roots: ['gone'] });
+    expect(pullRequests.errors['gone']).toMatchObject({ code: 40422 });
+    expect(pullRequests.statuses).toEqual({});
+  });
+
   it('allows a registered filesystem root as a Git root', async () => {
     const calls: string[] = [];
     const git: IGitService = {
@@ -626,6 +647,7 @@ describe('WorkspaceFsService.gitStatus', () => {
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       pullRequest: async () => null,
+      pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
       findWorkTree: async () => null,
     };
     const fs = makeSession({ '/placeholder': '' }, emptyHandler, [], git, [], undefined, {}, ['/']);
@@ -644,6 +666,7 @@ describe('WorkspaceFsService.gitStatus', () => {
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       pullRequest: async () => null,
+      pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
       findWorkTree: async () => null,
     };
     const fs = makeSession({}, emptyHandler, [], git);
@@ -669,9 +692,12 @@ describe('WorkspaceFsService git batches', () => {
         if (cwd === '/b') throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'not a repo');
         return { branch: `branch-${cwd.slice(1)}`, ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
       },
-      pullRequest: async (cwd) => {
+      pullRequest: async () => null,
+      pullRequestLookup: async (cwd) => {
         if (cwd === '/b') throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'not a repo');
-        return cwd === '/a' ? { number: 7, state: 'open', url: 'https://example.com/pull/7' } : null;
+        return cwd === '/a'
+          ? { pullRequest: { number: 7, state: 'open', url: 'https://example.com/pull/7' }, status: 'found' }
+          : { pullRequest: null, status: 'unavailable' };
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
       findWorkTree: async () => null,
@@ -701,6 +727,10 @@ describe('WorkspaceFsService git batches', () => {
     expect(pullRequests.results['/a']).toEqual({ number: 7, state: 'open', url: 'https://example.com/pull/7' });
     expect(pullRequests.results['/c']).toBeNull();
     expect(pullRequests.errors['/b']).toEqual({ code: 40908, msg: 'not a repo' });
+    expect(pullRequests.statuses).toEqual({
+      '/a': { status: 'found' },
+      '/c': { status: 'unavailable' },
+    });
   });
 
   it('preserves special root names and established batch error codes', async () => {
@@ -715,6 +745,7 @@ describe('WorkspaceFsService git batches', () => {
         return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
       },
       pullRequest: async () => null,
+      pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
       diff: async () => ({ path: '', diff: '', truncated: false }),
       findWorkTree: async () => null,
     };
@@ -765,6 +796,7 @@ describe('WorkspaceFsService.diff', () => {
         return { path: rel, diff: '-old\n+new\n', truncated: false };
       },
       pullRequest: async () => null,
+      pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
       findWorkTree: async () => null,
     };
     const fs = makeSession({ 'src/a.ts': 'content' }, emptyHandler, [], git);
@@ -787,6 +819,7 @@ describe('WorkspaceFsService.diff', () => {
         return { path: rel, diff: '-old\n+new\n', truncated: false };
       },
       pullRequest: async () => null,
+      pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
       findWorkTree: async () => null,
     };
     const fs = makeSession({ '/extra/src/a.ts': 'content' }, emptyHandler, [], git, [], undefined, {}, ['/extra']);
@@ -807,6 +840,7 @@ describe('WorkspaceFsService.diff', () => {
         return { path: rel, diff: '-old\n+new\n', truncated: false };
       },
       pullRequest: async () => null,
+      pullRequestLookup: async () => ({ pullRequest: null, status: 'none' }),
       findWorkTree: async () => null,
     };
     const fs = makeSession({ '/extra/src/a.ts': 'content' }, emptyHandler, [], git, [], undefined, {}, ['/extra']);

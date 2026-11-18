@@ -25,6 +25,19 @@ export const fsPullRequestSchema = z.object({
 });
 export type FsPullRequest = z.infer<typeof fsPullRequestSchema>;
 
+export const fsPullRequestStatusSchema = z.enum(['found', 'none', 'unavailable', 'failed']);
+export type FsPullRequestStatus = z.infer<typeof fsPullRequestStatusSchema>;
+
+export const fsPullRequestLookupStatusSchema = z.object({
+  status: fsPullRequestStatusSchema,
+  error: z.string().optional(),
+});
+export type FsPullRequestLookupStatus = z.infer<typeof fsPullRequestLookupStatusSchema>;
+
+export interface FsPullRequestLookup extends FsPullRequestLookupStatus {
+  readonly pullRequest: FsPullRequest | null;
+}
+
 export const fsGitStatusRequestSchema = z.object({
   root: z.string().min(1).optional(),
   paths: z.array(z.string().min(1)).optional(),
@@ -51,6 +64,12 @@ export const fsGitStatusResponseSchema = z.object({
   additions: z.number().int().nonnegative(),
   deletions: z.number().int().nonnegative(),
   pullRequest: fsPullRequestSchema.nullable(),
+  upstream: z.string().optional(),
+  head: z.string().optional(),
+  detached: z.boolean().optional(),
+  stats_error: z.string().optional(),
+  pull_request_status: fsPullRequestStatusSchema.optional(),
+  pull_request_error: z.string().optional(),
 });
 export type FsGitStatusResponse = z.infer<typeof fsGitStatusResponseSchema>;
 
@@ -80,6 +99,7 @@ export type FsPullRequestBatchRequest = z.infer<typeof fsPullRequestBatchRequest
 export const fsPullRequestBatchResponseSchema = z.object({
   results: z.record(z.string(), fsPullRequestSchema.nullable()),
   errors: z.record(z.string(), fsBatchErrorSchema),
+  statuses: z.record(z.string(), fsPullRequestLookupStatusSchema).optional(),
 });
 export type FsPullRequestBatchResponse = z.infer<typeof fsPullRequestBatchResponseSchema>;
 
@@ -101,6 +121,7 @@ export interface IGitService {
 
   status(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse>;
   pullRequest(cwd: string): Promise<FsPullRequest | null>;
+  pullRequestLookup(cwd: string): Promise<FsPullRequestLookup>;
   diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse>;
   findWorkTree(cwd: string): Promise<GitWorkTree | null>;
 }
