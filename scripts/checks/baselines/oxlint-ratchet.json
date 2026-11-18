@@ -326,7 +326,7 @@
     "packages/core/src/llm/protocol/protocol.ts": 4,
     "packages/core/src/llm/request.ts": 1,
     "packages/core/src/tool/hook-composer.ts": 1,
-    "packages/core/src/tool/tool-executor.ts": 33,
+    "packages/core/src/tool/tool-executor.ts": 32,
     "packages/core/src/tool/types.ts": 7,
     "packages/core/src/tool/validate.ts": 4,
     "packages/kap-server/src/transport/channelRegistry.ts": 1,
