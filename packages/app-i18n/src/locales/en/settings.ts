@@ -82,6 +82,8 @@ export default {
     sidebarTabsHint: 'The sidebar shows Open / Done / Projects tabs',
     notifyUser: 'Progress updates',
     notifyUserHint: 'Let the agent post progress updates in the conversation. Only applies to sessions created afterwards.',
+    transcriptEngine: 'New message list scrolling',
+    transcriptEngineHint: 'Turn off to use the previous version. The session view reloads when you switch',
   },
   plugins: {
     localOnlyHint: 'Plugins and MCP servers apply to projects on this machine only. Projects on SSH hosts use what is set up on each host',

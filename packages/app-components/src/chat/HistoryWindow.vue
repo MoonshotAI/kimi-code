@@ -2,7 +2,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button } from '@moonshot-ai/app-ui';
-import { HistoryAllKey, HistoryScrollKey, HistoryStateKey } from '@moonshot-ai/app-core/contracts';
+import { HistoryAllKey, HistoryScrollKey, HistoryStateKey, TranscriptFlatKey } from '@moonshot-ai/app-core/contracts';
 import HistoryRow from './HistoryRow.vue';
 import { HistoryHeights } from '@moonshot-ai/app-core/lib';
 
@@ -20,6 +20,7 @@ const props = withDefaults(defineProps<{
 }>(), { enabled: false, tail: 1, overscan: 1, scope: 'items', scrollRoot: '.panes' });
 const adjustScroll = inject(HistoryScrollKey, (container: HTMLElement, delta: number) => { container.scrollTop += delta; });
 const renderAll = inject(HistoryAllKey, undefined);
+const flat = inject(TranscriptFlatKey, false);
 const { t } = useI18n();
 const parentState = props.state ?? inject(HistoryStateKey, undefined);
 const nested = !props.state && parentState !== undefined;
@@ -304,6 +305,7 @@ async function navigate(index: number): Promise<void> {
 }
 
 onMounted(() => {
+  if (flat) return;
   scroller = root.value?.closest<HTMLElement>(props.scrollRoot) ?? null;
   if (!scroller || !props.enabled) return;
   const applySizes = (elements: Element[], resetFont = false) => {
@@ -413,6 +415,11 @@ defineExpose({ reveal, release });
 
 <template>
   <template v-if="!enabled"><slot v-for="(item, index) in items" :key="itemKey(item, index)" :item="item" :index="index" /></template>
+  <div v-else-if="flat" class="history-window" role="list">
+    <HistoryRow v-for="(item, index) in items" :key="keys[index]" :state="records.get(keys[index]!)!.state" :data-history-key="keys[index]" role="listitem" :aria-posinset="index + 1" :aria-setsize="items.length" :style="`padding-top: ${gap?.(item, index) ?? 0}px`">
+      <slot :item="item" :index="index" />
+    </HistoryRow>
+  </div>
   <div v-else ref="root" class="history-window" data-virtual-scroll-root role="list">
     <template v-for="entry in entries" :key="entry.key">
       <div v-if="entry.spaced" :ref="el => registerSpace(entry.key, el)" aria-hidden="true" class="history-space" />

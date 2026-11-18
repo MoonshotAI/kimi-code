@@ -82,6 +82,8 @@ export default {
     sidebarTabsHint: '侧边栏显示「进行中 / 已完成 / 项目」三个标签页',
     notifyUser: '进展更新',
     notifyUserHint: '让 agent 在对话中发布进展更新，仅对之后新建的会话生效',
+    transcriptEngine: '新版消息列表滚动',
+    transcriptEngineHint: '关闭后恢复旧版，切换后会话视图会重新加载',
   },
   plugins: {
     localOnlyHint: '插件和 MCP 服务器仅对本机项目生效，SSH 主机上的项目使用各主机自己的配置',

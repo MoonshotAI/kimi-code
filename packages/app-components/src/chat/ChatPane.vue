@@ -14,8 +14,9 @@ import { BrowserToolContextKey } from './tool-calls/browserToolContext';
 import { browserToolContexts } from './tool-calls/browserToolPresentation';
 import { CronToolContextKey, cronToolContexts } from './tool-calls/cronToolContext';
 import HistoryWindow from './HistoryWindow.vue';
+import TranscriptList from './TranscriptList.vue';
 import { settledSteerTurnIdsFor, syncSettledSteerTurnIds } from './steerContinuationState';
-import { HistoryAllKey } from '@moonshot-ai/app-core/contracts';
+import { HistoryAllKey, TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
 import ActivityRun from './ActivityRun.vue';
 import TurnFold from './TurnFold.vue';
 import RequestDebugRow from './RequestDebugRow.vue';
@@ -987,6 +988,41 @@ function copyFinalSummary(onCopied?: (ok: boolean) => void): void {
 provide(HistoryAllKey, computed(() => props.renderAllHistory));
 if (props.windowHistory) provide(HistoryImageCacheKey, createHistoryImageCache());
 const historyState = props.historyState ?? new Map<string, unknown>();
+const transcriptHost = inject(TranscriptScrollKey, null);
+const transcriptList = props.windowHistory && transcriptHost !== null;
+const transcriptAuxRefs = new Map<string, (el: unknown) => void>();
+function transcriptAux(id: string): (el: unknown) => void {
+  let bind = transcriptAuxRefs.get(id);
+  if (!bind) {
+    bind = (el: unknown) => {
+      const node = el && typeof el === 'object' && '$el' in el ? el.$el : el;
+      transcriptHost?.observeAux('tail', node instanceof HTMLElement ? node : null, id);
+    };
+    transcriptAuxRefs.set(id, bind);
+  }
+  return bind;
+}
+if (transcriptList) watch(topSentinelRef, transcriptAux('sentinel'), { flush: 'sync' });
+function historyTurnKey(turn: ChatTurn): string {
+  return turn.id;
+}
+function historyTurnKind(turn: ChatTurn): string {
+  return turn.role;
+}
+function historyTurnGap(turn: ChatTurn, index: number): number {
+  return index === 0 && !props.hasMoreMessages && !props.loadingMore ? 0 : turn.role === 'assistant' ? 10 : 16;
+}
+const historyList = computed(() => transcriptList
+  ? {
+      is: TranscriptList,
+      key: `v2:${props.sessionId ?? 'empty'}`,
+      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, estimate: estimateTurnHeight, kind: historyTurnKind, gap: historyTurnGap, renderAll: props.renderAllHistory },
+    }
+  : {
+      is: HistoryWindow,
+      key: `${props.windowHistory}:${props.sessionId ?? 'empty'}`,
+      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, enabled: props.windowHistory, tail: 4, overscan: 3, estimate: estimateTurnHeight, gap: historyTurnGap },
+    });
 const historyRef = ref<{ reveal: (key: string) => Promise<HTMLElement | null>; release: () => void } | null>(null);
 async function revealTurn(id: string): Promise<HTMLElement | null> {
   return await historyRef.value?.reveal(id) ?? null;
@@ -1273,7 +1309,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 <template>
   <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
     <BrowserReferenceDetails :state="browserDetails.state.value" @resolve="browserDetails.finish" />
-    <div v-if="sessionLoadingVisible" class="chat-loading">
+    <div v-if="sessionLoadingVisible" :ref="transcriptAux('loading')" class="chat-loading">
       <Spinner size="sm" />
       <span class="chat-loading-text">{{ t('conversation.loading') }}</span>
     </div>
@@ -1299,8 +1335,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       </span>
     </div>
 
-    <HistoryWindow ref="historyRef" :key="`${windowHistory}:${sessionId ?? 'empty'}`" :scope="sessionId ?? 'empty'" :state="historyState" :items="turns" :item-key="turn => turn.id" :enabled="windowHistory" :tail="4" :overscan="3" :estimate="estimateTurnHeight" :gap="(turn, index) => index === 0 && !hasMoreMessages && !loadingMore ? 0 : turn.role === 'assistant' ? 10 : 16">
-      <template #default="{ item: turn, index: ti }">
+    <component :is="historyList.is" ref="historyRef" :key="historyList.key" v-bind="historyList.props">
+      <template #default="{ item: turn, index: ti }: { item: ChatTurn; index: number }">
       <template v-if="turn.role === 'user'">
         <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
@@ -1449,6 +1485,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       <div v-else class="a-msg turn-anchor" :data-turn-id="turn.id">
         <TurnFold
           v-if="!inspector && turnFolding && assistantFold(turn).folded.length > 0"
+          data-block-key="fold"
           :items="assistantFold(turn).folded"
           mobile
           :streaming-tail-index="streamingTailIndex(turn)"
@@ -1465,10 +1502,11 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           @detach="onDetach"
         />
         <HistoryWindow :items="assistantVisibleBlocks(turn)" :item-key="renderBlockKey" :enabled="windowHistory" scope="visible-blocks"><template #default="{ item: blk, index: bi }">
-          <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" :instant-reveal="inspector" />
-          <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :state-key="renderBlockKey(blk, bi)" :open-file="panelApi?.openFile" :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" /></div>
+          <ThinkingBlock v-if="blk.kind === 'thinking'" :data-block-key="renderBlockKey(blk, bi)" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" :instant-reveal="inspector" />
+          <div v-else-if="blk.kind === 'text' && blk.text" class="msg" :data-block-key="renderBlockKey(blk, bi)"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :state-key="renderBlockKey(blk, bi)" :open-file="panelApi?.openFile" :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" /></div>
           <ActivityRun
             v-else-if="blk.kind === 'activity-run'"
+            :data-block-key="renderBlockKey(blk, bi)"
             :items="blk.items"
             mobile
             :live="isLiveActivityRun(turn, blk)"
@@ -1479,8 +1517,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
             @open-media="onOpenMedia"
             @detach="onDetach"
           />
-          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" @open-media="onOpenMedia" @detach="onDetach" />
-          <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
+          <ToolCall v-else-if="blk.kind === 'tool'" :data-block-key="renderBlockKey(blk, bi)" :tool="blk.tool" mobile :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" @open-media="onOpenMedia" @detach="onDetach" />
+          <NotificationCard v-else-if="blk.kind === 'notification'" :data-block-key="renderBlockKey(blk, bi)" :items="blk.items" />
           <template v-if="blk.kind === 'thinking' || blk.kind === 'text' || blk.kind === 'tool'"><RequestDebugRow v-for="(debug, di) in blk.debug ?? []" :key="di" :debug="debug" /></template>
         </template></HistoryWindow>
         <BrowserSources
@@ -1491,6 +1529,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
              sub-agent detail view stays a pure trajectory, no diff card. -->
         <TurnFilesSummary
           v-if="!inspector && turnFileChangesById.get(turn.id)"
+          data-block-key="files"
           :changes="turnFileChangesById.get(turn.id)!.changes"
           :turn-id="turn.id"
           :daemon-turn-id="turnFileChangesById.get(turn.id)!.daemonTurnId"
@@ -1498,7 +1537,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           :cwd="props.cwd"
           :interactive="turnFilesInteractive"
         />
-        <div v-if="!inspector && turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (props.turns[ti + 1]?.steered !== true || forkEntryAvailable(turn)) && (assistantRunHasOutput(ti) || forkEntryAvailable(turn)) && (assistantRunFinalText(ti).trim().length > 0 || turnTimeLabel(turn) || forkEntryAvailable(turn))" class="a-msg-ft">
+        <div v-if="!inspector && turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (props.turns[ti + 1]?.steered !== true || forkEntryAvailable(turn)) && (assistantRunHasOutput(ti) || forkEntryAvailable(turn)) && (assistantRunFinalText(ti).trim().length > 0 || turnTimeLabel(turn) || forkEntryAvailable(turn))" class="a-msg-ft" data-block-key="footer">
           <div class="a-msg-meta">
             <Tooltip :text="t('filePreview.copy')">
             <button
@@ -1547,12 +1586,12 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         <span class="cd-line" aria-hidden="true" />
       </div>
       </template>
-    </HistoryWindow>
+    </component>
 
     <!-- Model-request failure (e.g. provider 429 after retry exhaustion): the
          turn died and nothing resumes it on its own — a persistent card, since
          the transient error toast alone leaves a silently dead session. -->
-    <div v-if="turnFailed" class="turn-failed" role="alert">
+    <div v-if="turnFailed" :ref="transcriptAux('failed')" class="turn-failed" role="alert">
       <span class="tf-chip" aria-hidden="true"><Icon name="alert-triangle" size="sm" /></span>
       <div class="tf-main">
         <span class="tf-title">{{ turnFailedTitle }}</span>
@@ -1565,7 +1604,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
     </div>
 
     <Transition name="sr-fade">
-      <div v-if="ratingStandalone && ratingView" class="sr-tailrow">
+      <div v-if="ratingStandalone && ratingView" :ref="transcriptAux('rating')" class="sr-tailrow">
         <SessionRatingRow
           :key="ratingView.appearanceId"
           :view="ratingView"
@@ -1581,16 +1620,16 @@ function streamingTailIndex(turn: ChatTurn): number | null {
          alongside questions, so both blocking prompts share one position. -->
 
     <!-- Compaction in progress — body-sized activity notice -->
-    <ActivityNotice v-if="compaction" :label="t('conversation.compacting')" />
+    <ActivityNotice v-if="compaction" :ref="transcriptAux('compaction')" :label="t('conversation.compacting')" />
 
-    <div v-if="showMascot" class="sending-placeholder">
+    <div v-if="showMascot" :ref="transcriptAux('working')" class="sending-placeholder">
       <WorkingIndicator :label="showWorking ? workingLabel : ''" :idle="!showWorking" />
     </div>
 
     <!-- Inline queue — pending user messages shown after the running turn.
          The head row steers into the running turn; click to edit, × to
          remove, drag the grip to reorder. -->
-    <div v-if="queued.length > 0" class="q-stack">
+    <div v-if="queued.length > 0" :ref="transcriptAux('queue')" class="q-stack">
       <div class="q-head">
         <span class="q-title">
           <Icon name="mail" size="sm" />

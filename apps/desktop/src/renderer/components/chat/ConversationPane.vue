@@ -19,6 +19,7 @@ import ChatDock from './ChatDock.vue';
 import SessionInfoPanel from './SessionInfoPanel.vue';
 import { useSessionInfoLayout } from '../../composables/useSessionInfoLayout';
 import { toHtmlEl, useLegacyTranscriptScroll } from '../../composables/useLegacyTranscriptScroll';
+import { useTranscriptScrollBinding } from '../../composables/useTranscriptScroll';
 import WorkspaceHome from './WorkspaceHome.vue';
 import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
@@ -37,7 +38,7 @@ import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachm
 import { FetchTurnFileChangesKey, ModelDisplayKey, ResolveAgentModelKey, ResolveAgentTaskIdKey, ResolveAgentTaskStateKey, ResolveDetachableTaskKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { sessionObservationOptions, toast, turnFileChangesFetcher } from '@moonshot-ai/app-client/client';
 import { track } from '../../lib/track';
-import { useComposerAutoFocus, useEscInterrupt, useWorkspaceTrust } from '@moonshot-ai/app-client/composables';
+import { useComposerAutoFocus, useEscInterrupt, useTranscriptEngine, useWorkspaceTrust } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { workspacesStore, sessionRuntimeStore } from '@moonshot-ai/app-client/stores';
 import { useAppDialogs } from '@moonshot-ai/app-client/composables';
@@ -445,6 +446,7 @@ const approvalBusy = computed<boolean>(() => {
   return !!props.pendingApprovalActions?.[a.approvalId];
 });
 
+const transcriptV2 = useTranscriptEngine().transcriptEngine.value === 'v2';
 const transcriptSearchOpen = ref(false);
 const historySelection = ref(false);
 const activeSessionPaged = ref(false);
@@ -514,7 +516,7 @@ const {
   followAfterUserAction,
   lockFollowForUserAction,
   handleLoadOlderMessages,
-} = useLegacyTranscriptScroll({
+} = (transcriptV2 ? useTranscriptScrollBinding : useLegacyTranscriptScroll)({
   sessionId: () => props.sessionId,
   mobile: () => props.mobile,
   turns,
@@ -976,7 +978,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :turns="turns"
               :window-history="true"
               :history-state="historyState"
-              :render-all-history="(!mobile && !hasMoreMessages && !activeSessionPaged && historyRenderAllAffordable(turns)) || transcriptSearchOpen || historySelection"
+              :render-all-history="(!transcriptV2 && !mobile && !hasMoreMessages && !activeSessionPaged && historyRenderAllAffordable(turns)) || transcriptSearchOpen || historySelection"
               :cwd="status.cwd"
               :approvals="approvals"
               :questions="questions"
