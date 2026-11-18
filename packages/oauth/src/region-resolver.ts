@@ -28,13 +28,6 @@ export interface KimiRegionOAuthRef {
   readonly oauthHost?: string;
 }
 
-/**
- * Two-state account snapshot: the client is either logged out or logged in
- * with the persisted oauth ref. A read failure (corrupt/unreadable config,
- * un-hydrated provider state) is NOT a state — the reader reports
- * `unreadable` and the resolver short-circuits without inferring, touching
- * the cache, or memoizing, so every read retries and the failure self-heals.
- */
 export type KimiRegionAuthSnapshot =
   | { readonly status: 'logged-out' }
   | { readonly status: 'logged-in'; readonly ref: KimiRegionOAuthRef };
@@ -49,11 +42,8 @@ export type KimiRegionCacheAction =
 export interface KimiRegionDecideInput {
   readonly auth: KimiRegionAuthSnapshot;
   readonly env: NodeJS.ProcessEnv;
-  /** Install-channel marker value; absent when unreadable or skipped. */
   readonly marker?: KimiRegion;
-  /** Persisted logged-out inference record, when one validates. */
   readonly cacheRecord?: KimiRegionCacheRecord;
-  /** Invoked only when the chain reaches local-signals. */
   readonly signals: () => LocalRegionSignals;
   readonly readMarker?: boolean;
   readonly allowLocalInference?: boolean;
@@ -64,11 +54,6 @@ export interface KimiRegionDecision {
   readonly cacheAction: KimiRegionCacheAction;
 }
 
-/**
- * Pure two-state decision over env > login > marker > cache > local-signals >
- * default. No I/O: file effects are returned as `cacheAction` for the single
- * exit in the resolver to execute once.
- */
 export function decideKimiRegion(input: KimiRegionDecideInput): KimiRegionDecision {
   const ref = input.auth.status === 'logged-in' ? input.auth.ref : undefined;
   const explicit = resolveKimiRegionFromParts({
@@ -127,12 +112,6 @@ export interface CreateKimiRegionResolverOptions {
   readonly homeDir: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly readAuth: () => KimiRegionAuthRead;
-  /**
-   * Path of the file `readAuth` parses (config.toml). When set, `readAuth`
-   * only runs again after the file's stat fingerprint changes; hosts whose
-   * snapshot lives in memory leave this unset and the snapshot enters the
-   * memo basis directly.
-   */
   readonly authFilePath?: string;
   readonly readMarker?: boolean;
   readonly allowLocalInference?: boolean;
@@ -141,7 +120,6 @@ export interface CreateKimiRegionResolverOptions {
 
 export interface KimiRegionResolver {
   current(): KimiRegionResolution;
-  /** Force a full re-read of every input; `current()` re-validates via stat. */
   refresh(): KimiRegionResolution;
 }
 

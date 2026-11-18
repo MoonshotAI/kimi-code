@@ -66,13 +66,7 @@ describe('--session / -r / -S picker routing', () => {
       expect(uiMode).toBe('shell');
       expect(options.session).toBe('');
     });
-
-    // Note: --print / --wire are held back from the first release, so
-    // the "picker + print/wire" combinations can't be constructed via
-    // Commander anymore. The validateOptions guard still lives in
-    // source for when those flags return.
   });
 
-  // Silence unused-import warning kept for the preserved guard tests.
   void OptionConflictError;
 });

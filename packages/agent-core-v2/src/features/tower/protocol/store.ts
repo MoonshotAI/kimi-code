@@ -13,7 +13,9 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, posix, relative, resolve } from 'node:path';
+
+import picomatch from 'picomatch';
 
 import { listBaseDirtyEntries, snapshotBaseWip } from './baseWip';
 import {
@@ -172,6 +174,7 @@ export interface TowerReviewInput {
   readonly findings: string;
   readonly checks?: readonly string[];
   readonly decision: string;
+  readonly acceptanceTip?: string;
 }
 
 export interface TowerReviewResult {
@@ -1319,6 +1322,8 @@ export class TowerStore {
       readonly silent?: boolean;
       readonly validateOnly?: boolean;
       readonly completionPrepared?: boolean;
+      readonly completionTip?: string;
+      readonly completionKeyArtifacts?: readonly string[];
       readonly forceSave?: boolean;
       readonly inboxItems?: readonly TowerInboxItem[];
     } = {},
@@ -1327,6 +1332,7 @@ export class TowerStore {
     if (mission === undefined) {
       throw new TowerProtocolError(`unknown mission "${id}"`);
     }
+    const previousStatus = mission.status;
     if (callerName !== TOWER_NAME) {
       const caller = this.findAgent(state, callerName);
       if (caller?.kind !== 'worker' || caller.missionId !== id) {
@@ -1345,7 +1351,8 @@ export class TowerStore {
       patch.taskDrop === undefined &&
       patch.owner === undefined &&
       patch.scope === undefined &&
-      patch.spawnBase === undefined;
+      patch.spawnBase === undefined &&
+      !(mission.kind === 'artifact' && patch.status === 'completed');
     if (isNoOp) {
       if (options.forceSave === true) await this.save(state);
       return mission;
@@ -1451,6 +1458,19 @@ export class TowerStore {
       }
     }
     if (options.validateOnly === true) return mission;
+    if (
+      mission.kind === 'artifact' &&
+      patch.status === 'completed' &&
+      patch.blocker === undefined
+    ) {
+      if (options.completionTip !== undefined) {
+        mission.completionTip = options.completionTip;
+        mission.keyArtifacts = [...(options.completionKeyArtifacts ?? [])];
+      } else if (previousStatus !== 'completed') {
+        mission.completionTip = undefined;
+        mission.keyArtifacts = undefined;
+      }
+    }
 
     await this.save(state);
     await this.renderMissionsIndex(state);
@@ -1505,14 +1525,18 @@ export class TowerStore {
     }
     if (!(await branchExists(this.repoRoot, mission.branch))) {
       throw new TowerProtocolError(
-        `mission ${mission.id} cannot transition to completed — its branch "${mission.branch}" does not exist, so no work has landed; a build mission must produce a diff on its branch: spawn a worker to do the work, or have the tower abandon the mission (status=abandoned) if it is no longer needed`,
+        mission.kind === 'artifact'
+          ? `mission ${mission.id} cannot transition to completed — its branch "${mission.branch}" does not exist, so no work has landed; an artifact mission must produce committed deliverables on its branch: spawn a worker to do the work, or have the tower abandon the mission (status=abandoned) if it is no longer needed`
+          : `mission ${mission.id} cannot transition to completed — its branch "${mission.branch}" does not exist, so no work has landed; a build mission must produce a diff on its branch: spawn a worker to do the work, or have the tower abandon the mission (status=abandoned) if it is no longer needed`,
       );
     }
     const base = await this.diffBase(state, mission);
     const changed = await diffNameOnly(this.repoRoot, base, mission.branch);
     if (changed.length === 0) {
       throw new TowerProtocolError(
-        `mission ${mission.id} cannot transition to completed — branch "${mission.branch}" has no changes vs "${base}"; a build mission must produce a diff on its branch: commit the work there first, or if the work turned out unnecessary, have the tower abandon the mission (status=abandoned) instead`,
+        mission.kind === 'artifact'
+          ? `mission ${mission.id} cannot transition to completed — branch "${mission.branch}" has no changes vs "${base}"; an artifact mission must produce a committed diff on its branch: commit the deliverables there first, or if the work turned out unnecessary, have the tower abandon the mission (status=abandoned) instead`
+          : `mission ${mission.id} cannot transition to completed — branch "${mission.branch}" has no changes vs "${base}"; a build mission must produce a diff on its branch: commit the work there first, or if the work turned out unnecessary, have the tower abandon the mission (status=abandoned) instead`,
       );
     }
   }
@@ -1621,19 +1645,27 @@ export class TowerStore {
   async complete(
     callerName: string,
     report: string,
+    keyArtifacts: readonly string[] = [],
   ): Promise<TowerCompleteResult> {
     const trimmed = report.trim();
     if (trimmed.length === 0) {
       throw new TowerProtocolError('TowerComplete report must not be empty');
     }
+    const normalizedKeyArtifacts = normalizeArtifactPaths(keyArtifacts);
     return this.runPrepared(
       async () => {
         const snapshot = await this.loadSnapshot();
         const inbox = await this.listInboxSnapshot();
-        await this.completeLocked(callerName, trimmed, structuredClone(snapshot.state), {
-          validateOnly: true,
-          inboxItems: inbox.items,
-        });
+        await this.completeLocked(
+          callerName,
+          trimmed,
+          normalizedKeyArtifacts,
+          structuredClone(snapshot.state),
+          {
+            validateOnly: true,
+            inboxItems: inbox.items,
+          },
+        );
         return { snapshot, inboxFiles: inbox.files, inboxItems: inbox.items };
       },
       (prepared) =>
@@ -1642,7 +1674,7 @@ export class TowerStore {
             prepared.snapshot,
             prepared.inboxFiles,
           );
-          return this.completeLocked(callerName, trimmed, state, {
+          return this.completeLocked(callerName, trimmed, normalizedKeyArtifacts, state, {
             completionPrepared: true,
             inboxItems: prepared.inboxItems,
           });
@@ -1653,6 +1685,7 @@ export class TowerStore {
   private async completeLocked(
     callerName: string,
     report: string,
+    keyArtifacts: readonly string[],
     state: TowerState,
     options: TowerCompletionLockedOptions,
   ): Promise<TowerCompleteResult> {
@@ -1663,7 +1696,14 @@ export class TowerStore {
         : undefined;
     if (callerName === TOWER_NAME || caller?.kind !== 'worker' || ownedMission === undefined) {
       if (caller?.kind === 'worker' && state.recoveredAt !== undefined) {
-        return this.completeStateLostLocked(caller, report, state, state.recoveredAt, options);
+        return this.completeStateLostLocked(
+          caller,
+          report,
+          keyArtifacts,
+          state,
+          state.recoveredAt,
+          options,
+        );
       }
       if (caller?.kind === 'worker' && caller.missionId !== undefined) {
         throw new TowerProtocolError(`unknown mission "${caller.missionId}"`);
@@ -1673,22 +1713,94 @@ export class TowerStore {
       );
     }
     const beforeMission = ownedMission;
-    const wasCompleted = beforeMission.status === 'completed';
-    const subject = beforeMission.kind === 'survey' ? 'survey-summary' : 'review-request';
-    if (wasCompleted) {
-      const existing = await this.findCompletionMessage(
-        callerName,
-        beforeMission,
-        subject,
-        report,
-        options.inboxItems,
+    if (beforeMission.kind !== 'artifact' && keyArtifacts.length > 0) {
+      throw new TowerProtocolError('TowerComplete key_artifacts is only supported for artifact missions');
+    }
+    if (beforeMission.kind === 'artifact' && keyArtifacts.length === 0) {
+      throw new TowerProtocolError(
+        `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must name at least one committed key deliverable`,
       );
-      if (existing !== undefined) {
-        return {
-          mission: beforeMission,
-          message: { item: existing, missionId: beforeMission.id },
-          notificationCreated: false,
-        };
+    }
+    const wasCompleted = beforeMission.status === 'completed';
+    const subject =
+      beforeMission.kind === 'survey'
+        ? 'survey-summary'
+        : beforeMission.kind === 'artifact'
+          ? 'acceptance-request'
+          : 'review-request';
+    let completionTip: string | undefined;
+    let completionBase: string | undefined;
+    let completionChanged: readonly string[] = [];
+    if (beforeMission.kind === 'artifact') {
+      if (!(await branchExists(this.repoRoot, beforeMission.branch))) {
+        if (options.completionPrepared === true) {
+          throw new TowerProtocolError(
+            `artifact mission ${beforeMission.id} cannot complete — its branch "${beforeMission.branch}" does not exist, so there are no committed deliverables to accept`,
+          );
+        }
+      } else {
+        completionTip = await branchTip(this.repoRoot, beforeMission.branch);
+        completionBase = await this.diffBase(state, beforeMission);
+        completionChanged = await diffNameOnly(this.repoRoot, completionBase, completionTip);
+        if (completionChanged.length === 0) {
+          if (options.completionPrepared === true) {
+            throw new TowerProtocolError(
+              `artifact mission ${beforeMission.id} cannot complete — branch "${beforeMission.branch}" has no changes vs "${completionBase}"; commit the deliverables there first`,
+            );
+          }
+        } else {
+          const changed = new Set(completionChanged);
+          const uncommitted = keyArtifacts.filter((path) => !changed.has(path));
+          if (uncommitted.length > 0) {
+            throw new TowerProtocolError(
+              `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must name paths from the committed branch diff; not found: ${uncommitted.join(', ')}`,
+            );
+          }
+          const outOfScope = keyArtifacts.filter(
+            (path) => !beforeMission.scope.some((glob) => picomatch.isMatch(path, glob)),
+          );
+          if (outOfScope.length > 0) {
+            throw new TowerProtocolError(
+              `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must stay inside its scope (${beforeMission.scope.join(', ')}): ${outOfScope.join(', ')}`,
+            );
+          }
+          const missingAtTip: string[] = [];
+          for (const path of keyArtifacts) {
+            const type = await tryGit(this.repoRoot, ['cat-file', '-t', `${completionTip}:${path}`]);
+            if (type !== 'blob') missingAtTip.push(path);
+          }
+          if (missingAtTip.length > 0) {
+            throw new TowerProtocolError(
+              `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must name files present at completion tip ${completionTip.slice(0, 7)}; missing or not files: ${missingAtTip.join(', ')}`,
+            );
+          }
+        }
+      }
+    }
+    const completionReport =
+      beforeMission.kind === 'artifact' && completionTip !== undefined && completionBase !== undefined
+        ? artifactAcceptanceReport(report, keyArtifacts, completionChanged, completionTip)
+        : report;
+    const sameCompletion =
+      beforeMission.kind !== 'artifact' ||
+      (beforeMission.completionTip === completionTip &&
+        sameArtifactPaths(beforeMission.keyArtifacts, keyArtifacts));
+    if (wasCompleted) {
+      if (sameCompletion) {
+        const existing = await this.findCompletionMessage(
+          callerName,
+          beforeMission,
+          subject,
+          completionReport,
+          options.inboxItems,
+        );
+        if (existing !== undefined) {
+          return {
+            mission: beforeMission,
+            message: { item: existing, missionId: beforeMission.id },
+            notificationCreated: false,
+          };
+        }
       }
       if (options.completionPrepared !== true) {
         await this.assertCompletable(state, beforeMission);
@@ -1700,7 +1812,7 @@ export class TowerStore {
       beforeMission.id,
       { status: 'completed' },
       state,
-      options,
+      { ...options, completionTip, completionKeyArtifacts: keyArtifacts },
     );
     if (options.validateOnly === true) {
       return { mission, notificationCreated: false };
@@ -1711,7 +1823,7 @@ export class TowerStore {
         {
           to: TOWER_NAME,
           subject,
-          body: report,
+          body: completionReport,
           scope: mission.id,
           action: 'complete',
         },
@@ -1724,7 +1836,7 @@ export class TowerStore {
         activityLogError: message.activityLogError,
       };
     } catch (error) {
-      const existing = await this.findCompletionMessage(callerName, mission, subject, report);
+      const existing = await this.findCompletionMessage(callerName, mission, subject, completionReport);
       return {
         mission,
         message:
@@ -1738,11 +1850,16 @@ export class TowerStore {
   private async completeStateLostLocked(
     caller: TowerRosterEntry,
     report: string,
+    keyArtifacts: readonly string[],
     state: TowerState,
     recoveredAt: string,
     options: TowerCompletionLockedOptions,
   ): Promise<TowerCompleteResult> {
     const subject = 'completion-report-state-lost';
+    const completionReport =
+      keyArtifacts.length > 0
+        ? `Key artifacts:\n${keyArtifacts.map((path) => `- ${path}`).join('\n')}\n\n${report}`
+        : report;
     const items = options.inboxItems ?? (await this.listInboxItems());
     const existing = items.find(
       (item) =>
@@ -1750,7 +1867,7 @@ export class TowerStore {
         item.to === TOWER_NAME &&
         item.subject === subject &&
         item.action === 'complete' &&
-        item.body === report,
+        item.body === completionReport,
     );
     if (existing !== undefined) {
       return {
@@ -1768,7 +1885,7 @@ export class TowerStore {
         {
           to: TOWER_NAME,
           subject,
-          body: report,
+          body: completionReport,
           action: 'complete',
         },
         state,
@@ -2060,6 +2177,34 @@ export class TowerStore {
       reviewMissionId !== undefined
         ? state.missions.find((mission) => mission.id === reviewMissionId)
         : resolveMissionByBranch(state, input.target);
+    const artifactTowerFeedback = callerName === TOWER_NAME && reviewMission?.kind === 'artifact';
+    if (
+      artifactTowerFeedback &&
+      reviewMission !== undefined &&
+      input.status === 'clean' &&
+      input.merge === 'merge'
+    ) {
+      if (reviewMission.completionTip === undefined) {
+        throw new TowerProtocolError(
+          `artifact mission ${reviewMission.id} has no completion tip recorded — its acceptance-request cannot be bound to an exact branch tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope for explicit human approval, then record TowerReview again.`,
+        );
+      }
+      if (input.acceptanceTip === undefined) {
+        throw new TowerProtocolError(
+          `artifact mission ${reviewMission.id} requires acceptance_tip from the TowerComplete acceptance-request the human approved — present the latest request and pass its completion tip explicitly`,
+        );
+      }
+      if (input.acceptanceTip !== reviewMission.completionTip) {
+        throw new TowerProtocolError(
+          `artifact acceptance references ${input.acceptanceTip.slice(0, 7)}, but the latest acceptance-request for mission ${reviewMission.id} covers ${reviewMission.completionTip.slice(0, 7)} — the approval is tied to a different presentation; present the latest request and pass its acceptance_tip`,
+        );
+      }
+      if (reviewedCommit !== reviewMission.completionTip) {
+        throw new TowerProtocolError(
+          `branch "${input.target}" advanced after the artifact acceptance-request (completion ${reviewMission.completionTip.slice(0, 7)}, current ${reviewedCommit.slice(0, 7)}) — the user has not approved the delivery at the current tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope for fresh explicit human approval, then record TowerReview again.`,
+        );
+      }
+    }
     const activityLogErrors: string[] = [];
     let review = await this.findReviewRecovery(
       state,
@@ -2072,7 +2217,7 @@ export class TowerStore {
       options.activityLogRefs,
     );
     const myRounds = existing.filter((candidate) => candidate.reviewer === callerName).length;
-    if (review === undefined && myRounds >= MAX_REVIEW_ROUNDS) {
+    if (!artifactTowerFeedback && review === undefined && myRounds >= MAX_REVIEW_ROUNDS) {
       throw new TowerProtocolError(
         `branch "${input.target}" has already been through ${String(MAX_REVIEW_ROUNDS)} review rounds by "${callerName}" — the rework loop is not converging, so another round from the same reviewer is refused; redirect instead: reassign the work (spawn a different worker or a fresh reviewer), split the mission into smaller pieces, or descope it (TowerMission status=abandoned)`,
       );
@@ -2874,7 +3019,9 @@ export class TowerStore {
         await this.assertRebaseRecovered(worktreeAbs, gitDir, mission, fromCommit);
         if (inProgress && files.length > 0) {
           mission.blockers.push(
-            `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your tests, then clear this blocker (TowerMission clear_blockers) and TowerSend the tower asking for a fresh review — a worker-run rebase is not covered by the clean-rebase waiver, so the moved tip needs a new clean review before the merge can land`,
+            mission.kind === 'artifact'
+              ? `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your checks, clear this blocker (TowerMission clear_blockers), then run TowerComplete with the current report and key_artifacts so the tower can present the new acceptance-request for fresh explicit human acceptance of the entire tip — the moved tip cannot reuse the old acceptance`
+              : `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your tests, then clear this blocker (TowerMission clear_blockers) and TowerSend the tower asking for a fresh review — a worker-run rebase is not covered by the clean-rebase waiver, so the moved tip needs a new clean review before the merge can land`,
           );
           mission.status = 'blocked';
           await this.save(state);
@@ -3122,7 +3269,7 @@ export class TowerStore {
   private async renderMissionsIndex(state: TowerState): Promise<void> {
     const rows = state.missions.map(
       (m) =>
-        `| ${m.id} | ${m.title} | ${m.branch} | ${m.worktree} | ${STATUS_EMOJI[m.status]} | ${m.owner ?? '—'} |`,
+        `| ${m.id} | ${m.title} | ${m.branch} | ${m.worktree} | ${STATUS_EMOJI[m.status]} | ${m.owner ?? '—'} | ${m.kind} |`,
     );
     const deps = state.missions
       .flatMap((m) => m.deps.map((dep) => `${dep} → ${m.id}`))
@@ -3135,8 +3282,8 @@ export class TowerStore {
       '',
       '<!-- Generated by tower tools from state.json — do not edit by hand. -->',
       '',
-      '| ID | Mission | Branch | Worktree | Status | Owner |',
-      '| -- | ------- | ------ | -------- | ------ | ----- |',
+      '| ID | Mission | Branch | Worktree | Status | Owner | Kind |',
+      '| -- | ------- | ------ | -------- | ------ | ----- | ---- |',
       ...rows,
       '',
       'Status: 🟡 planned · 🔵 active · 🟢 completed · 🔴 blocked · ⏸️ paused · ✅ merged · 🚫 abandoned',
@@ -3159,9 +3306,9 @@ export class TowerStore {
       '',
       '<!-- Generated by tower tools from state.json — update via the TowerMission tool. -->',
       '',
-      '| Branch | Worktree | Status | Scope | Owner |',
-      '| ------ | -------- | ------ | ----- | ----- |',
-      `| ${mission.branch} | ${mission.worktree} | ${STATUS_EMOJI[mission.status]} | ${mission.scope.join(', ')} | ${mission.owner ?? '—'} |`,
+      '| Branch | Worktree | Status | Scope | Owner | Kind |',
+      '| ------ | -------- | ------ | ----- | ----- | ---- |',
+      `| ${mission.branch} | ${mission.worktree} | ${STATUS_EMOJI[mission.status]} | ${mission.scope.join(', ')} | ${mission.owner ?? '—'} | ${mission.kind} |`,
       '',
       ...(mission.context !== undefined
         ? ['## Context — the user\'s own words, verbatim', '', mission.context, '']
@@ -3226,6 +3373,56 @@ export class TowerStore {
     }
     throw new TowerProtocolError(`could not create a unique file for ${rel}`);
   }
+}
+
+function normalizeArtifactPaths(paths: readonly string[]): string[] {
+  const normalized = paths.map((path) => {
+    const trimmed = path.trim();
+    const candidate = posix.normalize(trimmed.replaceAll('\\', '/'));
+    if (
+      trimmed.length === 0 ||
+      /[\0\r\n]/.test(trimmed) ||
+      candidate === '.' ||
+      candidate === '..' ||
+      candidate.startsWith('../') ||
+      posix.isAbsolute(candidate)
+    ) {
+      throw new TowerProtocolError(
+        `TowerComplete key_artifacts entries must be non-empty relative file paths inside the repository; received "${path}"`,
+      );
+    }
+    return candidate;
+  });
+  return [...new Set(normalized)];
+}
+
+function sameArtifactPaths(left: readonly string[] | undefined, right: readonly string[]): boolean {
+  return (
+    left !== undefined &&
+    left.length === right.length &&
+    left.every((path, index) => path === right[index])
+  );
+}
+
+function artifactAcceptanceReport(
+  report: string,
+  keyArtifacts: readonly string[],
+  changed: readonly string[],
+  completionTip: string,
+): string {
+  const key = new Set(keyArtifacts);
+  const additional = changed.filter((path) => !key.has(path));
+  return [
+    'Key artifacts for human acceptance:',
+    ...keyArtifacts.map((path) => `- ${path}`),
+    '',
+    `Completion tip: ${completionTip}`,
+    'Approval authorizes the entire current mission tip presented for acceptance, not only these key artifacts.',
+    `Additional committed files included in this approval: ${String(additional.length)}.`,
+    'Optional full manifest: inspect the current mission branch diff on request; reading every path is not required.',
+    '',
+    report,
+  ].join('\n');
 }
 
 function reviewDocumentBody(input: TowerReviewInput): string {

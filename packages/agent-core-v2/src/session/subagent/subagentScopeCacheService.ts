@@ -5,7 +5,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { SubagentSuspended } from '#/features/swarm/session/sessionSwarmService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ILogService } from '#/_base/log/log';
@@ -186,7 +186,10 @@ export class SessionSubagentScopeCacheService
   private busy(handle: IAgentScopeHandle): boolean {
     const snapshot = handle.accessor.get(IAgentLoopService).snapshot();
     if (snapshot.state === 'running' || snapshot.hasPendingRequests) return true;
-    return handle.accessor.get(IAgentTaskService).list(true).length > 0;
+    return handle.accessor.get(IAgentToolExecutorService).handlers().some((handler) => {
+      const status = handler.snapshot().status;
+      return status === 'running' || status === 'stopping';
+    });
   }
 }
 

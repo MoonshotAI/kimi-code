@@ -17,15 +17,6 @@ export async function appendSessionIndexEntry(
   await appendFile(path, JSON.stringify(entry) + '\n', 'utf-8');
 }
 
-/**
- * Idempotently ensure `entry` is present in `session_index.jsonl`.
- *
- * Appends the entry only when no existing line carries the same `sessionId`.
- * Used for the `already-migrated` re-run path: if a prior run wrote the session
- * directory but crashed before appending its index entry, this self-heals the
- * index on a subsequent run instead of leaving the session permanently
- * unreachable by id.
- */
 export async function ensureSessionIndexEntry(
   targetHome: string,
   entry: SessionIndexEntry,
@@ -54,9 +45,7 @@ async function hasSessionIndexEntry(path: string, sessionId: string): Promise<bo
       ) {
         return true;
       }
-    } catch {
-      // Skip malformed lines — treat them as absent entries.
-    }
+    } catch {}
   }
   return false;
 }

@@ -11,7 +11,7 @@ import {
   type ProviderCatalog,
   type ProviderCatalogChanged,
 } from '#human/provider-catalog/catalog';
-import type { ModelCapability } from '#human/llm-requester/capability';
+import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 
 import { deepEqual } from '../record-diff';
 import { IProviderService, type ProviderConfig } from '../provider/provider';
@@ -63,24 +63,28 @@ export function toCatalogModelDefinition(
   bucket: string,
 ): CatalogModelDefinition {
   return {
-    provider: bucket,
-    model: alias,
-    capability: capabilityFromDeclared(record.capabilities),
-    maxContextSize: record.maxContextSize,
-    maxInputSize: record.maxInputSize,
-    baseUrl: record.baseUrl,
+    id: alias,
+    spec: {
+      provider: bucket,
+      name: record.name ?? alias,
+      capability: capabilityFromDeclared(record.capabilities),
+      thinking: {
+        supportEfforts: record.supportEfforts,
+        defaultEffort: record.defaultEffort,
+        offEffort: record.offEffort,
+        alwaysThinking: declaresAlwaysThinking(record.capabilities),
+        adaptiveThinking: record.adaptiveThinking,
+      },
+      maxContextSize: record.maxContextSize,
+      maxInputSize: record.maxInputSize,
+    },
+    endpoint: { baseUrl: record.baseUrl },
     apiKey: record.apiKey,
     displayName: record.displayName,
     maxOutputSize: record.maxOutputSize,
     reasoningKey: record.reasoningKey,
-    supportEfforts: record.supportEfforts,
-    offEffort: record.offEffort,
-    alwaysThinking: declaresAlwaysThinking(record.capabilities),
     protocol: record.protocol,
-    defaultEffort: record.defaultEffort,
-    adaptiveThinking: record.adaptiveThinking,
     betaApi: record.betaApi,
-    name: record.name,
     aliases: record.aliases,
     oauth: record.oauth,
     overrides: toCatalogOverrides(record.overrides),
@@ -196,7 +200,7 @@ export class ProviderCatalogRuntimeService extends Disposable implements IProvid
     this.sync();
     const bucket = this.routing.get(alias);
     if (bucket === undefined) return undefined;
-    return this.catalog.models(bucket).find((model) => model.model === alias);
+    return this.catalog.models(bucket).find((model) => model.id === alias);
   }
 
   onChanged(listener: (event: ProviderCatalogChanged) => void): IDisposable {

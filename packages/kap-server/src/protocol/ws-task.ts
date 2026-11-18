@@ -82,12 +82,3 @@ export const taskOutputMessageSchema = z.object({
   text: z.string(),
 });
 export type TaskOutputMessage = z.infer<typeof taskOutputMessageSchema>;
-
-export const taskResponseMessageSchema = z.object({
-  type: z.literal('response'),
-  request_id: z.string(),
-  code: z.number().int(),
-  msg: z.string().optional(),
-  task: taskStateSchema.optional(),
-});
-export type TaskResponseMessage = z.infer<typeof taskResponseMessageSchema>;

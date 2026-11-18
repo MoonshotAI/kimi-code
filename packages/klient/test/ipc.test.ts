@@ -56,8 +56,6 @@ describe('ipc transport specifics', () => {
     const klient = createKlient({ socketPath });
     await klient.global.env();
     await klient.close();
-    // env() is served from its frozen-snapshot cache after the first call, so
-    // probe the closed channel with an uncached method instead.
     await expect(klient.global.workspaces.list()).rejects.toThrow('ipc closed');
     await teardown();
   });
@@ -76,8 +74,6 @@ describe('ipc transport specifics', () => {
 
   it('completeAuth outlives the channel default call timeout', async () => {
     const socketPath = await setup();
-    // A slow engine-side wait: without the facade's per-call deadline the
-    // channel's default would kill the long poll mid-flight.
     const management = app.accessor.get(IMcpManagementService);
     const completeSpy = vi
       .spyOn(management, 'completeServerAuth')
@@ -91,12 +87,9 @@ describe('ipc transport specifics', () => {
       );
     const klient = createKlient({ socketPath, callTimeoutMs: 25 });
     try {
-      // completeAuth passes the engine wait + margin as its per-call deadline,
-      // so the 200ms wait resolves instead of dying at the 25ms default.
       await expect(
         klient.global.mcp.completeAuth({ flowId: 'flow-1', timeoutMs: 100 }),
       ).resolves.toBeUndefined();
-      // Calls without the override still die at the channel default.
       await expect(klient.global.mcp.cancelAuth({ flowId: 'flow-1' })).rejects.toThrow(
         'call timed out after 25ms',
       );
@@ -118,9 +111,6 @@ describe('ipc transport specifics', () => {
       );
     const klient = createKlient({ socketPath, callTimeoutMs: 25 });
     try {
-      // timeoutMs at the contract max plus the facade margin would overflow
-      // Node's 32-bit setTimeout into ~1ms; the clamp keeps the call alive
-      // until the engine-side wait resolves.
       await expect(
         klient.global.mcp.completeAuth({ flowId: 'flow-1', timeoutMs: 2 ** 31 - 1 }),
       ).resolves.toBeUndefined();

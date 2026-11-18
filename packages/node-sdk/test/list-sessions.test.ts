@@ -235,7 +235,6 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
       expect(new Set(pagedIds)).toEqual(
         new Set([0, 1, 2, 3, 4].map((i) => `ses_page_${String(i)}`)),
       );
-      // Draining pages yields exactly the unpaged listing, in the same order.
       const full = await client.listSessions({ workDir });
       expect(pagedIds).toEqual(full.map((item) => item.id));
     } finally {
@@ -278,8 +277,6 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
       }
       const index = client.engineAccessor.get(ISessionIndex);
       await index.prepare();
-      // A summary whose workDir can no longer be resolved (unknown workspace,
-      // no cwd) is dropped by the mapping; the page must still fill.
       client.engineAccessor.get(ISessionIndexMirror).record({
         id: 'ses_ghost',
         workspaceId: 'ws_missing',
@@ -303,8 +300,6 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
       expect(ids).toEqual(['ses_drain_0', 'ses_drain_1', 'ses_drain_2']);
     } finally {
       await client.close();
-      // Dispose fired the mirror/query-store async closes; await them before
-      // the shared afterEach removes the temp home.
       await drainSessionIndexMirror();
       await drainQueryStoreDisposals();
       vi.unstubAllEnvs();
@@ -313,12 +308,6 @@ describe('SDKRpcClientV2.listSessionsPage', () => {
 });
 
 describe('SDKRpcClientV2 search-index separation', () => {
-  // The global full-text search database (`<homeDir>/search-index`) belongs
-  // to the kap-server search surface. The TUI-side chain (rpc client →
-  // klient → `ISessionIndex`) must list, resume and continue sessions without
-  // ever opening it — including while the session read model is still
-  // preparing.
-
   it('listSessions / resumeSession never open the global search index (read model off)', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '0');
@@ -336,7 +325,6 @@ describe('SDKRpcClientV2 search-index separation', () => {
       expect(resumed.id).toBe(created.id);
 
       expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
-      // With the read model off, the session query-store is never opened either.
       expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(false);
     } finally {
       await client.close();
@@ -355,10 +343,6 @@ describe('SDKRpcClientV2 search-index separation', () => {
       const created = await client.createSession({ id: 'ses_search_sep_on', workDir });
       await client.closeSession({ sessionId: created.id });
 
-      // The read model is still preparing here: the first list kicks the
-      // background projection and answers from authoritative metadata, the
-      // resume reads the authoritative document — neither waits for, nor
-      // opens, any full-text index.
       const sessions = await client.listSessions({ workDir });
       expect(sessions.map((item) => item.id)).toEqual([created.id]);
       const resumed = await client.resumeSession({ id: created.id });
@@ -366,16 +350,12 @@ describe('SDKRpcClientV2 search-index separation', () => {
 
       expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
 
-      // Settle the kicked projection before close so teardown never races it,
-      // and prove the read model really did engage (the flag took effect).
       const status = await client.engineAccessor.get(ISessionIndex).prepare();
       expect(status.state).toBe('ready');
       expect(existsSync(join(homeDir, 'cache', 'query-store'))).toBe(true);
       expect(existsSync(join(homeDir, 'search-index'))).toBe(false);
     } finally {
       await client.close();
-      // Dispose fired the mirror/query-store async closes; await them before
-      // the shared afterEach removes the temp home.
       await drainSessionIndexMirror();
       await drainQueryStoreDisposals();
       vi.unstubAllEnvs();

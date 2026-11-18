@@ -1,4 +1,4 @@
-import { ConfigChanged, IConfigService, IEventService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { ConfigChanged, IConfigRegistry, IConfigService, IEventService, type Scope } from '@moonshot-ai/agent-core-v2';
 
 import { toConfigResponse } from '../../routes/config';
 
@@ -10,6 +10,7 @@ const FLUSH_DELAY_MS = 10;
 
 export function startConfigChangedPublisher(core: Scope): ConfigChangedPublisher {
   const config = core.accessor.get(IConfigService);
+  const registry = core.accessor.get(IConfigRegistry);
   const events = core.accessor.get(IEventService);
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -22,7 +23,7 @@ export function startConfigChangedPublisher(core: Scope): ConfigChangedPublisher
     pending.clear();
     events.publish(
       new ConfigChanged({
-        payload: { changedFields, config: toConfigResponse(config.getAll()) },
+        payload: { changedFields, config: toConfigResponse(config.getAll(), registry) },
       }),
     );
   };

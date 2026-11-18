@@ -87,7 +87,7 @@ describe('file history routes', () => {
 
     const changes = await appOf(r).inject({
       method: 'GET',
-      url: `/api/v1/sessions/${sessionId}/file-history/changes?turn_id=1`,
+      url: `/api/v1/sessions/${sessionId}/file-history/changes?turn_number=1`,
     });
     expect(changes.statusCode).toBe(200);
     expect((changes.json() as Envelope<{ changes: unknown[] }>).data).toEqual({
@@ -97,7 +97,7 @@ describe('file history routes', () => {
 
     const content = await appOf(r).inject({
       method: 'GET',
-      url: `/api/v1/sessions/${sessionId}/file-history/content?turn_id=1&path=a.txt`,
+      url: `/api/v1/sessions/${sessionId}/file-history/content?turn_number=1&path=a.txt`,
     });
     expect(content.statusCode).toBe(200);
     expect((content.json() as Envelope<{ content: unknown }>).data).toEqual({ content: null });
@@ -107,21 +107,43 @@ describe('file history routes', () => {
     const r = await boot();
     const res = await appOf(r).inject({
       method: 'GET',
-      url: '/api/v1/sessions/does-not-exist/file-history/changes?turn_id=1',
+      url: '/api/v1/sessions/does-not-exist/file-history/changes?turn_number=1',
     });
     const envelope = res.json() as Envelope;
     expect(envelope.code).not.toBe(0);
     expect(envelope.data).toBeNull();
   });
 
-  it('rejects a malformed turn_id', async () => {
+  it('rejects a malformed turn_number', async () => {
     const r = await boot();
     const sessionId = await createSession(r);
     const res = await appOf(r).inject({
       method: 'GET',
-      url: `/api/v1/sessions/${sessionId}/file-history/changes?turn_id=abc`,
+      url: `/api/v1/sessions/${sessionId}/file-history/changes?turn_number=abc`,
     });
     const envelope = res.json() as Envelope;
     expect(envelope.code).not.toBe(0);
+  });
+
+  it('no longer takes the turn number as turn_id', async () => {
+    const r = await boot();
+    const sessionId = await createSession(r);
+    for (const url of [
+      `/api/v1/sessions/${sessionId}/file-history/changes?turn_id=1`,
+      `/api/v1/sessions/${sessionId}/file-history/content?turn_id=1&path=a.txt`,
+    ]) {
+      const res = await appOf(r).inject({ method: 'GET', url });
+      expect((res.json() as Envelope).code).toBe(40001);
+    }
+  });
+
+  it('requires the turn number', async () => {
+    const r = await boot();
+    const sessionId = await createSession(r);
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/file-history/changes`,
+    });
+    expect((res.json() as Envelope).code).toBe(40001);
   });
 });

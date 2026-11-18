@@ -36,7 +36,6 @@ export function QuestionDialog() {
     setCustomDrafts((currentDrafts) => ({ ...currentDrafts, [questionIndex]: value }));
   };
 
-  // Step through the questions one by one; submit all answers after the last.
   const handleAnswer = async (answer: string | string[]) => {
     const nextAnswers = { ...answers, [question.question]: answer };
     if (!isLastQuestion) {

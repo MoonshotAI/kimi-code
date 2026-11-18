@@ -10,8 +10,6 @@ describe('mediaUrlPartToText', () => {
   });
 
   it('renders an internal daemon file reference as a bare placeholder', () => {
-    // `kimi-file://…?path=…` resolves nowhere for the user and carries the
-    // materialization path — never render the wire form.
     expect(
       mediaUrlPartToText('image', 'kimi-file://f_1?path=%2FUsers%2Falice%2Fmedia%2Ff_1.png'),
     ).toBe('[image]');

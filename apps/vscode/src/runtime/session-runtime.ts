@@ -62,11 +62,6 @@ interface PendingHostCompaction {
   readonly reject: (error: unknown) => void;
 }
 
-/**
- * Owns the one SDK event subscription and reverse-RPC handlers for a session.
- * Any number of Webviews may subscribe without replacing each other's approval
- * handler or duplicating streamed events.
- */
 export class SessionRuntime {
   readonly session: Session;
 
@@ -98,10 +93,6 @@ export class SessionRuntime {
     this.legacyApproval = options.legacyApproval;
     this.reverseRpc = new ReverseRpcController((event) => this.emitStreamEvent(event));
 
-    // Forward every approval request to the user. The engine permission mode
-    // (mapped from the legacy flags) already auto-approves what yolo/auto
-    // allow internally; anything that reaches this handler is an exception
-    // (sensitive file, plan review, ask rule) the user must decide on.
     this.session.setApprovalHandler((request) => this.reverseRpc.requestApproval(request));
     this.session.setQuestionHandler((request) => this.reverseRpc.requestQuestion(request));
     this.unsubscribe = this.session.onEvent((event) => this.onSdkEvent(event));
@@ -143,11 +134,6 @@ export class SessionRuntime {
     this.webviewIds.add(webviewId);
   }
 
-  /**
-   * Push the session's current status to a view. Called whenever a view
-   * opens or re-enters a session so the display (model, thinking effort,
-   * plan mode) matches engine truth instead of the global defaults.
-   */
   async announceStatus(webviewId: string): Promise<void> {
     this.ensureOpen();
     const status = await this.session.getStatus();
@@ -182,12 +168,6 @@ export class SessionRuntime {
   ): Promise<PromptResult> {
     this.ensureOpen();
     if (this.isBusy) {
-      // A re-entrant turn request must never disturb the active turn — it fails
-      // only itself. When a turn or host action is running, its later terminal
-      // stream event unlocks every subscribed view, so a non-terminal warning
-      // is enough. An exclusive operation (e.g. fork materialization) emits no
-      // such terminal event, so reject terminally: the caller's composer must
-      // unlock rather than hang until the handshake timeout.
       this.emitError(
         new Error(ALREADY_GENERATING_MESSAGE),
         "runtime",
@@ -211,9 +191,6 @@ export class SessionRuntime {
     try {
       await action();
     } catch (error) {
-      // Only settle the prompt this call created. Once the event pipeline or a
-      // cancel has settled it, the failure was already reported — settling it
-      // again would misreport the active turn and could emit a duplicate error.
       if (!active.settled) {
         this.emitError(error, active.started ? "runtime" : "preflight");
         this.settlePrompt({ status: "failed" });
@@ -328,10 +305,6 @@ export class SessionRuntime {
   }
 
   async cancel(): Promise<void> {
-    // Always reach the engine, even when the host believes nothing is active.
-    // The host-side bookkeeping can drift from engine truth after an abnormal
-    // error path; session.cancel() is a harmless no-op when the engine is
-    // idle, but it is the only way to recover a turn the host lost track of.
     if (this.closed) return;
     this.reverseRpc.cancelAll("Turn cancelled");
     const cancellingHostAction = this.hostActionActive;
@@ -340,10 +313,6 @@ export class SessionRuntime {
       this.cancelledHostActions.add(hostActionId);
       this.completeHostAction("cancelled", hostActionId);
     }
-    // A manual compaction is not a model turn, so Session.cancel() alone does
-    // not stop it. Calling both public cancellation surfaces is harmless when
-    // the other operation is idle and keeps the Stop button correct for both
-    // normal turns and host-side slash commands such as /compact and /init.
     const results = await Promise.allSettled([
       this.session.cancel(),
       ...(cancellingHostAction ? [this.session.cancelCompaction()] : []),
@@ -352,11 +321,6 @@ export class SessionRuntime {
     if (failure !== undefined) throw failure.reason;
   }
 
-  /**
-   * Stop any in-flight work, wait for its terminal event, and keep new turns
-   * out until the supplied operation finishes. Forking uses this so it reads a
-   * fully settled session instead of racing the asynchronous cancel event.
-   */
   async runExclusiveAfterCancelling<T>(action: () => Promise<T>): Promise<T> {
     this.ensureOpen();
     if (this.exclusiveActionActive) {
@@ -480,10 +444,6 @@ export class SessionRuntime {
     }
 
     if (adapted.event !== undefined) {
-      // Errors the core reports while the active turn keeps running (they are
-      // not followed by a terminal turn.ended) must not look turn-ending to the
-      // Webview — otherwise the UI unlocks mid-turn and the next send collides
-      // with the still-active prompt.
       const wireEvent =
         adapted.event.type === "error" && this.activePrompt?.started === true
           ? { ...adapted.event, terminal: false as const }
@@ -644,7 +604,6 @@ export function toSdkPromptInput(input: string | LegacyContentPart[]): string | 
         break;
       case "audio_url":
       case "think":
-        // PromptInput intentionally accepts user text/images/videos only.
         break;
     }
   }

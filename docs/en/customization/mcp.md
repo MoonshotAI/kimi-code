@@ -6,6 +6,8 @@ MCP tool results can include text (`content`) and structured data (`structuredCo
 
 Kimi Code CLI preserves embedded MCP attachments that cannot be delivered directly because of format or size limits. Embedded images, audio, and video are saved even when they can be delivered unchanged, because provider conversion or later history reduction may omit them. Session-attachment readers remain available without workspace filesystem access when the model supports the corresponding content. Originals are retained in the session's media storage instead of an evictable image cache. Saved originals, including images preserved during compression, have absolute paths and stable `kimi-file://` references. Pass a reference as the `path` to `Read` or `ReadMediaFile`; bytes are read from the current session's storage even when the workspace environment cannot access it. Pagination keeps the reference, including after a fork. For binary formats that `Read` cannot open, its error includes a server-local path when available; an external converter must have access to that filesystem. Text attachments such as CSV, HTML, JSON, and plain SVG use readable extensions.
 
+For providers that support image uploads and file references, later model requests can reuse a new MCP tool image after its first upload.
+
 Attachment paths and compression details share the tool-output budget. Large lists are saved to a text file, with a short pointer that remains visible when accompanying text is shortened; the agent can pass the list’s `kimi-file://` reference to `Read` and page through it. Canceling the tool stops subsequent attachment processing and signals active writes. If decoding or saving fails, the result explicitly reports that the original could not be preserved while retaining other usable output. Resource links are not automatically downloaded.
 
 ## Connection Methods
@@ -107,7 +109,7 @@ defaultCwd = "/srv/work"
 }
 ```
 
-`environment_id` references an environment declared in `[environments]` in `config.toml` (see [Declaring environments](../guides/remote-environment.md#declaring-environments)). The field defaults to `local` and never follows the session's own environment binding: a session bound to `dev-box` still runs stdio servers without `environment_id` locally. A cold environment connects on demand when the server starts.
+`environment_id` references an environment declared in `[environments]` in `config.toml` (see [Declare Docker and custom-command environments](../guides/remote-environment.md#declare-docker-and-custom-command-environments)). The field defaults to `local` and never follows the session's own environment binding: a session bound to `dev-box` still runs stdio servers without `environment_id` locally. A cold environment connects on demand when the server starts.
 
 ### Environment variables for remote stdio servers
 

@@ -18,7 +18,9 @@ import {
   EXIT_CONFIRM_WINDOW_MS,
   LLM_NOT_SET_MESSAGE,
 } from '../constant/kimi-tui';
-import { Key, matchesKey } from '@moonshot-ai/pi-tui';
+import { isKeyRelease, isKeyRepeat, Key, matchesKey, TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { normalizeCapsLockedCtrl } from '../components/editor/custom-editor';
+import { FOLLOW_UP_KEYMAP, resolveFollowUpBehavior, type FollowUpDelivery } from '../config';
 import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
 import { formatErrorMessage } from '../utils/event-payload';
 import type {
@@ -38,19 +40,21 @@ export interface EditorKeyboardHost {
   state: TUIState;
   session: Session | undefined;
   cancelInFlight: (() => void) | undefined;
-  /**
-   * The host's harness (KimiTUI always has one). Its `imageLimits` drives
-   * paste-time image compression; hosts without one fall back to the
-   * env/built-in default.
-   */
   harness?: KimiHarness | undefined;
 
-  handleUserInput(text: string): void;
+  handleUserInput(text: string, delivery?: FollowUpDelivery): void;
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly modelMigration?: ModelMigrationController;
+  readonly promptPredictionController?: import('./prompt-prediction').PromptPredictionController;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  readonly defaultSkillPathForCommand?: (commandName: string) => string | undefined;
+  retainSkillVariantSelection?(text: string): void;
+  beginInputHistoryRecall?(): void;
+  restoreInputHistoryEntry?(direction: 1 | -1): void;
+  restoreInputHistoryDraft?(): void;
   steerQueuedMessagesIntoRunningTurn(manual?: boolean): void;
   validateMediaCapabilities(extraction: {
     hasMedia: boolean;
@@ -63,12 +67,10 @@ export interface EditorKeyboardHost {
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
-  /** `undefined` means the input cannot be a `/goal` command (clear without measuring). */
   updateGoalLengthWarning(text: string | undefined): void;
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
   openTasksBrowser(): void;
-  /** Returns true when the Updates panel took keyboard focus. */
   focusNotifyPanel(): boolean;
   detachCurrentForegroundTask(): void;
   cancelRunningShellCommand(): void;
@@ -83,7 +85,11 @@ export interface EditorKeyboardHost {
   updateActivityPane(): void;
 }
 
+const SELECTION_COPY_KEYS = [Key.ctrl('c'), Key.ctrlShift('c'), Key.super('c')];
+
 export class EditorKeyboardController {
+  private disposeSelectionCopy: (() => void) | undefined;
+  private copyKeyHeld = false;
   private pendingExit: PendingExit | null = null;
   private pendingUndoEsc: { readonly timer: ReturnType<typeof setTimeout> } | null = null;
   private disposed = false;
@@ -99,33 +105,33 @@ export class EditorKeyboardController {
 
     editor.onSubmit = (text: string) => {
       if (host.surveyController.handleSubmit(text)) return;
-      host.handleUserInput(text);
+      host.promptPredictionController?.handleSubmit(text);
+      const behavior = resolveFollowUpBehavior(host.state.appState.followUpBehavior);
+      host.handleUserInput(text, FOLLOW_UP_KEYMAP[behavior][editor.submitKey]);
     };
 
-    // After dispose (shutdown), consume every key here so no shortcut can fire
-    // while the UI is being torn down — Ctrl+C is handled earlier, at the UI
-    // input-listener level.
     editor.onPreInput = (data: string) => {
       if (this.disposed) return true;
       if (matchesKey(data, Key.escape)) this.clearPendingExit();
-      const consumed = host.surveyController.handlePreInput(data);
-      if (consumed) this.clearPendingUndoEsc();
-      return consumed;
+      if (host.surveyController.handlePreInput(data)) {
+        this.clearPendingUndoEsc();
+        return true;
+      }
+      if (host.promptPredictionController?.handlePreInput(data) === true) {
+        this.clearPendingUndoEsc();
+        return true;
+      }
+      return false;
     };
 
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
+      host.promptPredictionController?.handleEditorChange(text);
       host.surveyController.handleEditorChange(text);
+      if (text === '') queueMicrotask(() => host.retainSkillVariantSelection?.(editor.getText()));
+      else host.retainSkillVariantSelection?.(text);
       host.updateEditorBorderHighlight(text);
       if (text.length === 0) host.modelMigration?.retry();
-      // Expanding paste markers costs a full-text pass, and only `/goal`
-      // input can trip the objective length limit — so skip the expansion
-      // for ordinary prompts. Submitted text is trimmed before dispatch, so
-      // gate on the trimmed text too. A paste marker may itself expand into
-      // part of the command (`[paste #…]` → `/goal …`, or completing a
-      // partial prefix like `/go[paste #1 …]` → `/goal …`), so any input
-      // containing a marker that can still become a `/goal` command must
-      // pass the gate as well.
       const trimmed = text.trimStart();
       const mightBeGoal =
         trimmed.startsWith('/goal') ||
@@ -138,21 +144,14 @@ export class EditorKeyboardController {
       }
     };
 
-    // bash mode recalls only shell (`!`-prefixed) history entries; prompt mode
-    // recalls everything. The filter is locked to the mode captured when the
-    // user first enters history browsing (see onHistoryDraftSave), so landing on
-    // a shell entry mid-browse doesn't switch the filter to shell-only.
     let browseMode: 'prompt' | 'bash' | null = null;
     editor.setHistoryFilter((entry: string) => {
       const mode = browseMode ?? editor.inputMode;
       return mode === 'bash' ? entry.startsWith('!') : true;
     });
 
-    // Recalling a `!`-prefixed entry strips the marker and returns to bash
-    // mode; recalling a plain entry returns to prompt mode. The filter above
-    // guarantees bash mode only ever lands on `!` entries, so this never
-    // misfires on commands typed in bash mode.
-    editor.onRecall = (entry: string) => {
+    editor.onRecall = (entry: string, direction: 1 | -1) => {
+      host.restoreInputHistoryEntry?.(direction);
       if (entry.startsWith('!')) {
         editor.setInputMode('bash');
         return entry.slice(1);
@@ -161,16 +160,13 @@ export class EditorKeyboardController {
       return undefined;
     };
 
-    // Save/restore the input mode alongside pi-tui's history draft. Without
-    // this, recalling a shell entry and then pressing Down back to an empty
-    // draft would leave the editor stuck in bash mode, so the next typed
-    // message would be submitted as a shell command. Also locks the history
-    // filter (browseMode) for the duration of the browse session.
     editor.onHistoryDraftSave = () => {
+      host.beginInputHistoryRecall?.();
       browseMode = editor.inputMode;
       return editor.inputMode;
     };
     editor.onHistoryDraftRestore = (state: unknown) => {
+      host.restoreInputHistoryDraft?.();
       editor.setInputMode(state as 'prompt' | 'bash');
       browseMode = null;
     };
@@ -188,8 +184,6 @@ export class EditorKeyboardController {
         return;
       }
 
-      // The btw panel stacks above the transcript, so Ctrl+C cancels/closes it
-      // before touching an in-flight compaction or stream.
       if (host.btwPanelController.cancelRunning()) {
         this.clearPendingExit();
         return;
@@ -245,8 +239,6 @@ export class EditorKeyboardController {
         this.clearPendingUndoEsc();
         return;
       }
-      // The btw panel stacks above the transcript, so Esc dismisses it before
-      // touching an in-flight compaction or stream.
       if (host.btwPanelController.closeOrCancel()) {
         this.clearPendingUndoEsc();
         return;
@@ -261,7 +253,6 @@ export class EditorKeyboardController {
         this.clearPendingUndoEsc();
         return;
       }
-      // Idle: a second Esc within the double-tap window opens the undo selector.
       if (this.pendingUndoEsc !== null) {
         this.clearPendingUndoEsc();
         host.openUndoSelector();
@@ -278,8 +269,6 @@ export class EditorKeyboardController {
         host.handlePlanToggle(next);
       };
       if (host.session === undefined) {
-        // v2 session-less: lazy-create the session, then toggle — the same
-        // path /plan takes.
         void host.ensureSession().then((session) => {
           if (session !== undefined) togglePlan();
         });
@@ -350,6 +339,12 @@ export class EditorKeyboardController {
           pluginCommandMap: host.pluginCommandMap,
           isStreaming: true,
           isCompacting: host.state.appState.isCompacting,
+          skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
+            ? undefined
+            : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
+          defaultSkillPathForCommand: host.defaultSkillPathForCommand === undefined
+            ? undefined
+            : (commandName) => host.defaultSkillPathForCommand!(commandName),
         });
         host.state.queuedMessages.push({
           text,
@@ -369,8 +364,6 @@ export class EditorKeyboardController {
     };
 
     editor.onCtrlB = (): boolean => {
-      // Shell command execution is treated as a streaming phase ('shell'), so
-      // this gate already covers it; only idle + not-compacting falls through.
       if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) {
         return false;
       }
@@ -378,6 +371,11 @@ export class EditorKeyboardController {
       host.detachCurrentForegroundTask();
       return true;
     };
+
+    const { ui } = host.state;
+    if (ui instanceof TuiAltScreen) {
+      this.disposeSelectionCopy = ui.addInputListener((data) => this.handleSelectionCopyKey(ui, data));
+    }
 
     editor.onUndo = () => {
       host.track('undo');
@@ -393,10 +391,6 @@ export class EditorKeyboardController {
       const recalled = host.recallLastQueued();
       if (recalled !== undefined) {
         editor.setText(recalled.text);
-        // Restore the queued item's mode so a recalled `!` command runs as a
-        // shell command again instead of being submitted as a normal prompt.
-        // Skill activations recall as prompt mode: their text is the original
-        // `/name args` slash command, which re-parses on submit.
         const mode = recalled.mode === 'bash' ? 'bash' : 'prompt';
         if (editor.inputMode !== mode) {
           editor.inputMode = mode;
@@ -423,8 +417,28 @@ export class EditorKeyboardController {
 
   dispose(): void {
     this.disposed = true;
+    this.disposeSelectionCopy?.();
     this.clearPendingExit();
     this.clearPendingUndoEsc();
+  }
+
+  private handleSelectionCopyKey(ui: TuiAltScreen, data: string): { consume: true } | undefined {
+    const key = normalizeCapsLockedCtrl(data);
+    if (!SELECTION_COPY_KEYS.some((copyKey) => matchesKey(key, copyKey))) return undefined;
+    if (isKeyRelease(key)) {
+      this.copyKeyHeld = false;
+      return undefined;
+    }
+    if (isKeyRepeat(key)) return this.copyKeyHeld ? { consume: true } : undefined;
+    this.copyKeyHeld = false;
+    if (!ui.hasActiveSelection()) return undefined;
+    this.clearPendingExit();
+    this.clearPendingUndoEsc();
+    void ui.copyActiveSelectionToClipboard();
+    ui.resetTextSelection();
+    ui.requestRender();
+    this.copyKeyHeld = true;
+    return { consume: true };
   }
 
   private armPendingUndoEsc(): void {
@@ -472,8 +486,6 @@ export class EditorKeyboardController {
       cancel();
       return;
     }
-    // Cancel any running `!` shell command (treated as a streaming phase) in
-    // addition to the agent turn, so Esc / Ctrl+C interrupts it too.
     this.host.cancelRunningShellCommand();
     void this.host.session?.cancel();
   }
@@ -501,13 +513,6 @@ export class EditorKeyboardController {
     if (media === null) return false;
 
     if (media.kind === 'video') {
-      // Same shape as the image flow below: register the attachment and put
-      // its placeholder in the editor first, then upload the source file to
-      // the daemon file store in the background — typing never waits on it,
-      // and submit gives a pending upload the bounded `pendingMediaIngestions`
-      // wait. Unlike an image there is no inline fallback form, so a video
-      // whose upload has not landed (or failed) refuses the submission at
-      // extraction time.
       const attachment = this.imageStore.addVideo(media.mimeType, media.sourcePath, media.filename);
       this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
       this.host.state.ui.requestRender();
@@ -523,13 +528,6 @@ export class EditorKeyboardController {
     const meta = parseImageMeta(media.bytes);
     if (meta === null) return false;
 
-    // Register the attachment and put its placeholder in the editor before
-    // any of the asynchronous ingestion work below. CustomEditor only holds
-    // keystrokes until this handler settles, so the callback returns right
-    // after the placeholder lands and ingestion continues in the background —
-    // typing never waits on compression or the daemon upload. Submit gives a
-    // pending ingestion a bounded wait (`pendingImageIngestions`) and falls
-    // back to the inline form when it has not finished.
     const attachment = this.imageStore.addImage(
       media.bytes,
       meta.mime,
@@ -547,8 +545,6 @@ export class EditorKeyboardController {
       meta.width,
       meta.height,
     ).catch((error: unknown) => {
-      // The raw attachment and its already-visible placeholder are still a
-      // valid inline fallback when optional ingestion work fails.
       this.host.showError(`Failed to process pasted image: ${formatErrorMessage(error)}`);
     });
     return true;
@@ -561,18 +557,6 @@ export class EditorKeyboardController {
     originalWidth: number,
     originalHeight: number,
   ): Promise<void> {
-    // Compress at ingestion — a pure data step while building the attachment, so
-    // the stored bytes, the inline thumbnail, the `[image #N (W×H)]` placeholder,
-    // and the submitted image all agree, and the agent core only ever sees an
-    // already-compressed image. Best effort: originals pass through on failure.
-    // When compression changed the bytes, the pre-compression original is kept
-    // on the attachment in memory: the session whose media-originals dir it
-    // belongs in may not exist yet at paste time, so dispatch-time caption
-    // resolution (`resolveOriginalCaptions`) persists it and announces the
-    // compression, pointing the model at the full-fidelity copy.
-    // The edge cap comes from the host harness's [image] config (resolved per
-    // paste so a config reload applies immediately); hosts without a harness
-    // use the env/built-in default.
     const compressed = await compressImageForModel(originalBytes, originalMime, {
       maxEdge: this.host.harness?.imageLimits?.maxEdgePx(),
       telemetry: {
@@ -583,10 +567,6 @@ export class EditorKeyboardController {
         source: 'tui_paste',
       },
     });
-    // Dimensions come from the compression result, not parseImageMeta: the
-    // compressor reports display space (EXIF orientation applied) — the space
-    // the sent image, the caption, and ReadMediaFile region readback share —
-    // while parseImageMeta reads the raw pre-rotation header.
     const original = compressed.changed
       ? {
           bytes: originalBytes,
@@ -596,8 +576,6 @@ export class EditorKeyboardController {
           mime: originalMime,
         }
       : undefined;
-    // v2 only: upload the final bytes to the daemon file store so submit-time
-    // expansion emits a `kimi-file://` reference instead of inline base64.
     const uploaded = await this.uploadImageToDaemonFileStore(
       compressed.changed ? compressed.data : originalBytes,
       compressed.changed ? compressed.mimeType : originalMime,
@@ -617,14 +595,6 @@ export class EditorKeyboardController {
     this.host.state.ui.requestRender();
   }
 
-  /**
-   * Paste-time upload of the final image bytes to the engine's daemon file
-   * store (agent-core-v2 only), run as part of the background ingestion —
-   * typing never waits on it, and submit only gives it the bounded
-   * `pendingImageIngestions` wait. Best effort: any failure returns undefined,
-   * so the attachment keeps no `fileId` and submit-time expansion falls back
-   * to the inline base64 form.
-   */
   private async uploadImageToDaemonFileStore(
     bytes: Uint8Array,
     mime: string,
@@ -643,13 +613,6 @@ export class EditorKeyboardController {
     }
   }
 
-  /**
-   * Paste-time upload of the video's source file to the engine's daemon file
-   * store (agent-core-v2 only), run as background ingestion exactly like the
-   * image upload above. Best effort: any failure returns undefined, leaving
-   * the attachment without a `fileId` — submit-time expansion then refuses
-   * the submission, since a video has no inline fallback form.
-   */
   private async uploadVideoToDaemonFileStore(
     media: ClipboardVideo,
   ): Promise<FileMeta | undefined> {
@@ -659,8 +622,6 @@ export class EditorKeyboardController {
     try {
       bytes = await readFile(media.sourcePath);
     } catch {
-      // The source (e.g. a clipboard temp file) vanished before the upload
-      // could read it — same outcome as a failed upload.
       return undefined;
     }
     try {
@@ -699,9 +660,6 @@ export class EditorKeyboardController {
     }
     this.host.setExternalEditorRunning(true);
     const seed = state.editor.getExpandedText?.() ?? state.editor.getText();
-    // Fullscreen: a plain stop() would replay the whole transcript into the
-    // main screen on exit; the external editor only needs the alternate
-    // screen released, so preserve the screen instead.
     state.ui.stop({ preserveScreen: state.ui.mode === 'fullscreen' ? true : undefined });
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
@@ -721,9 +679,6 @@ export class EditorKeyboardController {
       state.ui.start();
       state.ui.setFocus(state.editor);
       state.ui.requestRender(true);
-      // terminal.stop() cleared the OSC 9;4 progress indicator while the
-      // app-side progressActive flag still reads true; resync so a turn that
-      // was streaming while the editor was open gets its progress back.
       state.terminalState.progressActive = false;
       this.host.updateActivityPane();
       this.host.setExternalEditorRunning(false);

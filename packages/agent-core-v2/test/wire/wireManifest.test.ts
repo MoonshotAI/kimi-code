@@ -16,10 +16,28 @@ describe('wire manifest', () => {
       expect(type.startsWith(`${HUMAN_AGENT_DOMAIN}.`)).toBe(false);
     }
     expect([...AGENT_WIRE_RECORD_TYPES].toSorted()).toEqual([
+      'agent.input.cancelled',
+      'agent.input.drained',
+      'agent.input.notified',
+      'agent.input.reminded',
+      'agent.input.steered',
+      'agent.input.submitted',
       'agent.message.appended',
+      'agent.notifications.drained',
+      'agent.queue.drained',
       'agent.switched',
       'agent.turn.ended',
       'agent.turn.started',
+      'context.append_loop_event',
+      'context.append_message',
+      'context.apply_compaction',
+      'context.clear',
+      'context.undo',
+      'context.undone',
+      'turn.cancel',
+      'turn.ended',
+      'turn.prompt',
+      'turn.steer',
     ]);
   }, 60_000);
 

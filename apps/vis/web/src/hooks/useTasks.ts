@@ -2,8 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 
 import { api } from '../api';
 
-/** Background tasks for a session (process / agent / question), with
- *  `output.log` size metadata per task. */
 export function useTasks(sessionId: string | undefined) {
   return useQuery({
     queryKey: ['tasks', sessionId] as const,
@@ -12,7 +10,6 @@ export function useTasks(sessionId: string | undefined) {
   });
 }
 
-/** Cron jobs scheduled within a session. */
 export function useCron(sessionId: string | undefined) {
   return useQuery({
     queryKey: ['cron', sessionId] as const,
@@ -21,7 +18,6 @@ export function useCron(sessionId: string | undefined) {
   });
 }
 
-/** Parsed diagnostic log for a session (session or global). */
 export function useLogs(sessionId: string | undefined, which: 'session' | 'global') {
   return useQuery({
     queryKey: ['logs', sessionId, which] as const,

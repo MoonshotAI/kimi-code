@@ -5,7 +5,7 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
@@ -25,7 +25,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
   constructor(
     @IInstantiationService private readonly instantiationService: IInstantiationService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLoopService private readonly profile: IAgentLoopService,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IEventBus eventBus: IEventBus,
@@ -37,7 +37,6 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         void this.activate();
       }),
     );
-    this._register(this.environment.onDidChange(() => this.refreshEnvironmentRecords()));
     this._register(
       this.contributions.onDidChange((change) => {
         this.activateRecords(change.added);
@@ -80,24 +79,6 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         this._register(registration);
       }
     });
-  }
-
-  private refreshEnvironmentRecords(): void {
-    for (const record of this.contributions.items) {
-      if (!this.environmentAllows(record)) this.deactivateRecord(record);
-    }
-    this.activateRecords(this.contributions.items);
-  }
-
-  private environmentAllows(record: AgentToolContribution): boolean {
-    const required = record.options.requiredEnvironmentCapabilities;
-    if (required === undefined) return true;
-    if (this.environment.isAvailable(required)) return true;
-    try {
-      return typeof this.environment.inspect().connect === 'function';
-    } catch {
-      return false;
-    }
   }
 
   private deactivateRecord(record: AgentToolContribution): void {

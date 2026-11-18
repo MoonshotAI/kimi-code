@@ -33,7 +33,6 @@ function errorCode(error: unknown): string {
   return error instanceof Error ? error.name : 'UNKNOWN';
 }
 
-/** Install the SEA-bundled worker without making optional extraction fatal. */
 export function installMinidbTextBuildWorker(
   options: NativeAssetOptions = {},
 ): MinidbTextBuildWorkerInstallStatus {

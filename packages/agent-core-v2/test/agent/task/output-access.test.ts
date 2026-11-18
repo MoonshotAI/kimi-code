@@ -1,71 +1,76 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { Readable } from 'node:stream';
-import type { Writable } from 'node:stream';
 import { join } from 'pathe';
-import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IReadTool } from '#/agent/tools/os/read/read';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { createMapFs, stubPlanEnvironment } from '../../features/plan/stubs';
-import { IAgentTaskService } from '#/agent/task/task';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { TERMINAL_STATUSES } from '#/agent/task/types';
+import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
-import { ProcessTask } from '#/agent/tools/os/bash/process-task';
-import { createAgentTaskPersistence, type TaskServiceTestManager } from './stubs';
-import { agentService, taskServices, createTestAgent, homeDirServices, type TestAgentContext } from '../../harness';
+import {
+  AgentTaskRequestService,
+  AgentTaskService,
+  type IAgentTaskHistoryService,
+} from '#/agent/task/taskService';
+import {
+  createAgentTaskPersistence,
+  createTaskChannel,
+  startControlledTask,
+  taskHistoryRecords,
+  type TaskChannel,
+} from './stubs';
+import { agentService, taskServices, createTestAgent, homeDirServices } from '../../harness';
 import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
 
 interface TaskServiceFixture {
-  readonly ctx: TestAgentContext;
-  readonly manager: TaskServiceTestManager;
+  readonly channel: TaskChannel;
+  readonly manager: IAgentTaskService;
   readonly persistence: ReturnType<typeof createAgentTaskPersistence>;
 }
 
 function createTaskService(homedir: string): TaskServiceFixture {
   const persistence = createAgentTaskPersistence(homedir);
-  const ctx = createTestAgent(homeDirServices(homedir), taskServices());
-  const manager = ctx.get(IAgentTaskService) as TaskServiceTestManager;
+  const channel = createTaskChannel({ persistence });
+  return { channel, manager: channel.service, persistence };
+}
+
+function restoredTaskService(channel: TaskChannel, infos: readonly AgentTaskInfo[]) {
+  const reduced = new AgentTaskService('main');
+  reduced.restore(taskHistoryRecords(infos));
+  const history: IAgentTaskHistoryService = {
+    _serviceBrand: undefined,
+    getTask: (taskId) => reduced.get(taskId),
+    list: (activeOnly, limit) => reduced.list(activeOnly, limit),
+    values: () => reduced.values(),
+    reconcile: async () => {},
+  };
   return {
-    ctx,
-    manager,
-    persistence,
+    history,
+    manager: new AgentTaskRequestService(channel.toolExecutor, history, channel.outputs),
   };
 }
 
-function registerProcess(
-  manager: IAgentTaskService,
-  proc: IHostProcess,
-  command: string,
-  description: string,
-): string {
-  return manager.registerTask(new ProcessTask(proc, command, description));
+async function registerProcess(channel: TaskChannel, output: string, description: string): Promise<string> {
+  const task = await startControlledTask(channel, {
+    description,
+    output,
+    completion: Promise.resolve(''),
+  });
+  return task.handler.taskId;
 }
 
-function toolContext<Input>(
-  toolCallId: string,
-  args: Input,
-): TestExecutableToolContext<Input> {
-  return {
-    turnId: 0,
-    toolCallId,
-    args,
-    signal: new AbortController().signal,
-  };
+function toolContext<Input>(toolCallId: string, args: Input): TestExecutableToolContext<Input> {
+  return { turnId: 0, toolCallId, args, signal: new AbortController().signal };
 }
 
 function outputString(result: { readonly output: string | readonly unknown[] }): string {
   return typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
 }
 
-async function waitForOutput(
-  manager: IAgentTaskService,
-  taskId: string,
-  expected: string,
-): Promise<void> {
+async function waitForOutput(manager: IAgentTaskService, taskId: string, expected: string): Promise<void> {
   for (let i = 0; i < 20; i++) {
     const output = await manager.readOutput(taskId);
     if (output.includes(expected)) return;
@@ -74,80 +79,25 @@ async function waitForOutput(
   throw new Error(`Timed out waiting for output: ${expected}`);
 }
 
-async function waitForTaskNotifications(
-  ctx: TestAgentContext,
-  manager: TaskServiceTestManager,
-): Promise<void> {
-  const tasks = manager.list(false).filter(
-    (task) =>
-      TERMINAL_STATUSES.has(task.status) &&
-      task.detached !== false &&
-      task.terminalNotificationSuppressed !== true,
-  );
-  if (tasks.length === 0) return;
-
-  ctx.mockNextResponse({ type: 'text', text: 'notification drain ack' });
-  await vi.waitFor(() => {
-    const delivered = ctx.allEvents.filter((e) => e.event === 'task.notified').length;
-    expect(delivered).toBeGreaterThanOrEqual(tasks.length);
-  });
-  await vi.waitFor(() => {
-    const loop = ctx.get(IAgentLoopService);
-    expect(loop.snapshot().state).toBe('idle');
-    expect(loop.snapshot().hasPendingRequests).toBe(false);
-  });
-
-  const origins = ctx.context.get().map((message) => message.origin);
-  for (const task of tasks) {
-    expect(origins).toContainEqual({
-      kind: 'task',
-      taskId: task.taskId,
-      status: task.status,
-      notificationId: `task:${task.taskId}:${task.status}`,
-    });
-  }
-}
-
-function immediateProcess(exitCode: number, stdoutText = ''): IHostProcess {
-  return {
-    _serviceBrand: undefined,
-    stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
-    stdout: Readable.from(stdoutText ? [stdoutText] : []),
-    stderr: Readable.from([]),
-    pid: 50000 + exitCode,
-    exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as IHostProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as IHostProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
-  };
-}
-
 describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
   let sessionDir: string;
-  let ctx: TestAgentContext;
-  let manager: TaskServiceTestManager;
+  let fixture: TaskServiceFixture;
+  let manager: IAgentTaskService;
   let persistence: ReturnType<typeof createAgentTaskPersistence>;
 
   beforeEach(() => {
     sessionDir = mkdtempSync(join(tmpdir(), 'bpm-output-'));
-    const fixture = createTaskService(sessionDir);
-    ctx = fixture.ctx;
+    fixture = createTaskService(sessionDir);
     manager = fixture.manager;
     persistence = fixture.persistence;
   });
 
-  afterEach(async () => {
-    try {
-      await waitForTaskNotifications(ctx, manager);
-      await ctx.expectResumeMatches();
-    } finally {
-      await ctx.dispose();
-      rmSync(sessionDir, { recursive: true, force: true });
-    }
+  afterEach(() => {
+    rmSync(sessionDir, { recursive: true, force: true });
   });
 
   it('getOutputSnapshot returns output.log path when persisted output exists', async () => {
-    const taskId = registerProcess(manager, immediateProcess(0, 'hello\n'), 'echo', 'demo');
+    const taskId = await registerProcess(fixture.channel, 'hello\n', 'demo');
 
     await waitForOutput(manager, taskId, 'hello');
     const snapshot = await manager.getOutputSnapshot(taskId, 1_000);
@@ -169,11 +119,14 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     });
     const environment = stubPlanEnvironment({ fs: remoteFs, tempDir: '/remote/tmp' });
     const remoteCtx = createTestAgent([
-      homeDirServices(join(sessionDir, 'remote-home')), taskServices(), agentService(IAgentEnvironmentService, environment),
+      homeDirServices(join(sessionDir, 'remote-home')),
+      taskServices(),
+      agentService(IAgentEnvironmentService, environment),
     ]);
-    const remoteManager = remoteCtx.get(IAgentTaskService) as TaskServiceTestManager;
+    const remoteFixture = createTaskService(join(sessionDir, 'remote-home'));
+    const remoteManager = remoteFixture.manager;
     try {
-      const id = registerProcess(remoteManager, immediateProcess(0, 'retained local output\n'), 'echo', 'demo');
+      const id = await registerProcess(remoteFixture.channel, 'retained local output\n', 'demo');
       await remoteManager.wait(id);
       const snapshot = await remoteManager.getOutputSnapshot(id, 1_000);
       expect(snapshot.outputPath).toBe(join(remoteCtx.get(ISessionContext).sessionDir, 'agents', 'main', 'tasks', id, 'output.log'));
@@ -200,7 +153,6 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
         expect(outputString(other)).not.toContain('host secret');
       }
     } finally {
-      await waitForTaskNotifications(remoteCtx, remoteManager);
       await remoteCtx.dispose();
     }
   });
@@ -209,7 +161,7 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     const head = 'HEAD-MARKER\n';
     const tail = 'TAIL-MARKER\n';
     const output = head + 'x'.repeat(200 * 1024) + tail;
-    const taskId = registerProcess(manager, immediateProcess(0, output), 'echo big', 'large');
+    const taskId = await registerProcess(fixture.channel, output, 'large');
 
     await manager.wait(taskId);
     const snapshot = await manager.getOutputSnapshot(taskId, 32 * 1024);
@@ -223,14 +175,15 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     expect(snapshot.preview).not.toContain(head);
   });
 
-  it('getOutputSnapshot omits outputPath when no persisted log file exists', async () => {
-    const taskId = registerProcess(manager, immediateProcess(0), 'sleep 1', 'silent task');
+  it('getOutputSnapshot returns empty content without creating a log for a silent task', async () => {
+    const taskId = await registerProcess(fixture.channel, '', 'silent task');
 
     await manager.wait(taskId);
     const snapshot = await manager.getOutputSnapshot(taskId, 1_000);
 
-    expect(snapshot.outputPath).toBeUndefined();
-    expect(snapshot.fullOutputAvailable).toBe(false);
+    expect(snapshot.preview).toBe('');
+    expect(snapshot.outputSizeBytes).toBe(0);
+    expect(existsSync(persistence.taskOutputFile(taskId))).toBe(false);
   });
 
   it('getOutputSnapshot returns an empty snapshot for unknown task ids', async () => {
@@ -244,12 +197,7 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
   });
 
   it('readOutput returns live ring-buffer content while task is in memory', async () => {
-    const taskId = registerProcess(
-      manager,
-      immediateProcess(0, 'live content\n'),
-      'echo',
-      'demo',
-    );
+    const taskId = await registerProcess(fixture.channel, 'live content\n', 'demo');
 
     await waitForOutput(manager, taskId, 'live content');
 
@@ -257,79 +205,66 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     await manager.wait(taskId);
   });
 
-  it('readOutput prefers disk over the live ring buffer when persisted output exists', async () => {
-    const taskId = registerProcess(manager, immediateProcess(0, 'ring-only\n'), 'echo', 'demo');
+  it('readOutput keeps earlier live chunks when more output is persisted', async () => {
+    const taskId = await registerProcess(fixture.channel, 'ring-only\n', 'demo');
 
     await waitForOutput(manager, taskId, 'ring-only');
+    await manager.wait(taskId);
     await persistence.appendTaskOutput(taskId, 'disk-only\n');
 
-    expect(await manager.readOutput(taskId)).toContain('disk-only');
-    await manager.wait(taskId);
+    const output = await manager.readOutput(taskId);
+    expect(output).toContain('ring-only');
+    expect(output).toContain('disk-only');
   });
 
-  it('readOutput falls back to disk for ghost tasks', async () => {
-    const taskId = registerProcess(
-      manager,
-      immediateProcess(0, 'persisted line\n'),
-      'echo',
-      'demo',
-    );
+  it('readOutput falls back to disk for historical tasks', async () => {
+    const taskId = await registerProcess(fixture.channel, 'persisted line\n', 'demo');
     await waitForOutput(manager, taskId, 'persisted line');
-    await manager.wait(taskId);
+    const info = await manager.wait(taskId);
+    if (info === undefined) throw new Error('missing completed task');
 
     const freshFixture = createTaskService(sessionDir);
-    const fresh = freshFixture.manager;
-    try {
-      await fresh.loadFromDisk();
-      await fresh.reconcile();
+    const fresh = restoredTaskService(freshFixture.channel, [info]).manager;
 
-      expect(await fresh.readOutput(taskId)).toContain('persisted line');
-      await freshFixture.ctx.expectResumeMatches();
-    } finally {
-      await freshFixture.ctx.dispose();
-    }
+    expect(await fresh.readOutput(taskId)).toContain('persisted line');
   });
 
-  it('TaskOutputTool reads persisted output for a ghost task loaded after restart', async () => {
-    const taskId = registerProcess(
-      manager,
-      immediateProcess(0, 'persisted output\n'),
-      'echo persisted output',
-      'persist output test',
-    );
+  it('TaskOutputTool reads persisted output for a historical task loaded after restart', async () => {
+    const taskId = await registerProcess(fixture.channel, 'persisted output\n', 'persist output test');
     await waitForOutput(manager, taskId, 'persisted output');
-    await manager.wait(taskId);
+    const info = await manager.wait(taskId);
+    if (info === undefined) throw new Error('missing completed task');
 
     const freshFixture = createTaskService(sessionDir);
-    const fresh = freshFixture.manager;
-    try {
-      await fresh.loadFromDisk();
-      await fresh.reconcile();
+    const fresh = restoredTaskService(freshFixture.channel, [info]);
+    const result = await executeTool(
+      new TaskOutputTool(freshFixture.channel.toolExecutor, fresh.history, freshFixture.channel.outputs),
+      toolContext('task_output_restored', { task_id: taskId }),
+    );
+    const output = outputString(result);
 
-      const result = await executeTool(
-        new TaskOutputTool(fresh),
-        toolContext('task_output_restored', { task_id: taskId }),
-      );
-      const output = outputString(result);
-
-      expect(result.isError ?? false).toBe(false);
-      expect(output).toContain('status: completed');
-      expect(output).toContain('output_path:');
-      expect(output).toContain('persisted output');
-      await freshFixture.ctx.expectResumeMatches();
-    } finally {
-      await freshFixture.ctx.dispose();
-    }
+    expect(result.isError ?? false).toBe(false);
+    expect(output).toContain('status: completed');
+    expect(output).toContain('output_path:');
+    expect(output).toContain('persisted output');
   });
 
-  it('onDidAppendOutput reports contiguous UTF-8 byte offsets', async () => {
+  it('handler observation reports contiguous UTF-8 byte offsets', async () => {
     const chunks: { offset: number; text: string }[] = [];
-    const subscription = manager.onDidAppendOutput(({ offset, text }) => chunks.push({ offset, text }));
     const output = '  VITE ready\n  ➜  Local: http://localhost:5173/\n';
-    const taskId = registerProcess(manager, immediateProcess(0, output), 'npm run dev', 'dev server');
+    const controlled = await startControlledTask(fixture.channel, {
+      description: 'dev server',
+      completion: Promise.resolve(''),
+    });
+    const unobserve = controlled.handler.observe((event) => {
+      if (event.type === 'output') chunks.push({ offset: event.offset, text: event.text });
+    });
+    controlled.write(output);
+    controlled.resolve('');
+    const taskId = controlled.handler.taskId;
 
     await manager.wait(taskId);
-    subscription.dispose();
+    unobserve();
 
     expect(chunks.map((chunk) => chunk.text).join('')).toBe(output);
     let expectedOffset = 0;
@@ -342,7 +277,7 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
 
   it('readOutputTail returns the persisted tail bytes with their offset', async () => {
     const output = 'HEAD\n' + 'x'.repeat(200 * 1024) + '➜ TAIL\n';
-    const taskId = registerProcess(manager, immediateProcess(0, output), 'echo big', 'large');
+    const taskId = await registerProcess(fixture.channel, output, 'large');
 
     await manager.wait(taskId);
     const tail = await manager.readOutputTail(taskId, 4096);
@@ -353,8 +288,8 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     expect(Buffer.from(tail.data).toString('utf-8').endsWith('➜ TAIL\n')).toBe(true);
   });
 
-  it('readOutputTail returns the in-memory tail before output is persisted', async () => {
-    const taskId = registerProcess(manager, immediateProcess(0, 'short ➜ line\n'), 'echo', 'demo');
+  it('readOutputTail returns the complete tail for short output', async () => {
+    const taskId = await registerProcess(fixture.channel, 'short ➜ line\n', 'demo');
 
     await waitForOutput(manager, taskId, 'short');
     const tail = await manager.readOutputTail(taskId, 4096);
@@ -372,12 +307,7 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
   });
 
   it('readOutput respects tail length', async () => {
-    const taskId = registerProcess(
-      manager,
-      immediateProcess(0, 'aaaaa-bbbbb-ccccc-ddddd'),
-      'echo',
-      'demo',
-    );
+    const taskId = await registerProcess(fixture.channel, 'aaaaa-bbbbb-ccccc-ddddd', 'demo');
 
     await waitForOutput(manager, taskId, 'ddddd');
 
@@ -386,12 +316,7 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
   });
 
   it('readOutput returns the full output for a nonpositive tail', async () => {
-    const taskId = registerProcess(
-      manager,
-      immediateProcess(0, 'aaaaa-bbbbb-ccccc-ddddd'),
-      'echo',
-      'demo',
-    );
+    const taskId = await registerProcess(fixture.channel, 'aaaaa-bbbbb-ccccc-ddddd', 'demo');
 
     await waitForOutput(manager, taskId, 'ddddd');
 
@@ -403,12 +328,7 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
 
   it('readOutput does not split a surrogate pair at the tail boundary', async () => {
     const emoji = String.fromCodePoint(0x1f600);
-    const taskId = registerProcess(
-      manager,
-      immediateProcess(0, `aaaaa-bbbbb-${emoji}cc`),
-      'echo',
-      'demo',
-    );
+    const taskId = await registerProcess(fixture.channel, `aaaaa-bbbbb-${emoji}cc`, 'demo');
 
     await waitForOutput(manager, taskId, 'cc');
 

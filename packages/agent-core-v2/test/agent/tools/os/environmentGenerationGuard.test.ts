@@ -14,7 +14,7 @@ import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentE
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { WorkspaceConfig } from '#/tool/path-access';
@@ -47,7 +47,7 @@ const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs:
 const skillCatalog = { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog;
 const profile = {
   getModelCapabilities: () => ({ image_in: true, video_in: true }),
-} as unknown as IAgentProfileService;
+} as unknown as IAgentLoopService;
 const toolPolicy = { isToolActive: () => true } as unknown as IAgentToolPolicyService;
 const toolRegistry = { resolve: () => ({}) } as unknown as IAgentToolRegistryService;
 
@@ -385,6 +385,7 @@ describe('Bash environment generation guard', () => {
         cwd: '/workspace',
       }),
       stubWorkspaceContext('/workspace'),
+      {} as never,
       {} as never,
       toolPolicy,
       stubConfigService(),

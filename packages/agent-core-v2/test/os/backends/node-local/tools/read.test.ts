@@ -19,7 +19,7 @@ import { estimateTokens } from '#/llm-adapter/contract/tokens';
 import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
 import { stubConfigService } from '../../../../app/config/stubs';
 import type { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
-import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
@@ -75,10 +75,10 @@ function createTestEnv(home = '/home'): IHostEnvironment {
 function stubProfileService(capabilities: {
   image_in: boolean;
   video_in: boolean;
-}): IAgentProfileService {
+}): IAgentLoopService {
   return {
     getModelCapabilities: () => capabilities,
-  } as unknown as IAgentProfileService;
+  } as unknown as IAgentLoopService;
 }
 
 function createReadTool(
@@ -89,7 +89,7 @@ function createReadTool(
     catalog: { getSkillRoots: () => [] },
   } as unknown as ISessionSkillCatalog,
   truncation: IAgentToolResultTruncationService = stubToolResultTruncationService(),
-  profile: IAgentProfileService = stubProfileService({ image_in: true, video_in: true }),
+  profile: IAgentLoopService = stubProfileService({ image_in: true, video_in: true }),
   toolPolicy: IAgentToolPolicyService = { isToolActive: () => true } as unknown as IAgentToolPolicyService,
   toolRegistry: IAgentToolRegistryService = { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
   config: IConfigService = stubConfigService(),

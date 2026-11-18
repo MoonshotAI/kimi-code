@@ -68,6 +68,7 @@ class FakeEventService implements IEventService {
 class FakeSessionMetadata implements ISessionMetadata {
   declare readonly _serviceBrand: undefined;
   readonly ready = Promise.resolve();
+  readonly effectiveCwd = '/tmp';
   private readonly emitter = new Emitter<SessionMetadataChangedEvent>();
   readonly onDidChangeMetadata = this.emitter.event;
   meta: SessionMeta;

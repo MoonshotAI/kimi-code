@@ -36,15 +36,12 @@ describe('ReverseRpcController', () => {
     const second = controller.show('second');
     const third = controller.show('third');
 
-    // Only the first is presented; the rest stay queued.
     expect(showPanel).toHaveBeenCalledTimes(1);
     expect(showPanel).toHaveBeenLastCalledWith('first');
     expect(controller.hasPending()).toBe(true);
 
     controller.respond('answer-first');
     await expect(first).resolves.toBe('answer-first');
-    // Advancing to the next queued request reuses the same panel without
-    // hiding it in between.
     expect(hidePanel).not.toHaveBeenCalled();
     expect(showPanel).toHaveBeenCalledTimes(2);
     expect(showPanel).toHaveBeenLastCalledWith('second');
@@ -94,7 +91,6 @@ describe('ReverseRpcController', () => {
     await expect(first).resolves.toBe('approve_all_same');
     await expect(second).resolves.toBe('auto:b');
     await expect(fourth).resolves.toBe('auto:d');
-    // The non-matching request advances to the panel and stays pending.
     expect(showPanel).toHaveBeenLastCalledWith({ action: 'edit', id: 'c' });
     expect(controller.hasPending()).toBe(true);
 

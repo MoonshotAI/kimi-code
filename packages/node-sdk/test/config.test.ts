@@ -64,10 +64,28 @@ max_context_size = "large"
 [providers.acme]
 type = "openai"
 api_key_env = "ACME_API_KEY"
+
+[providers.bedrock]
+type = "bedrock"
+
+[providers.bedrock.env]
+AWS_REGION = "us-east-1"
+
+[models."bedrock/kimi"]
+provider = "bedrock"
+model = "global.moonshotai.kimi-k3"
+protocol = "openai"
+max_context_size = 1000000
 `;
 
     await expect(rpc.validateConfigToml({ text })).resolves.toBeUndefined();
-    expect(parseConfigString(text).providers['acme']?.apiKeyEnv).toBe('ACME_API_KEY');
+    const config = parseConfigString(text);
+    expect(config.providers['acme']?.apiKeyEnv).toBe('ACME_API_KEY');
+    expect(config.providers['bedrock']).toMatchObject({
+      type: 'bedrock',
+      env: { AWS_REGION: 'us-east-1' },
+    });
+    expect(config.models?.['bedrock/kimi']?.protocol).toBe('openai');
   });
 
   it('keeps a valid [environments] section through parseConfigString', () => {
@@ -163,5 +181,36 @@ retirement_at = "2030-01-01T00:00:00Z"
       { upgrade?: Record<string, unknown> }
     >;
     expect(withoutUpgrade['acme/current']).not.toHaveProperty('upgrade');
+  });
+
+  it('preserves and removes provider search_url and feedback_url', () => {
+    const config = parseConfigString(`
+[providers.acme]
+type = "kimi"
+base_url = "https://registry.example.test/v1"
+api_key = "YOUR_API_KEY"
+search_url = "https://registry.example.test/v1/search"
+feedback_url = "https://registry.example.test/v1/feedback"
+`);
+
+    expect(config.providers['acme']).toMatchObject({
+      searchUrl: 'https://registry.example.test/v1/search',
+      feedbackUrl: 'https://registry.example.test/v1/feedback',
+    });
+
+    config.providers['acme'] = {
+      type: 'kimi',
+      baseUrl: 'https://registry.example.test/v1',
+      apiKey: 'YOUR_API_KEY',
+      searchUrl: 'https://registry.example.test/v1/search',
+    };
+    const updatedProviders = configToTomlData(config)['providers'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(updatedProviders['acme']).toMatchObject({
+      search_url: 'https://registry.example.test/v1/search',
+    });
+    expect(updatedProviders['acme']).not.toHaveProperty('feedback_url');
   });
 });

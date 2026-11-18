@@ -73,6 +73,7 @@ function makeHost(
       _serviceBrand: undefined,
       discover: async () => ({
         skills: [],
+        variants: [],
         skipped: [],
         scannedRoots: [],
         scannedDirectories: [],

@@ -6,6 +6,7 @@ export * from '#/_base/di/instantiationService';
 export * from '#/_base/di/lifecycle';
 export * from '#/_base/di/scope';
 export * from './app/scopes';
+export * from '#/app/hostsConfig/configSection';
 export * from '#/_base/di/serviceCollection';
 export * from '#/_base/di/cascadeEngine';
 export * from '#/_base/di/dependencyGraph';
@@ -146,20 +147,20 @@ export {
   type VideoURLPart,
 } from '#human/message';
 export type { ToolDescription as Tool } from '#human/message';
-export { addUsage, emptyUsage, grandTotal, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
-export type { FinishReason } from '#human/llm-requester/finish-reason';
+export { addUsage, emptyUsage, grandTotal, inputTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
+export type { FinishReason } from '@moonshot-ai/core/llm/response';
 export type {
   JsonObjectResponseFormat,
   JsonSchemaObject,
   JsonSchemaResponseFormat,
   ResponseFormat,
-} from '#human/llm-requester/response-format';
-export type { ThinkingEffort, ThinkingRequestOptions } from '#human/llm-requester/thinking';
+} from '@moonshot-ai/core/llm/request';
+export type { ThinkingEffort, ThinkingRequestOptions } from '@moonshot-ai/core/llm/request';
 export type { VideoUploadInput } from '#human/media/upload';
-export type { ToolCallIdPolicy } from '#human/llm-requester/requester';
-export type { SamplingOptions } from '#/llm-adapter/model/generate';
+export type { ToolCallIdPolicy } from '@moonshot-ai/core/llm/protocol/rules/tool-call-ids';
+export type { LlmSampling as SamplingOptions } from '@moonshot-ai/core/llm/request';
 export * from '#/llm-adapter/contract/request-trace';
-export type { KimiThinkingConfig } from '#human/llm/builtin/provider/kimi/protocol';
+export type { KimiThinkingConfig } from '@moonshot-ai/core/llm/builtin/provider/kimi/protocol';
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
@@ -207,7 +208,6 @@ export * from '#/llm-adapter/model/model-service';
 export * from '#/llm-adapter/model/thinking';
 export * from '#/llm-adapter/model/catalog';
 export * from '#/llm-adapter/model/catalog-service';
-export * from '#/llm-adapter/model/generate';
 import '#/llm-adapter/model/errors';
 export {
   MODEL_CATALOG_SECTION,
@@ -337,6 +337,9 @@ import '#/agent/modeMutex/modeMutexService';
 export * from '#/features/btw/btw';
 export * from '#/features/btw/btwService';
 import '#/features/btw/btwFeature';
+export * from '#/features/promptPrediction/promptPrediction';
+export * from '#/features/promptPrediction/promptPredictionService';
+import '#/features/promptPrediction/promptPredictionFeature';
 import '#/features/plan/profile/plan';
 export * from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
 import '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
@@ -408,6 +411,7 @@ export * from '#/agent/usage/cacheProbeService';
 export * from '#/session/usage/sessionUsage';
 export * from '#/session/usage/usageAgentModel';
 export * from '#/session/usage/sessionUsageService';
+import '#/session/requestAttribution/requestAttributionService';
 import '#/features/usage/usageFeature';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
@@ -446,6 +450,8 @@ export * from '#/agent/tools/task/task-wait/task-wait';
 import '#/agent/tools/task/task-wait/taskWaitTool';
 export * from '#/agent/task/task';
 export * from '#/agent/task/taskOps';
+import '#/agent/task/taskOutput';
+export * from '#/agent/task/taskOutput';
 export * from '#/agent/task/taskService';
 import '#/features/cron/configSection';
 export * from '#/features/cron/cronTask';
@@ -490,7 +496,6 @@ export * from '#/session/subagent/spawn';
 import '#/session/subagent/flag';
 export * from '#/session/subagent/subagentModelsValidation';
 import '#/session/subagent/subagentModelsValidationService';
-export * from '#/agent/tools/agent/subagent-task';
 export { AGENT_RUN_PROMPT_ORIGIN } from '#/session/subagent/runAgentTurn';
 export * from '#/session/subagent/mirrorAgentRun';
 export * from '#/session/subagent/subagentScopeCache';
@@ -585,6 +590,8 @@ export * from '#/agent/tools/web-search/web-search';
 import '#/agent/tools/web-search/webSearchTool';
 export * from '#/app/auth/auth';
 export * from '#/app/auth/authService';
+export * from '#/app/auth/feedback';
+import '#/app/auth/feedbackService';
 export * from '#/app/region/region';
 export * from '#/app/region/regionService';
 export * from '#/app/auth/configSection';
@@ -607,7 +614,7 @@ export {
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
 } from '#/agent/media/image-compress';
-export { providerImagePolicy, type ProviderImagePolicy } from '#human/llm/protocol/kit/media';
+export { providerImagePolicy, type ProviderImagePolicy } from '@moonshot-ai/core/llm/protocol/kit/media';
 export {
   buildImageConversionGuidance,
   buildUnsupportedImageNotice,
@@ -637,12 +644,9 @@ export * from '#/app/web/providers/moonshot-fetch-url';
 
 export * from '#/agent/blob/agentBlobService';
 export * from '#/agent/blob/agentBlobServiceImpl';
-export * from '#/agent/contextMemory/contextMemory';
-export * from '#/agent/contextMemory/contextMemoryService';
 export * from '#/agent/contextMemory/contextOps';
 export * from '#/agent/contextMemory/compactionHandoff';
 export * from '#/agent/contextMemory/conversationUndoParticipants';
-export * from '#/agent/contextMemory/conversationTime';
 export * from '#/agent/contextMemory/loopEventFold';
 export * from '#/agent/contextMemory/messageId';
 export * from '#/agent/contextMemory/contextTranscript';
@@ -680,7 +684,6 @@ export * from '#/_base/utils/timer';
 import '#/agent/loop/configSection';
 export * from '#/agent/loop/loop';
 export * from '#/agent/loop/loopService';
-export * from '#/agent/loop/promptChannel';
 export * from '#/agent/interruptionReminder/interruptionReminder';
 export * from '#/agent/interruptionReminder/interruptionReminderService';
 export * from '#/agent/interruptionReminder/interruptionReminderOps';
@@ -719,6 +722,8 @@ import '#/agent/permissionRules/configSection';
 export * from '#/agent/permissionRules/permissionRules';
 export * from '#/agent/permissionRules/matchesRule';
 export * from '#/agent/permissionRules/permissionRulesService';
+export * from '#/agent/permissionRules/projectPermissionRules';
+export * from '#/agent/permissionRules/projectPermissionRulesService';
 export * from '#/agent/pluginCommand/pluginCommand';
 export * from '#/agent/pluginCommand/pluginCommandService';
 export * from '#/agent/profile/profile';

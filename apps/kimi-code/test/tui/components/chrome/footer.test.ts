@@ -50,7 +50,6 @@ function truecolorCodes(text: string): Set<string> {
   return codes;
 }
 
-// Dark dance colors the footer never uses outside of /dance.
 const RAINBOW_CYAN = '91,192,190';
 const RAINBOW_GREEN = '78,200,126';
 
@@ -90,7 +89,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
-  transcript: { groupTools: 'auto', groupThinking: true },
+  transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
@@ -187,8 +186,6 @@ describe('FooterComponent', () => {
 
     const codes = truecolorCodes(footer.render(120).join('\n'));
 
-    // "kimi-k2" spreads across the palette, pulling in colors the footer
-    // never renders on its own.
     expect(codes.has(RAINBOW_CYAN)).toBe(true);
     expect(codes.has(RAINBOW_GREEN)).toBe(true);
   });
@@ -209,7 +206,6 @@ describe('FooterComponent', () => {
     currentTheme.setPalette(lightColors);
     try {
       const after = footer.render(120).join('\n');
-      // Reads currentTheme live, so a palette swap changes the emitted colours.
       expect(after).not.toBe(before);
     } finally {
       currentTheme.setPalette(darkColors);
@@ -366,7 +362,6 @@ describe('FooterComponent ctrl+o hint', () => {
   });
 
   it('keeps the hint and drops the rotating tip when only one of them fits', () => {
-    // Same left-hand slots without the tips: measures the space the hint competes for.
     const noTips = new FooterComponent({
       ...appState,
       statusLine: { items: ['mode', 'model', 'cwd'], command: null },
@@ -421,21 +416,21 @@ describe('transcript grouping tip', () => {
 
     const toolGroups = fullscreenFooter({
       ...fullscreenState,
-      transcript: { groupTools: 'explore', groupThinking: false },
+      transcript: { toolCallDensity: 'detailed', thinking: 'ungrouped' },
     });
     expect(toolGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
     toolGroups.dispose();
 
     const noGroups = fullscreenFooter({
       ...fullscreenState,
-      transcript: { groupTools: 'off', groupThinking: false },
+      transcript: { toolCallDensity: 'ungrouped', thinking: 'ungrouped' },
     });
     expect(noGroups.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
     noGroups.dispose();
 
     const thoughtGroups = fullscreenFooter({
       ...fullscreenState,
-      transcript: { groupTools: 'off', groupThinking: true },
+      transcript: { toolCallDensity: 'ungrouped', thinking: 'grouped' },
     });
     expect(thoughtGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
     thoughtGroups.dispose();
@@ -483,7 +478,7 @@ describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
 });
 
 describe('FooterComponent environment slot', () => {
-  const ERROR = '38;2;232;84;84'; // colors.error #E85454
+  const ERROR = '38;2;232;84;84';
   let repoDir: string;
   const previousChalkLevel = chalk.level;
 

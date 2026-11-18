@@ -5,7 +5,7 @@ Kimi Code CLI uses environment variables to control a small number of runtime be
 ::: warning Important: API keys are not configured here
 Credential variables such as `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` are **not** read automatically from shell environment variables. Running `export KIMI_API_KEY=xxx` in the terminal does not give any provider its key. They must be written in `config.toml` under `[providers.<name>]` or the `[providers.<name>.env]` sub-table.
 
-The only exceptions are the `KIMI_MODEL_*` family and a provider's `api_key_env` field, two explicit channels that *do* read credentials from the shell. See [Define a model from environment variables](#define-a-model-from-environment-variables-kimi_model_) and [Provider credential key names](#provider-credential-key-names-written-in-configtoml).
+The exceptions are the `KIMI_MODEL_*` family, a provider's `api_key_env` field, and a small set of credentials read from the shell directly by the vendor SDKs (`GOOGLE_APPLICATION_CREDENTIALS`, and the AWS credential chain for Amazon Bedrock). See [Define a model from environment variables](#define-a-model-from-environment-variables-kimi_model_) and [Provider credential key names](#provider-credential-key-names-written-in-configtoml).
 
 For background, see [Config overrides: provider credentials](./overrides.md#provider-credentials).
 :::
@@ -54,7 +54,7 @@ The format mirrors `ANTHROPIC_CUSTOM_HEADERS`: newline-separated `Name: Value` l
 
 ## Provider credential key names (written in config.toml)
 
-The key names below are not read directly from the shell. They are key names written inside the `[providers.<name>.env]` sub-table of `config.toml`, serving as fallback values for `api_key` / `base_url`. The CLI reads only from the config file, not from `process.env`.
+The key names below are written inside the `[providers.<name>.env]` sub-table of `config.toml`, serving as fallback values for `api_key` / `base_url`. Unless a row notes otherwise, the CLI reads them only from the config file, not from `process.env`.
 
 These conventional names are fixed per provider type. If you would rather keep the key in the shell environment under a name of your choosing, set [`api_key_env`](./config-files.md#providers) on the provider instead: the CLI then reads the key from that variable on every request.
 
@@ -76,13 +76,23 @@ Key names per provider:
 | `ANTHROPIC_BASE_URL` | Anthropic | Follows Anthropic SDK default |
 | `OPENAI_API_KEY` | OpenAI (`openai` and `openai_responses`) | None |
 | `OPENAI_BASE_URL` | OpenAI (`openai` and `openai_responses`) | `https://api.openai.com/v1` |
+| `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock | None |
+| `AWS_DEFAULT_REGION` | Amazon Bedrock | Shell value, if present |
+| `AWS_REGION` | Amazon Bedrock | Configured `AWS_DEFAULT_REGION` or shell value |
+| `AWS_BEDROCK_BASE_URL` | Amazon Bedrock | Derived from the region as `bedrock-runtime.<region>.amazonaws.com` |
+| `AWS_PROFILE` | Amazon Bedrock | Falls back to the shell value |
 | `GOOGLE_API_KEY` | Google GenAI, Vertex AI | None |
 | `VERTEXAI_API_KEY` | Vertex AI | None |
 | `GOOGLE_CLOUD_PROJECT` | Vertex AI | None |
 | `GOOGLE_CLOUD_LOCATION` | Vertex AI | None |
 
 ::: warning
-`GOOGLE_APPLICATION_CREDENTIALS` (path to a service account JSON file) is the only exception that goes through the system environment variable mechanism. It is read by the Google SDK directly via the standard ADC flow; the CLI does not participate. All other key names must be placed in the `[providers.<name>.env]` sub-table to take effect.
+Two credential mechanisms bypass the config table and read from the system environment directly:
+
+- `GOOGLE_APPLICATION_CREDENTIALS` (path to a service account JSON file) is read by the Google SDK via the standard ADC flow; the CLI does not participate.
+- For Amazon Bedrock, the AWS secret credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, SSO, or `~/.aws/credentials`) are read from the shell by the AWS SDK's standard credential chain. Writing them in `[providers.<name>.env]` is not supported and has no effect — the CLI only passes the region and profile to the token generator, which resolves the credentials itself.
+
+All other key names must be placed in the `[providers.<name>.env]` sub-table to take effect.
 :::
 
 For the full provider type and field reference, see [Providers and models](./providers.md).
@@ -143,7 +153,6 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_PASSWORD` | Parallel auth credential for `kimi web`, recommended when binding beyond loopback (see [Security notes](../guides/web.md#security-notes)) | Any non-empty string; when unset, only the token is valid |
 | `KIMI_CODE_SESSION_IDLE_RECLAIM_MS` | How long (ms) a `kimi web` session may stay idle before it is unloaded from memory; the session resumes transparently on next access (default `1800000`; `0` = never unload) | Non-negative integer; invalid values fail fast |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | Keep background tasks when the session closes; higher priority than `config.toml` (default: stop them on exit) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
-| `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | Cap on concurrently running background tasks and Tower workers/reviewers; overrides `[task]` and legacy `[background]` `max_running_tasks`; Tower defaults to 256 when no value is configured | Positive integer; invalid values are ignored |
 | `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` | Default timeout (seconds) for background `Bash` tasks, also used to re-arm foreground commands moved to the background; higher priority than `[task] bash_task_timeout_s` (`0` = no timeout) | Non-negative integer; invalid values are ignored |
 | `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE` | What `kimi -p` does while background tasks are still pending after the main turn; higher priority than `[task] print_background_mode` | `exit`, `drain`, or `steer`; invalid values are ignored |
 | `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S` | Wall-clock ceiling (seconds) for the print-mode drain/steer wait; higher priority than `[task] print_wait_ceiling_s` | Positive integer; invalid values are ignored |
@@ -163,6 +172,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_SESSION_LOCK` | Whether this process takes the cross-process session lock that stops two Kimi Code processes from writing the same session at once. Unset keeps it on; turning it off brings back pre-lock behavior, so concurrent writers can interleave the session history | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off`; any other value is ignored |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | Experimental `fork` parameter on `Agent`/`AgentSwarm`: start the subagent from a snapshot of the caller's history instead of an empty context; `KIMI_CODE_EXPERIMENTAL_FLAG=1` also enables it | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT` | Experimental on-demand tool loading: tools of MCP servers marked `deferred: true` stay out of the top-level tool list and are loaded via `select_tools`; also requires the model to declare the `dynamically_loaded_tools` capability — see [MCP](../customization/mcp.md#loading-tools-on-demand) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION` | Experimental next-prompt suggestions after completed turns in the interactive TUI — see [Prompt prediction](../guides/interaction.md#prompt-prediction-experimental) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_TOWER` | Enable experimental [Tower multi-agent coordination](../guides/tower.md) and the `/tower` command; set it before launch. The persistent equivalent is `[experimental] tower = true` in `config.toml`; changing that setting in a running CLI requires a restart. `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables Tower only when `[experimental] tower` is not set in `config.toml`; an explicit `tower = false` takes precedence over the master flag, while this per-feature variable overrides the config | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_WATCH` | Attach filesystem watchers that reload config and workspace files; higher priority than `[watch] enabled` (default `true`) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
 | `KIMI_CODE_GLOBAL_SEARCH` | Build the global full-text search index and serve `POST /api/v1/search`; higher priority than `[database] global_search` (default `false`) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
@@ -190,6 +200,8 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_MODEL_THINKING_KEEP` | Preserved-thinking passthrough: `thinking.keep` on `kimi`, a `clear_thinking_20251015` edit on `anthropic`; overrides `[thinking] keep` | A value the API accepts, e.g. `all`; an off-value (`false`/`0`/`no`/`off`/`none`/`null`) disables it |
 | `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` | Max time (ms) an LLM request on the `openai` / `openai-responses` / `anthropic` protocols may wait for the response headers (first byte), replacing the HTTP client's default 300 s headers timeout — raise it for long non-streaming thinking; unset keeps the default; the SDK's own total request timeout (default 10 minutes) still caps each attempt; not supported for `google-genai` (its SDK exposes no dispatcher option) or behind a SOCKS proxy (requests still go through the proxy) | Positive integer no greater than 2147483647; invalid values fail the request |
 | `KIMI_CODE_NO_AUTO_UPDATE` | Fully disable the update preflight: no check, background install, or prompt. Legacy alias `KIMI_CLI_NO_AUTO_UPDATE` also honored | Truthy: `1`/`true`/`yes`/`on` |
+| `KIMI_CODE_CLIPBOARD_OSC52` | Also copy through your terminal (OSC 52); try it when copying does not work over a remote connection. In tmux, also add `set -g set-clipboard on` | `1` to enable |
+| `KIMI_CODE_TUI_ANIMATION_FPS` | Frame rate of the shimmer on in-progress titles in the terminal UI | Integer from `1` to `60`; invalid values are ignored with a notice at startup |
 | `KIMI_DISABLE_CRON` | Disable the scheduled-task tool (`CronCreate` rejects new schedules; existing tasks do not fire) | `1` to disable |
 
 The `KIMI_CODE_INFINITE_RETRY`, `KIMI_CODE_IDENTITY_*`, and `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` variables are read by the `agent-core-v2` engine.

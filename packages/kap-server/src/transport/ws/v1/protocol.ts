@@ -1,52 +1,18 @@
-import type { TaskResponseMessage } from '../../../protocol/ws-task';
-
-export interface ServerHelloPayload {
-  ws_connection_id: string;
-  protocol_version: number;
-  heartbeat_ms: number;
-  capabilities: {
-    event_batching: boolean;
-    compression: boolean;
-  };
-}
-
-export interface ServerHelloFrame {
-  type: 'server_hello';
-  timestamp: string;
-  payload: ServerHelloPayload;
-}
-
-export function buildServerHello(payload: ServerHelloPayload): ServerHelloFrame {
-  return { type: 'server_hello', timestamp: new Date().toISOString(), payload };
-}
+import type { ResponseMessage } from '../../../protocol/ws-control';
 
 export interface PingFrame {
   type: 'ping';
-  timestamp: string;
-  payload: { nonce: string };
 }
 
-export function buildPing(nonce: string): PingFrame {
-  return { type: 'ping', timestamp: new Date().toISOString(), payload: { nonce } };
-}
-
-export interface AckFrame<P = unknown> {
-  type: 'ack';
-  id: string;
-  code: number;
-  msg: string;
-  payload: P;
-}
-
-export function buildAck<P>(id: string, code: number, msg: string, payload: P): AckFrame<P> {
-  return { type: 'ack', id, code, msg, payload };
+export function buildPing(): PingFrame {
+  return { type: 'ping' };
 }
 
 export function buildResponse(
   requestId: string,
   code: number,
   msg?: string,
-  task?: TaskResponseMessage['task'],
-): TaskResponseMessage {
+  task?: ResponseMessage['task'],
+): ResponseMessage {
   return { type: 'response', request_id: requestId, code, msg, task };
 }

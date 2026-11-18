@@ -1,10 +1,3 @@
-/**
- * Scenario: one VS Code session runtime adapts the public Node SDK session for one or more Webviews.
- * Responsibilities: prompt conversion, event/terminal delivery, reverse RPC, cancellation, and baseline capture.
- * Wiring: SessionRuntime is real; a small in-memory Session implements only the public SDK boundary.
- * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts apps/vscode/test/session-runtime.test.ts
- */
-
 import type {
   ApprovalHandler,
   ApprovalRequest,
@@ -17,11 +10,15 @@ import type {
   Session,
   SessionSummary,
 } from "@moonshot-ai/kimi-code-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { Events } from "../shared/bridge";
+import { runHostSlashCommand } from "../src/handlers/slash-command";
+import type { HandlerContext } from "../src/handlers/types";
 import type { LegacyApprovalFlags } from "../src/runtime/legacy-approval";
 import { SessionRuntime } from "../src/runtime/session-runtime";
+
+vi.mock("vscode", () => ({}));
 
 interface BroadcastRecord {
   readonly event: string;
@@ -401,6 +398,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
       type: "tool.call.started",
       sessionId: "session-1",
       agentId: "main",
+      origin: "loop",
       turnId: 7,
       toolCallId: "tool-1",
       name: "Read",
@@ -721,6 +719,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
         type: "tool.call.started",
         sessionId: "session-1",
         agentId: "main",
+        origin: "loop",
         turnId: 7,
         toolCallId: "tool-1",
         name,
@@ -752,6 +751,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
       type: "tool.call.started",
       sessionId: "session-1",
       agentId: "main",
+      origin: "loop",
       turnId: 7,
       toolCallId: "tool-1",
       name,
@@ -759,5 +759,56 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     });
 
     expect(baselines).toEqual([]);
+  });
+
+  it("passes the visible variant path when the default skill is filtered out", async () => {
+    const activateSkill = vi.fn<(name: string, args?: string, options?: { path?: string }) => Promise<void>>();
+    const runtime = {
+      session: {
+        listSkills: vi.fn(async () => [
+          { name: "review", type: "prompt", path: "/work/A/review/SKILL.md", scopes: ["web"] },
+          { name: "review", type: "prompt", path: "/work/B/review/SKILL.md" },
+        ]),
+        activateSkill,
+      },
+      runTurnAction: vi.fn(async (_raw: string, action: () => Promise<void>) => {
+        await action();
+        return { status: "finished" };
+      }),
+    } as unknown as SessionRuntime;
+
+    const done = await runHostSlashCommand(
+      runtime,
+      { name: "skill:review", args: "", raw: "/skill:review" },
+      {} as HandlerContext,
+    );
+
+    expect(done).toBe(true);
+    expect(activateSkill).toHaveBeenCalledWith("review", undefined, { path: "/work/B/review/SKILL.md" });
+  });
+
+  it("prefers the exact-case visible variant when activating a skill", async () => {
+    const activateSkill = vi.fn<(name: string, args?: string, options?: { path?: string }) => Promise<void>>();
+    const runtime = {
+      session: {
+        listSkills: vi.fn(async () => [
+          { name: "Review", type: "prompt", path: "/work/A/review/SKILL.md" },
+          { name: "review", type: "prompt", path: "/work/B/review/SKILL.md" },
+        ]),
+        activateSkill,
+      },
+      runTurnAction: vi.fn(async (_raw: string, action: () => Promise<void>) => {
+        await action();
+        return { status: "finished" };
+      }),
+    } as unknown as SessionRuntime;
+
+    await runHostSlashCommand(
+      runtime,
+      { name: "skill:review", args: "", raw: "/skill:review" },
+      {} as HandlerContext,
+    );
+
+    expect(activateSkill).toHaveBeenCalledWith("review", undefined, { path: "/work/B/review/SKILL.md" });
   });
 });

@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
-import { castDraft } from 'immer';
-
-import {
-  computeUndoCut,
-  contextMemoryKey,
-  isFullyUndoable,
-} from '#/agent/contextMemory/contextOps';
-import { ContextUndo } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import { expandedStateFolds, type FoldContext } from '#/state/state';
+import { cutTurnUndo, wireLinesOf } from '#/agent/undo/turnUndo';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import type { WireRecord } from '#/wire/record';
 
 function text(value: string): { type: 'text'; text: string } {
   return { type: 'text', text: value };
+}
+
+function prompt(value = 'u', origin: PromptOrigin = { kind: 'user' }): WireRecord {
+  return {
+    type: 'turn.prompt',
+    input: [text(value)],
+    origin,
+    promptId: value,
+    turnId: 0,
+    trigger: 'normal',
+  };
 }
 
 function user(origin?: ContextMessage['origin']): ContextMessage {
@@ -21,6 +25,10 @@ function user(origin?: ContextMessage['origin']): ContextMessage {
     content: [text('u')],
     ...(origin === undefined ? {} : { origin }),
   };
+}
+
+function append(message: ContextMessage): WireRecord {
+  return { type: 'context.append_message', message };
 }
 
 function assistant(): ContextMessage {
@@ -35,109 +43,70 @@ function injection(): ContextMessage {
   };
 }
 
-function compaction(): ContextMessage {
-  return {
-    role: 'user',
-    content: [text('sum')],
-    origin: { kind: 'compaction_summary' },
-  };
+function compaction(): WireRecord {
+  return { type: 'context.apply_compaction', summary: 'summary', compactedCount: 2 };
 }
 
-const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
-
-describe('computeUndoCut', () => {
-  it('finds the cut for the last real user prompt', () => {
-    const cut = computeUndoCut(
-      [user(USER_ORIGIN), user({ kind: 'user', inTurn: true }), assistant()],
-      1,
-    );
-    expect(cut).toEqual({ cutIndex: 0, removedCount: 1, stoppedAtCompaction: false });
-    expect(isFullyUndoable(cut, 1)).toBe(true);
-  });
-
-  it('skips trailing non-user messages while scanning', () => {
-    const cut = computeUndoCut([user(USER_ORIGIN), assistant(), assistant()], 1);
-    expect(cut.cutIndex).toBe(0);
-    expect(isFullyUndoable(cut, 1)).toBe(true);
-  });
-
-  it('treats a user message without origin as a real prompt (legacy)', () => {
-    const cut = computeUndoCut([user(), assistant()], 1);
-    expect(cut.cutIndex).toBe(0);
-    expect(isFullyUndoable(cut, 1)).toBe(true);
-  });
-
-  it('finds nothing when the history has no real user prompt', () => {
-    const cut = computeUndoCut([], 1);
-    expect(cut).toEqual({ cutIndex: -1, removedCount: 0, stoppedAtCompaction: false });
-    expect(isFullyUndoable(cut, 1)).toBe(false);
-  });
-
-  it('skips injections without counting them', () => {
-    const cut = computeUndoCut([injection(), assistant()], 1);
-    expect(cut.cutIndex).toBe(-1);
-    expect(isFullyUndoable(cut, 1)).toBe(false);
-  });
-
-  it('counts fewer prompts than requested as not fully undoable', () => {
-    const history = [user(USER_ORIGIN), assistant(), user(USER_ORIGIN), assistant()];
-    const cut = computeUndoCut(history, 3);
-    expect(cut.removedCount).toBe(2);
-    expect(isFullyUndoable(cut, 3)).toBe(false);
-  });
-
-  it('stops at a compaction summary', () => {
-    const cut = computeUndoCut([user(USER_ORIGIN), compaction(), assistant()], 1);
-    expect(cut).toEqual({ cutIndex: -1, removedCount: 0, stoppedAtCompaction: true });
-    expect(isFullyUndoable(cut, 1)).toBe(false);
-  });
-
-  it('stops at a compaction summary even after counting some prompts', () => {
-    const history = [user(USER_ORIGIN), compaction(), user(USER_ORIGIN), assistant()];
-    const cut = computeUndoCut(history, 2);
-    expect(cut.removedCount).toBe(1);
-    expect(cut.stoppedAtCompaction).toBe(true);
-    expect(isFullyUndoable(cut, 2)).toBe(false);
-  });
-});
-
-describe('contextUndo op', () => {
-  const foldContext: FoldContext = {
-    silent: false,
-    checkpoint: () => {},
-    clearCheckpoints: () => {},
-    undoToCheckpoint: () => {},
-    emit: () => {},
-  };
-
-  function applyContextUndo(state: ContextMessage[], count: number): ContextMessage[] {
-    const fold = expandedStateFolds(contextMemoryKey).get(ContextUndo)!;
-    const result = fold(castDraft(state), new ContextUndo({ agentId: 'main', count }), foldContext);
-    return result === undefined ? state : result;
-  }
-
-  it('slices the history at the cut point, dropping post-cut injections too', () => {
-    const state = [
-      user(USER_ORIGIN),
-      assistant(),
-      user(USER_ORIGIN),
-      injection(),
-      assistant(),
+describe('cutTurnUndo', () => {
+  it('finds the cut for the last real turn prompt', () => {
+    const records = [
+      append({ ...user({ kind: 'user' }), id: 'u' }),
+      prompt(),
+      { type: 'turn.steer', input: [text('steer')], origin: { kind: 'user' }, turnId: 0 },
+      append(assistant()),
     ];
-    const next = applyContextUndo(state, 1);
-    expect(next).toEqual([user(USER_ORIGIN), assistant()]);
+    const result = cutTurnUndo(wireLinesOf(records), new Set(), 1);
+    expect(result.anchors.map((anchor) => anchor.turnId)).toEqual([0, 1]);
+    expect(result.cut).toMatchObject({ index: 2, line: 2 });
   });
 
-  it('returns the same reference when not fully undoable', () => {
-    const state = [user(USER_ORIGIN), compaction(), assistant()];
-    expect(applyContextUndo(state, 1)).toBe(state);
+  it('skips trailing non-turn records while scanning', () => {
+    const result = cutTurnUndo(wireLinesOf([prompt(), append(assistant()), append(assistant())]), new Set(), 1);
+    expect(result.cut?.line).toBe(0);
   });
 
-  it.each([0, 0.5, Number.MAX_SAFE_INTEGER + 1])(
-    'returns the same reference for invalid count %s',
-    (count) => {
-      const state = [user(USER_ORIGIN), assistant()];
-      expect(applyContextUndo(state, count)).toBe(state);
-    },
-  );
+  it('treats a turn prompt without origin as a real prompt', () => {
+    const record: WireRecord = { type: 'turn.prompt', input: [text('legacy')], promptId: 'legacy' };
+    const result = cutTurnUndo(wireLinesOf([record, append(assistant())]), new Set(), 1);
+    expect(result.cut?.line).toBe(0);
+  });
+
+  it('does not treat context-only user messages as turn starts', () => {
+    const result = cutTurnUndo(wireLinesOf([append(user({ kind: 'user' }))]), new Set(), 1);
+    expect(result.anchors).toHaveLength(0);
+    expect(result.cut).toBeUndefined();
+  });
+
+  it('skips injections and continuation prompts without counting them', () => {
+    const records = [
+      append(injection()),
+      { type: 'turn.prompt', input: [], origin: { kind: 'user' }, trigger: 'continue' },
+      append(assistant()),
+    ];
+    const result = cutTurnUndo(wireLinesOf(records), new Set(), 1);
+    expect(result.anchors).toHaveLength(0);
+    expect(result.cut).toBeUndefined();
+  });
+
+  it('does not cut when fewer turn prompts exist than requested', () => {
+    const result = cutTurnUndo(wireLinesOf([prompt('u1'), append(assistant()), prompt('u2'), append(assistant())]), new Set(), 3);
+    expect(result.anchors).toHaveLength(2);
+    expect(result.cut).toBeUndefined();
+  });
+
+  it('stops at a compaction boundary', () => {
+    const result = cutTurnUndo(wireLinesOf([prompt(), compaction(), append(assistant())]), new Set(), 1);
+    expect(result.anchors).toHaveLength(0);
+    expect(result.stoppedAtCompaction).toBe(true);
+    expect(result.cut).toBeUndefined();
+  });
+
+  it('keeps only prompts after compaction available', () => {
+    const records = [prompt('before'), compaction(), prompt('after'), append(assistant())];
+    const result = cutTurnUndo(wireLinesOf(records), new Set(), 2);
+    expect(result.anchors).toHaveLength(1);
+    expect(result.stoppedAtCompaction).toBe(true);
+    expect(result.cut).toBeUndefined();
+    expect(cutTurnUndo(wireLinesOf(records), new Set(), 1).cut?.line).toBe(2);
+  });
 });

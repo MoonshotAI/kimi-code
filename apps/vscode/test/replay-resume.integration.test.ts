@@ -1,10 +1,3 @@
-/**
- * Scenario: persisted Node SDK sessions are reopened and rendered by the VS Code replay adapter.
- * Responsibilities: restored tool displays and child-agent steps through the public resume state.
- * Wiring: Node SDK, core, storage, and HTTP provider adapter are real; only the remote provider is local.
- * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/replay-resume.integration.test.ts
- */
-
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

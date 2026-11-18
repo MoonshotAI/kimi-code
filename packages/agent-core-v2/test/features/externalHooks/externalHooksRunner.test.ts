@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ILogService } from '#/_base/log/log';

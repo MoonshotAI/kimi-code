@@ -4,8 +4,6 @@ import type { SyntaxNode } from '#/node';
 import { descendantsOfType } from '#/node';
 import { parse } from '#/parse';
 
-/** Compact S-expression of the tree: named leaves are (type "text"),
- *  anonymous leaves are just their quoted type, inner nodes nest. */
 function sexp(node: SyntaxNode): string {
   if (node.children.length === 0) {
     return node.isNamed ? `(${node.type} ${JSON.stringify(node.text)})` : JSON.stringify(node.type);
@@ -21,7 +19,6 @@ function parseOk(source: string): { rootNode: SyntaxNode; hasError: boolean } {
   return result;
 }
 
-/** Parse and assert the exact tree shape plus the hasError flag. */
 function expectTree(source: string, expected: string, hasError = false): SyntaxNode {
   const { rootNode, hasError: actual } = parseOk(source);
   expect(actual).toBe(hasError);
@@ -81,12 +78,10 @@ describe('if / while / until', () => {
     expectTree('done', `(program (command (command_name (word "done"))))`);
     expectTree('}', `(program (command (command_name (word "}"))))`);
     expectTree('time ls -la', `(program (command (command_name (word "time")) (word "ls") (word "-la")))`);
-    // Reserved words are plain arguments inside conditions and bodies.
     expectTree(
       'if echo then; then x; fi',
       `(program (if_statement "if" (command (command_name (word "echo")) (word "then")) ";" "then" (command (command_name (word "x"))) ";" "fi"))`,
     );
-    // A prefix assignment disables the keyword reading.
     expectTree(
       'x=1 if a; then b; fi',
       `(program (command (variable_assignment (variable_name "x") "=" (number "1")) (command_name (word "if")) (word "a")) ";" (command (command_name (word "then")) (word "b")) ";" (command (command_name (word "fi"))))`,
@@ -356,7 +351,6 @@ describe('test commands', () => {
       '[[ $x -eq 1 && $y -ne 2 ]]',
       `(program (test_command "[[" (binary_expression (binary_expression (simple_expansion "$" (variable_name "x")) (test_operator "-eq") (number "1")) "&&" (binary_expression (simple_expansion "$" (variable_name "y")) (test_operator "-ne") (number "2"))) "]]"))`,
     );
-    // Inside parentheses the == right side is a word, not extglob_pattern.
     expectTree(
       '[[ (a == b) && c ]]',
       `(program (test_command "[[" (binary_expression (parenthesized_expression "(" (binary_expression (word "a") "==" (word "b")) ")") "&&" (word "c")) "]]"))`,
@@ -414,8 +408,6 @@ describe('arithmetic', () => {
       'echo $((i++ + --j))',
       `(program (command (command_name (word "echo")) (arithmetic_expansion "$((" (binary_expression (postfix_expression (variable_name "i") "++") "+" (unary_expression "--" (variable_name "j"))) "))")))`,
     );
-    // Prefix operators grab the whole tighter-precedence expression, like
-    // the reference: -(x + ~y).
     expectTree(
       'echo $((-x + ~y))',
       `(program (command (command_name (word "echo")) (arithmetic_expansion "$((" (unary_expression "-" (binary_expression (variable_name "x") "+" (unary_expression "~" (variable_name "y")))) "))")))`,
@@ -568,7 +560,6 @@ describe('strings and brace expressions', () => {
       'for f in $"a"; do x; done',
       `(program (for_statement "for" (variable_name "f") "in" (translated_string "$" (string "\\"" (string_content "a") "\\"")) ";" (do_group "do" (command (command_name (word "x"))) ";" "done")))`,
     );
-    // Mid-concatenation the bare $ and the string stay separate pieces.
     expectTree(
       'echo a$"b"',
       `(program (command (command_name (word "echo")) (concatenation (word "a") "$" (string "\\"" (string_content "b") "\\""))))`,
@@ -911,7 +902,6 @@ describe('recovery and adversarial input', () => {
 
   it('parses a pathological test command under budget', () => {
     const result = parse('[[ ' + 'a && '.repeat(2000) + 'a ]]');
-    // Either parses (with bounded work) or the budget cuts it off; never throws.
     if (result.ok) {
       expect(result.rootNode.type).toBe('program');
     } else {
@@ -926,7 +916,6 @@ describe('M2 review regressions', () => {
       'x=$(case y in a) 1;; esac)',
       `(program (variable_assignment (variable_name "x") "=" (command_substitution "$(" (case_statement "case" (word "y") "in" (case_item (word "a") ")" (command (command_name (number "1"))) ";;") "esac") ")")))`,
     );
-    // Optional-paren item form stays balanced too.
     expectTree(
       'x=$(case y in (b) 2;; esac)',
       `(program (variable_assignment (variable_name "x") "=" (command_substitution "$(" (case_statement "case" (word "y") "in" (case_item "(" (word "b") ")" (command (command_name (number "2"))) ";;") "esac") ")")))`,
@@ -974,7 +963,6 @@ describe('M2 review regressions', () => {
       '((a++ + b))',
       `(program (test_command "((" (binary_expression (word "a++") "+" (word "b")) "))"))`,
     );
-    // Other ((…)) forms and non-statement positions stay arithmetic.
     expectTree(
       '((b + a++))',
       `(program (command (command_name (arithmetic_expansion "((" (binary_expression (variable_name "b") "+" (postfix_expression (variable_name "a") "++")) "))"))))`,
@@ -1027,8 +1015,6 @@ describe('M2 review regressions', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.hasError).toBe(true);
-    // Local degradation: the tree keeps the outer expansions instead of
-    // collapsing into a single ERROR child under program.
     expect(result.rootNode.children[0]!.type).not.toBe('ERROR');
     expect(descendantsOfType(result.rootNode, 'expansion').length).toBeGreaterThan(100);
   });
@@ -1044,7 +1030,6 @@ describe('M2 review regressions', () => {
       '[[ $a==b* ]]',
       `(program (test_command "[[" (concatenation (simple_expansion "$" (variable_name "a")) (word "==b*")) "]]"))`,
     );
-    // But they are operators at operator position, even when attached.
     expectTree(
       '[[ a ==b ]]',
       `(program (test_command "[[" (binary_expression (word "a") "==" (extglob_pattern "b")) "]]"))`,
@@ -1081,7 +1066,6 @@ describe('M2 review regressions', () => {
 
 describe('M2 review round 2 regressions', () => {
   it('applies the scanner.c extglob_pattern rule to ==/!= right sides', () => {
-    // Single letter followed by whitespace → glob; followed by `)` → word.
     expectTree(
       '[[ $a == b ]]',
       `(program (test_command "[[" (binary_expression (simple_expansion "$" (variable_name "a")) "==" (extglob_pattern "b")) "]]"))`,
@@ -1094,7 +1078,6 @@ describe('M2 review round 2 regressions', () => {
       '[[ ( $a == x ) ]]',
       `(program (test_command "[[" (parenthesized_expression "(" (binary_expression (simple_expansion "$" (variable_name "a")) "==" (extglob_pattern "x")) ")") "]]"))`,
     );
-    // Multi-character all-letter words stay words, dots don't count.
     expectTree(
       '[[ $a == foo ]]',
       `(program (test_command "[[" (binary_expression (simple_expansion "$" (variable_name "a")) "==" (word "foo")) "]]"))`,
@@ -1103,13 +1086,11 @@ describe('M2 review round 2 regressions', () => {
       '[[ $a == x.y ]]',
       `(program (test_command "[[" (binary_expression (simple_expansion "$" (variable_name "a")) "==" (word "x.y")) "]]"))`,
     );
-    // Any non-letter non-dot character makes it a glob.
     for (const word of ['x1', 'foo-', 'x_', 'b*c=d', 'bc=d', 'b?=e', '.x', 'a-b']) {
       const result = parseOk(`[[ $a == ${word} ]]`);
       const globs = descendantsOfType(result.rootNode, 'extglob_pattern');
       expect(globs.map((g) => g.text)).toEqual([word]);
     }
-    // `=` vetoes only as the second character; a leading `=` vetoes too.
     expectTree(
       '[[ $x == b=c ]]',
       `(program (test_command "[[" (binary_expression (simple_expansion "$" (variable_name "x")) "==" (word "b=c")) "]]"))`,
@@ -1118,7 +1099,6 @@ describe('M2 review round 2 regressions', () => {
       '[[ a == =b ]]',
       `(program (test_command "[[" (binary_expression (word "a") "==" (word "=b")) "]]"))`,
     );
-    // Round-1 fixed behavior must not regress.
     expectTree(
       '[[ $x == b*c ]]',
       `(program (test_command "[[" (binary_expression (simple_expansion "$" (variable_name "x")) "==" (extglob_pattern "b*c")) "]]"))`,
@@ -1156,7 +1136,6 @@ describe('M2 review round 2 regressions', () => {
     let inner = '${a#""}';
     for (let k = 0; k < 2500; k++) inner = `\${a#"${inner}"}`;
     const result = parse(`echo ${inner}`, { timeoutMs: 30_000 });
-    // No RangeError, no abort: the scan depth cap degrades locally.
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.hasError).toBe(true);
@@ -1168,7 +1147,6 @@ describe('M2 review round 2 regressions', () => {
       '[[ ((a)) == x ]]',
       `(program (test_command "[[" (binary_expression (arithmetic_expansion "((" (variable_name "a") "))") "==" (extglob_pattern "x")) "]]"))`,
     );
-    // Without the closing )), parens still nest as parenthesized_expressions.
     expectTree(
       '[[ ((a) == x) && y ]]',
       `(program (test_command "[[" (binary_expression (parenthesized_expression "(" (binary_expression (parenthesized_expression "(" (word "a") ")") "==" (word "x")) ")") "&&" (word "y")) "]]"))`,
@@ -1191,8 +1169,6 @@ describe('M2 review round 2 regressions', () => {
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.hasError).toBe(true);
     }
-    // Valid inputs stay clean: case items need no terminator before esac,
-    // subshells none before ), compounds with proper terminators.
     for (const source of ['if a; then b; fi', '{ ls; }', '(ls)', 'case $x in a) x esac', 'while x; do y; done']) {
       const result = parse(source);
       expect(result.ok).toBe(true);
@@ -1223,7 +1199,6 @@ describe('M2 review round 3 regressions', () => {
       '[[ $a = [abc] ]]',
       `(program (test_command "[[" (binary_expression (simple_expansion "$" (variable_name "a")) "=" (regex "[abc]")) "]]"))`,
     );
-    // Bracket fragments outside test commands are untouched.
     expectTree(
       'echo a[2]b',
       `(program (command (command_name (word "echo")) (concatenation (word "a") (word "[") (number "2") (word "]") (word "b"))))`,
@@ -1240,7 +1215,6 @@ describe('M2 review round 3 regressions', () => {
       `(program (test_command "[[" (binary_expression (word "-foo") "==" (extglob_pattern "x")) "]]"))`,
     );
     expectTree('[[ -f ]]', `(program (test_command "[[" (word "-f") "]]"))`);
-    // A real operand still makes it a test_operator.
     expectTree(
       '[[ -f file.txt ]]',
       `(program (test_command "[[" (unary_expression (test_operator "-f") (word "file.txt")) "]]"))`,
@@ -1299,8 +1273,6 @@ describe('M2 review round 3 regressions', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.hasError).toBe(true);
-    // Local degradation (MAX_SUBSTITUTION_DEPTH), not a last-resort
-    // single-ERROR root.
     expect(result.rootNode.children[0]!.type).not.toBe('ERROR');
     expect(descendantsOfType(result.rootNode, 'command_substitution').length).toBeGreaterThan(100);
   });

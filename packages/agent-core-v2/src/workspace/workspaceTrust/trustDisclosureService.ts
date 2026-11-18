@@ -66,7 +66,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
 
   async describeGatedActivation(
     pendingAdditionalDirs: readonly string[] = [],
-    baseDir = this.context.cwd,
+    baseDir = this.workspaceDirs.primary,
     pendingAdditionalDirsResolved = false,
   ): Promise<TrustGatedActivation> {
     if (await this.trust.get()) return EMPTY_ACTIVATION;
@@ -106,7 +106,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   }
 
   private async describeGatedMcpServers(): Promise<readonly TrustGatedMcpServer[]> {
-    const cwd = this.context.cwd;
+    const cwd = this.workspaceDirs.primary;
     const homeDir = this.bootstrap.homeDir;
     const [paths, loaded] = await Promise.all([
       resolveMcpJsonPaths({ fs: this.fs, cwd, homeDir }),
@@ -132,7 +132,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     dirs: readonly string[];
     sources: readonly string[];
   }> {
-    const result = await this.localConfig.readAdditionalDirs(this.context.cwd);
+    const result = await this.localConfig.readAdditionalDirs(this.workspaceDirs.primary);
     const realRoot = await realpathOrSelf(this.fs, result.projectRoot);
     const dirs: string[] = [];
     for (const dir of result.additionalDirs) {
@@ -156,10 +156,10 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     const projectRoot =
-      (await findGitWorkTree(this.fs, this.context.cwd))?.root ?? this.context.cwd;
+      (await findGitWorkTree(this.fs, this.workspaceDirs.primary))?.root ?? this.workspaceDirs.primary;
     const [roots, realRoot] = await Promise.all([
       projectRootsForDirs(
-        [this.context.cwd, ...this.workspaceDirs.sharedAdditionalDirs],
+        [this.workspaceDirs.primary, ...this.workspaceDirs.sharedAdditionalDirs],
         { mergeAllAvailableSkills },
         this.fs,
       ),
@@ -182,7 +182,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       warnings.push('Project skills are still loading; inspect the project skill directories.');
     }
     const projectRoot =
-      (await findGitWorkTree(this.fs, this.context.cwd))?.root ?? this.context.cwd;
+      (await findGitWorkTree(this.fs, this.workspaceDirs.primary))?.root ?? this.workspaceDirs.primary;
     if (this.instructions.snapshot.agentsMdWarning !== undefined) {
       warnings.push(this.instructions.snapshot.agentsMdWarning);
     }
@@ -241,7 +241,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     return (
       await projectRootsForDirs(
-        [this.context.cwd, ...this.workspaceDirs.sharedAdditionalDirs],
+        [this.workspaceDirs.primary, ...this.workspaceDirs.sharedAdditionalDirs],
         { mergeAllAvailableSkills },
         this.fs,
       )

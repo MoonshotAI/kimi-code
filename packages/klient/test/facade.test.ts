@@ -11,7 +11,6 @@ import { KlientValidationError } from '../src/core/validation.js';
 
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Records calls, replays scripted results, and captures listen subscriptions. */
 class FakeChannel implements KlientChannel {
   readonly calls: Array<{ scope: ScopeRef; service: string; method: string; args: unknown[] }> = [];
   readonly subscriptions: Array<{
@@ -20,7 +19,6 @@ class FakeChannel implements KlientChannel {
     dispose: ReturnType<typeof vi.fn>;
   }> = [];
   result: unknown;
-  /** Keyed `${service}.${method}` result overrides. */
   readonly results = new Map<string, unknown>();
   private readonly handlers = new Map<number, (data: unknown) => void>();
   private nextSub = 0;
@@ -32,9 +30,7 @@ class FakeChannel implements KlientChannel {
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
-  async *stream(_scope: ScopeRef, _service: string, _method: string, _args: unknown[]): AsyncIterableIterator<unknown> {
-    // stub — streaming is not exercised in facade tests
-  }
+  async *stream(_scope: ScopeRef, _service: string, _method: string, _args: unknown[]): AsyncIterableIterator<unknown> {}
 
   listen(scope: ScopeRef, source: EventSourceRef, handler: (data: unknown) => void): IDisposable {
     const id = this.nextSub;
@@ -47,7 +43,6 @@ class FakeChannel implements KlientChannel {
     return { dispose };
   }
 
-  /** Push a raw payload into the Nth subscription (0-based). */
   emit(index: number, data: unknown): void {
     this.handlers.get(index)?.(data);
   }
@@ -78,7 +73,7 @@ describe('facade routing', () => {
       args: ['/x', 'n'],
     });
 
-    channel.result = undefined; // void output
+    channel.result = undefined;
     await klient.global.plugins.setMcpServerEnabled({ id: 'p', server: 's', enabled: true });
     expect(channel.calls[1]).toMatchObject({
       service: 'pluginService',
@@ -93,6 +88,28 @@ describe('facade routing', () => {
       method: 'status',
       args: [undefined],
     });
+
+    channel.results.set('sessionPromptPredictionService.predict', 'next prompt');
+    await expect(klient.session('s1').predictNextPrompt({
+      predictionId: 'prediction-1',
+      expectedTurnId: 4,
+    })).resolves.toBe('next prompt');
+    channel.results.set('sessionPromptPredictionService.cancel', true);
+    await expect(klient.session('s1').cancelPromptPrediction('prediction-1', 'escape')).resolves.toBe(true);
+    expect(channel.calls.slice(3)).toEqual([
+      {
+        scope: { sessionId: 's1' },
+        service: 'sessionPromptPredictionService',
+        method: 'predict',
+        args: [{ predictionId: 'prediction-1', expectedTurnId: 4 }],
+      },
+      {
+        scope: { sessionId: 's1' },
+        service: 'sessionPromptPredictionService',
+        method: 'cancel',
+        args: ['prediction-1', 'escape'],
+      },
+    ]);
   });
 
   it('forwards the login region option through the wire contract', async () => {
@@ -128,7 +145,6 @@ describe('facade routing', () => {
       supported: true,
       state: 'partial',
       steps: [{ id: 'permissions', state: 'missing' }],
-      // The completed-install note survives the contract parse (not stripped).
       install: { running: false, note: 'user-skill-migrated' },
     };
     channel.result = [status];
@@ -251,7 +267,7 @@ describe('agent profile routing', () => {
     const klient = createKlientFromChannel(channel);
     const agent = klient.session('s1').agent('main');
 
-    channel.result = undefined; // void output
+    channel.result = undefined;
     await agent.setThinking('on');
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
@@ -322,7 +338,7 @@ describe('agent skill routing', () => {
       await expect(
         agent.promptWithSkills({
           input: [{ type: 'text', text: 'Review this change.' }],
-          skills: [{ name: 'review', args: 'src/app.ts' }],
+          skills: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
           steerIfActive,
         }),
       ).resolves.toEqual({
@@ -337,7 +353,7 @@ describe('agent skill routing', () => {
         args: [
           {
             input: [{ type: 'text', text: 'Review this change.' }],
-            skills: [{ name: 'review', args: 'src/app.ts' }],
+            skills: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
             steerIfActive,
           },
         ],
@@ -357,6 +373,7 @@ describe('session skills routing', () => {
         description: 'review changes',
         path: '/skills/review/SKILL.md',
         source: 'project',
+        workspaceDir: '/work/B',
       },
     ];
     channel.result = summaries;
@@ -392,14 +409,14 @@ describe('session skills routing', () => {
     const agent = klient.session('s1').agent('main');
 
     channel.result = { turn_id: 3 };
-    await expect(agent.activateSkill({ name: 'review', args: 'src/app.ts' })).resolves.toEqual({
+    await expect(agent.activateSkill({ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' })).resolves.toEqual({
       turn_id: 3,
     });
     expect(channel.calls[0]).toEqual({
       scope: { sessionId: 's1', agentId: 'main' },
       service: 'agentSkillService',
       method: 'activate',
-      args: [{ name: 'review', args: 'src/app.ts' }],
+      args: [{ name: 'review', path: '/work/B/review/SKILL.md', args: 'src/app.ts' }],
     });
   });
 
@@ -409,8 +426,8 @@ describe('session skills routing', () => {
     const agent = klient.session('s1').agent('main');
     const scope = { sessionId: 's1', agentId: 'main' };
 
-    channel.results.set('agentPromptService.submit', { turn_id: 1 });
-    channel.results.set('agentPromptService.submitSteer', {
+    channel.results.set('agentLoopService.submit', { turn_id: 1 });
+    channel.results.set('agentLoopService.notifyClient', {
       turn_id: 1,
       prompt_id: 'prompt-steer-1',
       created_at: '2026-01-01T00:00:00.000Z',
@@ -430,15 +447,21 @@ describe('session skills routing', () => {
     expect(channel.calls).toEqual([
       {
         scope,
-        service: 'agentPromptService',
+        service: 'agentLoopService',
         method: 'submit',
         args: [{ input: [{ type: 'text', text: 'hi' }] }],
       },
       {
         scope,
-        service: 'agentPromptService',
-        method: 'submitSteer',
-        args: [{ input: [{ type: 'text', text: 'steer' }] }],
+        service: 'agentLoopService',
+        method: 'notifyClient',
+        args: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'steer' }],
+            attributes: { origin: { kind: 'user' } },
+          },
+        ],
       },
       { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [2] },
       { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [] },
@@ -686,7 +709,7 @@ describe('contract validation', () => {
   it('rejects drifted output payloads', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
-    channel.result = { id: 's1' }; // missing required SessionSummary fields
+    channel.result = { id: 's1' };
     await expect(klient.global.sessions.get('s1')).rejects.toBeInstanceOf(KlientValidationError);
   });
 
@@ -736,21 +759,26 @@ describe('event hub', () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
     const archived: unknown[] = [];
+    const restored: unknown[] = [];
     const catalog: unknown[] = [];
 
     const subA = klient.events.on('session.archived', (event) => archived.push(event));
     const subB = klient.events.on('kosong.changed', (event) => catalog.push(event));
+    const subC = klient.events.on('session.restored', (event) => restored.push(event));
     expect(channel.subscriptions).toHaveLength(1);
     expect(channel.subscriptions[0]?.source).toEqual({ kind: 'stream', name: 'events' });
 
     channel.emit(0, { type: 'event.session.archived', payload: { sessionId: 's1' } });
+    channel.emit(0, { type: 'event.session.restored', payload: { sessionId: 's1', workspaceId: 'wd_1' } });
     channel.emit(0, { type: 'event.model_catalog.changed', payload: { changed: [], unchanged: [], failed: [] } });
     channel.emit(0, { type: 'unrelated.type', payload: {} });
     await tick();
     expect(archived).toEqual([{ sessionId: 's1' }]);
+    expect(restored).toEqual([{ sessionId: 's1' }]);
     expect(catalog).toEqual([{ changed: [], unchanged: [], failed: [] }]);
 
     subA.dispose();
+    subC.dispose();
     expect(channel.subscriptions[0]?.dispose).not.toHaveBeenCalled();
     subB.dispose();
     expect(channel.subscriptions[0]?.dispose).toHaveBeenCalledTimes(1);
@@ -817,24 +845,26 @@ describe('event hub', () => {
     });
 
     agent.events.on('tool.call.delta', (event) => seen.delta.push(event));
-    agent.events.on('tool.progress', (event) => seen.progress.push(event));
+    agent.events.on('tool.updated', (event) => seen.progress.push(event));
     agent.events.on('compaction.started', (event) => seen.started.push(event));
     agent.events.on('compaction.blocked', (event) => seen.blocked.push(event));
     agent.events.on('compaction.cancelled', (event) => seen.cancelled.push(event));
     agent.events.on('compaction.completed', (event) => seen.completed.push(event));
 
-    // All six registrations share one `events` stream subscription bound to
-    // the agent scope.
     expect(channel.subscriptions).toHaveLength(1);
     expect(channel.subscriptions[0]?.scope).toEqual({ sessionId: 's1', agentId: 'main' });
     expect(channel.subscriptions[0]?.source).toEqual({ kind: 'stream', name: 'events' });
 
     const delta = { type: 'tool.call.delta', turnId: 1, toolCallId: 'tc1', name: 'Bash', argumentsPart: '{"command":' };
     const progress = {
-      type: 'tool.progress',
+      type: 'tool.updated',
       turnId: 1,
       toolCallId: 'tc1',
-      update: { kind: 'stdout', text: 'chunk' },
+      taskId: 'task-1',
+      status: 'running',
+      detached: false,
+      fields: { status: 'copying' },
+      output: { offset: 0, text: 'chunk' },
     };
     const started = { type: 'compaction.started', trigger: 'auto' };
     const blocked = { type: 'compaction.blocked', turnId: 2 };
@@ -849,12 +879,12 @@ describe('event hub', () => {
     channel.emit(0, blocked);
     channel.emit(0, cancelled);
     channel.emit(0, completed);
-    channel.emit(0, { type: 'tool.progress', turnId: 1, toolCallId: 'tc1' }); // missing update
+    channel.emit(0, { type: 'tool.updated', turnId: 1, toolCallId: 'tc1', taskId: 'task-1', status: 'running', detached: false }); // missing fields
     channel.emit(0, { type: 'unregistered.type', turnId: 1 });
     await tick();
 
     expect(seen.delta).toEqual([delta]);
-    expect(seen.progress).toEqual([progress]);
+    expect(seen.progress).toEqual([{ ...progress, origin: 'loop' }]);
     expect(seen.started).toEqual([started]);
     expect(seen.blocked).toEqual([blocked]);
     expect(seen.cancelled).toEqual([cancelled]);

@@ -17,10 +17,12 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { EnvironmentLease } from '#/environment/environment';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../../features/reminder/stubs';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -180,9 +182,9 @@ function createHarness(options: {
         agentContext: stubAgentContext(options.agentId ?? 'main', 0),
         scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
       } satisfies IAgentScopeContext);
-      reg.defineInstance(IAgentProfileService, {
+      reg.defineInstance(IAgentLoopService, {
         data: () => options.profile,
-      } as unknown as IAgentProfileService);
+      } as unknown as IAgentLoopService);
       reg.defineInstance(ISessionInstructionsProvider, {
         _serviceBrand: undefined,
         ready: Promise.resolve(),
@@ -301,6 +303,10 @@ function createHarness(options: {
         },
         workspaceRoots: () => ({ workDir }),
       } satisfies IAgentEnvironmentService);
+      reg.defineInstance(IAgentEnvironmentBindingService, {
+        _serviceBrand: undefined,
+        current: { environmentId: 'local' },
+      } as IAgentEnvironmentBindingService);
       reg.defineInstance(IEventDispatcher, {
         _serviceBrand: undefined,
         hooks: { onDidRestore: new OrderedHookSlot() },
@@ -810,7 +816,7 @@ describe('notifySkillChanges', () => {
     expect(h.reminders[1]?.variant).toBe('skills_change');
   });
 
-  it('advances beliefs without reminding while the Skill tool is disabled', async () => {
+  it('continues delivering skill reminders while the Skill tool is disabled', async () => {
     const h = createHarness({
       profile: makeProfileData({
         profileName: 'default',
@@ -823,33 +829,30 @@ describe('notifySkillChanges', () => {
     h.sessionDisabledTools.value = ['Skill'];
     h.skillListing.value = LISTING_AB;
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(0);
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('skill-b');
 
     h.sessionDisabledTools.value = [];
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(0);
+    expect(h.reminders).toHaveLength(1);
 
     h.skillListing.value = LISTING_A;
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(1);
-    expect(h.reminders[0]?.content).toContain('skill-a');
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.content).toContain('skill-a');
   });
 
-  it('gates the skill reminder with the persisted binding policy', async () => {
+  it('delivers skill reminders independently of the binding tool policy', async () => {
     const profileData = makeProfileData({ profileName: 'default', activeToolNames: ['Read'] });
     const h = createHarness({ profile: profileData });
     h.skillListing.value = LISTING_A;
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(0);
-
-    (profileData as { activeToolNames?: readonly string[] }).activeToolNames = ['Skill'];
-    await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(0);
+    expect(h.reminders).toHaveLength(1);
 
     h.skillListing.value = LISTING_AB;
     await h.notifier.notifySkillChanges();
-    expect(h.reminders).toHaveLength(1);
-    expect(h.reminders[0]?.variant).toBe('skills_change');
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.variant).toBe('skills_change');
   });
 
   it('detects a truncated skill listing before the first check of a legacy session', async () => {
@@ -1239,7 +1242,7 @@ describe('notifyWorkspaceDirsChanges', () => {
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.variant).toBe('workspace_dirs_change');
     expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
-    expect(h.reminders[0]?.content).toContain(`Session cwd remains ${workDir}.`);
+    expect(h.reminders[0]?.content).toContain(`Default working directory: ${workDir}.`);
 
     h.workspaceDirs.additionalDirs = ['/work/B/'];
     await h.notifier.notifyWorkspaceDirsChanges();
@@ -1316,6 +1319,30 @@ describe('notifyWorkspaceDirsChanges', () => {
     );
     expect(h.reminders[0]?.content).not.toContain('Added directories:');
     expect(h.reminders[0]?.content).not.toContain('Removed directories:');
+  });
+
+  it('reports the effective cwd and complete roots for the current workspace primary swap', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { 'workspace-1': '/work/A' };
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    h.workspaceDirs.primaryByWorkspace = { 'workspace-1': '/work/B' };
+    h.workspaceDirs.additionalDirs = ['/work/A'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Default working directory: /work/A -> /work/B.');
+    expect(h.reminders[0]?.content).toContain('Effective directories: /work/B, /work/A.');
+    expect(h.reminders[0]?.content).not.toContain('Added directories:');
+    expect(h.reminders[0]?.content).not.toContain('Removed directories:');
+
+    h.workspaceDirs.additionalDirs = ['/work/A', '/work/C'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.content).toContain('Added directories: /work/C.');
+    expect(h.reminders[1]?.content).not.toContain('Removed directories:');
+    expect(h.reminders[1]?.content).toContain('Effective directories: /work/B, /work/A, /work/C.');
   });
 
   it('does not invent a primary change when a project leaves the cwd association', async () => {

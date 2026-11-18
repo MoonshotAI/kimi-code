@@ -45,7 +45,6 @@ describe('pickRandomWorkingTip', () => {
   });
 
   it('falls back to the rotation when every tip would be excluded', () => {
-    // If all working tips share the same text, exclusion cannot be satisfied.
     const onlyTip = WORKING_TIPS[0];
     if (onlyTip !== undefined && WORKING_TIPS.every((t) => t.text === onlyTip.text)) {
       expect(pickRandomWorkingTip(onlyTip.text)).toBeDefined();

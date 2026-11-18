@@ -190,7 +190,7 @@ describe('fetchClientConfig', () => {
   });
 });
 
-describe('server-v2 POST /api/v1/client_configs', () => {
+describe('server-v2 GET /api/v1/client-configs/{name}', () => {
   let server: RunningServer | undefined;
   let cloud: Server | undefined;
   let home: string | undefined;
@@ -253,10 +253,9 @@ describe('server-v2 POST /api/v1/client_configs', () => {
   async function postClientConfigs(
     name: string,
   ): Promise<Envelope<{ name: string; config: unknown }>> {
-    const res = await fetch(`${base}/api/v1/client_configs`, {
-      method: 'POST',
-      headers: { ...authHeaders(server as RunningServer), 'content-type': 'application/json' },
-      body: JSON.stringify({ name }),
+    const res = await fetch(`${base}/api/v1/client-configs/${encodeURIComponent(name)}`, {
+      method: 'GET',
+      headers: authHeaders(server as RunningServer),
     } as never);
     expect(res.status).toBe(200);
     return (await res.json()) as Envelope<{ name: string; config: unknown }>;
@@ -376,5 +375,21 @@ describe('server-v2 POST /api/v1/client_configs', () => {
     const body = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
     expect(body.code).toBe(0);
     expect(body.data).toEqual({ name: MODEL_SWITCH_CONFIRM_CONFIG_NAME, config: null });
+  });
+});
+
+
+describe('client_upgrade_policy', () => {
+  it('is registered and normalizes the cloud payload', async () => {
+    expect(isRegisteredClientConfig('client_upgrade_policy')).toBe(true);
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      name: 'client_upgrade_policy',
+      config: { cli_min_version: '0.6.0', desktop_min_version: '1.2.0' },
+    }));
+
+    await expect(fetchClientConfig('client_upgrade_policy', 'https://example.com/coding/v1', fetchImpl)).resolves.toEqual({
+      cliMinVersion: '0.6.0',
+      desktopMinVersion: '1.2.0',
+    });
   });
 });

@@ -13,16 +13,24 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
 import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import {
+  STATE_FILE,
   TOWER_GIT_CONCURRENCY,
   TowerStore,
   parseFrontmatter,
+  type TowerState,
 } from '#/features/tower/protocol/index';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -89,6 +97,8 @@ let currentSessionId: string;
 let liveSessionIds: string[];
 let liveAgentTaskIds: string[];
 let towerBudget: number;
+let currentPermissionMode: PermissionMode;
+let nonInteractive: boolean;
 const agentContexts = new Map<string, AgentContext>();
 const agentLoops = new Map<string, { state: 'idle' | 'running'; submitted: string[] }>();
 
@@ -104,6 +114,8 @@ beforeEach(async () => {
   liveSessionIds = [];
   liveAgentTaskIds = [];
   towerBudget = 2;
+  currentPermissionMode = 'manual';
+  nonInteractive = false;
   currentSessionId = 'session-test';
   agentContexts.clear();
   agentLoops.clear();
@@ -111,6 +123,9 @@ beforeEach(async () => {
   disposables = new DisposableStore();
   ix = createServices(disposables, {
     additionalServices: (reg) => {
+      const eventBus = disposables.add(new EventBusService());
+      reg.defineInstance(ISessionEventBus, eventBus);
+      reg.defineInstance(IEventBus, eventBus);
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,
         get sessionId() {
@@ -137,6 +152,19 @@ beforeEach(async () => {
           return context;
         },
         scope: (subKey?: string) => subKey ?? '',
+      });
+      reg.definePartialInstance(IAgentPermissionModeService, {
+        get mode() {
+          return currentPermissionMode;
+        },
+      });
+      reg.definePartialInstance(IBootstrapService, {
+        args: {
+          requestHeaders: {},
+          get nonInteractive() {
+            return nonInteractive;
+          },
+        },
       });
       reg.defineInstance(IAgentTowerService, {
         _serviceBrand: undefined,
@@ -166,6 +194,7 @@ beforeEach(async () => {
             (agentId) => ({ kind: 'agent', agentId }) as unknown as AgentTaskInfo,
           ),
       });
+      reg.defineInstance(IAgentToolExecutorService, statusToolExecutor());
       reg.definePartialInstance(IAgentLifecycleService, {
         handleOf: ((agentId: string) => {
           const loop = agentLoops.get(agentId);
@@ -176,7 +205,7 @@ beforeEach(async () => {
                 token === IAgentLoopService
                   ? {
                       snapshot: () => ({ state: loop.state }),
-                      submit: (entry: unknown) => {
+                      notify: (entry: unknown) => {
                         const text = (entry as { message: { content: { text: string }[] } })
                           .message.content[0]!.text;
                         loop.submitted.push(text);
@@ -220,12 +249,33 @@ async function initViaTool() {
   return result;
 }
 
+function statusToolExecutor(): IAgentToolExecutorService {
+  return {
+    handlers: () => liveAgentTaskIds.map((agentId) => ({
+      snapshot: () => ({
+        taskId: `task-${agentId}`,
+        detached: true,
+        status: 'running',
+        stopReason: undefined,
+        timing: { execute: { startedAt: 0, endedAt: null }, total: { startedAt: 0, endedAt: null } },
+        fields: {
+          task: {
+            kind: 'agent',
+            agentId,
+            description: agentId,
+          },
+        },
+      }),
+    })),
+  } as unknown as IAgentToolExecutorService;
+}
+
 function readStatus() {
   return readTowerStatus({
     active: towerActive,
     cwd: repo,
     agentId: currentAgentId,
-    tasks: ix.get(IAgentTaskService),
+    toolExecutor: statusToolExecutor(),
     concurrency: () => ix.get(ITowerRateLimitService).snapshot(),
   });
 }
@@ -235,7 +285,7 @@ function readStatusSummary() {
     active: towerActive,
     cwd: repo,
     agentId: currentAgentId,
-    tasks: ix.get(IAgentTaskService),
+    toolExecutor: statusToolExecutor(),
     concurrency: () => ix.get(ITowerRateLimitService).snapshot(),
   });
 }
@@ -881,6 +931,30 @@ describe('TowerStatusTool', () => {
     });
   });
 
+  it('surfaces the artifact kind in the dashboard, summary, and mission view', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Artifact engine', scope: ['artifacts/**'], kind: 'artifact' }],
+    });
+
+    const dashboard = await run(ix.get(ITowerStatusTool), {});
+    expect(dashboard.output).toContain('| Kind |');
+    expect(dashboard.output).toContain(
+      '| M1 | Artifact engine | feat/artifact-engine | wt-1 | 🟡 planned | — | artifact |',
+    );
+
+    const summary = await readStatusSummary();
+    expect(summary).toContain(
+      'M1 Artifact engine — planned · owner — · feat/artifact-engine · kind artifact',
+    );
+
+    const mission = await run(ix.get(ITowerMissionTool), { id: 'M1' });
+    expect(mission.output).toContain('| Branch | Worktree | Status | Scope | Owner | Kind |');
+    expect(mission.output).toContain(
+      '| feat/artifact-engine | wt-1 | 🟡 | artifacts/** | — | artifact |',
+    );
+  });
+
   it('renders a non-finite budget as unlimited in the dashboard and summary', async () => {
     await initViaTool();
     towerBudget = Number.POSITIVE_INFINITY;
@@ -940,6 +1014,46 @@ describe('TowerStatusTool', () => {
     expect(result.output).toMatch(
       /died \(failed\) — diagnose first[\s\S]*Agent\(resume="agent-w1", run_in_background=true/,
     );
+  });
+
+  it('orders death warnings by death time before applying the detail limit', async () => {
+    await initViaTool();
+    const store = new TowerStore(repo);
+    const missions = await store.plan(
+      Array.from({ length: 21 }, (_, index) => ({
+        title: `Mission ${String(index + 1)}`,
+        scope: [`src/m${String(index + 1)}/**`],
+      })),
+    );
+    for (const mission of missions) {
+      const name = `w-${mission.id.toLowerCase()}`;
+      await store.registerAgent({
+        name,
+        kind: 'worker',
+        agentId: `agent-${mission.id}`,
+        missionId: mission.id,
+        spawnedAt: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+      });
+      await store.updateMission('tower', mission.id, { status: 'active', owner: name }, { silent: true });
+    }
+    const stateFile = store.abs(STATE_FILE);
+    const state = JSON.parse(await readFile(stateFile, 'utf8')) as TowerState;
+    state.roster = {
+      ...state.roster,
+      agents: state.roster.agents.map((agent, index) => {
+        const seconds = index === 0 ? 100 : index === 20 ? 0 : index;
+        return { ...agent, diedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString() };
+      }),
+    };
+    await writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Showing 20 of 21 death warning(s), newest death first.');
+    expect(result.output).toContain('M1 owner w-m1 died');
+    expect(result.output).not.toContain('M21 owner w-m21 died');
+    expect(result.output).toContain('1 earlier death warnings omitted');
   });
 
   it('advises fixing or escalating a systematic death cause before any revive', async () => {
@@ -1009,9 +1123,9 @@ describe('TowerStatusTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('## Awaiting spawn');
-    expect(result.output).toContain('M1 (feat/build-engine) — planned but no worker spawned yet');
+    expect(result.output).toContain('M1 [build] (feat/build-engine) — planned but no worker spawned yet');
     expect(result.output).toContain('TowerSpawn(kind="worker", mission_id="M1"');
-    expect(result.output).not.toContain('M2 (feat/build-ui) — planned but no worker spawned yet');
+    expect(result.output).not.toContain('M2 [build] (feat/build-ui) — planned but no worker spawned yet');
 
     await store.updateMission('tower', 'M1', { status: 'active', owner: 'w-engine' }, { silent: true });
     const settled = await run(ix.get(ITowerStatusTool), {});
@@ -1114,6 +1228,92 @@ describe('TowerStatusTool', () => {
       gate.mockRestore();
     }
   });
+
+  it('limits detail lists to the newest entries without changing the summary', async () => {
+    await initViaTool();
+    const store = new TowerStore(repo);
+    const missions = await store.plan(
+      Array.from({ length: 22 }, (_, index) => ({
+        title: `Mission ${String(index + 1)}`,
+        scope: [`src/m${String(index + 1)}/**`],
+      })),
+    );
+    for (const [index, mission] of missions.entries()) {
+      const kind = index % 2 === 0 ? 'worker' : 'reviewer';
+      const suffix = String(index + 1).padStart(2, '0');
+      await store.registerAgent({
+        name: `${kind}-${suffix}`,
+        kind,
+        agentId: `agent-${suffix}`,
+        missionId: kind === 'worker' ? mission.id : undefined,
+        branch: kind === 'worker' ? mission.branch : undefined,
+        worktree: kind === 'worker' ? mission.worktree : undefined,
+        reviewTarget: kind === 'reviewer' ? mission.branch : undefined,
+        reviewMissionId: kind === 'reviewer' ? mission.id : undefined,
+        spawnedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+      });
+    }
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Showing 20 of 22 mission(s), newest first.');
+    expect(result.output).toContain('Status totals: 22 planned.');
+    expect(result.output).toContain(
+      'Showing 20 of 22 agent(s) (11 workers, 11 reviewers), newest spawned first.',
+    );
+    expect(result.output).toContain('Showing 20 of 22 open mission(s), newest first.');
+    expect(result.output).toContain('Showing 20 of 22 planned mission(s), newest first.');
+    expect(result.output).toContain('2 earlier missions omitted');
+    expect(result.output).toContain('2 earlier roster entries omitted');
+    expect(result.output).toContain('2 earlier review gate entries omitted');
+    expect(result.output).toContain('2 earlier awaiting-spawn missions omitted');
+    if (typeof result.output !== 'string') throw new Error('expected text status output');
+    const output = result.output;
+    const lines = output.split('\n');
+    const missionRows = lines.filter((line) => line.startsWith('| M'));
+    const rosterRows = lines.filter(
+      (line) => line.startsWith('- worker-') || line.startsWith('- reviewer-'),
+    );
+    const gateRows = lines.filter((line) => line.startsWith('- feat/mission-'));
+    const awaitingRows = lines.filter((line) => line.startsWith('- M'));
+    expect(missionRows).toHaveLength(20);
+    expect(missionRows[0]).toContain('| M22 |');
+    expect(missionRows[19]).toContain('| M3 |');
+    expect(rosterRows).toHaveLength(20);
+    expect(rosterRows[0]).toContain('- reviewer-22 (reviewer)');
+    expect(rosterRows[19]).toContain('- worker-03 (worker)');
+    expect(gateRows).toHaveLength(20);
+    expect(gateRows[0]).toContain('(M22):');
+    expect(gateRows[19]).toContain('(M3):');
+    expect(awaitingRows).toHaveLength(20);
+    expect(awaitingRows[0]).toContain('- M22 ');
+    expect(awaitingRows[19]).toContain('- M3 ');
+
+    const expanded = await run(ix.get(ITowerStatusTool), { limit: 22 });
+    if (typeof expanded.output !== 'string') throw new Error('expected text status output');
+    const expandedOutput = expanded.output;
+    const expandedLines = expandedOutput.split('\n');
+    expect(expandedLines.filter((line) => line.startsWith('| M'))).toHaveLength(22);
+    expect(
+      expandedLines.filter(
+        (line) => line.startsWith('- worker-') || line.startsWith('- reviewer-'),
+      ),
+    ).toHaveLength(22);
+    expect(expandedLines.filter((line) => line.startsWith('- feat/mission-'))).toHaveLength(22);
+    expect(expandedLines.filter((line) => line.startsWith('- M'))).toHaveLength(22);
+    expect(expandedOutput).toContain('| M1 |');
+    expect(expandedOutput).toContain('- worker-01 (worker)');
+    expect(expandedOutput).not.toContain('earlier missions omitted');
+    expect(expandedOutput).not.toContain('earlier roster entries omitted');
+
+    const summary = await readStatusSummary();
+    expect(
+      summary.split('\n').filter((line) => /^  M\d+ Mission \d+ — planned · owner /.test(line)),
+    ).toHaveLength(22);
+    expect(summary).toContain('worker-01 (worker)');
+    expect(summary).not.toContain('Showing 20 of 22');
+  });
 });
 
 describe('readTowerStatusSummary', () => {
@@ -1164,23 +1364,24 @@ describe('readTowerStatusSummary', () => {
 });
 
 describe('TowerCompleteTool', () => {
-  async function setupCompletable(kind: 'build' | 'survey' = 'build') {
+  async function setupCompletable(kind: 'build' | 'survey' | 'artifact' = 'build') {
     await initViaTool();
     const store = new TowerStore(repo);
     const [mission] = await store.plan([
       {
-        title: kind === 'survey' ? 'Survey engine' : 'Build engine',
+        title:
+          kind === 'survey' ? 'Survey engine' : kind === 'artifact' ? 'Artifact engine' : 'Build engine',
         scope: ['src/engine/**'],
         kind,
       },
     ]);
     const state = await store.load();
     await store.addWorktree(mission!.worktree, mission!.branch, state.base);
-    if (kind === 'build') {
+    if (kind !== 'survey') {
       await commitFile(
         join(repo, '.tower/worktrees', mission!.worktree),
-        'src/engine/engine.ts',
-        'export const engine = 1;\n',
+        kind === 'artifact' ? 'src/engine/report.html' : 'src/engine/engine.ts',
+        kind === 'artifact' ? '<h1>Engine report</h1>\n' : 'export const engine = 1;\n',
         'engine work',
       );
     }
@@ -1222,6 +1423,48 @@ describe('TowerCompleteTool', () => {
       scope: 'M1',
       action: 'complete',
     });
+  });
+
+  it('rejects key_artifacts for a non-artifact mission', async () => {
+    await setupCompletable();
+
+    const result = await run(ix.get(ITowerCompleteTool), {
+      report: 'implemented the engine',
+      key_artifacts: ['src/engine/engine.ts'],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('key_artifacts is only supported for artifact missions');
+  });
+
+  it('completes an artifact with key artifacts and stores a whole-tip acceptance-request', async () => {
+    const { store, mission } = await setupCompletable('artifact');
+    const report = 'Rendered the quarterly report for acceptance.';
+
+    const result = await run(ix.get(ITowerCompleteTool), {
+      report,
+      key_artifacts: ['src/engine/report.html'],
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('mission M1 persisted as completed');
+    expect(result.output).toContain('acceptance-request notification:');
+    expect(result.output).not.toContain('review-request notification:');
+    const messages = await store.readInbox('tower', 20);
+    const notification = messages.find((item) => item.subject === 'acceptance-request');
+    expect(notification).toMatchObject({
+      from: 'w1',
+      to: 'tower',
+      scope: 'M1',
+      action: 'complete',
+    });
+    expect(notification?.body).toContain('- src/engine/report.html');
+    expect(notification?.body).toContain('Approval authorizes the entire current mission tip presented for acceptance');
+    expect(notification?.body).toContain('Additional committed files included in this approval: 0.');
+    expect(notification?.body).toContain(report);
+    const completed = (await store.load()).missions[0]!;
+    expect(completed.completionTip).toBe(await git(repo, 'rev-parse', mission.branch));
+    expect(completed.keyArtifacts).toEqual(['src/engine/report.html']);
   });
 
   it('completes a zero-diff survey with survey-summary', async () => {
@@ -1380,6 +1623,26 @@ describe('TowerReviewTool', () => {
     return store;
   }
 
+  async function setupArtifactMission(): Promise<TowerStore> {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Artifact engine', scope: ['src/engine/**'], kind: 'artifact' }],
+    });
+    await git(repo, 'checkout', '-b', 'feat/artifact-engine');
+    await commitFile(repo, 'src/engine/report.html', '<h1>Engine report</h1>\n', 'render report');
+    await git(repo, 'checkout', 'main');
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    await store.complete('w1', 'Key artifact: src/engine/report.html', ['src/engine/report.html']);
+    return store;
+  }
+
   it('routes a non-clean verdict at the owning worker with the review file', async () => {
     const store = await setupReviewableBranch();
 
@@ -1418,6 +1681,99 @@ describe('TowerReviewTool', () => {
     expect(result.output).toContain('TowerMerge');
     expect(result.output).toContain('notified: tower');
     expect(result.output).not.toContain('resume w1');
+  });
+
+  it('distinguishes advisory artifact review from tower-recorded human acceptance', async () => {
+    const store = await setupArtifactMission();
+    await store.registerAgent({
+      name: 'r1',
+      kind: 'reviewer',
+      agentId: 'agent-r1',
+      reviewTarget: 'feat/artifact-engine',
+      reviewMissionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    currentAgentId = 'agent-r1';
+
+    const advisory = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'advisory review only',
+    });
+    expect(advisory.output).toContain('still waiting for mission-matching explicit human acceptance');
+    expect(advisory.output).not.toContain('is merge-ready —');
+
+    currentAgentId = 'main';
+    const accepted = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'the user explicitly approved the entire committed tip',
+      acceptance_tip: await git(repo, 'rev-parse', 'feat/artifact-engine'),
+    });
+    expect(accepted.isError).toBeFalsy();
+    expect(accepted.output).toContain('explicit human acceptance for feat/artifact-engine');
+    expect(accepted.output).toContain('recorded on the exact tip');
+  });
+
+  it('refuses artifact acceptance in auto permission mode', async () => {
+    const store = await setupArtifactMission();
+    currentAgentId = 'main';
+    currentPermissionMode = 'auto';
+    const tip = await git(repo, 'rev-parse', 'feat/artifact-engine');
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'accept without the human',
+      acceptance_tip: tip,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('cannot be recorded in an automatic or noninteractive run');
+    expect(await store.latestReview('feat/artifact-engine')).toBeUndefined();
+  });
+
+  it('refuses artifact acceptance in a noninteractive run', async () => {
+    const store = await setupArtifactMission();
+    currentAgentId = 'main';
+    nonInteractive = true;
+    const tip = await git(repo, 'rev-parse', 'feat/artifact-engine');
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'accept without the human',
+      acceptance_tip: tip,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('cannot be recorded in an automatic or noninteractive run');
+    expect(await store.latestReview('feat/artifact-engine')).toBeUndefined();
+  });
+
+  it('still records rework feedback in auto permission mode', async () => {
+    const store = await setupArtifactMission();
+    currentAgentId = 'main';
+    currentPermissionMode = 'auto';
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'missing data source',
+      decision: 'needs rework',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(await store.latestReview('feat/artifact-engine')).toBeDefined();
   });
 
   it('preserves the review and recovers without a new round or duplicate after review.write log failure', async () => {
@@ -1588,6 +1944,76 @@ describe('TowerMergeTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('Continue with the remaining missions in Dependency Flow order');
     expect(result.output).not.toContain('ready for TowerTeardown');
+  });
+
+  it('waits for artifact acceptance and reacceptance before reporting a real merge', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Artifact engine', scope: ['src/engine/**'], kind: 'artifact' }],
+    });
+    await git(repo, 'checkout', '-b', 'feat/artifact-engine');
+    await commitFile(repo, 'src/engine/report.html', '<h1>Engine report</h1>\n', 'render report');
+    await git(repo, 'checkout', 'main');
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    await store.complete('w1', 'Key artifact: src/engine/report.html', [
+      'src/engine/report.html',
+    ]);
+    const baseTip = await git(repo, 'rev-parse', 'HEAD');
+
+    const waiting = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
+    expect(waiting.isError).toBe(true);
+    expect(waiting.output).toContain('waiting for explicit human acceptance');
+    expect(await git(repo, 'rev-parse', 'HEAD')).toBe(baseTip);
+
+    await store.submitReview('tower', {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'user approved the initial artifact paths',
+      acceptanceTip: await git(repo, 'rev-parse', 'feat/artifact-engine'),
+    });
+    await git(repo, 'checkout', 'feat/artifact-engine');
+    await commitFile(repo, 'src/engine/data.csv', 'name,value\na,1\n', 'add report data');
+    await git(repo, 'checkout', 'main');
+
+    const moved = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
+    expect(moved.isError).toBe(true);
+    expect(moved.output).toContain('fresh explicit human acceptance');
+    expect(moved.output).toContain('rebase never waives artifact acceptance');
+
+    const freshAcceptance = {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'user approved the entire current tip',
+      acceptanceTip: await git(repo, 'rev-parse', 'feat/artifact-engine'),
+    } as const;
+    await expect(store.submitReview('tower', freshAcceptance)).rejects.toThrow(
+      /latest acceptance-request/,
+    );
+    await store.complete('w1', 'Updated key artifact: src/engine/report.html', [
+      'src/engine/report.html',
+    ]);
+    await store.submitReview('tower', freshAcceptance);
+    const merged = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
+
+    expect(merged.isError).toBeFalsy();
+    expect(merged.output).toContain('merged feat/artifact-engine (merge commit');
+    expect(merged.output).toContain('full commit:');
+    expect(merged.output).not.toContain('no git merge needed');
+    expect(await readFile(join(repo, 'src/engine/report.html'), 'utf8')).toBe(
+      '<h1>Engine report</h1>\n',
+    );
+    expect(await readFile(join(repo, 'src/engine/data.csv'), 'utf8')).toBe('name,value\na,1\n');
   });
 
   it('points at TowerTeardown when a survey noop-merge closes the last mission', async () => {

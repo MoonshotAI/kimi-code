@@ -1,7 +1,4 @@
 #!/usr/bin/env node
-// Copy web/dist/** into server/dist/public/ so the bundled server can serve
-// the SPA out of a single deploy artifact.
-
 import { cp, mkdir, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
