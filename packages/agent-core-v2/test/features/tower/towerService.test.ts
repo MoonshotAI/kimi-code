@@ -4274,9 +4274,9 @@ describe('TowerModeInjection', () => {
     expect(text).toContain('with `TowerInbox` only when it is needed');
     expect(text).toContain('structured reason and recovery details');
     expect(text).toContain('per reviewer');
-    expect(text).toContain('Normal merge-bound build reviews require this independent path');
-    expect(text).toContain('Surveys do not need review');
-    expect(text).toContain('kind: "artifact"');
+    expect(text).toContain('independent reviewer');
+    expect(text).toContain('Surveys close with `TowerMerge`');
+    expect(text).toContain('tower-recorded acceptance');
     expect(text).toContain('acceptance-request');
     expect(text).toContain('When the user has asked for the merge or approved the presented artifacts');
     expect(text).toContain('ask for it in interactive mode');
