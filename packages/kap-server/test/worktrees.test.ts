@@ -11,6 +11,7 @@ import {
   IAgentLoopService,
   IWorkspaceTrust,
   MAIN_AGENT_ID,
+  closeSessionById,
   getLiveSessionById,
   patchSessionMetadata,
 } from '@moonshot-ai/agent-core-v2';
@@ -971,5 +972,96 @@ describe('server-v2 session worktrees', () => {
       const lookup = await post<Lookup>('/worktrees:lookup', { path: other });
       expect(lookup.data.worktree, other).toBeNull();
     }
+  });
+
+  it('recreates a missing worktree from its recorded branch', async () => {
+    const root = await createRepo('recreate');
+    const workspaceId = await createWorkspace(root);
+    const session = await settled(
+      (await createWorktreeSession(workspaceId, { source_branch: 'main' })).id,
+    );
+    const { path, branch } = session.worktree as { path: string; branch: string };
+    git(path, 'config', 'user.email', 'dev@example.com');
+    git(path, 'config', 'user.name', 'Dev');
+    await writeFile(join(path, 'kept.txt'), 'committed in the worktree\n');
+    git(path, 'add', '.');
+    git(path, 'commit', '-q', '-m', 'work');
+    await rm(path, { recursive: true, force: true });
+    await closeSessionById(server.core.accessor, session.id);
+
+    const missing = await get<SessionWire>(`/sessions/${session.id}`);
+    expect(missing.data.worktree).toMatchObject({ path, branch, missing: true });
+    expect(missing.data.worktree?.branch_missing).toBeUndefined();
+    expect((await get<{ turns: unknown[] }>(`/sessions/${session.id}/agents/main/turns`)).code).toBe(0);
+    expect((await post(`/sessions/${session.id}/fs:git_status`, {})).code).toBe(
+      ErrorCode.FS_DIRECTORY_NOT_FOUND,
+    );
+
+    const started = await post<SessionWire>(`/sessions/${session.id}/worktree:recreate`);
+    expect(started.code).toBe(0);
+    expect(started.data.worktree?.setup).toMatchObject({ status: 'running', purpose: 'recreate' });
+    expect(started.data.worktree?.setup.steps).toMatchObject([
+      { kind: 'prune', command: 'git worktree prune' },
+      { kind: 'create', ref: branch, command: `git worktree add ${path} ${branch}` },
+    ]);
+    const ready = await settled(session.id);
+
+    expect(ready.worktree?.setup).toMatchObject({ status: 'ready', purpose: 'recreate', commands_ran: 2 });
+    expect(ready.worktree?.setup.steps.map((step) => step.state)).toEqual(['done', 'done']);
+    expect(ready.worktree?.missing).toBeUndefined();
+    expect(ready.worktree?.path).toBe(path);
+    expect(ready.cwd).toBe(path);
+    expect(await readFile(join(path, 'kept.txt'), 'utf-8')).toBe('committed in the worktree\n');
+    const status = await post<{ branch: string }>(`/sessions/${session.id}/fs:git_status`, {
+      include_pull_request: false,
+    });
+    expect(status.data.branch).toBe(branch);
+  });
+
+  it('falls back to the workspace root when a missing worktree cannot be recreated', async () => {
+    const root = await createRepo('recreate-failure');
+    const workspaceId = await createWorkspace(root);
+    const session = await settled(
+      (await createWorktreeSession(workspaceId, { source_branch: 'main' })).id,
+    );
+    const { path, branch } = session.worktree as { path: string; branch: string };
+    await rm(path, { recursive: true, force: true });
+    git(root, 'worktree', 'prune');
+    git(root, 'branch', '-D', branch);
+
+    const missing = await get<SessionWire>(`/sessions/${session.id}`);
+    expect(missing.data.worktree).toMatchObject({ missing: true, branch_missing: true });
+    await post<SessionWire>(`/sessions/${session.id}/worktree:recreate`);
+    const failed = await settled(session.id);
+
+    expect(failed.worktree?.setup).toMatchObject({
+      status: 'failed',
+      purpose: 'recreate',
+      stopped_step: 'create',
+      failure: { kind: 'create_failed' },
+    });
+    expect(failed.worktree?.setup.steps[1]?.output).toMatch(/invalid reference|not a valid|fatal/);
+    expect(failed.worktree?.path).toBe(path);
+    expect(existsSync(path)).toBe(false);
+    const retried = await post<SessionWire>(`/sessions/${session.id}/worktree:retry`);
+    expect(retried.data.worktree?.setup).toMatchObject({ status: 'running', purpose: 'recreate' });
+    await settled(session.id);
+
+    const local = await post<SessionWire>(`/sessions/${session.id}/worktree:use_local`);
+
+    expect(local.code).toBe(0);
+    expect(local.data.cwd).toBe(root);
+    expect(local.data.worktree?.setup.status).toBe('local');
+    expect(local.data.worktree?.path).toBeUndefined();
+    expect(local.data.worktree?.branch).toBeUndefined();
+    expect(local.data.worktree?.missing).toBeUndefined();
+    const main = mainAgent(session.id);
+    expect(main.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(root);
+    expect(main.accessor.get(IAgentEnvironmentBindingService).current.cwd).toBeUndefined();
+    expect(main.accessor.get(IAgentLoopService).getSystemPrompt()).not.toContain(path);
+    const status = await post<{ branch: string }>(`/sessions/${session.id}/fs:git_status`, {
+      include_pull_request: false,
+    });
+    expect(status.data.branch).toBe('main');
   });
 });
