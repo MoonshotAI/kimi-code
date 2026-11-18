@@ -1,6 +1,6 @@
 # klient Agent 指南
 
-`packages/klient` 的包内规则。
+本文件补充根目录的 `AGENTS.md`，只管 `packages/klient`。
 
 ## 架构
 

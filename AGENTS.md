@@ -14,21 +14,26 @@
 
 ## 项目地图
 
-- `apps/kimi-code`：CLI / TUI 应用，TUI 主路径通过 `@moonshot-ai/kimi-code-sdk` 使用核心能力。编写或修改它的终端界面时，使用 `write-tui` 技能（`.agents/skills/write-tui/SKILL.md`）。
-- 浏览器 Web UI：**源码已经不在本仓库。** 它在 code-app 仓库（`apps/web`）开发，以提交进本仓库的预构建产物 `apps/kimi-code/dist-web` 发布（该目录被 gitignore，需要强制添加），用 `KIMI_CODE_REPO=<本仓库路径> pnpm run sync:web` 从 code-app 同步。只要 Web UI 的发布内容需要变化，就在同一个改动里同步并提交这份产物。`apps/kimi-code/scripts/check-web-assets.mjs` 在打包时检查产物是否缺失。要在本仓库的服务上开发或调试 Web UI，在这里运行 `pnpm dev:server`，再让 code-app 的 `pnpm dev:web` 通过 `KIMI_SERVER_URL` 指向它。
+- `apps/kimi-code`：CLI / TUI 应用，TUI 主路径通过 `@moonshot-ai/kimi-code-sdk` 使用核心能力。
+- 浏览器 Web UI：源码在 code-app 仓库，本仓库只提交它的预构建产物 `apps/kimi-code/dist-web`。
 - `apps/vis`、`apps/vis/server`、`apps/vis/web`：会话和回放的可视化调试工具。
-- `packages/agent-core-v2`：DI × Scope 的 agent 引擎（kap-server 背后的 v2 移植版）。三个 `LifecycleScope` 层级 `App` / `Session` / `Agent`（`app/scopes.ts`），加上 L3 单元层（`Service`/`Fiber` 单元、集合贡献点、`src/features/` 里的 Feature 接缝）；`WorkspaceInstance`/`Program` 图在运行时通过 `IWorkspaceInstanceManager` 实例化，App 作用域的 `ISessionManager` 通过 `Program` 为每个工作区创建会话控制器。
-- `packages/core`：不依赖 DI 的 Loop、LLM 和工具运行时。LLM 模块的设计指南是 `packages/agent-core-v2/docs/en/llm.md`。
+- `apps/vscode`：VS Code 扩展。
+- `docs`：用户文档站（VitePress），中文和英文页面分别在 `docs/zh/` 和 `docs/en/`。
+- `packages/agent-core-v2`：DI × Scope 的 agent 引擎（kap-server 背后的 v2 移植版），包括 `src/remote` 下的远程执行栈。
+- `packages/core`：不依赖 DI 的 Loop、LLM 和工具运行时；LLM 模块的设计指南是 `packages/agent-core-v2/docs/en/llm.md`。
 - `packages/node-sdk`：公开的 TypeScript SDK 和 harness。
 - `packages/oauth`：Kimi OAuth 和托管认证工具。
 - `packages/telemetry`：共享的客户端遥测基础设施。
-- `packages/session-import`：独立的 Node.js 模块，把外部会话转换成一条用户消息，带上对话内容、完整的有效历史附件和图片引用。它不依赖引擎或 UI；调用方提供目标会话的附件目录和上下文预算。
-- `packages/kap-server`：Kimi Code 服务端，基于 `@moonshot-ai/agent-core-v2`；通过 REST + WebSocket（`/api/v1` + `/api/v1/ws`）提供会话，另有 `/api/v1/debug/*` 反射 RPC 接口（`--debug-endpoints`；仅在服务绑定回环地址时启用，并要求 bearer 认证）。
-- `packages/remote-control`：Kimi Remote Control 隧道客户端：把本机注册到中继，并把 HTTP/WebSocket 流量转发到本地服务，带全机范围的单实例锁；由 kap-server（`/api/v1/remote-control` 开关）和 CLI（`kimi web --remote-control`）使用。
-- `packages/agent-core-v2/src/remote`：引擎内部的远程执行栈。本地 `ExecBridge`（ssh/docker/`command` 启动器）和轻量的 `kimi exec-server` 执行器之间，用一套自成一体、按行分帧的 NDJSON RPC 通信（codex exec-server 方言）；另有一个 provider，把声明的目标注册为 `Environment`（fs/process 的 RPC 存根是 `src/os/backends/remote` 下的一个 OS 后端，与 `node-local` 并列）。这套栈导出为 `@moonshot-ai/agent-core-v2/remote` 和 `/remote/server`。执行器保持轻量：`src/remote/server` 只能导入 node 内置模块、相对路径模块、`#/remote/protocol`、`#/os/interface`、`#/_base/execEnv`，以及它所适配的、不依赖 DI 的 node-local fs/process 后端（由该包的 `lint:imports` 检查）；CLI 只通过 SDK 的轻量子路径 `@moonshot-ai/kimi-code-sdk/exec-server` 访问它，在 `src/cli/exec-server.ts` 里动态加载。
-- `packages/klient`：客户端 SDK，一层以契约驱动的 agent-core-v2 门面（`global.*` / `session(id).*` / `agent(id).*`，用 zod 校验）；按子路径入口选择传输方式（`@moonshot-ai/klient/ipc|memory`，两者返回的都是同一种 `Klient`）；e2e 测试套件也放在这里。见 `packages/klient/AGENTS.md`。
-- `packages/tree-sitter-bash`：纯 TypeScript 的 bash 解析器（没有运行时依赖，不用 wasm）；`parse(source, { timeoutMs, maxNodes })` 在确定的预算内运行，返回可辨识联合类型的 `ParseResult`。调用方必须把中止或 `hasError` 的语法树当作「无法分析」并降级处理。它只负责解析，不做安全判断；见该包 README 的「Known differences」一节。
-- `packages/minidb`：kap-server 搜索索引背后的嵌入式 JSON 文档库（`MiniDb`）：快照 + WAL 持久化（带独占写锁）、支持超出内存数据量的全文检索层，以及持久化的索引代际。见 `packages/minidb/AGENTS.md`。
+- `packages/session-import`：把外部会话转换成一条用户消息的独立 Node.js 模块，不依赖引擎或 UI；调用方提供目标会话的附件目录和上下文预算。
+- `packages/kap-server`：Kimi Code 服务端，基于 `@moonshot-ai/agent-core-v2`，通过 REST + WebSocket（`/api/v1` + `/api/v1/ws`）提供会话；`/api/v1/debug/*` 反射 RPC 接口只在 `--debug-endpoints` 打开且服务绑定回环地址时启用，并要求 bearer 认证。
+- `packages/remote-control`：Kimi Remote Control 隧道客户端，把本机注册到中继并转发本地服务的流量，带全机范围的单实例锁；由 kap-server（`/api/v1/remote-control` 开关）和 CLI（`kimi web --remote-control`）使用。
+- `packages/klient`：客户端 SDK，以契约驱动的 agent-core-v2 门面，按子路径（`@moonshot-ai/klient/ipc|memory`）选择传输方式；e2e 测试套件也放在这里。
+- `packages/tree-sitter-bash`：纯 TypeScript 的 bash 解析器，只负责解析，不做安全判断；调用方必须把中止或 `hasError` 的语法树当作「无法分析」并降级处理，和 tree-sitter-bash 原版的差异见该包 README 的「Known differences from tree-sitter-bash」一节。
+- `packages/minidb`：kap-server 搜索索引背后的嵌入式 JSON 文档库（`MiniDb`）。
+- `packages/acp-server`：Agent Client Protocol（ACP）宿主，直接基于 agent-core-v2。
+- `packages/product`：客户端和宿主共用的 Kimi Code 产品逻辑。
+- `packages/migration-legacy`：把 kimi-cli 的数据（`~/.kimi/`）迁移到 kimi-code（`~/.kimi-code/`）。
+- `packages/pi-tui`：终端 UI 库，从上游 `earendil-works/pi` 的 `packages/tui` 引入的 fork。
 
 ## 结束前的验证
 
@@ -109,11 +114,26 @@
 - 还没公开的功能，放在实验开关后面。开关由环境变量驱动，默认关闭：`KIMI_CODE_EXPERIMENTAL_<NAME>` 控制单个开关，`KIMI_CODE_EXPERIMENTAL_FLAG` 打开全部。优先级是：单个开关的环境变量 > 配置里的 `[experimental]` > 总开关环境变量 > 开关的 `default`。正式发布时，把对应条目的 `default` 改成 `true`。
   - `packages/agent-core-v2` 和 kap-server 的模块：没有集中的开关目录。在所属领域里用 `registerFlagDefinition` 在导入时声明开关，再用 `IFlagService.enabled(id)` 检查。
 
+## 技能
+
+技能在 `.agents/skills/` 下。技能的操作细则写在技能里，不要抄进 `AGENTS.md`；「工作流要求」里关于 changeset 的几条是硬约束，有意保留在这里。
+
+| 技能 | 什么时候用 |
+|---|---|
+| `write-tui` | 编写或修改 `apps/kimi-code/src/tui` 下的终端界面 |
+| `write-pr` | 创建或更新 PR 描述 |
+| `gen-changesets` | 生成 changeset：判断要不要写、写哪个包、升哪一级、怎么措辞 |
+| `gen-docs` | 代码改动影响了产品行为或用户体验，需要更新用户文档时 |
+| `translate-docs` | 在 `docs/zh/` 和 `docs/en/` 之间翻译、同步双语文档 |
+| `review-pr` | 评审 PR；只在用户明确要求时使用 |
+| `pre-changelog` | 合并发版 PR 之前，预览中文的 CLI 更新日志 |
+| `sync-changelog` | 发版成功后，把 `apps/kimi-code/CHANGELOG.md` 同步到文档站的更新日志 |
+
 ## 说明文件怎么维护
 
 - 代码改动让某份 `AGENTS.md` 写的事实（路径、命令、地图条目）不再成立时，在同一个 PR 里更新它。
 - 新增或修改规则，单独提 PR。几乎每个任务都要用到的规则，写进根目录的 `AGENTS.md`；只影响某个目录的规则，写进离它最近的子目录 `AGENTS.md`。
-- 项目地图的条目保持一到两句；包的深入说明放在包自己的 `AGENTS.md` 里。
+- 项目地图里，每个工作区包写一行，而且只写一行；包的深入说明放在包自己的 `AGENTS.md` 里。
 - 如果 lint 规则、测试或脚本能拦住这类错误，就加检查而不是写规则；有检查执行的规则，旁边写明是哪个检查。
 - 说明文件的改动要聚焦，并有代码事实支撑。
 
@@ -126,11 +146,11 @@
 
 - 读代码优先用 `rg` / `rg --files`。
 - 设计改动时，先遵循现有的边界和局部写法。
-- lint 报错要在代码里修。不要为了跑通而加禁用指令、修改 `.oxlintrc.json` 或 `.oxlintrc.ratchet.json`、重写 lint 快照，或者调高 `scripts/checks/baselines/` 里的棘轮基线；如果某条规则不适合你的情况，停下来报告。确实需要的禁用指令，要写明规则名，并在 ` -- ` 后面写原因。
+- lint 报错要在代码里修。不要为了跑通而加禁用指令、修改 `.oxlintrc.json` 或 `.oxlintrc.ratchet.json`、重写 lint 快照，或者调高 `scripts/checks/baselines/` 里的棘轮基线；如果某条规则不适合你的情况，停下来报告。确实需要的禁用指令，要写明规则名，并在 ` -- ` 后面写原因。改 `.oxlintrc.json` 会被 `scripts/checks/guards.mjs` 发现，新增违规会被 `scripts/checks/ratchet.mjs` 拦住；改 `.oxlintrc.ratchet.json` 或基线文件，只能靠评审发现。
 - `.oxlintrc.ratchet.json` 里的规则在现有代码中已有违规，按文件冻结在 `scripts/checks/baselines/oxlint-ratchet.json`。新代码不能增加违规；修掉现有违规后，运行 `node scripts/checks/ratchet.mjs --update` 降低基线。
 - 不要运行 `pnpm lint:fix`：oxlint 的有些自动修复会改变行为（例如 `unicorn/no-unnecessary-await` 会删掉一个 `await`，后面代码的执行时机就变了）。
 - 在公开文本和测试数据里，用中性的占位符（例如 `example.com`、`example.test` 和 `YOUR_API_KEY`）替换真实的内部标识。开 PR 之前，请一个只读 agent 审查 diff，看有没有和具体环境相关的内部标识。
-- 创建 PR 时，用 `write-pr` 技能（`.agents/skills/write-pr/SKILL.md`）写 PR 描述。PR 标题必须用 Conventional Commit 格式，例如 `chore: remove legacy format commands`。
+- 创建 PR 时，用 `write-pr` 技能（`.agents/skills/write-pr/SKILL.md`）写 PR 描述。PR 标题必须用 Conventional Commit 格式，例如 `chore: remove legacy format commands`（由 `.github/workflows/pr-title-checker.yml` 检查）。
 - AI agent 创建或更新 PR 时，要填写 `.github/pull_request_template.md`：关联相关 issue 或说明问题，再描述改了什么。不要留下占位文字，也不要只给出泛泛的 diff 摘要。
 - 不要提交含糊的、AI 生成的 PR 文字。提交 PR 的人类作者必须足够理解这个改动，能讲清代码、边界情况，以及为什么这个做法适合这个仓库。
 - 完成任务后、提交 PR 之前，必须运行 `gen-changesets` 技能（见 `.agents/skills/gen-changesets/SKILL.md`），按它的规则在 `.changeset/` 下生成 changeset。

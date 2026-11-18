@@ -1,5 +1,7 @@
 # minidb Agent 指南
 
+本文件补充根目录的 `AGENTS.md`，只管 `packages/minidb`。
+
 kap-server 搜索索引背后的嵌入式 JSON 文档库（`MiniDb`）：快照 + WAL 持久化，带独占写锁（抢锁失败的一方以只读方式打开，并从 WAL 追平；`OpenOptions.onLockAcquired` 在获取锁之后、开始恢复工作之前，立即报告所持有的锁 token。在 worker 线程里托管 MiniDb 的监管方需要它，因为 worker 线程与宿主进程共用同一个 pid，仅凭锁记录行里的 pid 无法驱动对失效锁的回收），外加一个支持超出内存数据量的全文检索层。
 
 ## 文本索引

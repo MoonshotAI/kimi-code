@@ -1,5 +1,7 @@
 # pi-tui
 
+本文件补充根目录的 `AGENTS.md`，只管 `packages/pi-tui`。
+
 本包是引入仓库的 fork，上游是 [`earendil-works/pi`](https://github.com/earendil-works/pi) 的 `packages/tui`。保持 fork 尽量小，这样同步上游的成本才低。
 
 **从上游同步、添加本地补丁，或评审 pi-tui 的 diff 时：** 读 [UPSTREAM.md](./UPSTREAM.md)。fork 就是相对于锁定的上游提交的 diff；那个文件记录了这些 diff 存在的原因。

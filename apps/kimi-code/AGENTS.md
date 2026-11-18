@@ -52,7 +52,7 @@
 
 ## 颜色规则（规范性）
 
-主题的应用/切换机制写在 `write-tui` 技能里。下面这些规则是硬性规则，由守卫强制执行：
+主题的应用/切换机制写在 `write-tui` 技能里。下面这些规则是硬性规则。第一条和最后一条由 `test/tui/chalk-named-color-guard.test.ts` 在 CI 中检查，但它只查直接调用（`chalk.red(` 这种写法），不查 `chalk.dim` 和链式调用；其余几条没有检查：
 
 - 不要直接使用 `chalk.red`、`chalk.cyan`、`chalk.white`、`chalk.gray`、`chalk.dim` 或 `chalk.yellow` 这类 chalk 命名颜色。
 - 组件里已经有 `colors` 时，用 `chalk.hex(colors.<token>)(text)`。
@@ -64,7 +64,12 @@
 
 ## 通用编码要求
 
+- `src/cli/exec-server.ts` 只通过 SDK 的轻量子路径 `@moonshot-ai/kimi-code-sdk/exec-server` 动态加载执行器；进程入口不能引入 SDK 主模块和重的 CLI 模块（`test/cli/exec-server.test.ts` 检查）。
 - 工作区信任关卡之前的启动路径（`KimiTUI.start()` -> `maybeRunWorkspaceTrustPrompt()`）上，不能用裸命令名启动子进程：在 Windows 上，cmd.exe / CreateProcess 会先从当前目录解析命令名，所以被植入不受信任工作区的二进制文件，会在用户确认信任之前就运行。确实避免不了外部命令时，用 `src/utils/process/resolve-command.ts` 里的 `resolveCommandPath` 解析：它返回在 PATH 中命中的绝对路径，并拒绝位于 cwd 内的匹配。
-- 可选的对象属性，类型里不需要再额外允许 `undefined`。
-- 只有一个参数的内部方法，不要为了风格统一改成 options 对象。
-- 除了包自己的 `index.ts`，其他 `index.ts` 优先写成 `export * from './module'`。
+
+## 浏览器 Web UI 产物
+
+- Web UI 的源码不在本仓库：它在 code-app 仓库（`apps/web`）开发，以提交进本仓库的预构建产物 `dist-web` 发布。
+- 用 `KIMI_CODE_REPO=<本仓库路径> pnpm run sync:web` 从 code-app 同步。只要 Web UI 的发布内容需要变化，就在同一个改动里同步并提交这份产物。
+- `scripts/check-web-assets.mjs` 在打包时检查产物是否缺失。
+- 要在本仓库的服务上开发或调试 Web UI，在仓库根目录运行 `pnpm dev:server`，再让 code-app 的 `pnpm dev:web` 通过 `KIMI_SERVER_URL` 指向它。
