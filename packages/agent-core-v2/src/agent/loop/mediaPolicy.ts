@@ -3,10 +3,17 @@ import {
   createMediaDegradeRecovery,
   type MediaReplacement,
 } from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
-import type { Message, ToolMessage, UserMessage } from '@moonshot-ai/core/llm/message';
+import {
+  isMediaPart,
+  mediaPlaceholderText,
+  type ContentPart,
+  type Message,
+  type ToolMessage,
+  type UserMessage,
+} from '@moonshot-ai/core/llm/message';
 import type { LlmRecovery } from '@moonshot-ai/core/llm/policy/recovery';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
-import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
+import { mediaFileIdOf, mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
@@ -70,6 +77,58 @@ function hideReadMediaFile(messages: readonly Message[]): readonly Message[] {
   return out;
 }
 
+const EXPIRED_UPLOAD_MESSAGE =
+  /failed to validate (?:image|video|audio)_url content: blob ID ([A-Za-z0-9][A-Za-z0-9._-]*) does not exist/i;
+
+function createMediaRecovery(
+  service: IAgentMediaResolverService,
+  replacement: MediaReplacement,
+): LlmRecovery {
+  const degrade = createMediaDegradeRecovery(replacement);
+  return {
+    propose: (context) => {
+      const match = EXPIRED_UPLOAD_MESSAGE.exec(context.error.message);
+      if (match === null) return degrade.propose(context);
+      const llmFileId = match[1]!;
+      const isRejected = (part: ContentPart): boolean =>
+        isMediaPart(part) &&
+        (mediaFileIdOf(part) === llmFileId || mediaUrlOf(part) === `ms://${llmFileId}`);
+      const directlyRejected = context.request.content.messages.some(
+        (message) => message.content.some(isRejected),
+      );
+      if (!directlyRejected && !service.hasUpload(llmFileId)) return undefined;
+      return {
+        strategy: 'media-upload',
+        action: 'invalidated',
+        beforeNextAttempt: () => {
+          service.invalidateUpload(llmFileId);
+        },
+        rewrite: directlyRejected
+          ? (request) => {
+              let changed = false;
+              const messages = request.content.messages.map((message) => {
+                let messageChanged = false;
+                const content = message.content.map((part): ContentPart => {
+                  if (!isMediaPart(part) || !isRejected(part)) return part;
+                  changed = true;
+                  messageChanged = true;
+                  return {
+                    type: 'text',
+                    text: mediaPlaceholderText(mediaKindOfPart(part)!, 'unavailable'),
+                  };
+                });
+                return messageChanged ? { ...message, content } : message;
+              });
+              return changed
+                ? { ...request, content: { ...request.content, messages } }
+                : request;
+            }
+          : undefined,
+      };
+    },
+  };
+}
+
 export interface AgentMediaPolicy {
   readonly toolResolver: LlmResolver;
   readonly resolver: LlmResolver;
@@ -129,6 +188,6 @@ export function createAgentMediaPolicy(
           : { ...current, content: { ...current.content, messages } };
       },
     },
-    recovery: createMediaDegradeRecovery(replacement),
+    recovery: createMediaRecovery(service, replacement),
   };
 }
