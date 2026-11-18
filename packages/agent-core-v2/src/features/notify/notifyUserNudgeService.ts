@@ -9,7 +9,7 @@ import {
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { IFlagService } from '#/app/flag/flag';
 import type { NotifyUserNudgeShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -39,7 +39,7 @@ const notifyUserNudgeReminders = fromCallback(({
 }) => {
   const runtime = input.runtime;
   const available = (): boolean =>
-    notifyUserAvailable(runtime.get(IFlagService), runtime.get(IBootstrapService));
+    notifyUserAvailable(runtime.get(IFlagService), runtime.get(IClientIdentity));
   if (!available()) return () => {};
   const registration = runtime.get(IAgentReminderService).register(
     NOTIFY_USER_NUDGE_VARIANT,

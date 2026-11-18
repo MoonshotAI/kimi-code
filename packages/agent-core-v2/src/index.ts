@@ -195,6 +195,8 @@ import '#/app/agentIdentity/configSection';
 export * from '#/app/agentIdentity/configSection';
 export * from '#/app/agentIdentity/agentIdentity';
 export * from '#/app/agentIdentity/agentIdentityService';
+export * from '#/app/clientIdentity/clientIdentity';
+export * from '#/session/clientIdentity/sessionClientIdentity';
 import '#/llm-adapter/protocol/errors';
 export * from '#/llm-adapter/protocol/errors';
 export * from '#/llm-adapter/protocol/protocol';

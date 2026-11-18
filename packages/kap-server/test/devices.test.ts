@@ -18,8 +18,11 @@ import { gzipSync } from 'node:zlib';
 import Fastify from 'fastify';
 import { FileTokenStorage, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import {
+  IClientIdentity,
   IConfigService,
   IOAuthService,
+  ISessionMetadata,
+  getLiveSessionById,
   accountDeviceEntrySchema,
   deviceIdSchema,
   devicesSectionSchema,
@@ -39,7 +42,8 @@ import { DeviceRequestError, type DeviceHttpRequest, type DeviceHttpResponse, ty
 import { RelayDeviceSession, relayRequestHeaders } from '../src/services/devices/relayDeviceSession';
 import { StdioDeviceSession } from '../src/services/devices/stdioDeviceSession';
 import { JsonlRpcStream, RPC_BACKPRESSURE_TIMEOUT_MS } from '../src/transport/jsonlRpcStream';
-import { startServer, type RunningServer } from '../src/start';
+import { startServer, type RunningServer, type ServerHostIdentity } from '../src/start';
+import { CLIENT_IDENTITY_HEADER, encodeClientIdentityHeader } from '../src/protocol/clientIdentity';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import {
   SshDeviceBridge,
@@ -55,6 +59,19 @@ import {
 } from '../src/transport/stdioRpc';
 
 const SSH_REMOTE_META = { server_version: '1.2.3', product: 'kimi-code-cli', device_id: 'ssh-remote', device_api_level: DEVICE_API_LEVEL };
+
+const LOCAL_HOST_IDENTITY: ServerHostIdentity = {
+  productName: 'local-desktop',
+  version: '9.8.7',
+  platform: 'local_desktop_platform',
+  displayName: 'Local Desktop',
+  replyStyleGuide: 'Replies render in the local desktop chat.',
+};
+
+const LOCAL_CLIENT_IDENTITY_HEADER = encodeClientIdentityHeader({
+  ...LOCAL_HOST_IDENTITY,
+  uiCapabilities: ['update_panel'],
+});
 
 function metaFrame(id: string, meta: Record<string, unknown> = SSH_REMOTE_META): string {
   const body = Buffer.from(JSON.stringify({ code: 0, msg: 'success', data: meta, request_id: 'meta' })).toString('base64');
@@ -731,7 +748,7 @@ describe('device HTTP proxy', () => {
         request: async () => { throw new DeviceRequestError('timeout', 'device request timed out'); },
         openWebSocket: () => { throw new Error('unexpected websocket'); },
       }),
-    } as never);
+    } as never, LOCAL_CLIENT_IDENTITY_HEADER);
     await app.ready();
     const timeout = await app.inject({ method: 'GET', url: '/api/v1/devices/dev/proxy/api/v1/healthz' });
     expect(timeout.statusCode).toBe(504);
@@ -756,7 +773,7 @@ describe('device HTTP proxy', () => {
         },
         openWebSocket: () => { throw new Error('unexpected websocket'); },
       }),
-    } as never);
+    } as never, LOCAL_CLIENT_IDENTITY_HEADER);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const address = app.server.address();
     if (address === null || typeof address === 'string') throw new Error('missing test server address');
@@ -772,6 +789,68 @@ describe('device HTTP proxy', () => {
       await app.close();
     }
   });
+
+  it('stamps only session creation with the local client identity, replacing a client-supplied one', async () => {
+    const app = Fastify();
+    const forwarded: DeviceHttpRequest[] = [];
+    registerDeviceProxyRoutes(app, {
+      session: () => ({
+        request: async (input: DeviceHttpRequest) => {
+          forwarded.push(input);
+          return { status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{}') };
+        },
+        openWebSocket: () => { throw new Error('unexpected websocket'); },
+      }),
+    } as never, LOCAL_CLIENT_IDENTITY_HEADER);
+    await app.ready();
+    const clientSupplied = { [CLIENT_IDENTITY_HEADER]: 'Y2xpZW50' };
+    const json = { 'content-type': 'application/json' };
+    await app.inject({ method: 'POST', url: '/api/v1/devices/dev/proxy/api/v1/sessions', headers: { ...json, ...clientSupplied }, payload: '{}' });
+    await app.inject({ method: 'POST', url: '/api/v1/devices/dev/proxy/api/v1/sessions?trace=1', headers: json, payload: '{}' });
+    await app.inject({ method: 'GET', url: '/api/v1/devices/dev/proxy/api/v1/sessions', headers: clientSupplied });
+    await app.inject({ method: 'POST', url: '/api/v1/devices/dev/proxy/api/v1/sessions/s1:fork', headers: { ...json, ...clientSupplied }, payload: '{}' });
+    await app.inject({ method: 'POST', url: '/api/v1/devices/dev/proxy/api/v1/sessions/s1/prompts', headers: json, payload: '{}' });
+    expect(forwarded.map((request) => [request.method, request.path, request.headers[CLIENT_IDENTITY_HEADER]])).toEqual([
+      ['POST', '/api/v1/sessions', LOCAL_CLIENT_IDENTITY_HEADER],
+      ['POST', '/api/v1/sessions?trace=1', LOCAL_CLIENT_IDENTITY_HEADER],
+      ['GET', '/api/v1/sessions', 'Y2xpZW50'],
+      ['POST', '/api/v1/sessions/s1:fork', 'Y2xpZW50'],
+      ['POST', '/api/v1/sessions/s1/prompts', undefined],
+    ]);
+    await app.close();
+  });
+
+  it.skipIf(process.platform === 'win32')('runs a session created through an SSH device with the local client identity', async () => {
+    const loopbackFetch = globalThis.fetch;
+    await withManagedDevicePair(
+      (input, init) => loopbackFetch(input as Parameters<typeof fetch>[0], init),
+      async ({ local, remote, remoteHome, requests }) => {
+        const project = join(remoteHome, 'project');
+        mkdirSync(project);
+        const created = await call(local, 'POST', '/api/v1/devices/dev/proxy/api/v1/sessions', { cwd: project });
+        expect(created).toMatchObject({ code: 0 });
+        const sessionId = String(created.data['id']);
+        expect(await call(local, 'GET', `/api/v1/devices/dev/proxy/api/v1/sessions/${sessionId}`)).toMatchObject({ code: 0 });
+
+        const remoteSession = getLiveSessionById(remote.core.accessor, sessionId);
+        expect((await remoteSession?.accessor.get(ISessionMetadata).read())?.clientIdentity).toEqual({
+          ...LOCAL_HOST_IDENTITY,
+          uiCapabilities: ['update_panel'],
+        });
+        expect(remoteSession?.accessor.get(IClientIdentity).requestHeaders).toMatchObject({
+          'User-Agent': 'local-desktop/9.8.7',
+          'X-Msh-Platform': 'local_desktop_platform',
+          'X-Msh-Version': '9.8.7',
+        });
+        expect(remote.core.accessor.get(IClientIdentity).requestHeaders['User-Agent']).toBe('test-host/0.0.0-test');
+        expect(requests.map((request) => [request.method, request.headers[CLIENT_IDENTITY_HEADER]])).toEqual([
+          ['POST', LOCAL_CLIENT_IDENTITY_HEADER],
+          ['GET', undefined],
+        ]);
+      },
+      LOCAL_HOST_IDENTITY,
+    );
+  }, 30_000);
 });
 
 interface ManagedDevicePair {
@@ -781,18 +860,20 @@ interface ManagedDevicePair {
   readonly remoteHome: string;
   readonly session: DeviceSession;
   readonly paths: string[];
+  readonly requests: DeviceHttpRequest[];
 }
 
 async function withManagedDevicePair(
   fetchImpl: (input: unknown, init?: RequestInit) => Promise<Response>,
   run: (pair: ManagedDevicePair) => Promise<void>,
+  localIdentity: ServerHostIdentity = TEST_HOST_IDENTITY,
 ): Promise<void> {
   const localHome = await mkdtemp(join(tmpdir(), 'kimi-device-local-'));
   const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-device-remote-'));
   vi.stubGlobal('fetch', vi.fn(fetchImpl));
   writeFileSync(join(localHome, 'config.toml'), '[devices.dev]\nhost = "dev"\n');
   const env = { KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START: '0', KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: '0' };
-  const local = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: localHome, logLevel: 'silent', env });
+  const local = await startServer({ hostIdentity: localIdentity, host: '127.0.0.1', port: 0, homeDir: localHome, logLevel: 'silent', env });
   const remote = await startServer({
     hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: remoteHome, logLevel: 'silent',
     socketPath: join(remoteHome, 'daemon.sock'), managedBy: 'ensure-daemon', env,
@@ -806,11 +887,13 @@ async function withManagedDevicePair(
     pending.delete(frame.id);
   });
   const paths: string[] = [];
+  const requests: DeviceHttpRequest[] = [];
   let requestId = 0;
   const session: DeviceSession = {
     request: (input: DeviceHttpRequest) => new Promise<DeviceHttpResponse>((resolve) => {
       const id = `req-${String(++requestId)}`;
       paths.push(input.path);
+      requests.push(input);
       pending.set(id, resolve);
       client.write(`${JSON.stringify({ type: 'http.req', id, method: input.method, path: input.path, headers: input.headers, body: input.body?.toString('base64') })}\n`);
     }),
@@ -819,7 +902,7 @@ async function withManagedDevicePair(
   vi.spyOn(SshDeviceBridge.prototype, 'connect').mockResolvedValue(session);
   vi.spyOn(SshDeviceBridge.prototype, 'session', 'get').mockReturnValue(session);
   try {
-    await run({ local, remote, localHome, remoteHome, session, paths });
+    await run({ local, remote, localHome, remoteHome, session, paths, requests });
   } finally {
     client.destroy();
     vi.unstubAllGlobals();
@@ -827,8 +910,8 @@ async function withManagedDevicePair(
     local.deviceManager.close();
     await local.close();
     await remote.close();
-    await rm(localHome, { recursive: true, force: true });
-    await rm(remoteHome, { recursive: true, force: true });
+    await rm(localHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await rm(remoteHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 }
 
@@ -1408,7 +1491,10 @@ interface AccountDevicePair {
   readonly remoteProject: string;
 }
 
-async function withAccountDevicePair(run: (pair: AccountDevicePair) => Promise<void>): Promise<void> {
+async function withAccountDevicePair(
+  run: (pair: AccountDevicePair) => Promise<void>,
+  localIdentity: ServerHostIdentity = TEST_HOST_IDENTITY,
+): Promise<void> {
   const localHome = await mkdtemp(join(tmpdir(), 'kimi-account-local-'));
   const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-account-remote-'));
   const remoteProject = join(remoteHome, 'project');
@@ -1428,7 +1514,7 @@ async function withAccountDevicePair(run: (pair: AccountDevicePair) => Promise<v
   const relay = await startFakeRelay(remote);
   relay.devices.push(registration(REMOTE_DEVICE_ID, 'online'));
   vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', relay.origin);
-  const local = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: localHome, logLevel: 'silent', env });
+  const local = await startServer({ hostIdentity: localIdentity, host: '127.0.0.1', port: 0, homeDir: localHome, logLevel: 'silent', env });
   try {
     await run({ local, remote, relay, remoteProject });
   } finally {
@@ -1438,8 +1524,8 @@ async function withAccountDevicePair(run: (pair: AccountDevicePair) => Promise<v
     await remote.close();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
-    await rm(localHome, { recursive: true, force: true });
-    await rm(remoteHome, { recursive: true, force: true });
+    await rm(localHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await rm(remoteHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 }
 
@@ -1512,6 +1598,26 @@ describe('account devices', () => {
         data: { status: 'disconnected', connect_failure: 'signed_out' },
       });
     });
+  }, 30_000);
+
+  it('runs a session created through an account device with the local client identity', async () => {
+    await withAccountDevicePair(async ({ local, remote, remoteProject }) => {
+      expect(await call(local, 'PUT', `/api/v1/devices/${REMOTE_DEVICE_ID}`, { connection: 'account' })).toMatchObject({ code: 0 });
+      const created = await call(local, 'POST', `/api/v1/devices/${REMOTE_DEVICE_ID}/proxy/api/v1/sessions`, { cwd: remoteProject });
+      expect(created).toMatchObject({ code: 0 });
+      const sessionId = String(created.data['id']);
+
+      const remoteSession = getLiveSessionById(remote.core.accessor, sessionId);
+      expect((await remoteSession?.accessor.get(ISessionMetadata).read())?.clientIdentity).toEqual({
+        ...LOCAL_HOST_IDENTITY,
+        uiCapabilities: ['update_panel'],
+      });
+      expect(remoteSession?.accessor.get(IClientIdentity).requestHeaders['User-Agent']).toBe('local-desktop/9.8.7');
+
+      const direct = await call(remote, 'POST', '/api/v1/sessions', { cwd: remoteProject });
+      const directSession = getLiveSessionById(remote.core.accessor, String(direct.data['id']));
+      expect((await directSession?.accessor.get(ISessionMetadata).read())?.clientIdentity).toBeUndefined();
+    }, LOCAL_HOST_IDENTITY);
   }, 30_000);
 
   it('reports offline and outdated devices and refuses to add this computer', async () => {

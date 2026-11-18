@@ -39,6 +39,7 @@ import {
   type IDisposable,
   type ISessionScopeHandle,
   type Scope,
+  type SessionClientIdentity,
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServerResponse } from 'node:http';
@@ -50,6 +51,11 @@ import {
   workspacePersistenceScope,
 } from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/addressing';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import {
+  CLIENT_IDENTITY_HEADER,
+  clientIdentityRequestHeadersSchema,
+  parseClientIdentityHeader,
+} from '../protocol/clientIdentity';
 import { ErrorCode } from '../protocol/error-codes';
 import { listPendingInteractions } from '../protocol/interaction-wire';
 import type { PendingInteraction } from '../protocol/interaction';
@@ -174,6 +180,7 @@ export function registerSessionsRoutes(
       method: 'POST',
       path: '/sessions',
       body: createSessionRequestSchema,
+      documentedHeaders: clientIdentityRequestHeadersSchema,
       success: { data: sessionSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
@@ -264,6 +271,7 @@ export function registerSessionsRoutes(
           environmentCwd: body.environment_cwd,
           mainAgentBinding,
           ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
+          clientIdentity: requestClientIdentity(req),
           prepare: async (session) => {
             if (Object.keys(custom).length > 0) {
               await session.accessor.get(ISessionMetadata).update({ custom });
@@ -1211,6 +1219,21 @@ function normalizeOptional(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
+}
+
+function requestClientIdentity(req: {
+  readonly id: string;
+  readonly headers: Record<string, unknown>;
+}): SessionClientIdentity | undefined {
+  const header = req.headers[CLIENT_IDENTITY_HEADER];
+  if (header === undefined) return undefined;
+  const parsed = parseClientIdentityHeader(header);
+  if (parsed.success) return parsed.identity;
+  requestLog(req)?.warn(
+    { reason: parsed.reason },
+    'ignoring an invalid client identity header; the session uses the server identity',
+  );
+  return undefined;
 }
 
 function buildWireMetadata(

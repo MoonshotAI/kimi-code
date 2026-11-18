@@ -15,7 +15,9 @@ import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageSe
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 
-export type HostUiCapability = 'update_panel';
+export const HOST_UI_CAPABILITIES = ['update_panel'] as const;
+
+export type HostUiCapability = (typeof HOST_UI_CAPABILITIES)[number];
 
 export interface HostArgs {
   readonly agentFiles?: readonly string[];

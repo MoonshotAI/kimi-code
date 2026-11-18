@@ -27,6 +27,7 @@ import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAge
 import { ErrorCodes, Error2 } from "#/errors";
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
@@ -158,6 +159,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentStateService private readonly states: IAgentStateService,
     @IPluginService private readonly plugins: IPluginService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
+    @IClientIdentity private readonly client: IClientIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
     @IProviderDiscoveryService private readonly discovery: IProviderDiscoveryService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -846,7 +848,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       pluginSections,
       skillActive: this.isToolActiveForProfile(profile, 'Skill'),
       productName: (await this.identity.resolved()).displayName,
-      replyStyleGuide: this.bootstrap.args.replyStyleGuide,
+      replyStyleGuide: this.client.replyStyleGuide,
       notifyUserActive:
         this.notify.enabled &&
         this.isToolActiveForProfile(profile, NOTIFY_USER_TOOL_NAME),

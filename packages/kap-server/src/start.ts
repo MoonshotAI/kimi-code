@@ -21,6 +21,7 @@ import {
   IWorkspaceService,
   IAgentLifecycleService,
   IAgentEnvironmentBindingService,
+  IClientIdentity,
   ISessionContext,
   MAIN_AGENT_ID,
   NOTIFY_USER_UI_CAPABILITY,
@@ -41,6 +42,7 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 import { createAsyncApiDocument } from './protocol/asyncapi';
+import { encodeClientIdentityHeader } from './protocol/clientIdentity';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { installErrorHandler } from './error-handler';
@@ -669,7 +671,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     await broadcaster.close();
   });
 
-  registerDeviceProxyRoutes(app, deviceManager);
+  registerDeviceProxyRoutes(
+    app,
+    deviceManager,
+    encodeClientIdentityHeader(core.accessor.get(IClientIdentity)),
+  );
 
   app.get('/asyncapi.json', async (_req, reply) => {
     return reply

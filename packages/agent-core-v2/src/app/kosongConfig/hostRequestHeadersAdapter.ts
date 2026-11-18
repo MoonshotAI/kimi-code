@@ -1,17 +1,20 @@
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import {
+  IClientIdentity,
+  registerClientIdentityScopedService,
+} from '#/app/clientIdentity/clientIdentity';
 import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
 
 export class HostRequestHeadersAdapter implements IHostRequestHeaders {
   readonly headers: Readonly<Record<string, string>>;
 
   constructor(
-    @IBootstrapService bootstrap: IBootstrapService,
+    @IClientIdentity client: IClientIdentity,
     @IAgentIdentity private readonly identity: IAgentIdentity,
   ) {
-    this.headers = bootstrap.args.requestHeaders;
+    this.headers = client.requestHeaders;
   }
 
   get thirdPartyHeaders(): Readonly<Record<string, string>> {
@@ -31,3 +34,4 @@ registerScopedService(
   ScopeActivation.OnDemand,
   'kosongConfig',
 );
+registerClientIdentityScopedService(IHostRequestHeaders, HostRequestHeadersAdapter);

@@ -12,6 +12,16 @@ export const agentMetaSchema = z.object({
   swarmItem: z.string().optional(),
 });
 
+const sessionClientIdentitySchema = z.object({
+  productName: z.string(),
+  version: z.string(),
+  platform: z.string(),
+  userAgentSuffix: z.string().optional(),
+  displayName: z.string().optional(),
+  replyStyleGuide: z.string().optional(),
+  uiCapabilities: z.array(z.enum(['update_panel'])).optional(),
+});
+
 export const sessionMetaSchema = z.object({
   id: z.string(),
   version: z.number().optional(),
@@ -29,6 +39,7 @@ export const sessionMetaSchema = z.object({
   agents: z.record(z.string(), agentMetaSchema).optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
   lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
+  clientIdentity: sessionClientIdentitySchema.optional(),
 });
 
 export const sessionMetaPatchSchema = z.object({
@@ -65,6 +76,7 @@ export const sessionMetaKeySchema = z.enum([
   'agents',
   'custom',
   'lastTurnReason',
+  'clientIdentity',
 ]);
 
 export const sessionMetadataChangedEventSchema = z.object({

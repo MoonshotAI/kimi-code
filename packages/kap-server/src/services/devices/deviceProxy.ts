@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { WebSocketServer, type RawData } from 'ws';
 
 import { errEnvelope } from '../../envelope';
+import { CLIENT_IDENTITY_HEADER } from '../../protocol/clientIdentity';
 import { ErrorCode } from '../../protocol/error-codes';
 import { DEVICE_RPC_MAX_BODY_BYTES } from '../../transport/jsonlRpcStream';
 import { selectWsBearerProtocol } from '../../transport/ws/bearerProtocol';
@@ -17,6 +18,7 @@ import {
 } from './deviceSession';
 
 const PROXY_PATH = /^\/api\/v1\/devices\/([^/?]+)\/proxy(\/[^?]*)?(\?.*)?$/;
+const SESSION_CREATE_PATH = /^\/api\/v1\/sessions(?:\?|$)/;
 
 function bodyTooLarge(): DeviceRequestError {
   return new DeviceRequestError(
@@ -52,6 +54,16 @@ export function upstreamHeaders(headers: IncomingHttpHeaders): IncomingHttpHeade
   return forwarded;
 }
 
+function stampSessionCreation(
+  method: string,
+  path: string,
+  headers: IncomingHttpHeaders,
+  clientIdentityHeader: string,
+): IncomingHttpHeaders {
+  if (method !== 'POST' || !SESSION_CREATE_PATH.test(path)) return headers;
+  return { ...headers, [CLIENT_IDENTITY_HEADER]: clientIdentityHeader };
+}
+
 async function resolveSession(
   manager: DeviceManager,
   deviceId: string,
@@ -61,6 +73,7 @@ async function resolveSession(
 
 async function proxyHttp(
   manager: DeviceManager,
+  clientIdentityHeader: string,
   req: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
@@ -106,7 +119,7 @@ async function proxyHttp(
     const response = await session.request({
       method: req.method,
       path: target.path,
-      headers: upstreamHeaders(req.headers),
+      headers: stampSessionCreation(req.method, target.path, upstreamHeaders(req.headers), clientIdentityHeader),
       body,
       signal: cancellation.signal,
       timeoutMs: /^\/api\/v1\/sessions\/[^/]+\/export(?:\?|$)/.test(target.path) ? 5 * 60_000 : undefined,
@@ -138,6 +151,7 @@ async function proxyHttp(
 export function registerDeviceProxyRoutes(
   app: FastifyInstance,
   manager: DeviceManager,
+  clientIdentityHeader: string,
 ): void {
   void app.register(async (scope) => {
     scope.removeAllContentTypeParsers();
@@ -149,7 +163,7 @@ export function registerDeviceProxyRoutes(
         method: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
         url,
         handler: async (req, reply) => {
-          await proxyHttp(manager, req, reply);
+          await proxyHttp(manager, clientIdentityHeader, req, reply);
         },
       });
     }

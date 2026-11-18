@@ -2,7 +2,10 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import {
+  IClientIdentity,
+  registerClientIdentityScopedService,
+} from '#/app/clientIdentity/clientIdentity';
 import { IConfigService } from '#/app/config/config';
 
 import {
@@ -20,7 +23,7 @@ export class AgentIdentityService implements IAgentIdentity {
 
   constructor(
     @IConfigService config: IConfigService,
-    @IBootstrapService bootstrap: IBootstrapService,
+    @IClientIdentity client: IClientIdentity,
   ) {
     this.frozen = config.ready
       .catch(() => undefined)
@@ -29,8 +32,8 @@ export class AgentIdentityService implements IAgentIdentity {
         this.snapshot = buildAgentIdentitySnapshot({
           name: section.name,
           slug: section.slug,
-          hostDisplayName: bootstrap.args.displayName,
-          hostRequestHeaders: bootstrap.args.requestHeaders,
+          hostDisplayName: client.displayName,
+          hostRequestHeaders: client.requestHeaders,
         });
         return this.snapshot;
       });
@@ -58,3 +61,4 @@ registerScopedService(
   ScopeActivation.OnScopeCreated,
   'agentIdentity',
 );
+registerClientIdentityScopedService(IAgentIdentity, AgentIdentityService);
