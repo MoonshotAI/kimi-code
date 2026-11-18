@@ -95,6 +95,26 @@ describe('WorkspaceInstanceManager', () => {
     await value.dispose();
   });
 
+  it('reuses the instance and program when the workspace primary changes', async () => {
+    const initial = workspace('one') as { -readonly [K in keyof Workspace]: Workspace[K] };
+    const value = manager([initial]);
+    const first = await value.acquire({ workspaceId: 'one' });
+    const instance = first.instance;
+    const program = instance.program;
+    initial.root = '/two';
+    initial.additionalDirs = ['/one'];
+
+    const second = await value.acquire({ workspaceId: 'one' });
+    expect(second.instance).toBe(instance);
+    expect(second.instance.root).toBe('/two');
+    expect(second.instance.program).toBe(program);
+    expect(second.instance.snapshot().metadata).toEqual(initial);
+
+    second.dispose();
+    first.dispose();
+    await value.dispose();
+  });
+
   it('rolls back environments registered by a provider that fails to attach', async () => {
     const environments = environmentService();
     const remote = environment('unused', 'remote');

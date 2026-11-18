@@ -1,14 +1,3 @@
-/**
- * Bridge Protocol - Communication between VS Code extension and webview.
- *
- * Architecture:
- * - Webview calls Methods via RPC (request/response)
- * - Extension broadcasts Events to webview (one-way notifications)
- *
- * RPC flow: webview.call(method, params) -> extension.dispatch -> webview.resolve(result)
- * Event flow: extension.broadcast(event, data) -> webview.on(event, handler)
- */
-
 export const Methods = {
   CheckWorkspace: "checkWorkspace",
   GetInputHistory: "getInputHistory",
@@ -101,7 +90,6 @@ export const Events = {
 
 const rpcMethods = new Set<string>(Object.values(Methods));
 
-/** Validates the untrusted Webview message before any host-side handler runs. */
 export function validateRpcMessage(value: unknown): RpcMessageValidation {
   if (!isPlainObject(value)) {
     return invalidMessage("", "<invalid>", "Invalid bridge request: expected a plain object.");

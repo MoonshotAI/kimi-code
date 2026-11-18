@@ -1,19 +1,3 @@
-/**
- * AgentActivityViewer — full-screen detail view for a background agent task.
- *
- * Same full-screen skeleton as `TaskOutputViewer` (header / scrolling body /
- * footer, tail-follow), but the body is assembled from the in-memory
- * `SubagentActivityRecord` instead of the task's captured output: recent
- * steps with their assistant text (Markdown, same as the main transcript)
- * and tool calls rendered through the main-flow result renderers
- * (`pickResultRenderer` / `pickChip` / `extractKeyArgument`). `ToolCallComponent`
- * itself is not reused — it is a live, event-driven component, while this
- * view renders a snapshot.
- *
- * Ctrl+O toggles a global expand of every tool result (same semantics as the
- * main transcript's `toolOutputExpanded`), capped by what the store retained.
- */
-
 import {
   Container,
   Key,
@@ -68,9 +52,7 @@ export class AgentActivityViewer extends Container implements Focusable {
   private props: AgentActivityViewerProps;
   private readonly terminal: Terminal;
   private expanded = false;
-  /** Index of the topmost visible body line. */
   private scrollTop = 0;
-  /** Stick to the bottom on updates until the user scrolls away. */
   private followTail = true;
   private lines: string[] = [];
   private lastCacheKey = '';
@@ -87,13 +69,9 @@ export class AgentActivityViewer extends Container implements Focusable {
   }
 
   override invalidate(): void {
-    // Theme switches arrive as a tree-wide invalidate; the styled body lines
-    // are cached, so drop the cache here to pick up the new palette.
     this.lastCacheKey = '';
     super.invalidate();
   }
-
-  // ── input ──────────────────────────────────────────────────────────
 
   handleInput(data: string): void {
     const visible = this.viewableRows();
@@ -121,7 +99,7 @@ export class AgentActivityViewer extends Container implements Focusable {
       matchesKey(data, Key.pageUp) ||
       matchesKey(data, Key.ctrl('u')) ||
       k === ' ' ||
-      data === '\u0002' /* C-b */
+      data === '\u0002'
     ) {
       this.scrollBy(-Math.max(1, visible - 1));
       return;
@@ -129,7 +107,7 @@ export class AgentActivityViewer extends Container implements Focusable {
     if (
       matchesKey(data, Key.pageDown) ||
       matchesKey(data, Key.ctrl('d')) ||
-      data === '\u0006' /* C-f */
+      data === '\u0006'
     ) {
       this.scrollBy(Math.max(1, visible - 1));
       return;
@@ -158,13 +136,9 @@ export class AgentActivityViewer extends Container implements Focusable {
     return Math.max(0, this.lines.length - this.viewableRows());
   }
 
-  /** Content rows inside the body frame: total rows minus header(1) +
-   *  footer(1) + top border(1) + bottom border(1). */
   private viewableRows(): number {
     return Math.max(1, this.terminal.rows - 4);
   }
-
-  // ── body assembly ──────────────────────────────────────────────────
 
   private cacheKey(innerWidth: number): string {
     const record = this.props.record;
@@ -218,10 +192,6 @@ export class AgentActivityViewer extends Container implements Focusable {
     return out;
   }
 
-  /** Same shape as the main flow's generic header (`tool-call.ts`
-   *  `buildHeader`): bullet + verb + name + key argument + chip. Custom
-   *  per-tool label wording (e.g. "Ran a command") is intentionally not
-   *  mirrored — the per-tool *body* renderers carry the specialization. */
   private buildToolCallHeader(call: SubToolCallActivity): string {
     let bullet: string;
     if (call.status === 'error') {
@@ -256,8 +226,6 @@ export class AgentActivityViewer extends Container implements Focusable {
         ? []
         : [currentTheme.dim(`${MESSAGE_INDENT}│ ${call.liveOutputTail}`)];
     }
-    // The store caps retained output, which cannot survive as a parseable
-    // media envelope (base64) — show a marker instead of dumping the blob.
     if (call.name === 'ReadMediaFile' && call.result.is_error !== true) {
       return [currentTheme.dim(`${MESSAGE_INDENT}[media output omitted]`)];
     }
@@ -276,8 +244,6 @@ export class AgentActivityViewer extends Container implements Focusable {
   private toToolCallBlockData(call: SubToolCallActivity): ToolCallBlockData {
     return { id: call.id, name: call.name, args: call.args };
   }
-
-  // ── render ─────────────────────────────────────────────────────────
 
   override render(width: number): string[] {
     const rows = Math.max(3, this.terminal.rows);
@@ -385,11 +351,6 @@ export class AgentActivityViewer extends Container implements Focusable {
   }
 }
 
-/**
- * Plain-text preview of a record for the tasks browser's Preview frame (the
- * frame styles whole lines itself, so this stays ANSI-free). The frame shows
- * the tail of the string, so the full retained activity is returned.
- */
 export function formatSubagentActivityPreview(record: SubagentActivityRecord): string {
   const lines: string[] = [];
   for (const step of record.steps) {

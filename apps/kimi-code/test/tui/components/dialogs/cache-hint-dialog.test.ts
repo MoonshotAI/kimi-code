@@ -72,8 +72,8 @@ describe('CacheHintDialogComponent', () => {
 
   it('navigates with arrows before selecting', () => {
     const { dialog, onSelect } = renderDialog();
-    dialog.handleInput('\u001B[B'); // down
-    dialog.handleInput('\u001B[B'); // down
+    dialog.handleInput('\u001B[B');
+    dialog.handleInput('\u001B[B');
     dialog.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith('continue');
   });

@@ -1,14 +1,12 @@
 import {
   buildContextCompactionShape,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/compactionHandoff';
-import {
-  computeUndoCut,
-  isFullyUndoable,
-  readContextCompactionShapeInput,
-} from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextOps';
+import { readContextCompactionShapeInput } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextOps';
+import { cutTurnUndo } from '@moonshot-ai/agent-core-v2/agent/undo/turnUndo';
+import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import { createLoopEventFold } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type {
   ContextMessage,
   PermissionMode,
@@ -22,15 +20,12 @@ export interface ProjectedMessage {
   source: 'append_message' | 'compaction_summary' | 'undo' | 'clear';
   message: ContextMessage;
   toolStepUuids: string[];
-  /** Set only when source === 'undo'. */
   undo?: { count: number; removedMessageCount: number };
-  /** Set only on the summary bubble of source === 'compaction_summary'.
-   *  `tokensBefore`/`tokensAfter` are absent on legacy payload variants. */
   compaction?: { compactedCount: number; tokensBefore?: number; tokensAfter?: number };
 }
 
 export interface UsageTotals {
-  byScope: { session: TokenUsage; turn: TokenUsage };
+  byScope: { session: TokenUsage; turn: TokenUsage; prediction: TokenUsage };
   byModel: Record<string, TokenUsage>;
 }
 
@@ -57,11 +52,6 @@ export interface GoalSnapshot {
 export interface ContextProjection {
   messages: ProjectedMessage[];
   usage: UsageTotals;
-  /** Absolute current context-window fill, mirroring the engine's token
-   *  counting state. Updated from the latest step.end.usage and the
-   *  token_counting.* records, and also reset on the lifecycle events the
-   *  engine touches: context.clear → 0, context.apply_compaction →
-   *  tokensAfter. Distinct from the cumulative `usage` totals. */
   contextTokens: number;
   config: ConfigSnapshot;
   permission: { mode: PermissionMode | null };
@@ -80,8 +70,8 @@ const ZERO: TokenUsage = { inputOther: 0, output: 0, inputCacheRead: 0, inputCac
  *    user / tool messages and any explicit assistant injections).
  *  - `step.begin` settles a preceding attempt and opens a fresh assistant;
  *    later `content.part` and `tool.call` events on the same step grow that
- *    message. A normal `step.end` seals it (or drops it when vacuous), while
- *    interrupted/error steps stay partial until the next attempt.
+ *    message. A `step.end` seals it (or drops it when vacuous), including
+ *    interrupted and error endings.
  *  - pending tool calls defer appended messages; matching `tool.result`
  *    events close them, and an attempt that settles first gets synthetic
  *    interrupted results, exactly like engine replay.
@@ -113,7 +103,7 @@ export function projectContext(
   let messages: ProjectedMessage[] = [];
   let modelMessages: ProjectedMessage[] = [];
   const usage: UsageTotals = {
-    byScope: { session: { ...ZERO }, turn: { ...ZERO } },
+    byScope: { session: { ...ZERO }, turn: { ...ZERO }, prediction: { ...ZERO } },
     byModel: {},
   };
   const config: ConfigSnapshot = {};
@@ -216,7 +206,7 @@ export function projectContext(
     openMessage = undefined;
   };
 
-  for (const entry of entries) {
+  for (const [entryIndex, entry] of entries.entries()) {
     currentEntry = entry;
     syntheticToolOrdinal = 0;
     const rec = entry.data;
@@ -237,12 +227,6 @@ export function projectContext(
         const ev = rec.event;
         fold.loopEvent(ev, rec.time);
         if (ev.type === 'step.end') {
-          // Absolute context-window fill, mirroring the engine's token
-          // counting state: the latest step.end usage REPLACES the
-          // snapshot (it is not cumulative — see Task P1.7 note on byScope).
-          // A zero-usage step.end (e.g. a content-filtered response) is the one
-          // exception the engine makes — it keeps the prior count instead of
-          // resetting to 0 — so guard against a false drop here too.
           if ('usage' in ev && ev.usage !== undefined) {
             const fill =
               ev.usage.inputCacheRead === undefined
@@ -264,29 +248,16 @@ export function projectContext(
         modelMessages = [];
         if (mode === 'model') {
           messages = [];
-          // Mirror the engine's clear() → legacy micro-compaction cutoff
-          // reset (→ 0):
-          // the message indices are wiped, so any prior cutoff is meaningless.
           microCutoff = 0;
         } else {
-          // Full history: keep all preceding messages, just
-          // append a synthetic 'clear' marker inline. The original tool results
-          // stay un-blanked, so the cutoff is not applied (the end-of-loop
-          // blanking pass is gated on model mode).
           messages.push({
             lineNo: entry.lineNo,
             time: rec.time,
             source: 'clear',
-            // Synthetic marker: never rendered as a bubble (the web dispatches on
-            // `source === 'clear'`). `role: 'assistant'` keeps it out of any
-            // role-counting / tool-blanking path.
             message: { role: 'assistant', content: [], toolCalls: [] } as ContextMessage,
             toolStepUuids: [],
           });
         }
-        // Mirror the engine's clear() → token count = 0: the context-window
-        // fill is wiped. Derived state, so it is mode-INDEPENDENT (applied for
-        // both modes).
         contextTokens = 0;
         break;
       case 'context.apply_compaction': {
@@ -301,22 +272,6 @@ export function projectContext(
         }
         const historyEntries = [...modelMessages];
         resetFold();
-        // Mirror the engine's applyCompaction
-        // (`packages/agent-core-v2/src/agent/contextMemory/`): the live history
-        // becomes the kept real user messages (verbatim, within a token budget
-        // — the oldest head plus the most recent tail, separated by an elision
-        // marker when the pool overflowed) followed by a single user-role
-        // summary tagged `origin.kind = 'compaction_summary'`. Assistant
-        // messages, tool calls, and tool results are dropped. The selection
-        // rules come from the same `buildContextCompactionShape` helper the
-        // engine uses during replay, so both views stay in sync.
-        //
-        // The v2 payload is a union of three variants: current records carry
-        // `summary` as a string (with `contextSummary` holding the
-        // model-facing variant when media degraded); a legacy variant carries
-        // the summary as a ContextMessage plus `count` instead of
-        // `compactedCount`. `tokensBefore`/`tokensAfter` are optional in all
-        // variants. Normalize before projecting.
         const rawSummary = rec.summary;
         const contextSummary = 'contextSummary' in rec ? rec.contextSummary : undefined;
         const summaryText =
@@ -378,34 +333,20 @@ export function projectContext(
         if (mode === 'model') {
           messages = [...modelMessages];
         } else {
-          // Full history: keep ALL preceding messages, just append the summary
-          // marker inline so the compacted prefix stays visible.
           messages.push(summaryBubble);
         }
-        // Mirror the engine's applyCompaction() → legacy micro-compaction
-        // cutoff reset (→ 0): the message list is rebuilt, so the old
-        // index-based cutoff no longer points at the same messages. (In full
-        // mode the blanking pass does not run, so this is a no-op there.)
         microCutoff = 0;
-        // `buildContextCompactionShape` also derives the post-compaction token
-        // count for legacy records that omit `tokensAfter`.
         contextTokens = shape.tokensAfter;
         break;
       }
       case 'usage.record': {
-        // byScope keeps per-scope cumulative spend. This is NOT the live context-window
-        // fill — that is `contextTokens` (latest step.end.usage). The web TokenBar shows
-        // contextTokens; byScope/byModel are for the cumulative breakdown only.
-        const scope = (rec.usageScope ?? 'session') as 'session' | 'turn';
+        const scope = rec.usageScope ?? 'session';
         addUsage(usage.byScope[scope], rec.usage);
         usage.byModel[rec.model] ??= { ...ZERO };
         addUsage(usage.byModel[rec.model]!, rec.usage);
         break;
       }
       case 'config.update': {
-        // v2 dropped top-level `cwd` (it lives in `environmentDisclosure`)
-        // and persists `thinkingLevel` on some records instead of
-        // `thinkingEffort`; accept both spellings.
         if (rec.environmentDisclosure !== undefined)
           config.cwd = rec.environmentDisclosure.cwd;
         if (rec.modelAlias !== undefined) config.modelAlias = rec.modelAlias;
@@ -416,8 +357,6 @@ export function projectContext(
         break;
       }
       case 'profile.bind': {
-        // v2 writes most initial config state on `profile.bind` rather than
-        // `config.update` (which now carries only later updates).
         if (rec.environmentDisclosure !== undefined)
           config.cwd = rec.environmentDisclosure.cwd;
         if (rec.modelAlias !== undefined) config.modelAlias = rec.modelAlias;
@@ -435,53 +374,37 @@ export function projectContext(
       case 'plan_mode.exit':
         planActive = false; planId = undefined; break;
       case 'context.undo': {
-        // Mirror the engine's `undo`: locate the requested user anchor while
-        // skipping injections, stop at a compaction summary, include an
-        // immediately preceding prompt-owned injection in the cut, then remove
-        // the entire suffix from that cut. The UI adds a marker afterwards.
-        //
-        // `computeUndoCut` is the engine's single source of truth for that
-        // skip/stop walk; only the visible removal is gated on `'model'` mode.
-        const cut = computeUndoCut(
-          modelMessages.map((message) => message.message),
+        // Mirror the engine's turn-based undo: locate the requested turn start,
+        // include an immediately preceding prompt-owned injection in the cut,
+        // then remove projected messages from that Wire line onward. The UI adds
+        // a marker afterwards. Only visible removal is gated on 'model' mode.
+        const result = cutTurnUndo(
+          entries.slice(0, entryIndex).map((candidate) => ({
+            record: candidate.data as WireRecord,
+            line: candidate.lineNo,
+          })),
+          new Set(),
           rec.count,
         );
-        const applied = isFullyUndoable(cut, rec.count);
-        const removedMessageCount = applied ? modelMessages.length - cut.cutIndex : 0;
+        const applied = result.cut !== undefined;
+        const removedMessageCount = applied
+          ? modelMessages.filter((message) => message.lineNo > result.cut!.line).length
+          : 0;
         if (applied) {
-          const firstRemoved = modelMessages[cut.cutIndex];
-          modelMessages = modelMessages.slice(0, cut.cutIndex);
+          const cutLine = result.cut!.line;
+          modelMessages = modelMessages.filter((message) => message.lineNo <= cutLine);
           resetFold();
           if (mode === 'model') {
-            const displayCutoff = firstRemoved === undefined ? -1 : messages.indexOf(firstRemoved);
-            messages = displayCutoff === -1 ? [...modelMessages] : messages.slice(0, displayCutoff);
+            messages = messages.filter((message) => message.lineNo <= cutLine);
           }
         }
         if (mode === 'model') {
-          // Mirror the engine's undo() → legacy micro-compaction cutoff reset
-          // (to the post-undo history length):
-          // clamp the cutoff to the post-undo HISTORY-entry count so a later append
-          // does not get blanked by a now-too-large stale cutoff. Count only history
-          // entries (`isHistoryEntry`) — `messages.length` would include any surviving
-          // synthetic undo/clear marker, which the engine's `_history.length` does
-          // NOT, so an array-length clamp could be too high by the marker count.
-          // (Clamp before pushing the undo marker, which is a non-tool pseudo-message
-          // and unaffected by blanking regardless.) With no markers, historyCount ===
-          // messages.length, so this is a no-op then.
           microCutoff = Math.min(microCutoff, modelMessages.length);
         }
-        // In 'full' mode: do NOT remove the visible messages; only push the undo
-        // marker. `modelMessages` still advances exactly like engine state so a
-        // later undo/compaction is computed from the right live history.
         messages.push({
           lineNo: entry.lineNo,
           time: rec.time,
           source: 'undo',
-          // Synthetic message: never rendered. The web dispatches on
-          // `source === 'undo'`; this only satisfies ProjectedMessage.
-          // `role: 'assistant'` is deliberate so this marker can never match the
-          // `role: 'tool'` micro-compaction blanking gate — keep it non-tool if
-          // you ever change the placeholder.
           message: { role: 'assistant', content: [], toolCalls: [] } as ContextMessage,
           toolStepUuids: [],
           undo: { count: rec.count, removedMessageCount },
@@ -489,9 +412,6 @@ export function projectContext(
         break;
       }
       case 'micro_compaction.apply':
-        // Track the latest cutoff; the actual content blanking is applied
-        // after the loop (mirrors the engine's legacy MicroCompaction.compact,
-        // which runs over the full history at projection time).
         microCutoff = rec.cutoff;
         break;
       case 'goal.create':
@@ -532,16 +452,8 @@ export function projectContext(
       case 'token_counting.truncated':
       case 'token_counting.rebased':
       case 'token_counting.turn_recorded':
-        // v2's replacement for `context.update_token_count`: every
-        // token_counting record carries the agent's current context-window
-        // fill (`tokens`) — the tokenCounting model sets its running count
-        // from each of them, and so do we.
         contextTokens = rec.tokens;
         break;
-      // Kinds that don't affect the projected timeline / derived state,
-      // including the observability records (request trace — `llm.*`,
-      // `mcp.tools_discovered`) and v2's lifecycle/task bookkeeping, which
-      // are never part of context state:
       case 'metadata':
       case 'forked':
       case 'changeNotifier.snapshot':
@@ -574,6 +486,7 @@ export function projectContext(
       case 'staleGuard.recorded':
       case 'staleGuard.cleared':
       case 'interruptionReminder.recorded':
+      case 'interruptionReminder.requested':
       case 'permission.record_approval_result':
       case 'full_compaction.begin':
       case 'full_compaction.cancel':
@@ -601,16 +514,6 @@ export function projectContext(
     }
   }
 
-  // Micro-compaction blanking (mirrors the engine's legacy
-  // MicroCompaction.compact): blank any message whose HISTORY index < cutoff
-  // that is a `role: 'tool'` result with a defined toolCallId and content
-  // large enough (≥ the min-content gate), replacing its content with the
-  // truncation marker. The cutoff is an engine `_history` index, which never
-  // includes our synthetic 'undo'/'clear' markers, so we count only history
-  // entries (`isHistoryEntry`)
-  // — array indices would be offset by any preceding marker. This rewrite is the
-  // model's-eye view, so it runs ONLY in 'model' mode — in 'full' mode the
-  // original tool results are shown un-blanked.
   if (mode === 'model' && microCutoff > 0) {
     let historyIndex = 0;
     for (const pm of messages) {
@@ -650,14 +553,6 @@ function addUsage(into: TokenUsage, src: TokenUsage): void {
 const MICRO_TRUNCATED_MARKER = '[Old tool result content cleared]';
 const MICRO_MIN_CONTENT_TOKENS = 100;
 
-/** Replicates the engine's per-char token weighting exactly, over the same
- *  `text` + `think` parts its gate counts. The engine
- *  (`packages/agent-core-v2/src/llm-adapter/contract/tokens.ts`) sums per-part
- *  estimates, each
- *  `estimateTokens(s) = Math.ceil(asciiCount / 4) + nonAsciiCount` (ASCII ~4
- *  chars/token, every non-ASCII/CJK code point a full token); other part types
- *  contribute 0. Matching it ensures Chinese-heavy tool results blank at the
- *  same gate as the agent. */
 function estimateTokens(text: string): number {
   let asciiCount = 0;
   let nonAsciiCount = 0;
@@ -680,11 +575,6 @@ function estimateContentTokens(content: readonly ContentPart[]): number {
   return total;
 }
 
-/** True for messages that correspond to a real `_history` entry —
- *  i.e. `append_message` and `compaction_summary` (the summary IS in `_history`).
- *  The synthetic UI-only markers (`undo` / `clear`) are NOT in `_history`, so
- *  index-based operations that mirror the engine (compaction slice, micro-
- *  compaction cutoff) must skip them to stay aligned with engine indices. */
 function isHistoryEntry(pm: ProjectedMessage): boolean {
   return pm.source !== 'undo' && pm.source !== 'clear';
 }
@@ -702,17 +592,12 @@ function modelFacingMessage(message: ContextMessage): ContextMessage {
   };
 }
 
-/** v1 wires tag background-task prompts `origin.kind === 'background_task'`;
- *  v2 renamed the kind to 'task' (same status literals). Normalize on ingest
- *  so the engine's undo helper and the web see one vocabulary. */
 function normalizeLegacyOrigin(message: ContextMessage): ContextMessage {
   const origin = message.origin as { readonly kind: string } | undefined;
   if (origin?.kind !== 'background_task') return message;
   return { ...message, origin: { ...origin, kind: 'task' } as ContextMessage['origin'] };
 }
 
-/** Text rendering of a ContextMessage's content parts, used to surface the
- *  legacy `context.apply_compaction` variant whose summary is a message. */
 function contextMessageText(message: ContextMessage): string {
   return message.content
     .filter((part) => part.type === 'text')

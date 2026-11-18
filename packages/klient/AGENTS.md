@@ -68,11 +68,6 @@ adapts the engine's `IFileService` streams in both directions.
   cross-workspace conflicts.
 - `pnpm --filter @moonshot-ai/klient typecheck` / `pnpm smoke` (in-process
   smoke over the memory transport; see `examples/smoke.ts`).
-- `pnpm --filter @moonshot-ai/klient smoke:boundary` — core requester boundary
-  probe: direct-generates every model configured in the real `~/.kimi-code/config.toml`
-  through the in-process engine, then drives deterministic failure modes
-  against a local stub to show which errors the ChatProvider layer wraps and
-  which the requester owns (see `examples/model-requester-boundary.ts`).
 - `pnpm --filter @moonshot-ai/klient smoke:select-tools` — select_tools
   (progressive tool disclosure) probe for kimi-type providers: stub-verifies
   the kimi-only wire encoding of dynamic tool declarations, then runs a live

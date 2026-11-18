@@ -725,6 +725,7 @@ export class AuthSummaryService implements IAuthSummaryService {
         providerName,
       });
       if (auth.apiKey !== undefined) return;
+      if (auth.aws !== undefined) return;
       if (auth.apiKeyEnv !== undefined) {
         if (nonEmpty(process.env[auth.apiKeyEnv]) !== undefined) return;
         throw new AuthCredentialEnvMissingError(providerName, auth.apiKeyEnv);

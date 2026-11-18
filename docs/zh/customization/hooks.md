@@ -17,7 +17,7 @@ Hooks（钩子）是一种自动触发机制：你预先告诉 Kimi Code CLI"每
 - **退出码**（exit code，程序结束时向操作系统报告的状态数字）：`0` 表示放行，`2` 表示阻断，其他数字默认放行
 - **标准输出**（stdout，脚本打印到终端的内容）：可以附带说明文字
 
-即使脚本报错或超时，CLI 也**不会因此中断你的工作**。这种"出错就放行"的设计称为 fail-open（失败开放），避免 hook 异常阻塞主流程。
+即使脚本报错或超时，CLI 也**不会因此中断你的工作**。这种 "出错就放行" 的设计称为 fail-open（失败开放），避免 hook 异常阻塞主流程。
 
 ::: warning 注意
 正因为 fail-open，Hooks 适合做提醒和轻量拦截，但**不应作为唯一的安全防线**。对真正高风险的操作，仍需依赖权限审批和人工确认。
@@ -114,7 +114,7 @@ Hook 命令始终在运行 Kimi Code 的机器上执行，工作目录是当前�
 | `UserPromptSubmit` | 用户提交的文本内容 | ✓ | 用户发送消息时触发；返回文本会附加到上下文，阻断则本轮不调用模型 |
 | `UserPromptQueued` | 排队消息的文本内容 | — | 上一回合仍在运行、新消息进入队列时触发；payload 含 `prompt_id`、`prompt`、`queue_length` |
 | `PreToolUse` | 工具名 | ✓ | 工具调用前、权限检查前触发；阻断后工具不会执行 |
-| `Stop` | 空字符串 | ✓ | 模型准备结束本轮时触发；阻断后可追加一条消息让模型继续 |
+| `Stop` | 空字符串 | ✓ | 回合完成后触发；payload 含 `turn_id`、`step`、`first_step_of_turn`、`finish_reason` 和 `usage`（最后一个 step 的 token 用量）；阻断后追加一条消息并开启新的续跑回合 |
 | `TurnStarted` | 回合来源类型（如 `user`、`task`、`system_trigger`） | — | 新回合开始时触发；payload 含 `turn_id`、`origin_kind`、`origin_name`、`prompt` |
 | `PostToolUse` | 工具名 | — | 工具成功执行后触发 |
 | `PostToolUseFailure` | 工具名 | — | 工具失败或被阻断后触发 |

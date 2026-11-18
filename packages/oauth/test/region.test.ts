@@ -104,8 +104,6 @@ describe('resolveKimiRegion', () => {
   });
 
   it('treats an unknown env host as a custom environment and falls back to cn', async () => {
-    // ...even when the persisted login or marker says otherwise: the custom
-    // env overrides every endpoint anyway.
     expect(
       resolveKimiRegion({
         env: { KIMI_CODE_OAUTH_HOST: 'https://auth.internal.example.com' },

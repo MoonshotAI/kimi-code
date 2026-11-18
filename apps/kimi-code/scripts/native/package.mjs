@@ -13,7 +13,6 @@ const execName = executableName();
 const sourceBinary = nativeBinPath(target);
 const artifactsDir = nativeArtifactsDir();
 
-// Flat-name archive for GH Release (GitHub Release assets do not support subdirectories).
 const artifactName = `kimi-code-${target}.zip`;
 const artifactPath = resolve(artifactsDir, artifactName);
 const checksumPath = `${artifactPath}.sha256`;

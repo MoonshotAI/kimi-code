@@ -6,6 +6,8 @@ MCP 工具结果可以包含文本（`content`）和结构化数据（`structure
 
 Kimi Code CLI 会保留因格式或大小限制而无法直接交付的内嵌 MCP 附件。内嵌图片、音频和视频即使能够原样交付也会保存，因为后续供应商协议转换或历史精简可能省略它们。模型支持相应内容时，即使工作区文件系统不可用，也仍可读取会话附件。原件随会话保存在媒体存储中，不会被图片缓存淘汰。保存的原件（包括图片压缩前的原图）均提供绝对路径和稳定的 `kimi-file://` 引用。将引用作为 `path` 传给 `Read` 或 `ReadMediaFile`，即使工作区环境无法访问会话存储，也能直接从当前会话存储读取字节。分页续读会保留该引用，包括 fork 后的会话。对于 `Read` 无法打开的二进制格式，错误信息会在可用时提供服务端本地路径；外部转换工具必须能够访问该文件系统。CSV、HTML、JSON 和普通 SVG 等文本附件使用可读取的扩展名。
 
+供应商支持图片上传和文件引用时，MCP 工具新返回的图片首次上传后，后续模型请求可以复用这张图。
+
 附件路径和压缩说明共用工具输出预算。较长的清单会保存为文本文件，结果中保留简短指针，即使伴随的文本被截短，该指针仍然可见；Agent 可将清单的 `kimi-file://` 引用传给 `Read`，分页读取完整内容。取消工具调用会停止后续附件处理，并通知正在进行的写入操作。如果解码或保存失败，结果会明确说明原件未能保留，并保留其他可用输出。资源链接不会被自动下载。
 
 ## 接入方式
@@ -107,7 +109,7 @@ defaultCwd = "/srv/work"
 }
 ```
 
-`environment_id` 引用在 `config.toml` 的 `[environments]` 中声明的环境（见 [声明环境](../guides/remote-environment.md#声明环境)）。该字段默认为 `local`，且不跟随会话自身的环境绑定：绑定到 `dev-box` 的会话仍会在本地运行未设置 `environment_id` 的 stdio server。环境尚未连接时，会在 server 启动时按需建立连接。
+`environment_id` 引用在 `config.toml` 的 `[environments]` 中声明的环境（见 [声明 Docker 与自定义命令环境](../guides/remote-environment.md#声明-docker-与自定义命令环境)）。该字段默认为 `local`，且不跟随会话自身的环境绑定：绑定到 `dev-box` 的会话仍会在本地运行未设置 `environment_id` 的 stdio server。环境尚未连接时，会在 server 启动时按需建立连接。
 
 ### 远程 stdio server 的环境变量
 
@@ -157,7 +159,7 @@ defaultCwd = "/srv/work"
 
 MCP 工具按 `mcp__<server>__<tool>` 格式命名，例如 `mcp__github__create_issue`。权限规则中支持 `*` 和 `**` 通配，例如 `mcp__github__*` 命中该 server 下所有工具。MCP 工具参数不参与权限匹配。
 
-未命中权限规则的调用会触发审批请求；在审批弹窗中选择“Approve for this session”后，本次会话内的后续同类调用自动放行。
+未命中权限规则的调用会触发审批请求；在审批弹窗中选择 "Approve for this session" 后，本次会话内的后续同类调用自动放行。
 
 也可以在 `config.toml` 的 `[[permission.rules]]` 中预置永久规则：
 

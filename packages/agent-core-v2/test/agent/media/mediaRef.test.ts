@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import {
   AUDIO_MIME_BY_SUFFIX,
   IMAGE_MIME_BY_SUFFIX,

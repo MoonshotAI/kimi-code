@@ -1,4 +1,4 @@
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 
 import { createDecorator } from "#/_base/di/instantiation";
 

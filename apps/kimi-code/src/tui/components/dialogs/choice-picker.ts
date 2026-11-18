@@ -1,13 +1,3 @@
-/**
- * ChoicePicker — modal single-select list for slash commands that ask
- * the user to pick from a small set of preset values.
- *
- * Mirrors SessionPickerComponent's container-replacement pattern: host
- * calls `showChoicePicker(...)` which clears the editor container,
- * addChild(picker), setFocus(picker); the picker invokes `onSelect` or
- * `onCancel`, and the host tears it down.
- */
-
 import {
   matchesKey,
   Key,
@@ -18,6 +8,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
+import { DockSection, type DockLayout, type DockPart } from '#/tui/components/chrome/dock-section';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
@@ -28,16 +19,10 @@ import { SearchableList } from '#/tui/utils/searchable-list';
 import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
 export interface ChoiceOption {
-  /** Value passed to onSelect (e.g. the actual editor command string). */
   readonly value: string;
-  /** Display text shown in the list. */
   readonly label: string;
-  /** Optional semantic tone for labels that need stronger visual treatment. */
   readonly tone?: 'danger';
-  /** Optional explanatory text shown below the label. */
   readonly description?: string | undefined;
-  /** Color token applied to the description while this option is selected, drawing
-   *  attention to important details. Falls back to `textMuted` when unset or not selected. */
   readonly descriptionTone?: ColorToken;
 }
 
@@ -45,21 +30,15 @@ export interface ChoicePickerOptions {
   readonly title: string;
   readonly hint?: string;
   readonly formatHint?: (text: string) => string;
-  /** Plain text shown in `noticeTone`, or Markdown rendered with the Markdown theme. */
   readonly notice?: string | { readonly markdown: string };
-  /** Color tone for a plain-text notice. Defaults to 'success'. */
   readonly noticeTone?: 'success' | 'warning';
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   readonly initialValue?: string;
-  /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   readonly spaceSelect?: boolean;
-  /** Items per page. Lists longer than this paginate. */
   readonly pageSize?: number;
   readonly onSelect: (value: string) => void;
-  /** When provided, Alt+S invokes this with the selected value instead of
-   * onSelect — used to apply the choice to the current session only. */
   readonly onSessionOnlySelect?: (value: string) => void;
   readonly onCancel: () => void;
 }
@@ -127,7 +106,6 @@ export class ChoicePickerComponent implements Component, Focusable {
       if (chosen !== undefined) this.opts.onSessionOnlySelect(chosen.value);
       return;
     }
-    // Left/Right page through the list (this picker has no horizontal control).
     if (matchesKey(data, Key.left)) {
       this.list.pageUp();
       return;
@@ -136,7 +114,6 @@ export class ChoicePickerComponent implements Component, Focusable {
       this.list.pageDown();
       return;
     }
-    // Space confirmation is opt-out; searchable lists always route it to the query.
     const isSpace = matchesKey(data, Key.space) || printableChar(data) === ' ';
     if (
       matchesKey(data, Key.enter) ||
@@ -194,18 +171,23 @@ export class ChoicePickerComponent implements Component, Focusable {
     return changed;
   }
 
+  selectedValue(): string | undefined {
+    return this.list.selected()?.value;
+  }
+
   render(width: number): string[] {
+    return [...this.renderHead(width), ...this.renderFoot(width)];
+  }
+
+  renderHead(width: number, hintSuffix = ''): string[] {
     const searchable = this.opts.searchable === true;
     const view = this.list.view();
     const options = view.items;
 
-    // Header mirrors the model dialog (see model-selector.ts): border, title
-    // with a "(type to search)" suffix until you type, the hint, a blank, then
-    // the search line. Key vocabulary is lowercase to match every list dialog.
     const navParts = ['↑↓ navigate'];
     if (view.page.pageCount > 1) navParts.push('←→ page');
     navParts.push('Enter select', 'Esc cancel');
-    const hint = this.opts.hint ?? navParts.join(' · ');
+    const hint = (this.opts.hint ?? navParts.join(' · ')) + hintSuffix;
 
     const titleSuffix =
       searchable && view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
@@ -278,16 +260,139 @@ export class ChoicePickerComponent implements Component, Focusable {
     this.choiceRegions = choiceRegions;
 
     lines.push('');
-    if (view.page.pageCount > 1) {
-      lines.push(
-        currentTheme.fg('textMuted',
-          ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,
-        ),
-      );
+    return this.finishLines(lines, width);
+  }
+
+  renderFoot(width: number): string[] {
+    const { page } = this.list.view();
+    const lines: string[] = [];
+    if (page.pageCount > 1) {
+      lines.push(currentTheme.fg('textMuted', ` Page ${String(page.page + 1)}/${String(page.pageCount)}`));
     }
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
+    return this.finishLines(lines, width);
+  }
+
+  private finishLines(lines: readonly string[], width: number): string[] {
     const rendered = lines.map((line) => truncateToWidth(line, width));
     return this.focused ? rendered : rendered.map((line) => currentTheme.fade(line));
+  }
+}
+
+export interface ChoicePreview {
+  render(value: string, width: number): readonly string[];
+  invalidate(): void;
+  dispose(): void;
+}
+
+export interface PreviewChoicePickerOptions extends ChoicePickerOptions {
+  readonly preview: ChoicePreview;
+  readonly layout?: DockLayout;
+  readonly previewLabel?: string;
+  readonly onPreviewScroll?: (direction: -1 | 1) => void;
+}
+
+const PREVIEW_LABEL = [' Preview', ''] as const;
+
+export class PreviewChoicePickerComponent extends DockSection implements Focusable {
+  private readonly picker: ChoicePickerComponent;
+
+  constructor(private readonly opts: PreviewChoicePickerOptions) {
+    super(opts.layout);
+    this.picker = new ChoicePickerComponent(opts);
+  }
+
+  get focused(): boolean {
+    return this.picker.focused;
+  }
+
+  set focused(focused: boolean) {
+    this.picker.focused = focused;
+  }
+
+  handleInput(data: string): void {
+    const scrollPreview = this.opts.onPreviewScroll;
+    if (scrollPreview !== undefined) {
+      if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.left)) {
+        scrollPreview(-1);
+        return;
+      }
+      if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.right)) {
+        scrollPreview(1);
+        return;
+      }
+    }
+    if (this.layout !== undefined && (matchesKey(data, 'shift+up') || matchesKey(data, 'shift+down'))) {
+      this.scrollBody(matchesKey(data, 'shift+up') ? -1 : 1);
+      return;
+    }
+    this.showingNewChoiceFromTop(() => {
+      this.picker.handleInput(data);
+    });
+  }
+
+  override invalidate(): void {
+    super.invalidate();
+    this.opts.preview.invalidate();
+  }
+
+  dispose(): void {
+    this.opts.preview.dispose();
+  }
+
+  protected renderPart(part: DockPart, width: number): string[] {
+    switch (part) {
+      case 'head': {
+        const hints = [
+          this.bodyOverflows(width) ? 'shift+↑/↓ scroll' : undefined,
+          this.opts.onPreviewScroll === undefined ? undefined : '←→ page',
+        ].filter((part) => part !== undefined);
+        return [
+          ...this.picker.renderHead(width, hints.length > 0 ? ` · ${hints.join(' · ')}` : ''),
+          ...this.finishLines(
+            [this.opts.previewLabel ?? PREVIEW_LABEL[0], ''].map((line) =>
+              currentTheme.fg('textMuted', line),
+            ),
+            width,
+          ),
+        ];
+      }
+      case 'body':
+        return this.finishLines(this.previewLines(width), width);
+      case 'foot':
+        return this.picker.renderFoot(width);
+    }
+  }
+
+  protected override handlePartMouse(part: DockPart, event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type === 'wheel' && part === 'body') return undefined;
+    if (event.type === 'wheel' || part === 'head') {
+      return this.showingNewChoiceFromTop(() => this.picker.handleMouse(event));
+    }
+    if (this.focused) return undefined;
+    if (event.type === 'press') return { handled: true };
+    if (event.type === 'click') return { handled: true, focus: true };
+    return undefined;
+  }
+
+  private showingNewChoiceFromTop<T>(action: () => T): T {
+    const shown = this.picker.selectedValue();
+    const result = action();
+    if (this.picker.selectedValue() !== shown) this.scrollBodyToTop();
+    return result;
+  }
+
+  private previewLines(width: number): string[] {
+    const { preview, options } = this.opts;
+    const tallestRows = Math.max(0, ...options.map((option) => preview.render(option.value, width).length));
+    const value = this.picker.selectedValue();
+    const shown = value === undefined ? [] : preview.render(value, width);
+    return [...shown, ...Array.from({ length: tallestRows - shown.length }, () => ''), ''];
+  }
+
+  private finishLines(lines: readonly string[], width: number): string[] {
+    const finished = lines.map((line) => truncateToWidth(line, width));
+    return this.focused ? finished : finished.map((line) => currentTheme.fade(line));
   }
 }
 

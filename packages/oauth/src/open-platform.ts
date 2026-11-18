@@ -58,8 +58,6 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   const supportsToolUse = Object.hasOwn(item, 'supports_tool_use')
     ? Boolean(item['supports_tool_use'])
     : true;
-  // Effort levels come from the nested `think_efforts` object
-  // ({ support, valid_efforts, default_effort }) returned by /models.
   const thinkEfforts = parseThinkEfforts(item['think_efforts']);
   return {
     id: item['id'],
@@ -77,8 +75,6 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
 
 export function capabilitiesForModel(model: ManagedKimiCodeModelInfo): string[] | undefined {
   const caps = new Set<string>();
-  // supports_thinking_type is the full three-state declaration and wins over
-  // the legacy supports_reasoning boolean; absent (older servers) falls back.
   switch (model.supportsThinkingType) {
     case 'only':
       caps.add('thinking');
@@ -160,20 +156,13 @@ export function applyOpenPlatformConfig(
     readonly models: readonly ManagedKimiCodeModelInfo[];
     readonly selectedModel: ManagedKimiCodeModelInfo;
     readonly thinking: boolean;
-    /** Concrete thinking effort to persist (e.g. 'low'/'high'/'max'). Omit
-     * for boolean models, where thinking is simply enabled with no effort. */
     readonly effort?: string;
-    /** The credential to persist: an inline key, or `apiKeyEnv` to keep the
-     * env declaration instead of leaking the resolved secret into config.toml. */
     readonly credential: { readonly apiKey: string } | { readonly apiKeyEnv: string };
   },
 ): ApplyOpenPlatformResult {
   const providerKey = options.platform.id;
   const modelKey = `${providerKey}/${options.selectedModel.id}`;
 
-  // Merge onto the existing record so hand-written fields (customHeaders, the
-  // env sub-table, …) survive a refresh; credential fields always get replace
-  // semantics — never a merge that could resurrect a conflicting second source.
   const existing = config.providers[providerKey];
   const {
     apiKey: _droppedKey,
@@ -190,10 +179,6 @@ export function applyOpenPlatformConfig(
   };
 
   const existingModels = config.models ?? {};
-  // Selectively merge upstream models into the existing config so any fields
-  // the user added by hand (or that upstream does not declare) survive a
-  // refresh. Models that upstream no longer lists are removed; the rest are
-  // merged field-by-field.
   const upstreamKeys = new Set(options.models.map((m) => `${providerKey}/${m.id}`));
   for (const [key, model] of Object.entries(existingModels)) {
     if (isRecord(model) && model['provider'] === providerKey && !upstreamKeys.has(key)) {

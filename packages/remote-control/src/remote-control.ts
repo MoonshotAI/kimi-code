@@ -555,8 +555,10 @@ class RemoteControlClient {
     }
 
     const managementEnd = waitForSocketEnd(management);
+    const earlyHttpFrames: [RawData, boolean][] = [];
     const http = await this.connectRelay(
       `/v1/remote/http?device_id=${encodeURIComponent(this.deviceId)}&capabilities=${HTTP_TUNNEL_CAPABILITIES}`,
+      earlyHttpFrames,
     );
     this.http = http;
     const tunnel = new HttpTunnel(
@@ -574,12 +576,14 @@ class RemoteControlClient {
       this.httpTunnelLimits,
     );
     this.httpTunnel = tunnel;
-    this.watchSocket(http, 'http');
     if (management.readyState !== WebSocket.OPEN) {
       throw new Error('management connection closed');
     }
     management.on('message', (data) => this.handleManagementMessage(data));
+    http.removeAllListeners('message');
+    for (const [data] of earlyHttpFrames) tunnel.handleMessage(data);
     http.on('message', (data) => tunnel.handleMessage(data));
+    this.watchSocket(http, 'http');
     this.reconnectAttempt = 0;
     this.relayOnline = true;
     this.onStatus('relay_connected');
@@ -595,12 +599,12 @@ class RemoteControlClient {
     if (!this.stopped) throw new Error('relay connection closed');
   }
 
-  private connectRelay(path: string): Promise<WebSocket> {
+  private connectRelay(path: string, earlyFrames?: [RawData, boolean][]): Promise<WebSocket> {
     return connectWebSocket(
       relayWebSocketUrl(this.relayOrigin, path),
       this.refreshToken,
       undefined,
-      undefined,
+      earlyFrames,
       this.pendingSockets,
       () => this.stopped,
     );

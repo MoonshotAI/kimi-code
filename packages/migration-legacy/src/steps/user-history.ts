@@ -44,14 +44,10 @@ export async function migrateUserHistoryStep(
       skippedExisting++;
       continue;
     }
-    // Create the target dir only once there is a file to put in it — touching
-    // it earlier aborts the whole migration if the path is blocked.
     if (!targetDirReady) {
       await mkdir(tgtDir, { recursive: true, mode: 0o700 });
       targetDirReady = true;
     }
-    // Copy atomically: a crash mid-copy leaves only the temp file, never a
-    // truncated final file that the next run would skip as complete.
     const tmpPath = `${tgtPath}.${process.pid}.tmp`;
     await copyFile(srcPath, tmpPath);
     await rename(tmpPath, tgtPath);

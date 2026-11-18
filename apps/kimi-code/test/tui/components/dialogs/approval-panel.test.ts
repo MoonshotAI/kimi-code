@@ -17,7 +17,6 @@ function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 
-/** The host focuses a panel when it mounts one in place of the editor. */
 function mount(panel: ApprovalPanelComponent): ApprovalPanelComponent {
   panel.focused = true;
   return panel;
@@ -93,7 +92,6 @@ describe('ApprovalPanelComponent', () => {
     const out = strip(mount(new ApprovalPanelComponent(pending, () => {})).render(80).join('\n'));
     expect(out).toContain('1. Switch to Never Ask and start');
     expect(out).toContain('Tools are approved automatically, and questions are skipped.');
-    // A choice without a description stays label-only — no stray blank helper line.
     expect(out).toContain('2. Do not start');
   });
 
@@ -318,12 +316,6 @@ describe('ApprovalPanelComponent', () => {
     expect(out).not.toContain('Investigate');
   });
 
-  // Inline expand-in-place used to inflate the panel past the viewport on
-  // any non-trivial Edit, which then collided with pi-tui's inline scroll
-  // and made the terminal flicker / refuse to scroll. The panel now always
-  // renders the diff in its compact cluster form; ctrl+e instead asks the
-  // host to open a dedicated full-screen preview that can manage its own
-  // scrolling.
   it('renders an Edit diff in compact form and asks the host to open a preview on ctrl+e', () => {
     const responses: Array<{ response: string }> = [];
     const oldLines: string[] = [];
@@ -362,16 +354,14 @@ describe('ApprovalPanelComponent', () => {
     expect(before).toContain('+30');
     expect(before).toContain('-30');
     expect(before).toContain('ctrl+e preview');
-    expect(before).not.toContain('new30'); // compact view stays compact
+    expect(before).not.toContain('new30');
 
-    dialog.handleInput('\u0005'); // Ctrl+E
+    dialog.handleInput('\u0005');
 
-    // The panel itself does not expand; it delegates to the host.
     const after = strip(dialog.render(120).join('\n'));
     expect(after).not.toContain('new30');
     expect(after).toContain('ctrl+e preview');
     expect(previewCalls).toEqual([diffBlock]);
-    // The unrelated forward-only callback must not fire for ctrl+e.
     expect(toolOutputToggles).toBe(0);
     expect(responses).toEqual([]);
   });
@@ -398,7 +388,7 @@ describe('ApprovalPanelComponent', () => {
     let globalToggleCalls = 0;
     const dialog = mount(new ApprovalPanelComponent(pending, () => {}, () => globalToggleCalls++));
 
-    dialog.handleInput('\u000F'); // Ctrl+O
+    dialog.handleInput('\u000F');
 
     const after = strip(dialog.render(120).join('\n'));
     expect(globalToggleCalls).toBe(1);
@@ -426,7 +416,7 @@ describe('ApprovalPanelComponent', () => {
       (block) => previewCalls.push(block),
     ));
 
-    dialog.handleInput('\u0005'); // Ctrl+E
+    dialog.handleInput('\u0005');
     expect(previewCalls).toEqual([]);
   });
 
@@ -459,7 +449,6 @@ describe('ApprovalPanelComponent', () => {
     ));
 
     const collapsed = strip(dialog.render(120).join('\n'));
-    // No diff markers, no +N -M header.
     expect(collapsed).not.toMatch(/^\s*\+\d+/m);
     expect(collapsed).not.toMatch(/^\s*-\d+/m);
     expect(collapsed).toContain('src/new.ts');
@@ -469,9 +458,8 @@ describe('ApprovalPanelComponent', () => {
     expect(collapsed).toContain('20 more lines hidden (ctrl+e to preview)');
     expect(collapsed).toContain('ctrl+e preview');
 
-    dialog.handleInput('\u0005'); // Ctrl+E hands off to the host preview.
+    dialog.handleInput('\u0005');
     const after = strip(dialog.render(120).join('\n'));
-    // The panel itself stays compact; the full content is opened elsewhere.
     expect(after).not.toContain('const x30 = 30;');
     expect(previewCalls).toEqual([contentBlock]);
     expect(responses).toEqual([]);
@@ -501,7 +489,7 @@ describe('ApprovalPanelComponent', () => {
       const collapsed = strip(dialog.render(120).join('\n'));
       expect(collapsed).toContain('hello');
 
-      dialog.handleInput('\u0005'); // Ctrl+E
+      dialog.handleInput('\u0005');
       expect(previewCalls).toHaveLength(1);
       expect(stderr.text()).not.toContain('Could not find the language');
     } finally {

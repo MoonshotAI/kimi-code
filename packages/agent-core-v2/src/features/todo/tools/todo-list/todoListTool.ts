@@ -1,6 +1,6 @@
 import type { ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { TodoListWrittenEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
@@ -31,7 +31,7 @@ export class TodoListTool implements ITodoListTool {
 
   constructor(
     @IAgentTodoService private readonly todo: IAgentTodoService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
@@ -61,7 +61,7 @@ export class TodoListTool implements ITodoListTool {
         await this.todo.replace(next);
         const stored = this.todo.get();
         const progress = todoProgress(stored);
-        const stats = todoListWriteStatsBefore(this.context.get(), toolCallId);
+        const stats = todoListWriteStatsBefore(this.context.history(), toolCallId);
         const properties: TodoListWrittenEvent = {
           turn_id: turnId,
           item_count: progress.total,

@@ -1,14 +1,4 @@
-/**
- * Reverse RPC view-layer types.
- *
- * These types are the contract between the UI layer and reverse RPC
- * controllers, not SDK event payloads. Approval and question adapters convert
- * core payloads into these shapes for panel components.
- */
-
 import type { QuestionAnswerMethod } from '@moonshot-ai/kimi-code-sdk';
-
-// ── Display blocks (approval panel) ──────────────────────────────────
 
 export interface BriefDisplayBlock {
   type: 'brief';
@@ -41,7 +31,6 @@ export interface FileOpDisplayBlock {
   detail?: string | undefined;
 }
 
-/** Full file content preview for Write — a code block, not a diff. */
 export interface FileContentDisplayBlock {
   type: 'file_content';
   path: string;
@@ -103,12 +92,8 @@ export interface ApprovalPanelChoice {
   response: 'approved' | 'approved_for_session' | 'rejected' | 'cancelled';
   selected_label?: string | undefined;
   requires_feedback?: boolean | undefined;
-  // Optional helper text shown dim beneath the label. Omitted/empty renders
-  // exactly as a plain label-only choice.
   description?: string | undefined;
 }
-
-// ── Approval / Question view payloads ────────────────────────────────
 
 export interface ApprovalPanelData {
   id: string;
@@ -118,11 +103,6 @@ export interface ApprovalPanelData {
   description: string;
   display: DisplayBlock[];
   choices: ApprovalPanelChoice[];
-  /**
-   * Environment identifier of a remote-bound session (e.g. `ssh:dev-box`),
-   * shown next to the command/path so approvals name the host they run on.
-   * Undefined for local sessions — the panel renders exactly as before.
-   */
   environment?: string;
 }
 
@@ -148,8 +128,6 @@ export interface QuestionPanelResponse {
   readonly answers: string[];
   readonly method?: QuestionSubmissionMethod | undefined;
 }
-
-// ── Pending state wrappers ───────────────────────────────────────────
 
 export interface PendingApproval {
   data: ApprovalPanelData;

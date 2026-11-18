@@ -26,7 +26,7 @@ export interface IAgentPermissionRulesService {
 
   readonly rules: readonly PermissionRule[];
   readonly sessionApprovalRulePatterns: readonly string[];
-  addRules(rules: readonly PermissionRule[]): void;
+  addRules(rules: readonly PermissionRule[]): Promise<void>;
   recordApprovalResult(record: PermissionApprovalResultRecord): void;
 }
 

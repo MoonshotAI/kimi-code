@@ -1,15 +1,7 @@
-// test/performance.test.ts
-//
-// Performance smoke tests — order-of-magnitude guards only (no absolute
-// timing assertions beyond the documented abort path), meant to catch
-// accidental quadratic complexity in future changes.
-
 import { describe, expect, it } from 'vitest';
 
 import { parse } from '#/parse';
 
-/** ~100 KB of realistic script-shaped text (functions, loops, redirects,
- *  expansions, heredocs — not a pathological single construct). */
 function realisticScript(): string {
   const block = `deploy() {
   local version="$1"
@@ -48,13 +40,10 @@ describe('performance smoke', () => {
     const result = parse(source);
     const elapsed = performance.now() - start;
     if (!result.ok) {
-      // An abort is acceptable only when it is prompt (< 100 ms).
       expect(result).toEqual({ ok: false, reason: 'aborted' });
       expect(elapsed).toBeLessThan(100);
       return;
     }
-    // Completed within the default 50 ms budget; re-parse unbounded and
-    // assert the order of magnitude (< 1 s for 100KB) as a quadratic guard.
     const restart = performance.now();
     const full = parse(source, { timeoutMs: Number.POSITIVE_INFINITY });
     const fullElapsed = performance.now() - restart;
@@ -74,7 +63,6 @@ describe('performance smoke', () => {
   });
 
   it('typical one-line commands parse in well under a millisecond', () => {
-    // Warm up.
     parse('git status && rm -rf /');
     const iterations = 200;
     const start = performance.now();

@@ -29,6 +29,7 @@ export const ProviderTypeSchema = z.enum([
   'kimi',
   'google-genai',
   'openai_responses',
+  'bedrock',
   'vertexai',
 ]);
 
@@ -49,6 +50,8 @@ export const ProviderConfigSchema = z.object({
   apiKey: z.string().optional(),
   apiKeyEnv: z.string().optional(),
   baseUrl: z.string().optional(),
+  searchUrl: z.string().optional(),
+  feedbackUrl: z.string().optional(),
   defaultModel: z.string().optional(),
   oauth: OAuthRefSchema.optional(),
   env: StringRecordSchema.optional(),
@@ -73,7 +76,7 @@ const ModelAliasBaseSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
   reasoningKey: z.string().optional(),
-  protocol: z.enum(['anthropic', 'openai_responses']).optional(),
+  protocol: z.enum(['anthropic', 'openai', 'openai_responses']).optional(),
   adaptiveThinking: z.boolean().optional(),
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),

@@ -1,15 +1,3 @@
-/**
- * DockSection — a panel made of a fixed head, a body and a fixed foot.
- *
- * Inline (regular mode, no `DockLayout`) the three parts simply stack and the
- * host's GutterContainer pads them. Docked (fullscreen) the section sits in
- * the layout tree itself: each part carries its own gutter, the body lives in
- * a ScrollView capped at `maxBodyRows` and scrolls with the wheel, and the
- * head and foot never shrink — so a long body cannot push the foot (options,
- * key hints) off the screen. A part that takes focus on a click hands it to
- * the whole section.
- */
-
 import {
   ScrollView,
   VStack,
@@ -29,18 +17,18 @@ export interface DockLayout {
 
 export type DockPart = 'head' | 'body' | 'foot';
 
-/**
- * Keeps the scrollbar column reserved but paints the bar only while the body
- * overflows, so a short body shows no track and a long one always shows where
- * it is.
- */
 class OverflowScrollView extends ScrollView {
   override get isScrollbarVisible(): boolean {
     return this.canScroll;
   }
 
+  override updateLayout(contentHeight: number, viewportHeight: number, requestRender: () => void): void {
+    const overflowed = this.canScroll;
+    super.updateLayout(contentHeight, viewportHeight, requestRender);
+    if (this.canScroll !== overflowed) requestRender();
+  }
+
   override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
-    // Consume the wheel here so the renderer's fallback cannot hand overscroll to the transcript.
     if (event.type !== 'wheel') return undefined;
     this.scrollBy(event.wheelDelta ?? 0);
     return { handled: true, target: mouseTarget(this, event) };
@@ -89,17 +77,11 @@ export abstract class DockSection extends VStack {
     this.addChild(padded(view('foot')), { shrink: 0 });
   }
 
-  /** Scroll a docked body by `lines`; false when it did not move (inline, or already at the edge). */
   scrollBody(lines: number): boolean {
     if (this.bodyScroll === undefined) return false;
     return this.bodyScroll.scrollBy(lines) !== lines;
   }
 
-  /**
-   * Whether a docked body is taller than its rows, judged from a head or foot
-   * render at `partWidth`: the body renders one column narrower (the
-   * scrollbar's), and the last layout covers a dock squeezed below the cap.
-   */
   protected bodyOverflows(partWidth: number): boolean {
     if (this.layout === undefined || this.bodyScroll === undefined) return false;
     return (

@@ -10,27 +10,13 @@ import { getUpdateRolloutLogFile } from '#/utils/paths';
 import { decideUpdate } from './select';
 import type { RolloutBatch, UpdateFeed, UpdateManifest, UpdatePlan } from './types';
 
-/**
- * Hard ceiling for any rollout delay. Combined with the uncovered-bucket
- * fallback below, it guarantees every device sees a release no later than
- * `publishedAt + 24h`, no matter what the published plan says.
- */
 export const MAX_ROLLOUT_DELAY_SECONDS = 86_400;
 
-/**
- * Deterministic 0-99 bucket for a device. The version is mixed into the hash
- * so each release reshuffles which devices land in the early batches.
- */
 export function rolloutBucket(deviceId: string, version: string): number {
   const digest = createHash('sha256').update(`${deviceId}:${version}`, 'utf-8').digest();
   return digest.readUInt32BE(0) % 100;
 }
 
-/**
- * Delay assigned to a bucket by the published plan. Batches claim bucket
- * ranges in array order; buckets left uncovered (percents summing under 100)
- * fall into the slowest cohort, and oversized delays are clamped to 24h.
- */
 export function rolloutDelayForBucket(rollout: readonly RolloutBatch[], bucket: number): number {
   let cumulative = 0;
   for (const batch of rollout) {
@@ -53,8 +39,6 @@ export function isRolloutEligible(
   now: Date,
 ): boolean {
   const publishedAt = Date.parse(manifest.publishedAt);
-  // Schema validation rejects unparseable timestamps before they get here;
-  // fail open defensively so a defect can never block updates indefinitely.
   if (!Number.isFinite(publishedAt)) return true;
   const delayMs = rolloutDelaySeconds(manifest, deviceId) * 1000;
   return now.getTime() >= publishedAt + delayMs;
@@ -121,12 +105,6 @@ export function decidePassiveUpdate(
 
 const ROLLOUT_LOG_MAX_BYTES = 256 * 1024;
 
-/**
- * Append one JSON line describing a passive update decision to
- * `<dataDir>/updates/rollout.log`. Best-effort diagnostics: any I/O failure
- * is swallowed — logging must never affect update prompting. The file is
- * reset once it grows past a small cap so it cannot grow unbounded.
- */
 export async function appendRolloutDecisionLog(
   entry: Record<string, unknown>,
   filePath: string = getUpdateRolloutLogFile(),
@@ -140,28 +118,13 @@ export async function appendRolloutDecisionLog(
       return;
     }
     await appendFile(filePath, line, 'utf-8');
-  } catch {
-    // Diagnostic logging must never affect the update flow.
-  }
+  } catch {}
 }
 
-/**
- * Stable per-installation id used for bucketing when telemetry has already
- * minted one. Missing ids stay ephemeral here so update preflight never
- * creates the telemetry device_id before telemetry can emit first_launch.
- */
 export function resolveUpdateDeviceId(): string {
   return readKimiDeviceId(resolveKimiHome()) ?? randomUUID();
 }
 
-/**
- * The experimental master switch opts a device out of staged rollouts: the
- * newest version is always visible to the passive update surfaces, exactly as
- * if every release were fully rolled out. Read directly from the env (same
- * truthy values as `KIMI_CODE_NO_AUTO_UPDATE`) — the update preflight runs
- * before the harness exists, so the core flag registry is not consulted.
- * `KIMI_CODE_NO_AUTO_UPDATE` still wins: disabling updates beats opting in.
- */
 export function isRolloutBypassedByExperimentalEnv(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {

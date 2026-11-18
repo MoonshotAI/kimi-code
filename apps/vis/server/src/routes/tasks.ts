@@ -10,18 +10,12 @@ import {
   taskOutputMetadata,
 } from '../lib/task-store';
 
-/** Default output-log window size: 256 KiB. Large enough to show a whole
- *  typical log in one fetch, bounded so a multi-MB log pages instead of
- *  loading wholesale. Overridable via `?limit=`. */
 const DEFAULT_OUTPUT_LIMIT = 256 * 1024;
 const MAX_OUTPUT_LIMIT = 4 * 1024 * 1024;
 
 export function tasksRoute(home: string = KIMI_CODE_HOME): Hono {
   const r = new Hono();
 
-  // List background tasks (process / agent / question) for a session. Current
-  // tasks live under each spawning agent's homedir; the main agent also falls
-  // back to the legacy session-root tasks directory.
   r.get('/:id/tasks', async (c) => {
     const id = c.req.param('id');
     const detail = await readSessionDetail(home, id);
@@ -42,13 +36,10 @@ export function tasksRoute(home: string = KIMI_CODE_HOME): Hono {
         });
       }
     }
-    // Newest first across all agents.
     entries.sort((a, b) => (b.task.startedAt ?? 0) - (a.task.startedAt ?? 0));
     return c.json({ sessionId: id, tasks: entries });
   });
 
-  // Read a byte-window of a single task's output.log. The task may belong to
-  // any agent, so locate the agent whose tasks/ directory holds it.
   r.get('/:id/tasks/:taskId/output', async (c) => {
     const id = c.req.param('id');
     const taskId = c.req.param('taskId');
@@ -64,9 +55,6 @@ export function tasksRoute(home: string = KIMI_CODE_HOME): Hono {
     if (!detail) {
       return c.json({ error: 'session not found', code: 'NOT_FOUND' }, 404);
     }
-    // Prefer the agent whose log exists, including an empty log. An explicit
-    // ?agent= short-circuits the scan. The main agent also reads the legacy
-    // session-root tasks directory as its fallback.
     const hinted = c.req.query('agent');
     const hintedAgent = detail.agents.find((agent) => agent.agentId === hinted);
     let owner = hintedAgent ?? detail.agents[0];

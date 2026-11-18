@@ -16,10 +16,6 @@ import {
 } from '../utils/capability-marketplace';
 import { isOfficialPluginInstall } from '../utils/plugin-source-label';
 
-/**
- * The slice of the SDK session the notifier reads. Structurally satisfied by
- * the full SDK `Session`, and easy to fake in tests.
- */
 export interface PluginUpdateNotifierSession {
   listMcpServers(): Promise<readonly { name: string }[]>;
   listPlugins(): Promise<readonly PluginSummary[]>;
@@ -29,43 +25,24 @@ export interface PluginUpdateNotifierDeps {
   readonly getSession: () => PluginUpdateNotifierSession | undefined;
   readonly workDir: string;
   readonly notify: (message: string) => void;
-  /** Overridable for tests; defaults to the shared marketplace loader. */
   readonly loadMarketplace?: () => Promise<PluginMarketplace>;
   readonly reloadPlugins?: () => Promise<unknown>;
   readonly refreshPluginCommands?: () => Promise<unknown>;
-  /** Overridable for tests; defaults to the updates dir under the data dir. */
   readonly stateFile?: string;
 }
 
 const MCP_TOOL_NAME_PREFIX = 'mcp__';
 const PLUGIN_MCP_TOOL_NAME_PREFIX = `${MCP_TOOL_NAME_PREFIX}plugin-`;
-// Plugin MCP servers run under the runtime name `plugin-<id>:<server>`
-// (pluginMcpRuntimeName in packages/agent-core-v2/src/app/plugin/manager.ts).
 const PLUGIN_MCP_RUNTIME_NAME = /^plugin-([a-z0-9][a-z0-9_-]{0,63}):/;
 
-/** Cheap name check for plugin-provided MCP tools (`mcp__plugin-…`). */
 export function isPluginMcpToolName(toolName: string): boolean {
   return toolName.startsWith(PLUGIN_MCP_TOOL_NAME_PREFIX);
 }
 
-/**
- * Mirror of sanitizeMcpNamePart in packages/agent-core-v2/src/mcpCore/tool-naming.ts.
- * MCP tool names on the wire carry the sanitized server name; the collapse
- * step guarantees the `__` separator never appears inside a name part.
- */
 function sanitizeMcpServerName(name: string): string {
   return name.replaceAll(/[^a-zA-Z0-9_-]/g, '_').replaceAll(/_+/g, '_');
 }
 
-/**
- * Find the plugin behind a qualified MCP tool name by longest-prefix match
- * against known server names. Prefix matching (rather than splitting on the
- * `__` separator) survives core's 64-char truncation, which can cut the
- * separator before appending the hash suffix; the boundary check keeps a
- * shorter server name from matching another server's name, and longest match
- * wins when one server name is a prefix of another. A name truncated inside
- * the server part itself cannot be attributed reliably and stays unresolved.
- */
 function matchPluginByToolName(
   toolName: string,
   serverPluginIds: Map<string, string>,
@@ -85,19 +62,6 @@ function matchPluginByToolName(
   return best;
 }
 
-/**
- * Shows a one-time "update detected" notice for outdated plugins. Callers
- * report completed plugin usage (a plugin MCP tool name, or the plugin id of
- * a `/<plugin>:<command>` turn — both reported once the turn's output has
- * ended); the notifier checks the marketplace and persists the last notified
- * version, so a plugin is re-notified only when the marketplace advertises a
- * newer version than the one already shown.
- *
- * Entry points are fire-and-forget in production (never reject — the notice
- * is a background nicety and any failure, e.g. an offline marketplace, is
- * swallowed) and return an awaitable promise so tests can settle the queue
- * deterministically.
- */
 export class PluginUpdateNotifier {
   private marketplacePromise: Promise<PluginMarketplace> | undefined;
   private mcpServerPluginIds: Map<string, string> | undefined;
@@ -107,8 +71,6 @@ export class PluginUpdateNotifier {
   constructor(private readonly deps: PluginUpdateNotifierDeps) {}
 
   handleMcpToolCompleted(toolName: string): Promise<void> {
-    // Cheap bail before touching the RPC layer — most tools are not MCP tools,
-    // let alone plugin ones.
     if (!isPluginMcpToolName(toolName)) return Promise.resolve();
     return this.resolvePluginId(toolName)
       .then((pluginId) => {
@@ -123,10 +85,6 @@ export class PluginUpdateNotifier {
   }
 
   private enqueue(pluginId: string): Promise<void> {
-    // Serialize the read-modify-write cycle on the notice state file: two
-    // concurrent checks (e.g. a turn that used two outdated plugins) would
-    // otherwise read the same snapshot and the last write would drop the
-    // other plugin's entry.
     this.queue = this.queue.then(() => this.checkAndNotify(pluginId)).catch(() => {});
     return this.queue;
   }
@@ -134,9 +92,6 @@ export class PluginUpdateNotifier {
   private async resolvePluginId(toolName: string): Promise<string | undefined> {
     const hit = matchPluginByToolName(toolName, await this.getMcpServerPluginIds());
     if (hit !== undefined) return hit;
-    // The map is memoized, but this notifier is reused across /reload, /new,
-    // and session switches, so plugins installed or enabled later in the same
-    // app run are missing from it. Refresh once on a miss before giving up.
     return matchPluginByToolName(toolName, await this.loadMcpServerPluginIds());
   }
 
@@ -148,8 +103,6 @@ export class PluginUpdateNotifier {
   private async loadMcpServerPluginIds(): Promise<Map<string, string>> {
     const map = new Map<string, string>();
     const session = this.deps.getSession();
-    // Without a session there is nothing to list; leave the cache unset so
-    // the next lookup retries instead of pinning an empty map.
     if (session === undefined) return map;
     const servers = await session.listMcpServers();
     for (const server of servers) {
@@ -169,9 +122,6 @@ export class PluginUpdateNotifier {
       const session = this.deps.getSession();
       if (session === undefined) return;
       const marketplace = await this.loadCatalog();
-      // Only the default official catalog can back an "Official Marketplace"
-      // notice — a custom catalog (KIMI_CODE_PLUGIN_MARKETPLACE_URL) may
-      // advertise anything under any id.
       if (marketplace.source !== kimiCodePluginMarketplaceUrl()) return;
       const entryId = marketplaceEntryIdForInstalledPlugin(pluginId, true);
       const entry = marketplace.plugins.find((plugin) => plugin.id === entryId);
@@ -202,7 +152,6 @@ export class PluginUpdateNotifier {
   }
 
   private loadCatalog(): Promise<PluginMarketplace> {
-    // Cached for the app run; a failed fetch is retried on the next invocation.
     this.marketplacePromise ??= this.loadMarketplace().catch((error: unknown) => {
       this.marketplacePromise = undefined;
       throw error;

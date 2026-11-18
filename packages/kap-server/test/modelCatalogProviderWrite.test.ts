@@ -371,6 +371,7 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
           max_context_size: 1047576,
           support_efforts: ['low', 'max'],
           adaptive_thinking: true,
+          protocol: 'openai_responses',
         },
       ],
     });
@@ -381,6 +382,7 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
       'my-openai/gpt-4.1': {
         support_efforts: ['low', 'max'],
         adaptive_thinking: true,
+        protocol: 'openai_responses',
       },
     });
   });
@@ -509,7 +511,13 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     await boot(KEEP_DEFAULT_TOML);
     const { status, body } = await putJson<{
       provider: Record<string, unknown>;
-    }>('/api/v1/providers/openai', REPLACE_BODY);
+    }>('/api/v1/providers/openai', {
+      ...REPLACE_BODY,
+      models: [
+        { ...REPLACE_BODY.models[0], protocol: 'openai' },
+        REPLACE_BODY.models[1],
+      ],
+    });
     expect(status).toBe(200);
     expect(body.code).toBe(0);
     expect(body.data.provider).toEqual({
@@ -539,6 +547,7 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
         model: 'gpt-4.1',
         max_context_size: 1047576,
         display_name: 'GPT-4.1',
+        protocol: 'openai',
       },
       'openai/gpt-4o-mini': {
         provider: 'openai',

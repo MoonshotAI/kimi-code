@@ -4,6 +4,7 @@ import type { SkillDefinition, SkippedSkill } from './types';
 
 export interface SkillContribution {
   readonly skills: readonly SkillDefinition[];
+  readonly variants?: readonly SkillDefinition[];
   readonly skipped?: readonly SkippedSkill[];
   readonly scannedRoots?: readonly string[];
 }

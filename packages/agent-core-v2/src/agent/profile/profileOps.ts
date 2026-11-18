@@ -1,25 +1,11 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import { nothing, original } from 'immer';
 import { z } from 'zod';
 
 import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { AgentEvent2 } from '#/app/event/event2';
-import type { ThinkingEffort } from '#human/llm-requester/thinking';
-import { defineState } from '#/state/state';
+import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
+import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
 
-import { ProfileError, ProfileErrors } from './profile';
-
-export interface ProfileModelState {
-  readonly modelAlias?: string;
-  readonly profileName?: string;
-  readonly thinkingLevel: string;
-  readonly systemPrompt: string;
-  readonly environmentDisclosure?: EnvironmentDisclosureSnapshot;
-  readonly renderGeneration: number;
-  readonly agentsMdPaths?: readonly string[];
-  readonly disallowedTools?: readonly string[];
-  readonly subagents?: readonly string[];
-}
+import { ProfileError, ProfileErrors, type ProfileBindingSnapshot } from './profile';
 
 const profileBindSchema = z.object({
   agentId: z.string(),
@@ -127,56 +113,78 @@ export class WarningIssued extends AgentEvent2<WarningIssuedPayload> {
 }
 export interface WarningIssued extends WarningIssuedPayload {}
 
-export const profileKey = defineState(
-  'profile',
-  (): ProfileModelState => ({
-    thinkingLevel: 'off',
-    systemPrompt: '',
-    renderGeneration: 0,
-  }),
-).replayable({ schema: z.custom<ProfileModelState>() })
-  .on(ProfileBind, (s, e) => ({
-    modelAlias: e.modelAlias ?? s.modelAlias,
-    profileName: e.profileName ?? s.profileName,
-    thinkingLevel: e.thinkingEffort,
-    systemPrompt: e.systemPrompt,
-    environmentDisclosure: e.environmentDisclosure,
-    renderGeneration: e.renderGeneration ?? s.renderGeneration + 1,
-    agentsMdPaths: e.agentsMdPaths ?? s.agentsMdPaths,
-    disallowedTools: e.disallowedTools,
-    subagents: e.subagents,
-  }))
-  .on(ConfigUpdate, (s, e) => {
-    if (e.modelAlias !== undefined && e.modelAlias !== s.modelAlias) {
-      s.modelAlias = e.modelAlias;
-    }
-    if (e.profileName !== undefined && e.profileName !== s.profileName) {
-      s.profileName = e.profileName;
-    }
-    const thinkingLevel = configUpdateThinkingLevel(e);
-    if (thinkingLevel !== undefined && thinkingLevel !== s.thinkingLevel) {
-      s.thinkingLevel = thinkingLevel;
-    }
-    if (
-      e.systemPrompt !== undefined &&
-      (e.systemPrompt !== s.systemPrompt ||
-        e.environmentDisclosure !== undefined ||
-        e.renderGeneration !== undefined)
-    ) {
-      s.systemPrompt = e.systemPrompt;
-      s.environmentDisclosure = e.environmentDisclosure;
-      s.renderGeneration = e.renderGeneration ?? s.renderGeneration + 1;
-    }
-    if (e.agentsMdPaths !== undefined && !stringArrayEqual(e.agentsMdPaths, s.agentsMdPaths)) {
-      s.agentsMdPaths = e.agentsMdPaths as string[];
-    }
-    if (
-      e.disallowedTools !== undefined &&
-      !stringArrayEqual(e.disallowedTools, s.disallowedTools)
-    ) {
-      s.disallowedTools = e.disallowedTools as string[];
-    }
-  });
+export const EMPTY_LOOP_PROFILE: ProfileBindingSnapshot = {
+  thinkingLevel: 'off',
+  systemPrompt: '',
+  renderGeneration: 0,
+};
+
+export interface ProfileUpdatePlan {
+  readonly config?: ConfigUpdatePayload;
+  readonly tools?: ToolsSetActiveTools | ToolsResetActiveTools;
+}
+
+export function reduceLoopProfileBind(
+  current: ProfileBindingSnapshot | undefined,
+  event: ProfileBind,
+): ProfileBindingSnapshot {
+  return {
+    modelAlias: event.modelAlias ?? current?.modelAlias,
+    profileName: event.profileName ?? current?.profileName,
+    thinkingLevel: event.thinkingEffort,
+    systemPrompt: event.systemPrompt,
+    environmentDisclosure: event.environmentDisclosure,
+    renderGeneration: event.renderGeneration ?? (current?.renderGeneration ?? 0) + 1,
+    agentsMdPaths: event.agentsMdPaths ?? current?.agentsMdPaths,
+    activeToolNames: event.activeToolNames,
+    disallowedTools: event.disallowedTools,
+    subagents: event.subagents,
+  };
+}
+
+export function reduceLoopConfigUpdate(
+  current: ProfileBindingSnapshot,
+  event: ConfigUpdatePayload,
+): ProfileBindingSnapshot {
+  let next: { -readonly [K in keyof ProfileBindingSnapshot]: ProfileBindingSnapshot[K] } | undefined;
+  const update = (): { -readonly [K in keyof ProfileBindingSnapshot]: ProfileBindingSnapshot[K] } =>
+    next ??= { ...current };
+  if (event.modelAlias !== undefined && event.modelAlias !== current.modelAlias) {
+    update().modelAlias = event.modelAlias;
+  }
+  if (event.profileName !== undefined && event.profileName !== current.profileName) {
+    update().profileName = event.profileName;
+  }
+  const thinkingLevel = configUpdateThinkingLevel(event);
+  if (thinkingLevel !== undefined && thinkingLevel !== current.thinkingLevel) {
+    update().thinkingLevel = thinkingLevel;
+  }
+  if (
+    event.systemPrompt !== undefined &&
+    (event.systemPrompt !== current.systemPrompt ||
+      event.environmentDisclosure !== undefined ||
+      event.renderGeneration !== undefined)
+  ) {
+    next = update();
+    next.systemPrompt = event.systemPrompt;
+    next.environmentDisclosure = event.environmentDisclosure;
+    next.renderGeneration = event.renderGeneration ?? (current.renderGeneration ?? 0) + 1;
+  }
+  if (event.agentsMdPaths !== undefined && !stringArrayEqual(event.agentsMdPaths, current.agentsMdPaths)) {
+    update().agentsMdPaths = event.agentsMdPaths;
+  }
+  if (event.disallowedTools !== undefined && !stringArrayEqual(event.disallowedTools, current.disallowedTools)) {
+    update().disallowedTools = event.disallowedTools;
+  }
+  return next ?? current;
+}
+
+export function reduceLoopActiveTools(
+  current: ProfileBindingSnapshot,
+  names: readonly string[] | undefined,
+): ProfileBindingSnapshot {
+  return stringArrayEqual(names, current.activeToolNames) ? current : { ...current, activeToolNames: names };
+}
 
 function stringArrayEqual(
   a: readonly string[] | undefined,
@@ -208,20 +216,7 @@ function configUpdateThinkingLevel(e: ConfigUpdatePayload): ThinkingEffort | und
 
 export type ActiveToolsState = readonly string[] | undefined;
 
-export const profileActiveToolsKey = defineState(
-  'profile.activeTools',
-  (): ActiveToolsState => undefined,
-).replayable({ schema: z.custom<ActiveToolsState>() })
-  .on(ToolsSetActiveTools, (s, e) => {
-    if (s !== undefined && e.names === original(s)) return;
-    return e.names;
-  })
-  .on(ToolsResetActiveTools, (s) => {
-    if (s === undefined) return;
-    return nothing as unknown as ActiveToolsState;
-  })
-  .on(ProfileBind, (s, e) =>
-    e.activeToolNames === undefined && s !== undefined
-      ? (nothing as unknown as ActiveToolsState)
-      : e.activeToolNames,
-  );
+registerEvent2Class(ProfileBind);
+registerEvent2Class(ConfigUpdate);
+registerEvent2Class(ToolsSetActiveTools);
+registerEvent2Class(ToolsResetActiveTools);

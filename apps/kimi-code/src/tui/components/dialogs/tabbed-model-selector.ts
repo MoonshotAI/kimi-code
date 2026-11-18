@@ -1,18 +1,3 @@
-/**
- * TabbedModelSelectorComponent — a thin wrapper around ModelSelectorComponent
- * that splits the model list into per-provider tabs.
- *
- * Tabs are derived from the `models` passed at construction time:
- *   ['all', ...uniqueProviderIds]   (insertion order, deduplicated)
- *
- * Each tab owns its own inner ModelSelectorComponent built from the filtered
- * subset of models. ↑/↓/Enter/Esc/←/→ (thinking) and typing (filter) are
- * forwarded to the active inner selector; Tab / Shift-Tab cycle between tabs.
- *
- * The active tab is highlighted with a filled background (matching the
- * AskUserQuestion dialog's tab strip) — see .agents/skills/write-tui/DESIGN.md.
- */
-
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import {
   Container,
@@ -40,22 +25,12 @@ export interface TabbedModelSelectorOptions {
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinkingEffort: string;
-  /** Forwarded to each inner selector; overrides the default ' Select a model'
-   * title line. */
   readonly title?: string;
-  /** When set, the tab for this provider id is initially active instead of the
-   * tab derived from `currentValue`. */
   readonly initialTabId?: string;
-  /** When set, warning-colored lines are rendered directly below the key-hint
-   * line, wrapping as needed (e.g. the mid-conversation switch cost notice). */
   readonly warning?: string;
-  /** Forwarded to each inner selector; set to false to hide the Thinking
-   * footer and disable ←/→ effort switching. */
   readonly thinkingControl?: boolean;
   readonly effortDescriptions?: Readonly<Record<string, string>>;
   readonly onSelect: (selection: ModelSelection) => void;
-  /** Forwarded to each inner selector; when set, Alt+S applies the choice to
-   * the current session only without persisting it as the default. */
   readonly onSessionOnlySelect?: (selection: ModelSelection) => void;
   readonly onCancel: () => void;
 }
@@ -77,9 +52,6 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     this.opts = opts;
     this.tabs = buildTabs(opts);
 
-    // Default to the "All" tab. Only an explicit initialTabId (e.g. the
-    // provider just added via /provider) opens on a specific provider tab —
-    // the current model is still highlighted inside whichever tab is active.
     const initialTabIdx = opts.initialTabId
       ? this.tabs.findIndex((tab) => tab.id === opts.initialTabId)
       : -1;
@@ -110,10 +82,6 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     if (this.tabs.length <= 1) {
       return inner.map((line) => truncateToWidth(line, width));
     }
-    // Layout: divider, title, hint, optional warning, blank, tab strip, blank,
-    // then the model list. The header ends at its first blank line — keep that
-    // blank above the strip, and separate the tabs from the list with another
-    // blank.
     const stripLine = renderTabStrip({
       labels: this.tabs.map((tab) => tab.label),
       activeIndex: this.activeIndex,

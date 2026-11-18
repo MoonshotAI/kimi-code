@@ -139,6 +139,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
+      - run: node --test scripts/check-comments.test.mjs
       - run: pnpm run sherif
 
   typecheck:

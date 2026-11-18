@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ContentPart } from '#human/llm/message';
-import { mediaUrlOf } from '#human/llm/protocol/kit/media';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
+import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { type ServiceIdentifier } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';

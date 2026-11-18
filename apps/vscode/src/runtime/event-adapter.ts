@@ -33,7 +33,6 @@ export interface EventAdapterState {
 export interface AdaptedToolCallPartEvent {
   readonly type: 'ToolCallPart';
   readonly payload: {
-    /** Lets the Webview update the right call when tool arguments interleave. */
     readonly tool_call_id: string;
     readonly arguments_part?: string | null;
   };
@@ -45,7 +44,6 @@ export type AdaptedUIStreamEvent = UIStreamEvent | AdaptedToolCallPartEvent;
 type SdkTurnEndedEvent = Extract<Event, { type: 'turn.ended' }>;
 
 export interface TurnTerminalMetadata {
-  /** Stable within one adapter stream and suitable for terminal-event de-duplication. */
   readonly key: string;
   readonly sessionId: string;
   readonly agentId: string;
@@ -57,12 +55,10 @@ export interface TurnTerminalMetadata {
 export interface EventAdapterResult {
   readonly state: EventAdapterState;
   readonly event?: AdaptedUIStreamEvent;
-  /** SessionRuntime owns conversion of this metadata to exactly one complete/error event. */
   readonly terminal?: TurnTerminalMetadata;
 }
 
 export interface AdaptSdkEventOptions {
-  /** The SDK turn-start event intentionally does not repeat prompt content. */
   readonly pendingInput?: TurnBegin['user_input'];
   readonly mainAgentId?: string;
   readonly errorPhase?: ErrorPhase;
@@ -76,10 +72,6 @@ export function createEventAdapterState(): EventAdapterState {
   };
 }
 
-/**
- * Purely projects one public Node SDK event into the released Webview protocol.
- * The returned state must be passed into the next call; the input state is never mutated.
- */
 export function adaptSdkEvent(
   state: EventAdapterState,
   sdkEvent: Event,

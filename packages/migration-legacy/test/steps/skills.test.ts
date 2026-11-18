@@ -98,7 +98,6 @@ describe('migrateSkillsStep', () => {
   });
 
   it('does not create the target dir when there is nothing to copy', async () => {
-    // Empty source skills/ — no files to copy, target dir must stay untouched.
     await mkdir(join(src, 'skills'), { recursive: true });
     const r = await migrateSkillsStep({ sourceHome: src, targetHome: tgt });
     expect(r).toEqual({ copied: 0, skippedExisting: 0 });
@@ -106,9 +105,6 @@ describe('migrateSkillsStep', () => {
   });
 
   it('copies non-skill files at top level too (no filtering)', async () => {
-    // We intentionally do not filter — whatever the user kept under
-    // ~/.kimi/skills/ is preserved verbatim. The new scanner ignores anything
-    // that does not match the skill shape.
     await mkdir(join(src, 'skills'), { recursive: true });
     await writeFile(join(src, 'skills', 'NOTES.txt'), 'stray notes');
 

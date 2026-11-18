@@ -1,14 +1,3 @@
-/**
- * Detect image MIME type + dimensions from raw bytes.
- *
- * Uses magic-byte sniffing for MIME and minimal format-specific parsing
- * for dimensions. Only formats that the kimi-core multimodal pipeline
- * accepts are supported: PNG / JPEG / GIF / WebP.
- *
- * Unsupported or truncated inputs return `null` so the caller can
- * decline the paste cleanly.
- */
-
 export type SupportedImageMime = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 
 export interface ImageMeta {
@@ -25,8 +14,6 @@ export function parseImageMeta(bytes: Uint8Array): ImageMeta | null {
   return null;
 }
 
-// ── PNG ─────────────────────────────────────────────────────────────
-
 function isPng(b: Uint8Array): boolean {
   return (
     b.length >= 8 &&
@@ -42,8 +29,6 @@ function isPng(b: Uint8Array): boolean {
 }
 
 function parsePng(b: Uint8Array): ImageMeta | null {
-  // IHDR chunk immediately follows the 8-byte signature: length (4) +
-  // "IHDR" (4) + width (4 BE) + height (4 BE) + ...
   if (b.length < 24) return null;
   const width = readUInt32BE(b, 16);
   const height = readUInt32BE(b, 20);
@@ -51,28 +36,22 @@ function parsePng(b: Uint8Array): ImageMeta | null {
   return { mime: 'image/png', width, height };
 }
 
-// ── JPEG ────────────────────────────────────────────────────────────
-
 function isJpeg(b: Uint8Array): boolean {
   return b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
 }
 
 function parseJpeg(b: Uint8Array): ImageMeta | null {
-  // Scan for a Start-Of-Frame marker (SOF0..SOF3, SOF5..SOF7, SOF9..SOF11,
-  // SOF13..SOF15). After the marker + 2-byte segment length come:
-  //   precision (1), height (2 BE), width (2 BE), components (1).
   let i = 2;
   while (i < b.length) {
     if (b[i] !== 0xff) {
       i += 1;
       continue;
     }
-    // Skip fill bytes (0xFF padding before a marker).
     while (i < b.length && b[i] === 0xff) i += 1;
     if (i >= b.length) return null;
     const marker = b[i]!;
     i += 1;
-    if (marker === 0xd8 || marker === 0xd9) continue; // SOI / EOI — no length
+    if (marker === 0xd8 || marker === 0xd9) continue;
     if (i + 1 >= b.length) return null;
     const segLen = readUInt16BE(b, i);
     if (isSofMarker(marker)) {
@@ -89,27 +68,22 @@ function parseJpeg(b: Uint8Array): ImageMeta | null {
 
 function isSofMarker(marker: number): boolean {
   if (marker < 0xc0 || marker > 0xcf) return false;
-  // Exclude DHT (0xC4), JPG (0xC8), DAC (0xCC) — these reuse the SOF
-  // number range but are not frame headers.
   return marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
 }
-
-// ── GIF ─────────────────────────────────────────────────────────────
 
 function isGif(b: Uint8Array): boolean {
   return (
     b.length >= 6 &&
-    b[0] === 0x47 && // G
-    b[1] === 0x49 && // I
-    b[2] === 0x46 && // F
-    b[3] === 0x38 && // 8
-    (b[4] === 0x37 || b[4] === 0x39) && // 7 or 9
-    b[5] === 0x61 // a
+    b[0] === 0x47 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x38 &&
+    (b[4] === 0x37 || b[4] === 0x39) &&
+    b[5] === 0x61
   );
 }
 
 function parseGif(b: Uint8Array): ImageMeta | null {
-  // Logical screen width/height are at offsets 6-9, little-endian.
   if (b.length < 10) return null;
   const width = readUInt16LE(b, 6);
   const height = readUInt16LE(b, 8);
@@ -117,30 +91,24 @@ function parseGif(b: Uint8Array): ImageMeta | null {
   return { mime: 'image/gif', width, height };
 }
 
-// ── WebP ────────────────────────────────────────────────────────────
-
 function isWebp(b: Uint8Array): boolean {
   return (
     b.length >= 12 &&
-    b[0] === 0x52 && // R
-    b[1] === 0x49 && // I
-    b[2] === 0x46 && // F
-    b[3] === 0x46 && // F
-    b[8] === 0x57 && // W
-    b[9] === 0x45 && // E
-    b[10] === 0x42 && // B
-    b[11] === 0x50 // P
+    b[0] === 0x52 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x46 &&
+    b[8] === 0x57 &&
+    b[9] === 0x45 &&
+    b[10] === 0x42 &&
+    b[11] === 0x50
   );
 }
 
 function parseWebp(b: Uint8Array): ImageMeta | null {
-  // WebP has three sub-formats: VP8 (simple), VP8L (lossless), VP8X
-  // (extended). Offset 12 is the 4-byte chunk identifier.
   if (b.length < 30) return null;
   const chunk = String.fromCodePoint(b[12]!, b[13]!, b[14]!, b[15]!);
   if (chunk === 'VP8 ') {
-    // Frame data starts at offset 20 + 3-byte start code; dimensions at
-    // offsets 26-29 (little-endian, 14-bit values with 2 top bits masked).
     const widthRaw = readUInt16LE(b, 26);
     const heightRaw = readUInt16LE(b, 28);
     const width = widthRaw & 0x3fff;
@@ -149,8 +117,6 @@ function parseWebp(b: Uint8Array): ImageMeta | null {
     return { mime: 'image/webp', width, height };
   }
   if (chunk === 'VP8L') {
-    // VP8L packs width-1 (14 bits) and height-1 (14 bits) across bytes 21-24
-    // starting from the signature byte at offset 20 (0x2F).
     if (b[20] !== 0x2f) return null;
     const b1 = b[21]!;
     const b2 = b[22]!;
@@ -162,7 +128,6 @@ function parseWebp(b: Uint8Array): ImageMeta | null {
     return { mime: 'image/webp', width, height };
   }
   if (chunk === 'VP8X') {
-    // Canvas width-1 at offsets 24-26, height-1 at 27-29 (24-bit LE).
     const width = 1 + readUInt24LE(b, 24);
     const height = 1 + readUInt24LE(b, 27);
     if (width <= 0 || height <= 0) return null;
@@ -170,8 +135,6 @@ function parseWebp(b: Uint8Array): ImageMeta | null {
   }
   return null;
 }
-
-// ── byte helpers ────────────────────────────────────────────────────
 
 function readUInt16BE(b: Uint8Array, off: number): number {
   return (b[off]! << 8) | b[off + 1]!;

@@ -1,4 +1,3 @@
-// node/vscode_extension/webview-ui/src/App.tsx
 import { useEffect, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "./components/Header";
@@ -23,7 +22,6 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
 
   useEffect(() => {
     return bridge.on(Events.StreamEvent, (event: UIStreamEvent) => {
-      // 只有当前已有 session 时才过滤，确保 session_start 能正常处理
       if (sessionId && "_sessionId" in event && event._sessionId && event._sessionId !== sessionId) {
         console.log("Ignored stream event from another session:", event._sessionId);
         return;
@@ -109,7 +107,6 @@ export default function App() {
 
   const resolution = resolveAppView({ status, modelsCount, skippedLogin, showLogin });
 
-  // 登录界面：未登录且未跳过，或用户从其他界面主动选择登录
   if (resolution.view === "login") {
     return (
       <div className="flex flex-col h-screen text-foreground overflow-hidden">
@@ -120,7 +117,6 @@ export default function App() {
     );
   }
 
-  // 错误与设置状态界面；no-models 必须保留回到登录界面的入口
   if (resolution.view === "status") {
     return (
       <div className="flex flex-col h-screen text-foreground overflow-hidden">
@@ -136,7 +132,6 @@ export default function App() {
     );
   }
 
-  // 正常状态
   return (
     <div className="flex flex-col h-screen text-foreground overflow-hidden">
       <Header />

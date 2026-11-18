@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Message } from '#human/llm/message';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import {
   estimateTokens,
   estimateTokensForContentPart,
@@ -9,7 +9,7 @@ import {
   estimateTokensForTools,
   MEDIA_TOKEN_ESTIMATE,
 } from '#/llm-adapter/contract/tokens';
-import { addUsage, emptyUsage, grandTotal, inputTotal } from '#human/llm-requester/usage';
+import { addUsage, emptyUsage, grandTotal, inputTotal } from '@moonshot-ai/core/llm/usage';
 
 describe('TokenUsage aggregation', () => {
   it('emptyUsage leaves cache read unknown', () => {

@@ -43,7 +43,6 @@ export interface OpenSessionOptions {
   readonly yoloMode: boolean;
 }
 
-/** Extension-host owner for one in-process Node SDK harness. */
 export class KimiRuntime {
   readonly harness: KimiHarness;
 
@@ -224,9 +223,6 @@ export class KimiRuntime {
     }
   }
 
-  // A view attaches to at most one session, so opens/detaches for one view
-  // must never overlap: concurrent callers that both miss `this.sessions`
-  // would wrap the same SDK session twice and double every streamed event.
   private serializeView<T>(webviewId: string, work: () => Promise<T>): Promise<T> {
     const prev = this.viewChains.get(webviewId) ?? Promise.resolve();
     const run = prev.then(work, work);
@@ -310,11 +306,6 @@ async function applySessionSettings(
   legacyApproval: LegacyApprovalFlags,
 ): Promise<void> {
   const status = await session.getStatus();
-  // Model and thinking effort are applied only when the session is created
-  // (see openSession). An existing session keeps its own — the global config
-  // values are defaults for new sessions, matching CLI/TUI resume semantics.
-  // Changes made in the pickers reach the active session through the
-  // SaveConfig handler instead.
   const permission = corePermissionForLegacyApproval(legacyApproval);
   if (status.permission !== permission) {
     await session.setPermission(permission);

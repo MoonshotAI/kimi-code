@@ -1,12 +1,3 @@
-/**
- * `kimi vis`
- *
- * Verifies the CLI layer for the session visualizer: home + auto-port
- * resolution, browser open vs `--no-open`, and the session deep-link path.
- * Uses injected deps so no real port is bound and the real vis server is
- * never started.
- */
-
 import { describe, it, expect, vi } from 'vitest';
 
 import { handleVis, type VisDeps } from '#/cli/sub/vis';
@@ -107,7 +98,6 @@ describe('handleVis', () => {
     expect(errored.join('')).toContain('Failed to start kimi vis');
     expect(errored.join('')).toContain('EADDRINUSE');
     expect(deps.exit).toHaveBeenCalledWith(1);
-    // Nothing past the failed start should run.
     expect(opened).toEqual([]);
     expect(deps.waitForShutdown).not.toHaveBeenCalled();
   });

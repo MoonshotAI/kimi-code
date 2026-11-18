@@ -1,11 +1,3 @@
-/**
- * OAuth device code flow tests — pure HTTP wrappers against a fake server.
- *
- * Covers the three endpoint calls: requestDeviceAuthorization, pollDeviceToken,
- * refreshAccessToken. Uses a local HTTP server on a dynamic port to exercise
- * the real fetch code path.
- */
-
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -28,11 +20,6 @@ import type { DeviceHeaders, OAuthFlowConfig } from '../src/types';
 interface FakeResponse {
   status: number;
   body: string | Record<string, unknown>;
-  /**
-   * When true, destroy the socket before writing any status / body.
-   * Used by the "network error retry" test to surface a transport-level
-   * failure (fetch throws) on the first N attempts.
-   */
   drop?: boolean;
 }
 
@@ -73,7 +60,6 @@ class FakeOAuthServer {
     });
   }
 
-  /** Queue a response for the given POST path (FIFO). */
   enqueue(path: string, response: FakeResponse): void {
     const key = `POST ${path}`;
     const list = this.responses.get(key) ?? [];
@@ -102,7 +88,6 @@ class FakeOAuthServer {
         return;
       }
       if (next.drop === true) {
-        // Destroy the socket so `fetch` rejects with a transport error.
         req.socket.destroy();
         return;
       }
@@ -112,8 +97,6 @@ class FakeOAuthServer {
     });
   }
 }
-
-// ── Fixtures ──────────────────────────────────────────────────────────
 
 let server: FakeOAuthServer;
 
@@ -172,8 +155,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await server.stop();
 });
-
-// ── requestDeviceAuthorization ────────────────────────────────────────
 
 describe('requestDeviceAuthorization', () => {
   it('parses a successful response', async () => {
@@ -289,7 +270,6 @@ describe('requestDeviceAuthorization', () => {
         verification_uri_complete: 'https://x',
         expires_in: 60,
         interval: 5,
-        // device_code missing
       },
     });
     await expect(requestAuth()).rejects.toBeInstanceOf(OAuthError);
@@ -303,14 +283,11 @@ describe('requestDeviceAuthorization', () => {
         device_code: 'D',
         expires_in: 60,
         interval: 5,
-        // verification_uri_complete missing
       },
     });
     await expect(requestAuth()).rejects.toBeInstanceOf(OAuthError);
   });
 });
-
-// ── pollDeviceToken ───────────────────────────────────────────────────
 
 describe('pollDeviceToken', () => {
   it('returns TokenInfo on success (200)', async () => {
@@ -411,7 +388,6 @@ describe('pollDeviceToken', () => {
       status: 200,
       body: {
         access_token: 'at-1',
-        // refresh_token missing
         expires_in: 60,
         scope: '',
         token_type: 'Bearer',
@@ -428,7 +404,6 @@ describe('pollDeviceToken', () => {
         refresh_token: 'rt-1',
         scope: '',
         token_type: 'Bearer',
-        // expires_in missing
       },
     });
     await expect(pollToken(flowConfig(), 'd')).rejects.toBeInstanceOf(OAuthError);
@@ -453,8 +428,6 @@ describe('pollDeviceToken', () => {
     );
   });
 });
-
-// ── refreshAccessToken ────────────────────────────────────────────────
 
 describe('refreshAccessToken', () => {
   it('returns new TokenInfo on success', async () => {
@@ -561,15 +534,10 @@ describe('refreshAccessToken', () => {
   });
 
   it('retries on transport-level fetch failure (network retry gap fix)', async () => {
-    // First attempt: server unreachable. Second: success.
     const badConfig: OAuthFlowConfig = {
       ...flowConfig(),
-      // Stop the real server, point at it (will refuse connection), then
-      // restart for the retry. This is awkward; instead inject via a
-      // separate flowConfig with closed port for the first call.
-      oauthHost: 'http://127.0.0.1:1', // reserved port, ECONNREFUSED
+      oauthHost: 'http://127.0.0.1:1',
     };
-    // Single attempt against unreachable host should throw (not RetryableRefreshError)
     await expect(
       refreshToken(badConfig, 'rt', { maxRetries: 1, backoffMs: () => 0 }),
     ).rejects.toBeInstanceOf(OAuthConnectionError);
@@ -578,7 +546,7 @@ describe('refreshAccessToken', () => {
   it('names the transport root cause in the connection error message', async () => {
     const badConfig: OAuthFlowConfig = {
       ...flowConfig(),
-      oauthHost: 'http://127.0.0.1:1', // reserved port, ECONNREFUSED
+      oauthHost: 'http://127.0.0.1:1',
     };
 
     const failure = await refreshToken(badConfig, 'rt', {
@@ -589,8 +557,6 @@ describe('refreshAccessToken', () => {
     expect(failure).toBeInstanceOf(OAuthConnectionError);
     const error = failure as OAuthConnectionError;
     expect(error.cause).toBeInstanceOf(Error);
-    // The undici root cause (e.g. `connect ECONNREFUSED 127.0.0.1:1`) must be
-    // visible in the surfaced message, not just the generic "fetch failed".
     const rootCause = error.cause instanceof Error ? error.cause : undefined;
     expect(rootCause?.message).toBeTruthy();
     expect(error.message).toContain(rootCause?.message);
@@ -629,13 +595,7 @@ describe('refreshAccessToken', () => {
     expectNoDeviceHeaders(recorded.headers);
   });
 
-  // ── network error retry / 400 fail-fast ───────────────────────────────
-
   it('retries transport-level failures N times, then succeeds', async () => {
-    // The first two attempts fail with a transport error, the third
-    // succeeds. We prime the fake server with two force-drop responses
-    // that destroy the socket before writing headers, which surfaces
-    // as `fetch` throwing.
     server.enqueue('/api/oauth/token', { status: 0, body: '', drop: true });
     server.enqueue('/api/oauth/token', { status: 0, body: '', drop: true });
     server.enqueue('/api/oauth/token', {
@@ -653,20 +613,14 @@ describe('refreshAccessToken', () => {
       backoffMs: () => 0,
     });
     expect(token.accessToken).toBe('recovered-at');
-    // All three attempts hit the server (two destroyed + one success)
     expect(server.recorded.length).toBe(3);
   });
 
   it('400 Bad Request fails fast (not retried, non-retryable)', async () => {
-    // 400 is a client-side fault and must surface immediately as a
-    // bare OAuthError (never RetryableRefreshError, never retried).
     server.enqueue('/api/oauth/token', {
       status: 400,
       body: { error: 'invalid_request', error_description: 'bad client id' },
     });
-    // Second enqueue exists to prove a retry would hit it — if the
-    // implementation incorrectly retried, the second call would succeed
-    // and the test would miss the regression.
     server.enqueue('/api/oauth/token', {
       status: 200,
       body: {
@@ -684,7 +638,6 @@ describe('refreshAccessToken', () => {
     expect(err).toBeInstanceOf(OAuthError);
     expect(err).not.toBeInstanceOf(RetryableRefreshError);
     expect(err).not.toBeInstanceOf(OAuthUnauthorizedError);
-    // Only one request — no retry.
     expect(server.recorded.length).toBe(1);
   });
 });

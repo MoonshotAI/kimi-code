@@ -15,6 +15,14 @@ export function toErrorMessage(error: unknown, verbose = false): string {
   if (typeof error === 'string') {
     return error;
   }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    typeof (error as { readonly kind?: unknown }).kind === 'string' &&
+    typeof (error as { readonly message?: unknown }).message === 'string'
+  ) {
+    return (error as { readonly message: string }).message;
+  }
   try {
     return JSON.stringify(error);
   } catch {

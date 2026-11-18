@@ -6,21 +6,20 @@ import { ILogService } from '#/_base/log/log';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptSubmitted } from '#/agent/prompt/promptEvents';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import { TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { agentTaskInfo } from '#/agent/task/handler';
+import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
@@ -107,8 +106,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentStateService private readonly agentState: IAgentStateService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IFlagService private readonly flags: IFlagService,
@@ -117,11 +115,10 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IFeatureManager featureManager: IFeatureManager,
     @IConfigService config: IConfigService,
     @IAgentReminderService reminder: IAgentReminderService,
-    @IAgentContextMemoryService context: IAgentContextMemoryService,
+    @IAgentLoopService context: IAgentLoopService,
     @IEventBus eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentTaskService private readonly tasks: IAgentTaskService | undefined,
     @ISessionEventBus sessionBus: ISessionEventBus,
     @IBashParserService private readonly bashParser: IBashParserService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext | undefined,
@@ -155,10 +152,10 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       eventBus.subscribe(AgentStatusUpdated, () => {
         if (this.agentCtx.agentId !== 'main') return;
         if (!this.isActive) return;
-        const active = this.profile.getActiveToolNames();
+        const active = this.loop.getActiveToolNames();
         if (active === undefined) return;
         if (TOWER_MODE_TOOLS.every((name) => active.includes(name))) return;
-        for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
+        for (const name of TOWER_MODE_TOOLS) this.loop.addActiveTool(name);
         void this.dispatcher.dispatch(
           new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: true }),
         );
@@ -219,12 +216,18 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         if (this.agentCtx.agentId !== 'main') return;
         if (!this.isActive) return;
         if (event.agentId !== this.agentCtx.agentId) return;
+        const userInitiated =
+          event.origin.kind === 'user' ||
+          event.origin.kind === 'plugin_command' ||
+          (event.origin.kind === 'skill_activation' && event.origin.trigger === 'user-slash');
+        if (!userInitiated) return;
         const turnId = this.wakeTurnId;
         if (turnId === undefined) return;
         queueMicrotask(() => {
           if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
-          if (this.loop.cancel({ turnId }, userCancellationReason())) {
-            this.wakeAbortedForUserPrompt = true;
+          this.wakeAbortedForUserPrompt = true;
+          if (!this.loop.cancel({ turnId }, userCancellationReason())) {
+            this.wakeAbortedForUserPrompt = false;
           }
         });
       }),
@@ -235,7 +238,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      registerLegacyStarting(toolExecutor, (event) => {
         if (this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!TOWER_FLAG_VETO_TOOLS.has(event.toolCall.name)) return;
         event.veto(
@@ -248,7 +251,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      registerLegacyStarting(toolExecutor, (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'TodoList') return;
@@ -262,7 +265,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      registerLegacyStarting(toolExecutor, (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'AgentSwarm') return;
@@ -276,7 +279,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      registerLegacyStarting(toolExecutor, (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name === 'CreateGoal') {
@@ -303,7 +306,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
+      registerLegacyStarting(toolExecutor, async (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'Agent') return;
@@ -353,8 +356,8 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
-        if (this.profile.data().profileName !== TOWER_WORKER_PROFILE) return;
+      registerLegacyStarting(toolExecutor, async (event) => {
+        if (this.loop.data().profileName !== TOWER_WORKER_PROFILE) return;
         const toolName = event.toolCall.name;
         if (toolName !== 'Write' && toolName !== 'Edit') return;
 
@@ -389,7 +392,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
+      registerLegacyStarting(toolExecutor, async (event) => {
         if (event.toolCall.name !== 'Bash') return;
         const args = event.args;
         if (typeof args !== 'object' || args === null) return;
@@ -452,7 +455,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       return { entered: true };
     }
     await this.adoptTowerRoster();
-    for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
+    for (const name of TOWER_MODE_TOOLS) this.loop.addActiveTool(name);
     this.lastPublished = true;
     this.dispatchEnter();
     return { entered: true };
@@ -801,7 +804,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         content: [{ type: 'text', text }],
         origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
       },
-      turnScoped: false,
       onConsume: () => {
         this.inboxWakeHandle = undefined;
         this.inboxWakePending = false;
@@ -892,13 +894,12 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   private activeAgentIds(): ReadonlySet<string> | undefined {
-    if (this.tasks === undefined) return undefined;
     return new Set(
-      this.tasks
-        .list(true)
-        .flatMap((task) =>
-          task.kind === 'agent' && task.agentId !== undefined ? [task.agentId] : [],
-        ),
+      this.toolExecutor.handlers().flatMap((handler) => {
+        if (handler.snapshot().fields.task === undefined) return [];
+        const info = agentTaskInfo(handler);
+        return info.kind === 'agent' && info.agentId !== undefined ? [info.agentId] : [];
+      }),
     );
   }
 
@@ -906,7 +907,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (!this.isActive) return;
     if (this.agentCtx.agentId !== 'main') return;
-    for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
+    for (const name of TOWER_MODE_TOOLS) this.loop.addActiveTool(name);
     this.lastPublished = true;
     void this.dispatcher.dispatch(new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: true }));
   }

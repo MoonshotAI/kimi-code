@@ -1,11 +1,5 @@
-import { errorStatusCode } from '#/llm-requester/errors';
-import type { LlmModel } from '#/llm-requester/model';
-import type { LlmRecovery } from '#/llm-requester/recovery';
-import {
-  mergeRequestHeaders,
-  type LlmCredential,
-  type LlmCredentialProvider,
-} from '#/llm-requester/requester';
+import { errorStatusCode } from '@moonshot-ai/core/llm/protocol/errors';
+import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 
 export interface AccessTokenResolver {
   (options?: { readonly force?: boolean }): Promise<string | undefined>;
@@ -36,35 +30,3 @@ export function createOAuthCredentialProvider(
     },
   };
 }
-
-export function applyCredential(
-  model: LlmModel,
-  credential: LlmCredential | undefined,
-): LlmModel {
-  if (credential === undefined) {
-    return model;
-  }
-  return {
-    ...model,
-    apiKey: credential.apiKey ?? model.apiKey,
-    defaultHeaders: mergeRequestHeaders(model.defaultHeaders, credential.headers),
-  };
-}
-
-const CREDENTIALS_RECOVERY_ID = 'credentials';
-
-export const credentialsRecovery: LlmRecovery = {
-  propose: ({ error, appliedRecoveries, credentialProvider }) => {
-    if (
-      credentialProvider?.canRecover?.(error) !== true ||
-      appliedRecoveries.some((record) => record.strategy === CREDENTIALS_RECOVERY_ID)
-    ) {
-      return undefined;
-    }
-    return {
-      strategy: CREDENTIALS_RECOVERY_ID,
-      action: 'refresh',
-      beforeNextAttempt: () => credentialProvider?.invalidate?.(),
-    };
-  },
-};

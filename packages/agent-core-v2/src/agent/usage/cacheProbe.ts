@@ -1,6 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { PromptCacheProbeEvent } from '#/app/telemetry/events';
-import { inputTotal, type TokenUsage } from '#human/llm-requester/usage';
+import { inputTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 export interface IAgentCacheProbeService {
   readonly _serviceBrand: undefined;

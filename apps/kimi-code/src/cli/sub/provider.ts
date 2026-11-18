@@ -1,17 +1,3 @@
-/**
- * `kimi provider` sub-command — non-interactive provider management.
- *
- * Mirrors the TUI `/provider` flow (apps/kimi-code/src/tui/commands/provider.ts)
- * for the custom-registry path so users can import an api.json document, drop
- * a provider, or inspect what is configured without launching the TUI.
- *
- * `add` writes the same `source = { kind: 'apiJson', url, apiKey }` blob the
- * TUI does; the next launch's provider-model refresh
- * (`KimiHarness.refreshProviderModels`, backed by the engine's discovery
- * service) groups by URL, retries available API-key candidates, and
- * re-fetches the model list, so periodic refresh is automatic.
- */
-
 import {
   applyCatalogProvider,
   catalogProviderModels,
@@ -174,11 +160,6 @@ export async function handleProviderList(
   }
 }
 
-/**
- * Fetches the models.dev-style public catalog and lists providers, or — when
- * `providerId` is given — drills into one provider and lists its models. This
- * mirrors the discovery half of the TUI "Known third-party provider" flow.
- */
 export async function handleCatalogList(
   deps: ProviderDeps,
   providerId: string | undefined,
@@ -260,11 +241,6 @@ export async function handleCatalogList(
   }
 }
 
-/**
- * Imports a known provider from the models.dev catalog by id. Unlike
- * `provider add` (which expects a custom api.json), this command relies on
- * the catalog's normalized metadata to fill in context limits and capabilities.
- */
 export async function handleCatalogAdd(
   deps: ProviderDeps,
   providerId: string,
@@ -337,11 +313,6 @@ export async function handleCatalogAdd(
 
   let config = await harness.getConfig();
 
-  // Capture defaults BEFORE `removeProvider`, because that call clears
-  // `defaultModel` when it points at one of this provider's aliases (see
-  // `core-impl.ts removeKimiProvider`). Without this, re-importing an
-  // already-configured provider would lose the user's previously-set default
-  // even when `--default-model` is not supplied.
   const previousDefaultModel = config.defaultModel;
   const previousThinking = config.thinking;
 
@@ -349,9 +320,6 @@ export async function handleCatalogAdd(
     config = await harness.removeProvider(providerId);
   }
 
-  // `applyCatalogProvider` always overwrites both `defaultModel` and
-  // `[thinking]`. The values we pass here are temporary; we restore
-  // a consistent state in the post-apply block below.
   applyCatalogProvider(config, {
     providerId,
     wire,
@@ -362,12 +330,6 @@ export async function handleCatalogAdd(
     thinking: false,
   });
 
-  // Resolve the final `defaultModel`:
-  //   - If the caller asked for one, `applyCatalogProvider` already set it.
-  //   - Else, restore the previous default ONLY when its alias still resolves
-  //     after the catalog refresh; the catalog may have dropped the old
-  //     model, in which case restoring would point default_model at a
-  //     non-existent alias and break the next session.
   if (opts.defaultModel === undefined) {
     const stillResolves =
       previousDefaultModel !== undefined &&
@@ -375,11 +337,6 @@ export async function handleCatalogAdd(
     config.defaultModel = stillResolves ? previousDefaultModel : undefined;
   }
 
-  // Always restore `[thinking]` from what was there before — including
-  // `undefined`. Persisting `enabled: false` when the user never set it would
-  // make `resolveThinkingEffort` (agent-core-v2/src/kosong/model/thinking.ts) treat
-  // it as an explicit "off" request and silently disable thinking, even for
-  // thinking-capable models.
   config.thinking = previousThinking;
 
   await harness.setConfig({
@@ -424,10 +381,6 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
     .command('provider')
     .description('Manage LLM providers non-interactively.');
 
-  // Last-resort boundary: handlers report expected failures themselves, but
-  // anything that escapes (e.g. a config write rejected because config.toml
-  // is invalid) must end as a one-line error + exit 1, not an unhandled
-  // rejection dumping a stack trace.
   const runAction = async (
     resolved: ResolvedProviderDeps,
     run: () => Promise<void>,
@@ -541,8 +494,6 @@ function resolveDeps(overrides: Partial<ProviderDeps> = {}): ResolvedProviderDep
     stderr: overrides.stderr ?? process.stderr,
     env: overrides.env ?? process.env,
     exit: overrides.exit ?? ((code: number) => process.exit(code)),
-    // The v2 harness boots an engine whose watchers hold the event loop open;
-    // close it so a one-shot command can exit. No-op for injected harnesses.
     close: async () => {
       await harness?.close();
     },

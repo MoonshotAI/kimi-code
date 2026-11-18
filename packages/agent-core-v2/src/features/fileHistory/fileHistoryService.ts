@@ -6,6 +6,7 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { runLegacyBeforeExecute } from '#/agent/toolExecutor/legacyHooks';
 import type { WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -73,15 +74,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     super();
     this.agentState.contributeState(fileHistoryKey);
     if (this.agentCtx.agentId !== MAIN_AGENT_ID) {
-      this._register(
-        toolExecutor.onWillExecuteTool((event) => this.onSubagentWillExecuteTool(event)),
-      );
+      this._register(toolExecutor.registerHook({
+        beforeExecute: (context) => runLegacyBeforeExecute(context, (event) => this.onSubagentWillExecuteTool(event)),
+      }));
       return;
     }
 
-    this._register(
-      toolExecutor.onWillExecuteTool((event) => this.onWillExecuteTool(event)),
-    );
+    this._register(toolExecutor.registerHook({
+      beforeExecute: (context) => runLegacyBeforeExecute(context, (event) => this.onWillExecuteTool(event)),
+    }));
     this._register(
       eventBus.subscribe(TurnStarted, (event) => {
         if (event.agentId !== this.agentCtx.agentId) return;

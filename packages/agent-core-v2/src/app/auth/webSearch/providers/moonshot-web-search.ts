@@ -53,7 +53,7 @@ export class MoonshotWebSearchProvider implements WebSearchProvider {
       signal?: AbortSignal;
     },
   ): Promise<WebSearchResult[]> {
-    const body = { text_query: query };
+    const body = { text_query: query, search_mode: 'links' };
     const bodyJson = JSON.stringify(body);
 
     const toolCallId = options?.toolCallId;

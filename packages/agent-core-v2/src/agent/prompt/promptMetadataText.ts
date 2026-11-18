@@ -1,4 +1,4 @@
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { matchSingleMediaPathTag } from '#/agent/media/mediaRef';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 

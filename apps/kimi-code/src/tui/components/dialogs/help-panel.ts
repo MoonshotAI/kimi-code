@@ -1,13 +1,3 @@
-/**
- * HelpPanel — modal `/help` display. Lists keyboard shortcuts, slash
- * commands (with aliases + descriptions) in colour-coded sections.
- *
- * Mirrors the container-replacement pattern used by SessionPicker /
- * ApprovalPanel: host mounts the panel into `editorContainer`, picks
- * it as the focused component, and tears it down on the `onClose`
- * callback (fired on Esc / Enter / q).
- */
-
 import {
   Container,
   matchesKey,
@@ -16,6 +6,12 @@ import {
   type Focusable,
   truncateToWidth,
 } from '@moonshot-ai/pi-tui';
+import {
+  DEFAULT_FOLLOW_UP_BEHAVIOR,
+  FOLLOW_UP_KEYMAP,
+  type FollowUpBehavior,
+  type FollowUpDelivery,
+} from '#/tui/config';
 import { currentTheme } from '#/tui/theme';
 
 export interface KeyboardShortcut {
@@ -29,25 +25,39 @@ export interface HelpPanelCommand {
   readonly description: string;
 }
 
-/** Static list — keep in sync with the global editor bindings. */
-export const DEFAULT_KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
-  { keys: 'Shift-Tab', description: 'Toggle plan mode' },
-  { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
-  { keys: 'Ctrl-O', description: 'Toggle tool output / compaction summary expansion' },
-  { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
-  { keys: 'Shift-Enter / Ctrl-J', description: 'Insert newline' },
-  { keys: 'Ctrl-C', description: 'Interrupt stream / clear input' },
-  { keys: 'Ctrl-D', description: 'Exit (on empty input)' },
-  { keys: 'Esc', description: 'Close dialogs / interrupt streaming' },
-  { keys: '↑ / ↓', description: 'Browse input history' },
-  { keys: 'Enter', description: 'Submit' },
-];
+const SUBMIT_DESCRIPTIONS: Readonly<Record<FollowUpDelivery, string>> = {
+  default: 'Submit; queues while Kimi is working',
+  'steer-draft': 'Submit; steers into the running turn',
+  queue: 'Submit; queues while Kimi is working',
+};
+
+export function keyboardShortcuts(
+  followUpBehavior: FollowUpBehavior,
+  ctrlEnterRecognized: boolean,
+): readonly KeyboardShortcut[] {
+  const submit = FOLLOW_UP_KEYMAP[followUpBehavior];
+  return [
+    { keys: 'Shift-Tab', description: 'Toggle plan mode' },
+    { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
+    { keys: 'Ctrl-O', description: 'Toggle tool output / compaction summary expansion' },
+    { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
+    { keys: 'Shift-Enter / Ctrl-J', description: 'Insert newline' },
+    { keys: 'Ctrl-C', description: 'Interrupt stream / clear input' },
+    { keys: 'Ctrl-D', description: 'Exit (on empty input)' },
+    { keys: 'Esc', description: 'Close dialogs / interrupt streaming' },
+    { keys: '↑ / ↓', description: 'Browse input history' },
+    { keys: 'Enter', description: SUBMIT_DESCRIPTIONS[submit.enter] },
+    ...(ctrlEnterRecognized ? [{ keys: 'Ctrl-Enter', description: SUBMIT_DESCRIPTIONS[submit['mod-enter']] }] : []),
+    { keys: 'Ctrl-Q', description: SUBMIT_DESCRIPTIONS[submit['ctrl-q']] },
+  ];
+}
+
+export const DEFAULT_KEYBOARD_SHORTCUTS = keyboardShortcuts(DEFAULT_FOLLOW_UP_BEHAVIOR, false);
 
 export interface HelpPanelOptions {
   readonly commands: readonly HelpPanelCommand[];
   readonly shortcuts?: readonly KeyboardShortcut[];
   readonly onClose: () => void;
-  /** Terminal height — used to decide whether to show the hint tail. */
   readonly maxVisible?: number;
 }
 
@@ -77,7 +87,7 @@ export class HelpPanelComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.down)) {
-      this.scrollTop += 1; // render clamps
+      this.scrollTop += 1;
       return;
     }
     if (matchesKey(data, Key.pageUp)) {
@@ -108,14 +118,11 @@ export class HelpPanelComponent extends Container implements Focusable {
       accent('─'.repeat(width)),
       currentTheme.boldFg('primary', ' help ') + muted('· Esc / Enter / q to cancel · ↑↓ scroll'),
       '',
-      // Greeting
       `  ${dim('Sure, Kimi is ready to help! Just send a message to get started.')}`,
       '',
-      // Section: keyboard shortcuts
       `  ${currentTheme.bold('Keyboard shortcuts')}`,
       ...shortcuts.map((s) => `    ${kbdColor(s.keys.padEnd(kbdWidth))}  ${dim(s.description)}`),
       '',
-      // Section: slash commands
       `  ${currentTheme.bold('Slash commands')}`,
       ...sortedCmds.map((cmd, i) => {
         const label = cmdLabels[i] ?? `/${cmd.name}`;
@@ -125,7 +132,6 @@ export class HelpPanelComponent extends Container implements Focusable {
       accent('─'.repeat(width)),
     ];
 
-    // Apply scroll windowing — keep the borders visible.
     const content = lines.slice(1, lines.length - 1);
     const maxVisible = Math.max(5, this.opts.maxVisible ?? 24);
     if (content.length > maxVisible) {

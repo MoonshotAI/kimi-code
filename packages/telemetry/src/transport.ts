@@ -21,8 +21,6 @@ export const RETRY_BACKOFFS_MS = [1_000, 4_000, 16_000] as const;
 export interface AsyncTransportOptions {
   readonly homeDir: string;
   readonly deviceId: string;
-  /** Static endpoint, or a resolver invoked per flush so an in-process region
-      switch (login/logout) takes effect without rebuilding the transport. */
   readonly endpoint?: string | (() => string | undefined);
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;
@@ -125,9 +123,7 @@ export class AsyncTransport {
     writeFileSync(path, text, { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
     try {
       chmodSync(path, 0o600);
-    } catch {
-      // best effort on platforms that do not support chmod.
-    }
+    } catch {}
   }
 
   async retryDiskEvents(): Promise<void> {
@@ -160,9 +156,7 @@ export class AsyncTransport {
         if (error instanceof SyntaxError || error instanceof TypeError) {
           try {
             unlinkSync(path);
-          } catch {
-            // best effort cleanup.
-          }
+          } catch {}
         }
         continue;
       }
@@ -176,9 +170,7 @@ export class AsyncTransport {
         if (error instanceof SyntaxError || error instanceof TypeError) {
           try {
             unlinkSync(path);
-          } catch {
-            // best effort cleanup.
-          }
+          } catch {}
         }
         continue;
       }
@@ -244,9 +236,7 @@ export class AsyncTransport {
     mkdirSync(path, { recursive: true, mode: 0o700 });
     try {
       chmodSync(path, 0o700);
-    } catch {
-      // best effort on platforms that do not support chmod.
-    }
+    } catch {}
     return path;
   }
 }

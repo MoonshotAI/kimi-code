@@ -1,7 +1,14 @@
-import { IAgentLifecycleService, IAgentTaskService, type IDisposable } from '@moonshot-ai/agent-core-v2';
+import {
+  IAgentLifecycleService,
+  IAgentTaskService,
+  IEventBus,
+  type IDisposable,
+} from '@moonshot-ai/agent-core-v2';
+import { TaskStarted, TaskTerminatedNotice } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 
 import type { TaskState } from '../../../protocol/ws-task';
+import { optionalService } from './agentState';
 import { toTaskState } from './taskState';
 
 export class SessionTaskFeed implements IDisposable {
@@ -24,7 +31,8 @@ export class SessionTaskFeed implements IDisposable {
   }
 
   running(agentId: string): TaskState[] {
-    const tasks = this.agents.handleOf(agentId)?.accessor.get(IAgentTaskService);
+    const handle = this.agents.handleOf(agentId);
+    const tasks = handle === undefined ? undefined : optionalService(handle, IAgentTaskService);
     return (tasks?.list(true) ?? []).map(toTaskState);
   }
 
@@ -36,16 +44,41 @@ export class SessionTaskFeed implements IDisposable {
 
   private watch(agentId: string): void {
     if (this.agentWatches.has(agentId)) return;
-    const tasks = this.agents.handleOf(agentId)?.accessor.get(IAgentTaskService);
-    if (tasks === undefined) return;
-    this.agentWatches.set(
-      agentId,
-      tasks.onDidChangeTask((info) => this.onChange(agentId, info)),
-    );
+    const handle = this.agents.handleOf(agentId);
+    if (handle === undefined) return;
+    const tasks = optionalService(handle, IAgentTaskService);
+    const bus = optionalService(handle, IEventBus);
+    const subscriptions: IDisposable[] = [];
+    if (tasks !== undefined) {
+      subscriptions.push(
+        tasks.onDidChangeTask((info) => {
+          this.onChange(agentId, info);
+        }),
+      );
+    }
+    if (bus !== undefined) {
+      const onSwarmTask = (event: TaskStarted | TaskTerminatedNotice): void => {
+        if (event.agentId === agentId && isSwarmTask(event.info)) this.onChange(agentId, event.info);
+      };
+      subscriptions.push(
+        bus.subscribe(TaskStarted, onSwarmTask),
+        bus.subscribe(TaskTerminatedNotice, onSwarmTask),
+      );
+    }
+    if (subscriptions.length === 0) return;
+    this.agentWatches.set(agentId, {
+      dispose: () => {
+        for (const subscription of subscriptions) subscription.dispose();
+      },
+    });
   }
 
   private unwatch(agentId: string): void {
     this.agentWatches.get(agentId)?.dispose();
     this.agentWatches.delete(agentId);
   }
+}
+
+function isSwarmTask(info: AgentTaskInfo): boolean {
+  return info.kind === 'agent' && info.swarmIndex !== undefined;
 }

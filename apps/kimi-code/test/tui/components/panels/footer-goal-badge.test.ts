@@ -41,7 +41,7 @@ function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
     status: 'active',
     turnsUsed: 7,
     tokensUsed: 1234,
-    wallClockMs: 245_000, // 4m05s
+    wallClockMs: 245_000,
     budget: {
       turnBudget: null,
       tokenBudget: null,
@@ -68,7 +68,6 @@ describe('FooterComponent — goal badge', () => {
     expect(out).toContain('active');
     expect(out).toContain('4m');
     expect(out).toContain('7 turns');
-    // No N/M when no turn budget is set.
     expect(out).not.toMatch(/\d+\/\d+ turns/);
   });
 

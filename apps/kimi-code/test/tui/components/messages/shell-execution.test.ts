@@ -71,7 +71,7 @@ describe('ShellExecutionComponent', () => {
     const component = new ShellExecutionComponent({
       result: {
         tool_call_id: 'call_shell',
-        output: 'hello\n\n\n', // 1 content line + 2 trailing empty lines
+        output: 'hello\n\n\n',
         is_error: false,
       },
     });
@@ -85,7 +85,7 @@ describe('ShellExecutionComponent', () => {
     const component = new ShellExecutionComponent({
       result: {
         tool_call_id: 'call_shell',
-        output: 'a\n\nb\n\n\n', // 1 internal empty line + 2 trailing empty lines
+        output: 'a\n\nb\n\n\n',
         is_error: false,
       },
     });
@@ -198,9 +198,6 @@ describe('ShellExecutionComponent', () => {
         .flatMap((c) => c.render(100))
         .map(strip)
         .join('\n');
-      // Command is owned by ToolCallComponent.buildCallPreview, not the
-      // renderer — rendering it here too would duplicate it once the result
-      // lands.
       expect(rendered).not.toContain('$ echo');
       expect(rendered).toContain('boom');
     });

@@ -3,18 +3,14 @@ import { describe, it, expect } from 'vitest';
 import { parseImageMeta } from '#/utils/image/image-mime';
 
 function png(width: number, height: number): Uint8Array {
-  // 8-byte PNG signature + IHDR length (4) + 'IHDR' + width (4 BE) + height (4 BE) + ...
   const bytes = new Uint8Array(24);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-  // length = 13 (IHDR body)
   bytes.set([0x00, 0x00, 0x00, 0x0d], 8);
-  bytes.set([0x49, 0x48, 0x44, 0x52], 12); // "IHDR"
-  // width
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
   bytes[16] = (width >>> 24) & 0xff;
   bytes[17] = (width >>> 16) & 0xff;
   bytes[18] = (width >>> 8) & 0xff;
   bytes[19] = width & 0xff;
-  // height
   bytes[20] = (height >>> 24) & 0xff;
   bytes[21] = (height >>> 16) & 0xff;
   bytes[22] = (height >>> 8) & 0xff;
@@ -23,22 +19,19 @@ function png(width: number, height: number): Uint8Array {
 }
 
 function jpeg(width: number, height: number): Uint8Array {
-  // SOI + SOF0 marker with the minimal segment body.
-  // Layout: FFD8 FFC0 <len16 BE> <precision 08> <height BE> <width BE> <components 03>
   const body = new Uint8Array([
     0xff,
-    0xd8, // SOI
+    0xd8,
     0xff,
-    0xc0, // SOF0
+    0xc0,
     0x00,
-    0x11, // segment length (17 bytes including itself)
-    0x08, // precision
+    0x11,
+    0x08,
     (height >> 8) & 0xff,
     height & 0xff,
     (width >> 8) & 0xff,
     width & 0xff,
-    0x03, // components
-    // 3 component spec blocks (3 bytes each) — not parsed but required for realism
+    0x03,
     0x01,
     0x22,
     0x00,
@@ -54,7 +47,6 @@ function jpeg(width: number, height: number): Uint8Array {
 
 function gif(width: number, height: number): Uint8Array {
   const bytes = new Uint8Array(10);
-  // "GIF89a"
   bytes.set([0x47, 0x49, 0x46, 0x38, 0x39, 0x61], 0);
   bytes[6] = width & 0xff;
   bytes[7] = (width >> 8) & 0xff;
@@ -81,7 +73,7 @@ describe('parseImageMeta', () => {
 
   it('recognises GIF (87a)', () => {
     const bytes = gif(50, 75);
-    bytes[4] = 0x37; // '7'
+    bytes[4] = 0x37;
     const meta = parseImageMeta(bytes);
     expect(meta).toEqual({ mime: 'image/gif', width: 50, height: 75 });
   });

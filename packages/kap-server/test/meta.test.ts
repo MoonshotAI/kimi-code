@@ -13,7 +13,10 @@ import { authedFetch } from './helpers/auth';
 
 interface MetaBody {
   code: number;
-  data: { experimental_flags?: Record<string, boolean> };
+  data: {
+    kimi_agent_protocol_version?: string;
+    experimental_flags?: Record<string, boolean>;
+  };
 }
 
 describe('/api/v1/meta experimental_flags', () => {
@@ -62,6 +65,8 @@ describe('/api/v1/meta experimental_flags', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as MetaBody;
     expect(body.code).toBe(0);
+    expect(body.data.kimi_agent_protocol_version).toBe('0.1.0');
+    expect(body.data).not.toHaveProperty('backend');
     expect(body.data.experimental_flags).toBeDefined();
     return body.data.experimental_flags as Record<string, boolean>;
   }
@@ -210,8 +215,8 @@ describe('/api/v1/meta features', () => {
     const features = await getMetaFeatures(base);
     const expected = getFeatureRecipes()
       .map((recipe) => recipe.name)
-      .sort();
-    expect(features.map((feature) => feature.name).sort()).toEqual(expected);
+      .toSorted();
+    expect(features.map((feature) => feature.name).toSorted()).toEqual(expected);
     for (const feature of features) {
       expect(feature.state).toBe('Active');
       expect(feature.meta).toEqual({});

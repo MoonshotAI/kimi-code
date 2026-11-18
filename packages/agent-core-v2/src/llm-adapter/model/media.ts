@@ -1,5 +1,5 @@
-import { resolveEndpoint } from '#human/llm/endpoint';
-import type { ContentPart, ImageURLPart, MediaKind, VideoURLPart } from '#human/llm/message';
+import { resolveEndpoint } from '@moonshot-ai/core/llm/endpoint';
+import type { ContentPart, ImageURLPart, MediaKind, VideoURLPart } from '@moonshot-ai/core/llm/message';
 import type { ImageUploadInput, VideoUploadInput } from '#human/media/upload';
 import {
   acceptsMime,
@@ -7,11 +7,11 @@ import {
   mediaSupportAt,
   type MediaKindSupport,
   type MediaPosition,
-} from '#human/llm/protocol/rules/media';
-import type { LlmCredentialProvider } from '#human/llm-requester/requester';
+} from '@moonshot-ai/core/llm/protocol/rules/media';
+import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 import type { Model } from '#/llm-adapter/model/catalog';
-import { contentsOf } from '#human/llm/requester';
-import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
+import { contentsOf } from '@moonshot-ai/core/llm/requester';
+import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { ImageUploadUnsupportedError, VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 
 export type ImageUploader = (
@@ -42,7 +42,8 @@ export function imageUploaderFor(
 export function videoUploaderFor(
   model: Model,
   request: InitializedLlmRequester,
-): VideoUploader {
+): VideoUploader | undefined {
+  if (!supportsLlmUpload(request, 'video')) return undefined;
   return (input, options) => uploadVideo(model, request, input, options?.signal);
 }
 
@@ -85,7 +86,7 @@ export async function uploadVideo(
 }
 
 
-export type { MediaKindSupport, MediaPosition } from '#human/llm/protocol/rules/media';
+export type { MediaKindSupport, MediaPosition } from '@moonshot-ai/core/llm/protocol/rules/media';
 
 export function mediaSupportForRequest(
   request: InitializedLlmRequester,

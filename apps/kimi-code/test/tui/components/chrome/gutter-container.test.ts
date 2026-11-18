@@ -156,7 +156,6 @@ describe('GutterContainer', () => {
     c.addChild(first);
     c.addChild(second);
 
-    // Inner width is 17, where the first child wraps to two rows.
     c.handleMouse(clickAt(3, 1, 19, 3));
     expect(first.events).toHaveLength(1);
     expect(first.events[0]).toMatchObject({ y: 1 });

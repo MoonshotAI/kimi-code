@@ -1,10 +1,3 @@
-/**
- * Scenario: a resumed Node SDK transcript is rendered through the released VS Code Webview protocol.
- * Responsibilities: visible turns, media, assistant/tool output, subagent routing, compaction, plan state, and hidden injections.
- * Wiring: the pure replay adapter and public SDK replay types are used directly; there are no stubs.
- * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts test/replay-adapter.test.ts
- */
-
 import type {
   AgentReplayRecord,
   ContentPart,
