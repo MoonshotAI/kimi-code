@@ -150,7 +150,7 @@ export class RelayDeviceSession implements DeviceSession {
     return fetch(relayDeviceUrl(access.relayOrigin, this.deviceId, req.path), {
       method: req.method,
       headers: relayRequestHeaders(req.headers, access.cookie),
-      body: req.body !== undefined && req.body.length > 0 ? req.body : undefined,
+      body: req.body !== undefined && req.body.length > 0 ? new Uint8Array(req.body) : undefined,
       redirect: 'manual',
       signal,
     });
