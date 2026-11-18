@@ -55,6 +55,7 @@ import { ErrorCode } from '../protocol/error-codes';
 import { listPendingInteractions } from '../protocol/interaction-wire';
 import type { PendingInteraction } from '../protocol/interaction';
 import type { ConversationService } from '../services/conversation/conversationService';
+import { deleteSessionRequestSchema } from '../protocol/rest-worktree';
 import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
 import {
   archiveSessionResponseSchema,
@@ -166,6 +167,8 @@ const sessionActionRequestSchema = z.preprocess(
     timeout_ms: z.number().int().min(0).max(MAX_SESSION_WAIT_TIMEOUT_MS).optional(),
     count: z.number().int().positive().optional(),
     page_size: z.number().int().min(1).max(100).optional(),
+    remove_worktree: z.boolean().optional(),
+    delete_branch: z.boolean().optional(),
   }),
 );
 
@@ -529,7 +532,7 @@ export function registerSessionsRoutes(
           tail: req.params.tail,
           actions: sessionActions,
           resourceLabel: 'session',
-          extra: { core, conversations, req, reply },
+          extra: { core, conversations, worktrees, req, reply },
           body: req.body,
           onUnsupported: (message) => {
             reply.send(buildValidationEnvelope([{ path: 'session_id', message }], req.id));
@@ -611,6 +614,7 @@ type SessionAction =
 interface SessionActionExtra {
   readonly core: Scope;
   readonly conversations: ConversationService;
+  readonly worktrees: SessionWorktreeService;
   readonly req: {
     readonly id: string;
   };
@@ -634,7 +638,7 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   btw: { handle: btwSessionAction },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
-  delete: { handle: deleteSessionAction },
+  delete: { body: deleteSessionRequestSchema, handle: deleteSessionAction },
   reload: { handle: reloadSessionAction },
   takeover: { handle: takeoverSessionAction },
 };
@@ -1016,11 +1020,24 @@ async function takeoverSessionAction(ctx: SessionActionCtx): Promise<void> {
   reply.send(okEnvelope({ taken_over: true }, req.id));
 }
 
-async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
-  const { core, req, reply, id } = ctx;
+async function deleteSessionAction(
+  ctx: SessionActionCtx<z.infer<typeof deleteSessionRequestSchema>>,
+): Promise<void> {
+  const { core, worktrees, req, reply, id, body } = ctx;
+  const directory =
+    body.remove_worktree === true
+      ? (await core.accessor.get(ISessionIndex).get(id))?.cwd
+      : undefined;
   await core.accessor.get(ISessionManager).delete(id);
-  requestLog(req)?.info({ session_id: id, action: 'delete' }, 'session action completed');
-  reply.send(okEnvelope({ deleted: true }, req.id));
+  const worktree =
+    directory === undefined
+      ? undefined
+      : await worktrees.inventory.removeAfterSessionDeletion(directory, body.delete_branch === true);
+  requestLog(req)?.info(
+    { session_id: id, action: 'delete', worktree: worktree?.outcome },
+    'session action completed',
+  );
+  reply.send(okEnvelope({ deleted: true, worktree }, req.id));
 }
 
 async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {

@@ -47,6 +47,7 @@ import {
   waitSessionBodySchema,
   waitSessionResponseSchema,
 } from '../protocol/rest-session';
+import { deleteSessionRequestSchema } from '../protocol/rest-worktree';
 
 const binarySchema = {
   type: 'string',
@@ -224,6 +225,7 @@ function patchSessionAction(paths: Record<string, unknown>): void {
     'delete',
     'runSessionDeleteAction',
     deleteSessionResponseSchema,
+    deleteSessionRequestSchema,
   );
   projectSessionAction(
     paths,

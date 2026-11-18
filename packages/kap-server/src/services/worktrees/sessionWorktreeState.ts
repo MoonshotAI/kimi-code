@@ -115,7 +115,9 @@ export async function refreshWorktreeFacts(stored: StoredSessionWorktree): Promi
   });
 }
 
-export function forgetWorktreeFacts(stored: StoredSessionWorktree): void {
+export function forgetWorktreeFacts(
+  stored: Pick<StoredSessionWorktree, 'repo_root' | 'path' | 'branch'>,
+): void {
   if (stored.path !== undefined) pathFacts.delete(stored.path);
   if (stored.branch !== undefined) branchFacts.delete(branchKey(stored.repo_root, stored.branch));
 }

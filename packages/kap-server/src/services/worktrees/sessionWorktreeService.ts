@@ -3,7 +3,6 @@ import { join } from 'node:path';
 
 import {
   IBootstrapService,
-  IEventService,
   ISessionIndex,
   IWorkspaceService,
   isError2,
@@ -12,7 +11,6 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { Workspace } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 import { SessionErrors } from '@moonshot-ai/agent-core-v2/session/errors';
-import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 
 import { ErrorCode } from '../../protocol/error-codes';
 import type { SessionWorktreeAction, SessionWorktreeRetryRequest } from '../../protocol/rest-worktree';
@@ -24,6 +22,7 @@ import type {
 import type { ServerLogger } from '../pinoLoggerService';
 import { branchExists, isRepoRoot } from './gitRefs';
 import { repointSession } from './sessionRepoint';
+import { publishSessionUpdated } from './sessionUpdates';
 import {
   forgetWorktreeFacts,
   liveWorktreeBranch,
@@ -34,6 +33,7 @@ import {
   type StoredSessionWorktree,
 } from './sessionWorktreeState';
 import { WorktreeError, stateInvalid } from './worktreeError';
+import { WorktreeInventory } from './worktreeInventory';
 import { WorktreeRegistry } from './worktreeRegistry';
 import {
   WorktreeCreation,
@@ -133,12 +133,6 @@ export async function writeStoredWorktree(
   return written;
 }
 
-export function publishSessionUpdated(core: Scope, sessionId: string): void {
-  core.accessor
-    .get(IEventService)
-    .publish(new SessionMetaUpdated({ payload: { agentId: 'main', sessionId, patch: {} } }));
-}
-
 function ended(
   setup: WorktreeSetup,
   status: WorktreeSetup['status'],
@@ -154,6 +148,7 @@ function withoutPending(stored: StoredSessionWorktree): StoredSessionWorktree {
 
 export class SessionWorktreeService {
   readonly registry: WorktreeRegistry;
+  readonly inventory: WorktreeInventory;
   private readonly runs = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private closed = false;
 
@@ -162,6 +157,7 @@ export class SessionWorktreeService {
     private readonly options: SessionWorktreeServiceOptions = {},
   ) {
     this.registry = new WorktreeRegistry(this.worktreesHome);
+    this.inventory = new WorktreeInventory(core, this);
   }
 
   get worktreesHome(): string {

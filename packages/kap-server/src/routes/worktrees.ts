@@ -7,9 +7,18 @@ import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import {
+  inspectWorktreesRequestSchema,
+  inspectWorktreesResponseSchema,
+  listWorktreesQuerySchema,
+  listWorktreesResponseSchema,
+  lookupWorktreeRequestSchema,
+  lookupWorktreeResponseSchema,
+  removeWorktreeRequestSchema,
+  removeWorktreeResponseSchema,
   sessionWorktreeActionSchema,
   sessionWorktreeRetryRequestSchema,
   workspaceGitBranchesResponseSchema,
+  worktreeRemoveFailedDetailsSchema,
   type SessionWorktreeAction,
 } from '../protocol/rest-worktree';
 import { sessionSchema } from '../protocol/session';
@@ -18,6 +27,7 @@ import type { SessionWorktreeService } from '../services/worktrees/sessionWorktr
 import { WorktreeError } from '../services/worktrees/worktreeError';
 import { sendMappedError as sendSessionMappedError, sessionConflictErrors } from './sessionErrors';
 import { readWireSession } from './sessions';
+import { toWireWorkspace } from './workspaces';
 
 interface WorktreeRouteHost {
   get(
@@ -169,5 +179,121 @@ export function registerWorktreeRoutes(
     branchesRoute.path,
     branchesRoute.options,
     branchesRoute.handler as Parameters<WorktreeRouteHost['get']>[2],
+  );
+
+  const listRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/worktrees',
+      querystring: listWorktreesQuerySchema,
+      success: { data: listWorktreesResponseSchema },
+      description:
+        'List the linked git worktrees of every registered workspace: the ones created for sessions (origin "product") and any other (origin "external"), each with the sessions working in it. size_bytes is computed in the background and omitted until known; refresh=sizes recomputes every size before answering',
+      tags: ['worktrees'],
+    },
+    async (req, reply) => {
+      reply.send(okEnvelope(await worktrees.inventory.list(req.query.refresh === 'sizes'), req.id));
+    },
+  );
+  app.get(
+    listRoute.path,
+    listRoute.options,
+    listRoute.handler as Parameters<WorktreeRouteHost['get']>[2],
+  );
+
+  const inspectRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/worktrees::inspect',
+      body: inspectWorktreesRequestSchema,
+      success: { data: inspectWorktreesResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+      },
+      description:
+        'Report what removing each worktree would lose: uncommitted files and commits that are on no remote, plus the sessions working in it. Paths that are not known worktrees fold into errors',
+      tags: ['worktrees'],
+    },
+    async (req, reply) => {
+      reply.send(okEnvelope(await worktrees.inventory.inspect(req.body.paths), req.id));
+    },
+  );
+  app.post(
+    inspectRoute.path,
+    inspectRoute.options,
+    inspectRoute.handler as Parameters<WorktreeRouteHost['post']>[2],
+  );
+
+  const removeRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/worktrees::remove',
+      body: removeWorktreeRequestSchema,
+      success: { data: removeWorktreeResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.WORKTREE_NOT_FOUND]: {},
+        [ErrorCode.WORKTREE_REMOVE_FAILED]: { detailsSchema: worktreeRemoveFailedDetailsSchema },
+      },
+      description:
+        'Remove a worktree directory and its git registration, even with uncommitted changes, and optionally its local branch. Refused while a session that uses it is running; sessions that used it then report worktree.missing',
+      tags: ['worktrees'],
+    },
+    async (req, reply) => {
+      try {
+        const removed = await worktrees.inventory.remove(req.body.path, req.body.delete_branch === true);
+        requestLog(req)?.info({ path: req.body.path, action: 'worktree:remove' }, 'worktree removed');
+        reply.send(okEnvelope(removed, req.id));
+      } catch (error) {
+        sendWorktreeError(reply, req, error);
+      }
+    },
+  );
+  app.post(
+    removeRoute.path,
+    removeRoute.options,
+    removeRoute.handler as Parameters<WorktreeRouteHost['post']>[2],
+  );
+
+  const lookupRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/worktrees::lookup',
+      body: lookupWorktreeRequestSchema,
+      success: { data: lookupWorktreeResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+      },
+      description:
+        'Tell whether a directory is a linked git worktree, and of which repository, branch and registered workspace. worktree is null for anything else',
+      tags: ['worktrees'],
+    },
+    async (req, reply) => {
+      const found = await worktrees.inventory.lookup(req.body.path);
+      reply.send(
+        okEnvelope(
+          {
+            worktree:
+              found === undefined
+                ? null
+                : {
+                    repo_root: found.repoRoot,
+                    branch: found.branch,
+                    workspace:
+                      found.workspace === undefined
+                        ? undefined
+                        : await toWireWorkspace(core, found.workspace),
+                    session_count: found.sessionCount,
+                  },
+          },
+          req.id,
+        ),
+      );
+    },
+  );
+  app.post(
+    lookupRoute.path,
+    lookupRoute.options,
+    lookupRoute.handler as Parameters<WorktreeRouteHost['post']>[2],
   );
 }
