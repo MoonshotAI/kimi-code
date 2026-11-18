@@ -29,11 +29,18 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
+    this.config.assertValid(TOOLS_SECTION);
     this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
     this._register(
       this.config.onDidSectionChange((event) => {
         if (event.domain !== TOOLS_SECTION) return;
-        this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
+        this.applyToolsSection();
+      }),
+    );
+    this._register(
+      this.config.onDidChangeConfiguration((event) => {
+        if (event.domain !== TOOLS_SECTION) return;
+        this.applyToolsSection();
       }),
     );
     this._register(toolExecutor.registerHook({
@@ -48,6 +55,15 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
         return runLegacyStarting(context, (event) => event.veto({ output: text, isError: true }));
       },
     }));
+  }
+
+  private applyToolsSection(): void {
+    try {
+      this.config.assertValid(TOOLS_SECTION);
+      this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
+    } catch {
+      return;
+    }
   }
 
   isToolActive(name: string, source: ToolSource = 'builtin'): boolean {

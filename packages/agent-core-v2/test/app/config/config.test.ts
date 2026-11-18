@@ -41,6 +41,7 @@ import {
 } from '#/features/skill/catalog/configSection';
 import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
+import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
 import { READ_SECTION } from '#/agent/tools/os/read/configSection';
@@ -3103,6 +3104,14 @@ describe('ConfigService persistence guards', () => {
     expect(isError2(error)).toBe(true);
     expect((error as Error2).code).toBe(ErrorCodes.CONFIG_PERSIST_BLOCKED);
   }
+
+  it('exposes the initial read failure through assertValid', async () => {
+    const { config, disposables } = await createGuardedConfig('[providers\nbroken');
+
+    expect(() => config.assertValid(TOOLS_SECTION)).toThrow(/could not be read/);
+
+    disposables.dispose();
+  });
 
   it('refuses to persist when the initial load fails and keeps the file untouched', async () => {
     const broken = '[providers\nbroken';
