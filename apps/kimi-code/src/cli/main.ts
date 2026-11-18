@@ -27,7 +27,6 @@ import { runNativeAssetSmokeIfRequested } from '#/native/smoke';
 import { startupTrace } from '#/utils/startup-trace';
 
 import { createProgram } from './commands';
-import { runExecServerCommand } from './exec-server';
 import { finalizeHeadlessRun } from './headless-exit';
 import type { CLIOptions } from './options';
 import { OptionConflictError, validateOptions } from './options';
@@ -151,7 +150,6 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
   skillsDirs: [],
   agent: undefined,
   agentFiles: [],
-  environment: undefined,
 };
 
 export function main(): void {
@@ -258,11 +256,6 @@ function bootstrap(): void {
           process.exit(1);
         },
       );
-    },
-    (listen) => {
-      void runExecServerCommand(listen).then((code) => {
-        process.exitCode = code;
-      });
     },
   );
 

@@ -239,7 +239,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'new',
     aliases: ['clear'],
-    description: 'Start a fresh session in the current environment',
+    description: 'Start a fresh session',
     priority: 80,
   },
   {

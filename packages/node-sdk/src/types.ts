@@ -3,8 +3,6 @@ import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
-import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
-import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
@@ -27,34 +25,6 @@ export type {
 } from '@moonshot-ai/klient';
 
 export type Unsubscribe = () => void;
-
-export interface AgentEnvironmentBinding {
-  readonly environmentId: string;
-  readonly cwd?: string;
-}
-
-export type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
-
-export type SessionEnvironmentType = 'local' | 'ssh' | 'docker' | 'command';
-
-export interface SessionEnvironmentInfo {
-  readonly environmentId: string;
-  readonly type: SessionEnvironmentType;
-  readonly status: SessionEnvironmentStatus;
-  readonly connectError?: string;
-}
-
-export interface SessionEnvironmentState extends AgentEnvironmentBinding {
-  readonly type: SessionEnvironmentType;
-  readonly status: SessionEnvironmentStatus;
-  readonly connectError?: string;
-}
-
-export interface SessionEnvironmentsInfo {
-  readonly environments: readonly SessionEnvironmentInfo[];
-}
-
-export type { RemoteEnvironmentEntry };
 
 export type { CapabilityInstallOptions, CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
@@ -87,7 +57,6 @@ export type {
 export type {
   BackgroundConfig,
   ConfigDiagnostics,
-  EnvironmentsConfig,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
@@ -206,8 +175,6 @@ export interface WorkspaceTrustInfo {
 
 export interface WorkspaceTrustInfoOptions {
   readonly additionalDirs?: readonly string[];
-  readonly environmentId?: string;
-  readonly environmentCwd?: string;
 }
 
 /**
@@ -314,23 +281,13 @@ export interface KimiHarnessOptions {
   readonly uiCapabilities?: readonly HostUiCapability[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
-  /**
-   * Opt into the interactive SSH password retry. `askpassCommand` must
-   * re-enter a process whose entry runs `runSshAskpass` from the
-   * `./ssh-askpass` subpath when `isSshAskpassEnvironment()` holds.
-   */
-  readonly sshPassword?: KimiSshPasswordOptions;
   readonly sessionStartedProperties?: TelemetryProperties;
-}
-
-export interface KimiSshPasswordOptions {
-  readonly prompt: (environmentId: string) => Promise<string | undefined>;
-  readonly askpassCommand: readonly [string, ...string[]];
 }
 
 export interface CreateSessionOptions {
   readonly id?: string | undefined;
   readonly workDir: string;
+  readonly cwd?: string;
   readonly model?: string | undefined;
   readonly thinking?: string | undefined;
   readonly permission?: PermissionMode | undefined;
@@ -356,20 +313,6 @@ export interface CreateSessionOptions {
    * interactive / SDK sessions.
    */
   readonly drainAgentTasksOnStop?: boolean;
-  /**
-   * Initial environment binding for the main agent. An id declared in
-   * `[environments]`, or one already registered in this process (a temporary
-   * `connect` environment). Omit to start on the local environment, or the
-   * configured default when one is set. A registered environment that is not
-   * declared requires `environmentCwd`.
-   */
-  readonly environmentId?: string;
-  /**
-   * Working directory on the target environment for the initial binding.
-   * For a declared environment, defaults to that entry's `defaultCwd`.
-   * Required when the id is registered in this process but not declared.
-   */
-  readonly environmentCwd?: string;
 }
 
 export interface RenameSessionInput {

@@ -25,7 +25,6 @@ import { registerOAuthRoutes } from './oauth';
 import { registerPluginsRoutes } from './plugins';
 import { registerPromptsRoutes } from './prompts';
 import { registerRemoteControlRoutes, type RemoteControlRouteOptions } from './remoteControl';
-import { registerEnvironmentRoutes } from './environment';
 import { registerSearchRoutes } from './search';
 import { registerSessionMediaRoutes } from './sessionMedia';
 import { registerSessionRatingRoutes } from './sessionRating';
@@ -136,7 +135,6 @@ export async function registerApiV1Routes(
         core,
         hostSources(opts.hostBridges),
       );
-      registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
       if (opts.managedHost === true) {
         registerImportProvidersRoute(apiV1 as unknown as Parameters<typeof registerImportProvidersRoute>[0], core);

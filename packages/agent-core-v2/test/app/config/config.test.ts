@@ -32,6 +32,7 @@ import {
 } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
+import '#/app/config/environmentsConfigSection';
 import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/features/cron/configSection';
 import '#/features/skill/catalog/configSection';
 import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/features/skill/catalog/configSection';
@@ -1300,6 +1301,22 @@ describe('config deprecations', () => {
     await config.ready;
     return { config, disposables, storage };
   }
+
+  it('warns when the removed environments section is present', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[environments.dev]\ntype = "ssh"\nhost = "dev.example.test"\n',
+    );
+
+    expect(config.diagnostics()).toContainEqual({
+      domain: 'environments',
+      severity: 'warning',
+      message: '[environments] has been removed; configure SSH sessions with [hosts] instead.',
+    });
+    expect(config.get('providers')).toEqual({});
+
+    disposables.dispose();
+  });
 
   it('warns and ignores a deprecated TOML key whose value no longer applies', async () => {
     const { config, disposables } = await createConfig(

@@ -114,7 +114,6 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`workspace`](#workspace-trust) | `table` | — | Workspace settings, including the trust gate |
 | [`services`](#services) | `table` | — | Built-in external service configuration |
 | [`permission`](#permission) | `table` | — | Initial permission rules |
-| [`environments`](#environments) | `table` | — | Remote environment declarations |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | Lifecycle hooks |
 | [`identity`](#identity) | `table` | — | Custom agent identity |
 
@@ -576,75 +575,6 @@ pattern = "Bash"
 ::: tip
 MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project-local `.kimi-code/mcp.json`, not in `config.toml`. The interactive configuration entry point is `/mcp-config`; see [Model Context Protocol](../customization/mcp.md).
 :::
-
-## `environments`
-
-`environments` declares remote environments — SSH hosts, Docker-compatible containers, or custom launcher commands — that sessions can bind to so the agent's tools execute in the target environment. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough, boundaries, and limitations.
-
-Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
-
-Remote working directories must be absolute POSIX paths or Windows drive paths; relative paths and `~` are not expanded. See [Windows targets](../guides/remote-environment.md#windows-targets) for the Git Bash and launcher requirements.
-
-The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without a `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
-
-If the environment section is invalid, implicit session creation uses the last valid declarations when available instead of failing, or falls back to the local environment with a warning otherwise. This can change where commands run; check config diagnostics before relying on a configured remote environment.
-
-### SSH entries
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `type` | `string` | Yes | `"ssh"` |
-| `host` | `string` | Yes | SSH host; spawned through the system `ssh`, so `~/.ssh/config` (user, port, key, `ProxyJump`, `ControlMaster`) applies |
-| `remoteBin` | `string` | No | Path to `kimi` on the target; defaults to `~/.kimi-code/bin/kimi` on POSIX and `~/.kimi-code/bin/kimi.exe` on Windows. Supports absolute paths with spaces, `~/` paths under the target account's home, or bare names on the target's `PATH`, such as `kimi` |
-| `defaultCwd` | `string` | No | Working-directory prefill when binding a session; not validated locally |
-
-### Docker entries
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `type` | `string` | Yes | `"docker"` |
-| `container` | `string` | Yes | Running container name or id; attached with `docker exec` |
-| `context` | `string` | No | Docker context (for example `orbstack`) |
-| `remoteBin` | `string` | No | Path to `kimi` inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. The launcher runs through `docker exec … sh -c`, so a leading `~` is expanded by the container's shell |
-| `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
-
-### Command entries
-
-The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The command and `args` describe how to reach the target: the launcher must run the arguments that follow it on the target, as `ssh host`, `kubectl exec -i pod --` and `docker exec -i container` do. Kimi Code appends `<remoteBin> exec-server` to `args`, unless `args` already invokes `exec-server`.
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `command` | `string` | Yes | Launcher executable: a name resolved against `PATH`, or an absolute path. A resolution landing inside the working directory is refused, so a project cannot shadow the launcher with a same-named binary |
-| `args` | `array<string>` | No | Launcher arguments that reach the target. When an argument already invokes `exec-server` (for example `--command "~/.kimi-code/bin/kimi exec-server"`), nothing is appended and the arguments run as written |
-| `env` | `table<string, string>` | No | Environment for the launcher process on your machine; never propagated into commands running on the target |
-| `remoteBin` | `string` | No | Path to `kimi` on the target, appended after `args`; defaults to `~/.kimi-code/bin/kimi`. Use a plain path without spaces or shell metacharacters. `~` only expands when the launcher runs the arguments through a shell on the target, as ssh does; launchers that pass arguments straight through, such as `kubectl exec` and `docker exec`, need an absolute path |
-| `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
-
-```toml
-[environments]
-default = "dev-box"
-
-[environments.dev-box]
-type = "ssh"
-host = "dev-box"
-defaultCwd = "/home/me/projects"
-
-[environments.dev-container]
-type = "docker"
-container = "myapp-dev"
-
-[environments.sandbox]
-command = "sandbox"
-args = ["ssh", "i-1234567890", "--"]
-env = { SANDBOX_TOKEN = "..." }
-defaultCwd = "/home/me/kimi-code"
-
-[environments.k8s]
-command = "kubectl"
-args = ["exec", "-i", "dev-pod", "--"]
-remoteBin = "/root/.kimi-code/bin/kimi"
-defaultCwd = "/workspace"
-```
 
 ## `tui.toml`
 

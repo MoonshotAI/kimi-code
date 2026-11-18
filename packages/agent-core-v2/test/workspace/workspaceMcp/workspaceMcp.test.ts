@@ -59,7 +59,6 @@ function stdioServer(): McpServerConfig {
     transport: 'stdio',
     command: process.execPath,
     args: [stdioFixture],
-    environment_id: 'local',
   };
 }
 

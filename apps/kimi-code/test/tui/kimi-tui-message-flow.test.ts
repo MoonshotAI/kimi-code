@@ -180,7 +180,6 @@ interface MessageDriver {
   reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void>;
   createNewSession(): Promise<void>;
   syncRuntimeState(session?: unknown): Promise<void>;
-  refreshEnvironmentSlot(session?: unknown): Promise<void>;
   getCurrentSessionId(): string;
 }
 
@@ -218,7 +217,6 @@ function makeStartupInput(): KimiTUIStartupInput {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
-      environment: undefined,
     },
     tuiConfig: {
       theme: 'dark',
@@ -259,9 +257,6 @@ function makeSession(overrides: Record<string, unknown> = {}) {
       contextUsage: 0,
     })),
     getGoal: vi.fn(async () => ({ goal: null })),
-    getEnvironment: vi.fn(async () => ({ environmentId: 'local' })),
-    listEnvironments: vi.fn(async () => ({ environments: [] })),
-    getEnvironmentState: vi.fn(async () => ({ environmentId: 'local', type: 'local', status: 'ready' })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
     setStaleReloadHandler: vi.fn(),
@@ -359,7 +354,6 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       },
     })),
     setConfig: vi.fn(async () => ({ providers: {} })),
-    resolveSessionEnvironment: vi.fn(async (options: { environmentId?: string; environmentCwd?: string }) => ({ environmentId: options.environmentId ?? 'local', cwd: options.environmentCwd })),
     onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
@@ -3215,22 +3209,7 @@ command = "vim"
     expect(harness.submitFeedback).toHaveBeenCalledOnce();
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Feedback ID: 7');
-  });
-
-  it('drops the codebase attachment option with a hint for remote-bound sessions', async () => {
-    const { driver, harness } = await makeDriver(makeSession());
-    driver.state.appState.environment = { environmentId: 'dev-box', type: 'ssh', status: 'ready' };
-    const feedbackDriver = driver as unknown as FeedbackDriver;
-    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
-    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
-    harness.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 9 });
-
-    await handleFeedbackCommand(feedbackDriver as any);
-
-    expect(promptFeedbackAttachment).toHaveBeenCalledWith(expect.anything(), true, undefined);
-    const transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('Codebase attachment is not supported for remote sessions');
-  });
+  });;
 
   it('tracks successful feedback submissions only after the request succeeds', async () => {
     const { driver, harness } = await makeDriver(makeSession());
@@ -3411,8 +3390,6 @@ command = "vim"
         thinking: 'off',
         permission: 'manual',
         planMode: true,
-        environmentId: 'local',
-        environmentCwd: undefined,
       });
     });
     expect(session.setPlanMode).not.toHaveBeenCalled();
@@ -12542,54 +12519,7 @@ capabilities = ["image_in", "video_in"]
       expect(output).toContain('Context window');
       expect(output).toContain('25%');
     });
-  });
-
-  it('renders /status with the remote session working directory', async () => {
-    const session = makeSession({
-      getEnvironmentState: vi.fn(async () => ({
-        environmentId: 'dev-box',
-        type: 'ssh',
-        status: 'ready',
-        cwd: '/remote/project',
-      })),
-    });
-    const { driver } = await makeDriver(session);
-
-    driver.handleUserInput('/status');
-
-    await vi.waitFor(() => {
-      const output = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
-      expect(output).toContain(' Status ');
-      expect(output).toContain('/remote/project');
-      expect(output).not.toContain('/tmp/proj-a');
-    });
-  });
-
-  it('exports Markdown metadata with the remote session working directory', async () => {
-    const session = makeSession({
-      getEnvironmentState: vi.fn(async () => ({
-        environmentId: 'dev-box',
-        type: 'ssh',
-        status: 'ready',
-        cwd: '/remote/project',
-      })),
-      getContext: vi.fn(async () => ({
-        history: [{ role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] }],
-        tokenCount: 1,
-      })),
-    });
-    const { driver } = await makeDriver(session);
-    const outputDir = await mkdtemp(join(tmpdir(), 'kimi-code-remote-export-'));
-    tempDirs.push(outputDir);
-    const outputPath = join(outputDir, 'session.md');
-
-    driver.handleUserInput(`/export-md ${outputPath}`);
-
-    await vi.waitFor(() => expect(existsSync(outputPath)).toBe(true));
-    const markdown = await readFile(outputPath, 'utf8');
-    expect(markdown).toContain('work_dir: /remote/project');
-    expect(markdown).not.toContain('work_dir: /tmp/proj-a');
-  });
+  });;;
 
   it('renders /mcp using a fresh MCP server snapshot', async () => {
     const session = makeSession({
@@ -14148,7 +14078,7 @@ capabilities = ["image_in", "video_in"]
     });
   });
 
-  it('reports when the forked environment cannot be released', async () => {
+  it('reports when the forked session cannot be released', async () => {
     const source = makeSession({ id: 'ses-source' });
     const forked = makeSession({ id: 'ses-fork' });
     forked.close.mockRejectedValueOnce(new Error('close unavailable'));
@@ -14161,7 +14091,7 @@ capabilities = ["image_in", "video_in"]
       expect(forked.close).toHaveBeenCalledOnce();
       expect(driver.getCurrentSessionId()).toBe('ses-source');
       expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-        'Session forked (ses-fork), but failed to release its environment: close unavailable',
+        'Session forked (ses-fork), but failed to release its session: close unavailable',
       );
     });
     expect(source.close).not.toHaveBeenCalled();
@@ -16056,99 +15986,7 @@ describe('KimiTUI session rating survey', () => {
     listener?.({ domain: 'telemetry', value: false });
     expect(driver.state.appState.disableFeedbackSurvey).toBeUndefined();
   });
-});
-
-describe('KimiTUI environment slot', () => {
-  function environmentSession(overrides: Record<string, unknown> = {}) {
-    return makeSession({
-      getEnvironment: vi.fn(async () => ({
-        environmentId: 'dev-box',
-        cwd: '/home/me/projects',
-      })),
-      getEnvironmentState: vi.fn(async () => ({
-        environmentId: 'dev-box',
-        cwd: '/home/me/projects',
-        type: 'ssh',
-        status: 'ready',
-      })),
-      ...overrides,
-    });
-  }
-
-  it('syncs the binding and connection status into appState', async () => {
-    const { driver } = await makeDriver(environmentSession());
-    await driver.refreshEnvironmentSlot();
-    expect(driver.state.appState.environment).toEqual({
-      environmentId: 'dev-box',
-      type: 'ssh',
-      status: 'ready',
-      cwd: '/home/me/projects',
-    });
-  });
-
-  it('refreshes the slot with the recorded reason on a environment.status.changed hint', async () => {
-    const session = environmentSession({
-      getEnvironmentState: vi.fn(async () => ({
-        environmentId: 'dev-box',
-        cwd: '/home/me/projects',
-        type: 'ssh',
-        status: 'disconnected',
-        connectError: 'initialize timed out after 10000ms; executor stderr: Password:\nsecond line stays out',
-      })),
-    });
-    const { driver } = await makeDriver(session);
-
-    driver.sessionEventHandler.handleEvent(
-      {
-        type: 'environment.status.changed',
-        environmentId: 'dev-box',
-        status: 'disconnected',
-        agentId: 'main',
-        sessionId: 'ses-1',
-      } as Event,
-      () => {},
-    );
-    await vi.waitFor(() => {
-      expect(driver.state.appState.environment?.status).toBe('disconnected');
-    });
-
-    expect(driver.state.appState.environment?.connectError).toContain('executor stderr: Password:');
-  });
-
-  it('surfaces the lazy creation failure and leaves the prompt for resubmission', async () => {
-    const lazySession = environmentSession({ id: 'ses-lazy' });
-    const startupInput: KimiTUIStartupInput = {
-      ...makeStartupInput(),
-      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2', environment: 'dev-box' },
-    };
-    const createSession = vi.fn(async (): Promise<unknown> => {
-      throw new Error('connect failed');
-    });
-    const { driver } = await makeDriver(
-      lazySession,
-      {
-        createSession,
-      },
-      startupInput,
-    );
-
-    await vi.waitFor(() => {
-      expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: connect failed');
-    });
-    expect(driver.state.appState.environment).toBeUndefined();
-
-    driver.handleUserInput('hello-remote-world');
-    await vi.waitFor(() => {
-      expect(createSession).toHaveBeenCalledTimes(2);
-    });
-    await vi.waitFor(() => {
-      expect(driver.state.appState.environment).toBeUndefined();
-    });
-    expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: connect failed');
-    expect(stripSgr(renderTranscript(driver))).not.toContain('hello-remote-world');
-    expect(driver.state.appState.streamingPhase).toBe('idle');
-  });
-});
+});;
 
 describe('KimiTUI editor replacement disposal', () => {
   interface FakePanel {

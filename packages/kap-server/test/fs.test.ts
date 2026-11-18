@@ -4,9 +4,6 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
-import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
-import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
-import type { EnvironmentCapability } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { ErrorCode } from '../src/protocol/error-codes';
 import { sendMappedError } from '../src/routes/fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -287,48 +284,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     } as never, { id: 'req_config' }, new Error2(ErrorCodes.CONFIG_INVALID, 'invalid workspace config'), true);
     expect(status).toBe(400);
     expect(body?.code).toBe(ErrorCode.VALIDATION_FAILED);
-  });
-
-  it('serves fs actions and downloads from the environment the session was created on', async () => {
-    await writeFile(join(work!, 'selected.txt'), 'local');
-    const remote = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-')));
-    await writeFile(join(remote, 'selected.txt'), 'remote');
-    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
-      id: 'remote-session-provider',
-      attach: async (host) => {
-        const environment = Object.assign(
-          new FakeEnvironment(
-            { environmentId: 'remote-session', generation: 'remote-generation' },
-            { capabilities: ['fs', 'process'] },
-          ),
-          { fs: new HostFileSystem(), process: new HostProcessService() },
-        );
-        const registration = host.registerEnvironment(environment);
-        return { dispose: () => registration.remove() };
-      },
-    });
-    try {
-      const created = await fetch(`${base}/api/v1/sessions`, {
-        method: 'POST',
-        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-        body: JSON.stringify({ metadata: { cwd: work as string }, environment_id: 'remote-session', environment_cwd: remote }),
-      } as never);
-      const session = (await created.json()) as Envelope<{ id: string }>;
-      expect(session.code).toBe(0);
-      const body = await postFs<{ content: string }>(session.data.id, 'read', { path: 'selected.txt' });
-      expect(body.code).toBe(0);
-      expect(body.data.content).toBe('remote');
-      const download = await fetch(`${base}/api/v1/sessions/${session.data.id}/fs/selected.txt:download`, {
-        headers: authHeaders(server as RunningServer),
-      } as never);
-      expect(await download.text()).toBe('remote');
-      const opened = await postFs<null>(session.data.id, 'reveal', { path: 'selected.txt' });
-      expect(opened.code).not.toBe(0);
-    } finally {
-      await provider.dispose();
-      await rm(remote, { recursive: true, force: true });
-    }
-  });
+  });;
 
   it('fs:read maps a directory to FS_IS_DIRECTORY', async () => {
     const id = await createSession();

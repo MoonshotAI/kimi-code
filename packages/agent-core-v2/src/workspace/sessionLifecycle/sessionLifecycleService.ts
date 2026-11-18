@@ -138,7 +138,9 @@ const NO_ABORT = new AbortController().signal;
 function sessionEnvironment(
   environmentId: string | undefined,
   cwd: string | undefined,
+  pinnedCwd: string | undefined,
 ): (EnvironmentBinding & { readonly cwd: string }) | undefined {
+  if (pinnedCwd !== undefined) return { environmentId: LOCAL_ENVIRONMENT_ID, cwd: pinnedCwd };
   if (environmentId === undefined || environmentId === LOCAL_ENVIRONMENT_ID) {
     return cwd === undefined ? undefined : { environmentId: LOCAL_ENVIRONMENT_ID, cwd };
   }
@@ -228,7 +230,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
-    const environment = sessionEnvironment(opts.environmentId, opts.environmentCwd);
+    const environment = sessionEnvironment(undefined, undefined, opts.cwd);
     const workDir = this.sessionWorkDir(opts.workDir, environment);
     const effective = { ...opts, workDir };
     const workdir = await this.openWorkdir(environment, workDir);
@@ -240,7 +242,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (environment !== undefined) {
         await handle.accessor.get(ISessionMetadata).update(
           environment.environmentId === LOCAL_ENVIRONMENT_ID
-            ? { environmentCwd: environment.cwd }
+            ? { cwd: environment.cwd }
             : {
                 environmentId: environment.environmentId,
                 environmentCwd: environment.cwd,
@@ -501,7 +503,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const summary = await this.index.get(sessionId);
     if (summary === undefined || summary.workspaceId !== this.workspaceId) return undefined;
     const persisted = await this.readMetaFromDisk(sessionId);
-    const environment = sessionEnvironment(persisted?.environmentId, persisted?.environmentCwd);
+    const environment = sessionEnvironment(persisted?.environmentId, persisted?.environmentCwd, undefined);
     const fallbackCwd = persisted?.cwd ?? summary.cwd ?? this.workspaceContext.meta.root;
     const workDir = this.sessionWorkDir(fallbackCwd, environment);
 
@@ -824,9 +826,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         title,
         titleKind: opts.title !== undefined ? 'custom' : sourceMeta?.titleKind,
         forkedFrom: sourceId,
-        agents,
-        environmentId: sourceMeta?.environmentId,
         environmentCwd: sourceMeta?.environmentCwd,
+        agents,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
         lastTurnReason: turnSlice === undefined ? sourceMeta?.lastTurnReason : turnSlice.lastTurnReason,
@@ -841,7 +842,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           id: targetId,
           workspaceId: this.workspaceId,
           cwd: hostCwd,
-          environmentId: meta.environmentId,
           environmentCwd: meta.environmentCwd,
           title,
           lastPrompt: meta.lastPrompt,

@@ -1,4 +1,3 @@
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,9 +28,6 @@ import type {
   SessionWorkspaceAssociationSnapshot,
   WorkspaceInstanceSnapshot,
 } from '@moonshot-ai/agent-core-v2';
-import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
-import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
-import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -368,55 +364,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     );
     expect(body.code).toBe(0);
     expect(body.data.turn).toBeUndefined();
-  });
-
-  it('exposes environment binding through REST and debug dispatcher contracts', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
-
-    const dispatched = await call<{ workspaceId: string; environmentId: string }>(
-      'POST',
-      rpc('agent', IAgentEnvironmentBindingService, 'current', { sid: id, aid: 'main' }),
-    );
-    expect(dispatched.body.data.environmentId).toBe('local');
-
-    const current = await call<{ workspace_id: string; environment_id: string }>(
-      'GET',
-      `/api/v1/sessions/${id}/environment`,
-    );
-    expect(current.body.data).toMatchObject({ environment_id: 'local' });
-
-    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
-      id: 'debug-remote-provider',
-      attach: async (host) => {
-        host.registerEnvironment(Object.assign(new FakeEnvironment({
-          environmentId: 'remote',
-          generation: 'remote-two',
-        }, { capabilities: ['fs', 'process'] }), { fs: new HostFileSystem(), process: new HostProcessService() }));
-        return { dispose: () => {} };
-      },
-    });
-    try {
-      const created = await call<{ id: string }>('POST', '/api/v1/sessions', {
-        metadata: { cwd: home },
-        environment_id: 'remote',
-        environment_cwd: home,
-      });
-      expect(created.body.code).toBe(0);
-      const remoteId = created.body.data.id;
-      const snapshot = await call<AgentEnvironmentBindingSnapshot>(
-        'GET',
-        `/api/v1/debug/session/${remoteId}/agent/main/environment-binding`,
-      );
-      expect(snapshot.body.data).toMatchObject({
-        binding: { environmentId: 'remote' },
-        available: true,
-        environment: { environmentId: 'remote', generation: 'remote-two', status: 'ready' },
-      });
-    } finally {
-      await provider.dispose();
-    }
-  });
+  });;
 
   it('archives a session', async () => {
     const id = await createSession(home as string);

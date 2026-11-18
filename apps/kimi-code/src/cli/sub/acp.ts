@@ -17,19 +17,6 @@ export function registerAcpCommand(parent: Command): void {
     )
     .option('--region <region>', 'Login region used together with --login: "mainland-cn" (kimi.com) or "global" (kimi.ai).')
     .action(async (opts: { login?: boolean; region?: string }) => {
-      const rootOptions = parent.opts<{ environment?: string; environmentCwd?: string }>();
-      if (rootOptions.environment !== undefined) {
-        process.stderr.write(
-          `error: Cannot use --environment with 'acp': ACP sessions run in the ACP client's own environment.\n`,
-        );
-        process.exit(1);
-      }
-      if (rootOptions.environmentCwd !== undefined) {
-        process.stderr.write(
-          `error: Cannot use --environment-cwd with 'acp': ACP sessions run in the ACP client's own environment.\n`,
-        );
-        process.exit(1);
-      }
       if (opts.login === true) {
         await runLoginFlow({
           region: opts.region === undefined ? undefined : parseRegionFlag(opts.region),

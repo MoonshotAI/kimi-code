@@ -3244,6 +3244,10 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     );
 
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
+    await vi.waitFor(async () => {
+      const archivedOnly = await getJson<PageWire>('/api/v1/sessions?archived=true');
+      expect(archivedOnly.body.data.items.map((s) => s.id)).toEqual([id]);
+    }, { timeout: 10_000 });
     const archivedOnly = await getJson<PageWire>('/api/v1/sessions?archived=true');
     expect(archivedOnly.body.data.items.map((s) => s.id)).toEqual([id]);
 

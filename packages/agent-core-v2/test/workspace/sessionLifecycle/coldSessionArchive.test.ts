@@ -12,7 +12,6 @@ import type { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ISessionManager, type UnguardedSessionLifecycle } from '#/app/sessionManager/sessionManager';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
-import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import {
   ISessionIndex,
   ISessionIndexMirror,
@@ -249,10 +248,6 @@ function sessionManagerResuming(sessionId: string): SessionManager {
       get: () => workspace,
     } as unknown as IWorkspaceInstanceManager,
     { get: async () => summary } as unknown as ISessionIndex,
-    new EnvironmentDeclarationService(
-      { _serviceBrand: undefined, ready: Promise.resolve(), assertValid: () => {}, get: () => undefined } as unknown as IConfigService,
-      { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService,
-    ),
     environments,
     {
       _serviceBrand: undefined,

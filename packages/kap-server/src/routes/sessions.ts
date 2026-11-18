@@ -78,7 +78,6 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readAgentState } from '../transport/ws/v1/agentState';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
-import { sendEnvironmentError } from './environment';
 import {
   sendMappedError as sendSessionMappedError,
   sessionConflictErrors,
@@ -247,10 +246,7 @@ export function registerSessionsRoutes(
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
-          environmentId: body.environment_id,
-          environmentCwd: body.environment_cwd,
           mainAgentBinding,
-          ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
           prepare: async (session) => {
             if (Object.keys(custom).length > 0) {
               await session.accessor.get(ISessionMetadata).update({ custom });
@@ -1065,6 +1061,5 @@ function sendMappedError(
   req: { id: string },
   error: unknown,
 ): void {
-  if (sendEnvironmentError(reply, req.id, error)) return;
   sendSessionMappedError(reply, req, error);
 }

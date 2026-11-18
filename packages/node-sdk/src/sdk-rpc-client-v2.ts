@@ -52,12 +52,6 @@
  *   the engine has no import capability of its own. `createSession`'s
  *   `model` / `thinking` / `permission` options are applied in this batch
  *   too (default-profile bind + permission mode).
- * - `getEnvironment` uses the klient agent facade; `listEnvironments`
- *   reads the workspace registry.
- *   `createSession`'s `environmentId` / `environmentCwd` options ride the
- *   engine's own `mainAgentBinding` + environment seed path. The constructor
- *   attaches the `remote-exec` environment provider with the region CDN
- *   artifact locator, mirroring the kap-server composition root.
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
  *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
@@ -154,7 +148,6 @@ import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/towe
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
-import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import {
@@ -175,8 +168,6 @@ import {
   IAgentGoalService,
   IAgentPluginService,
   IAgentLifecycleService,
-  IAgentEnvironmentBindingService,
-  IAgentEnvironmentService,
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
@@ -220,15 +211,11 @@ import {
   IWorkspaceAliases,
   ISessionActivityView,
   IWorkspaceInstanceManager,
-  IEnvironmentService,
-  IEnvironmentDeclarationService,
   closeSessionById,
   followSessionLifecycles,
   getLiveSessionById,
   isError2,
   programForSession,
-  environmentEntryInfo,
-  snapshotAgentEnvironmentBinding,
   resumeSessionById,
   sessionDirOf,
   workspacePersistenceScope,
@@ -271,7 +258,6 @@ import {
 import { RegistryImportError } from '#/catalog';
 import { createKlient } from '@moonshot-ai/klient/memory';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
-import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 
 import type { FeedbackSubmitInput } from '@moonshot-ai/agent-core-v2/app/auth/feedback';
 import { KimiAuthFacade } from '#/auth';
@@ -307,7 +293,6 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentEnvironmentBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
   CapabilityInstallOptions,
@@ -333,7 +318,6 @@ import type {
   KimiHarnessOptions,
   KimiHostIdentity,
   InstallPluginInput,
-  KimiSshPasswordOptions,
   ListSessionsOptions,
   McpManagedServerInfo,
   McpServerConfig,
@@ -355,8 +339,6 @@ import type {
   SessionStatus,
   SessionSummary,
   SessionSummaryPage,
-  SessionEnvironmentsInfo,
-  SessionEnvironmentState,
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
@@ -408,7 +390,6 @@ export interface SDKRpcClientV2Options {
   readonly nonInteractive?: boolean;
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
-  readonly sshPassword?: KimiSshPasswordOptions;
   readonly uiMode?: string;
   /** UI surfaces this host renders; forwarded as `BootstrapInput.args.uiCapabilities`. */
   readonly uiCapabilities?: readonly HostUiCapability[];
@@ -452,7 +433,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * {@link close} before the app scope; an attach failure degrades to no
    * remote environments instead of killing the client.
    */
-  private readonly remoteEnvironmentProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
   /**
    * The engine's config reads (`get`/`getAll`/`inspect`/`diagnostics`) are
    * synchronous over state that only exists once the initial load settles;
@@ -537,18 +517,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       [...logSeed(resolveLoggingConfig({ homeDir: this.homeDir, env: process.env }))],
     );
     this.app = app;
-    this.remoteEnvironmentProvider = app.accessor
-      .get(IEnvironmentService)
-      .addProvider(
-        new RemoteEnvironmentProviderFactory({
-          clientVersion: identity.version,
-          sshPassword: options.sshPassword,
-        }),
-      )
-      .catch((error) => {
-        app.accessor.get(ILogService).warn('remote environment provider attach failed', { error });
-        return undefined;
-      });
     this.klient = createKlient({ scope: app });
     this.configReady = app.accessor.get(IConfigService).ready;
     this.installEngineTelemetry(options.telemetry);
@@ -588,8 +556,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await this.klient.close();
     await this.app.accessor.get(ISessionIndexMirror).drain();
     await this.app.accessor.get(IMcpOAuthService).shutdown();
-    const remoteEnvironmentProvider = await this.remoteEnvironmentProvider;
-    await remoteEnvironmentProvider?.dispose();
     const appendLogStore = this.app.accessor.get(IAppendLogStore);
     this.app.dispose();
     await this.app.instantiation.disposeAsync();
@@ -834,14 +800,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     workDir: string,
     options?: WorkspaceTrustInfoOptions,
   ): Promise<WorkspaceTrustInfo> {
-    const environment = options?.environmentId === undefined
-      ? undefined
-      : await this.resolveSessionEnvironment({
-          workDir,
-          environmentId: options.environmentId,
-          environmentCwd: options.environmentCwd,
-        });
-    const baseDir = environment?.cwd ?? normalizeRequiredWorkDir('getWorkspaceTrustInfo', workDir);
+    const baseDir = normalizeRequiredWorkDir('getWorkspaceTrustInfo', workDir);
     return this.withWorkspaceInstance('getWorkspaceTrustInfo', workDir, async (handler) => {
       const trusted = await handler.program.trust.get();
       if (trusted) {
@@ -854,36 +813,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           instructionSources: EMPTY_INSTRUCTION_SOURCES,
         };
       }
-      let additionalDirs = options?.additionalDirs;
-      let pendingAdditionalDirsResolved = false;
-      if (environment !== undefined && additionalDirs !== undefined) {
-        const workdir = await handler.program.acquireWorkdir(
-          environment.environmentId,
-          environment.cwd ?? baseDir,
-        );
-        try {
-          const resolved = await workdir.localConfig.resolveAdditionalDirs(
-            environment.cwd ?? baseDir,
-            additionalDirs,
-          );
-          additionalDirs = await Promise.all(
-            resolved.map(async (dir) => {
-              try {
-                return await workdir.hostFs.realpath(dir);
-              } catch {
-                return dir;
-              }
-            }),
-          );
-          pendingAdditionalDirsResolved = true;
-        } finally {
-          workdir.dispose();
-        }
-      }
+      const additionalDirs = options?.additionalDirs;
       const activation = await handler.program.trustDisclosure.describeGatedActivation(
         additionalDirs,
         baseDir,
-        pendingAdditionalDirsResolved,
       );
       return {
         trusted: false,
@@ -1547,9 +1480,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private async doCreateSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const workDir = normalizeRequiredWorkDir('createSession', input.workDir);
-    if (input.environmentCwd !== undefined && input.environmentId === undefined) {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'createSession environmentCwd requires environmentId');
-    }
     if (input.id !== undefined) {
       const existing =
         this.liveSession(input.id) ??
@@ -1564,16 +1494,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const handle = await this.engineAccessor.get(ISessionManager).create({
       sessionId: input.id,
       workDir,
+      cwd: input.cwd,
       additionalDirs: input.additionalDirs,
-      environmentId: input.environmentId,
-      environmentCwd: input.environmentCwd,
-      mainAgentBinding: input.environmentId === undefined || input.environmentId === 'local'
-        ? undefined
-        : {
-            profile: DEFAULT_AGENT_PROFILE_NAME,
-            model: input.model,
-            thinking: input.thinking,
-          },
     });
     this.wireSession(handle);
     if (
@@ -1581,12 +1503,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       input.thinking !== undefined ||
       input.permission !== undefined
     ) {
-      const agent = await this.materializeMainAgent(
-        handle,
-        input.environmentId === undefined || input.environmentId === 'local'
-          ? { model: input.model, thinking: input.thinking }
-          : undefined,
-      );
+      const agent = await this.materializeMainAgent(handle, { model: input.model, thinking: input.thinking });
       if (input.permission !== undefined) {
         agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
       }
@@ -2122,56 +2039,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async runCommand(input: RunCommandRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
     return agent.runCommand({ name: input.name, args: input.args });
-  }
-
-  override async resolveSessionEnvironment(options: Pick<CreateSessionOptions, 'workDir' | 'environmentId' | 'environmentCwd'>): Promise<AgentEnvironmentBinding> {
-    await this.configReady;
-    const binding = await this.engineAccessor.get(ISessionManager).resolveCreationEnvironment({
-      workDir: options.workDir,
-      environmentId: options.environmentId,
-      environmentCwd: options.environmentCwd,
-    });
-    return { environmentId: binding.environmentId ?? 'local', cwd: binding.environmentCwd };
-  }
-
-  override async getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding> {
-    const agent = await this.agentFacade(input.sessionId);
-    return agent.getEnvironment();
-  }
-
-  /**
-   * The engine's binding snapshot (binding + live registry generation) joined
-   * with the resolved declaration (type).
-   */
-  override async getEnvironmentState(input: SessionIdRpcInput): Promise<SessionEnvironmentState> {
-    const agent = await this.agentScope(input.sessionId);
-    const { binding, environment } = snapshotAgentEnvironmentBinding(
-      agent.accessor.get(IAgentEnvironmentBindingService),
-      agent.accessor.get(IAgentEnvironmentService),
-    );
-    if (environment === undefined) {
-      return { ...binding, type: binding.environmentId === 'local' ? 'local' : 'command', status: 'disposed' };
-    }
-    const declarations = await this.engineAccessor.get(IEnvironmentDeclarationService).declarations();
-    const entry = declarations?.entries.find((declaration) => declaration.id === binding.environmentId)?.entry;
-    const info = environmentEntryInfo(environment, entry);
-    return { ...binding, type: info.type, status: info.status, connectError: info.connectError };
-  }
-
-  /**
-   * The app's environment registry snapshot (status) joined with the resolved
-   * declarations (type).
-   */
-  override async listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo> {
-    this.requireLiveSession(input.sessionId);
-    const declarations = await this.engineAccessor.get(IEnvironmentDeclarationService).declarations();
-    const entries = new Map((declarations?.entries ?? []).map((declaration) => [declaration.id, declaration.entry]));
-    return {
-      environments: this.engineAccessor.get(IEnvironmentService).snapshot().environments.map((environment) => {
-        const { defaultCwd: _defaultCwd, ...info } = environmentEntryInfo(environment, entries.get(environment.environmentId));
-        return info;
-      }),
-    };
   }
 
   /**

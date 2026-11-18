@@ -127,7 +127,6 @@ describe('Workspace MCP initialization', () => {
         transport: 'stdio',
         command: process.execPath,
         args: [stdioFixture],
-        environment_id: 'local',
       },
     });
     const service = createWorkspaceMcpService(ready);
@@ -148,7 +147,6 @@ describe('Workspace MCP initialization', () => {
         transport: 'stdio',
         command: process.execPath,
         args: [slowToolStdioFixture],
-        environment_id: 'local',
         env: { KIMI_TEST_MCP_TOOL_DELAY_MS: '300' },
       },
     });

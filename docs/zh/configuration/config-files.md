@@ -114,7 +114,6 @@ timeout = 5
 | [`workspace`](#workspace-trust) | `table` | — | 工作区设置，包括信任机制 |
 | [`services`](#services) | `table` | — | 内置外部服务配置 |
 | [`permission`](#permission) | `table` | — | 初始权限规则 |
-| [`environments`](#environments) | `table` | — | 远程环境声明 |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | 生命周期 hook |
 | [`identity`](#identity) | `table` | — | 自定义 Agent 身份 |
 
@@ -575,75 +574,6 @@ pattern = "Bash"
 ::: tip
 MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-code/mcp.json` 中，不在 `config.toml` 里。交互式配置入口是 `/mcp-config`，详见 [Model Context Protocol](../customization/mcp.md)。
 :::
-
-## `environments`
-
-`environments` 声明远程环境——SSH 主机、Docker 兼容容器或自定义启动命令——会话绑定后，Agent 的工具即在目标环境中执行。功能介绍、边界与限制见 [远程环境](../guides/remote-environment.md)。
-
-每个条目以环境 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
-
-远端工作目录必须是 POSIX 绝对路径或 Windows 驱动器路径，相对路径和 `~` 不会展开。Git Bash 和启动器的要求见 [Windows 目标](../guides/remote-environment.md#windows-目标)。
-
-可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，这些会话从 `local` 开始。TUI 的 `/new` 不用这个 default，而是保留当前环境。详见 [远程环境](../guides/remote-environment.md)。
-
-环境配置节非法时，隐式会话创建不会直接失败：有历史有效声明时沿用历史声明，否则回退到本地环境并给出警告。这可能改变命令的执行位置；依赖配置的远程环境前，请先查看配置诊断。
-
-### SSH 条目
-
-| 字段 | 类型 | 是否必填 | 说明 |
-| --- | --- | --- | --- |
-| `type` | `string` | 是 | `"ssh"` |
-| `host` | `string` | 是 | SSH 主机；经系统 `ssh` 启动，`~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）照常生效 |
-| `remoteBin` | `string` | 否 | 目标环境上 `kimi` 的路径，POSIX 默认 `~/.kimi-code/bin/kimi`，Windows 默认 `~/.kimi-code/bin/kimi.exe`。支持含空格的绝对路径、目标账户主目录下的 `~/` 路径或目标 `PATH` 中的裸名称（如 `kimi`） |
-| `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值，不在本机校验 |
-
-### Docker 条目
-
-| 字段 | 类型 | 是否必填 | 说明 |
-| --- | --- | --- | --- |
-| `type` | `string` | 是 | `"docker"` |
-| `container` | `string` | 是 | 运行中的容器名或 id，经 `docker exec` 接入 |
-| `context` | `string` | 否 | Docker context（例如 `orbstack`） |
-| `remoteBin` | `string` | 否 | 容器内 `kimi` 的路径，默认为容器用户 home 下的 `~/.kimi-code/bin/kimi`；启动命令经 `docker exec … sh -c` 执行，`~` 前缀由容器内的 shell 展开 |
-| `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
-
-### command 条目
-
-通用启动器形式，用于内置启动器未覆盖的环境（OrbStack 机器、`kubectl exec`、Apple Container、受管沙箱等）。`command` 与 `args` 描述如何进入目标：启动器必须在目标上执行跟在它后面的参数，`ssh host`、`kubectl exec -i pod --`、`docker exec -i container` 都是这样。Kimi Code 会在 `args` 末尾追加 `<remoteBin> exec-server`；`args` 已经调用 `exec-server` 时不追加。
-
-| 字段 | 类型 | 是否必填 | 说明 |
-| --- | --- | --- | --- |
-| `command` | `string` | 是 | 启动器可执行文件：按 `PATH` 解析的名称，或绝对路径。解析结果落在工作目录内会被拒绝，项目无法用同名二进制冒名顶替启动器 |
-| `args` | `array<string>` | 否 | 进入目标的启动器参数。某个参数已经调用 `exec-server` 时（例如 `--command "~/.kimi-code/bin/kimi exec-server"`），不再追加，按原样执行 |
-| `env` | `table<string, string>` | 否 | 本机启动器进程的环境变量，不会传播到目标环境执行的命令中 |
-| `remoteBin` | `string` | 否 | 目标环境上 `kimi` 的路径，追加在 `args` 之后，默认 `~/.kimi-code/bin/kimi`。应为不含空格和 shell 特殊字符的路径。只有经目标上的 shell 执行参数的启动器（如 ssh）会展开 `~`；`kubectl exec`、`docker exec` 这类原样传递参数的启动器需要绝对路径 |
-| `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
-
-```toml
-[environments]
-default = "dev-box"
-
-[environments.dev-box]
-type = "ssh"
-host = "dev-box"
-defaultCwd = "/home/me/projects"
-
-[environments.dev-container]
-type = "docker"
-container = "myapp-dev"
-
-[environments.sandbox]
-command = "sandbox"
-args = ["ssh", "i-1234567890", "--"]
-env = { SANDBOX_TOKEN = "..." }
-defaultCwd = "/home/me/kimi-code"
-
-[environments.k8s]
-command = "kubectl"
-args = ["exec", "-i", "dev-pod", "--"]
-remoteBin = "/root/.kimi-code/bin/kimi"
-defaultCwd = "/workspace"
-```
 
 ## `tui.toml`
 

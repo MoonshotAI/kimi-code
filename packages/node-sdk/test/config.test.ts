@@ -86,53 +86,7 @@ max_context_size = 1000000
       env: { AWS_REGION: 'us-east-1' },
     });
     expect(config.models?.['bedrock/kimi']?.protocol).toBe('openai');
-  });
-
-  it('keeps a valid [environments] section through parseConfigString', () => {
-    const text = `
-[environments.dev-box]
-type = "ssh"
-host = "dev-box"
-defaultCwd = "/remote/dev"
-
-[environments.sandbox]
-command = "bwrap"
-args = ["--unshare-all"]
-env = { SANDBOX_TOKEN = "x" }
-`;
-    const config = parseConfigString(text);
-    expect(config.environments?.['dev-box']).toEqual({
-      type: 'ssh',
-      host: 'dev-box',
-      defaultCwd: '/remote/dev',
-    });
-    expect(config.environments?.['sandbox']).toEqual({
-      command: 'bwrap',
-      args: ['--unshare-all'],
-      env: { SANDBOX_TOKEN: 'x' },
-    });
-  });
-
-  it('preserves underscored environment ids and camel-cases entry fields', () => {
-    const text = `
-[environments]
-default = "dev_box"
-
-[environments.dev_box]
-type = "ssh"
-host = "dev-box"
-default_cwd = "/remote/dev"
-remote_bin = "~/.kimi-code/bin/kimi"
-`;
-    const config = parseConfigString(text);
-    expect(config.environments?.default).toBe('dev_box');
-    expect(config.environments?.['dev_box']).toEqual({
-      type: 'ssh',
-      host: 'dev-box',
-      defaultCwd: '/remote/dev',
-      remoteBin: '~/.kimi-code/bin/kimi',
-    });
-  });
+  });;;
 
   it('preserves and removes model upgrade metadata', () => {
     const config = parseConfigString(`

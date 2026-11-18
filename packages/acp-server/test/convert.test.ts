@@ -37,7 +37,6 @@ describe('acpMcpServersToConfigRecord', () => {
         command: '/usr/local/bin/mcp-fs',
         args: ['--root', '/tmp'],
         env: { API_KEY: 'secret', DEBUG: '1' },
-        environment_id: 'local',
       },
     });
   });

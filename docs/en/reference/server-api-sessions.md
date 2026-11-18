@@ -4,7 +4,7 @@ This page lists the REST endpoints under `/api/v1/sessions` (session file system
 
 ## Sessions
 
-These endpoints manage sessions themselves: create, list, read, and update sessions, run session actions such as fork, compact, and undo, and read session-level information such as the goal, warnings, environments, and file history. Every endpoint that returns a session uses the [session object](#session-object) shape.
+These endpoints manage sessions themselves: create, list, read, and update sessions, run session actions such as fork, compact, and undo, and read session-level information such as the goal, warnings, and file history. Every endpoint that returns a session uses the [session object](#session-object) shape.
 
 ### Session object
 
@@ -59,8 +59,6 @@ The session's directory comes from `workspace_id` (a registered workspace) or `m
 | `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is required when `workspace_id` is absent; with `workspace_id` also given, it must equal the workspace root. Other keys are kept as the session's custom metadata; the reserved keys `goal`, `parent_session_id`, and `child_session_kind` are dropped |
 | `title` | body | string | Initial title, at least 1 character. Without it, the session is untitled |
 | `agent_config` | body | object | Partial main agent config, applied before the session is returned. Same fields as `agent_config` in [`POST /api/v1/sessions/{session_id}/profile`](#post-api-v1-sessions-session-id-profile), plus `profile` |
-| `environment_id` | body | string | Id of the environment the main agent runs in; `local` means this machine. Without it, the server uses `default` under `[environments]` in `config.toml`, or this machine when that is not configured. A non-local environment must be declared under `[environments]` or already registered. With a value other than `local`, the server creates the main agent before returning the session |
-| `environment_cwd` | body | string | Working directory on the environment. Requires `environment_id`. For a non-local environment without this field, the environment's `defaultCwd` under `[environments]` is used |
 
 The main agent is bound when the session is created:
 
@@ -74,13 +72,11 @@ When no model is available (no default model is configured, or the default model
 
 On success, `data` is the [session object](#session-object) of the new session.
 
-- `40001`: neither `workspace_id` nor `metadata.cwd` is given; `metadata.cwd` does not match the workspace root; `agent_config` sets `tower_mode: true` (`details` lists the field); `agent_config.model` is not configured; `agent_config.profile` is an unknown agent profile; the model does not support `agent_config.thinking`; `environment_cwd` is given without `environment_id`; a non-local environment is not declared, fails to register, or has no usable working directory
+- `40001`: neither `workspace_id` nor `metadata.cwd` is given; `metadata.cwd` does not match the workspace root; `agent_config` sets `tower_mode: true` (`details` lists the field); `agent_config.model` is not configured; `agent_config.profile` is an unknown agent profile; the model does not support `agent_config.thinking`
 - `40113`: no model is available while `agent_config` sets `profile` or `thinking`
-- `40409`: the working directory does not exist or is not a directory. With a non-local environment, the server does not check whether the working directory exists
+- `40409`: the working directory does not exist or is not a directory
 - `40410`: no workspace is registered with that `workspace_id`
-- `40420`: the environment does not exist
 - `40913`–`40918`, `40920`: `agent_config` could not be applied because of a goal error
-- `40926`: the environment is unavailable
 
 #### `GET /api/v1/sessions`
 
@@ -98,7 +94,7 @@ Queries sessions across workspaces with filtering, sorting, workspace grouping, 
 | `sort` | query | string | `updated_at_desc` (default) / `updated_at_asc` / `created_at_desc` |
 | `view` | query | string | `flat` (default) / `by_workspace` |
 | `group_page_size` | query | integer | Sessions returned per workspace under `view=by_workspace`: 1–100, default `5` (up to `10000` with the `id,archived` projection) |
-| `include` | query | string | Comma-separated extra field groups. Currently supports `git` (branch and PR info, deduplicated per environment and working directory and cached for 60 seconds) |
+| `include` | query | string | Comma-separated extra field groups. Currently supports `git` (branch and PR info, deduplicated per working directory and cached for 60 seconds) |
 | `fields` | query | string | Comma-separated field projection. Currently supports only `id,archived`, trimming each item to `{ id, archived }` (for select-all-matching flows) |
 | `page_size` | query | integer | 1–100, default `50`; up to `10000` with the `id,archived` projection. Under `view=by_workspace` it counts groups |
 | `page_token` | query | string | Pagination token returned by the previous page |
@@ -447,15 +443,13 @@ On success, `data` is the updated goal snapshot, in the same shape as `GET /api/
 - `40917`: the objective is empty
 - `40918`: the objective exceeds 4000 characters
 
-### Warnings and environments
+### Warnings
 
-Read session-level warnings, the environment the main agent runs in, and the environments available to the session.
+Read session-level warnings.
 
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
-| `GET /api/v1/sessions/{session_id}/environment` | Read the main agent's environment binding |
-| `GET /api/v1/sessions/{session_id}/environments` | List the environments registered for the session's workspace |
 
 #### `GET /api/v1/sessions/{session_id}/warnings`
 
@@ -472,43 +466,6 @@ On success, `data` is `{ warnings }`:
 | `warnings[].code` | string | Warning code, for example `agents-md-oversized` |
 | `warnings[].message` | string | Warning message |
 | `warnings[].severity` | string | `info` / `warning` / `error` |
-
-- `40401`: the session does not exist
-
-#### `GET /api/v1/sessions/{session_id}/environment`
-
-Reads the main agent's environment binding, that is, which environment the session's agent loop runs on.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | Required. Session id |
-
-On success, `data` is:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `workspace_id` | string | Workspace id |
-| `environment_id` | string | Id of the bound environment |
-| `cwd` | string | Working directory on the bound environment. Returned only when the binding carries one |
-
-- `40401`: the session does not exist
-
-#### `GET /api/v1/sessions/{session_id}/environments`
-
-Lists the environments available to the session, that is, the environments registered for the session's workspace.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | Required. Session id |
-
-On success, `data` is `{ environments }`:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `environments[].environment_id` | string | Environment id |
-| `environments[].type` | string | `local` / `ssh` / `docker` / `command` |
-| `environments[].status` | string | `pending` / `connecting` / `ready` / `disconnected` / `disposed`. `pending` means there is no live connection and no observed failure (never connected) |
-| `environments[].connect_error` | string | Failure reason of a `disconnected` entry |
 
 - `40401`: the session does not exist
 
@@ -880,7 +837,7 @@ The body fields are the same as [`POST /api/v1/sessions/{session_id}/prompts`](#
 
 The order and effect of applying overrides and the `prompt_id` idempotency rules are the same as for prompt submission.
 
-On success, `data` has the same shape as the accepted prompt returned by prompt submission. Errors also match prompt submission, including validation, media, environment, and idempotency errors.
+On success, `data` has the same shape as the accepted prompt returned by prompt submission. Errors also match prompt submission, including validation, media, and idempotency errors.
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 

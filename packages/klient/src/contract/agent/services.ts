@@ -13,7 +13,6 @@ import {
   promptWithSkillsPayloadSchema,
   promptWithSkillsResultSchema,
   runShellCommandPayloadSchema,
-  environmentBindingSchema,
   setModelResultSchema,
   shellCommandResultSchema,
   steerResultSchema,
@@ -48,10 +47,6 @@ export const agentPermissionModeContract = {
 export const agentCommandContract = {
   list: { input: z.tuple([]), output: z.array(agentCommandInfoSchema) },
   run: { input: z.tuple([z.string(), z.string().optional()]), output: noResult },
-} satisfies ServiceContract;
-
-export const agentEnvironmentBindingContract = {
-  current: { input: z.tuple([]), output: environmentBindingSchema },
 } satisfies ServiceContract;
 
 export const agentContextMemoryContract = {

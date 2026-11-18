@@ -167,7 +167,6 @@ function opts(overrides: Record<string, unknown> = {}) {
     skillsDirs: [],
     agent: undefined,
     agentFiles: [],
-    environment: undefined,
     addDirs: [],
     ...overrides,
   } as const;
@@ -619,30 +618,6 @@ describe('runV2Print', () => {
     });
     const profile = agentServices.get(IAgentProfileService) as { bind: ReturnType<typeof vi.fn> };
     expect(profile.bind).not.toHaveBeenCalled();
-  });
-
-  it('threads the environment flags into the initial session binding', async () => {
-    const stdout = writer();
-    const stderr = writer();
-    const { app, appServices } = makeFakeHarness();
-
-    mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
-
-    await runV2Print(
-      opts({ environment: 'dev-box', environmentCwd: '/remote/work' }) as never,
-      '1.2.3-test',
-      { stdout, stderr },
-    );
-
-    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
-    expect(sessions.create).toHaveBeenCalledWith({
-      workDir: process.cwd(),
-      additionalDirs: undefined,
-      mainAgentBinding: { profile: 'agent', model: 'k2' },
-      environmentId: 'dev-box',
-      environmentCwd: '/remote/work',
-    });
   });
 
   it('does not materialize a main agent after fresh profile binding fails', async () => {

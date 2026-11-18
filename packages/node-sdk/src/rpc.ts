@@ -29,7 +29,6 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentEnvironmentBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
   ConfigDiagnostics,
@@ -78,8 +77,6 @@ import type {
   RefreshProviderModelsResponse,
   SessionSummary,
   SessionSummaryPage,
-  SessionEnvironmentsInfo,
-  SessionEnvironmentState,
   SkillSummary,
   PluginCommandDef,
   GitPullRequest,
@@ -528,16 +525,6 @@ export abstract class SDKRpcClientBase {
   abstract listCommands(input: SessionIdRpcInput): Promise<readonly AgentCommandInfo[]>;
 
   abstract runCommand(input: RunCommandRpcInput): Promise<void>;
-
-  async resolveSessionEnvironment(options: Pick<CreateSessionOptions, 'workDir' | 'environmentId' | 'environmentCwd'>): Promise<AgentEnvironmentBinding> {
-    throw new Error(`Environment resolution is unavailable on this engine for ${options.workDir}.`);
-  }
-
-  abstract getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding>;
-
-  abstract listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo>;
-
-  abstract getEnvironmentState(input: SessionIdRpcInput): Promise<SessionEnvironmentState>;
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);

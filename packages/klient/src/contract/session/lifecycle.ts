@@ -9,7 +9,7 @@ export const createSessionOptionsSchema = z.object({
   sessionId: z.string().optional(),
   workDir: z.string(),
   additionalDirs: z.array(z.string()).optional(),
-  environmentId: z.string().optional(),
+  cwd: z.string().optional(),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
 });
 

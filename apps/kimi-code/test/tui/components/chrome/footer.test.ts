@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildWeightedTips, FooterComponent } from '#/tui/components/chrome/footer';
 import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP } from '#/tui/constant/tips';
-import { BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
@@ -112,30 +111,7 @@ describe('FooterComponent', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
     footer.dispose();
     expect(dispose).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps the git cache through a disconnect and refreshes it once the environment is ready again', () => {
-    const refresh = vi.fn();
-    const dispose = vi.fn();
-    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({ getStatus: () => null, refresh, dispose }));
-    const remote = (status: 'ready' | 'disconnected'): AppState => ({
-      ...appState,
-      environment: { environmentId: 'dev-box', type: 'ssh', status },
-    });
-    const footer = new FooterComponent(remote('ready'));
-    footer.setGitBinding((state) => ({ key: state.sessionId, source: gitSource }));
-
-    footer.setState(remote('disconnected'));
-    expect(dispose).not.toHaveBeenCalled();
-    expect(refresh).not.toHaveBeenCalled();
-
-    footer.setState(remote('ready'));
-    expect(refresh).toHaveBeenCalledTimes(1);
-    footer.setState(remote('ready'));
-    expect(refresh).toHaveBeenCalledTimes(1);
-    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(1);
-    footer.dispose();
-  });
+  });;
 
   it('keeps the git cache for the same binding key and replaces it on a new one', () => {
     const dispose = vi.fn();
@@ -475,78 +451,4 @@ describe('FooterComponent ctrl+o hint beside an inline tips slot', () => {
     expect(line1.length).toBeLessThanOrEqual(width);
     footer.dispose();
   });
-});
-
-describe('FooterComponent environment slot', () => {
-  const ERROR = '38;2;232;84;84';
-  let repoDir: string;
-  const previousChalkLevel = chalk.level;
-
-  beforeEach(() => {
-    chalk.level = 3;
-  });
-
-  afterEach(() => {
-    chalk.level = previousChalkLevel;
-    vi.useRealTimers();
-  });
-
-  function plain(text: string): string {
-    return text.replaceAll(/\[[0-9;]*m/g, '');
-  }
-
-  function line1(footer: FooterComponent, width = 160): string {
-    return plain(footer.render(width)[0] ?? '');
-  }
-
-  beforeEach(() => {
-    repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-environment-'));
-  });
-
-  afterEach(() => {
-    rmSync(repoDir, { recursive: true, force: true });
-  });
-
-  function footerWith(environment: AppState['environment']): FooterComponent {
-    return new FooterComponent({ ...appState, workDir: repoDir, environment });
-  }
-
-  it('renders the remote identifier ahead of the cwd without a type prefix', () => {
-    const ssh = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
-    const sshRendered = line1(ssh);
-    expect(sshRendered).toContain('dev-box');
-    expect(sshRendered.indexOf('dev-box')).toBeLessThan(sshRendered.indexOf('kimi-footer-environment'));
-    ssh.dispose();
-
-    const command = footerWith({ environmentId: 'kimi-dev', type: 'command', status: 'ready' });
-    const commandRendered = line1(command);
-    expect(commandRendered).toContain('kimi-dev');
-    expect(commandRendered).not.toContain('command:kimi-dev');
-    expect(commandRendered).not.toContain('command:');
-    command.dispose();
-  });
-
-  it('renders a disconnected remote identifier in the error color', () => {
-    const footer = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'disconnected' });
-    const rendered = footer.render(160)[0] ?? '';
-    expect(rendered).toContain('dev-box');
-    expect(rendered).toContain(ERROR);
-    footer.dispose();
-  });
-
-  it('leaves no spinner timer running after dispose', () => {
-    vi.useFakeTimers();
-    const onRefresh = vi.fn();
-    const footer = new FooterComponent(
-      {
-        ...appState,
-        workDir: repoDir,
-        environment: { environmentId: 'dev-box', type: 'ssh', status: 'connecting' },
-      },
-      onRefresh,
-    );
-    footer.dispose();
-    vi.advanceTimersByTime(BRAILLE_SPINNER_INTERVAL_MS * 5);
-    expect(onRefresh).not.toHaveBeenCalled();
-  });
-});
+});;

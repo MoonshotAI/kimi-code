@@ -9,6 +9,10 @@ import {
   towerArgumentCompletions,
   type KimiSlashCommand,
 } from '#/tui/commands/index';
+import { mkdtemp, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 describe('parseSlashInput', () => {
@@ -92,7 +96,7 @@ describe('built-in slash command registry', () => {
     expect(values('Ship feature X')).toBeNull();
   });
 
-  it('offers add-dir list and directory argument completions', () => {
+  it('offers add-dir list and directory argument completions', async () => {
     const values = (prefix: string): string[] | null => {
       const items = addDirArgumentCompletions(prefix);
       return items === null ? null : items.map((item) => item.value);
@@ -106,11 +110,19 @@ describe('built-in slash command registry', () => {
     expect(directoryCompletions.every((value) => value.startsWith('/') && value.endsWith('/'))).toBe(true);
     expect(directoryCompletions.some((value) => value.startsWith('/.'))).toBe(false);
     expect(values('/.')).toBeNull();
-    const homeCompletions = values('~/') ?? [];
-    expect(homeCompletions.length).toBeGreaterThan(0);
-    expect(homeCompletions.every((value) => value.startsWith('~/') && value.endsWith('/'))).toBe(true);
-    expect(homeCompletions.some((value) => value.startsWith('~/.'))).toBe(false);
-    expect(homeCompletions.some((value) => value.startsWith('~/sers/'))).toBe(false);
+    const home = await mkdtemp(join(tmpdir(), 'kimi-registry-home-'));
+    const previousHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    try {
+      await mkdir(join(home, 'projects'));
+      const homeCompletions = values('~/') ?? [];
+      expect(homeCompletions.length).toBeGreaterThan(0);
+      expect(homeCompletions.every((value) => value.startsWith('~/') && value.endsWith('/'))).toBe(true);
+      expect(homeCompletions.some((value) => value.startsWith('~/.'))).toBe(false);
+      expect(homeCompletions.some((value) => value.startsWith('~/sers/'))).toBe(false);
+    } finally {
+      process.env['HOME'] = previousHome;
+    }
   });
 
   it('defaults commands without explicit availability to idle-only', () => {

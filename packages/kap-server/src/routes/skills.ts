@@ -4,8 +4,6 @@ import {
   Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
-  IAgentEnvironmentBindingService,
-  IAgentEnvironmentService,
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
@@ -44,11 +42,9 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import {
   assertPromptFileRefs,
   assertPromptPathRefs,
-  contentHasPathRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
-  environmentMediaTargets,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
@@ -63,7 +59,6 @@ import {
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
-import { sendEnvironmentError } from './environment';
 import { beginPromptAttempt, type PromptAttempt } from './prompts';
 import {
   sendMappedError as sendSessionMappedError,
@@ -251,15 +246,6 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           const attachments = req.body.attachments ?? [];
           const attachmentParts: ContentPart[] = [];
           if (attachments.length > 0) {
-            if (contentHasPathRefs(attachments)) {
-              const mainAgent = await ensureMainAgentHandle(resolved.handle);
-              if (mainAgent.accessor.get(IAgentEnvironmentBindingService).current.environmentId !== 'local') {
-                throw new Error2(
-                  ErrorCodes.REQUEST_INVALID,
-                  'file attachments by server-local path require the local environment',
-                );
-              }
-            }
             const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
             await catalog.ready;
             const skill = catalog.catalog.getSkill(parsed.id, req.body.path);
@@ -281,12 +267,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
             const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
             const mainAgent = await ensureMainAgentHandle(resolved.handle);
-            const environmentMedia = environmentMediaTargets(
-              mainAgent.accessor.get(IAgentEnvironmentBindingService).current,
-              mainAgent.accessor.get(IAgentEnvironmentService),
-            );
-            try {
-              preparedMedia = await resolvePromptMediaFiles(
+            preparedMedia = await resolvePromptMediaFiles(
                 resolvedSessionMedia,
                 core.accessor.get(IFileService),
                 core.accessor.get(IBootstrapService).cacheDir,
@@ -295,17 +276,10 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
                   providerType: mainAgent.accessor
                     .get(IAgentLoopService)
                     .getModelProviderType(),
-                  resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => ({
-                    dir: sessionMediaOriginalsDir(sessionDir),
-                  })),
-                  resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget ?? (async () => ({
-                    dir: join(sessionDir, 'attachments'),
-                  })),
+                  resolveOriginalsTarget: async () => ({ dir: sessionMediaOriginalsDir(sessionDir) }),
+                  resolveAttachmentsTarget: async () => ({ dir: join(sessionDir, 'attachments') }),
                 },
               );
-            } finally {
-              environmentMedia.dispose();
-            }
             attachmentParts.push(...contentToCoreParts(preparedMedia.content));
           }
           const mainAgent = await ensureMainAgentHandle(resolved.handle);
@@ -434,6 +408,5 @@ function sendMappedError(
   req: { id: string },
   error: unknown,
 ): void {
-  if (sendEnvironmentError(reply, req.id, error)) return;
   sendSessionMappedError(reply, req, error);
 }

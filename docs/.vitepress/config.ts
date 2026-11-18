@@ -58,7 +58,6 @@ const config = withMermaid(defineConfig({
                 { text: '在 IDE 中使用', link: '/zh/guides/ides' },
                 { text: '在网页中使用', link: '/zh/guides/web' },
                 { text: '远程控制', link: '/zh/guides/remote-control' },
-                { text: '远程环境', link: '/zh/guides/remote-environment' },
               ],
             },
           ],
@@ -114,6 +113,7 @@ const config = withMermaid(defineConfig({
               text: '发布说明',
               items: [
                 { text: '变更记录', link: '/zh/release-notes/changelog' },
+                { text: '不兼容变更', link: '/zh/release-notes/breaking-changes' },
               ],
             },
           ],
@@ -148,7 +148,6 @@ const config = withMermaid(defineConfig({
                 { text: 'Using in IDEs', link: '/en/guides/ides' },
                 { text: 'Using Kimi Code in the browser', link: '/en/guides/web' },
                 { text: 'Remote Control', link: '/en/guides/remote-control' },
-                { text: 'Remote environments', link: '/en/guides/remote-environment' },
               ],
             },
           ],
@@ -204,6 +203,7 @@ const config = withMermaid(defineConfig({
               text: 'Release Notes',
               items: [
                 { text: 'Changelog', link: '/en/release-notes/changelog' },
+                { text: 'Breaking changes', link: '/en/release-notes/breaking-changes' },
               ],
             },
           ],

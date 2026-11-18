@@ -10,7 +10,6 @@ import type { ApprovalController } from './controller';
 export function createApprovalRequestHandler(
   controller: ApprovalController,
   onResponse?: (request: ApprovalRequest, response: ApprovalResponse) => void,
-  resolveEnvironment?: () => string | undefined,
   interactionTracker?: ProgramStatusInteractionTracker,
   timeline?: Pick<TurnTimeline, 'approvalRequested'>,
 ): ApprovalHandler {
@@ -24,15 +23,7 @@ export function createApprovalRequestHandler(
     });
     try {
       const data = adaptApprovalRequest(event);
-      let environment: string | undefined;
-      try {
-        environment = resolveEnvironment?.();
-      } catch {
-        environment = undefined;
-      }
-      const response = await controller.show(
-        environment === undefined ? data : { ...data, environment },
-      );
+      const response = await controller.show(data);
       onResponse?.(event, response);
       return response;
     } catch {

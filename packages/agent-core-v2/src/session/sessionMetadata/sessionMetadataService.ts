@@ -224,8 +224,6 @@ export class SessionMetadata extends Service implements ISessionMetadata {
           id: this.data.id,
           workspaceId: this.ctx.workspaceId,
           cwd: this.effectiveCwd,
-          environmentId: this.data.environmentId,
-          environmentCwd: this.data.environmentCwd,
           title: this.data.title,
           lastPrompt: this.data.lastPrompt,
           createdAt: this.data.createdAt,
@@ -314,10 +312,10 @@ export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): Sessi
     customTitle: _legacyCustomTitle,
     ...clean
   } = legacy;
+  const localBinding = clean.environmentId === undefined || clean.environmentId === LOCAL_ENVIRONMENT_ID;
   const cwd =
-    clean.cwd ?? (typeof legacyWorkDir === 'string' && legacyWorkDir.length > 0
-      ? legacyWorkDir
-      : undefined);
+    (localBinding ? clean.environmentCwd ?? clean.cwd : clean.cwd) ??
+    (typeof legacyWorkDir === 'string' && legacyWorkDir.length > 0 ? legacyWorkDir : undefined);
   const { title, titleKind } = normalizedTitle;
   return {
     ...clean,

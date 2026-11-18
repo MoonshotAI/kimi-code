@@ -1,4 +1,4 @@
-import { Command, Option } from 'commander';
+import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@moonshot-ai/acp-server', () => ({
@@ -119,20 +119,21 @@ describe('kimi acp', () => {
     expect(optsArg.terminalAuthLegacyCommand).toBe(process.argv[1]);
   });
 
-  it('rejects a root-level --environment instead of silently ignoring it', async () => {
+  it('rejects an unknown root-level --environment', async () => {
     const program = new Command('kimi').exitOverride().enablePositionalOptions();
-    program.addOption(new Option('--environment <id>').hideHelp());
     registerAcpCommand(program);
+    program.configureOutput({ writeErr: () => {} });
 
-    await expect(
-      program.parseAsync(['node', 'kimi', '--environment', 'dev-box', 'acp']),
-    ).rejects.toThrow(ExitCalled);
+    let error: unknown;
+    try {
+      await program.parseAsync(['node', 'kimi', '--environment', 'dev-box', 'acp']);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(String(error)).toContain("unknown option '--environment'");
 
     expect(runAcpServer).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    const stderr = stderrSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('');
-    expect(stderr).toContain("--environment");
-    expect(stderr).toContain('acp');
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it('exits without starting the ACP server when --login is passed', async () => {

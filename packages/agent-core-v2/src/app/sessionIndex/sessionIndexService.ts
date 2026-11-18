@@ -425,6 +425,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   async remove(id: string): Promise<void> {
+    this.projector.invalidateSharedScan();
     await this.mirror.evict(id);
     await this.withReadModel(
       async (generation) => {

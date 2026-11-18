@@ -4,15 +4,14 @@ import { Readable } from 'node:stream';
 import {
   ErrorCodes,
   IHostFileSystem,
-  IEnvironmentService,
   ISessionWorkdir,
+  IEnvironmentService,
   IWorkspaceFsService,
   IWorkspaceService,
   getLiveSessionById,
   resumeSessionById,
   isError2,
   Error2,
-  LOCAL_ENVIRONMENT_ID,
   WorkspaceFsService,
   WorkspaceGitService,
   ITelemetryService,
@@ -41,7 +40,7 @@ import {
   fsSuggestResponseSchema,
   type FsSuggestRequest,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
-import type { EnvironmentCapability, EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -62,7 +61,6 @@ import {
   fsOpenRequestSchema,
   fsRevealRequestSchema,
 } from '../protocol/rest-fs';
-import { sendEnvironmentError } from './environment';
 
 interface FsPostReply {
   send(payload: unknown): unknown;
@@ -156,42 +154,33 @@ const FS_TAIL_PREFIX = 'fs:';
 
 interface FsScope extends EnvironmentReadStreamSource {
   readonly fs: IWorkspaceFsService;
-  readonly environmentId: string;
-  readonly lease: EnvironmentLease;
 }
 
-function acquireSessionFs(core: Scope, sessionId: string, required: readonly EnvironmentCapability[]): FsScope {
+function acquireSessionFs(core: Scope, sessionId: string): FsScope {
   const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   const workdir = session.accessor.get(ISessionWorkdir);
-  const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId: workdir.environmentId }, required);
-  return { fs: workdir.fs, hostFs: lease.environment.fs!, lease, environmentId: workdir.environmentId };
+  return { fs: workdir.fs, hostFs: core.accessor.get(IHostFileSystem), lease: NO_LEASE };
 }
 
 function acquireLocalRootedFs(
   core: Scope,
   workspaceId: string,
   roots: { readonly workDir: string; readonly additionalDirs: readonly string[] },
-  required: readonly EnvironmentCapability[],
 ): FsScope {
+  const hostFs = core.accessor.get(IHostFileSystem);
   const environments = core.accessor.get(IEnvironmentService);
-  const lease = environments.acquire({ environmentId: LOCAL_ENVIRONMENT_ID }, required);
-  try {
-    const hostFs = lease.environment.fs!;
-    const context = { workspaceId, cwd: roots.workDir };
-    const git = new WorkspaceGitService({ primary: roots.workDir }, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
-    const fs = new WorkspaceFsService(context, { primary: roots.workDir, additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
-    return { fs, hostFs, lease, environmentId: LOCAL_ENVIRONMENT_ID };
-  } catch (error) {
-    lease.dispose();
-    throw error;
-  }
+  const context = { workspaceId, cwd: roots.workDir };
+  const git = new WorkspaceGitService({ primary: roots.workDir }, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
+  const fs = new WorkspaceFsService(context, { primary: roots.workDir, additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
+  return { fs, hostFs, lease: NO_LEASE };
 }
+
+const NO_LEASE = { track: <T>(resource: T): T => resource, dispose: () => {} };
 
 async function resolveWorkspaceFs(
   core: Scope,
   ref: string,
-  required: readonly EnvironmentCapability[],
 ): Promise<FsScope | undefined> {
   const workspaces = core.accessor.get(IWorkspaceService);
   let ws = await workspaces.get(ref);
@@ -203,7 +192,7 @@ async function resolveWorkspaceFs(
       return undefined;
     }
   }
-  return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs }, required);
+  return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs });
 }
 
 async function sendSuggestStream(
@@ -313,31 +302,16 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const session = await resumeSessionById(core.accessor, session_id);
       let environmentFs: FsScope | undefined;
       try {
-        const required: EnvironmentCapability[] = ['fs'];
-        if (
-          fsAction === 'search' ||
-          fsAction === 'grep' ||
-          fsAction === 'git_status' ||
-          fsAction === 'git_status:batch' ||
-          fsAction === 'pull_request' ||
-          fsAction === 'pull_request:batch' ||
-          fsAction === 'diff'
-        ) {
-          required.push('process');
-        }
         environmentFs = session === undefined && fsAction === 'search'
-          ? await resolveWorkspaceFs(core, session_id, required)
+          ? await resolveWorkspaceFs(core, session_id)
           : session === undefined
             ? undefined
-            : acquireSessionFs(core, session_id, required);
+            : acquireSessionFs(core, session_id);
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
           );
           return;
-        }
-        if ((fsAction === 'open' || fsAction === 'open-in' || fsAction === 'reveal') && environmentFs.environmentId !== LOCAL_ENVIRONMENT_ID) {
-          throw new Error(`filesystem action ${fsAction} is unavailable on environment ${environmentFs.environmentId}`);
         }
         switch (fsAction) {
           case 'list':
@@ -426,7 +400,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, ...listRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
+        environmentFs = await resolveWorkspaceFs(core, workspace);
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -474,7 +448,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, ...searchRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs', 'process']);
+        environmentFs = await resolveWorkspaceFs(core, workspace);
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -521,7 +495,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, stream, ...suggestRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
+        environmentFs = await resolveWorkspaceFs(core, workspace);
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -581,7 +555,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const fsRoots = { workDir: roots[0]!, additionalDirs: roots.slice(1) };
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = acquireLocalRootedFs(core, encodeWorkDirKey(fsRoots.workDir), fsRoots, ['fs']);
+        environmentFs = acquireLocalRootedFs(core, encodeWorkDirKey(fsRoots.workDir), fsRoots);
         for (const root of [fsRoots.workDir, ...fsRoots.additionalDirs]) {
           let stat;
           try {
@@ -674,7 +648,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = acquireSessionFs(core, session_id, ['fs']);
+        environmentFs = acquireSessionFs(core, session_id);
         resolved = await environmentFs.fs.resolveDownload(
           relPath,
           req.query.allow_external_symlinks === 'true',
@@ -975,7 +949,6 @@ export function sendMappedError(reply: Reply, req: { id: string }, err: unknown,
   }
   const requestId = req.id;
   const log = requestLog(req);
-  if (sendEnvironmentError(reply, requestId, err)) return;
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.FS_PATH_ESCAPES:

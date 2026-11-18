@@ -6,8 +6,6 @@ import {
   getOrRestoreAgent,
   IAgentLoopService,
   IAgentPermissionModeService,
-  IAgentEnvironmentBindingService,
-  IAgentEnvironmentService,
   IAgentToolPolicyService,
   IAgentSkillService,
   IAgentSwarmService,
@@ -59,18 +57,15 @@ import {
 import {
   assertPromptFileRefs,
   assertPromptPathRefs,
-  contentHasPathRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
-  environmentMediaTargets,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute, type RouteDefinition } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
-import { sendEnvironmentError } from './environment';
 import { applyThinking } from './sessionAgentConfig';
 
 interface PromptRouteHost {
@@ -125,8 +120,6 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     profile: agent.accessor.get(IAgentLoopService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
-    binding: agent.accessor.get(IAgentEnvironmentBindingService),
-    environment: agent.accessor.get(IAgentEnvironmentService),
     swarm: agent.accessor.get(IAgentSwarmService),
   };
 }
@@ -207,15 +200,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         try {
           const session = await resolveSession(core, session_id);
           let resolved: Awaited<ReturnType<typeof resolvePromptFromSession>> | undefined;
-          if (contentHasPathRefs(req.body.content)) {
-            resolved = await resolvePromptFromSession(session, req.body.agent_id);
-            if (resolved.binding.current.environmentId !== 'local') {
-              throw new Error2(
-                ErrorCodes.REQUEST_INVALID,
-                'file attachments by server-local path require the local environment',
-              );
-            }
-          }
           await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
           await assertPromptPathRefs(req.body.content);
           if (req.body.skills !== undefined) {
@@ -231,16 +215,14 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
 
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
-          const environmentMedia = environmentMediaTargets(resolved.binding.current, resolved.environment);
-          try {
-            preparedMedia = await resolvePromptMediaFiles(
+          preparedMedia = await resolvePromptMediaFiles(
               resolvedSessionMedia,
               core.accessor.get(IFileService),
               core.accessor.get(IBootstrapService).cacheDir,
               {
                 telemetry,
                 providerType: resolved.profile.getModelProviderType(req.body.model),
-                resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => {
+                resolveOriginalsTarget: (async () => {
                   try {
                     const session = await resumeSessionById(core.accessor, session_id);
                     return session === undefined
@@ -250,7 +232,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                     return undefined;
                   }
                 }),
-                resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget ?? (async () => {
+                resolveAttachmentsTarget: (async () => {
                   try {
                     const session = await resumeSessionById(core.accessor, session_id);
                     return session === undefined
@@ -262,9 +244,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 }),
               },
             );
-          } finally {
-            environmentMedia.dispose();
-          }
           const resolvedContent = preparedMedia.content;
           const promptAttachments =
             preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
@@ -691,6 +670,5 @@ function sendMappedError(
   req: { id: string },
   error: unknown,
 ): void {
-  if (sendEnvironmentError(reply, req.id, error)) return;
   sendSessionMappedError(reply, req, error);
 }

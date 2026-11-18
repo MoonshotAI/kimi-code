@@ -172,7 +172,6 @@ export class AcpServer {
       workDir: params.cwd,
       additionalDirs: params.additionalDirectories,
       mcpServers: acpMcpServersToConfigRecord(params.mcpServers),
-      environmentId: 'local',
     });
     return { sessionId: meta.id, ...(await this.activateSession(meta.id)) };
   }

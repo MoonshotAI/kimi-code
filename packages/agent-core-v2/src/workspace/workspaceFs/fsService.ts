@@ -60,7 +60,6 @@ import {
 } from '#/_base/utils/fileMeta';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { EnvironmentError } from '#/environment/environmentRegistry';
-import { HandshakeError } from '#/remote/client/connection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
@@ -1961,9 +1960,6 @@ function toGitBatchError(err: unknown): FsBatchError {
       case 'environment.capability_unavailable':
         return { code: FsWireErrorCode.ENVIRONMENT_UNAVAILABLE, msg: err.message };
     }
-  }
-  if (err instanceof HandshakeError) {
-    return { code: FsWireErrorCode.ENVIRONMENT_UNAVAILABLE, msg: err.message };
   }
   if (err instanceof Error2) {
     if (err.code === ErrorCodes.FS_GIT_UNAVAILABLE) return { code: 40908, msg: err.message };

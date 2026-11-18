@@ -12,7 +12,6 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { ErrorCodes, Error2 } from '#/errors';
 import { EnvironmentError } from '#/environment/environmentRegistry';
-import { HandshakeError } from '#/remote/client/connection';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError } from '#/os/interface/hostFsErrors';
 import { walkDirectoryTree } from '#/os/backends/node-local/hostFsService';
@@ -711,14 +710,14 @@ describe('WorkspaceFsService git batches', () => {
         if (cwd === '/invalid-cwd') throw new EnvironmentError('environment.invalid_cwd', 'invalid');
         if (cwd === '/conflict') throw new EnvironmentError('environment.conflict', 'conflict');
         if (cwd === '/unavailable') throw new EnvironmentError('environment.unavailable', 'unavailable');
-        if (cwd === '/handshake') throw new HandshakeError('handshake');
+        if (cwd === '/capability') throw new EnvironmentError('environment.capability_unavailable', 'capability');
         return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
       },
       pullRequest: async () => null,
       diff: async () => ({ path: '', diff: '', truncated: false }),
       findWorkTree: async () => null,
     };
-    const roots = ['__proto__', '/missing-env', '/invalid-cwd', '/conflict', '/unavailable', '/handshake'];
+    const roots = ['__proto__', '/missing-env', '/invalid-cwd', '/conflict', '/unavailable', '/capability'];
     const files = Object.fromEntries(roots.filter(root => root.startsWith('/')).map(root => [`${root}/placeholder`, '']));
     const fs = makeSession(
       { '__proto__/placeholder': '', ...files },
@@ -741,7 +740,7 @@ describe('WorkspaceFsService git batches', () => {
       '/invalid-cwd': { code: 40001, msg: 'invalid' },
       '/conflict': { code: 40901, msg: 'conflict' },
       '/unavailable': { code: 40926, msg: 'unavailable' },
-      '/handshake': { code: 40926, msg: 'handshake' },
+      '/capability': { code: 40926, msg: 'capability' },
     });
   });
 });

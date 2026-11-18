@@ -37,7 +37,6 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
-import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -237,11 +236,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
   const environments = core.accessor.get(IEnvironmentService);
-  const remoteEnvironmentProvider = await environments.addProvider(
-    new RemoteEnvironmentProviderFactory({
-      clientVersion: serverVersion,
-    }),
-  );
   const legacyAcpBindingSubscription = core.accessor.get(ISessionManager).onDidCreateSession?.((event) => {
     const main = event.handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
     if (main === undefined) return;
@@ -401,7 +395,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(IMcpOAuthService).shutdown();
       const appendLogStore = core.accessor.get(IAppendLogStore);
       legacyAcpBindingSubscription?.dispose();
-      await remoteEnvironmentProvider.dispose();
       core.dispose();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
