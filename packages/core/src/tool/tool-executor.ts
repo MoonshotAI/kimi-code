@@ -2,6 +2,8 @@ import { randomBytes } from 'node:crypto';
 
 import type { ContentPart } from '#/llm/message';
 import { abortedToolOutput, isUserCancellation } from '#/utils/abort';
+import { clock } from '#/utils/clock';
+import { now } from '#/utils/now';
 import { parseToolCallArguments } from '#/tool/args';
 
 import { memoryOutputStore } from './output-store';
@@ -74,7 +76,6 @@ export class ToolExecutor<TContext = unknown> {
       call,
       generateTaskId(call.name),
       this.outputStore,
-      { now: this.policy.now ?? defaultNow, tick: this.policy.tick ?? defaultTick },
       (snapshot, reason) => this.detached(call, snapshot, reason),
     );
     const decisionContext = (): ToolDecisionContext<unknown, TContext, any> => ({
@@ -304,19 +305,6 @@ export function textToolContent(text: string): ContentPart[] {
   return [{ type: 'text', text }];
 }
 
-export function defaultNow(): number {
-  return Date.now();
-}
-
-export function defaultTick(): number {
-  return performance.now();
-}
-
-interface ToolClock {
-  now(): number;
-  tick(): number;
-}
-
 const EMPTY_OUTPUT: ToolOutputSnapshot = {
   totalBytes: 0,
   preview: '',
@@ -324,17 +312,10 @@ const EMPTY_OUTPUT: ToolOutputSnapshot = {
 };
 
 class TimeSpan {
-  private readonly clock: ToolClock;
-  private readonly startedAt: number;
-  private readonly startedTick: number;
+  private readonly startedAt = now();
+  private readonly startedTick = clock();
   private endedAt: number | null = null;
   private elapsedMs: number | undefined;
-
-  constructor(clock: ToolClock) {
-    this.clock = clock;
-    this.startedAt = clock.now();
-    this.startedTick = clock.tick();
-  }
 
   get ended(): boolean {
     return this.endedAt !== null;
@@ -342,15 +323,15 @@ class TimeSpan {
 
   end(): void {
     if (this.endedAt !== null) return;
-    this.endedAt = this.clock.now();
-    this.elapsedMs = Math.max(0, this.clock.tick() - this.startedTick);
+    this.endedAt = now();
+    this.elapsedMs = Math.max(0, clock() - this.startedTick);
   }
 
   snapshot(): ToolTimeSpan {
     return {
       startedAt: this.startedAt,
       endedAt: this.endedAt,
-      elapsedMs: this.elapsedMs ?? Math.max(0, this.clock.tick() - this.startedTick),
+      elapsedMs: this.elapsedMs ?? Math.max(0, clock() - this.startedTick),
     };
   }
 }
@@ -363,7 +344,6 @@ class CallControl<TContext> {
   readonly abandonment: Promise<ToolResult>;
   prepared: any;
   private readonly store: ToolOutputStore;
-  private readonly clock: ToolClock;
   private readonly abortController = new AbortController();
   private readonly total: TimeSpan;
   private execution: TimeSpan | undefined;
@@ -392,7 +372,6 @@ class CallControl<TContext> {
     call: ToolCall,
     taskId: string,
     store: ToolOutputStore,
-    clock: ToolClock,
     defaultDetachAck: (
       snapshot: ToolExecutionSnapshot<any, any>,
       reason: unknown,
@@ -401,10 +380,9 @@ class CallControl<TContext> {
     this.call = call;
     this.taskId = taskId;
     this.store = store;
-    this.clock = clock;
     this.defaultDetachAck = defaultDetachAck;
     this.signal = this.abortController.signal;
-    this.total = new TimeSpan(clock);
+    this.total = new TimeSpan();
     this.view = {
       snapshot: () => this.snapshot(),
       output: (maxPreviewBytes) => this.output(maxPreviewBytes),
@@ -453,7 +431,7 @@ class CallControl<TContext> {
   startExecution(): void {
     this.change(() => {
       this.currentPhase = 'execute';
-      this.execution = new TimeSpan(this.clock);
+      this.execution = new TimeSpan();
     });
   }
 

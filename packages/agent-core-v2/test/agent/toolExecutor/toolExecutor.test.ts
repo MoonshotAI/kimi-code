@@ -9,6 +9,9 @@ import type { ToolCall } from '#human/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setClock } from '@moonshot-ai/core/utils/clock';
+import { setNow } from '@moonshot-ai/core/utils/now';
+
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, TestInstantiationService } from '#/_base/di/test';
@@ -1948,9 +1951,16 @@ class ControlledTool implements ExecutableTool<Record<string, unknown>> {
 }
 
 describe('ToolExecutor handler kernel', () => {
+  afterEach(() => {
+    setNow();
+    setClock();
+  });
+
   it('settles success, business failure and invalid args with distinct outcomes and clocks', async () => {
     let wall = 1_000;
     let monotonic = 100;
+    setNow(() => (wall += 1_000));
+    setClock(() => (monotonic += 5));
     const invalidExecute = vi.fn(() => ({ content: textToolContent('must not run') }));
     const executor = new HandlerToolExecutor([
       {
@@ -1981,10 +1991,7 @@ describe('ToolExecutor handler kernel', () => {
         },
         execute: invalidExecute,
       },
-    ], {
-      now: () => (wall += 1_000),
-      tick: () => (monotonic += 5),
-    });
+    ]);
 
     const succeeded = executor.execute(toolCall('success-1', 'success', {}), undefined);
     const successResult = await succeeded.wait();
