@@ -49,7 +49,10 @@ export default {
         { role: 'system', content: 'Be useful' },
         { role: 'user', content: 'Hello' },
       ],
-      tools: [{ type: 'function', function: tool }],
+      tools: [
+        { type: 'function', function: tool },
+        { type: 'function', function: { ...tool, name: 'later' } },
+      ],
       prompt_cache_key: 'cache-1',
       reasoning_effort: 'high',
       response_format: {

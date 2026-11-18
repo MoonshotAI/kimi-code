@@ -1425,11 +1425,11 @@ class LoopActor implements Loop {
 
   private requestProgress(turn: LiveTurn, step: StepState, event: LoopRequestProgress): void {
     if (!this.isCurrentStep(turn, step, 'requesting')) return;
-    if (event.type === 'llm.streaming.request_id') this.requestId = event.requestId;
-    if (event.type === 'llm.streaming.part' && (event.part.type === 'function' || event.part.type === 'tool_call_part')) {
+    if (event.type === 'llm.delta.request_id') this.requestId = event.requestId;
+    if (event.type === 'llm.delta.part' && (event.part.type === 'function' || event.part.type === 'tool_call_part')) {
       step.toolCallStreaming = true;
     }
-    if (event.type === 'llm.retrying') {
+    if (event.type === 'llm.retry') {
       const message = event.message;
       if (message !== undefined && message !== null) {
         this.record({ type: 'message.appended', turnId: turn.id, step: turn.step, source: 'partial', message });

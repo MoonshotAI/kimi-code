@@ -6,6 +6,7 @@ import type { LlmModule } from '../protocol';
 import { legalizeMedia, relocateToolMedia, type MediaSupport } from './media';
 import { legalizeModel, type ModelLegality } from './model';
 import { legalizeToolCallIds, type ToolCallIdPolicy } from './tool-call-ids';
+import { legalizeTools } from './tools';
 
 export type PatternSet<TOptions> = (
   module: LlmModule<TOptions>,
@@ -43,7 +44,8 @@ export function legalize<TOptions>(
     const patterns = spec.thinkingHistory?.(patternsLegal, ctx) ?? [];
     return patterns.length === 0 ? messages : applyPatterns(messages, patterns);
   });
-  return pass.model('legalize-model', thinkingLegal, (module, ctx) =>
+  const modelLegal = pass.model('legalize-model', thinkingLegal, (module, ctx) =>
     legalizeModel(module, spec.legality, keepCacheKey, ctx),
   );
+  return pass.module('legalize-tools', modelLegal, legalizeTools);
 }

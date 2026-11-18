@@ -42,13 +42,22 @@ export default {
       contents: [{ role: 'user', parts: [{ text: 'Weather?' }] }],
       config: {
         systemInstruction: 'Be useful',
-        tools: [{
-          functionDeclarations: [{
-            name: tool.name,
-            description: tool.description,
-            parametersJsonSchema: tool.parameters,
-          }],
-        }],
+        tools: [
+          {
+            functionDeclarations: [{
+              name: tool.name,
+              description: tool.description,
+              parametersJsonSchema: tool.parameters,
+            }],
+          },
+          {
+            functionDeclarations: [{
+              name: 'later',
+              description: tool.description,
+              parametersJsonSchema: tool.parameters,
+            }],
+          },
+        ],
         thinkingConfig: { includeThoughts: true, thinkingLevel: 'HIGH' },
         responseMimeType: 'application/json',
         responseJsonSchema: { type: 'object' },

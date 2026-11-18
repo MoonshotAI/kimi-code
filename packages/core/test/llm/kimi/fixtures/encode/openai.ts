@@ -13,6 +13,7 @@ export const kimiOpenAIEncodeFixtures = [{
         maxContextSize: 1000,
       },
       thinking: { effort: 'high', keep: 'all' },
+      cacheKey: 'cache-1',
     },
     profile: {
       tools: [{ name: 'weather', description: 'Get weather', parameters: { type: 'object' } }],
@@ -67,6 +68,7 @@ export const kimiOpenAIEncodeFixtures = [{
         function: { name: 'weather', description: 'Get weather', parameters: { type: 'object' } },
       }],
       thinking: { type: 'enabled', effort: 'high', keep: 'all' },
+      prompt_cache_key: 'cache-1',
       max_completion_tokens: 700,
       nested: { enabled: true },
       custom: 'inside',

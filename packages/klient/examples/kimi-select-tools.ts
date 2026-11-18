@@ -183,7 +183,7 @@ async function collect(
   let toolCalls: Collected['toolCalls'] = [];
   let finishReason: string | undefined;
   for await (const event of requester.request(input, signal)) {
-    if (event.type === 'llm.streaming.part' && event.part.type === 'text') text += event.part.text;
+    if (event.type === 'llm.delta.part' && event.part.type === 'text') text += event.part.text;
     if (event.type === 'llm.ended' && event.outcome.type === 'done') {
       finishReason = event.outcome.finish?.finishReason ?? event.outcome.finish?.rawFinishReason ?? undefined;
       toolCalls = event.outcome.message.toolCalls.map((t) => ({
