@@ -1,8 +1,8 @@
 import { stripVTControlCharacters } from 'node:util';
 
-import { visibleWidth, type Component, type Focusable } from '@moonshot-ai/pi-tui';
+import { visibleWidth, type Component, type Focusable, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { promptFeedbackAttachment } from '#/tui/commands/prompts';
 import {
@@ -23,12 +23,28 @@ beforeAll(() => {
   chalk.level = 3;
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+function submit(dialog: FeedbackInputDialogComponent): void {
+  vi.useFakeTimers();
+  vi.advanceTimersByTime(150);
+  dialog.handleInput('\r');
+  vi.useRealTimers();
+}
+
 function makeDialog(): {
   dialog: FeedbackInputDialogComponent;
   collected: FeedbackInputDialogResult[];
 } {
   const collected: FeedbackInputDialogResult[] = [];
-  const dialog = new FeedbackInputDialogComponent((result) => {
+  const tui = {
+    requestRender: vi.fn(),
+    render: vi.fn(() => []),
+    terminal: { rows: 40, cols: 120 },
+  } as unknown as TUI;
+  const dialog = new FeedbackInputDialogComponent(tui, (result) => {
     collected.push(result);
   });
   dialog.focused = true;
@@ -46,8 +62,9 @@ describe('FeedbackInputDialogComponent', () => {
     expect(text).toContain('╯');
     expect(text).toContain('Send feedback to Kimi Code');
     expect(text).toContain("Tell us what's working or what's not.");
-    expect(text).toContain('Enter to submit');
-    expect(text).toContain('Esc to cancel');
+    expect(text).toContain('Enter submit');
+    expect(text).toContain('Shift-Enter/Ctrl-J newline');
+    expect(text).toContain('Esc cancel');
   });
 
   it('uses the primary color for the border', () => {
@@ -74,13 +91,72 @@ describe('FeedbackInputDialogComponent', () => {
     for (const ch of 'hello world ') {
       dialog.handleInput(ch);
     }
-    dialog.handleInput('\r');
+    submit(dialog);
     expect(collected).toEqual([{ kind: 'ok', value: 'hello world' }]);
+  });
+
+  it('renders and submits multiple lines', () => {
+    const { dialog, collected } = makeDialog();
+    for (const ch of 'First line') dialog.handleInput(ch);
+    dialog.handleInput('\n');
+    for (const ch of 'Second line') dialog.handleInput(ch);
+
+    const text = strip(dialog.render(60).join('\n'));
+    expect(text).toContain('> First line');
+    expect(text).toContain('  Second line');
+
+    submit(dialog);
+    expect(collected).toEqual([{ kind: 'ok', value: 'First line\nSecond line' }]);
+  });
+
+  it('supports Shift-Enter and editing an earlier line', () => {
+    const { dialog, collected } = makeDialog();
+    for (const ch of 'first') dialog.handleInput(ch);
+    dialog.handleInput(`${ESC}[13;2~`);
+    for (const ch of 'second') dialog.handleInput(ch);
+    dialog.handleInput(`${ESC}[A`);
+    dialog.handleInput(`${ESC}[F`);
+    dialog.handleInput('!');
+
+    submit(dialog);
+    expect(collected).toEqual([{ kind: 'ok', value: 'first!\nsecond' }]);
+  });
+
+  it('preserves newlines in bracketed paste', () => {
+    const { dialog, collected } = makeDialog();
+    dialog.handleInput(`${ESC}[200~First\r\nSecond\nThird${ESC}[201~`);
+    submit(dialog);
+
+    expect(collected).toEqual([{ kind: 'ok', value: 'First\nSecond\nThird' }]);
+  });
+
+  it('keeps undo and word deletion shortcuts', () => {
+    const { dialog, collected } = makeDialog();
+    for (const ch of 'hello world') dialog.handleInput(ch);
+    dialog.handleInput(String.fromCodePoint(23));
+    dialog.handleInput('there');
+    dialog.handleInput(String.fromCodePoint(31));
+    submit(dialog);
+
+    expect(collected).toEqual([{ kind: 'ok', value: 'hello' }]);
+  });
+
+  it('collapses a long paste and submits its expanded multiline content', () => {
+    const { dialog, collected } = makeDialog();
+    dialog.handleInput(`${ESC}[200~${Array.from({ length: 15 }, (_, i) => `line ${i + 1}`).join('\n')}${ESC}[201~`);
+
+    const text = strip(dialog.render(60).join('\n'));
+    expect(text).toContain('[paste #1 +15 lines]');
+
+    submit(dialog);
+    expect(collected).toEqual([
+      { kind: 'ok', value: Array.from({ length: 15 }, (_, i) => `line ${i + 1}`).join('\n') },
+    ]);
   });
 
   it('Enter on an empty input does not submit and shows an inline empty hint', () => {
     const { dialog, collected } = makeDialog();
-    dialog.handleInput('\r');
+    submit(dialog);
     expect(collected).toEqual([]);
     const text = strip(dialog.render(60).join('\n'));
     expect(text).toContain('Feedback cannot be empty.');
@@ -89,7 +165,7 @@ describe('FeedbackInputDialogComponent', () => {
 
   it('typing again after the empty hint clears the hint', () => {
     const { dialog, collected } = makeDialog();
-    dialog.handleInput('\r');
+    submit(dialog);
     expect(strip(dialog.render(60).join('\n'))).toContain('Feedback cannot be empty.');
     dialog.handleInput('a');
     const text = strip(dialog.render(60).join('\n'));
@@ -114,8 +190,8 @@ describe('FeedbackInputDialogComponent', () => {
     const { dialog, collected } = makeDialog();
     dialog.handleInput('h');
     dialog.handleInput('i');
-    dialog.handleInput('\r');
-    dialog.handleInput('\r');
+    submit(dialog);
+    submit(dialog);
     dialog.handleInput(ESC);
     expect(collected).toEqual([{ kind: 'ok', value: 'hi' }]);
   });

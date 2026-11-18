@@ -1,13 +1,16 @@
 import {
   Container,
-  Input,
+  Editor,
+  isKeyRelease,
   Key,
   matchesKey,
   truncateToWidth,
   visibleWidth,
   type Focusable,
+  type TUI,
 } from '@moonshot-ai/pi-tui';
 import { currentTheme } from '#/tui/theme';
+import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 
 export type FeedbackInputDialogResult =
   | { readonly kind: 'ok'; readonly value: string }
@@ -16,26 +19,46 @@ export type FeedbackInputDialogResult =
 const TITLE = 'Send feedback to Kimi Code';
 const SUBTITLE_DEFAULT = "Tell us what's working or what's not.";
 const SUBTITLE_EMPTY = 'Feedback cannot be empty.';
-const FOOTER = 'Enter to submit  ·  Esc to cancel';
+const FOOTER = 'Enter submit · Shift-Enter/Ctrl-J newline · Esc cancel';
+
+class FeedbackMultilineInput extends Editor {
+  protected override renderTopBorder(width: number, hiddenLineCount: number): string {
+    return hiddenLineCount > 0 ? super.renderTopBorder(width, hiddenLineCount) : '';
+  }
+
+  protected override renderBottomBorder(width: number, hiddenLineCount: number): string {
+    return hiddenLineCount > 0 ? super.renderBottomBorder(width, hiddenLineCount) : '';
+  }
+
+  override render(width: number): string[] {
+    const lines = super.render(width).slice(1, -1);
+    if (lines[0]?.startsWith('  ')) lines[0] = `> ${lines[0].slice(2)}`;
+    return lines;
+  }
+}
 
 export class FeedbackInputDialogComponent extends Container implements Focusable {
   focused = false;
 
-  private readonly input = new Input();
+  private readonly input: FeedbackMultilineInput;
   private readonly onDone: (result: FeedbackInputDialogResult) => void;
   private done = false;
   private emptyHinted = false;
 
-  constructor(onDone: (result: FeedbackInputDialogResult) => void) {
+  constructor(tui: TUI, onDone: (result: FeedbackInputDialogResult) => void) {
     super();
     this.onDone = onDone;
+    this.input = new FeedbackMultilineInput(tui, createEditorTheme(), { paddingX: 2 });
     this.input.onSubmit = (value) => {
       this.submit(value);
+    };
+    this.input.onChange = () => {
+      this.emptyHinted = false;
     };
   }
 
   handleInput(data: string): void {
-    if (this.done) return;
+    if (this.done || isKeyRelease(data)) return;
     if (
       matchesKey(data, Key.escape) ||
       matchesKey(data, Key.ctrl('c')) ||
@@ -43,9 +66,6 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     ) {
       this.cancel();
       return;
-    }
-    if (this.emptyHinted) {
-      this.emptyHinted = false;
     }
     this.input.handleInput(data);
   }
@@ -67,19 +87,19 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     const titleStyled = currentTheme.boldFg('textStrong', TITLE);
     const subtitleText = this.emptyHinted ? SUBTITLE_EMPTY : SUBTITLE_DEFAULT;
     const subtitleStyled = currentTheme.fg('textDim', subtitleText);
-    const footerStyled = currentTheme.fg('textDim', FOOTER);
+    const footerStyled = currentTheme.fg('textMuted', FOOTER);
 
     const titleLine = truncateToWidth(titleStyled, innerWidth, '…');
     const subtitleLine = truncateToWidth(subtitleStyled, innerWidth, '…');
     const footerLine = truncateToWidth(footerStyled, innerWidth, '…');
-    const inputLine = this.input.render(innerWidth)[0] ?? '> ';
+    const inputLines = this.input.render(innerWidth);
 
     const contentLines: string[] = [
       titleLine,
       '',
       subtitleLine,
       '',
-      inputLine,
+      ...inputLines,
       '',
       footerLine,
     ];
