@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
@@ -88,14 +88,14 @@ describe('kimi web', () => {
     expect(subs).toEqual(['rotate-token']);
   });
 
-  it('reports the host protocol from `kimi server ensure-daemon --probe` without starting a server', async () => {
+  it('reports the device protocol from `kimi server ensure-daemon --probe` without starting a server', async () => {
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     try {
       await makeProgram().parseAsync(['node', 'kimi', 'server', 'ensure-daemon', '--probe']);
       const line = String(write.mock.calls.at(-1)?.[0]);
       expect(line.startsWith('__KIMI_ENSURE_DAEMON__')).toBe(true);
       const payload = JSON.parse(line.slice('__KIMI_ENSURE_DAEMON__'.length)) as Record<string, unknown>;
-      expect(payload).toEqual({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: expect.any(String) });
+      expect(payload).toEqual({ protocol: DEVICE_PROTOCOL_VERSION, api_level: DEVICE_API_LEVEL, version: expect.any(String) });
     } finally {
       write.mockRestore();
     }

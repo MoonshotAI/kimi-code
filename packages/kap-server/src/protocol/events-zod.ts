@@ -89,7 +89,7 @@ export const modelCatalogChangedEventSchema = z.object({
     .optional(),
 });
 
-export const hostSnapshotSchema = z.object({
+export const deviceSnapshotSchema = z.object({
   id: z.string(),
   host: z.string(),
   identity_file: z.string().optional(),
@@ -102,14 +102,14 @@ export const hostSnapshotSchema = z.object({
   connect_failure: z.string().optional(),
 });
 
-export type HostSnapshot = z.infer<typeof hostSnapshotSchema>;
+export type DeviceSnapshot = z.infer<typeof deviceSnapshotSchema>;
 
-export const hostChangedEventSchema = z.object({
-  type: z.literal('event.host.changed'),
-  hosts: z.array(hostSnapshotSchema),
+export const deviceChangedEventSchema = z.object({
+  type: z.literal('event.device.changed'),
+  devices: z.array(deviceSnapshotSchema),
 });
 
-export const hostGlobalEventSchema = hostChangedEventSchema.extend(eventCreatedAt);
+export const deviceGlobalEventSchema = deviceChangedEventSchema.extend(eventCreatedAt);
 
 export const pushEventSchema = z.discriminatedUnion('type', [
   sessionGlobalEventSchema,
@@ -117,5 +117,5 @@ export const pushEventSchema = z.discriminatedUnion('type', [
   configGlobalEventSchema,
   invalidatedGlobalEventSchema,
   capabilityGlobalEventSchema,
-  hostGlobalEventSchema,
+  deviceGlobalEventSchema,
 ]);

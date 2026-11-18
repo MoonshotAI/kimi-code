@@ -22,19 +22,19 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
   "routes": [
     [
       "DELETE",
+      "/api/v1/devices/{id}",
+    ],
+    [
+      "DELETE",
+      "/api/v1/devices/{id}/proxy",
+    ],
+    [
+      "DELETE",
+      "/api/v1/devices/{id}/proxy/{*}",
+    ],
+    [
+      "DELETE",
       "/api/v1/files/{file_id}",
-    ],
-    [
-      "DELETE",
-      "/api/v1/hosts/{id}",
-    ],
-    [
-      "DELETE",
-      "/api/v1/hosts/{id}/proxy",
-    ],
-    [
-      "DELETE",
-      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "DELETE",
@@ -114,6 +114,22 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/devices",
+    ],
+    [
+      "GET",
+      "/api/v1/devices:ssh-hosts",
+    ],
+    [
+      "GET",
+      "/api/v1/devices/{id}/proxy",
+    ],
+    [
+      "GET",
+      "/api/v1/devices/{id}/proxy/{*}",
+    ],
+    [
+      "GET",
       "/api/v1/files/{file_id}",
     ],
     [
@@ -131,22 +147,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/healthz",
-    ],
-    [
-      "GET",
-      "/api/v1/hosts",
-    ],
-    [
-      "GET",
-      "/api/v1/hosts:ssh-hosts",
-    ],
-    [
-      "GET",
-      "/api/v1/hosts/{id}/proxy",
-    ],
-    [
-      "GET",
-      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "GET",
@@ -298,19 +298,19 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "HEAD",
-      "/api/v1/hosts/{id}/proxy",
+      "/api/v1/devices/{id}/proxy",
     ],
     [
       "HEAD",
-      "/api/v1/hosts/{id}/proxy/{*}",
+      "/api/v1/devices/{id}/proxy/{*}",
     ],
     [
       "PATCH",
-      "/api/v1/hosts/{id}/proxy",
+      "/api/v1/devices/{id}/proxy",
     ],
     [
       "PATCH",
-      "/api/v1/hosts/{id}/proxy/{*}",
+      "/api/v1/devices/{id}/proxy/{*}",
     ],
     [
       "PATCH",
@@ -342,6 +342,26 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/devices:connect",
+    ],
+    [
+      "POST",
+      "/api/v1/devices:copy-providers",
+    ],
+    [
+      "POST",
+      "/api/v1/devices:test",
+    ],
+    [
+      "POST",
+      "/api/v1/devices/{id}/proxy",
+    ],
+    [
+      "POST",
+      "/api/v1/devices/{id}/proxy/{*}",
+    ],
+    [
+      "POST",
       "/api/v1/files",
     ],
     [
@@ -351,26 +371,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/fs:suggest",
-    ],
-    [
-      "POST",
-      "/api/v1/hosts:connect",
-    ],
-    [
-      "POST",
-      "/api/v1/hosts:copy-providers",
-    ],
-    [
-      "POST",
-      "/api/v1/hosts:test",
-    ],
-    [
-      "POST",
-      "/api/v1/hosts/{id}/proxy",
-    ],
-    [
-      "POST",
-      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "POST",
@@ -562,15 +562,15 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "PUT",
-      "/api/v1/hosts/{id}",
+      "/api/v1/devices/{id}",
     ],
     [
       "PUT",
-      "/api/v1/hosts/{id}/proxy",
+      "/api/v1/devices/{id}/proxy",
     ],
     [
       "PUT",
-      "/api/v1/hosts/{id}/proxy/{*}",
+      "/api/v1/devices/{id}/proxy/{*}",
     ],
     [
       "PUT",

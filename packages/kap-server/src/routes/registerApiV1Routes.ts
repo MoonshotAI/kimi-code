@@ -32,16 +32,16 @@ import { registerSessionRatingRoutes } from './sessionRating';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionListAndBatchRoutes } from './sessionList';
 import { registerSessionsRoutes } from './sessions';
-import type { HostBridgeManager } from '../services/hosts/hostBridgeManager';
-import { registerImportProvidersRoute } from '../services/hosts/hostProviders';
-import { registerHostsRoutes } from './hosts';
+import type { DeviceManager } from '../services/devices/deviceManager';
+import { registerImportProvidersRoute } from '../services/devices/deviceProviders';
+import { registerDevicesRoutes } from './devices';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
 import { registerToolsRoutes } from './tools';
 import { registerConversationRoutes } from './conversation';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
-import { hostSources } from '../services/hosts/hostFanout';
+import { deviceSources } from '../services/devices/deviceFanout';
 
 interface ApiV1AppHost {
   register(
@@ -66,12 +66,12 @@ export interface RegisterApiV1RoutesOptions {
   readonly enableShutdown?: boolean;
   readonly onShutdown: () => void;
   readonly drainIdleSessions: () => Promise<boolean>;
-  readonly hostBridges: HostBridgeManager;
+  readonly deviceManager: DeviceManager;
   readonly conversations: ConversationService;
   readonly sessionRating: SessionRatingHost;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
-  readonly managedHost?: boolean;
+  readonly managedDevice?: boolean;
   readonly webTitle?: string;
 }
 
@@ -131,16 +131,16 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
         opts.conversations,
-        hostSources(opts.hostBridges),
+        deviceSources(opts.deviceManager),
       );
       registerSessionListAndBatchRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionListAndBatchRoutes>[0],
         core,
-        hostSources(opts.hostBridges),
+        deviceSources(opts.deviceManager),
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
-      registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
-      if (opts.managedHost === true) {
+      registerDevicesRoutes(apiV1 as unknown as Parameters<typeof registerDevicesRoutes>[0], core, opts.deviceManager);
+      if (opts.managedDevice === true) {
         registerImportProvidersRoute(apiV1 as unknown as Parameters<typeof registerImportProvidersRoute>[0], core);
       }
       registerSessionRatingRoutes(
@@ -175,7 +175,7 @@ export async function registerApiV1Routes(
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
         core,
-        hostSources(opts.hostBridges),
+        deviceSources(opts.deviceManager),
       );
       registerWorkspaceFsRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspaceFsRoutes>[0],

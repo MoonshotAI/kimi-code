@@ -1,28 +1,28 @@
-import type { HostBridgeManager } from './hostBridgeManager';
-import type { HostSession } from './hostSession';
+import type { DeviceManager } from './deviceManager';
+import type { DeviceSession } from './deviceSession';
 
-export type HostQuery = Readonly<Record<string, string | number | boolean | readonly string[] | undefined>>;
+export type DeviceQuery = Readonly<Record<string, string | number | boolean | readonly string[] | undefined>>;
 
-export interface HostSource {
+export interface DeviceSource {
   readonly id: string;
-  readonly session: HostSession | undefined;
+  readonly session: DeviceSession | undefined;
 }
 
-export interface HostSources {
-  sources(): HostSource[];
+export interface DeviceSources {
+  sources(): DeviceSource[];
 }
 
-export class HostSourceError extends Error {
+export class DeviceSourceError extends Error {
   constructor(
     readonly code: number | undefined,
     message: string,
   ) {
     super(message);
-    this.name = 'HostSourceError';
+    this.name = 'DeviceSourceError';
   }
 }
 
-export function hostSources(manager: HostBridgeManager): HostSources {
+export function deviceSources(manager: DeviceManager): DeviceSources {
   return {
     sources: () => {
       manager.activate();
@@ -34,7 +34,7 @@ export function hostSources(manager: HostBridgeManager): HostSources {
   };
 }
 
-function queryString(query: HostQuery): string {
+function queryString(query: DeviceQuery): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value === undefined) continue;
@@ -48,7 +48,7 @@ function queryString(query: HostQuery): string {
   return text === '' ? '' : `?${text}`;
 }
 
-export async function hostGet<T>(session: HostSession, path: string, query: HostQuery = {}): Promise<T> {
+export async function deviceGet<T>(session: DeviceSession, path: string, query: DeviceQuery = {}): Promise<T> {
   const response = await session.request({
     method: 'GET',
     path: `${path}${queryString(query)}`,
@@ -58,34 +58,34 @@ export async function hostGet<T>(session: HostSession, path: string, query: Host
   try {
     body = JSON.parse(response.body.toString('utf8')) as typeof body;
   } catch {
-    throw new HostSourceError(undefined, `host responded with HTTP ${String(response.status)}`);
+    throw new DeviceSourceError(undefined, `device responded with HTTP ${String(response.status)}`);
   }
   if (response.status !== 200 || body.code !== 0 || body.data === undefined) {
-    throw new HostSourceError(body.code, body.msg ?? `host responded with HTTP ${String(response.status)}`);
+    throw new DeviceSourceError(body.code, body.msg ?? `device responded with HTTP ${String(response.status)}`);
   }
   return body.data;
 }
 
-export async function hostProjects<T extends { readonly kind: string }>(session: HostSession): Promise<T[]> {
-  const data = await hostGet<{ items: T[] }>(session, '/api/v1/workspaces');
+export async function deviceProjects<T extends { readonly kind: string }>(session: DeviceSession): Promise<T[]> {
+  const data = await deviceGet<{ items: T[] }>(session, '/api/v1/workspaces');
   return data.items.filter((workspace) => workspace.kind === 'managed');
 }
 
-export interface HostCollection<T> {
-  readonly items: (T & { readonly host_id: string })[];
+export interface DeviceCollection<T> {
+  readonly items: (T & { readonly device_id: string })[];
   readonly unavailable: string[];
 }
 
-export async function collectFromHosts<T extends object>(
-  hosts: HostSources,
-  fetch: (session: HostSession) => Promise<readonly T[]>,
-): Promise<HostCollection<T>> {
+export async function collectFromDevices<T extends object>(
+  devices: DeviceSources,
+  fetch: (session: DeviceSession) => Promise<readonly T[]>,
+): Promise<DeviceCollection<T>> {
   const results = await Promise.all(
-    hosts.sources().map(async (source) => {
+    devices.sources().map(async (source) => {
       if (source.session === undefined) return { id: source.id, items: undefined };
       try {
         const items = await fetch(source.session);
-        return { id: source.id, items: items.map((item) => ({ ...item, host_id: source.id })) };
+        return { id: source.id, items: items.map((item) => ({ ...item, device_id: source.id })) };
       } catch {
         return { id: source.id, items: undefined };
       }
@@ -97,16 +97,16 @@ export async function collectFromHosts<T extends object>(
   };
 }
 
-export type HostLookup<T> =
-  | { readonly found: T & { readonly host_id: string } }
+export type DeviceLookup<T> =
+  | { readonly found: T & { readonly device_id: string } }
   | { readonly found: undefined; readonly unavailable: string[] };
 
-export async function findOnHosts<T extends object>(
-  hosts: HostSources,
-  fetch: (session: HostSession) => Promise<T | undefined>,
-): Promise<HostLookup<T>> {
+export async function findOnDevices<T extends object>(
+  devices: DeviceSources,
+  fetch: (session: DeviceSession) => Promise<T | undefined>,
+): Promise<DeviceLookup<T>> {
   const results = await Promise.all(
-    hosts.sources().map(async (source) => {
+    devices.sources().map(async (source) => {
       if (source.session === undefined) return { id: source.id, reachable: false, item: undefined };
       try {
         return { id: source.id, reachable: true, item: await fetch(source.session) };
@@ -116,6 +116,6 @@ export async function findOnHosts<T extends object>(
     }),
   );
   const hit = results.find((result) => result.item !== undefined);
-  if (hit?.item !== undefined) return { found: { ...hit.item, host_id: hit.id } };
+  if (hit?.item !== undefined) return { found: { ...hit.item, device_id: hit.id } };
   return { found: undefined, unavailable: results.filter((result) => !result.reachable).map((result) => result.id) };
 }

@@ -1,32 +1,32 @@
 import {
-  HOSTS_SECTION,
+  DEVICES_SECTION,
   IConfigService,
-  type HostEntry,
-  type HostsSection,
+  type DeviceEntry,
+  type DevicesSection,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
-import type { HostSnapshot } from '../../protocol/events-zod';
+import type { DeviceSnapshot } from '../../protocol/events-zod';
 import {
   collectSharedProviders,
   sendSharedProviders,
   type ProviderCopyResult,
-} from './hostProviders';
-import { HostConnectError, SshKapBridge } from './sshKapBridge';
-import type { HostSession } from './hostSession';
+} from './deviceProviders';
+import { DeviceConnectError, SshDeviceBridge } from './sshDeviceBridge';
+import type { DeviceSession } from './deviceSession';
 
 interface BridgeRecord {
   readonly fingerprint: string;
-  readonly bridge: SshKapBridge;
+  readonly bridge: SshDeviceBridge;
 }
 
-export interface HostInfo {
+export interface DeviceInfo {
   readonly id: string;
-  readonly entry: HostEntry;
-  readonly bridge: SshKapBridge | undefined;
+  readonly entry: DeviceEntry;
+  readonly bridge: SshDeviceBridge | undefined;
 }
 
-export function toHostSnapshot(info: HostInfo): HostSnapshot {
+export function toDeviceSnapshot(info: DeviceInfo): DeviceSnapshot {
   const disabled = info.entry.enabled === false;
   return {
     id: info.id,
@@ -37,16 +37,16 @@ export function toHostSnapshot(info: HostInfo): HostSnapshot {
     enabled: info.entry.enabled,
     status: disabled ? 'disconnected' : info.bridge?.status ?? 'pending',
     remote_version: info.bridge?.remoteVersion,
-    connect_error: disabled ? `host "${info.id}" is disabled` : info.bridge?.error,
+    connect_error: disabled ? `device "${info.id}" is disabled` : info.bridge?.error,
     connect_failure: disabled ? 'unknown' : info.bridge?.failure,
   };
 }
 
-export function hostSnapshots(manager: HostBridgeManager): HostSnapshot[] {
-  return manager.list().map(toHostSnapshot);
+export function deviceSnapshots(manager: DeviceManager): DeviceSnapshot[] {
+  return manager.list().map(toDeviceSnapshot);
 }
 
-export class HostBridgeManager {
+export class DeviceManager {
   private readonly records = new Map<string, BridgeRecord>();
   private readonly subscription: { dispose(): void };
   private active = false;
@@ -56,15 +56,15 @@ export class HostBridgeManager {
     private readonly onChange?: () => void,
   ) {
     this.subscription = core.accessor.get(IConfigService).onDidSectionChange((event) => {
-      if (event.domain === HOSTS_SECTION) this.reconcile();
+      if (event.domain === DEVICES_SECTION) this.reconcile();
     });
   }
 
-  section(): HostsSection {
-    return this.core.accessor.get(IConfigService).get<HostsSection | undefined>(HOSTS_SECTION) ?? {};
+  section(): DevicesSection {
+    return this.core.accessor.get(IConfigService).get<DevicesSection | undefined>(DEVICES_SECTION) ?? {};
   }
 
-  list(): readonly HostInfo[] {
+  list(): readonly DeviceInfo[] {
     return Object.entries(this.section()).map(([id, entry]) => ({
       id,
       entry,
@@ -72,11 +72,11 @@ export class HostBridgeManager {
     }));
   }
 
-  async connect(id: string): Promise<HostSession> {
+  async connect(id: string): Promise<DeviceSession> {
     await this.core.accessor.get(IConfigService).ready;
     const entry = this.section()[id];
-    if (entry === undefined) throw new HostConnectError('unknown', `host "${id}" is not configured`);
-    if (entry.enabled === false) throw new HostConnectError('unknown', `host "${id}" is disabled`);
+    if (entry === undefined) throw new DeviceConnectError('unknown', `device "${id}" is not configured`);
+    if (entry.enabled === false) throw new DeviceConnectError('unknown', `device "${id}" is disabled`);
     return this.record(id, entry).bridge.connect();
   }
 
@@ -95,7 +95,7 @@ export class HostBridgeManager {
     return sendSharedProviders(session, shared);
   }
 
-  session(id: string): HostSession | undefined {
+  session(id: string): DeviceSession | undefined {
     return this.records.get(id)?.bridge.session;
   }
 
@@ -106,14 +106,14 @@ export class HostBridgeManager {
     this.records.clear();
   }
 
-  private record(id: string, entry: HostEntry): BridgeRecord {
+  private record(id: string, entry: DeviceEntry): BridgeRecord {
     const fingerprint = JSON.stringify({ ...entry, enabled: undefined, name: undefined });
     const existing = this.records.get(id);
     if (existing?.fingerprint === fingerprint) return existing;
     existing?.bridge.dispose();
     const created = {
       fingerprint,
-      bridge: new SshKapBridge(entry, {
+      bridge: new SshDeviceBridge(entry, {
         onChange: () => this.onChange?.(),
       }),
     };

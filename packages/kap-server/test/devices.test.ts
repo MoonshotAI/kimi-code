@@ -10,41 +10,41 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
 import { FileTokenStorage, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
-import { IConfigService, IOAuthService, hostIdSchema, hostsSectionSchema } from '@moonshot-ai/agent-core-v2';
+import { IConfigService, IOAuthService, deviceIdSchema, devicesSectionSchema } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '../src/services/hosts/hostProtocol';
-import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes, upstreamHeaders } from '../src/services/hosts/hostProxy';
-import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
-import { hostWireSchema } from '../src/services/hosts/hostsConfig';
-import { HostRequestError, type HostHttpRequest, type HostHttpResponse, type HostSession } from '../src/services/hosts/hostSession';
-import { StdioHostSession } from '../src/services/hosts/stdioHostSession';
+import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from '../src/services/devices/deviceProtocol';
+import { matchDeviceProxyPath, proxyDeviceWebSocket, registerDeviceProxyRoutes, upstreamHeaders } from '../src/services/devices/deviceProxy';
+import { DeviceManager } from '../src/services/devices/deviceManager';
+import { deviceWireSchema } from '../src/services/devices/devicesConfig';
+import { DeviceRequestError, type DeviceHttpRequest, type DeviceHttpResponse, type DeviceSession } from '../src/services/devices/deviceSession';
+import { StdioDeviceSession } from '../src/services/devices/stdioDeviceSession';
 import { JsonlRpcStream, RPC_BACKPRESSURE_TIMEOUT_MS } from '../src/transport/jsonlRpcStream';
 import { startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import {
-  HostConnectError,
-  SshKapBridge,
+  DeviceConnectError,
+  SshDeviceBridge,
   classifySshFailure,
   checkBootstrapOutput,
   remoteBinCommand,
   remoteKimiCommand,
-} from '../src/services/hosts/sshKapBridge';
+} from '../src/services/devices/sshDeviceBridge';
 import {
   attachRpcStream,
-  HOST_RPC_MAX_BODY_BYTES,
+  DEVICE_RPC_MAX_BODY_BYTES,
   startUnixRpcServer,
 } from '../src/transport/stdioRpc';
 
-function thrown(run: () => unknown): HostConnectError {
+function thrown(run: () => unknown): DeviceConnectError {
   try {
     run();
   } catch (error) {
-    if (error instanceof HostConnectError) return error;
+    if (error instanceof DeviceConnectError) return error;
     throw error;
   }
-  throw new Error('expected a HostConnectError');
+  throw new Error('expected a DeviceConnectError');
 }
 
 async function withFakeSsh(
@@ -62,23 +62,23 @@ async function withFakeSsh(
   }
 }
 
-describe('host proxy path', () => {
-  it('splits the host id from the upstream path and keeps the query', () => {
-    expect(matchHostProxyPath('/api/v1/hosts/dev/proxy/api/v1/sessions?limit=1')).toEqual({
-      hostId: 'dev',
+describe('device proxy path', () => {
+  it('splits the device id from the upstream path and keeps the query', () => {
+    expect(matchDeviceProxyPath('/api/v1/devices/dev/proxy/api/v1/sessions?limit=1')).toEqual({
+      deviceId: 'dev',
       path: '/api/v1/sessions?limit=1',
     });
-    expect(matchHostProxyPath('/api/v1/hosts/dev/proxy')).toEqual({ hostId: 'dev', path: '/' });
+    expect(matchDeviceProxyPath('/api/v1/devices/dev/proxy')).toEqual({ deviceId: 'dev', path: '/' });
   });
 
   it('does not match control-plane routes', () => {
-    expect(matchHostProxyPath('/api/v1/hosts')).toBeUndefined();
-    expect(matchHostProxyPath('/api/v1/hosts/dev/projects')).toBeUndefined();
+    expect(matchDeviceProxyPath('/api/v1/devices')).toBeUndefined();
+    expect(matchDeviceProxyPath('/api/v1/devices/dev/projects')).toBeUndefined();
   });
 
-  it('decodes the host id and rejects a malformed percent-encoding', () => {
-    expect(matchHostProxyPath('/api/v1/hosts/dev%2Dbox/proxy')).toEqual({ hostId: 'dev-box', path: '/' });
-    expect(matchHostProxyPath('/api/v1/hosts/%E0%A4%A/proxy')).toBeUndefined();
+  it('decodes the device id and rejects a malformed percent-encoding', () => {
+    expect(matchDeviceProxyPath('/api/v1/devices/dev%2Dbox/proxy')).toEqual({ deviceId: 'dev-box', path: '/' });
+    expect(matchDeviceProxyPath('/api/v1/devices/%E0%A4%A/proxy')).toBeUndefined();
   });
 
   it('strips local credentials and browser identity on the way upstream', () => {
@@ -97,25 +97,25 @@ describe('host proxy path', () => {
   });
 });
 
-describe('host configuration', () => {
+describe('device configuration', () => {
   it('accepts an alias entry and rejects unknown fields or option-like hosts', () => {
-    expect(hostsSectionSchema.safeParse({ dev: { host: 'dev-box', identityFile: '~/.ssh/key' } }).success).toBe(true);
-    expect(hostsSectionSchema.safeParse({ dev: { host: 'dev-box', type: 'ssh' } }).success).toBe(false);
-    expect(hostsSectionSchema.safeParse({ dev: { host: '-oProxyCommand=x' } }).success).toBe(false);
+    expect(devicesSectionSchema.safeParse({ dev: { host: 'dev-box', identityFile: '~/.ssh/key' } }).success).toBe(true);
+    expect(devicesSectionSchema.safeParse({ dev: { host: 'dev-box', type: 'ssh' } }).success).toBe(false);
+    expect(devicesSectionSchema.safeParse({ dev: { host: '-oProxyCommand=x' } }).success).toBe(false);
   });
 
   it('maps the wire entry to the config entry through one schema', () => {
-    expect(hostWireSchema.parse({ host: 'dev-box', identity_file: '~/.ssh/key', remote_bin: 'kimi' })).toEqual({
+    expect(deviceWireSchema.parse({ host: 'dev-box', identity_file: '~/.ssh/key', remote_bin: 'kimi' })).toEqual({
       host: 'dev-box',
       identityFile: '~/.ssh/key',
       remoteBin: 'kimi',
     });
   });
 
-  it('keeps host ids safe for URL path segments', () => {
-    expect(hostIdSchema.safeParse('dev_box-1.example').success).toBe(true);
-    expect(hostIdSchema.safeParse('a/b').success).toBe(false);
-    expect(hostIdSchema.safeParse('').success).toBe(false);
+  it('keeps device ids safe for URL path segments', () => {
+    expect(deviceIdSchema.safeParse('dev_box-1.example').success).toBe(true);
+    expect(deviceIdSchema.safeParse('a/b').success).toBe(false);
+    expect(deviceIdSchema.safeParse('').success).toBe(false);
   });
 });
 
@@ -128,12 +128,12 @@ describe('ssh bootstrap', () => {
   });
 
   it('finds the marker line among shell startup noise', () => {
-    const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.0.0"}\n`;
+    const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.0.0"}\n`;
     expect(checkBootstrapOutput(stdout)).toBe(true);
     expect(checkBootstrapOutput('command output without a marker\n')).toBe(false);
   });
 
-  it('reports a remote below the host protocol as outdated with its version', () => {
+  it('reports a remote below the device protocol as outdated with its version', () => {
     const error = thrown(() =>
       checkBootstrapOutput('__KIMI_ENSURE_DAEMON__{"version":"0.40.0"}\n'),
     );
@@ -143,16 +143,16 @@ describe('ssh bootstrap', () => {
     expect(thrown(() => checkBootstrapOutput('0.40.0\n__KIMI_ENSURE_DAEMON__{"protocol":0}\n')).remoteVersion).toBe('0.40.0');
   });
 
-  it('reports a remote below the host API level as outdated and accepts a newer one', () => {
+  it('reports a remote below the device API level as outdated and accepts a newer one', () => {
     const marker = (apiLevel: number | undefined): string =>
-      `__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: apiLevel, version: '2.5.2' })}\n`;
-    for (const apiLevel of [undefined, HOST_API_LEVEL - 1]) {
+      `__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: DEVICE_PROTOCOL_VERSION, api_level: apiLevel, version: '2.5.2' })}\n`;
+    for (const apiLevel of [undefined, DEVICE_API_LEVEL - 1]) {
       const error = thrown(() => checkBootstrapOutput(marker(apiLevel)));
       expect(error.failure).toBe('executor_outdated');
       expect(error.remoteVersion).toBe('2.5.2');
       expect(error.message).toContain('kimi upgrade');
     }
-    expect(checkBootstrapOutput(marker(HOST_API_LEVEL + 1))).toBe(true);
+    expect(checkBootstrapOutput(marker(DEVICE_API_LEVEL + 1))).toBe(true);
   });
 
   it.each([
@@ -161,23 +161,23 @@ describe('ssh bootstrap', () => {
     ['lock_timeout', 'remote_start_failed'],
     ['something_new', 'unknown'],
   ] as const)('maps the ensure-daemon error %s to %s', (code, failure) => {
-    const stdout = `__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0","error":"${code}","message":"m"}\n`;
+    const stdout = `__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"2.0.0","error":"${code}","message":"m"}\n`;
     const error = thrown(() => checkBootstrapOutput(stdout));
     expect(error.failure).toBe(failure);
     expect(error.remoteVersion).toBe('2.0.0');
   });
 
   it('accepts a probe with a supported protocol and API level', () => {
-    expect(checkBootstrapOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0"}\n`)).toBe(true);
+    expect(checkBootstrapOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"2.0.0"}\n`)).toBe(true);
   });
 
   it.skipIf(process.platform === 'win32')('reports an older kimi without the probe as outdated with its version', () =>
     withFakeSsh("#!/bin/sh\necho 'motd line'\necho '0.40.0'\necho \"error: unknown option '--probe'\" >&2\nexit 1\n", async (ssh) => {
-      const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+      const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
       const error = await bridge.probe().catch((error: unknown) => error);
-      expect(error).toBeInstanceOf(HostConnectError);
-      expect((error as HostConnectError).failure).toBe('executor_outdated');
-      expect((error as HostConnectError).remoteVersion).toBe('0.40.0');
+      expect(error).toBeInstanceOf(DeviceConnectError);
+      expect((error as DeviceConnectError).failure).toBe('executor_outdated');
+      expect((error as DeviceConnectError).remoteVersion).toBe('0.40.0');
     }),
   );
 
@@ -203,7 +203,7 @@ describe('ssh bootstrap', () => {
       (dir) => `#!/bin/sh\necho $$ > '${join(dir, 'pid')}'\nexec sleep 30\n`,
       async (ssh, dir) => {
         const pidfile = join(dir, 'pid');
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
         const pending = bridge.connect();
         let pid = 0;
         await vi.waitFor(() => {
@@ -211,7 +211,7 @@ describe('ssh bootstrap', () => {
           expect(pid).toBeGreaterThan(0);
         });
         bridge.dispose();
-        await expect(pending).rejects.toBeInstanceOf(HostConnectError);
+        await expect(pending).rejects.toBeInstanceOf(DeviceConnectError);
         expect(() => process.kill(pid, 0)).toThrow();
       },
     ),
@@ -220,12 +220,12 @@ describe('ssh bootstrap', () => {
   it.skipIf(process.platform === 'win32')('continues after an unmatched frame in the same stdout chunk as the marker', () =>
     withFakeSsh(
       `#!/bin/sh
-printf '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}\\n{"type":"http.res","id":"early","status":200,"headers":{},"body":"e30="}\\n'
+printf '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}\\n{"type":"http.res","id":"early","status":200,"headers":{},"body":"e30="}\\n'
 read line
 printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
 `,
       async (ssh) => {
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
           const session = await bridge.connect();
           const response = await session.request({ method: 'GET', path: '/healthz', headers: {} });
@@ -240,7 +240,7 @@ printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
   it.skipIf(process.platform === 'win32')('preserves UTF-8 bytes when the handshake splits a character', () =>
     withFakeSsh(
       `#!/usr/bin/env node
-const output = Buffer.from(${JSON.stringify(`__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: '版本1.2.3' })}\n`)});
+const output = Buffer.from(${JSON.stringify(`__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: DEVICE_PROTOCOL_VERSION, api_level: DEVICE_API_LEVEL, version: '版本1.2.3' })}\n`)});
 const split = output.indexOf(Buffer.from('版本')) + 1;
 process.stdout.write(output.subarray(0, split));
 setImmediate(() => {
@@ -252,7 +252,7 @@ process.stdin.once('data', () => {
 process.stdin.resume();
 `,
       async (ssh) => {
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
           const session = await bridge.connect();
           expect(session).toBeDefined();
@@ -275,7 +275,7 @@ process.stdin.resume();
     withFakeSsh(
       (dir) => `#!/bin/sh
 echo x >> '${join(dir, 'count')}'
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
 while IFS= read -r line; do
   case "$line" in
     *'"type":"http.req"'*)
@@ -290,7 +290,7 @@ while IFS= read -r line; do
 done
 `,
       async (ssh, dir) => {
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
           const session = await bridge.connect();
           expect(bridge.status).toBe('ready');
@@ -324,7 +324,7 @@ done
     ),
   );
 
-  it.skipIf(process.platform === 'win32')('keeps retrying with backoff after an abnormal exit until the host is reachable again', () =>
+  it.skipIf(process.platform === 'win32')('keeps retrying with backoff after an abnormal exit until the device is reachable again', () =>
     withFakeSsh(
       (dir) => `#!/bin/sh
 echo x >> '${join(dir, 'count')}'
@@ -333,12 +333,12 @@ if [ "$attempt" = 2 ]; then
   echo 'ssh: connect to host dev port 22: Connection refused' >&2
   exit 255
 fi
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
 if [ "$attempt" = 1 ]; then exit 1; fi
 while IFS= read -r line; do :; done
 `,
       async (ssh, dir) => {
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
           await bridge.connect();
           await vi.waitFor(
@@ -363,20 +363,20 @@ if [ -e '${join(dir, 'down')}' ]; then
   echo 'ssh: connect to host dev port 22: Connection refused' >&2
   exit 255
 fi
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
 while IFS= read -r line; do :; done
 `,
       async (ssh, dir) => {
         const down = join(dir, 'down');
         writeFileSync(down, '');
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
           bridge.start();
           await vi.waitFor(() => {
             expect(bridge.status).toBe('disconnected');
             expect(bridge.failure).toBe('connection_refused');
           });
-          await expect(bridge.connect()).rejects.toBeInstanceOf(HostConnectError);
+          await expect(bridge.connect()).rejects.toBeInstanceOf(DeviceConnectError);
           rmSync(down);
           await vi.waitFor(
             () => {
@@ -396,7 +396,7 @@ while IFS= read -r line; do :; done
     withFakeSsh(
       (dir) => `#!/bin/sh\necho x >> '${join(dir, 'count')}'\necho 'dev: Permission denied (publickey).' >&2\nexit 255\n`,
       async (ssh, dir) => {
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
           bridge.start();
           await vi.waitFor(() => {
@@ -412,7 +412,7 @@ while IFS= read -r line; do :; done
   10_000);
 });
 
-describe('host auto-connect', () => {
+describe('device auto-connect', () => {
   function managerWith(section: Record<string, { host: string; enabled?: boolean }>) {
     let listener: ((event: { domain: string }) => void) | undefined;
     const config = {
@@ -432,22 +432,22 @@ describe('host auto-connect', () => {
         },
       },
     };
-    const manager = new HostBridgeManager(core as never);
-    return { manager, changeHosts: () => listener?.({ domain: 'hosts' }) };
+    const manager = new DeviceManager(core as never);
+    return { manager, changeDevices: () => listener?.({ domain: 'devices' }) };
   }
 
-  it('connects enabled hosts once a client has connected, including hosts added later', async () => {
+  it('connects enabled devices once a client has connected, including devices added later', async () => {
     const started: string[] = [];
-    const start = vi.spyOn(SshKapBridge.prototype, 'start').mockImplementation(function (this: SshKapBridge) {
+    const start = vi.spyOn(SshDeviceBridge.prototype, 'start').mockImplementation(function (this: SshDeviceBridge) {
       started.push((this as unknown as { entry: { host: string } }).entry.host);
     });
     const section: Record<string, { host: string; enabled?: boolean }> = {
       dev: { host: 'dev-box' },
       off: { host: 'off-box', enabled: false },
     };
-    const { manager, changeHosts } = managerWith(section);
+    const { manager, changeDevices } = managerWith(section);
     try {
-      changeHosts();
+      changeDevices();
       expect(started).toEqual([]);
       manager.activate();
       manager.activate();
@@ -455,10 +455,10 @@ describe('host auto-connect', () => {
         expect(started).toEqual(['dev-box']);
       });
       section['added'] = { host: 'added-box' };
-      changeHosts();
+      changeDevices();
       expect(started).toEqual(['dev-box', 'added-box']);
       section['off'] = { host: 'off-box' };
-      changeHosts();
+      changeDevices();
       expect(started).toEqual(['dev-box', 'added-box', 'off-box']);
     } finally {
       start.mockRestore();
@@ -467,7 +467,7 @@ describe('host auto-connect', () => {
   });
 });
 
-describe('host HTTP session', () => {
+describe('device HTTP session', () => {
   it('rejects a pending request when the transport closes', async () => {
     let stream: Duplex;
     stream = new Duplex({
@@ -476,7 +476,7 @@ describe('host HTTP session', () => {
         Duplex.prototype.write.call(stream, chunk, encoding, callback);
       },
     });
-    const session = new StdioHostSession(stream);
+    const session = new StdioDeviceSession(stream);
     const pending = session.request({ method: 'GET', path: '/held', headers: {} });
     stream.destroy();
     await expect(pending).rejects.toMatchObject({ failure: 'unavailable' });
@@ -485,7 +485,7 @@ describe('host HTTP session', () => {
   it('cancels a timed out request and ignores its late response', () =>
     withFakeSsh(
       (dir) => `#!/bin/sh
-echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(DEVICE_PROTOCOL_VERSION)},"api_level":${String(DEVICE_API_LEVEL)},"version":"1.2.3"}'
 while IFS= read -r line; do
   case "$line" in
     *'"type":"http.cancel"'*)
@@ -496,13 +496,13 @@ while IFS= read -r line; do
 done
 `,
       async (ssh, dir) => {
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh });
         try {
           const session = await bridge.connect();
           const request = session.request({
             method: 'GET', path: '/held', headers: {}, timeoutMs: 10,
           });
-          await expect(request).rejects.toThrow('host request timed out');
+          await expect(request).rejects.toThrow('device request timed out');
           await vi.waitFor(() => expect(readFileSync(join(dir, 'cancel'), 'utf8')).toContain('"type":"http.cancel"'));
         } finally {
           bridge.dispose();
@@ -512,7 +512,7 @@ done
   );
 });
 
-describe('host WebSocket backpressure', () => {
+describe('device WebSocket backpressure', () => {
 
   it('pauses a client while ssh is blocked and resumes after drain', async () => {
     const app = Fastify();
@@ -539,9 +539,9 @@ describe('host WebSocket backpressure', () => {
       }),
     };
     app.server.on('upgrade', (req, upgradeSocket, head) => {
-      void proxyHostWebSocket({ session: () => session } as never, { hostId: 'dev', path: '/api/v1/ws' }, req, upgradeSocket, head);
+      void proxyDeviceWebSocket({ session: () => session } as never, { deviceId: 'dev', path: '/api/v1/ws' }, req, upgradeSocket, head);
     });
-    const ws = new WebSocketClient(`ws://127.0.0.1:${address.port}/api/v1/hosts/dev/proxy/api/v1/ws`);
+    const ws = new WebSocketClient(`ws://127.0.0.1:${address.port}/api/v1/devices/dev/proxy/api/v1/ws`);
     try {
       await new Promise<void>((resolve) => ws.once('open', resolve));
       blocked = true;
@@ -566,7 +566,7 @@ describe('host WebSocket backpressure', () => {
     const stream = new Duplex({ read() {}, write() {} });
     const onClose = vi.fn();
     const rpc = new JsonlRpcStream<{ type: string; body: string }>(stream, () => {}, () => {}, onClose);
-    const body = Buffer.alloc(HOST_RPC_MAX_BODY_BYTES).toString('base64');
+    const body = Buffer.alloc(DEVICE_RPC_MAX_BODY_BYTES).toString('base64');
     rpc.write({ type: 'http.res', body });
     expect(stream.destroyed).toBe(false);
     for (let frame = 0; frame < 3; frame += 1) rpc.write({ type: 'http.res', body });
@@ -575,9 +575,9 @@ describe('host WebSocket backpressure', () => {
   });
 });
 
-describe('host management routes', () => {
-  it('tests, creates, updates and removes hosts through the real HTTP API', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'kimi-hosts-routes-'));
+describe('device management routes', () => {
+  it('tests, creates, updates and removes devices through the real HTTP API', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'kimi-devices-routes-'));
     const server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
@@ -585,32 +585,32 @@ describe('host management routes', () => {
       homeDir: home,
       logLevel: 'silent',
     });
-    const probe = vi.spyOn(SshKapBridge.prototype, 'probe').mockResolvedValue(undefined);
+    const probe = vi.spyOn(SshDeviceBridge.prototype, 'probe').mockResolvedValue(undefined);
     const request = (method: string, path: string, body?: unknown) => fetch(`http://127.0.0.1:${server.port}${path}`, {
       method,
       headers: { authorization: `Bearer ${server.authTokenService.getToken()}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     try {
-      const tested = await request('POST', '/api/v1/hosts:test', { host: 'dev@example.test' });
+      const tested = await request('POST', '/api/v1/devices:test', { host: 'dev@example.test' });
       expect(tested.status).toBe(200);
       expect(await tested.json()).toMatchObject({ code: 0, data: { connected: true } });
       expect(probe).toHaveBeenCalledOnce();
-      const created = await request('PUT', '/api/v1/hosts/dev', { host: 'dev@example.test', name: 'Dev' });
+      const created = await request('PUT', '/api/v1/devices/dev', { host: 'dev@example.test', name: 'Dev' });
       expect(created.status).toBe(200);
-      await request('PUT', '/api/v1/hosts/other', { host: 'other.example.test' });
-      const updated = await request('PUT', '/api/v1/hosts/dev', { host: 'new.example.test', enabled: false });
+      await request('PUT', '/api/v1/devices/other', { host: 'other.example.test' });
+      const updated = await request('PUT', '/api/v1/devices/dev', { host: 'new.example.test', enabled: false });
       expect(updated.status).toBe(200);
-      const connected = await request('POST', '/api/v1/hosts:connect', { id: 'dev' });
+      const connected = await request('POST', '/api/v1/devices:connect', { id: 'dev' });
       expect(await connected.json()).toMatchObject({ data: { id: 'dev', enabled: false, status: 'disconnected' } });
-      const listed = await request('GET', '/api/v1/hosts');
-      expect(await listed.json()).toMatchObject({ data: { hosts: [
+      const listed = await request('GET', '/api/v1/devices');
+      expect(await listed.json()).toMatchObject({ data: { devices: [
         { id: 'dev', host: 'new.example.test', enabled: false, status: 'disconnected' },
         { id: 'other', host: 'other.example.test' },
       ] } });
-      expect((await request('DELETE', '/api/v1/hosts/dev')).status).toBe(200);
-      const remaining = await request('GET', '/api/v1/hosts');
-      expect(await remaining.json()).toEqual({ code: 0, msg: 'success', data: { hosts: [{ id: 'other', host: 'other.example.test', status: 'pending' }] }, request_id: expect.any(String) });
+      expect((await request('DELETE', '/api/v1/devices/dev')).status).toBe(200);
+      const remaining = await request('GET', '/api/v1/devices');
+      expect(await remaining.json()).toEqual({ code: 0, msg: 'success', data: { devices: [{ id: 'other', host: 'other.example.test', status: 'pending' }] }, request_id: expect.any(String) });
     } finally {
       vi.restoreAllMocks();
       await server.close();
@@ -619,22 +619,22 @@ describe('host management routes', () => {
   });
 });
 
-describe('host HTTP proxy', () => {
+describe('device HTTP proxy', () => {
   it('enforces request limits and maps timeouts to gateway responses', async () => {
     const app = Fastify();
-    registerHostProxyRoutes(app, {
+    registerDeviceProxyRoutes(app, {
       session: () => ({
-        request: async () => { throw new HostRequestError('timeout', 'host request timed out'); },
+        request: async () => { throw new DeviceRequestError('timeout', 'device request timed out'); },
         openWebSocket: () => { throw new Error('unexpected websocket'); },
       }),
     } as never);
     await app.ready();
-    const timeout = await app.inject({ method: 'GET', url: '/api/v1/hosts/dev/proxy/api/v1/healthz' });
+    const timeout = await app.inject({ method: 'GET', url: '/api/v1/devices/dev/proxy/api/v1/healthz' });
     expect(timeout.statusCode).toBe(504);
     const tooLarge = await app.inject({
       method: 'POST',
-      url: '/api/v1/hosts/dev/proxy/api/v1/files',
-      headers: { 'content-length': String(HOST_RPC_MAX_BODY_BYTES + 1) },
+      url: '/api/v1/devices/dev/proxy/api/v1/files',
+      headers: { 'content-length': String(DEVICE_RPC_MAX_BODY_BYTES + 1) },
     });
     expect(tooLarge.statusCode).toBe(413);
     expect(tooLarge.json().code).toBe(41301);
@@ -644,7 +644,7 @@ describe('host HTTP proxy', () => {
   it('cancels the remote request when the client disconnects', async () => {
     const app = Fastify();
     let sessionRequest!: { signal?: AbortSignal };
-    registerHostProxyRoutes(app, {
+    registerDeviceProxyRoutes(app, {
       session: () => ({
         request: (input: typeof sessionRequest) => {
           sessionRequest = input;
@@ -659,7 +659,7 @@ describe('host HTTP proxy', () => {
     const socket = createConnection({ host: '127.0.0.1', port: address.port });
     try {
       await new Promise<void>((resolve) => socket.once('connect', resolve));
-      socket.write('POST /api/v1/hosts/dev/proxy/api/v1/sessions/s1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx');
+      socket.write('POST /api/v1/devices/dev/proxy/api/v1/sessions/s1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx');
       await vi.waitFor(() => expect(sessionRequest).toBeDefined());
       socket.destroy();
       await vi.waitFor(() => expect(sessionRequest.signal?.aborted).toBe(true));
@@ -670,23 +670,23 @@ describe('host HTTP proxy', () => {
   });
 });
 
-interface ManagedHostPair {
+interface ManagedDevicePair {
   readonly local: Awaited<ReturnType<typeof startServer>>;
   readonly remote: Awaited<ReturnType<typeof startServer>>;
   readonly localHome: string;
   readonly remoteHome: string;
-  readonly session: HostSession;
+  readonly session: DeviceSession;
   readonly paths: string[];
 }
 
-async function withManagedHostPair(
+async function withManagedDevicePair(
   fetchImpl: (input: unknown, init?: RequestInit) => Promise<Response>,
-  run: (pair: ManagedHostPair) => Promise<void>,
+  run: (pair: ManagedDevicePair) => Promise<void>,
 ): Promise<void> {
-  const localHome = await mkdtemp(join(tmpdir(), 'kimi-host-local-'));
-  const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-host-remote-'));
+  const localHome = await mkdtemp(join(tmpdir(), 'kimi-device-local-'));
+  const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-device-remote-'));
   vi.stubGlobal('fetch', vi.fn(fetchImpl));
-  writeFileSync(join(localHome, 'config.toml'), '[hosts.dev]\nhost = "dev"\n');
+  writeFileSync(join(localHome, 'config.toml'), '[devices.dev]\nhost = "dev"\n');
   const env = { KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START: '0', KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: '0' };
   const local = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: localHome, logLevel: 'silent', env });
   const remote = await startServer({
@@ -694,7 +694,7 @@ async function withManagedHostPair(
     socketPath: join(remoteHome, 'daemon.sock'), managedBy: 'ensure-daemon', env,
   });
   const client = createConnection(join(remoteHome, 'daemon.sock'));
-  const pending = new Map<string, (response: HostHttpResponse) => void>();
+  const pending = new Map<string, (response: DeviceHttpResponse) => void>();
   createInterface({ input: client, crlfDelay: Infinity }).on('line', (line) => {
     const frame = JSON.parse(line) as { id?: string; status?: number; headers?: OutgoingHttpHeaders; body?: string };
     if (frame.id === undefined) return;
@@ -703,8 +703,8 @@ async function withManagedHostPair(
   });
   const paths: string[] = [];
   let requestId = 0;
-  const session: HostSession = {
-    request: (input: HostHttpRequest) => new Promise<HostHttpResponse>((resolve) => {
+  const session: DeviceSession = {
+    request: (input: DeviceHttpRequest) => new Promise<DeviceHttpResponse>((resolve) => {
       const id = `req-${String(++requestId)}`;
       paths.push(input.path);
       pending.set(id, resolve);
@@ -712,15 +712,15 @@ async function withManagedHostPair(
     }),
     openWebSocket: () => { throw new Error('not used'); },
   };
-  vi.spyOn(SshKapBridge.prototype, 'connect').mockResolvedValue(session);
-  vi.spyOn(SshKapBridge.prototype, 'session', 'get').mockReturnValue(session);
+  vi.spyOn(SshDeviceBridge.prototype, 'connect').mockResolvedValue(session);
+  vi.spyOn(SshDeviceBridge.prototype, 'session', 'get').mockReturnValue(session);
   try {
     await run({ local, remote, localHome, remoteHome, session, paths });
   } finally {
     client.destroy();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    local.hostBridges.close();
+    local.deviceManager.close();
     await local.close();
     await remote.close();
     await rm(localHome, { recursive: true, force: true });
@@ -728,11 +728,11 @@ async function withManagedHostPair(
   }
 }
 
-describe('host account', () => {
-  it.skipIf(process.platform === 'win32')('lets a managed host sign in and renew with its own Kimi login', async () => {
+describe('device account', () => {
+  it.skipIf(process.platform === 'win32')('lets a managed device sign in and renew with its own Kimi login', async () => {
     const now = Math.floor(Date.now() / 1000);
     const refreshRequests: string[] = [];
-    await withManagedHostPair(
+    await withManagedDevicePair(
       async (input, init) => {
         const url = String(input);
         if (url.endsWith('/api/oauth/device_authorization')) {
@@ -764,7 +764,7 @@ describe('host account', () => {
         await remoteStorage.save('kimi-code', {
           accessToken: 'remote-access', refreshToken: 'remote-refresh', expiresAt: now + 10, expiresIn: 3600, scope: '', tokenType: 'Bearer',
         });
-        const manager = local.hostBridges;
+        const manager = local.deviceManager;
         const remoteJson = async (method: string, path: string, body?: unknown) => {
           const response = await session.request({
             method,
@@ -798,9 +798,9 @@ describe('host account', () => {
   }, 30_000);
 });
 
-describe('host model providers', () => {
+describe('device model providers', () => {
   it.skipIf(process.platform === 'win32')('copies portable providers with their models and replaces same-name ones whole', async () => {
-    await withManagedHostPair(
+    await withManagedDevicePair(
       async () => new Response(null, { status: 404 }),
       async ({ local, remote }) => {
         const localConfig = local.core.accessor.get(IConfigService);
@@ -824,7 +824,7 @@ describe('host model providers', () => {
           kept: { type: 'openai', baseUrl: 'https://kept.example.test/v1', apiKey: 'sk-kept' },
         });
         await remoteConfig.replace('models', { 'taken/remote-only': { provider: 'taken', model: 'remote-only', maxContextSize: 16_000 } });
-        const manager = local.hostBridges;
+        const manager = local.deviceManager;
 
         const result = await manager.copyProviders('dev');
         expect(result).toEqual({ providers: ['gateway', 'taken'] });
@@ -949,7 +949,7 @@ describe('stdio rpc transport', () => {
   it.skipIf(process.platform === 'win32')('stops reading an oversized response and returns 413', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-limit-'));
     const app = Fastify();
-    app.get('/large', async () => Buffer.alloc(HOST_RPC_MAX_BODY_BYTES + 1));
+    app.get('/large', async () => Buffer.alloc(DEVICE_RPC_MAX_BODY_BYTES + 1));
     const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), {
       app,
       wssV1: new WebSocketServer({ noServer: true }),

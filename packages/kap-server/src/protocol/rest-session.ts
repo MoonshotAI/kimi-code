@@ -113,7 +113,7 @@ export const listSessionsQuerySchema = z
     include_archive: booleanQueryParam,
     exclude_empty: booleanQueryParam,
     archived_only: booleanQueryParam,
-    hosts: z.literal('include').optional(),
+    devices: z.literal('include').optional(),
   })
   .superRefine((value, ctx) => {
     if (value.archived_only === true && value.include_archive === true) {
@@ -223,7 +223,7 @@ export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
 export const sessionIdProjectionSchema = z.object({
   id: z.string().min(1),
   archived: z.boolean(),
-  host_id: z.string().optional(),
+  device_id: z.string().optional(),
 });
 export type SessionIdProjection = z.infer<typeof sessionIdProjectionSchema>;
 
@@ -232,7 +232,7 @@ export const listSessionsFlatResponseSchema = z.object({
   total: z.number().int().nonnegative(),
   has_more: z.boolean(),
   next_page_token: z.string().min(1).optional(),
-  unavailable_hosts: z.array(z.string()).optional(),
+  unavailable_devices: z.array(z.string()).optional(),
 });
 export type ListSessionsFlatResponse = z.infer<typeof listSessionsFlatResponseSchema>;
 
@@ -240,7 +240,7 @@ export const sessionWorkspaceGroupSchema = z.object({
   workspace_id: z.string().min(1),
   sessions: z.array(z.union([sessionSchema, sessionIdProjectionSchema])),
   total: z.number().int().nonnegative(),
-  host_id: z.string().optional(),
+  device_id: z.string().optional(),
 });
 export type SessionWorkspaceGroup = z.infer<typeof sessionWorkspaceGroupSchema>;
 
@@ -249,7 +249,7 @@ export const listSessionsGroupedResponseSchema = z.object({
   total: z.number().int().nonnegative(),
   has_more: z.boolean(),
   next_page_token: z.string().min(1).optional(),
-  unavailable_hosts: z.array(z.string()).optional(),
+  unavailable_devices: z.array(z.string()).optional(),
 });
 export type ListSessionsGroupedResponse = z.infer<typeof listSessionsGroupedResponseSchema>;
 

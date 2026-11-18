@@ -8,11 +8,11 @@ import type { Duplex } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket, WebSocketServer } from 'ws';
 
-import { HOST_RPC_MAX_BODY_BYTES, JsonlRpcStream } from './jsonlRpcStream';
+import { DEVICE_RPC_MAX_BODY_BYTES, JsonlRpcStream } from './jsonlRpcStream';
 import { WS_DEBUG_PATH } from './ws/debug/registerWsDebug';
 import { WS_PATH as WS_PATH_V1 } from './ws/v1/registerWsV1';
 
-export { HOST_RPC_MAX_BODY_BYTES } from './jsonlRpcStream';
+export { DEVICE_RPC_MAX_BODY_BYTES } from './jsonlRpcStream';
 
 export interface RpcHttpRequestFrame {
   readonly type: 'http.req';
@@ -71,7 +71,7 @@ export interface RpcStreamOptions {
 
 class RpcBodyTooLargeError extends Error {
   constructor() {
-    super(`HTTP body exceeds the ${String(HOST_RPC_MAX_BODY_BYTES)} byte host proxy limit`);
+    super(`HTTP body exceeds the ${String(DEVICE_RPC_MAX_BODY_BYTES)} byte device proxy limit`);
     this.name = 'RpcBodyTooLargeError';
   }
 }
@@ -156,9 +156,9 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
         };
         void (async () => {
           const contentLength = Number(frame.headers['content-length'] ?? 0);
-          if (contentLength > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
+          if (contentLength > DEVICE_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
           const body = frame.body === undefined ? Buffer.alloc(0) : Buffer.from(frame.body, 'base64');
-          if (body.length > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
+          if (body.length > DEVICE_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
           const res = await opts.app.inject({
             method: frame.method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
             url: frame.path,
@@ -174,7 +174,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
             return;
           }
           const declaredLength = Number(res.headers['content-length'] ?? 0);
-          if (declaredLength > HOST_RPC_MAX_BODY_BYTES) {
+          if (declaredLength > DEVICE_RPC_MAX_BODY_BYTES) {
             responseStream.destroy();
             throw new RpcBodyTooLargeError();
           }
@@ -182,7 +182,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
           let size = 0;
           for await (const chunk of responseStream) {
             size += (chunk as Buffer).length;
-            if (size > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
+            if (size > DEVICE_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
             chunks.push(chunk as Buffer);
           }
           if (aborted.has(frame.id)) return;

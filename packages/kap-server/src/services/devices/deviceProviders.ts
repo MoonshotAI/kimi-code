@@ -12,7 +12,7 @@ import { okEnvelope } from '../../envelope';
 import { defineRoute } from '../../middleware/defineRoute';
 import { ErrorCode } from '../../protocol/error-codes';
 import { enqueueProviderWrite } from '../providerWrites';
-import type { HostSession } from './hostSession';
+import type { DeviceSession } from './deviceSession';
 
 const sharedProvidersSchema = z.object({
   providers: ProvidersSectionSchema,
@@ -92,17 +92,17 @@ function importSharedProviders(core: Scope, incoming: SharedProviders): Promise<
   });
 }
 
-export async function sendSharedProviders(session: HostSession, shared: SharedProviders): Promise<ProviderCopyResult> {
+export async function sendSharedProviders(session: DeviceSession, shared: SharedProviders): Promise<ProviderCopyResult> {
   const response = await session.request({
     method: 'POST',
-    path: '/api/v1/hosts:import-providers',
+    path: '/api/v1/devices:import-providers',
     headers: { 'content-type': 'application/json' },
     body: Buffer.from(JSON.stringify(shared)),
     timeoutMs: 60_000,
   });
   const body = JSON.parse(response.body.toString('utf8')) as { code?: number; msg?: string; data?: unknown };
   if (response.status !== 200 || body.code !== 0 || body.data === undefined) {
-    throw new Error(body.msg ?? 'Unable to copy model providers to the SSH host');
+    throw new Error(body.msg ?? 'Unable to copy model providers to the device');
   }
   return providerCopyResultSchema.parse(body.data);
 }
@@ -113,12 +113,12 @@ export function registerImportProvidersRoute(app: {
   const route = defineRoute(
     {
       method: 'POST',
-      path: '/hosts::import-providers',
+      path: '/devices::import-providers',
       body: sharedProvidersSchema,
       success: { data: providerCopyResultSchema },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },
       description: 'Add model providers copied from the connecting computer; providers with the same name here are replaced along with their models',
-      tags: ['hosts'],
+      tags: ['devices'],
     },
     async (req, reply) => {
       reply.send(okEnvelope(await importSharedProviders(core, req.body), req.id));

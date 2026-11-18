@@ -1,34 +1,34 @@
 import type { Duplex } from 'node:stream';
 
 import {
-  HOST_RPC_MAX_BODY_BYTES,
+  DEVICE_RPC_MAX_BODY_BYTES,
   JsonlRpcStream,
   RPC_BACKPRESSURE_TIMEOUT_MS,
 } from '../../transport/jsonlRpcStream';
 import type { RpcFrame } from '../../transport/stdioRpc';
 import {
-  HOST_HTTP_TIMEOUT_MS,
-  HostRequestError,
-  type HostHttpRequest,
-  type HostHttpResponse,
-  type HostSession,
-  type HostWsHandlers,
-  type HostWsSession,
-} from './hostSession';
+  DEVICE_HTTP_TIMEOUT_MS,
+  DeviceRequestError,
+  type DeviceHttpRequest,
+  type DeviceHttpResponse,
+  type DeviceSession,
+  type DeviceWsHandlers,
+  type DeviceWsSession,
+} from './deviceSession';
 
 interface PendingHttp {
-  resolve(res: HostHttpResponse): void;
+  resolve(res: DeviceHttpResponse): void;
   reject(err: Error): void;
   timeout: ReturnType<typeof setTimeout>;
   signal?: AbortSignal;
   onCancel?: () => void;
 }
 
-export class StdioHostSession implements HostSession {
+export class StdioDeviceSession implements DeviceSession {
   private nextId = 0;
   private closed = false;
   private readonly pendingHttp = new Map<string, PendingHttp>();
-  private readonly wsChannels = new Map<string, HostWsHandlers>();
+  private readonly wsChannels = new Map<string, DeviceWsHandlers>();
   private readonly rpc: JsonlRpcStream<RpcFrame>;
 
   constructor(stream: Duplex) {
@@ -47,21 +47,21 @@ export class StdioHostSession implements HostSession {
     );
   }
 
-  request(req: HostHttpRequest): Promise<HostHttpResponse> {
+  request(req: DeviceHttpRequest): Promise<DeviceHttpResponse> {
     if (this.closed) {
-      return Promise.reject(new HostRequestError('unavailable', 'host session is closed'));
+      return Promise.reject(new DeviceRequestError('unavailable', 'device session is closed'));
     }
     if (req.signal?.aborted === true) {
-      return Promise.reject(new HostRequestError('cancelled', 'host request cancelled'));
+      return Promise.reject(new DeviceRequestError('cancelled', 'device request cancelled'));
     }
-    if (req.body !== undefined && req.body.length > HOST_RPC_MAX_BODY_BYTES) {
+    if (req.body !== undefined && req.body.length > DEVICE_RPC_MAX_BODY_BYTES) {
       return Promise.reject(
-        new HostRequestError('body_too_large', `HTTP body exceeds the ${String(HOST_RPC_MAX_BODY_BYTES)} byte host proxy limit`),
+        new DeviceRequestError('body_too_large', `HTTP body exceeds the ${String(DEVICE_RPC_MAX_BODY_BYTES)} byte device proxy limit`),
       );
     }
     const id = String(++this.nextId);
     const body = req.body !== undefined && req.body.length > 0 ? req.body.toString('base64') : undefined;
-    return new Promise<HostHttpResponse>((resolve, reject) => {
+    return new Promise<DeviceHttpResponse>((resolve, reject) => {
       const settle = (failure: 'cancelled' | 'timeout', message: string): void => {
         const pending = this.pendingHttp.get(id);
         if (pending === undefined) return;
@@ -71,18 +71,18 @@ export class StdioHostSession implements HostSession {
           pending.signal.removeEventListener('abort', pending.onCancel);
         }
         this.rpc.write({ type: 'http.cancel', id });
-        pending.reject(new HostRequestError(failure, message));
+        pending.reject(new DeviceRequestError(failure, message));
       };
       const onCancel = req.signal === undefined
         ? undefined
         : () => {
-            settle('cancelled', 'host request cancelled');
+            settle('cancelled', 'device request cancelled');
           };
       const timeout = setTimeout(
         () => {
-          settle('timeout', 'host request timed out');
+          settle('timeout', 'device request timed out');
         },
-        req.timeoutMs ?? HOST_HTTP_TIMEOUT_MS,
+        req.timeoutMs ?? DEVICE_HTTP_TIMEOUT_MS,
       );
       timeout.unref?.();
       this.pendingHttp.set(id, { resolve, reject, timeout, signal: req.signal, onCancel });
@@ -98,11 +98,11 @@ export class StdioHostSession implements HostSession {
     });
   }
 
-  openWebSocket(path: string, handlers: HostWsHandlers): HostWsSession {
+  openWebSocket(path: string, handlers: DeviceWsHandlers): DeviceWsSession {
     const id = String(++this.nextId);
     if (this.closed) {
       queueMicrotask(() => {
-        handlers.onClose(1001, 'host session is closed');
+        handlers.onClose(1001, 'device session is closed');
       });
       return { send() {}, close() {} };
     }
@@ -152,7 +152,7 @@ export class StdioHostSession implements HostSession {
   close(error?: Error): void {
     if (this.closed) return;
     this.closed = true;
-    const failure = new HostRequestError('unavailable', error?.message ?? 'host connection closed');
+    const failure = new DeviceRequestError('unavailable', error?.message ?? 'device connection closed');
     for (const pending of this.pendingHttp.values()) {
       clearTimeout(pending.timeout);
       if (pending.signal !== undefined && pending.onCancel !== undefined) {
@@ -161,7 +161,7 @@ export class StdioHostSession implements HostSession {
       pending.reject(failure);
     }
     this.pendingHttp.clear();
-    for (const handlers of this.wsChannels.values()) handlers.onClose(1001, 'host connection closed');
+    for (const handlers of this.wsChannels.values()) handlers.onClose(1001, 'device connection closed');
     this.wsChannels.clear();
     this.rpc.dispose();
   }

@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
 import type { Command } from 'commander';
 
 import { getDataDir } from '#/utils/paths';
@@ -136,7 +136,7 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
     if (!stopped) {
       throw new EnsureDaemonError(
         'version_mismatch_busy',
-        `a kimi server of version ${existing.version} is still running work on this host; retry after it finishes`,
+        `a kimi server of version ${existing.version} is still running work on this device; retry after it finishes`,
       );
     }
     let closed = false;
@@ -353,11 +353,11 @@ export function registerEnsureDaemonCommand(web: Command): void {
   web
     .command('ensure-daemon', { hidden: true })
     .description('Internal: reuse or start a background server and bridge stdio to its socket.')
-    .option('--probe', 'Only report the host protocol and version.')
+    .option('--probe', 'Only report the device protocol and version.')
     .action(async (options: { probe?: boolean }) => {
       const report = (payload: Record<string, unknown>): void => {
         process.stdout.write(
-          `${ENSURE_DAEMON_MARKER}${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: getVersion(), ...payload })}\n`,
+          `${ENSURE_DAEMON_MARKER}${JSON.stringify({ protocol: DEVICE_PROTOCOL_VERSION, api_level: DEVICE_API_LEVEL, version: getVersion(), ...payload })}\n`,
         );
       };
       if (options.probe === true) {

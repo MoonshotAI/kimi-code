@@ -11,11 +11,11 @@ import type {
 } from '../protocol/rest-session';
 import type { Session } from '../protocol/session';
 import {
-  HostSourceError,
-  hostGet,
-  hostProjects,
-  type HostSources,
-} from '../services/hosts/hostFanout';
+  DeviceSourceError,
+  deviceGet,
+  deviceProjects,
+  type DeviceSources,
+} from '../services/devices/deviceFanout';
 import {
   compareSessionGroups,
   compareSessionPositions,
@@ -30,11 +30,11 @@ export type SessionsListOutcome =
 
 type Page = SessionsPage;
 type Entry = Record<string, unknown>;
-type Query = Omit<ListSessionsQuery, 'hosts'>;
+type Query = Omit<ListSessionsQuery, 'devices'>;
 
 interface Source {
   readonly key: string;
-  readonly hostId?: string;
+  readonly deviceId?: string;
   readonly workspaceIds?: string[];
   fetch(query: Query): Promise<Page>;
   total?: number;
@@ -79,7 +79,7 @@ function fingerprint(query: Query): string {
   return createHash('sha256').update(JSON.stringify(normalized, Object.keys(normalized).toSorted())).digest('base64url').slice(0, 16);
 }
 
-function decodeToken(raw: string, context: Context, hostIds: readonly string[]): MergeToken {
+function decodeToken(raw: string, context: Context, deviceIds: readonly string[]): MergeToken {
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
@@ -87,8 +87,8 @@ function decodeToken(raw: string, context: Context, hostIds: readonly string[]):
     throw new TokenMismatchError('page_token is corrupted; discard it and restart from the first page');
   }
   const result = mergeTokenSchema.safeParse(parsed);
-  if (!result.success || result.data.q !== fingerprint(context.query) || result.data.h.join('\0') !== hostIds.join('\0')) {
-    throw new TokenMismatchError('page_token does not match this query and host set; discard it and restart from the first page');
+  if (!result.success || result.data.q !== fingerprint(context.query) || result.data.h.join('\0') !== deviceIds.join('\0')) {
+    throw new TokenMismatchError('page_token does not match this query and device set; discard it and restart from the first page');
   }
   return result.data;
 }
@@ -99,56 +99,56 @@ function isGroups(page: Page): page is ListSessionsGroupedResponse {
 
 async function collectSources(
   query: Query,
-  hosts: HostSources,
+  devices: DeviceSources,
   local: (query: Query) => Promise<SessionsListOutcome>,
   unavailable: string[],
-): Promise<{ sources: Source[]; hostIds: string[] }> {
+): Promise<{ sources: Source[]; deviceIds: string[] }> {
   const filter = query.workspace_id === undefined ? undefined : new Set([query.workspace_id].flat());
-  const configured = hosts.sources();
-  const remote = await Promise.all(configured.map(async (host): Promise<Source | undefined> => {
-    const session = host.session;
+  const configured = devices.sources();
+  const remote = await Promise.all(configured.map(async (device): Promise<Source | undefined> => {
+    const session = device.session;
     if (session === undefined) {
-      unavailable.push(host.id);
+      unavailable.push(device.id);
       return undefined;
     }
     let projectIds: string[];
     try {
-      projectIds = (await hostProjects<{ id: string; kind: string }>(session)).map((project) => project.id);
+      projectIds = (await deviceProjects<{ id: string; kind: string }>(session)).map((project) => project.id);
     } catch (error) {
-      if (error instanceof HostSourceError && error.code !== undefined) throw error;
-      unavailable.push(host.id);
+      if (error instanceof DeviceSourceError && error.code !== undefined) throw error;
+      unavailable.push(device.id);
       return undefined;
     }
     const allowed = filter === undefined ? projectIds : projectIds.filter((id) => filter.has(id));
     if (allowed.length === 0) return undefined;
     return {
-      key: host.id,
-      hostId: host.id,
+      key: device.id,
+      deviceId: device.id,
       workspaceIds: allowed,
-      fetch: (next) => hostGet<Page>(session, '/api/v1/sessions', next),
+      fetch: (next) => deviceGet<Page>(session, '/api/v1/sessions', next),
     };
   }));
   return {
     sources: [{
       key: '',
-      fetch: (nextQuery) => local(nextQuery).then((outcome) => outcome.ok ? outcome.data : Promise.reject(new HostSourceError(outcome.code, outcome.message))),
+      fetch: (nextQuery) => local(nextQuery).then((outcome) => outcome.ok ? outcome.data : Promise.reject(new DeviceSourceError(outcome.code, outcome.message))),
     }, ...remote.filter((source): source is Source => source !== undefined)],
-    hostIds: ['', ...configured.map((host) => host.id)],
+    deviceIds: ['', ...configured.map((device) => device.id)],
   };
 }
 
-function project(entry: Entry, groups: boolean, hostId: string | undefined): Entry {
+function project(entry: Entry, groups: boolean, deviceId: string | undefined): Entry {
   const sessions = groups ? (entry['sessions'] as Entry[]) : [entry];
   const ids = sessions.map((session) => ({
     id: session['id'],
     archived: session['archived'],
-    host_id: hostId,
+    device_id: deviceId,
   }));
   return groups ? { ...entry, sessions: ids } : ids[0]!;
 }
 
 async function stamp(entry: Entry, context: Context, source: Source): Promise<Entry> {
-  const hostId = source.hostId;
+  const deviceId = source.deviceId;
   if (context.projection) {
     if (context.groups && (context.query.group_page_size ?? 5) > SOURCE_PAGE_SIZE_MAX) {
       const page = await source.fetch({
@@ -162,14 +162,14 @@ async function stamp(entry: Entry, context: Context, source: Source): Promise<En
       }) as ListSessionsFlatResponse;
       entry = { ...entry, sessions: page.items };
     }
-    return project(entry, context.groups, hostId);
+    return project(entry, context.groups, deviceId);
   }
-  if (hostId === undefined) return entry;
-  if (!context.groups) return { ...entry, host_id: hostId };
+  if (deviceId === undefined) return entry;
+  if (!context.groups) return { ...entry, device_id: deviceId };
   return {
     ...entry,
-    sessions: (entry['sessions'] as Entry[]).map((session) => ({ ...session, host_id: hostId })),
-    host_id: hostId,
+    sessions: (entry['sessions'] as Entry[]).map((session) => ({ ...session, device_id: deviceId })),
+    device_id: deviceId,
   };
 }
 
@@ -189,12 +189,12 @@ async function load(source: Source, context: Context, token?: string, after?: Se
         workspace_id: source.workspaceIds ?? context.query.workspace_id,
       });
     } catch (error) {
-      if (source.hostId !== undefined && !(error instanceof HostSourceError && error.code !== undefined)) {
+      if (source.deviceId !== undefined && !(error instanceof DeviceSourceError && error.code !== undefined)) {
         if (context.query.page_token === undefined) {
-          context.unavailable.push(source.hostId);
+          context.unavailable.push(source.deviceId);
           return { source, token, queue: [] };
         }
-        throw new HostSourceError(ErrorCode.HOST_UNAVAILABLE, `host "${source.hostId}" is unavailable`);
+        throw new DeviceSourceError(ErrorCode.DEVICE_UNAVAILABLE, `device "${source.deviceId}" is unavailable`);
       }
       throw error;
     }
@@ -204,7 +204,7 @@ async function load(source: Source, context: Context, token?: string, after?: Se
     source.total = page.total;
     if (queue.length > 0 || page.next_page_token === undefined) return { source, token, queue, next: page.next_page_token };
     if (page.next_page_token === token || seen.has(page.next_page_token)) {
-      throw new Error(`session listing returned a repeated cursor for host "${source.hostId ?? 'local'}"`);
+      throw new Error(`session listing returned a repeated cursor for device "${source.deviceId ?? 'local'}"`);
     }
     seen.add(page.next_page_token);
     token = page.next_page_token;
@@ -214,9 +214,9 @@ async function load(source: Source, context: Context, token?: string, after?: Se
 async function mergePage(
   context: Context,
   sources: Source[],
-  hostIds: readonly string[],
+  deviceIds: readonly string[],
 ): Promise<Page> {
-  const token = context.query.page_token ? decodeToken(context.query.page_token, context, hostIds) : undefined;
+  const token = context.query.page_token ? decodeToken(context.query.page_token, context, deviceIds) : undefined;
   const active = token === undefined ? sources : sources.filter((source) => token.c[source.key] !== undefined);
   const buffers = await Promise.all(active.map((source) => load(source, context, token?.c[source.key]?.t, token?.a ?? token?.c[source.key]?.k)));
   const entries: Entry[] = [];
@@ -250,9 +250,9 @@ async function mergePage(
   const hasMore = buffers.some((buffer) => buffer.queue.length > 0 || buffer.next !== undefined);
   const total = sources.reduce((sum, source) => sum + (source.total ?? 0), 0);
   for (const buffer of buffers) buffer.queue = [];
-  const nextToken = hasMore ? Buffer.from(JSON.stringify({ v: 2, q: fingerprint(context.query), h: [...hostIds], a: after as SessionPosition, c: cursors } satisfies MergeToken)).toString('base64url') : undefined;
+  const nextToken = hasMore ? Buffer.from(JSON.stringify({ v: 2, q: fingerprint(context.query), h: [...deviceIds], a: after as SessionPosition, c: cursors } satisfies MergeToken)).toString('base64url') : undefined;
   const unavailable = [...new Set(context.unavailable)].toSorted();
-  const base = { total, has_more: hasMore, next_page_token: nextToken, unavailable_hosts: unavailable };
+  const base = { total, has_more: hasMore, next_page_token: nextToken, unavailable_devices: unavailable };
   return (context.groups ? { ...base, groups: entries } : { ...base, items: entries }) as Page;
 }
 
@@ -273,34 +273,34 @@ function contextFor(query: Query): Context {
 
 function outcomeError(error: unknown): SessionsListOutcome | undefined {
   if (error instanceof TokenMismatchError) return { ok: false, code: ErrorCode.PAGE_TOKEN_MISMATCH, message: error.message };
-  if (error instanceof HostSourceError && error.code !== undefined) return { ok: false, code: error.code, message: error.message };
+  if (error instanceof DeviceSourceError && error.code !== undefined) return { ok: false, code: error.code, message: error.message };
   return undefined;
 }
 
-export async function listSessionsAcrossHosts(
+export async function listSessionsAcrossDevices(
   query: ListSessionsQuery,
-  hosts: HostSources,
+  devices: DeviceSources,
   local: (query: Query) => Promise<SessionsListOutcome>,
 ): Promise<SessionsListOutcome> {
-  const { hosts: _hosts, ...base } = query;
+  const { devices: _devices, ...base } = query;
   if (base.archived_only === true) base.archived = 'true';
   if (base.include_archive === true) base.archived = 'all';
   if (base.exclude_empty === true) base.has_prompt = true;
   const context = contextFor(base);
   try {
-    const { sources, hostIds } = await collectSources(base, hosts, local, context.unavailable);
+    const { sources, deviceIds } = await collectSources(base, devices, local, context.unavailable);
     let data: Page;
     if (context.query.page === undefined || context.query.page === 1) {
-      data = await mergePage(context, sources, hostIds);
+      data = await mergePage(context, sources, deviceIds);
     } else {
       const page = context.query.page;
       let token: string | undefined;
       for (let index = 1; index < page; index++) {
-        const previous = await mergePage({ ...context, query: { ...context.query, page_token: token } }, sources, hostIds);
+        const previous = await mergePage({ ...context, query: { ...context.query, page_token: token } }, sources, deviceIds);
         token = previous.next_page_token;
         if (token === undefined) return { ok: true, data: { ...previous, has_more: false, next_page_token: undefined } };
       }
-      data = await mergePage({ ...context, query: { ...context.query, page_token: token } }, sources, hostIds);
+      data = await mergePage({ ...context, query: { ...context.query, page_token: token } }, sources, deviceIds);
       data.next_page_token = undefined;
     }
     return { ok: true, data };
@@ -311,14 +311,14 @@ export async function listSessionsAcrossHosts(
   }
 }
 
-export async function listAllSessionsAcrossHosts(
+export async function listAllSessionsAcrossDevices(
   query: Query,
-  hosts: HostSources,
+  devices: DeviceSources,
   local: (query: Query) => Promise<SessionsListOutcome>,
 ): Promise<SessionsListOutcome> {
   const context = contextFor({ ...query, fields: undefined });
   try {
-    const { sources } = await collectSources(context.query, hosts, local, context.unavailable);
+    const { sources } = await collectSources(context.query, devices, local, context.unavailable);
     const items: Session[] = [];
     for (const source of sources) {
       let buffer = await load(source, context);
@@ -334,10 +334,10 @@ export async function listAllSessionsAcrossHosts(
       data: {
         items: query.fields === undefined
           ? items
-          : items.map((item) => project(item, false, item.host_id) as Session),
+          : items.map((item) => project(item, false, item.device_id) as Session),
         total: items.length,
         has_more: false,
-        unavailable_hosts: [...new Set(context.unavailable)].toSorted(),
+        unavailable_devices: [...new Set(context.unavailable)].toSorted(),
       },
     };
   } catch (error) {

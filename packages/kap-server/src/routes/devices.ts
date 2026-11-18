@@ -1,9 +1,9 @@
 import {
-  HOSTS_SECTION,
+  DEVICES_SECTION,
   IBootstrapService,
   IConfigService,
   IHostFileSystem,
-  hostIdSchema,
+  deviceIdSchema,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
@@ -11,21 +11,21 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
-import { hostSnapshotSchema } from '../protocol/events-zod';
-import { hostSnapshots, toHostSnapshot, type HostBridgeManager } from '../services/hosts/hostBridgeManager';
-import { hostWireSchema } from '../services/hosts/hostsConfig';
-import { providerCopyResultSchema } from '../services/hosts/hostProviders';
-import { readSshConfigHosts } from '../services/hosts/sshConfigHosts';
-import { HostConnectError, SshKapBridge } from '../services/hosts/sshKapBridge';
+import { deviceSnapshotSchema } from '../protocol/events-zod';
+import { deviceSnapshots, toDeviceSnapshot, type DeviceManager } from '../services/devices/deviceManager';
+import { deviceWireSchema } from '../services/devices/devicesConfig';
+import { providerCopyResultSchema } from '../services/devices/deviceProviders';
+import { readSshConfigHosts } from '../services/devices/sshConfigHosts';
+import { DeviceConnectError, SshDeviceBridge } from '../services/devices/sshDeviceBridge';
 
-interface HostsRouteHost {
+interface DevicesRouteHost {
   get(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
   post(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
   put(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
   delete(path: string, options: { preHandler: unknown[]; schema?: Record<string, unknown> }, handler: never): unknown;
 }
 
-const hostIdBodySchema = z.object({ id: z.string() });
+const deviceIdBodySchema = z.object({ id: z.string() });
 const testResultSchema = z.object({
   connected: z.boolean(),
   remote_version: z.string().optional(),
@@ -33,27 +33,27 @@ const testResultSchema = z.object({
   connect_failure: z.string().optional(),
 });
 
-export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: HostBridgeManager): void {
+export function registerDevicesRoutes(app: DevicesRouteHost, core: Scope, manager: DeviceManager): void {
   const config = core.accessor.get(IConfigService);
   const bootstrap = core.accessor.get(IBootstrapService);
-  let hostsWrite: Promise<unknown> = Promise.resolve();
+  let devicesWrite: Promise<unknown> = Promise.resolve();
 
-  const mutateHosts = <T>(fn: () => Promise<T>): Promise<T> => {
-    const next = hostsWrite.catch(() => undefined).then(fn);
-    hostsWrite = next;
+  const mutateDevices = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = devicesWrite.catch(() => undefined).then(fn);
+    devicesWrite = next;
     return next;
   };
 
   const listRoute = defineRoute(
     {
       method: 'GET',
-      path: '/hosts',
-      success: { data: z.object({ hosts: z.array(hostSnapshotSchema) }) },
-      description: 'List configured SSH hosts and their connection status',
-      tags: ['hosts'],
+      path: '/devices',
+      success: { data: z.object({ devices: z.array(deviceSnapshotSchema) }) },
+      description: 'List configured devices and their connection status',
+      tags: ['devices'],
     },
     async (req, reply) => {
-      reply.send(okEnvelope({ hosts: hostSnapshots(manager) }, req.id));
+      reply.send(okEnvelope({ devices: deviceSnapshots(manager) }, req.id));
     },
   );
   app.get(listRoute.path, listRoute.options, listRoute.handler as never);
@@ -61,7 +61,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
   const sshHostsRoute = defineRoute(
     {
       method: 'GET',
-      path: '/hosts::ssh-hosts',
+      path: '/devices::ssh-hosts',
       success: {
         data: z.object({
           config_path: z.string(),
@@ -77,7 +77,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
         }),
       },
       description: 'List concrete Host aliases declared in the local ~/.ssh/config',
-      tags: ['hosts'],
+      tags: ['devices'],
     },
     async (req, reply) => {
       const result = await readSshConfigHosts(core.accessor.get(IHostFileSystem), bootstrap.osHomeDir);
@@ -103,15 +103,15 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
   const testRoute = defineRoute(
     {
       method: 'POST',
-      path: '/hosts::test',
-      body: hostWireSchema,
+      path: '/devices::test',
+      body: deviceWireSchema,
       success: { data: testResultSchema },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },
       description: 'Check SSH connectivity and the remote kimi version without starting a server',
-      tags: ['hosts'],
+      tags: ['devices'],
     },
     async (req, reply) => {
-      const bridge = new SshKapBridge(req.body);
+      const bridge = new SshDeviceBridge(req.body);
       try {
         await bridge.probe();
         reply.send(okEnvelope({ connected: true }, req.id));
@@ -120,9 +120,9 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
           okEnvelope(
             {
               connected: false,
-              remote_version: error instanceof HostConnectError ? error.remoteVersion : undefined,
+              remote_version: error instanceof DeviceConnectError ? error.remoteVersion : undefined,
               connect_error: error instanceof Error ? error.message : String(error),
-              connect_failure: error instanceof HostConnectError ? error.failure : 'unknown',
+              connect_failure: error instanceof DeviceConnectError ? error.failure : 'unknown',
             },
             req.id,
           ),
@@ -135,25 +135,25 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
   const connectRoute = defineRoute(
     {
       method: 'POST',
-      path: '/hosts::connect',
-      body: hostIdBodySchema,
-      success: { data: hostSnapshotSchema },
+      path: '/devices::connect',
+      body: deviceIdBodySchema,
+      success: { data: deviceSnapshotSchema },
       errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {} },
-      description: 'Connect a configured host now; failures are reported in the returned status',
-      tags: ['hosts'],
+      description: 'Connect a configured device now; failures are reported in the returned status',
+      tags: ['devices'],
     },
     async (req, reply) => {
       const { id } = req.body;
       const error = await manager.connect(id).then(
         () => undefined,
-        (error: unknown) => (error instanceof Error ? error : new Error('host connection failed')),
+        (error: unknown) => (error instanceof Error ? error : new Error('device connection failed')),
       );
       const info = manager.list().find((candidate) => candidate.id === id);
       if (info === undefined) {
-        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id));
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `device "${id}" is not configured`, req.id));
         return;
       }
-      const snapshot = toHostSnapshot(info);
+      const snapshot = toDeviceSnapshot(info);
       reply.send(
         okEnvelope(
           error !== undefined && snapshot.status === 'pending'
@@ -161,7 +161,7 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
                 ...snapshot,
                 status: 'disconnected',
                 connect_error: error.message,
-                connect_failure: error instanceof HostConnectError ? error.failure : 'unknown',
+                connect_failure: error instanceof DeviceConnectError ? error.failure : 'unknown',
               }
             : snapshot,
           req.id,
@@ -174,17 +174,17 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
   const copyProvidersRoute = defineRoute(
     {
       method: 'POST',
-      path: '/hosts::copy-providers',
-      body: hostIdBodySchema,
+      path: '/devices::copy-providers',
+      body: deviceIdBodySchema,
       success: { data: providerCopyResultSchema },
       errors: { [ErrorCode.ENVIRONMENT_NOT_FOUND]: {}, [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {} },
-      description: 'Copy shareable custom model providers on this computer to a host, replacing providers with the same name there',
-      tags: ['hosts'],
+      description: 'Copy shareable custom model providers on this computer to a device, replacing providers with the same name there',
+      tags: ['devices'],
     },
     async (req, reply) => {
       const { id } = req.body;
       if (manager.section()[id] === undefined) {
-        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `host "${id}" is not configured`, req.id));
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `device "${id}" is not configured`, req.id));
         return;
       }
       try {
@@ -199,16 +199,16 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
   const putRoute = defineRoute(
     {
       method: 'PUT',
-      path: '/hosts/{id}',
-      params: z.object({ id: hostIdSchema }),
-      body: hostWireSchema,
+      path: '/devices/{id}',
+      params: z.object({ id: deviceIdSchema }),
+      body: deviceWireSchema,
       success: { data: z.object({ ok: z.literal(true) }) },
       errors: { [ErrorCode.VALIDATION_FAILED]: {} },
-      description: 'Create or replace a host',
-      tags: ['hosts'],
+      description: 'Create or replace a device',
+      tags: ['devices'],
     },
     async (req, reply) => {
-      await mutateHosts(() => config.replace(HOSTS_SECTION, { ...manager.section(), [req.params.id]: req.body }));
+      await mutateDevices(() => config.replace(DEVICES_SECTION, { ...manager.section(), [req.params.id]: req.body }));
       reply.send(okEnvelope({ ok: true as const }, req.id));
     },
   );
@@ -217,17 +217,17 @@ export function registerHostsRoutes(app: HostsRouteHost, core: Scope, manager: H
   const deleteRoute = defineRoute(
     {
       method: 'DELETE',
-      path: '/hosts/{id}',
-      params: hostIdBodySchema,
+      path: '/devices/{id}',
+      params: deviceIdBodySchema,
       success: { data: z.object({ ok: z.literal(true) }) },
-      description: 'Remove a host',
-      tags: ['hosts'],
+      description: 'Remove a device',
+      tags: ['devices'],
     },
     async (req, reply) => {
       const { id } = req.params;
-      await mutateHosts(async () => {
+      await mutateDevices(async () => {
         const { [id]: _removed, ...rest } = manager.section();
-        await config.replace(HOSTS_SECTION, rest);
+        await config.replace(DEVICES_SECTION, rest);
       });
       reply.send(okEnvelope({ ok: true as const }, req.id));
     },

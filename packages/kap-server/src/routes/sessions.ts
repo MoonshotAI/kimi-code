@@ -54,7 +54,7 @@ import { ErrorCode } from '../protocol/error-codes';
 import { listPendingInteractions } from '../protocol/interaction-wire';
 import type { PendingInteraction } from '../protocol/interaction';
 import type { ConversationService } from '../services/conversation/conversationService';
-import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
+import { findOnDevices, deviceGet, DeviceSourceError, type DeviceSources } from '../services/devices/deviceFanout';
 import {
   archiveSessionResponseSchema,
   cancelSessionRequestSchema,
@@ -126,16 +126,16 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
-const sessionGetQuerySchema = z.object({ hosts: z.literal('include').optional() });
+const sessionGetQuerySchema = z.object({ devices: z.literal('include').optional() });
 
-const hostSessionSchema = sessionSchema;
+const deviceSessionSchema = sessionSchema;
 
-async function sessionOnHosts(hosts: HostSources, id: string) {
-  return findOnHosts(hosts, async (session) => {
+async function sessionOnDevices(devices: DeviceSources, id: string) {
+  return findOnDevices(devices, async (session) => {
     try {
-      return await hostGet<Session>(session, `/api/v1/sessions/${encodeURIComponent(id)}`);
+      return await deviceGet<Session>(session, `/api/v1/sessions/${encodeURIComponent(id)}`);
     } catch (error) {
-      if (error instanceof HostSourceError && error.code === ErrorCode.SESSION_NOT_FOUND) return undefined;
+      if (error instanceof DeviceSourceError && error.code === ErrorCode.SESSION_NOT_FOUND) return undefined;
       throw error;
     }
   });
@@ -167,7 +167,7 @@ export function registerSessionsRoutes(
   app: SessionRouteHost,
   core: Scope,
   conversations: ConversationService,
-  hosts?: HostSources,
+  devices?: DeviceSources,
 ): void {
   const createRoute = defineRoute(
     {
@@ -301,28 +301,28 @@ export function registerSessionsRoutes(
       path: '/sessions/{session_id}',
       params: sessionIdParamSchema,
       querystring: sessionGetQuerySchema,
-      success: { data: hostSessionSchema },
+      success: { data: deviceSessionSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.HOST_UNAVAILABLE]: {},
+        [ErrorCode.DEVICE_UNAVAILABLE]: {},
       },
       description:
-        'Get a session by ID. hosts=include also looks the session up on each SSH host and tags it with host_id; when it is not found and a host cannot answer, the result is HOST_UNAVAILABLE',
+        'Get a session by ID. devices=include also looks the session up on each device and tags it with device_id; when it is not found and a device cannot answer, the result is DEVICE_UNAVAILABLE',
       tags: ['sessions'],
     },
     async (req, reply) => {
       const { session_id } = req.params;
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
-      if (summary === undefined && req.query.hosts === 'include' && hosts !== undefined) {
-        const lookup = await sessionOnHosts(hosts, session_id);
+      if (summary === undefined && req.query.devices === 'include' && devices !== undefined) {
+        const lookup = await sessionOnDevices(devices, session_id);
         if (lookup.found !== undefined) {
           reply.send(okEnvelope(lookup.found, req.id));
         } else if (lookup.unavailable.length > 0) {
           reply.send(
             errEnvelope(
-              ErrorCode.HOST_UNAVAILABLE,
-              `session ${session_id} may be on an unavailable host: ${lookup.unavailable.join(', ')}`,
+              ErrorCode.DEVICE_UNAVAILABLE,
+              `session ${session_id} may be on an unavailable device: ${lookup.unavailable.join(', ')}`,
               req.id,
             ),
           );

@@ -2,15 +2,15 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import type { HostEntry } from '@moonshot-ai/agent-core-v2';
+import type { DeviceEntry } from '@moonshot-ai/agent-core-v2';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './hostProtocol';
-import type { HostSession } from './hostSession';
-import { StdioHostSession } from './stdioHostSession';
+import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from './deviceProtocol';
+import type { DeviceSession } from './deviceSession';
+import { StdioDeviceSession } from './stdioDeviceSession';
 
-export type HostStatus = 'pending' | 'connecting' | 'ready' | 'disconnected';
+export type DeviceStatus = 'pending' | 'connecting' | 'ready' | 'disconnected';
 
-export type HostConnectFailure =
+export type DeviceConnectFailure =
   | 'host_not_found'
   | 'connection_refused'
   | 'host_unreachable'
@@ -31,14 +31,14 @@ interface BootstrapMarker {
   readonly message?: string;
 }
 
-export class HostConnectError extends Error {
+export class DeviceConnectError extends Error {
   constructor(
-    readonly failure: HostConnectFailure,
+    readonly failure: DeviceConnectFailure,
     message: string,
     readonly remoteVersion?: string,
   ) {
     super(message);
-    this.name = 'HostConnectError';
+    this.name = 'DeviceConnectError';
   }
 }
 
@@ -61,7 +61,7 @@ const SSH_OPTIONS = [
 const BOOTSTRAP_TIMEOUT_MS = 60_000;
 const VERSION_TIMEOUT_MS = 20_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
-const RETRYABLE: ReadonlySet<HostConnectFailure> = new Set([
+const RETRYABLE: ReadonlySet<DeviceConnectFailure> = new Set([
   'connection_refused',
   'host_unreachable',
   'connect_timeout',
@@ -69,7 +69,7 @@ const RETRYABLE: ReadonlySet<HostConnectFailure> = new Set([
   'remote_start_failed',
   'unknown',
 ]);
-const ENSURE_DAEMON_FAILURES: Readonly<Record<string, HostConnectFailure>> = {
+const ENSURE_DAEMON_FAILURES: Readonly<Record<string, DeviceConnectFailure>> = {
   version_mismatch_busy: 'remote_busy',
   lock_timeout: 'remote_start_failed',
   start_timeout: 'remote_start_failed',
@@ -90,7 +90,7 @@ export function remoteKimiCommand(remoteBin: string | undefined, subcommand: str
   return `${bin} --version; ${bin} ${subcommand}`;
 }
 
-export function classifySshFailure(stderr: string, exitCode: number | null): HostConnectFailure {
+export function classifySshFailure(stderr: string, exitCode: number | null): DeviceConnectFailure {
   if (/Could not resolve hostname|Name or service not known|nodename nor servname/i.test(stderr)) return 'host_not_found';
   if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(stderr)) return 'host_key_changed';
   if (/Permission denied|Too many authentication failures/i.test(stderr)) return 'authentication_failed';
@@ -120,10 +120,10 @@ function readMarker(stdout: string): BootstrapMarker | undefined {
   return undefined;
 }
 
-function outdatedError(version: string | undefined): HostConnectError {
-  return new HostConnectError(
+function outdatedError(version: string | undefined): DeviceConnectError {
+  return new DeviceConnectError(
     'executor_outdated',
-    `kimi ${version ?? '(unknown version)'} on this host is too old for this app; run \`kimi upgrade\` on the host`,
+    `kimi ${version ?? '(unknown version)'} on this device is too old for this app; run \`kimi upgrade\` on the device`,
     version,
   );
 }
@@ -132,10 +132,10 @@ export function checkBootstrapOutput(stdout: string): boolean {
   const marker = readMarker(stdout);
   if (marker === undefined) return false;
   const version = marker.version ?? readVersionLine(stdout);
-  if (marker.protocol === undefined || marker.protocol < HOST_PROTOCOL_VERSION) throw outdatedError(version);
-  if (marker.api_level === undefined || marker.api_level < HOST_API_LEVEL) throw outdatedError(version);
+  if (marker.protocol === undefined || marker.protocol < DEVICE_PROTOCOL_VERSION) throw outdatedError(version);
+  if (marker.api_level === undefined || marker.api_level < DEVICE_API_LEVEL) throw outdatedError(version);
   if (marker.error !== undefined) {
-    throw new HostConnectError(
+    throw new DeviceConnectError(
       ENSURE_DAEMON_FAILURES[marker.error] ?? 'unknown',
       marker.message ?? marker.error,
       version,
@@ -150,22 +150,22 @@ interface SshResult {
   readonly stderr: string;
 }
 
-function sshFailure(result: SshResult): HostConnectError {
-  return new HostConnectError(
+function sshFailure(result: SshResult): DeviceConnectError {
+  return new DeviceConnectError(
     classifySshFailure(result.stderr, result.code),
     result.stderr.trim() || `ssh exited with code ${String(result.code)}`,
     readVersionLine(result.stdout),
   );
 }
 
-function identityArgs(entry: HostEntry): string[] {
+function identityArgs(entry: DeviceEntry): string[] {
   return entry.identityFile === undefined
     ? []
     : ['-i', entry.identityFile, '-o', 'IdentitiesOnly=yes'];
 }
 
-interface ActiveHostSession {
-  readonly session: StdioHostSession;
+interface ActiveDeviceSession {
+  readonly session: StdioDeviceSession;
   readonly child: ChildProcess;
 }
 
@@ -220,19 +220,19 @@ function createProcessStream(child: ChildProcess, initial: Buffer): Duplex {
   return stream;
 }
 
-export interface SshKapBridgeOptions {
+export interface SshDeviceBridgeOptions {
   readonly sshProgram?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly onChange?: () => void;
 }
 
-export class SshKapBridge {
-  private statusValue: HostStatus = 'pending';
-  private failureValue: HostConnectFailure | undefined;
+export class SshDeviceBridge {
+  private statusValue: DeviceStatus = 'pending';
+  private failureValue: DeviceConnectFailure | undefined;
   private errorValue: string | undefined;
   private remoteVersionValue: string | undefined;
-  private sessionValue: ActiveHostSession | undefined;
-  private connecting: Promise<HostSession> | undefined;
+  private sessionValue: ActiveDeviceSession | undefined;
+  private connecting: Promise<DeviceSession> | undefined;
   private readonly children = new Set<ChildProcess>();
   private disposed = false;
   private reconnecting = false;
@@ -241,18 +241,18 @@ export class SshKapBridge {
   private readonly env: NodeJS.ProcessEnv;
 
   constructor(
-    private readonly entry: HostEntry,
-    private readonly options: SshKapBridgeOptions = {},
+    private readonly entry: DeviceEntry,
+    private readonly options: SshDeviceBridgeOptions = {},
   ) {
     this.sshProgram = options.sshProgram ?? 'ssh';
     this.env = options.env ?? process.env;
   }
 
-  get status(): HostStatus {
+  get status(): DeviceStatus {
     return this.statusValue;
   }
 
-  get failure(): HostConnectFailure | undefined {
+  get failure(): DeviceConnectFailure | undefined {
     return this.failureValue;
   }
 
@@ -264,12 +264,12 @@ export class SshKapBridge {
     return this.remoteVersionValue;
   }
 
-  get session(): HostSession | undefined {
+  get session(): DeviceSession | undefined {
     return this.sessionValue?.session;
   }
 
-  connect(): Promise<HostSession> {
-    if (this.disposed) return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
+  connect(): Promise<DeviceSession> {
+    if (this.disposed) return Promise.reject(new DeviceConnectError('unknown', 'device bridge disposed'));
     if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue.session);
     return this.establishOnce();
   }
@@ -278,7 +278,7 @@ export class SshKapBridge {
     void this.connect().catch(() => {});
   }
 
-  private establishOnce(): Promise<HostSession> {
+  private establishOnce(): Promise<DeviceSession> {
     this.connecting ??= this.establish().finally(() => {
       this.connecting = undefined;
     });
@@ -290,7 +290,7 @@ export class SshKapBridge {
     this.reconnectGeneration += 1;
     const active = this.sessionValue;
     this.sessionValue = undefined;
-    active?.session.close(new Error('host bridge disposed'));
+    active?.session.close(new Error('device bridge disposed'));
     active?.child.kill();
     for (const child of this.children) child.kill();
   }
@@ -310,21 +310,21 @@ export class SshKapBridge {
     throw sshFailure(result);
   }
 
-  private update(status: HostStatus, failure?: HostConnectFailure, error?: string): void {
+  private update(status: DeviceStatus, failure?: DeviceConnectFailure, error?: string): void {
     this.statusValue = status;
     this.failureValue = failure;
     this.errorValue = error;
     this.options.onChange?.();
   }
 
-  private async establish(): Promise<HostSession> {
+  private async establish(): Promise<DeviceSession> {
     if (this.statusValue !== 'ready') this.update('connecting');
     try {
       const active = await this.openSession();
       if (this.disposed) {
-        active.session.close(new Error('host bridge disposed'));
+        active.session.close(new Error('device bridge disposed'));
         active.child.kill();
-        throw new HostConnectError('unknown', 'host bridge disposed');
+        throw new DeviceConnectError('unknown', 'device bridge disposed');
       }
       this.sessionValue = active;
       this.reconnectGeneration += 1;
@@ -332,22 +332,22 @@ export class SshKapBridge {
       this.update('ready');
       return active.session;
     } catch (error) {
-      const failure = error instanceof HostConnectError ? error.failure : 'unknown';
+      const failure = error instanceof DeviceConnectError ? error.failure : 'unknown';
       const message = error instanceof Error ? error.message : String(error);
       this.sessionValue = undefined;
-      if (this.disposed) throw error instanceof HostConnectError ? error : new HostConnectError(failure, message);
-      if (error instanceof HostConnectError && error.remoteVersion !== undefined) {
+      if (this.disposed) throw error instanceof DeviceConnectError ? error : new DeviceConnectError(failure, message);
+      if (error instanceof DeviceConnectError && error.remoteVersion !== undefined) {
         this.remoteVersionValue = error.remoteVersion;
       }
       this.update('disconnected', failure, message);
       if (RETRYABLE.has(failure)) void this.reconnect();
-      throw error instanceof HostConnectError ? error : new HostConnectError(failure, message);
+      throw error instanceof DeviceConnectError ? error : new DeviceConnectError(failure, message);
     }
   }
 
-  private openSession(): Promise<ActiveHostSession> {
-    if (this.disposed) return Promise.reject(new HostConnectError('unknown', 'host bridge disposed'));
-    return new Promise<ActiveHostSession>((resolve, reject) => {
+  private openSession(): Promise<ActiveDeviceSession> {
+    if (this.disposed) return Promise.reject(new DeviceConnectError('unknown', 'device bridge disposed'));
+    return new Promise<ActiveDeviceSession>((resolve, reject) => {
       const child = spawn(
         this.sshProgram,
         [
@@ -362,7 +362,7 @@ export class SshKapBridge {
       this.track(child);
       if (this.disposed) {
         child.kill();
-        reject(new HostConnectError('unknown', 'host bridge disposed'));
+        reject(new DeviceConnectError('unknown', 'device bridge disposed'));
         return;
       }
 
@@ -370,12 +370,12 @@ export class SshKapBridge {
       let preMarkerStdout = '';
       let stderr = '';
       let settled = false;
-      let activeSession: ActiveHostSession | undefined;
+      let activeSession: ActiveDeviceSession | undefined;
       const timer = setTimeout(() => {
         stderr += '\nssh timed out';
         child.kill();
       }, BOOTSTRAP_TIMEOUT_MS);
-      const finishReject = (error: HostConnectError): void => {
+      const finishReject = (error: DeviceConnectError): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -406,12 +406,12 @@ export class SshKapBridge {
           clearTimeout(timer);
           child.stdout?.off('data', onStdout);
           const stream = createProcessStream(child, bootstrap.subarray(lineEnd + 1));
-          const session = new StdioHostSession(stream);
+          const session = new StdioDeviceSession(stream);
           activeSession = { session, child };
           settled = true;
           resolve(activeSession);
         } catch (error) {
-          finishReject(error instanceof HostConnectError ? error : new HostConnectError('unknown', String(error)));
+          finishReject(error instanceof DeviceConnectError ? error : new DeviceConnectError('unknown', String(error)));
         }
       };
       child.stdout?.on('data', onStdout);
@@ -422,7 +422,7 @@ export class SshKapBridge {
           try {
             checkBootstrapOutput(preMarkerStdout);
           } catch (error) {
-            finishReject(error instanceof HostConnectError ? error : new HostConnectError('unknown', String(error)));
+            finishReject(error instanceof DeviceConnectError ? error : new DeviceConnectError('unknown', String(error)));
           }
         }
       });
@@ -469,7 +469,7 @@ export class SshKapBridge {
           await this.establishOnce();
           return;
         } catch (error) {
-          if (error instanceof HostConnectError && !RETRYABLE.has(error.failure)) return;
+          if (error instanceof DeviceConnectError && !RETRYABLE.has(error.failure)) return;
         }
       }
     } finally {

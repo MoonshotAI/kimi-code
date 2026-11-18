@@ -2,11 +2,11 @@ import { z } from 'zod';
 
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 
-export const HOSTS_SECTION = 'hosts';
+export const DEVICES_SECTION = 'devices';
 
-const HOST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const DEVICE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-export const hostEntrySchema = z
+export const deviceEntrySchema = z
   .object({
     host: z.string().min(1).refine((value) => !value.startsWith('-'), 'host must not start with "-"'),
     name: z.string().min(1).max(64).optional(),
@@ -16,19 +16,19 @@ export const hostEntrySchema = z
   })
   .strict();
 
-export type HostEntry = z.infer<typeof hostEntrySchema>;
+export type DeviceEntry = z.infer<typeof deviceEntrySchema>;
 
-export interface HostsSection {
-  [id: string]: HostEntry;
+export interface DevicesSection {
+  [id: string]: DeviceEntry;
 }
 
-export const hostIdSchema = z
+export const deviceIdSchema = z
   .string()
-  .regex(HOST_ID_PATTERN, 'host id must be 1-64 letters, digits, ".", "_" or "-"');
+  .regex(DEVICE_ID_PATTERN, 'device id must be 1-64 letters, digits, ".", "_" or "-"');
 
-export const hostsSectionSchema: z.ZodType<HostsSection> = z.record(
-  hostIdSchema,
-  hostEntrySchema,
+export const devicesSectionSchema: z.ZodType<DevicesSection> = z.record(
+  deviceIdSchema,
+  deviceEntrySchema,
 );
 
 const TOML_FIELDS = [
@@ -54,7 +54,7 @@ function mapEntries(section: unknown, fromToml: boolean): unknown {
   );
 }
 
-registerConfigSection(HOSTS_SECTION, hostsSectionSchema, {
+registerConfigSection(DEVICES_SECTION, devicesSectionSchema, {
   fromToml: (raw) => mapEntries(raw, true),
   toToml: (value) => mapEntries(value, false),
 });
