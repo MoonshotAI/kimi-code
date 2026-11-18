@@ -510,7 +510,7 @@ const _envProps: _bootstrapStringProps = true;
 const _sessionMeta: AssertWire<typeof sessionMetaSchema, SessionMeta> = true;
 const _agentMeta: AssertWire<typeof agentMetaSchema, AgentMeta> = true;
 const _sessionMetaPatch: AssertWire<typeof sessionMetaPatchSchema, SessionMetaPatch> = true;
-const _sessionMetadataChangedEvent: AssertWire<
+const _sessionMetadataChangedEvent: AssertWireToEngine<
   typeof sessionMetadataChangedEventSchema,
   SessionMetadataChangedEvent
 > = true;

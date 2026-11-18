@@ -1,7 +1,6 @@
 
 import { IEnvironmentService } from '#/app/environment/environment';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
@@ -80,9 +79,7 @@ export class SessionManager implements ISessionManager {
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
     const opened = await this.openCreation(options);
     try {
-      const effective = opened.environmentId === undefined && opened.environmentCwd === undefined
-        ? options
-        : { ...options, environmentId: opened.environmentId, environmentCwd: opened.environmentCwd };
+      const effective = options;
       const create = async () => {
         const entry = await this.controllerForWorkspace({
           workspaceId: opened.workspaceId,
@@ -99,10 +96,6 @@ export class SessionManager implements ISessionManager {
 
   private async openCreation(options: CreateManagedSessionOptions) {
     await this.environments.ready;
-    const environmentId = options.environmentId ?? LOCAL_ENVIRONMENT_ID;
-    if (environmentId !== LOCAL_ENVIRONMENT_ID) {
-      throw new Error2(ErrorCodes.CONFIG_INVALID, `[environments] has been removed; use [hosts] for SSH sessions.`);
-    }
     if (options.workDir !== undefined) await this.assertUsableWorkDir(options.workDir);
     const lease = await this.workspaces.acquire(
       options.workspaceId === undefined
@@ -112,8 +105,7 @@ export class SessionManager implements ISessionManager {
     try {
       return {
         workspaceId: lease.instance.id,
-        environmentId,
-        environmentCwd: options.environmentCwd,
+        cwd: options.cwd,
         lease,
       };
     } catch (error) {

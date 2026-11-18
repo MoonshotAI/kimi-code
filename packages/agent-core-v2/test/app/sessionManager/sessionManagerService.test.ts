@@ -900,21 +900,6 @@ describe('SessionManager controller retirement', () => {
     await registry.dispose();
   });
 
-  it('rejects remote session creation', async () => {
-    const { registry, program } = liveProgram();
-    registry.register(fakeEnvironment('local', 'one'));
-    await program.ready;
-    const manager = managerFor(program, registry);
-
-    await expect(manager.create({ workDir: '/workspace', environmentId: 'remote' })).rejects.toMatchObject({
-      code: 'config.invalid',
-      message: '[environments] has been removed; use [hosts] for SSH sessions.',
-    });
-
-    manager.dispose();
-    await program.dispose();
-    await registry.dispose();
-  });
 });
 
 describe('reloadOnStale', () => {

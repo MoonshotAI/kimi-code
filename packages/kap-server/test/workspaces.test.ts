@@ -779,8 +779,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       sessionId: explicitSession.body.data.id,
       workspaceId,
       workDir: dirA,
-      environmentId: 'local',
-      environmentCwd: dirA,
+      cwd: dirA,
     });
     expect(explicitHandle.id).toBe(explicitSession.body.data.id);
 

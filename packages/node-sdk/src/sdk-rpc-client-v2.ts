@@ -52,12 +52,6 @@
  *   the engine has no import capability of its own. `createSession`'s
  *   `model` / `thinking` / `permission` options are applied in this batch
  *   too (default-profile bind + permission mode).
- * - `getEnvironment` uses the klient agent facade; `listEnvironments`
- *   reads the workspace registry.
- *   `createSession`'s `environmentId` / `environmentCwd` options ride the
- *   engine's own `mainAgentBinding` + environment seed path. The constructor
- *   attaches the `remote-exec` environment provider with the region CDN
- *   artifact locator, mirroring the kap-server composition root.
  * - `prompt` / `steer` / `runShellCommand` / `cancelShellCommand` → the
  *   `klient.session(id).agent(id)` facade; `activatePluginCommand` →
  *   `IAgentPluginCommandService` through the agent scope; `activateSkill` →
@@ -1500,6 +1494,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const handle = await this.engineAccessor.get(ISessionManager).create({
       sessionId: input.id,
       workDir,
+      cwd: input.cwd,
       additionalDirs: input.additionalDirs,
     });
     this.wireSession(handle);

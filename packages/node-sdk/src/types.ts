@@ -287,6 +287,7 @@ export interface KimiHarnessOptions {
 export interface CreateSessionOptions {
   readonly id?: string | undefined;
   readonly workDir: string;
+  readonly cwd?: string;
   readonly model?: string | undefined;
   readonly thinking?: string | undefined;
   readonly permission?: PermissionMode | undefined;

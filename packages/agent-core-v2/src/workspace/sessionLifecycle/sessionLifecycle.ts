@@ -15,8 +15,7 @@ export interface CreateSessionOptions {
   readonly additionalDirs?: readonly string[];
   readonly mainAgentBinding?: BindAgentInput;
   readonly ensureMainAgent?: boolean;
-  readonly environmentId?: string;
-  readonly environmentCwd?: string;
+  readonly cwd?: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly prepare?: (session: ISessionScopeHandle) => Promise<void>;
 }

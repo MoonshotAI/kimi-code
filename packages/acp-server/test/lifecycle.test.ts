@@ -251,10 +251,10 @@ describe('acp-server session lifecycle', () => {
       const files = await readdir(homeDir!, { recursive: true });
       const wirePath = files.find((path) => path.endsWith('wire.jsonl'))!;
       const records = (await readFile(join(homeDir!, wirePath), 'utf8')).trim().split('\n')
-        .map((line) => JSON.parse(line) as { type?: string; environmentId?: string });
-      const bindingIndex = records.findIndex((record) => record.type === 'environment.set_binding');
-      expect(bindingIndex).toBeGreaterThanOrEqual(0);
-      records[bindingIndex]!.environmentId = `acp:${created.sessionId}`;
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const bindingIndex = 1;
+      records.splice(bindingIndex, 0, { type: 'environment.set_binding', agentId: 'main', environmentId: 'local', cwd: homeDir });
+      records[bindingIndex]!['environmentId'] = `acp:${created.sessionId}`;
       await writeFile(join(homeDir!, wirePath), `${records.map((record) => JSON.stringify(record)).join('\n')}\n`);
 
       const legacyForked = (await c.send('session/fork', {

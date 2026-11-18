@@ -367,7 +367,7 @@ export const KimiConfigPatchSchema = z
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
-      telemetry: z.boolean().optional(),
+    telemetry: z.boolean().optional(),
     disableFeedbackSurvey: z.boolean().optional(),
   })
   .strict();

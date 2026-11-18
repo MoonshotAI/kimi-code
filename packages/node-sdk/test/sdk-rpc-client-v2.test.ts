@@ -260,7 +260,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const resumed = await harness.resumeSession({ id: implicit.id });
       expect(resumed.id).toBe(implicit.id);
 
-      const local = await client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
+      const local = await client.engineAccessor.get(ISessionManager).create({ workDir, cwd: workDir });
       expect(local.id).not.toBe('');
       expect(client.engineAccessor.get(IConfigService).diagnostics()).toContainEqual(
         expect.objectContaining({ severity: readFailure ? 'error' : 'warning' }),
@@ -270,6 +270,24 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       vi.unstubAllEnvs();
     }
   });;;;;;;
+
+  it('pins the session cwd across SDK create, close, and resume', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-pinned-work-'));
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-pinned-home-'));
+    tempDirs.push(workDir, homeDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const created = await client.createSession({ workDir, cwd: workDir });
+      const readCwd = () => client.engineAccessor.get(ISessionManager).get(created.id)!
+        .accessor.get(ISessionContext).cwd;
+      expect(readCwd()).toBe(workDir);
+      await client.closeSession({ sessionId: created.id });
+      expect(await client.resumeSession({ id: created.id })).toMatchObject({ id: created.id });
+      expect(readCwd()).toBe(workDir);
+    } finally {
+      await client.close();
+    }
+  });
 
   it('reports global MCP authorization without probing when verify is false', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));

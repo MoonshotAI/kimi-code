@@ -673,13 +673,13 @@ describe('session lifecycle routing', () => {
     const mcpServers = {
       example: { transport: 'stdio' as const, command: 'node', args: ['server.mjs'] },
     };
-    await klient.global.sessions.create({ workDir: '/x', mcpServers });
+    await klient.global.sessions.create({ workDir: '/x', cwd: '/x/project', mcpServers });
 
     expect(channel.calls[0]).toMatchObject({
       scope: {},
       service: 'sessionManager',
       method: 'create',
-      args: [{ workDir: '/x', mcpServers }],
+      args: [{ workDir: '/x', cwd: '/x/project', mcpServers }],
     });
   });
 

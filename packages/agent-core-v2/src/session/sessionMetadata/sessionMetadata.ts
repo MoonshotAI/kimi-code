@@ -14,7 +14,12 @@ export const SESSION_META_VERSION = 2;
 
 export type SessionTitleKind = 'replaceable' | 'generated' | 'custom';
 
-export interface SessionMeta {
+export interface LegacySessionEnvironmentMeta {
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
+}
+
+export interface SessionMeta extends LegacySessionEnvironmentMeta {
   readonly id: string;
   readonly version?: number;
   readonly title?: string;
@@ -25,15 +30,13 @@ export interface SessionMeta {
   readonly archived: boolean;
   readonly archivedAt?: number;
   readonly cwd?: string;
-  readonly environmentId?: string;
-  readonly environmentCwd?: string;
   readonly forkedFrom?: string;
   readonly agents?: Readonly<Record<string, AgentMeta>>;
   readonly custom?: Record<string, unknown>;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
-export type SessionMetaPatch = Partial<Omit<SessionMeta, 'id' | 'createdAt'>>;
+export type SessionMetaPatch = Partial<Omit<SessionMeta & LegacySessionEnvironmentMeta, 'id' | 'createdAt'>>;
 
 export interface SessionMetadataChangedEvent {
   readonly changed: readonly (keyof SessionMeta)[];

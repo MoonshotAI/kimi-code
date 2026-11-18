@@ -83,6 +83,10 @@ export class SessionIndexProjector {
     return this.startScan();
   }
 
+  invalidateSharedScan(): void {
+    this.scanSlot = undefined;
+  }
+
   sharedScanForRead(): Promise<AuthoritativeScan> {
     const slot = this.scanSlot;
     if (slot !== undefined && (!slot.settled || Date.now() < slot.reusableUntil)) {
