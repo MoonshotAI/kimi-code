@@ -1,4 +1,4 @@
-import { BEL, ESC, ST } from "#/constant/terminal";
+import { BEL, ESC } from "#/constant/terminal";
 
 export { BEL, ESC, ST } from "#/constant/terminal";
 

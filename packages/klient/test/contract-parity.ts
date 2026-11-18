@@ -3,11 +3,19 @@ import type { z } from 'zod';
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBinding';
-import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import type {
+  TurnEndReason,
+  AssistantDeltaEvent,
+  ThinkingDeltaEvent,
+  TurnStartedEvent,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
-import type { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import type { PromptLaunchResult, SteerResult } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import type {
+  IAgentLoopService,
+  PromptLaunchResult,
+  SteerResult,
+} from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
@@ -136,11 +144,6 @@ import type {
   CompactionCompletedEvent,
   CompactionStartedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import type {
-  AssistantDeltaEvent,
-  ThinkingDeltaEvent,
-  TurnStartedEvent,
-} from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { TurnEndedEvent } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type {
   PromptAbortedEvent,

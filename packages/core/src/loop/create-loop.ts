@@ -1,6 +1,6 @@
 import type { Message, SystemMessage, ToolCall, UserMessage } from '#/llm/message';
 import type { PolicyRegistry } from '#/llm/policy/registry';
-import type { ToolExecutionHandler } from '#/tool/runtime';
+import type { ToolExecutionHandler } from '#/tool/types';
 import type { WaitOpts } from '#/utils/wait';
 import { createActorLoop } from './loop-actor';
 import type { LoopInput } from './contract/command';

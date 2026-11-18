@@ -117,7 +117,7 @@ export interface StoreOptions {
 
 export class Store {
   readonly map = new Map<string, StoreRecord>(); // kstr -> record
-  private order = new SkipList<string, string>({ compareKey: cmpString }); // kstr ordered
+  private order = new SkipList<string>({ compareKey: cmpString }); // kstr ordered
   private readonly heap = new MinHeap();
   private seq = 0;
   /** Approximate bytes held by live + expired-not-yet-reaped records. In

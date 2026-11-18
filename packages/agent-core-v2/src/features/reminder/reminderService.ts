@@ -29,7 +29,7 @@ import type {
 } from './types';
 
 interface ReminderEntry {
-  readonly provider: ContextInjectionProvider<unknown>;
+  readonly provider: ContextInjectionProvider;
   readonly variant: string;
 }
 
@@ -81,7 +81,7 @@ function providerContext(
   entry: ReminderEntry,
   isNewTurn: boolean,
   signal?: AbortSignal,
-): ContextInjectionContext<unknown> {
+): ContextInjectionContext {
   const history = runtime.get(IAgentLoopService).history();
   const injectedPositions = findInjections(history, entry.variant);
   const lastInjectedAt = injectedPositions.at(-1) ?? null;
@@ -123,10 +123,10 @@ async function injectEntry(
 function appendResult(
   runtime: AgentActorContext<null>,
   entry: ReminderEntry,
-  content: ContextInjectionContent | ContextInjectionResult<unknown> | undefined,
+  content: ContextInjectionContent | ContextInjectionResult | undefined,
 ): void {
   if (content === undefined) return;
-  const result: ContextInjectionResult<unknown> = isInjectionResult(content)
+  const result: ContextInjectionResult = isInjectionResult(content)
     ? content
     : { content };
   const origin = {
@@ -276,7 +276,7 @@ export class AgentReminderService extends AgentActorService<null> implements IAg
 
   register<D = unknown>(variant: string, provider: ContextInjectionProvider<D>): ReminderRegistration {
     const entry: ReminderEntry = {
-      provider: provider as ContextInjectionProvider<unknown>,
+      provider: provider as ContextInjectionProvider,
       variant,
     };
     this.actor.send({ type: 'reminder.register', entry });
@@ -321,8 +321,8 @@ function isRawInjectionMessage(
 }
 
 function isInjectionResult(
-  content: ContextInjectionContent | ContextInjectionResult<unknown>,
-): content is ContextInjectionResult<unknown> {
+  content: ContextInjectionContent | ContextInjectionResult,
+): content is ContextInjectionResult {
   return typeof content === 'object' && content !== null && !Array.isArray(content) && 'content' in content;
 }
 

@@ -87,8 +87,7 @@ import type { TextBuildCoreResult } from './worker/text-build-core.js';
 import { TYPE_SET } from './codec.js';
 import { GenerationLoader } from './generation-loader.js';
 import { yieldToLoop } from './text-index/tokenize.js';
-import type { Store } from './store.js';
-import type { ValueRef } from './store.js';
+import type { Store, ValueRef } from './store.js';
 import type { WAL } from './wal.js';
 import type { ValueCodecName } from './types.js';
 

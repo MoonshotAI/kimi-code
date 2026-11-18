@@ -271,7 +271,6 @@ describe('context-projector', () => {
       { lineNo: 3, data: { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's2', turnId: 'T', step: 1 } }, raw: {} },
       { lineNo: 4, data: { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's2', turnId: 'T', step: 1, finishReason: 'filtered', usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } } }, raw: {} },
     ];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const proj = projectContext(entries as any);
     expect(proj.contextTokens).toBe(200);
   });

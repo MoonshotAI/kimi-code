@@ -8,8 +8,7 @@ import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { Event2, Event2Class } from '#/app/event/event2';
-import type { IEventDispatcher } from '#/state/eventDispatcher';
-import type { DurableAgentRuntimeParticipant } from '#/state/eventDispatcher';
+import type { IEventDispatcher, DurableAgentRuntimeParticipant } from '#/state/eventDispatcher';
 import type { StateFold } from '#/state/state';
 
 export interface AgentActorContext<State> {

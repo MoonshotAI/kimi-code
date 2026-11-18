@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage } from 'node:http';
+import { connect } from 'node:net';
 import { spawn } from 'node:child_process';
 import type { Duplex } from 'node:stream';
 import { existsSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
@@ -210,7 +211,7 @@ describe('Remote Control tunnel', () => {
     ).rejects.toThrow(/DEVICE_LIMIT_EXCEEDED.*membership allows 3 devices/);
   });
 
-  it('uses only Authorization when the refresh token is not a valid subprotocol token', async () => {
+  it('uses HTTP_PROXY for relay WebSockets and only Authorization when the refresh token is not a valid subprotocol token', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-auth-'));
     cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
     const oauthRef = resolveKimiCodeOAuthRef({
@@ -222,6 +223,12 @@ describe('Remote Control tunnel', () => {
       { ...TOKEN, refreshToken: 'invalid/token=' },
     );
     const relay = await startAuthRelay();
+    const proxy = await startConnectProxy(relay.port);
+    const proxyOrigin = `http://127.0.0.1:${proxy.port}`;
+    vi.stubEnv('HTTP_PROXY', proxyOrigin);
+    vi.stubEnv('http_proxy', proxyOrigin);
+    vi.stubEnv('NO_PROXY', '');
+    vi.stubEnv('no_proxy', '');
     let handle: RemoteControlHandle | undefined;
     cleanups.push(async () => handle?.close());
 
@@ -233,10 +240,11 @@ describe('Remote Control tunnel', () => {
       urlSource: 'kimi_code_cli',
       configuredOAuthKey: oauthRef.key,
       configuredOAuthHost: oauthRef.oauthHost,
-      relayOrigin: `http://127.0.0.1:${relay.port}/coding-relay`,
+      relayOrigin: `http://relay.test:${relay.port}/coding-relay`,
       stderr: { write: () => true },
     });
 
+    expect(proxy.requests).toEqual([`relay.test:${relay.port}`, `relay.test:${relay.port}`]);
     expect(relay.requests).toHaveLength(2);
     expect(relay.requests.every((request) => request.protocol === undefined)).toBe(true);
     expect(relay.requests.every((request) => request.authorization === 'Bearer invalid/token=')).toBe(
@@ -2201,6 +2209,28 @@ async function startAuthRelay(
   const port = await listen(relayServer);
   cleanups.push(() => closeServer(relayServer));
   return { port, requests, registrations, managementSockets, httpSockets };
+}
+
+async function startConnectProxy(
+  targetPort: number,
+): Promise<{ port: number; requests: string[] }> {
+  const requests: string[] = [];
+  const proxyServer = createServer();
+  proxyServer.on('connect', (request, socket, head) => {
+    requests.push(request.url ?? '');
+    const target = connect(targetPort, '127.0.0.1');
+    target.once('connect', () => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head.length > 0) target.write(head);
+      socket.pipe(target);
+      target.pipe(socket);
+    });
+    target.on('error', () => socket.destroy());
+    socket.on('error', () => target.destroy());
+  });
+  const port = await listen(proxyServer);
+  cleanups.push(() => closeServer(proxyServer));
+  return { port, requests };
 }
 
 function requestText(request: IncomingMessage): Promise<string> {

@@ -18,10 +18,9 @@ import {
 import { IWireService } from '#/wire/wire';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { sessionOccupiedError } from '#/persistence/interface/sessionLock';
+import { sessionOccupiedError, ISessionLockService } from '#/persistence/interface/sessionLock';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
-import { ISessionLockService } from '#/persistence/interface/sessionLock';
 
 import { noopLogger, registerTestAgentWire } from './stubs';
 

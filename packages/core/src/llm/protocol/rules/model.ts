@@ -37,7 +37,7 @@ export interface ModelLegality {
 }
 
 export function legalizeModel(
-  module: LlmModule<unknown>,
+  module: LlmModule,
   legality: ModelLegality,
   keepCacheKey: boolean,
   ctx: PassContext,
@@ -57,7 +57,7 @@ export function legalizeModel(
   return legal;
 }
 
-function legalOutputCap(module: LlmModule<unknown>, legality: ModelLegality): number | undefined {
+function legalOutputCap(module: LlmModule, legality: ModelLegality): number | undefined {
   const { maxOutputTokens, spec } = module.model;
   if (maxOutputTokens === 'none') return undefined;
   const { usedTokens } = module.content;

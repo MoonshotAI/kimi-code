@@ -77,8 +77,8 @@ function AssistantBubble({ m }: { m: ProjectedMessage }) {
 }
 
 function ToolBubble({ m }: { m: ProjectedMessage }) {
+  const [open, setOpen] = useState(m.message.role === 'tool' && m.message.isError === true);
   if (m.message.role !== 'tool') return null;
-  const [open, setOpen] = useState(m.message.isError === true);
   const totalChars = m.message.content.reduce((acc, p) => {
     if (p.type === 'text') return acc + p.text.length;
     return acc;

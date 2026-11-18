@@ -1,10 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import type {
-  AgentTaskInfo,
-  AgentTaskInfoBase,
-  AgentTaskStatus,
-} from './types';
+import type { AgentTaskInfo } from './types';
 
 export { AgentTaskPersistence } from './persist';
 export type {

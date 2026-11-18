@@ -58,7 +58,6 @@ const payload: StatusLinePayload = {
 };
 
 function plain(text: string): string {
-  // eslint-disable-next-line no-control-regex
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 

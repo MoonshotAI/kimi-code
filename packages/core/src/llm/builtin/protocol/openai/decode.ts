@@ -15,10 +15,10 @@ import {
   toLlmTransportErrorMessage,
 } from '#/llm/protocol/rules/status';
 import {
+  type LlmRemoteErrorMessage,
   NO_FINISH,
   type FinishInfo,
   type FinishReason,
-  type LlmRemoteErrorMessage,
   type TokenUsage,
 } from '#/llm/response';
 import { isVacuousContentPart, type StreamedMessagePart, type ThinkPart } from '#/llm/message';

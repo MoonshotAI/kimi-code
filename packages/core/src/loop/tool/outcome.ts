@@ -6,9 +6,9 @@ import {
   type ToolMessage,
   type UserMessage,
 } from '#/llm/message';
-import { abortedToolOutput } from '#/tool/abort';
+import { abortedToolOutput } from '#/utils/abort';
 import { errorText } from '#/llm/protocol/errors';
-import type { ToolDetachAck, ToolResult } from '#/tool/runtime';
+import type { ToolDetachAck, ToolResult } from '#/tool/types';
 import type { AsyncToolOutcome, Cause, ToolCallOutcome } from '../contract/outcome';
 
 export function toolOutcomeMessage(

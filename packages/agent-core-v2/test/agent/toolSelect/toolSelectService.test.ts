@@ -27,7 +27,7 @@ import {
 } from '#/agent/loop/loop';
 import { createToolSelectResolver } from '#/agent/loop/toolSelectPolicy';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { StubEffectiveProfileReader } from '../loop/stubs';
+import { StubEffectiveProfileReader, stubToolExecutor, stubWire } from '../loop/stubs';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -63,7 +63,6 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
-import { stubToolExecutor, stubWire } from '../loop/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
 
 function toolsOf(message: Message | undefined) {

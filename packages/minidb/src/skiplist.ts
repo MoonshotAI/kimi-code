@@ -202,7 +202,7 @@ export class SkipList<K = number, V = string> {
       update[i] = x;
     }
 
-    let lvl = randomLevel();
+    const lvl = randomLevel();
     if (lvl > this.level) {
       for (let i = this.level; i < lvl; i++) {
         rank[i] = 0;

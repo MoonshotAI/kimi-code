@@ -1,7 +1,12 @@
 import { BugIndicatingError } from '../errors/errors';
 import { SyncDescriptor } from './descriptors';
-import { ScopeActivation, type ProvideAllEntry } from './instantiation';
-import type { ServiceIdentifier, ServicesAccessor, IInstantiationService } from './instantiation';
+import {
+  ScopeActivation,
+  type ProvideAllEntry,
+  type ServiceIdentifier,
+  type ServicesAccessor,
+  type IInstantiationService,
+} from './instantiation';
 import { InstantiationService } from './instantiationService';
 import { DisposableStore, type IDisposable } from './lifecycle';
 import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
