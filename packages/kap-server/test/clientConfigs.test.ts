@@ -241,7 +241,7 @@ describe('feedback_form', () => {
   });
 });
 
-describe('server-v2 POST /api/v1/client_configs', () => {
+describe('server-v2 GET /api/v1/client-configs/{name} and POST /api/v1/client_configs', () => {
   let server: RunningServer | undefined;
   let cloud: Server | undefined;
   let home: string | undefined;
@@ -301,7 +301,7 @@ describe('server-v2 POST /api/v1/client_configs', () => {
     base = `http://127.0.0.1:${server.port}`;
   }
 
-  async function postClientConfigs(
+  async function getClientConfig(
     name: string,
   ): Promise<Envelope<{ name: string; config: unknown }>> {
     const res = await fetch(`${base}/api/v1/client-configs/${encodeURIComponent(name)}`, {
@@ -311,6 +311,46 @@ describe('server-v2 POST /api/v1/client_configs', () => {
     expect(res.status).toBe(200);
     return (await res.json()) as Envelope<{ name: string; config: unknown }>;
   }
+
+  async function postClientConfigs(
+    name: string,
+  ): Promise<Envelope<{ name: string; config: unknown }>> {
+    const res = await fetch(`${base}/api/v1/client_configs`, {
+      method: 'POST',
+      headers: { ...authHeaders(server as RunningServer), 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    } as never);
+    expect(res.status).toBe(200);
+    return (await res.json()) as Envelope<{ name: string; config: unknown }>;
+  }
+
+  it('serves feedback_form and existing configs through POST with the same envelope', async () => {
+    const existing = {
+      name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
+      config: { enable: true, rules: [{ session_type: 'all', from: 'a', to: 'b' }] },
+    };
+    const feedback = {
+      name: FEEDBACK_FORM_CONFIG_NAME,
+      config: {
+        version: 1,
+        reply_reasons: {
+          positive: [{ id: 'fast', label: { en: 'Fast', zh: '快速' } }],
+          negative: [{ id: 'slow', label: { en: 'Slow', zh: '缓慢' } }],
+        },
+      },
+    };
+    await boot();
+
+    cloudBehavior = { status: 200, body: existing };
+    const existingBody = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
+    expect(existingBody).toMatchObject({ code: 0, msg: 'success', data: existing });
+    expect(typeof existingBody.request_id).toBe('string');
+
+    cloudBehavior = { status: 200, body: feedback };
+    const feedbackBody = await postClientConfigs(FEEDBACK_FORM_CONFIG_NAME);
+    expect(feedbackBody).toMatchObject({ code: 0, msg: 'success', data: feedback });
+    expect(typeof feedbackBody.request_id).toBe('string');
+  });
 
   it('preserves session type and warning inside the ok envelope', async () => {
     cloudBehavior = {
@@ -332,7 +372,7 @@ describe('server-v2 POST /api/v1/client_configs', () => {
       },
     };
     await boot();
-    const body = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
+    const body = await getClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
     expect(body.code).toBe(0);
     expect(body.msg).toBe('success');
     expect(typeof body.request_id).toBe('string');
@@ -384,7 +424,7 @@ describe('server-v2 POST /api/v1/client_configs', () => {
     };
     await boot();
 
-    const body = await postClientConfigs(EFFORT_SWITCH_CONFIG_NAME);
+    const body = await getClientConfig(EFFORT_SWITCH_CONFIG_NAME);
 
     expect(body.code).toBe(0);
     expect(body.data).toEqual(cloudBehavior.body);
@@ -399,7 +439,7 @@ describe('server-v2 POST /api/v1/client_configs', () => {
       },
     };
     await boot();
-    const first = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
+    const first = await getClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
     expect(first.data.config).toEqual({ enable: true, rules: [{ session_type: 'old', from: 'a', to: 'b' }] });
 
     cloudBehavior = {
@@ -409,13 +449,13 @@ describe('server-v2 POST /api/v1/client_configs', () => {
         config: { enable: true, rules: [{ session_type: 'old', from: ['a', 'c'], to: 'b' }] },
       },
     };
-    const second = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
+    const second = await getClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
     expect(second.data.config).toEqual({ enable: true, rules: [{ session_type: 'old', from: ['a', 'c'], to: 'b' }] });
   });
 
   it('returns null config for an unregistered name', async () => {
     await boot();
-    const body = await postClientConfigs('no_such_config');
+    const body = await getClientConfig('no_such_config');
     expect(body.code).toBe(0);
     expect(body.data).toEqual({ name: 'no_such_config', config: null });
   });
@@ -423,7 +463,7 @@ describe('server-v2 POST /api/v1/client_configs', () => {
   it('returns null config when the cloud fetch keeps failing', async () => {
     cloudBehavior = { status: 500, body: {} };
     await boot();
-    const body = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
+    const body = await getClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
     expect(body.code).toBe(0);
     expect(body.data).toEqual({ name: MODEL_SWITCH_CONFIRM_CONFIG_NAME, config: null });
   });
