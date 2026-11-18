@@ -110,6 +110,7 @@ export interface TurnEndedPayload {
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
+  readonly hasNextNotificationTurn?: boolean;
   readonly stopReason?: string;
   readonly requestId?: string;
 }
@@ -193,6 +194,8 @@ export interface TurnEndedEvent {
   readonly error?: KimiErrorPayload;
   readonly durationMs?: number;
   readonly interruptReason?: TurnInterruptReason;
+  readonly hasNextNotificationTurn?: boolean;
+  readonly stopReason?: string;
   readonly requestId?: string;
 }
 

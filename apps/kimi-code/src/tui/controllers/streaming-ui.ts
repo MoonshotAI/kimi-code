@@ -490,17 +490,22 @@ export class StreamingUIController {
     this.finalizeAssistantStream();
   }
 
-  finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
+  finalizeTurn(sendQueued: (item: QueuedMessage) => void, hasNextNotificationTurn = false): void {
     this.timeline.turnEnded();
     const { state } = this.host;
     if (state.appState.streamingPhase === 'idle') return;
     this.host.deferUserMessages = false;
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
-    this.finalizeLiveTextBuffers('idle');
+    this.finalizeLiveTextBuffers(hasNextNotificationTurn ? 'waiting' : 'idle');
     this.host.mergeCompletedTurnAssistants();
     this.resetToolCallState();
     this._currentTurnId = undefined;
+
+    if (hasNextNotificationTurn) {
+      this.host.setAppState({ streamingPhase: 'waiting' });
+      return;
+    }
 
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {

@@ -147,6 +147,7 @@ export interface TurnProjectionOptions {
   readonly hooks: AgentLoopService['hooks'];
   readonly errorHandlers: readonly LoopErrorHandler[];
   readonly maxSteps: () => number | undefined;
+  readonly hasNextNotificationTurn: (endedTurnId: number) => boolean;
   readonly cancel: (turnId: number, reason: unknown) => boolean;
   readonly recordStreamPart: (turnId: number, step: number, block: number) => void;
 }
@@ -924,6 +925,7 @@ export class AgentTurnProjection {
       error,
       durationMs,
       interruptReason,
+      hasNextNotificationTurn: this.options.hasNextNotificationTurn(turn.id) || undefined,
       stopReason: result.type === 'completed' ? result.stopReason : undefined,
       requestId,
     }));

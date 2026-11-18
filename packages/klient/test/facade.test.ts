@@ -827,6 +827,26 @@ describe('event hub', () => {
     expect(channel.subscriptions[0]?.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves the optional notification handoff and stop reason on turn.ended', () => {
+    const channel = new FakeChannel();
+    const agent = createKlientFromChannel(channel).session('s1').agent('main');
+    const listener = vi.fn();
+    agent.events.on('turn.ended', listener);
+
+    const handoff = {
+      type: 'turn.ended',
+      turnId: 1,
+      reason: 'completed',
+      hasNextNotificationTurn: true,
+      stopReason: 'prompt_only',
+    };
+    const completed = { type: 'turn.ended', turnId: 2, reason: 'completed' };
+    channel.emit(0, handoff);
+    channel.emit(0, completed);
+    expect(listener).toHaveBeenNthCalledWith(1, handoff);
+    expect(listener).toHaveBeenNthCalledWith(2, completed);
+  });
+
   it('forwards the newly registered agent stream events and validates payloads', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);

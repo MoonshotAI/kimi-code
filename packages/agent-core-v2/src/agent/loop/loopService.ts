@@ -268,6 +268,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       hooks: this.hooks,
       errorHandlers: this.errorHandlers,
       maxSteps: () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
+      hasNextNotificationTurn: (endedTurnId) => {
+        const next = this.loop?.state.turn;
+        return next?.trigger === 'notify' && next.id > endedTurnId;
+      },
       cancel: (turnId, reason) => this.cancelActiveTurn(turnId, reason),
       recordStreamPart: (turnId, step, block) => this.journal.recordStreamPart(turnId, step, block),
     });

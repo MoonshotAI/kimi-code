@@ -8570,6 +8570,50 @@ capabilities = ["image_in", "video_in"]
     }
   });
 
+  it('keeps Enter submissions in order across a notification handoff', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, session } = await makeDriver();
+      const sendQueued = vi.fn();
+      const main = { agentId: 'main', sessionId: 'ses-1' };
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.state.appState.notifications = { enabled: true, condition: 'always' };
+      driver.handleUserInput('first');
+
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 1, reason: 'completed', hasNextNotificationTurn: true },
+        sendQueued,
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      driver.handleUserInput('second');
+
+      expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['first', 'second']);
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(session.steer).not.toHaveBeenCalled();
+      expect(sendQueued).not.toHaveBeenCalled();
+      expect(driver.state.terminalState.notificationKeys.has('turn-complete:1')).toBe(false);
+
+      driver.sessionEventHandler.handleEvent(
+        {
+          ...main, type: 'turn.started', turnId: 2,
+          origin: { kind: 'task', taskId: 'bash-demo', status: 'killed', notificationId: 'task:bash-demo:killed' },
+        },
+        sendQueued,
+      );
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 2, reason: 'completed', stopReason: 'notify' },
+        sendQueued,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(sendQueued).toHaveBeenCalledOnce();
+      expect(sendQueued).toHaveBeenCalledWith(expect.objectContaining({ text: 'first' }));
+      expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['second']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('queues bash input with mode bash while a turn is streaming', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
