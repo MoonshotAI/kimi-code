@@ -15,7 +15,10 @@ import {
   type TurnResult,
 } from '#/agent/loop/loop';
 import { AssistantDelta, TurnStepRetrying, TurnStepStarted } from '#/agent/loop/turnEvents';
-import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
 import type { AgentRunCompletion, AgentRunHandle, AgentRunRequest } from './subagent';
@@ -80,6 +83,9 @@ async function awaitRetry(
   target: IAgentScopeHandle,
   options: RunAgentTurnOptions,
 ): Promise<AgentRunCompletion> {
+  const scope = target.accessor.get(IAgentScopeContext);
+  const parentAgentId = subagentParentAgentId(scope.meta) ?? scope.meta?.forkedFrom ?? scope.forkedFrom ?? MAIN_AGENT_ID;
+  target.accessor.get(ISessionRequestAttributionService)?.noteSubagentDispatch(scope.agentId, parentAgentId);
   const loop = target.accessor.get(IAgentLoopService);
   return awaitRunCompletion(target, loop, loop.retry(), options);
 }

@@ -14,6 +14,9 @@ import {
   type Turn,
   type TurnResult,
 } from '#/agent/loop/loop';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
+import { SessionRequestAttributionService } from '#/session/requestAttribution/requestAttributionService';
 import {
   AssistantDelta,
   ThinkingDelta,
@@ -156,11 +159,13 @@ function handleWith(
   retry?: () => Promise<TurnResult>,
   settled?: () => Promise<TurnResult | undefined>,
   tasks = new TaskServiceStub(),
+  attribution = new SessionRequestAttributionService(),
 ): {
   readonly handle: IAgentScopeHandle;
   readonly prompts: unknown[];
   readonly cancellations: Array<{ readonly target: unknown; readonly reason: unknown }>;
   readonly suppressions: readonly string[][];
+  readonly attribution: SessionRequestAttributionService;
 } {
   const prompts: unknown[] = [];
   const cancellations: Array<{ readonly target: unknown; readonly reason: unknown }> = [];
@@ -189,6 +194,8 @@ function handleWith(
     ],
     [IAgentTaskService, tasks.service],
     [IEventBus, events.bus],
+    [IAgentScopeContext, makeAgentScopeContext({ agentId: 'agent-child', agentScope: 'agent-child', forkedFrom: 'main' })],
+    [ISessionRequestAttributionService, attribution],
   ]);
   const handle: IAgentScopeHandle = {
     id: 'agent-child',
@@ -198,7 +205,7 @@ function handleWith(
     },
     dispose: () => {},
   };
-  return { handle, prompts, cancellations, suppressions };
+  return { handle, prompts, cancellations, suppressions, attribution };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
@@ -347,6 +354,20 @@ describe('runAgentTurn', () => {
     expect(run.turn).toBeUndefined();
     expect(ready).toBe(true);
     expect(run.partialOutput()).toBe('partial work');
+  });
+  it('restores the parent root turn before retrying', async () => {
+    const { handle, attribution, prompts } = handleWith(
+      makeTurn({ type: 'completed', steps: 1, truncated: false }),
+      [assistant('Recovered answer.')],
+      new EventBusStub(),
+      async () => ({ type: 'completed', steps: 1, truncated: false }),
+    );
+    attribution.noteRootTurn('main', 41);
+    const run = await runAgentTurn(handle, { kind: 'retry' }, { signal });
+
+    await expect(run.completion).resolves.toMatchObject({ summary: 'Recovered answer.' });
+    expect(attribution.of('agent-child').rootTurnId).toBe(41);
+    expect(prompts).toHaveLength(0);
   });
 });
 
