@@ -121,9 +121,9 @@
     },
     {
       "files": [
-        "apps/desktop/**",
-        "apps/rc-portal/**",
-        "packages/app-*/**"
+        "apps/desktop/**/*",
+        "packages/app-*/**/*",
+        "scripts/**/*.mjs"
       ],
       "rules": {
         "eslint/accessor-pairs": "error",

@@ -10,7 +10,6 @@ export default defineConfig({
       'apps/vis/server',
       'apps/vis/web',
       'apps/desktop',
-      'apps/rc-portal',
       ...vscodeProjects,
     ],
     coverage: {

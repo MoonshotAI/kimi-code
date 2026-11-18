@@ -22,7 +22,7 @@
     "package:macos": "bash apps/desktop/scripts/package-local-macos.sh",
     "e2e:desktop": "pnpm --filter kimi-code-app run e2e",
     "e2e:desktop:headless": "pnpm --filter kimi-code-app run e2e:headless",
-    "typecheck": "pnpm run build:packages && pnpm -r --filter './packages/*' run typecheck && pnpm --filter @moonshot-ai/kimi-code run typecheck && pnpm --filter kimi-code run typecheck && pnpm --filter @moonshot-ai/vis-server run typecheck && pnpm --filter @moonshot-ai/vis-web run typecheck && pnpm --filter kimi-code-app run typecheck && pnpm --filter kimi-code-rc-portal run typecheck",
+    "typecheck": "pnpm run build:packages && pnpm -r --filter './packages/*' run typecheck && pnpm --filter @moonshot-ai/kimi-code run typecheck && pnpm --filter kimi-code run typecheck && pnpm --filter @moonshot-ai/vis-server run typecheck && pnpm --filter @moonshot-ai/vis-web run typecheck && pnpm --filter kimi-code-app run typecheck",
     "lint": "node scripts/check-comments.mjs && oxlint --type-aware --deny-warnings && node packages/agent-core-v2/scripts/check-import-boundaries.mjs && node scripts/checks/guards.mjs && node scripts/checks/ratchet.mjs",
     "lint:fix": "oxlint --type-aware --fix",
     "lint:pkg": "pnpm --filter @moonshot-ai/kimi-code exec publint && npm_config_cache=${TMPDIR:-/tmp}/kimi-code-npm-cache pnpm --filter @moonshot-ai/kimi-code exec attw --pack . --profile node16",

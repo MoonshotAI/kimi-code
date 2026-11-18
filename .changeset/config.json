@@ -1,5 +1,10 @@
 {
-  "changelog": ["@changesets/changelog-github", { "repo": "MoonshotAI/kimi-code" }],
+  "changelog": [
+    "@changesets/changelog-github",
+    {
+      "repo": "MoonshotAI/kimi-code"
+    }
+  ],
   "commit": false,
   "fixed": [],
   "linked": [],
@@ -10,7 +15,6 @@
     "@moonshot-ai/vis",
     "@moonshot-ai/vis-server",
     "@moonshot-ai/vis-web",
-    "kimi-code-rc-portal",
     "@moonshot-ai/vite-preset",
     "@moonshot-ai/app-core",
     "@moonshot-ai/app-i18n",

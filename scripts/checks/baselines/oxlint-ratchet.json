@@ -39,7 +39,6 @@
     "apps/desktop/src/renderer/lib/browserReceipts.ts": 2,
     "apps/kimi-code/src/cli/update/native-stage.ts": 1,
     "apps/kimi-code/src/cli/v2/run-v2-print.ts": 1,
-    "apps/rc-portal/src/flow.ts": 1,
     "apps/vscode/src/bridge-handler.ts": 2,
     "apps/vscode/src/managers/file.manager.ts": 1,
     "packages/agent-core-v2/src/_base/di/lifecycle.ts": 2,
@@ -55,7 +54,8 @@
   },
   "eslint/no-empty": {
     "apps/kimi-code/test/tui/kimi-tui-message-flow.test.ts": 1,
-    "packages/agent-core-v2/test/os/backends/node-local/hostFsService.test.ts": 1
+    "packages/agent-core-v2/test/os/backends/node-local/hostFsService.test.ts": 1,
+    "packages/app-markdown/src/lib/inlineMath.ts": 2
   },
   "eslint/no-regex-spaces": {
     "apps/kimi-code/test/tui/components/messages/transcript-container.test.ts": 1,
@@ -386,7 +386,6 @@
   },
   "import/no-named-as-default": {
     "apps/desktop/src/renderer/main.ts": 1,
-    "apps/rc-portal/src/main.ts": 1,
     "packages/kap-server/test/wsBearerProtocol.test.ts": 1
   },
   "import/no-named-as-default-member": {
@@ -432,7 +431,8 @@
   "typescript/no-base-to-string": {
     "apps/desktop/tests/main/browser/browser-page-dialogs.test.ts": 1,
     "packages/app-client/test/useFilePreview.test.ts": 1,
-    "packages/app-core/src/lib/toolText.ts": 1
+    "packages/app-core/src/lib/toolText.ts": 1,
+    "scripts/desktop-artifact-prefix.test.mjs": 1
   },
   "typescript/no-confusing-non-null-assertion": {
     "apps/desktop/src/renderer/lib/browserTextHighlight.ts": 1
@@ -595,7 +595,10 @@
     "apps/desktop/e2e/focus-watch/steal-control.cjs": 1,
     "apps/desktop/src/main/ipc/register.ts": 1,
     "apps/desktop/src/main/shell/menu.ts": 1,
-    "packages/app-client/test/useUpdateStatus.test.ts": 2
+    "packages/app-client/test/useUpdateStatus.test.ts": 2,
+    "scripts/canary-linux.test.mjs": 1,
+    "scripts/desktop-artifact-prefix.test.mjs": 2,
+    "scripts/release.test.mjs": 9
   },
   "typescript/no-implied-eval": {
     "apps/desktop/tests/renderer/api-bootstrap.test.ts": 1,
@@ -650,7 +653,6 @@
     "apps/desktop/src/shared/browser-device.ts": 1,
     "apps/desktop/tests/main/screenshot/screenshot-lifecycle.test.ts": 1,
     "apps/kimi-code/src/utils/survey-setting.ts": 1,
-    "apps/rc-portal/src/flow.ts": 1,
     "packages/agent-core-v2/src/_base/log/fileLog.ts": 1,
     "packages/agent-core-v2/src/agent/tools/os/read/readTool.ts": 2,
     "packages/agent-core-v2/src/app/kosongConfig/modelsDevUpstream.ts": 1,
@@ -751,7 +753,6 @@
     "apps/desktop/src/shared/terminal-activity.ts": 1,
     "apps/kimi-code/src/tui/components/markdown/markdown.ts": 1,
     "apps/kimi-code/src/tui/utils/steer-delivery.ts": 2,
-    "apps/rc-portal/src/main.ts": 1,
     "apps/vscode/webview-ui/src/components/Markdown.tsx": 1,
     "apps/vscode/webview-ui/src/services/bridge.ts": 5,
     "packages/acp-server/src/session.ts": 3,
@@ -789,7 +790,6 @@
     "apps/desktop/src/renderer/components/panel/panelComponents.ts": 8,
     "apps/kimi-code/src/tui/components/markdown/markdown.ts": 1,
     "apps/kimi-code/src/tui/utils/message-replay.ts": 1,
-    "apps/rc-portal/src/router.ts": 3,
     "apps/vis/web/src/components/shared/JsonViewer.tsx": 1,
     "apps/vscode/src/runtime/legacy-approval.ts": 2,
     "apps/vscode/webview-ui/src/components/Markdown.tsx": 3,
@@ -988,7 +988,8 @@
     "packages/agent-core-v2/src/state/agentModel.ts": 1
   },
   "typescript/restrict-template-expressions": {
-    "packages/app-client/test/useFilePreview.test.ts": 1
+    "packages/app-client/test/useFilePreview.test.ts": 1,
+    "scripts/desktop-artifact-prefix.test.mjs": 1
   },
   "typescript/return-await": {
     "apps/desktop/src/main/ipc/register.ts": 1,

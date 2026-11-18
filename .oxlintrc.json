@@ -410,7 +410,7 @@
       // Imported from code-app: legacy findings are grandfathered into the
       // ratchet baseline (scripts/checks/baselines/oxlint-ratchet.json), which
       // re-enables these rules for these paths and only lets the counts shrink.
-      "files": ["apps/desktop/**/*", "apps/rc-portal/**/*", "packages/app-*/**/*", "scripts/**/*.mjs"],
+      "files": ["apps/desktop/**/*", "packages/app-*/**/*", "scripts/**/*.mjs"],
       "rules": {
         "eslint/accessor-pairs": "off",
         "eslint/eqeqeq": "off",

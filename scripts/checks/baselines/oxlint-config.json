@@ -235,7 +235,6 @@
       "env": null,
       "files": [
         "apps/desktop/**/*",
-        "apps/rc-portal/**/*",
         "packages/app-*/**/*",
         "scripts/**/*.mjs"
       ],

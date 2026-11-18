@@ -86,7 +86,6 @@
         ./packages/vite-preset
         ./apps/desktop
         ./apps/kimi-code
-        ./apps/rc-portal
         ./apps/vscode
         ./apps/vis
         ./apps/vis/server
@@ -120,7 +119,6 @@
         "@moonshot-ai/vite-preset"
         "kimi-code-app"
         "@moonshot-ai/kimi-code"
-        "kimi-code-rc-portal"
         "kimi-code"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
