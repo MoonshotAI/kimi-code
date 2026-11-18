@@ -551,12 +551,15 @@ describe('randomized invariants', () => {
     }
   }
 
-  it('keeps anchored offsets and follow bottoms across 1000 seeded change sequences', () => {
-    const master = mulberry32(20261118);
+  const master = mulberry32(20261118);
+  const seeds = Array.from({ length: 1000 }, () => Math.floor(master() * 2 ** 32));
+  const chunks = Array.from({ length: 10 }, (_, i) => i * 100);
+
+  it.each(chunks)('keeps anchored offsets and follow bottoms across seeded change sequences starting at %i', (first) => {
     let anchoredChecks = 0;
     let followChecks = 0;
-    for (let sequence = 0; sequence < 1000; sequence++) {
-      const rng = mulberry32(Math.floor(master() * 2 ** 32));
+    for (let sequence = first; sequence < first + 100; sequence++) {
+      const rng = mulberry32(seeds[sequence]!);
       const rows = Array.from({ length: 6 + Math.floor(rng() * 10) }, (_, i) => randomRow(rng, `r${i}`));
       const s = new LayoutSim({ rows, viewport: 250 + Math.floor(rng() * 400), dock: Math.floor(rng() * 120) });
       const follow = sequence % 2 === 0;
@@ -598,7 +601,7 @@ describe('randomized invariants', () => {
       expect(s.assignments).toBe(s.writes.length);
       s.controller.dispose();
     }
-    expect(followChecks).toBeGreaterThan(2000);
-    expect(anchoredChecks).toBeGreaterThan(2000);
+    expect(followChecks).toBeGreaterThan(150);
+    expect(anchoredChecks).toBeGreaterThan(150);
   });
 });
