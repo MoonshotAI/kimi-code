@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Browser automation fixture</title>
+    <style>
+      body { font: 16px system-ui; margin: 24px; min-height: 1800px; }
+      main { display: grid; gap: 20px; max-width: 680px; }
+      label { display: grid; gap: 6px; }
+      #hover-menu { display: none; padding: 12px; background: #eee; }
+      #hover-trigger:hover + #hover-menu { display: block; }
+      #drag-source { width: 80px; padding: 12px; background: #ddd; cursor: grab; }
+      #drop-target { width: 220px; height: 100px; border: 2px dashed #777; }
+      #deep { margin-top: 900px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a id="fixture-link" href="#deep">Jump to deep control</a>
+      <button id="counter" type="button">Count: 0</button>
+      <label>Name <input id="name" placeholder="Customer name" /></label>
+      <label>Notes <textarea id="notes"></textarea></label>
+      <label>Size
+        <select id="size">
+          <option value="small">Small</option>
+          <option value="medium">Medium</option>
+          <option value="large">Large</option>
+        </select>
+      </label>
+      <label><input id="checked" type="checkbox" /> Checked</label>
+      <button id="hover-trigger" type="button">Hover me</button>
+      <div id="hover-menu" role="menu">Hover menu</div>
+      <div id="drag-source" draggable="true">Drag me</div>
+      <div id="drop-target">Drop here</div>
+      <button id="replace" type="button">Replace controls</button>
+      <output id="state" aria-live="polite"></output>
+      <button id="deep" type="button">Deep control</button>
+    </main>
+    <script>
+      const state = document.querySelector('#state');
+      const report = (message) => { state.value = message; state.textContent = message; };
+      let count = 0;
+      document.querySelector('#counter').addEventListener('click', () => {
+        count += 1;
+        document.querySelector('#counter').textContent = `Count: ${count}`;
+        report(`count:${count}`);
+      });
+      document.querySelector('#name').addEventListener('input', (event) => report(`name:${event.target.value}`));
+      document.querySelector('#size').addEventListener('change', (event) => report(`size:${event.target.value}`));
+      document.querySelector('#checked').addEventListener('change', (event) => report(`checked:${event.target.checked}`));
+      document.querySelector('#drop-target').addEventListener('dragover', (event) => event.preventDefault());
+      document.querySelector('#drop-target').addEventListener('drop', (event) => {
+        event.preventDefault();
+        report('dropped');
+      });
+      document.querySelector('#replace').addEventListener('click', () => {
+        const original = document.querySelector('#counter');
+        const replacement = original.cloneNode(true);
+        replacement.id = 'counter-replaced';
+        original.replaceWith(replacement);
+        report('replaced');
+      });
+    </script>
+  </body>
+</html>

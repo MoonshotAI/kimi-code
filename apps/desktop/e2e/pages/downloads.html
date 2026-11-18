@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Monthly reports</title>
+<style>html{background:#fff;color:#111}</style>
+<h1>Monthly reports</h1>
+<p><a id="report" data-path="/files/report.csv">Download report</a></p>
+<p><a id="archive" data-path="/files/archive.bin">Download archive</a></p>
+<p><a id="own" data-path="/files/own-report.csv">Download my copy</a></p>
+<p><a id="help" href="next.html" target="_blank">Open help in a new tab</a></p>
+<button type="button" id="print">Print receipt</button>
+<p id="status">Ready</p>
+<script>
+  const files = new URLSearchParams(location.search).get('files');
+  for (const link of document.querySelectorAll('a[data-path]')) link.href = files + link.dataset.path;
+  document.getElementById('print').addEventListener('click', () => {
+    window.print();
+    document.getElementById('status').textContent = 'Print requested';
+  });
+</script>
+</html>

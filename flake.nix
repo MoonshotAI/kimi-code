@@ -63,6 +63,13 @@
       workspacePaths = [
         ./packages/acp-server
         ./packages/agent-core-v2
+        ./packages/app-client
+        ./packages/app-components
+        ./packages/app-composer
+        ./packages/app-core
+        ./packages/app-i18n
+        ./packages/app-markdown
+        ./packages/app-ui
         ./packages/core
         ./packages/kap-server
         ./packages/klient
@@ -76,7 +83,10 @@
         ./packages/session-import
         ./packages/telemetry
         ./packages/tree-sitter-bash
+        ./packages/vite-preset
+        ./apps/desktop
         ./apps/kimi-code
+        ./apps/rc-portal
         ./apps/vscode
         ./apps/vis
         ./apps/vis/server
@@ -87,6 +97,13 @@
       workspaceNames = [
         "@moonshot-ai/acp-server"
         "@moonshot-ai/agent-core-v2"
+        "@moonshot-ai/app-client"
+        "@moonshot-ai/app-components"
+        "@moonshot-ai/app-composer"
+        "@moonshot-ai/app-core"
+        "@moonshot-ai/app-i18n"
+        "@moonshot-ai/app-markdown"
+        "@moonshot-ai/app-ui"
         "@moonshot-ai/core"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/migration-legacy"
@@ -100,7 +117,10 @@
         "@moonshot-ai/session-import"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/tree-sitter-bash"
+        "@moonshot-ai/vite-preset"
+        "kimi-code-app"
         "@moonshot-ai/kimi-code"
+        "kimi-code-rc-portal"
         "kimi-code"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"

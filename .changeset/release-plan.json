@@ -1,0 +1,19 @@
+{
+  "branch": "release/2026-11-16",
+  "changesets": [
+    "calm-pandas-resume.md",
+    "custom-registry-search-feedback-urls.md",
+    "fix-windows-webbridge-running-update.md",
+    "stop-hooks-turn-facts.md",
+    "task-reconcile-prompt-only.md",
+    "tower-background-notifications.md"
+  ],
+  "packages": [
+    {
+      "name": "kimi-code-app",
+      "path": "apps/desktop",
+      "version": "1.3.7",
+      "private": true
+    }
+  ]
+}
