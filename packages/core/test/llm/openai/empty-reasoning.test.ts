@@ -19,11 +19,11 @@ function decodeDeltas(deltas: Array<Record<string, unknown>>): AssistantMessage 
   });
   for (const [idx, delta] of deltas.entries()) {
     const isLast = idx === deltas.length - 1;
-    const hasTools = Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0;
+    const toolCalls = delta['tool_calls'];
+    const hasTools = Array.isArray(toolCalls) && toolCalls.length > 0;
     decoder.push({
       choices: [
         {
-          index: 0,
           delta: delta as never,
           finish_reason: isLast ? (hasTools ? 'tool_calls' : 'stop') : null,
         },
@@ -245,7 +245,6 @@ describe('openai decoder tool-call ordering', () => {
     decoder.push({
       choices: [
         {
-          index: 0,
           delta: {
             tool_calls: [
               { index: 0, id: 'a', function: { name: 'first', arguments: '{}' } },
@@ -265,7 +264,6 @@ describe('openai decoder tool-call ordering', () => {
     decoder.push({
       choices: [
         {
-          index: 0,
           delta: { tool_calls: [{ index: 0, id: 'a', function: { name: 'first', arguments: '{"q":' } }] },
           finish_reason: null,
         },
@@ -274,7 +272,6 @@ describe('openai decoder tool-call ordering', () => {
     decoder.push({
       choices: [
         {
-          index: 0,
           delta: {
             tool_calls: [
               { index: 0, function: { arguments: '1}' } },
