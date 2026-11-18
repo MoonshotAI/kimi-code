@@ -80,6 +80,8 @@ export class LayoutSim {
   readonly list: HTMLElement;
   readonly tailEl: HTMLElement;
   readonly dockEl: HTMLElement;
+  readonly contentEl: HTMLElement;
+  contentWidth: number | null = null;
   readonly model: LayoutModel;
   readonly controller: ScrollController;
   rows: SimRow[];
@@ -119,7 +121,8 @@ export class LayoutSim {
     this.list = document.createElement('div');
     this.tailEl = document.createElement('div');
     this.dockEl = document.createElement('div');
-    this.scroller.append(this.list, this.tailEl);
+    this.contentEl = document.createElement('div');
+    this.scroller.append(this.list, this.tailEl, this.contentEl);
     document.body.replaceChildren(this.scroller, this.dockEl);
     this.stubScroller();
     for (const el of [this.list, this.tailEl, this.dockEl]) this.stubRect(el);
@@ -373,6 +376,7 @@ export class LayoutSim {
     if (!target.isConnected) return { block: 0, inline: 0 };
     if (target === this.scroller) return { block: this.viewport, inline: this.width };
     if (target === this.dockEl) return { block: this.dock, inline: this.width };
+    if (target === this.contentEl) return { block: 0, inline: this.contentWidth ?? this.width };
     this.layout();
     return { block: this.boxes.get(target)?.height ?? 0, inline: this.width };
   }

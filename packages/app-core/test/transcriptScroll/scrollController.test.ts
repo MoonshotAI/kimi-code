@@ -510,10 +510,100 @@ describe('snapshot and restore', () => {
     s.unmount('r3');
     s.frame();
     s.controller.restore(snap);
-    expect(s.scrollTop).toBe(3 * ROW - snap.offset);
+    expect(s.scrollTop).toBe(3 * ROW - snap.rowOffset!);
+    expect(s.scrollTop).toBe(1000);
     s.mount('r3');
     s.frame();
     expect(s.visualTop(s.childEl('r3', 'md', 2))).toBe(snap.offset);
+  });
+});
+
+describe('layout entry points', () => {
+  it('keys row measurements to the content column width instead of the scroller width', () => {
+    const s = setup();
+    s.contentWidth = 760;
+    s.controller.observeAux('content', s.contentEl);
+    s.frame();
+    expect(s.model.environment.width).toBe(760);
+    s.setWidth(1400);
+    s.frame();
+    expect(s.model.environment.width).toBe(760);
+    expect(s.model.isMeasured('r11')).toBe(true);
+    s.contentWidth = 600;
+    s.setWidth(900);
+    s.frame();
+    expect(s.model.environment.width).toBe(600);
+  });
+
+  it('defers a restore until the next resize callback and writes once there', () => {
+    const s = setup();
+    scrollUserTo(s, 1000);
+    const snap = s.controller.snapshot();
+    const el = s.childEl('r3', 'md', 2);
+    const before = s.visualTop(el);
+    s.controller.follow();
+    const writes = s.writes.length;
+    s.controller.restore(snap, { defer: true });
+    expect(s.writes.length).toBe(writes);
+    expect(s.controller.state.mode.kind).toBe('anchored');
+    s.setBlockHeight('r0', 'head', 120);
+    s.frame();
+    expect(s.writes.slice(writes).map(w => w.reason)).toEqual(['resize']);
+    expect(s.visualTop(el)).toBe(before);
+  });
+
+  it('treats a position change before the first correction after a deferred restore as a clamp', () => {
+    const s = setup();
+    scrollUserTo(s, 1000);
+    s.controller.restore(null, { defer: true });
+    s.userScroll(0);
+    s.setTail(20);
+    s.frame();
+    expect(s.controller.state.following).toBe(true);
+    expect(s.distanceFromBottom()).toBe(0);
+    s.userScroll(500);
+    s.frame();
+    expect(s.controller.state.mode.kind).toBe('anchored');
+  });
+
+  it('navigates with a shift relative to the target and keeps that offset', async () => {
+    const s = setup();
+    await s.controller.navigate({ row: 'r4' }, { shift: 60 });
+    expect(s.visualTop(s.rowEl('r4'))).toBe(-60);
+    expect(s.controller.state.mode).toMatchObject({ kind: 'anchored', anchor: { row: 'r4' }, offset: -60 });
+  });
+
+  it('holds the row position while a deep anchor is not rendered yet', () => {
+    const s = setup();
+    scrollUserTo(s, 1000);
+    const snap = s.controller.snapshot();
+    if (snap.mode !== 'anchored' || snap.anchor.child === undefined) throw new Error('expected a child anchor');
+    const rowTop = s.visualTop(s.rowEl('r3'));
+    s.controller.follow();
+    s.replaceMarkdown('r3', 'md');
+    const renderer = s.blockEl('r3', 'md').querySelector('.markdown-renderer')!;
+    const children = [...renderer.children];
+    renderer.replaceChildren(...children.slice(0, snap.anchor.child));
+    s.setViewport(s.viewport);
+    s.controller.restore(snap);
+    expect(s.visualTop(s.rowEl('r3'))).toBe(rowTop);
+    renderer.replaceChildren(...children);
+    s.setViewport(s.viewport);
+    s.frame();
+    expect(s.visualTop(s.childEl('r3', 'md', snap.anchor.child))).toBe(snap.offset);
+  });
+
+  it('corrects on sync when only placeholder heights above the anchor changed', () => {
+    const s = setup();
+    scrollUserTo(s, 1000);
+    const el = s.childEl('r3', 'md', 2);
+    const before = s.visualTop(el);
+    s.insertRows(0, textRows(2, 150, 'p').map(row => ({ ...row, mounted: false })));
+    expect(s.visualTop(el)).not.toBe(before);
+    const writes = s.writes.length;
+    s.controller.sync();
+    expect(s.writes.slice(writes).map(w => w.reason)).toEqual(['sync']);
+    expect(s.visualTop(el)).toBe(before);
   });
 });
 

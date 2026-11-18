@@ -1,8 +1,33 @@
 
-import type { InjectionKey, Ref } from 'vue';
+import type { InjectionKey, Ref, ShallowRef } from 'vue';
+import type { AnchorPath, AuxKind, LayoutModel, NavigateOptions, ScrollController } from './lib/transcriptScroll';
 export const HistoryScrollKey: InjectionKey<(container: HTMLElement, delta: number) => void> = Symbol('history-scroll');
 export const HistoryAllKey: InjectionKey<Readonly<Ref<boolean>>> = Symbol('history-all');
 export const HistoryStateKey: InjectionKey<Map<string, unknown>> = Symbol('history-state');
+
+export type TranscriptRefreshSource = 'scroll' | 'model';
+
+export interface TranscriptListHandle {
+  readonly root: HTMLElement;
+  applyLayout(): void;
+  refresh(source: TranscriptRefreshSource, defer?: boolean): void;
+}
+
+export interface TranscriptScrollHost {
+  readonly model: LayoutModel;
+  readonly scroller: Readonly<Ref<HTMLElement | null>>;
+  readonly controller: Readonly<ShallowRef<ScrollController | null>>;
+  touch(): boolean;
+  attachList(handle: TranscriptListHandle): () => void;
+  observeRow(key: string, el: HTMLElement | null): void;
+  observeAux(kind: AuxKind, el: HTMLElement | null, id?: string): void;
+  resolveAnchor(path: AnchorPath): HTMLElement | null;
+  navigate(path: AnchorPath, options?: NavigateOptions): Promise<void>;
+  sync(): void;
+}
+
+export const TranscriptScrollKey: InjectionKey<TranscriptScrollHost> = Symbol('transcript-scroll');
+export const TranscriptFlatKey: InjectionKey<boolean> = Symbol('transcript-flat');
 export interface ClientIdentity {
   readonly clientId: string;
   readonly clientName: string;
