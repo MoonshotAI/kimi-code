@@ -406,9 +406,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async openWorkdir(
     environment: (EnvironmentBinding & { readonly cwd: string }) | undefined,
     workDir: string,
+    resuming = false,
   ): Promise<ProgramWorkdir> {
     if (environment === undefined) return this.acquireWorkdir(LOCAL_ENVIRONMENT_ID, workDir, true);
     const { environmentId, cwd } = environment;
+    if (resuming && environmentId === LOCAL_ENVIRONMENT_ID) {
+      return this.acquireWorkdir(environmentId, cwd, false);
+    }
     let lease: EnvironmentLease;
     try {
       lease = await this.environments.acquireWhenReady({ environmentId }, ['fs']);
@@ -510,7 +514,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workDir,
       additionalDirs: opts?.additionalDirs,
       mcpServers: opts?.mcpServers,
-    }, environment, await this.openWorkdir(environment, workDir));
+    }, environment, await this.openWorkdir(environment, workDir, true));
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
       if (agents.get(MAIN_AGENT_ID) === undefined) {
