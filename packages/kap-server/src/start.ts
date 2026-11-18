@@ -17,6 +17,7 @@ import {
   ICapabilityService,
   IPluginService,
   IEnvironmentService,
+  IOAuthToolkit,
   IWorkspaceService,
   IAgentLifecycleService,
   IAgentEnvironmentBindingService,
@@ -279,6 +280,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     homeDir,
     configuredOAuthKey: () => readManagedOAuth()?.key,
     configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
+    refreshToken: (oauthRef) => core.accessor.get(IOAuthToolkit).tokenProvider(undefined, oauthRef).getAccessToken(),
   });
 
   let telemetry: ServerTelemetry = {};

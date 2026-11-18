@@ -13,6 +13,7 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   resolveKimiCodeOAuthRef,
   resolveKimiTokenStorageName,
+  type KimiOAuthTokenRef,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -1340,6 +1341,81 @@ describe('Remote Control device client', () => {
 
     await expect(client.relayAccess()).rejects.toBeInstanceOf(RemoteControlLoginRequiredError);
     await expect(client.listDevices()).rejects.toThrow('Remote Control requires a Kimi login.');
+  });
+
+  it('refreshes the Kimi token before exchanging it for a relay session', async () => {
+    const homeDir = await createRemoteControlHome('stale-refresh');
+    const exchanged: unknown[] = [];
+    const server = createServer((request, response) => {
+      const pathname = new URL(request.url ?? '', 'http://relay.test').pathname;
+      if (pathname === '/auth/exchange') {
+        let body = '';
+        request.on('data', (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        request.on('end', () => {
+          exchanged.push(JSON.parse(body));
+          response.writeHead(204, { 'Set-Cookie': 'rc_session=1; Path=/; HttpOnly' });
+          response.end();
+        });
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ devices: [] }));
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const refreshes: KimiOAuthTokenRef[] = [];
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+      refreshToken: async (oauthRef) => {
+        refreshes.push(oauthRef);
+        await new FileTokenStorage(join(homeDir, 'credentials')).save(
+          resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
+          { ...TOKEN, accessToken: 'fresh-access', refreshToken: 'fresh-refresh' },
+        );
+      },
+    });
+
+    await client.listDevices();
+
+    expect(refreshes).toHaveLength(1);
+    expect(exchanged).toEqual([
+      expect.objectContaining({ access_token: 'fresh-access', refresh_token: 'fresh-refresh' }),
+    ]);
+  });
+
+  it('exchanges the stored token when refreshing it fails', async () => {
+    const homeDir = await createRemoteControlHome('stored-refresh');
+    const exchanged: unknown[] = [];
+    const server = createServer((request, response) => {
+      let body = '';
+      request.on('data', (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      request.on('end', () => {
+        if (new URL(request.url ?? '', 'http://relay.test').pathname === '/auth/exchange') {
+          exchanged.push(JSON.parse(body));
+          response.writeHead(204, { 'Set-Cookie': 'rc_session=1; Path=/; HttpOnly' });
+          response.end();
+          return;
+        }
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ devices: [] }));
+      });
+    });
+    const port = await listen(server);
+    cleanups.push(() => closeServer(server));
+    const client = new RemoteControlDeviceClient({
+      homeDir,
+      relayOrigin: `http://127.0.0.1:${port}`,
+      refreshToken: () => Promise.reject(new Error('token endpoint unreachable')),
+    });
+
+    await client.listDevices();
+
+    expect(exchanged).toEqual([expect.objectContaining({ refresh_token: 'stored-refresh' })]);
   });
 
   it('does not retry more than once after re-exchange', async () => {

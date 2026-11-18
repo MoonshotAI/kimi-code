@@ -4,6 +4,7 @@ import {
   FileTokenStorage,
   resolveKimiRemoteControlAuth,
   resolveKimiTokenStorageName,
+  type KimiOAuthTokenRef,
   type KimiRemoteControlAuth,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -55,6 +56,7 @@ export interface RemoteControlDeviceClientOptions {
   readonly configuredOAuthHost?: () => string | undefined;
   readonly relayOrigin?: string;
   readonly fetchImpl?: typeof fetch;
+  readonly refreshToken?: (oauthRef: KimiOAuthTokenRef) => Promise<unknown>;
 }
 
 interface RemoteControlDeviceContext {
@@ -150,6 +152,9 @@ export class RemoteControlDeviceClient {
       this.options.relayOrigin ??
       resolveRemoteControlRelayOrigin(process.env, auth.relayOrigin)
     ).replace(/\/+$/, '');
+    await this.options
+      .refreshToken?.({ key: auth.oauthKey, oauthHost: this.options.configuredOAuthHost?.() })
+      .catch(() => undefined);
     const storage = new FileTokenStorage(join(this.options.homeDir, 'credentials'));
     const token = await storage.load(
       resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }),
