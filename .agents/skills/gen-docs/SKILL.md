@@ -57,7 +57,7 @@ This skill depends on the following being in place. If any are missing, stop and
 
    Cover all relevant sections:
 
-   - Guides (getting-started, use cases, interaction, sessions, IDE integration)
+   - Guides (getting-started, use cases, interaction, sessions, web, print, IDE integration, other agents — keep `skills/use-kimi-code/SKILL.md` and `packages/kap-server/docs/kap.md` aligned when local server bootstrap or core KAP capabilities change)
    - Customization (skills, agents, MCP, hooks, plugins, etc.)
    - Configuration (config files, env vars, providers, data locations)
    - Reference (CLI subcommands, slash commands, keyboard shortcuts)
