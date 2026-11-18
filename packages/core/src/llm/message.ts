@@ -175,6 +175,7 @@ export interface UserMessageAttributes extends MessageAttributes {
   userMessageId?: string;
   toolCallId?: string;
   bypassMaxSteps?: boolean;
+  promptOnly?: true;
 }
 
 export interface ToolMessageAttributes extends MessageAttributes {

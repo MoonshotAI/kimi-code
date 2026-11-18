@@ -759,7 +759,7 @@
 
 成功时 `data` 为 [能力状态对象](#能力状态对象)。
 
-目前只有 Windows 上的 `kimi-cu` 会检查运行中的进程：存在相关进程且没有传 `stopRunningProcesses: true` 时，后台安装结束，`install.confirmationRequired` 为 `stop-processes`。
+目前 Windows 上的 `kimi-cu` 与 `kimi-webbridge` 会检查运行中的进程：存在相关进程且没有传 `stopRunningProcesses: true` 时，后台安装结束，`install.confirmationRequired` 为 `stop-processes`。
 
 - `40001`：缺少动作后缀或动作未知
 - `40418`：没有该 id 的能力

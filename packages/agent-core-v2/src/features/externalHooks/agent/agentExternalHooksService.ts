@@ -67,8 +67,15 @@ export const externalHooksStopHookContinuationUsedKey = defineState<boolean>(
   () => false,
 );
 
+type StepFacts = Pick<AfterStepContext, 'turnId' | 'step' | 'firstStepOfTurn' | 'finishReason' | 'usage'>;
+
 export class AgentExternalHooksService extends Service implements IAgentExternalHooksService {
   declare readonly _serviceBrand: undefined;
+
+  private readonly stepFactsByTurn = new Map<number, StepFacts>();
+  private readonly stopHookContinuationTurnIds = new Set<number>();
+  private readonly stopHookAbortController = new AbortController();
+  private stopHookQueue: Promise<void> = Promise.resolve();
 
   constructor(
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
@@ -83,6 +90,13 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   ) {
     super();
     this.states.contributeState(externalHooksStopHookContinuationUsedKey);
+    this._register({
+      dispose: () => {
+        this.stopHookAbortController.abort();
+        this.stepFactsByTurn.clear();
+        this.stopHookContinuationTurnIds.clear();
+      },
+    });
     void this.sessionMetadata
       .read()
       .then((meta) => {
@@ -249,6 +263,9 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private notifyTurnStarted(event: TurnStarted): void {
+    if (event.origin.kind === 'system_trigger' && event.origin.name === 'stop_hook') {
+      this.stopHookContinuationTurnIds.add(event.turnId);
+    }
     this.fireAndForget(
       'TurnStarted',
       {
@@ -265,25 +282,13 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     this._register(
       loop.hooks.onDidFinishStep.register('externalHooks', async (ctx, next) => {
         await next();
-        if (
-          ctx.finishReason === 'tool_calls' ||
-          ctx.finishReason === 'filtered' ||
-          loop.snapshot().hasPendingRequests
-        ) {
-          return;
-        }
-        const reason = await this.runStop(ctx);
-        if (reason !== undefined) {
-          this.stopHookContinuationUsed = true;
-          loop.notify({
-            message: {
-              role: 'user',
-              content: [{ type: 'text', text: reason }],
-              origin: { kind: 'system_trigger', name: 'stop_hook' },
-            },
-          });
-          return;
-        }
+        this.stepFactsByTurn.set(ctx.turnId, {
+          turnId: ctx.turnId,
+          step: ctx.step,
+          firstStepOfTurn: ctx.firstStepOfTurn,
+          finishReason: ctx.finishReason,
+          usage: ctx.usage,
+        });
       }),
     );
   }
@@ -412,13 +417,27 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private notifyTurnEnded(event: TurnEnded): void {
-    this.stopHookContinuationUsed = false;
+    const stopHookContinuation = this.stopHookContinuationTurnIds.delete(event.turnId);
+    const facts = this.stepFactsByTurn.get(event.turnId);
+    this.stepFactsByTurn.delete(event.turnId);
     if (event.reason === 'failed' && event.error !== undefined) {
       this.notifyStopFailure(event.error, new AbortController().signal);
     }
     if (event.reason === 'cancelled') {
       this.fireAndForget('Interrupt', { turnId: event.turnId, reason: 'cancelled' });
     }
+    if (event.reason !== 'completed' || facts === undefined) return;
+    if (this.loop.snapshot().hasPendingRequests) return;
+    this.stopHookQueue = this.stopHookQueue
+      .then(() => this.runStop(facts, stopHookContinuation))
+      .catch((error: unknown) => {
+        if (this.stopHookAbortController.signal.aborted) return;
+        this.warnHookFailure({
+          event: 'Stop',
+          sessionId: this.sessionContext.sessionId,
+          message: toKimiErrorPayload(error).message,
+        });
+      });
   }
 
   private notifyStopFailure(error: unknown, signal: AbortSignal): void {
@@ -434,18 +453,35 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private async runStop(ctx: AfterStepContext): Promise<string | undefined> {
-    ctx.signal.throwIfAborted();
-    if (this.stopHookContinuationUsed) return undefined;
+  private async runStop(facts: StepFacts, stopHookContinuation: boolean): Promise<void> {
+    const signal = this.stopHookAbortController.signal;
+    signal.throwIfAborted();
+    if (stopHookContinuation && this.stopHookContinuationUsed) return;
 
     const block = await this.runner.triggerBlock('Stop', {
-      signal: ctx.signal,
+      signal,
       cwd: await this.hookCwd(),
       sessionId: this.sessionContext.sessionId,
-      inputData: this.withSessionFacts({ stopHookActive: false }),
+      inputData: this.withSessionFacts({
+        turnId: facts.turnId,
+        step: facts.step,
+        firstStepOfTurn: facts.firstStepOfTurn,
+        finishReason: facts.finishReason,
+        usage: facts.usage,
+        stopHookActive: false,
+      }),
     });
-    ctx.signal.throwIfAborted();
-    return block?.reason;
+    signal.throwIfAborted();
+    const reason = block?.reason;
+    if (reason === undefined) return;
+    this.stopHookContinuationUsed = true;
+    this.loop.notify({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: reason }],
+        origin: { kind: 'system_trigger', name: 'stop_hook' },
+      },
+    });
   }
 
   private async runPreCompact(ctx: FullCompactionTask): Promise<void> {

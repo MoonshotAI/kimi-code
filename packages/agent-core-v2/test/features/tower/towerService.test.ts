@@ -3529,7 +3529,7 @@ describe('AgentTowerService', () => {
       expect(loop.snapshot().hasPendingRequests).toBe(false);
     });
 
-    function publishUserPrompt(promptId: string): void {
+    function publishPrompt(promptId: string, origin: PromptSubmitted['origin']): void {
       publishAsMain(
         ix,
         new PromptSubmitted({
@@ -3538,33 +3538,53 @@ describe('AgentTowerService', () => {
           userMessageId: promptId,
           status: 'queued',
           content: [{ type: 'text', text: 'hold on' }],
+          origin,
           createdAt: new Date().toISOString(),
         }),
       );
     }
 
-    it('cancels the inbox wake turn when a user prompt is submitted', async () => {
+    it('cancels the inbox wake turn for user-initiated prompts', async () => {
       const tower = ix.get(IAgentTowerService);
       await tower.enter();
 
-      const wakeTurn = loop.startTurn();
-      publishAsMain(
-        ix,
-        new TurnStarted({
-          agentId: 'main',
-          turnId: wakeTurn.id,
-          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
-        }),
-      );
-      publishUserPrompt('p1');
-      await flushWake();
+      const origins = [
+        { kind: 'user' },
+        {
+          kind: 'skill_activation',
+          activationId: 'skill-1',
+          skillName: 'example-skill',
+          trigger: 'user-slash',
+        },
+        {
+          kind: 'plugin_command',
+          activationId: 'plugin-1',
+          pluginId: 'example-plugin',
+          commandName: 'example-command',
+          trigger: 'user-slash',
+        },
+      ] as const;
+      const wakeTurnIds: number[] = [];
+      for (const [index, origin] of origins.entries()) {
+        const wakeTurn = loop.startTurn();
+        wakeTurnIds.push(wakeTurn.id);
+        publishAsMain(
+          ix,
+          new TurnStarted({
+            agentId: 'main',
+            turnId: wakeTurn.id,
+            origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+          }),
+        );
+        publishPrompt(`p${String(index + 1)}`, origin);
+        await flushWake();
+      }
 
-      expect(loop.cancels).toHaveLength(1);
-      expect(loop.cancels[0]?.turnId).toBe(wakeTurn.id);
-      expect(isUserCancellation(loop.cancels[0]?.reason)).toBe(true);
+      expect(loop.cancels.map((cancel) => cancel.turnId)).toEqual(wakeTurnIds);
+      for (const cancel of loop.cancels) expect(isUserCancellation(cancel.reason)).toBe(true);
     });
 
-    it('ignores turns seeded by other notification origins', async () => {
+    it('ignores non-user submissions and turns seeded by other notification origins', async () => {
       const tower = ix.get(IAgentTowerService);
       await tower.enter();
 
@@ -3577,7 +3597,31 @@ describe('AgentTowerService', () => {
           origin: { kind: 'injection', variant: 'cron' },
         }),
       );
-      publishUserPrompt('p1');
+      publishPrompt('p1', { kind: 'user' });
+      await flushWake();
+
+      const wakeTurn = loop.startTurn();
+      publishAsMain(
+        ix,
+        new TurnStarted({
+          agentId: 'main',
+          turnId: wakeTurn.id,
+          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+        }),
+      );
+      publishPrompt('p2', {
+        kind: 'task',
+        taskId: 'task-1',
+        status: 'completed',
+        notificationId: 'task:task-1:completed',
+      });
+      publishPrompt('p3', { kind: 'injection', variant: 'cron' });
+      publishPrompt('p4', {
+        kind: 'skill_activation',
+        activationId: 'skill-model',
+        skillName: 'example-skill',
+        trigger: 'model-tool',
+      });
       await flushWake();
 
       expect(loop.cancels).toEqual([]);
@@ -3597,7 +3641,7 @@ describe('AgentTowerService', () => {
         }),
       );
       publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: wakeTurn.id, reason: 'completed' }));
-      publishUserPrompt('p1');
+      publishPrompt('p1', { kind: 'user' });
       await flushWake();
 
       expect(loop.cancels).toEqual([]);

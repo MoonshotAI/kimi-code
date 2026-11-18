@@ -1,4 +1,4 @@
-import type { UserPromptOrigin } from '#/agent/contextMemory/types';
+import type { PromptOrigin, UserPromptOrigin } from '#/agent/contextMemory/types';
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
@@ -65,6 +65,7 @@ export interface PromptSubmittedEvent {
   readonly userMessageId: string;
   readonly status: 'running' | 'queued' | 'blocked';
   readonly content: readonly MessageContent[];
+  readonly origin: PromptOrigin;
   readonly createdAt: string;
 }
 
@@ -123,6 +124,7 @@ export interface PromptSubmittedPayload {
   readonly userMessageId: string;
   readonly status: 'running' | 'queued';
   readonly content: ContentPart[];
+  readonly origin: PromptOrigin;
   readonly createdAt: string;
   readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
 }

@@ -159,7 +159,9 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     if (!dynamic) return base ?? this.defaultToolsForDisclosure(disclosure);
     if (disclosure) return base ?? [];
     const loaded = collectLoadedDynamicTools(messages);
-    const tools = (base ?? []).filter((tool) => tool.name !== SELECT_TOOLS_TOOL_NAME && tool.deferred !== true);
+    const tools = (base ?? [])
+      .filter((tool) => tool.name !== SELECT_TOOLS_TOOL_NAME)
+      .map((tool) => tool.deferred === true ? { ...tool, deferred: undefined } : tool);
     const names = new Set(tools.map((tool) => tool.name));
     for (const tool of loaded.values()) {
       if (names.has(tool.name)) continue;

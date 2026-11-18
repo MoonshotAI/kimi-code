@@ -1807,8 +1807,8 @@ describe('KimiTUI message flow', () => {
       ['n2', 'second update'],
       ['n3', 'third update'],
     ] as const) {
-      notifications.handleEvent({ type: 'tool.call.started', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId, name: 'NotifyUser', args: { message } });
-      notifications.handleEvent({ type: 'tool.result', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId, output: 'Update shown to the user.' });
+      notifications.handleEvent({ type: 'tool.call.started', agentId: 'main', sessionId: 's1', origin: 'loop', turnId: 1, toolCallId, name: 'NotifyUser', args: { message } });
+      notifications.handleEvent({ type: 'tool.result', agentId: 'main', sessionId: 's1', origin: 'loop', turnId: 1, toolCallId, output: 'Update shown to the user.' });
     }
     driver.state.editor.setText('unsent follow-up');
     const cursor = driver.state.editor.getCursor();
@@ -7283,7 +7283,7 @@ command = "vim"
     type: 'tool.call.started' | 'tool.updated' | 'tool.result',
     extra: Record<string, unknown> = {},
   ): Event {
-    const base = { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_wait' };
+    const base = { agentId: 'main', sessionId: 'ses-1', origin: 'loop', turnId: 1, toolCallId: 'call_wait' };
     if (type === 'tool.call.started') {
       return { type, ...base, name: 'WaitFor', args: { timeout: 60 }, ...extra } as Event;
     }
@@ -9032,21 +9032,68 @@ capabilities = ["image_in", "video_in"]
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
-  it('echoes a bash command with a $ prompt in the transcript', async () => {
-    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+  it('echoes a foreground bash command once and settles its activity state', async () => {
+    let resolveCommand!: (result: { stdout: string; stderr: string; isError: boolean }) => void;
+    const runShellCommand = vi.fn(() => new Promise<{ stdout: string; stderr: string; isError: boolean }>((resolve) => {
+      resolveCommand = resolve;
+    }));
     const session = makeSession({ runShellCommand });
     const { driver, harness } = await makeDriver(session);
     driver.state.appState.inputMode = 'bash';
     driver.state.editor.inputMode = 'bash';
 
     driver.handleUserInput('ls');
-    await Promise.resolve();
+    const commandId = driver.state.transcriptEntries.at(-1)!.id;
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, vi.fn());
+    emit({
+      type: 'tool.call.started',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      origin: 'shellCommand',
+      turnId: -1,
+      toolCallId: commandId,
+      name: 'Bash',
+      args: { command: 'ls' },
+    } as Event);
+    emit({
+      type: 'tool.updated',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      origin: 'shellCommand',
+      turnId: -1,
+      toolCallId: commandId,
+      taskId: 'bash-task-1',
+      status: 'running',
+      detached: false,
+      fields: {},
+      output: { offset: 0, text: 'hello' },
+    } as Event);
+    emit({
+      type: 'shell.output',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      commandId,
+      update: { kind: 'stdout', text: 'hello' },
+    } as Event);
+    emit({
+      type: 'tool.result',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      origin: 'shellCommand',
+      turnId: -1,
+      toolCallId: commandId,
+      output: 'hello',
+    } as Event);
+    resolveCommand({ stdout: 'hello', stderr: '', isError: false });
+    await vi.waitFor(() => expect(driver.state.appState.streamingPhase).toBe('idle'));
 
     expect(harness.track).toHaveBeenCalledWith('shell_command', undefined);
-
     const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
-    expect(transcript).toContain('$ ls');
+    expect(transcript.match(/\$ ls/g)).toHaveLength(1);
+    expect(transcript.match(/hello/g)).toHaveLength(1);
     expect(transcript).not.toContain('! ls');
+    expect(driver.state.livePane.mode).toBe('idle');
+    expect(driver.state.activitySpinner).toBeNull();
   });
 
   it('collapses long ! output to its first 10 rows and expands it with ctrl+o', async () => {

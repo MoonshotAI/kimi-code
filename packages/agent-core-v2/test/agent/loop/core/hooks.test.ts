@@ -670,7 +670,7 @@ describe('notify turn handoff', () => {
     const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 2);
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     await followup;
-    expect(starting).toEqual([0, 1, 2]);
+    expect(starting).toEqual([0, 2]);
     expect(events.find((event) => event.type === 'prompt.steered')).toMatchObject({
       promptIds: ['first', 'second'],
       messages: [first, second],
@@ -715,30 +715,79 @@ describe('notify turn handoff', () => {
     await loop.close();
   });
 
-  it('does not run another step of an interrupted turn when notify is pending', async () => {
+  it('resumes interrupted and queued turns before a prompt-only notification', async () => {
     const events: LoopEmitted[] = [];
-    const scripted = requester([done('new turn')]);
+    const starting: number[] = [];
+    const scripted = requester([done('queued')]);
     const loop = createLoop({
       requester: scripted,
       executor: createExecutor({}),
+      hooks: [{ point: 'step.starting', hook: (event) => { starting.push(event.turnId) } }],
       input: {
         messages: [prompt('old')],
-        inbox: { notify: [prompt('wake')] },
+        inbox: { normal: [prompt('queued')] },
         nextTurnId: 1,
         unfinished: { turnId: 0, trigger: 'normal', step: 1, stepUnfinished: true, appended: true },
       },
     });
     loop.subscribe((event) => events.push(event));
-    const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 1);
-    loop.continue();
+    loop.recordNotification(prompt('wake'));
+    const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 2);
+    loop.resume();
     await followup;
     expect(events.find((event) => event.type === 'turn.resumed')).toMatchObject({ turnId: 0, step: 1 });
     expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 0)).toMatchObject({
       outcome: { type: 'done', cause: { by: 'loop', reason: 'notify' } },
     });
+    expect(events.filter((event) => event.type === 'turn.started').map((event) => [event.turnId, event.trigger])).toEqual([
+      [1, 'normal'],
+      [2, 'notify'],
+    ]);
     expect(events.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
       [1, 1],
     ]);
+    expect(starting).toEqual([1]);
+    expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 2)).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+    });
     await loop.close();
+
+    const ordinaryEvents: LoopEmitted[] = [];
+    const ordinary = createLoop({
+      requester: requester([done('ordinary')]),
+      executor: createExecutor({}),
+      input: { inbox: { normal: [prompt('queued')] } },
+    });
+    ordinary.subscribe((event) => ordinaryEvents.push(event));
+    ordinary.notify(prompt('ordinary'));
+    const ordinaryEnded = once(ordinary, (event) => event.type === 'turn.ended' && event.turnId === 1);
+    ordinary.start();
+    await ordinaryEnded;
+    expect(ordinaryEvents.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
+      [1, 1],
+    ]);
+    expect(ordinaryEvents.find((event) => event.type === 'turn.ended' && event.turnId === 0)).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+    });
+    await ordinary.close();
+
+    const executableEvents: LoopEmitted[] = [];
+    const executable = createLoop({
+      requester: requester([done('ordinary')]),
+      executor: createExecutor({}),
+      input: { inbox: { notify: [prompt('ordinary')] } },
+    });
+    executable.subscribe((event) => executableEvents.push(event));
+    executable.recordNotification(prompt('restored'));
+    const executableEnded = once(executable, (event) => event.type === 'turn.ended' && event.turnId === 1);
+    executable.start();
+    await executableEnded;
+    expect(executableEvents.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+    ]);
+    expect(executableEvents.find((event) => event.type === 'turn.ended' && event.turnId === 1)).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+    });
+    await executable.close();
   });
 });

@@ -523,14 +523,17 @@ export class AgentTurnProjection {
       }
       case 'llm.sent': {
         const turn = this.active;
-        if (turn === undefined || turn.retry === undefined) return;
-        const step = turn.current?.number ?? turn.gatedSteps;
+        if (turn === undefined || (turn.retry === undefined && turn.current !== undefined)) return;
+        const stepNumber = turn.current?.number ?? turn.gatedSteps;
+        const step = createStepState(stepNumber, turn.controller.signal, turn.stepIds.get(stepNumber));
+        turn.current = step;
+        turn.stepIds.set(step.number, step.uuid);
         turn.retry = undefined;
         void this.options.dispatcher.dispatch(new TurnStepStarted({
           agentId: this.options.scopeContext.agentId,
           turnId: turn.id,
-          step,
-          stepId: turn.current?.uuid ?? turn.stepIds.get(step),
+          step: step.number,
+          stepId: step.uuid,
         }));
         return;
       }
@@ -1023,8 +1026,8 @@ export class AgentTurnProjection {
   }
 }
 
-function createStepState(number: number, signal: AbortSignal): CoreStepState {
-  return { number, uuid: randomUUID(), signal, pendingToolIds: new Set(), tools: [] };
+function createStepState(number: number, signal: AbortSignal, uuid: string = randomUUID()): CoreStepState {
+  return { number, uuid, signal, pendingToolIds: new Set(), tools: [] };
 }
 
 function mergeUsage(base: TokenUsage | undefined, patch: Partial<TokenUsage>): TokenUsage {

@@ -30,7 +30,7 @@ function runTool(opts: {
   });
   const handler = new ToolExecutor([new LegacyExecutableToolAdapter(tool)]).execute(
     { type: 'function', id: 'tc', name: tool.name, arguments: '{}' },
-    { turnId: 0 },
+    { origin: 'loop', turnId: 0 },
   );
   const snapshots: Array<Readonly<Record<string, unknown>>> = [];
   handler.observe((event) => {

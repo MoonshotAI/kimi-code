@@ -111,7 +111,7 @@ export class AgentShellCommandService extends Service implements IAgentShellComm
       name: 'Bash',
       arguments: JSON.stringify({ command: input.command, timeout: SHELL_FOREGROUND_TIMEOUT_S }),
     };
-    const handler = this.toolExecutor.executor.execute(call, { turnId: -1 });
+    const handler = this.toolExecutor.executor.execute(call, { origin: 'shellCommand', turnId: -1 });
     if (input.commandId !== undefined) {
       this.shellCommandControllers.set(input.commandId, handler);
       this.shellCommandTasks.set(input.commandId, handler.taskId);

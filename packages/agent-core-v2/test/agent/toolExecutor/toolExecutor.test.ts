@@ -196,6 +196,7 @@ describe('AgentToolExecutorService', () => {
       expect(detach).toHaveBeenCalledWith('call_echo', 'background task_id=task-echo');
       expect(tool.calls).toEqual([
         expect.objectContaining({
+          origin: 'loop',
           toolCallId: 'call_echo',
           turnId: 0,
           args: { text: 'hi' },
@@ -210,6 +211,7 @@ describe('AgentToolExecutorService', () => {
         'tool.updated',
         'tool.result',
       ]);
+      expect(protocolEvents[0]).toMatchObject({ origin: 'loop' });
       expect(telemetryEvents).toContainEqual({
         event: 'tool_call',
         properties: expect.objectContaining({
@@ -244,8 +246,8 @@ describe('AgentToolExecutorService', () => {
       });
       registry.register(firstTool);
       registry.register(secondTool);
-      const first = executor.executor.execute(toolCall('lease-first-1', 'lease-first', {}), { turnId: 1, step: 0 });
-      const second = executor.executor.execute(toolCall('lease-second-1', 'lease-second', {}), { turnId: 1, step: 0 });
+      const first = executor.executor.execute(toolCall('lease-first-1', 'lease-first', {}), { origin: 'loop', turnId: 1, step: 0 });
+      const second = executor.executor.execute(toolCall('lease-second-1', 'lease-second', {}), { origin: 'loop', turnId: 1, step: 0 });
       await firstStarted.promise;
       expect(secondTool.calls).toEqual([]);
       await vi.advanceTimersByTimeAsync(200);
@@ -619,8 +621,8 @@ describe('AgentToolExecutorService', () => {
     registry.register(slow);
     registry.register(fast);
 
-    const slowHandler = executor.executor.execute(toolCall('call_slow', 'slow', {}), { turnId: 0 });
-    const fastHandler = executor.executor.execute(toolCall('call_fast', 'fast', {}), { turnId: 0 });
+    const slowHandler = executor.executor.execute(toolCall('call_slow', 'slow', {}), { origin: 'loop', turnId: 0 });
+    const fastHandler = executor.executor.execute(toolCall('call_fast', 'fast', {}), { origin: 'loop', turnId: 0 });
     const yielded: string[] = [];
     const slowResult = slowHandler.wait().then(() => {
       yielded.push('slow');
@@ -680,9 +682,9 @@ describe('AgentToolExecutorService', () => {
       }
       return input.result;
     };
-    const detached = executor.executor.execute(toolCall('call_detached', 'detached', {}), { turnId: 1, step: 0 });
-    const conflicting = executor.executor.execute(toolCall('call_conflicting', 'conflicting', {}), { turnId: 1, step: 0 });
-    const nextBatch = executor.executor.execute(toolCall('call_next_batch', 'next-batch', {}), { turnId: 1, step: 1 });
+    const detached = executor.executor.execute(toolCall('call_detached', 'detached', {}), { origin: 'loop', turnId: 1, step: 0 });
+    const conflicting = executor.executor.execute(toolCall('call_conflicting', 'conflicting', {}), { origin: 'loop', turnId: 1, step: 0 });
+    const nextBatch = executor.executor.execute(toolCall('call_next_batch', 'next-batch', {}), { origin: 'loop', turnId: 1, step: 1 });
     await detachedStarted.promise;
     expect(detached.detach('background')).toBeDefined();
     await Promise.all([conflictingStarted.promise, nextBatchStarted.promise]);
@@ -920,8 +922,8 @@ describe('AgentToolExecutorService', () => {
     const second = new ControlledTool('second', ToolAccesses.readFile('/repo/second.ts'));
     registry.register(first);
     registry.register(second);
-    const firstHandler = executor.executor.execute(toolCall('call_first', 'first', {}), { turnId: 0 });
-    const secondHandler = executor.executor.execute(toolCall('call_second', 'second', {}), { turnId: 0 });
+    const firstHandler = executor.executor.execute(toolCall('call_first', 'first', {}), { origin: 'loop', turnId: 0 });
+    const secondHandler = executor.executor.execute(toolCall('call_second', 'second', {}), { origin: 'loop', turnId: 0 });
     await Promise.all([first.started, second.started]);
 
     const stopped = await firstHandler.stop('cancel first');
@@ -1769,7 +1771,7 @@ async function execute(
   detach?: (toolCallId: string, text: string) => void,
 ): Promise<ToolResult[]> {
   return Promise.all(calls.map(async (call) => {
-    const handler = executor.executor.execute(call, { turnId: 0, step: 0, trace });
+    const handler = executor.executor.execute(call, { origin: 'loop', turnId: 0, step: 0, trace });
     const onAbort = (): void => {
       void handler.stop(signal?.reason);
     };
@@ -2485,6 +2487,7 @@ describe('ToolExecutor handler kernel', () => {
       },
     });
     const agentContext = {
+      origin: 'loop' as const,
       turnId: 9,
       trace: { requestId: 'trace-legacy' },
       metadata: { source: 'test' },
