@@ -376,6 +376,10 @@ while IFS= read -r line; do :; done
             expect(bridge.status).toBe('disconnected');
             expect(bridge.failure).toBe('connection_refused');
           });
+          const refused = bridge.error;
+          await vi.waitFor(() => expect(bridge.status).toBe('connecting'), { timeout: 3_000, interval: 20 });
+          expect(bridge.failure).toBe('connection_refused');
+          expect(bridge.error).toBe(refused);
           await expect(bridge.connect()).rejects.toBeInstanceOf(HostConnectError);
           rmSync(down);
           await vi.waitFor(
