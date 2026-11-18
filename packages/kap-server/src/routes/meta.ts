@@ -16,6 +16,7 @@ interface RouteHost {
 
 export interface MetaRouteOptions {
   readonly serverVersion: string;
+  readonly product?: string;
   readonly serverId: string;
   readonly startedAt: string;
   readonly dangerousBypassAuth: boolean;
@@ -27,9 +28,11 @@ export interface MetaRouteOptions {
 export const KIMI_AGENT_PROTOCOL_VERSION = '0.1.0';
 
 export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void {
+  const product = opts.product !== undefined && opts.product.length > 0 ? opts.product : undefined;
   const staticData = Object.freeze({
     kimi_agent_protocol_version: KIMI_AGENT_PROTOCOL_VERSION,
     server_version: opts.serverVersion,
+    product,
     capabilities: Object.freeze({
       websocket: true as const,
       file_upload: true as const,

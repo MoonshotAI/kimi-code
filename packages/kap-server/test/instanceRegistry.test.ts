@@ -35,6 +35,7 @@ interface DiskInstance {
   started_at: number;
   heartbeat_at: number;
   host_version?: string;
+  product?: string;
 }
 
 function writeInstance(serverId: string, fields: Partial<DiskInstance> & { pid: number }): void {
@@ -88,10 +89,18 @@ describe('createInstanceRegistry — register / release', () => {
     expect(existsSync(filePath)).toBe(false);
   });
 
-  it('records host_version when provided', async () => {
+  it('records host_version and product when provided', async () => {
     const registry = createInstanceRegistry({ instancesDir, now: () => 1 });
-    const reg = await registry.register({ ...baseInfo, serverVersion: '1.2.3' });
-    expect(readInstance(reg.serverId).host_version).toBe('1.2.3');
+    const reg = await registry.register({
+      ...baseInfo,
+      serverVersion: '1.2.3',
+      product: 'kimi-code-desktop',
+    });
+    const disk = readInstance(reg.serverId);
+    expect(disk.host_version).toBe('1.2.3');
+    expect(disk.product).toBe('kimi-code-desktop');
+    const live = await registry.listLive();
+    expect(live[0]?.product).toBe('kimi-code-desktop');
     await reg.release();
   });
 
@@ -270,6 +279,10 @@ describe('startServer — instance registry wiring', () => {
 
     const live = await listLiveServerInstances(home);
     expect(live).toHaveLength(2);
+    expect(live.map((i) => i.product)).toEqual([
+      TEST_HOST_IDENTITY.productName,
+      TEST_HOST_IDENTITY.productName,
+    ]);
     expect(new Set(live.map((i) => i.serverId)).size).toBe(2);
     expect(live.map((i) => i.port).sort((x, y) => x - y)).toEqual(
       [a.port, b.port].sort((x, y) => x - y),

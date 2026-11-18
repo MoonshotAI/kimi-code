@@ -33,6 +33,7 @@ export type MetaFeature = z.infer<typeof metaFeatureSchema>;
 export const metaResponseSchema = z.object({
   kimi_agent_protocol_version: z.string().min(1),
   server_version: z.string().min(1),
+  product: z.string().min(1).optional(),
   capabilities: metaCapabilitiesSchema,
   server_id: z.string().min(1),
   started_at: isoDateTimeSchema,
