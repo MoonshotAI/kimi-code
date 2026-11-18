@@ -36,6 +36,7 @@ import {
 } from './zip';
 import { openZipSource, type ZipSource } from './file-source';
 import { FILE_HISTORY_BLOB_PREFIX } from '#/features/fileHistory/fileHistoryService';
+import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 
 const SESSION_LOG_REL = 'logs/kimi-code.log';
 const GLOBAL_LOG_REL = 'logs/global/kimi-code.log';
@@ -186,6 +187,9 @@ export class SessionExportService implements ISessionExportService {
     for (const agent of agents.list()) {
       const agentHandle = agents.handleOf(agent.agentId);
       if (agentHandle === undefined) continue;
+      await this.warnIfFails('export agent file history settle failed', () =>
+        agentHandle.accessor.get(IAgentFileHistoryService).settled(),
+      );
       await this.warnIfFails('export agent wire flush failed', () =>
         agentHandle.accessor.get(IWireService).flush(),
       );

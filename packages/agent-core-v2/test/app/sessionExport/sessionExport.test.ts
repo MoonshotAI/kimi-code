@@ -50,6 +50,7 @@ import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLi
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentFileHistoryService } from '#/features/fileHistory/fileHistory';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
@@ -890,6 +891,69 @@ describe('sessionExport', () => {
     expect(result.entries).toContain('state.json');
   });
 
+  it('waits for queued file-history checkpoints before packaging', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_live', 'ses_live');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    const outputPath = join(tmp, 'live.zip');
+    const warnings: Array<{ message: string; error: unknown }> = [];
+    let checkpointSettled = false;
+    const liveHandle = liveSessionHandle({
+      meta: {
+        id: 'ses_live',
+        title: 'Live',
+        createdAt: 1,
+        updatedAt: 2,
+        archived: false,
+      },
+      sessionLog: stubLog(),
+      agentWire: {
+        flush: async () => {
+          expect(checkpointSettled).toBe(true);
+        },
+      },
+      agentFileHistory: {
+        settled: async () => {
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+          const historyDir = join(sessionDir, 'agents', 'main', 'file-history');
+          await mkdir(historyDir, { recursive: true });
+          await writeFile(join(historyDir, 'last-checkpoint@v1'), 'last edit\n', 'utf-8');
+          checkpointSettled = true;
+        },
+      },
+    });
+    ix = createTestServices(tmp, {
+      summary: {
+        id: 'ses_live',
+        workspaceId: 'ws_live',
+        title: 'Live',
+        createdAt: 1,
+        updatedAt: 2,
+        archived: false,
+      },
+      lifecycleHandle: liveHandle,
+      appLog: {
+        ...stubLog(),
+        warn: (message, ...args: unknown[]) => {
+          warnings.push({ message, error: args });
+        },
+      },
+    });
+
+    const result = await ix.get(ISessionExportService).exportFeedback({
+      sessionId: 'ses_live',
+      outputPath,
+      version: '1.0.0-test',
+    });
+
+    expect(warnings).toEqual([]);
+    expect(result.entries).toContain('agents/main/file-history/last-checkpoint@v1');
+    await expect(readZipEntry(outputPath, 'agents/main/file-history/last-checkpoint@v1')).resolves.toEqual(
+      Buffer.from('last edit\n', 'utf8'),
+    );
+  });
+
   it('continues exporting when live flushes fail', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
     const sessionDir = join(tmp, 'sessions', 'ws_live', 'ses_flush_failure');
@@ -1062,9 +1126,10 @@ function liveSessionHandle(options: {
   readonly meta: SessionMeta;
   readonly sessionLog: LogService;
   readonly agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flush'>;
+  readonly agentFileHistory?: Pick<IAgentFileHistoryService, 'settled'>;
   readonly lastRequestId?: string;
 }): ISessionScopeHandle {
-  const agentHandle = testAgentHandle(options.agentWire);
+  const agentHandle = testAgentHandle(options.agentWire, options.agentFileHistory);
   const lifecycle = stubAgentLifecycle([agentHandle]);
   return {
     id: options.meta.id,
@@ -1089,11 +1154,17 @@ function liveSessionHandle(options: {
   };
 }
 
-function testAgentHandle(agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flush'>): IAgentScopeHandle {
+function testAgentHandle(
+  agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flush'>,
+  agentFileHistory: Pick<IAgentFileHistoryService, 'settled'> = { settled: async () => {} },
+): IAgentScopeHandle {
   return {
     id: 'main',
     kind: LifecycleScope.Agent,
-    accessor: accessorFrom([[IWireService, stubAgentWire(agentWire.flush)]]),
+    accessor: accessorFrom([
+      [IWireService, stubAgentWire(agentWire.flush)],
+      [IAgentFileHistoryService, agentFileHistory],
+    ]),
     dispose: () => {},
   };
 }
