@@ -17,7 +17,7 @@ export const worktreeSetupRequestSchema = z.object({
 });
 export type WorktreeSetupRequest = z.infer<typeof worktreeSetupRequestSchema>;
 
-export const worktreeSetupStepKindSchema = z.enum(['fetch', 'create', 'changes', 'script']);
+export const worktreeSetupStepKindSchema = z.enum(['fetch', 'prune', 'create', 'changes', 'script']);
 export type WorktreeSetupStepKind = z.infer<typeof worktreeSetupStepKindSchema>;
 
 export const worktreeSetupStepStateSchema = z.enum([

@@ -278,6 +278,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/workspaces/{workspace_id}/git/branches",
+    ],
+    [
+      "GET",
       "/api/v1/workspaces/{workspace_id}/skills",
     ],
     [
@@ -527,6 +531,30 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/title/generate",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:cancel",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:recreate",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:retry",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:run_script",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:skip_script",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/worktree:use_local",
     ],
     [
       "POST",

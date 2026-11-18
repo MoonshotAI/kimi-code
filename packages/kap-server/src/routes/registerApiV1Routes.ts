@@ -41,6 +41,8 @@ import { registerToolsRoutes } from './tools';
 import { registerConversationRoutes } from './conversation';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
+import { registerWorktreeRoutes } from './worktrees';
+import type { SessionWorktreeService } from '../services/worktrees/sessionWorktreeService';
 import { hostSources } from '../services/hosts/hostFanout';
 
 interface ApiV1AppHost {
@@ -68,6 +70,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly drainIdleSessions: () => Promise<boolean>;
   readonly hostBridges: HostBridgeManager;
   readonly conversations: ConversationService;
+  readonly worktrees: SessionWorktreeService;
   readonly sessionRating: SessionRatingHost;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
@@ -131,12 +134,19 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
         opts.conversations,
+        opts.worktrees,
         hostSources(opts.hostBridges),
       );
       registerSessionListAndBatchRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionListAndBatchRoutes>[0],
         core,
+        opts.worktrees,
         hostSources(opts.hostBridges),
+      );
+      registerWorktreeRoutes(
+        apiV1 as unknown as Parameters<typeof registerWorktreeRoutes>[0],
+        core,
+        opts.worktrees,
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);

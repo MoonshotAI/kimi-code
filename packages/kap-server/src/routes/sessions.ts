@@ -40,6 +40,7 @@ import {
   type ISessionScopeHandle,
   type Scope,
   type SubagentModelPoolSnapshot,
+  type Workspace,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServerResponse } from 'node:http';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
@@ -102,6 +103,13 @@ import {
   creationMainAgentBinding,
 } from './sessionAgentConfig';
 import { customSessionMetadata, updateSessionProfile } from './sessionProfile';
+import type { SessionWorktreeService } from '../services/worktrees/sessionWorktreeService';
+import {
+  SESSION_WORKTREE_METADATA_KEY,
+  sessionWorktreeWire,
+  withStoredSessionWorktree,
+} from '../services/worktrees/sessionWorktreeState';
+import { WorktreeError } from '../services/worktrees/worktreeError';
 
 interface SessionRouteHost {
   post(
@@ -167,6 +175,7 @@ export function registerSessionsRoutes(
   app: SessionRouteHost,
   core: Scope,
   conversations: ConversationService,
+  worktrees: SessionWorktreeService,
   hosts?: HostSources,
 ): void {
   const createRoute = defineRoute(
@@ -181,9 +190,11 @@ export function registerSessionsRoutes(
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        [ErrorCode.WORKTREE_UNSUPPORTED]: {},
         ...agentConfigErrors,
       },
-      description: 'Create a new session',
+      description:
+        'Create a new session. With worktree, the session is returned at once at the workspace root with worktree.setup.status "running"; the setup continues in the background and each change is published as a session "updated" event',
       tags: ['sessions'],
     },
     async (req, reply) => {
@@ -214,7 +225,7 @@ export function registerSessionsRoutes(
 
       const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
-      let bucket: { readonly id: string; readonly root: string } | undefined;
+      let bucket: Workspace | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -252,7 +263,15 @@ export function registerSessionsRoutes(
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
-        const custom = customSessionMetadata(body.metadata);
+        const planned =
+          body.worktree === undefined
+            ? undefined
+            : await worktrees.planCreate(resolved, body.worktree);
+        const clientCustom = customSessionMetadata(body.metadata);
+        const custom =
+          planned === undefined
+            ? clientCustom
+            : withStoredSessionWorktree(clientCustom, planned.stored);
         const agentConfig = body.agent_config ?? {};
         const mainAgentBinding = await creationMainAgentBinding(core, agentConfig);
         const { profile: _profile, model: _model, thinking: _thinking, ...settings } = agentConfig;
@@ -283,6 +302,7 @@ export function registerSessionsRoutes(
         core.accessor.get(IEventService).publish(
           new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
         );
+        if (planned !== undefined) worktrees.start(sessionId, planned);
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -337,9 +357,8 @@ export function registerSessionsRoutes(
         );
         return;
       }
-      const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
-      if (cwd === undefined) {
+      const session = await readWireSession(core, worktrees, session_id);
+      if (session === undefined) {
         reply.send(
           errEnvelope(
             ErrorCode.SESSION_NOT_FOUND,
@@ -349,9 +368,7 @@ export function registerSessionsRoutes(
         );
         return;
       }
-      reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
-      );
+      reply.send(okEnvelope(session, req.id));
     },
   );
   app.get(
@@ -1161,7 +1178,22 @@ export function toWireSession(
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom),
     git,
+    worktree: sessionWorktreeWire(fields.custom),
   };
+}
+
+export async function readWireSession(
+  core: Scope,
+  worktrees: Pick<SessionWorktreeService, 'refreshFacts'>,
+  sessionId: string,
+): Promise<Session | undefined> {
+  const summary = await core.accessor.get(ISessionIndex).get(sessionId);
+  if (summary === undefined) return undefined;
+  const cwd =
+    summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
+  if (cwd === undefined) return undefined;
+  await worktrees.refreshFacts([summary]);
+  return toWireSession(summary, cwd, resolveSessionFacts(core, sessionId));
 }
 
 export interface SessionFacts {
@@ -1217,7 +1249,11 @@ function buildWireMetadata(
   custom: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (custom === undefined) return undefined;
-  const { goal: _drop, ...rest } = custom as { goal?: unknown; [key: string]: unknown };
+  const {
+    goal: _goal,
+    [SESSION_WORKTREE_METADATA_KEY]: _worktree,
+    ...rest
+  } = custom as { goal?: unknown; [key: string]: unknown };
   return Object.keys(rest).length === 0 ? undefined : rest;
 }
 
@@ -1252,6 +1288,10 @@ function sendMappedError(
   req: { id: string },
   error: unknown,
 ): void {
+  if (error instanceof WorktreeError) {
+    reply.send(errEnvelope(error.code, error.message, req.id, error.details));
+    return;
+  }
   if (sendEnvironmentError(reply, req.id, error)) return;
   sendSessionMappedError(reply, req, error);
 }
