@@ -121,6 +121,7 @@ import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolic
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -355,6 +356,9 @@ describe('AgentLifecycleService', () => {
       acquire: () => ({ dispose: () => {} }),
     };
     ix.stub(IAtomicDocumentStore, atomicDocsStore);
+    ix.stub(IAgentToolSelectService, {
+      restoreInheritedTools: (tools) => tools,
+    } as IAgentToolSelectService);
     ix.stub(ILogService, noopLog);
     ix.stub(IAgentPluginService, {
       _serviceBrand: undefined,
@@ -423,6 +427,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       start: vi.fn(async () => {}),
       baselineTools: () => [],
+      prepareBaselineTools: async () => [],
       data: () => ({
         ...(loopProfileSequence.length > 0 ? loopProfileSequence.shift()! : loopProfile),
         modelCapabilities: UNKNOWN_CAPABILITY,
@@ -1726,6 +1731,44 @@ describe('AgentLifecycleService', () => {
       disallowedTools: ['Bash'],
       subagents: ['explore'],
     });
+  });
+
+  it('fork reads the inherited profile after baseline preparation', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const source = await svc.create({ agentId: 'main' });
+    const sourceLoop = svc.handleOf('main')!.accessor.get(IAgentLoopService);
+    await sourceLoop.setProfile({
+      profileName: 'before-preparation',
+      thinkingLevel: 'off',
+      systemPrompt: '',
+      activeToolNames: ['Read', 'mcp__srv__echo'],
+    });
+    vi.spyOn(sourceLoop, 'prepareBaselineTools').mockImplementationOnce(async () => {
+      await sourceLoop.setProfile({
+        profileName: 'after-preparation',
+        thinkingLevel: 'off',
+        systemPrompt: '',
+        activeToolNames: ['Read'],
+      });
+      return [];
+    });
+
+    const child = await svc.fork(source, { agentId: 'forked' });
+
+    expect(svc.handleOf(child.agentId)!.accessor.get(IAgentProfileService).data()).toMatchObject({
+      profileName: 'after-preparation',
+      activeToolNames: ['Read'],
+    });
+  });
+
+  it('keeps a fork in memory when another client holds the session lock', async () => {
+    const lifecycle = ix.get(IAgentLifecycleService);
+    const parent = await lifecycle.create({ agentId: 'main' });
+    vi.spyOn(ix.get(ISessionLockService), 'tryHold').mockReturnValue(false);
+    const child = await lifecycle.fork(parent, { agentId: 'forked' });
+
+    expect(lifecycle.get(child.agentId)).toBe(child);
+    expect(atomicDocs.has('sessions/ws_test/sess_test/agents/forked/inherited-tools.json')).toBe(false);
   });
 
   it('fork snapshots the source environment and remains independent', async () => {

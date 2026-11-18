@@ -2,9 +2,10 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { BaselineTool } from '#/agent/toolSelect/toolSelect';
 import type { AgentTaskInfo } from '#/agent/task/types';
 import type { FinishReason } from '@moonshot-ai/core/llm/response';
-import type { ContentPart, Message, TextPart, ToolCall, ToolDescription as Tool, UserMessage } from '@moonshot-ai/core/llm/message';
+import type { ContentPart, Message, TextPart, ToolCall, UserMessage } from '@moonshot-ai/core/llm/message';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { Hooks } from '#/hooks';
 import type { LoopRequester } from './requesterContract';
@@ -249,9 +250,11 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   readonly requester: LoopRequester;
 
-  start(tools?: readonly Tool[]): Promise<void>;
+  start(tools?: readonly BaselineTool[]): Promise<void>;
 
-  baselineTools(): readonly Tool[];
+  baselineTools(): readonly BaselineTool[];
+
+  prepareBaselineTools(signal?: AbortSignal): Promise<readonly BaselineTool[]>;
 
   bindingSnapshot(): ProfileBindingSnapshot;
 

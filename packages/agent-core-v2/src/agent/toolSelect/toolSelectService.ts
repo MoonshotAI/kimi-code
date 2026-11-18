@@ -33,6 +33,8 @@ import {
 import { TOOL_SELECT_FLAG_ID } from './flag';
 import {
   IAgentToolSelectService,
+  modelTools,
+  type BaselineTool,
   SELECT_TOOLS_TOOL_NAME,
   type LoadToolsResult,
   type ShapedToolEntry,
@@ -140,14 +142,28 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.defaultToolsForDisclosure(disclosure);
   }
 
-  initialTools(): readonly Tool[] {
-    const tools = this.initialToolInfos();
+  initialTools(source?: ToolInfo['source']): readonly BaselineTool[] {
+    const tools = this.initialToolInfos().filter((tool) => source === undefined || tool.source === source);
     return this.activeEntries(tools, this.featureEnabled()).map((tool) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
       deferred: tool.disclosure === 'deferred' ? true : undefined,
+      source: tool.source,
     }));
+  }
+
+  restoreInheritedTools(tools: readonly BaselineTool[]): readonly BaselineTool[] {
+    const disclosure = this.featureEnabled();
+    const active = tools.filter((tool) => tool.deferred === true || this.isActiveEntry(tool, disclosure));
+    if (!disclosure || active.some((tool) => tool.name === SELECT_TOOLS_TOOL_NAME)) return active;
+    const selector = this.initialTools('builtin').find((tool) => tool.name === SELECT_TOOLS_TOOL_NAME);
+    if (selector === undefined) return active;
+    return [...active, selector].toSorted((left, right) => left.name.localeCompare(right.name));
+  }
+
+  operationTools(baseline: readonly BaselineTool[], disclosure: boolean): readonly Tool[] {
+    return this.requestTools(modelTools(this.activeEntries(baseline, disclosure)), disclosure, true);
   }
 
   requestTools(
@@ -159,12 +175,22 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     if (!dynamic) return base ?? this.defaultToolsForDisclosure(disclosure);
     if (disclosure) return base ?? [];
     const loaded = collectLoadedDynamicTools(messages);
+    const sources = new Map(this.currentTools().map((tool) => [tool.name, tool.source]));
+    for (const tool of this.profile.baselineTools()) {
+      if (tool.source !== undefined) sources.set(tool.name, tool.source);
+    }
+    const isActive = (tool: BaselineTool): boolean => this.toolPolicy.isToolActive(
+      tool.name,
+      tool.source ?? sources.get(tool.name) ?? (isMcpToolName(tool.name) ? 'mcp' : undefined),
+    );
     const tools = (base ?? [])
-      .filter((tool) => tool.name !== SELECT_TOOLS_TOOL_NAME)
-      .map((tool) => tool.deferred === true ? { ...tool, deferred: undefined } : tool);
+      .filter((tool) =>
+        tool.name !== SELECT_TOOLS_TOOL_NAME &&
+        (tool.deferred !== true || isActive(tool)))
+      .map((tool) => tool.deferred === true ? { ...(loaded.get(tool.name) ?? tool), deferred: undefined } : tool);
     const names = new Set(tools.map((tool) => tool.name));
     for (const tool of loaded.values()) {
-      if (names.has(tool.name)) continue;
+      if (names.has(tool.name) || !isActive(tool)) continue;
       tools.push({ ...tool, deferred: undefined });
       names.add(tool.name);
     }
@@ -685,26 +711,30 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     };
   }
 
-  private activeEntries<T extends ToolInfo | ToolSelectTool>(
+  private activeEntries<T extends Pick<BaselineTool, 'name' | 'source'>>(
     entries: readonly T[],
     disclosure: boolean,
   ): readonly T[] {
     let filtered: T[] | undefined;
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i]!;
-      const active =
-        this.toolPolicy.isToolActive(entry.name, entry.source) ||
-        (disclosure &&
-          entry.name === SELECT_TOOLS_TOOL_NAME &&
-          this.toolPolicy.isToolActiveForDisclosure(entry.name, entry.source));
-      const keep = active && (disclosure || entry.name !== SELECT_TOOLS_TOOL_NAME);
-      if (keep) {
+      if (this.isActiveEntry(entry, disclosure)) {
         if (filtered !== undefined) filtered.push(entry);
         continue;
       }
       if (filtered === undefined) filtered = entries.slice(0, i);
     }
     return filtered ?? entries;
+  }
+
+  private isActiveEntry(entry: Pick<BaselineTool, 'name' | 'source'>, disclosure: boolean): boolean {
+    const source = entry.source ?? this.currentTools().find((tool) => tool.name === entry.name)?.source ??
+      (isMcpToolName(entry.name) ? 'mcp' : undefined);
+    if (entry.name === SELECT_TOOLS_TOOL_NAME) {
+      return disclosure && (this.toolPolicy.isToolActive(entry.name, source) ||
+        this.toolPolicy.isToolActiveForDisclosure(entry.name, source));
+    }
+    return this.toolPolicy.isToolActive(entry.name, source);
   }
 
   private describeUnavailableTool(name: string): string | undefined {

@@ -232,6 +232,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
     return [];
   }
 
+  async prepareBaselineTools(): Promise<readonly Tool[]> {
+    return [];
+  }
+
   override getModelCapabilities(): LegacyModelCapability {
     return fromLlmModelSpec({ provider: 'stub', name: 'stub', capability: capabilities });
   }
@@ -651,6 +655,63 @@ describe('AgentToolSelectService gate', () => {
 });
 
 describe('AgentToolSelectService S0 baseline (gate closed)', () => {
+  it.each([false, true])('preserves an explicit tool baseline without disclosure (flag: %s)', async (enabled) => {
+    flagEnabled = enabled;
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: !enabled });
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+    const baseline = h.sut.initialTools();
+    const alpha = new StubMcpTool(MCP_ALPHA);
+    const registration = registerMcp(h, alpha);
+    registerMcp(h, new StubMcpTool(MCP_BETA), 'inline');
+    registerBuiltin(h, new EchoTool('Denied'));
+    activeToolNames = new Set(['Echo', MCP_ALPHA, MCP_BETA, MCP_GAMMA]);
+
+    const first = await resolveWith(h, { tools: baseline, messages: [], capabilities, dynamic: true });
+    expect(first.profile?.tools?.map((tool) => tool.name)).toEqual(['Echo']);
+    expect(first.profile?.tools?.every((tool) => tool.deferred === undefined)).toBe(true);
+    expect(baseline.map((tool) => tool.name)).toEqual(['Echo']);
+
+    registration.dispose();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA, 'ok', REQUIRED_PAYLOAD_PARAMETERS));
+    registerMcp(h, new StubMcpTool(MCP_GAMMA));
+    const next = await resolveWith(h, { tools: baseline, messages: [], capabilities, dynamic: true });
+    expect(next.profile?.tools).toEqual(first.profile?.tools);
+  });
+
+  it('filters deferred baseline tools through the current policy without disclosure', () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+    const baseline = h.sut.initialTools();
+    activeToolNames = new Set(['Echo', MCP_BETA]);
+
+    const tools = h.sut.requestTools(baseline, false, true, []);
+
+    expect(tools.map((tool) => tool.name)).toEqual(['Echo', MCP_BETA]);
+    expect(tools.every((tool) => tool.deferred === undefined)).toBe(true);
+  });
+
+  it('filters history-loaded tools through the current policy without disclosure', () => {
+    const h = createHarness();
+    registerBuiltin(h, new EchoTool());
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+    const baseline = h.sut.initialTools();
+    const active = new Set(['Echo', MCP_BETA]);
+    activeToolNames = active;
+
+    const tools = h.sut.requestTools(
+      baseline.filter((tool) => active.has(tool.name)),
+      false,
+      true,
+      [schemaMessage(MCP_ALPHA, MCP_BETA)],
+    );
+
+    expect(tools.map((tool) => tool.name)).toEqual(['Echo', MCP_BETA]);
+  });
+
   it.each([false, true])('keeps initial schemas pinned without dynamic loading (restored: %s)', async (restoring) => {
     flagEnabled = true;
     const h = createHarness();

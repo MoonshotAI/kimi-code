@@ -131,7 +131,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.dispose();
   });
 
-  it('announces MCP tools discovered during startup in the first model request', async () => {
+  it.each(['inline', 'deferred'] as const)('exposes %s MCP tools discovered during startup with disclosure enabled', async (disclosure) => {
     registration?.dispose();
     const ready = createControlledPromise<void>();
     const waiting = createControlledPromise<void>();
@@ -143,14 +143,13 @@ describe('progressive tool disclosure end-to-end', () => {
     await waiting;
     expect(ctx.llmCalls).toHaveLength(0);
     registration = ctx.get(IAgentToolRegistryService)
-      .register(alpha, { source: 'mcp', disclosure: 'deferred' });
+      .register(alpha, { source: 'mcp', disclosure });
     ready.resolve();
     await ctx.untilTurnEnd();
 
     const firstWire = ctx.llmCalls[0]!;
-    expect(toolNames(firstWire.tools)).not.toContain(MCP_ALPHA);
-    expect(historyText(firstWire.history)).toContain('<tools_added>');
-    expect(historyText(firstWire.history)).toContain(MCP_ALPHA);
+    expect(toolNames(firstWire.tools).includes(MCP_ALPHA)).toBe(disclosure === 'inline');
+    expect(historyText(firstWire.history).includes(MCP_ALPHA)).toBe(disclosure === 'deferred');
   });
 
   it('can cancel the first turn while MCP discovery is still pending', async () => {
@@ -172,6 +171,62 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(turnEnded?.args).toMatchObject({ reason: 'cancelled' });
     expect(ctx.llmCalls).toHaveLength(0);
   });
+
+  it.each([
+    { disclosure: 'inline' as const, toolSelect: false },
+    { disclosure: 'deferred' as const, toolSelect: false },
+    { disclosure: 'inline' as const, toolSelect: true },
+    { disclosure: 'deferred' as const, toolSelect: true },
+  ])(
+    'exposes $disclosure MCP tools discovered during startup without disclosure (flag: $toolSelect)',
+    async ({ disclosure, toolSelect }) => {
+      await ctx.dispose();
+      registration = undefined;
+      vi.stubEnv(TOOL_SELECT_FLAG_ENV, toolSelect ? '1' : '0');
+      const ready = createControlledPromise<void>();
+      const waiting = createControlledPromise<void>();
+      ctx = createTestAgent(sessionService(ISessionMcpHandle, {
+        _serviceBrand: undefined,
+        get ready() {
+          waiting.resolve();
+          return ready;
+        },
+        connectionManager: new McpConnectionManager(),
+        isBaselineServer: () => true,
+      }));
+      ctx.configure({
+        tools: ['Read', 'mcp__*'],
+        modelCapabilities: { ...DISCLOSURE_CAPABILITIES, dynamically_loaded_tools: !toolSelect },
+      });
+      await ctx.restorePersisted();
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+      expect(ctx.get(IAgentToolSelectService).enabled()).toBe(false);
+      ctx.mockNextResponse({ type: 'text', text: 'ready' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the server tool' }] });
+      await waiting;
+      expect(ctx.llmCalls).toHaveLength(0);
+      registration = ctx.get(IAgentToolRegistryService)
+        .register(alpha, { source: 'mcp', disclosure });
+      ready.resolve();
+      await ctx.untilTurnEnd();
+
+      const firstWire = ctx.llmCalls[0]!;
+      expect(toolNames(firstWire.tools)).toEqual([MCP_ALPHA, 'Read']);
+      const schema = firstWire.tools.find((tool) => tool.name === MCP_ALPHA);
+      expect(schema?.parameters).toEqual(alpha.parameters);
+      expect(schema).not.toHaveProperty('deferred', true);
+
+      ctx.mockNextResponse({ type: 'function', id: 'call_alpha', name: MCP_ALPHA, arguments: '{}' });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'call the server tool' }] });
+      await ctx.untilTurnEnd();
+
+      expect(alpha.calls).toBe(1);
+      expect(ctx.llmCalls.every((call) => JSON.stringify(call.tools) === JSON.stringify(firstWire.tools)))
+        .toBe(true);
+    },
+  );
 
   it('announces, loads, preserves schemas through replacements and restore, and keeps the baseline stable', async () => {
     const inlineName = 'mcp__srv__inline';
