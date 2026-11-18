@@ -4,8 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MoonLoader, type SpinnerLabel, type SpinnerStyle } from '#/tui/components/chrome/moon-loader';
 import { MOON_LOADER_FRAME_MS } from '#/tui/constant/rendering';
 
-// MoonLoader requests animation frames from its constructor, so every loader
-// created in these tests must be stopped to avoid leaving live timers behind.
 const loaders: MoonLoader[] = [];
 
 function createLoader(style: SpinnerStyle = 'moon', label?: SpinnerLabel) {

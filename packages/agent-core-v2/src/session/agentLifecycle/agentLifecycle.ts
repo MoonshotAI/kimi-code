@@ -54,6 +54,7 @@ export interface IAgentLifecycleService {
   remove(agent: AgentContext): Promise<void>;
 
   handleOf(agentId: string): IAgentScopeHandle | undefined;
+  whenCreateSettled?(agentId?: string): Promise<void>;
 
   adopt(handle: IAgentScopeHandle): AgentContext;
 }

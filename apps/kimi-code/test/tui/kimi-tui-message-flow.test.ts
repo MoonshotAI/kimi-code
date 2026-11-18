@@ -604,10 +604,6 @@ function stagedImage(imageStore: ImageAttachmentStore, fileId: string) {
   return imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1, undefined, fileId);
 }
 
-/**
- * Emits the turn.started/turn.ended pair that claims and then releases a
- * staged-media lease; `between` runs assertions after the claim.
- */
 function emitTurn(driver: MessageDriver, turnId: number, between?: () => void): void {
   driver.sessionEventHandler.handleEvent(
     { type: 'turn.started', agentId: 'main', turnId, origin: { kind: 'user' } } as Event,
@@ -1809,8 +1805,8 @@ describe('KimiTUI message flow', () => {
       ['n2', 'second update'],
       ['n3', 'third update'],
     ] as const) {
-      notifications.handleEvent({ type: 'tool.call.started', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId, name: 'NotifyUser', args: { message } });
-      notifications.handleEvent({ type: 'tool.result', agentId: 'main', sessionId: 's1', turnId: 1, toolCallId, output: 'Update shown to the user.' });
+      notifications.handleEvent({ type: 'tool.call.started', agentId: 'main', sessionId: 's1', origin: 'loop', turnId: 1, toolCallId, name: 'NotifyUser', args: { message } });
+      notifications.handleEvent({ type: 'tool.result', agentId: 'main', sessionId: 's1', origin: 'loop', turnId: 1, toolCallId, output: 'Update shown to the user.' });
     }
     driver.state.editor.setText('unsent follow-up');
     const cursor = driver.state.editor.getCursor();
@@ -2012,8 +2008,6 @@ describe('KimiTUI message flow', () => {
     const replayed = await driver.sessionReplay.hydrateFromReplay(session as unknown as Session);
     expect(replayed).toBe(true);
 
-    // Live, the cron fire's turn.started closes the panel; replay folds the
-    // cron turn into the previous one for grouping but must close it too.
     expect(driver.state.notifyPanel.isEmpty()).toBe(true);
     expect(driver.state.notifyPanelContainer.children).toHaveLength(0);
   });
@@ -2620,8 +2614,6 @@ describe('KimiTUI message flow', () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
-      // No model configured: /settings must still open so the user can fix
-      // local editor/theme/update settings before picking a model.
       cliOptions: { ...makeStartupInput().cliOptions },
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
@@ -2672,7 +2664,6 @@ describe('KimiTUI message flow', () => {
     const listPlugins = vi.fn(async () => []);
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
-      // No model configured: /plugins must still work via the app-global API.
       cliOptions: { ...makeStartupInput().cliOptions },
     };
     const { driver, harness } = await makeDriver(session, { listPlugins }, startupInput);
@@ -2733,7 +2724,6 @@ describe('KimiTUI message flow', () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
-      // No model configured: the read-only form must still work.
       cliOptions: { ...makeStartupInput().cliOptions },
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
@@ -2984,7 +2974,6 @@ describe('KimiTUI message flow', () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
-      // No model configured: read-only views must still open.
       cliOptions: { ...makeStartupInput().cliOptions },
     };
     const { driver, harness } = await makeDriver(session, {}, startupInput);
@@ -7292,7 +7281,7 @@ command = "vim"
     type: 'tool.call.started' | 'tool.updated' | 'tool.result',
     extra: Record<string, unknown> = {},
   ): Event {
-    const base = { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_wait' };
+    const base = { agentId: 'main', sessionId: 'ses-1', origin: 'loop', turnId: 1, toolCallId: 'call_wait' };
     if (type === 'tool.call.started') {
       return { type, ...base, name: 'WaitFor', args: { timeout: 60 }, ...extra } as Event;
     }
@@ -9041,21 +9030,68 @@ capabilities = ["image_in", "video_in"]
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
-  it('echoes a bash command with a $ prompt in the transcript', async () => {
-    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+  it('echoes a foreground bash command once and settles its activity state', async () => {
+    let resolveCommand!: (result: { stdout: string; stderr: string; isError: boolean }) => void;
+    const runShellCommand = vi.fn(() => new Promise<{ stdout: string; stderr: string; isError: boolean }>((resolve) => {
+      resolveCommand = resolve;
+    }));
     const session = makeSession({ runShellCommand });
     const { driver, harness } = await makeDriver(session);
     driver.state.appState.inputMode = 'bash';
     driver.state.editor.inputMode = 'bash';
 
     driver.handleUserInput('ls');
-    await Promise.resolve();
+    const commandId = driver.state.transcriptEntries.at(-1)!.id;
+    const emit = (event: Event) => driver.sessionEventHandler.handleEvent(event, vi.fn());
+    emit({
+      type: 'tool.call.started',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      origin: 'shellCommand',
+      turnId: -1,
+      toolCallId: commandId,
+      name: 'Bash',
+      args: { command: 'ls' },
+    } as Event);
+    emit({
+      type: 'tool.updated',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      origin: 'shellCommand',
+      turnId: -1,
+      toolCallId: commandId,
+      taskId: 'bash-task-1',
+      status: 'running',
+      detached: false,
+      fields: {},
+      output: { offset: 0, text: 'hello' },
+    } as Event);
+    emit({
+      type: 'shell.output',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      commandId,
+      update: { kind: 'stdout', text: 'hello' },
+    } as Event);
+    emit({
+      type: 'tool.result',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      origin: 'shellCommand',
+      turnId: -1,
+      toolCallId: commandId,
+      output: 'hello',
+    } as Event);
+    resolveCommand({ stdout: 'hello', stderr: '', isError: false });
+    await vi.waitFor(() => expect(driver.state.appState.streamingPhase).toBe('idle'));
 
     expect(harness.track).toHaveBeenCalledWith('shell_command', undefined);
-
     const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
-    expect(transcript).toContain('$ ls');
+    expect(transcript.match(/\$ ls/g)).toHaveLength(1);
+    expect(transcript.match(/hello/g)).toHaveLength(1);
     expect(transcript).not.toContain('! ls');
+    expect(driver.state.livePane.mode).toBe('idle');
+    expect(driver.state.activitySpinner).toBeNull();
   });
 
   it('collapses long ! output to its first 10 rows and expands it with ctrl+o', async () => {
@@ -9434,9 +9470,6 @@ capabilities = ["image_in", "video_in"]
     entry('assistant', 'USER-FINAL', '1');
     emit({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event);
 
-    // task 1 terminates while idle; its notification turn opens and starts
-    // answering, then task 2 terminates mid-turn and its terminal card lands
-    // inside turn 2's output.
     terminate('task-1');
     emit({ type: 'turn.started', agentId: 'main', turnId: 2, origin: taskOrigin('task-1') } as Event);
     entry('assistant', 'report one intro', '2');
@@ -9444,9 +9477,6 @@ capabilities = ["image_in", "video_in"]
     entry('assistant', 'REPORT-ONE-FINAL', '2');
     emit({ type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event);
 
-    // task 2's notification missed turn 2's last drain, so it opens its own
-    // turn. When that turn ends, the fold must start at this turn's boundary —
-    // not at task 2's card mounted mid-turn-2 — or REPORT-ONE-FINAL folds away.
     emit({ type: 'turn.started', agentId: 'main', turnId: 3, origin: taskOrigin('task-2') } as Event);
     entry('assistant', 'report two intro', '3');
     entry('assistant', 'report two middle', '3');
@@ -9481,9 +9511,6 @@ capabilities = ["image_in", "video_in"]
 
     expect(stripSgr(renderTranscript(driver))).toContain('FINAL-ANSWER');
 
-    // The agent timed out without any subagent lifecycle event, so no
-    // terminal card was ever mounted for it — agent-kind task terminations
-    // mount none of their own.
     emit({
       type: 'background.task.terminated',
       agentId: 'main',
@@ -9503,8 +9530,6 @@ capabilities = ["image_in", "video_in"]
       ),
     ).toHaveLength(0);
 
-    // The notification turn anchors its fold boundary by mounting the missing
-    // terminal card at the turn's start.
     emit({
       type: 'turn.started',
       agentId: 'main',
@@ -11706,8 +11731,6 @@ capabilities = ["image_in", "video_in"]
       } as Event,
       sendQueued,
     );
-    // Swarm child events are batched onto the swarm's own frame timer instead
-    // of rendering the whole tree per event.
     expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     driver.sessionEventHandler.handleEvent(
@@ -11770,8 +11793,6 @@ capabilities = ["image_in", "video_in"]
       } as Event,
       sendQueued,
     );
-    // A child turn end changes no swarm state, so it stays on the batched
-    // frame timer like the deltas above.
     expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     transcript = stripSgr(renderTranscript(driver));
@@ -12698,7 +12719,7 @@ capabilities = ["image_in", "video_in"]
       );
     });
     const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
-    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\u001B[B');
     confirm.handleInput('\r');
 
     await vi.waitFor(() => {
@@ -12762,7 +12783,7 @@ capabilities = ["image_in", "video_in"]
       );
     });
     const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
-    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\u001B[B');
     confirm.handleInput('\r');
 
     await vi.waitFor(() => {
@@ -12786,7 +12807,7 @@ capabilities = ["image_in", "video_in"]
       );
     });
     const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
-    confirm.handleInput('\r'); // default option is "Exit"
+    confirm.handleInput('\r');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBe(driver.state.editor);
@@ -12939,7 +12960,7 @@ capabilities = ["image_in", "video_in"]
       );
     });
     const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
-    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\u001B[B');
     confirm.handleInput('\r');
 
     await vi.waitFor(() => {
@@ -12996,7 +13017,7 @@ capabilities = ["image_in", "video_in"]
       );
     });
     const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
-    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\u001B[B');
     confirm.handleInput('\r');
 
     await vi.waitFor(() => {
@@ -13114,7 +13135,7 @@ capabilities = ["image_in", "video_in"]
         expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
       });
       const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
-      panel.handleInput('\t'); // → Official, which lazily (and unsuccessfully) loads
+      panel.handleInput('\t');
 
       await vi.waitFor(() => {
         expect(stripSgr(panel.render(120).join('\n'))).toContain(
@@ -14990,8 +15011,6 @@ describe('footer ctrl+o hint', () => {
     driver.toggleToolOutputExpansion();
     expect(renderFooterLine1(driver)).toContain('ctrl+o collapse');
 
-    // Four later user turns move the expanded card before the three-turn
-    // cutoff; nothing collapses it, and ctrl+o would still visibly collapse it.
     for (let i = 0; i < 4; i++) {
       driver.appendTranscriptEntry({
         id: `later-${String(i)}`,
@@ -16113,7 +16132,6 @@ describe('KimiTUI environment slot', () => {
       startupInput,
     );
 
-    // The background pre-create kicked off at init already failed once.
     await vi.waitFor(() => {
       expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: connect failed');
     });
@@ -16127,7 +16145,6 @@ describe('KimiTUI environment slot', () => {
       expect(driver.state.appState.environment).toBeUndefined();
     });
     expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: connect failed');
-    // The failed lazy creation does not append the prompt: the user resubmits it.
     expect(stripSgr(renderTranscript(driver))).not.toContain('hello-remote-world');
     expect(driver.state.appState.streamingPhase).toBe('idle');
   });

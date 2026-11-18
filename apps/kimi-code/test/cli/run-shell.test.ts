@@ -167,8 +167,6 @@ vi.mock('../../src/utils/process/resolve-command', () => ({
 
 describe('runShell', () => {
   beforeEach(() => {
-    // Pin region to cn: the telemetry endpoint assertion below must not
-    // follow the dev machine's own login/marker state.
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
     vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '');
@@ -312,9 +310,6 @@ describe('runShell', () => {
     expect(mocks.harnessEnsureConfigFile.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.harnessGetConfig.mock.invocationCallOrder[0]!,
     );
-    // stty is resolved to an absolute path before the trust gate and skipped
-    // entirely on Windows (a bare `stty` name would resolve into the
-    // untrusted cwd).
     if (process.platform !== 'win32') {
       expect(execFileSync).toHaveBeenCalledWith('/bin/stty', ['-ixon'], {
         stdio: ['inherit', 'ignore', 'ignore'],
@@ -343,7 +338,6 @@ describe('runShell', () => {
       getAccessToken: expect.any(Function),
       onUnexpectedError: expect.any(Function),
     });
-    // The endpoint resolver defers to the active region profile at flush time.
     const telemetryOptions = mocks.initializeTelemetry.mock.calls[0]![0] as {
       endpoint: () => string;
     };
@@ -796,9 +790,6 @@ describe('runShell', () => {
       '1.2.3-test',
     );
 
-    // Diagnostics render in warning yellow via `showConfigWarningsIfAny` at
-    // `finishStartup`; the (dim) startup notice stays reserved for things like
-    // tui.toml parse errors, so the same warning is not shown twice.
     const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
     expect(startupInput).toMatchObject({
       startupNotice: undefined,
@@ -841,9 +832,6 @@ describe('runShell', () => {
       )?.[1] as ((error: unknown) => void) | undefined;
       expect(handler).toBeDefined();
 
-      // The async log sink cannot flush before process.exit() runs, so the
-      // crash handler must force a synchronous flush or the crash reason is
-      // lost (regression: uncaughtException logs never reached disk).
       expect(() => handler?.(new Error('boom'))).toThrow(ExitCalled);
       expect(mocks.flushDiagnosticLogsSync).toHaveBeenCalledOnce();
       expect(exitSpy).toHaveBeenCalledWith(1);
@@ -1066,8 +1054,6 @@ describe('runShell', () => {
       new Error('Invalid configuration in ~/.kimi-code/config.toml'),
     );
 
-    // A broken config.toml must fail loudly — `kimi migrate` must not swallow
-    // it and proceed, or the user never learns their config is broken.
     await expect(
       runShell(
         {

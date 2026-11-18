@@ -110,7 +110,6 @@ describe('ImageAttachmentStore', () => {
     expect(s.size()).toBe(1);
     expect(s.get(a.id)).toBeUndefined();
     expect(s.get(b.id)).toBe(b);
-    // Unlike clear(), remove() must not reset the id counter.
     const next = s.addImage(new Uint8Array([3]), 'image/png', 10, 10);
     expect(next.id).toBe(3);
   });
@@ -157,7 +156,6 @@ describe('ImageAttachmentStore', () => {
     s.retainFileIds([att.id]);
     s.releaseRetains([att.id]);
     expect(att.fileId).toBe('file-1');
-    // The retain is gone: a later take consumes the upload immediately.
     expect(s.takeFileIds([att.id])).toEqual(['file-1']);
     expect(att.fileId).toBeUndefined();
   });
@@ -166,15 +164,12 @@ describe('ImageAttachmentStore', () => {
     const s = new ImageAttachmentStore();
     const att = s.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
 
-    s.retainFileIds([att.id]); // submission A queues
-    s.retainFileIds([att.id]); // submission B queues
-    s.releaseRetains([att.id]); // A is recalled into the editor
-    s.retainFileIds([att.id]); // A's restored draft resubmits
-    // A's consuming turn ends: one retain (B's) is still outstanding, so the
-    // upload survives.
+    s.retainFileIds([att.id]);
+    s.retainFileIds([att.id]);
+    s.releaseRetains([att.id]);
+    s.retainFileIds([att.id]);
     expect(s.takeFileIds([att.id])).toEqual([]);
     expect(att.fileId).toBe('file-1');
-    // B's turn ends: the last retain is gone, the upload is taken.
     expect(s.takeFileIds([att.id])).toEqual(['file-1']);
     expect(att.fileId).toBeUndefined();
   });
@@ -191,7 +186,6 @@ describe('ImageAttachmentStore', () => {
     expect(att.fileExpiresAt).toBe(123_000);
     expect(att.pending).toBeUndefined();
 
-    // A cleared attachment is not completed — the caller deletes the upload.
     s.clear();
     const stale = att;
     const fresh = s.addVideo('video/mp4', '/tmp/other.mp4');
@@ -205,8 +199,6 @@ describe('ImageAttachmentStore', () => {
     const vid = s.addVideo('video/mp4', '/tmp/a.mp4');
     s.completeVideo(vid, { fileId: 'file-2' });
 
-    // The video's upload is still referenced by a stashed/queued draft; the
-    // image's is not, so only the latter comes back for deletion.
     s.retainFileIds([vid.id]);
     expect(s.clear()).toEqual(['file-1']);
     expect(s.size()).toBe(0);

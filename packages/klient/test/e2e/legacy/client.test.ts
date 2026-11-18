@@ -1,18 +1,3 @@
-/**
- * Self-tests for `DaemonClient` against a live server at
- * `process.env.KIMI_SERVER_URL ?? http://127.0.0.1:58627`.
- *
- * Every test gates on a `daemonReachable()` check so CI / dev machines
- * without a running server stay green. Run a server (`pnpm dev:server` from
- * repo root) to exercise these locally.
- *
- * Coverage:
- *   1. HTTP envelope unwrap throws on `code !== 0`.
- *   2. WS connects without a handshake.
- *   3. Subscribe succeeds for a real session id.
- *   4. `waitForFrame` times out cleanly (no zombie waiters).
- *   5. Created session is observable via `getSession`.
- */
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
@@ -21,7 +6,7 @@ import type {
   ProviderCatalogItem,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { ErrorCode } from '@moonshot-ai/kap-server/protocol/error-codes';
-import type { Message } from '@moonshot-ai/kap-server/protocol/message';
+import type { ConversationTurn } from '@moonshot-ai/kap-server/protocol/conversation';
 import type { Session } from '@moonshot-ai/kap-server/protocol/session';
 
 import { DaemonClient, EnvelopeError } from '../harness/index.js';
@@ -48,18 +33,13 @@ const describeLive = reachable ? describe : describe.skip;
 let created: { client: DaemonClient; sid: string }[] = [];
 
 afterEach(async () => {
-  // Best-effort cleanup so reruns don't accumulate phantom sessions.
   for (const { client, sid } of created.splice(0)) {
     try {
       await client.archiveSession(sid);
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       await client.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 });
 
@@ -234,10 +214,9 @@ describeLive('DaemonClient (live server required)', () => {
         final_frame: frameForLog(promptResult.finalFrame),
       });
 
-      const beforeCompact = await client.listMessages(populated.id, { page_size: 100 });
-      successLog('messages before compact', beforeCompact);
-      expect(beforeCompact.items.some((m) => m.role === 'user')).toBe(true);
-      expect(beforeCompact.items.some((m) => m.role === 'assistant')).toBe(true);
+      const beforeCompact = await client.listTurns(populated.id);
+      successLog('turns before compact', beforeCompact);
+      expect(beforeCompact.turns.length).toBeGreaterThan(0);
 
       const populatedCompactRequest = {
         instruction: 'Preserve the compact-test code word and the fact that the assistant replied OK.',
@@ -256,24 +235,20 @@ describeLive('DaemonClient (live server required)', () => {
       successLog('rest response', compaction.result);
       successLog('compaction idle frame', frameForLog(compaction.finalFrame));
 
-      const afterCompact = await client.listMessages(populated.id, { page_size: 100 });
-      successLog('messages after compact', afterCompact);
+      const afterCompact = await client.listTurns(populated.id);
+      successLog('turns after compact', afterCompact);
 
-      const compactedText = afterCompact.items
-        .flatMap((m) => m.content)
-        .filter((part) => part.type === 'text')
-        .map((part) => part.text)
-        .join('\n');
+      const compactedText = textFromTurns(afterCompact.turns);
       successLog('compacted text content', { text: compactedText });
 
-      expect(afterCompact.items.length).toBeGreaterThan(0);
+      expect(afterCompact.turns.length).toBeGreaterThan(0);
       expect(compactedText.length).toBeGreaterThan(0);
     },
     PROMPT_TIMEOUT_MS + 30_000,
   );
 
   it(
-    'undoSession removes the latest prompt and returns refreshed messages plus status',
+    'undoSession removes the latest prompt and returns refreshed turns plus status',
     async () => {
       const log = createCaseLogger('client: undo action');
       const client = new DaemonClient({ baseUrl: BASE_URL });
@@ -307,16 +282,16 @@ describeLive('DaemonClient (live server required)', () => {
         final_frame: frameForLog(undoPrompt.finalFrame),
       });
 
-      const beforeUndo = await client.listMessages(session.id, { page_size: 100 });
-      log('messages before undo', beforeUndo);
-      expect(textFromMessages(beforeUndo.items)).toContain('UNDO-ME');
+      const beforeUndo = await client.listTurns(session.id);
+      log('turns before undo', beforeUndo);
+      expect(textFromTurns(beforeUndo.turns)).toContain('UNDO-ME');
 
-      const undoTurn = (await client.listTurns(session.id)).turns.at(-1)!;
+      const undoTurn = beforeUndo.turns.at(-1)!;
       const result = await client.undoSession(session.id, { turn_id: undoTurn.turn_id });
       log('undo response', result);
       expect(result.removed_turn_ids).toEqual([undoTurn.turn_id]);
 
-      const afterText = textFromMessages((await client.listMessages(session.id, { page_size: 100 })).items);
+      const afterText = textFromTurns((await client.listTurns(session.id)).turns);
       expect(afterText).toContain('KEEP');
       expect(afterText).not.toContain('UNDO-ME');
     },
@@ -457,16 +432,14 @@ describe('DaemonClient session action helpers', () => {
     expect(parseRecordedJsonBody(calls[2])).toEqual({});
   });
 
-  it('child-session and interaction helpers call recovery routes', async () => {
-    const log = createCaseLogger('client helper: children + interactions');
+  it('cancelSession and interaction helpers call session control routes', async () => {
+    const log = createCaseLogger('client helper: cancel + interactions');
     const calls: FetchCall[] = [];
-    const child = testSession({ id: 'sess_child', title: 'Child session' });
     const client = new DaemonClient({
       baseUrl: 'http://server.example.test',
       fetchImpl: recordingFetchSequence(
         [
-          okEnvelope(child),
-          okEnvelope({ items: [child], has_more: false }),
+          okEnvelope({ cancelled: true }),
           okEnvelope({ outcome: 'dismissed', ended_at: '2026-06-09T00:00:00.000Z' }),
         ],
         calls,
@@ -474,14 +447,8 @@ describe('DaemonClient session action helpers', () => {
     });
 
     await expect(
-      client.createChild('sess_parent', {
-        title: 'Child session',
-        metadata: { topic: 'side-question' },
-      }),
-    ).resolves.toEqual(child);
-    await expect(
-      client.listChildren('sess_parent', { page_size: 5, busy: false }),
-    ).resolves.toEqual({ items: [child], has_more: false });
+      client.cancelSession('sess_parent', { include_background: true }),
+    ).resolves.toEqual({ cancelled: true });
     await expect(
       client.respondInteraction('sess_parent', 'question_1', { kind: 'question', dismissed: true }),
     ).resolves.toEqual({
@@ -491,15 +458,13 @@ describe('DaemonClient session action helpers', () => {
 
     log('fetch calls', calls);
     expect(calls.map((call) => [call.init.method, call.url])).toEqual([
-      ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/children'],
-      ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/children?page_size=5&busy=false'],
+      ['POST', 'http://server.example.test/api/v1/sessions/sess_parent:cancel'],
       ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/interactions/question_1'],
     ]);
     expect(parseRecordedJsonBody(calls[0])).toEqual({
-      title: 'Child session',
-      metadata: { topic: 'side-question' },
+      include_background: true,
     });
-    expect(parseRecordedJsonBody(calls[2])).toEqual({ kind: 'question', dismissed: true });
+    expect(parseRecordedJsonBody(calls[1])).toEqual({ kind: 'question', dismissed: true });
   });
 
   it('uploadFile posts multipart form data and deleteFile hits the file route', async () => {
@@ -645,21 +610,18 @@ function testFile(overrides: Partial<FileMeta> = {}): FileMeta {
   };
 }
 
-function testMessage(overrides: Partial<Message> = {}): Message {
-  return {
-    id: 'msg_example',
-    session_id: 'sess_example',
-    role: 'user',
-    content: [{ type: 'text', text: 'kept' }],
-    created_at: '2026-06-09T00:00:00.000Z',
-    ...overrides,
-  };
-}
-
-function textFromMessages(messages: Array<{ content: Array<{ type: string; text?: string }> }>): string {
-  return messages
-    .flatMap((message) => message.content)
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text ?? '')
+function textFromTurns(turns: readonly ConversationTurn[]): string {
+  return turns
+    .flatMap((turn) => turn.items)
+    .map((item) => {
+      if (item.type === 'user_message' || item.type === 'assistant_message') {
+        return item.text;
+      }
+      if (item.type === 'system' && item.kind === 'compaction') {
+        return item.summary ?? '';
+      }
+      return '';
+    })
+    .filter((text) => text.length > 0)
     .join('\n');
 }

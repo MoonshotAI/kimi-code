@@ -1,7 +1,3 @@
-/**
- * Pattern that merges consecutive user messages without folding a tool-result-only message into a
- * preceding regular one.
- */
 import type { Pattern } from '../pattern';
 
 export interface MergeUsersPolicy<T> {
@@ -10,28 +6,6 @@ export interface MergeUsersPolicy<T> {
   readonly merge: (last: T, next: T) => T;
 }
 
-/**
- * Converts a run of consecutive user messages into one message merged by `policy`, stopping before
- * a tool-result-only message when the accumulated message is not tool-result-only.
- *
- * @example
- * // With content-concatenating `policy.merge`:
- * // Input:
- * [
- *   { role: 'user', content: [{ type: 'text', text: 'A' }] }, // ←
- *   { role: 'user', content: [{ type: 'text', text: 'B' }] }, // ←
- * ]
- * // Output:
- * [
- *   {
- *     role: 'user',
- *     content: [ // ←
- *       { type: 'text', text: 'A' },
- *       { type: 'text', text: 'B' },
- *     ],
- *   },
- * ]
- */
 export function mergeConsecutiveUsers<T>(policy: MergeUsersPolicy<T>): Pattern<T> {
   return {
     name: 'mergeConsecutiveUsers',

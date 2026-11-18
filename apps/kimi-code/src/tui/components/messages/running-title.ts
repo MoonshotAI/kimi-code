@@ -27,8 +27,6 @@ export class TitleSweep {
   private lastFrame: number | undefined;
   private columns = 0;
   private level = 0;
-  // Only painting knows the columns a title covers: a wrapped detail title paints more characters
-  // than the columns passed to advance, and a cut title fewer.
   private paintedColumns = 0;
 
   get intensity(): number {
@@ -57,7 +55,6 @@ export class TitleSweep {
     if (this.level < 0.01 && target === 0) this.level = 0;
   }
 
-  /** Starts painting a new title; the gap check covers only what the returned function paints. */
   painter(): (text: string, offset: number) => string {
     const band = this.band();
     this.paintedColumns = 0;

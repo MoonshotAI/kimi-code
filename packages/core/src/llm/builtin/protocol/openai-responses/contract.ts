@@ -1,7 +1,3 @@
-/**
- * OpenAI Responses wire types: input content items, input items, raw stream chunks, and usage.
- */
-
 export type ResponsesInputContentItem =
   | { type: 'input_text'; text: string }
   | { type: 'input_image'; detail?: string; image_url: string }

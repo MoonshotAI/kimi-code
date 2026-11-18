@@ -43,8 +43,6 @@ function dangerShortcut(text: string): string {
 }
 
 function warningMark(): string {
-  // Opening ANSI escape for the warning color; the install-trust notice is the
-  // only element in that dialog using it, so its presence confirms the tone.
   return withAnsiColors(() => chalk.hex(darkColors.warning)('\u0001').split('\u0001')[0]!);
 }
 
@@ -256,12 +254,10 @@ describe('plugins selector dialogs', () => {
         source: 'zip-url',
         originalSource,
       });
-    // code.kimi.ai mirrors the cdnBase rules; cdn.kimi.ai the content-CDN ones.
     expect(labelFor('https://code.kimi.ai/kimi-code/plugins/official/kimi-datasource.zip')).toBe('official');
     expect(labelFor('https://code.kimi.ai/kimi-code/plugins/curated/superpowers.zip')).toBe('curated');
     expect(labelFor('https://cdn.kimi.ai/kimi-computer-use/latest/kimi-cu-plugin.zip')).toBe('official');
     expect(labelFor('https://cdn.kimi.ai/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip')).toBe('official');
-    // Non-plugin paths on the .ai hosts, and lookalike hosts, stay third-party.
     expect(labelFor('https://code.kimi.ai/demo.zip')).toBe('third-party');
     expect(labelFor('https://cdn.kimi.ai/unrelated/plugin.zip')).toBe('third-party');
     expect(labelFor('https://code.kimi.ai.example.test/kimi-code/plugins/official/x.zip')).toBe('third-party');
@@ -280,7 +276,6 @@ describe('plugins selector dialogs', () => {
       commandCount: 0,
       hasErrors: false,
     };
-    // Zip installs from the official CDN path.
     expect(isOfficialPluginInstall({
       ...base,
       source: 'zip-url',
@@ -298,8 +293,6 @@ describe('plugins selector dialogs', () => {
       source: 'zip-url',
       originalSource: 'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
     })).toBe(true);
-    // Same manifest id from a local path, GitHub, a loopback URL, or a
-    // third-party URL is not the official build.
     expect(isOfficialPluginInstall({ ...base, source: 'local-path' })).toBe(false);
     expect(isOfficialPluginInstall({ ...base, source: 'github' })).toBe(false);
     expect(isOfficialPluginInstall({
@@ -349,7 +342,6 @@ describe('plugins selector dialogs', () => {
         'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
       ),
     ).toBe(true);
-    // The .ai region family follows the same path rules.
     expect(isOfficialPluginSource('https://code.kimi.ai/kimi-code/plugins/official/kimi-datasource.zip')).toBe(true);
     expect(isOfficialPluginSource('https://cdn.kimi.ai/kimi-computer-use/latest/kimi-cu-plugin.zip')).toBe(true);
     expect(
@@ -359,12 +351,9 @@ describe('plugins selector dialogs', () => {
     ).toBe(true);
     expect(isOfficialPluginSource('https://code.kimi.ai/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
     expect(isOfficialPluginSource('https://cdn.kimi.ai/unrelated/plugin.zip')).toBe(false);
-    // Curated and other Kimi CDN paths are not "official" for the install gate.
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/foo.zip')).toBe(false);
     expect(isOfficialPluginSource('https://cdn.kimi.com/unrelated/plugin.zip')).toBe(false);
-    // Non-Kimi hosts (loopback included), non-https schemes, local paths, and
-    // GitHub sources are unofficial.
     expect(isOfficialPluginSource('https://example.test/kimi-code/plugins/official/x.zip')).toBe(false);
     expect(isOfficialPluginSource('http://code.kimi.com/kimi-code/plugins/official/x.zip')).toBe(false);
     expect(isOfficialPluginSource('http://127.0.0.1:58627/kimi-code/plugins/official/x.zip')).toBe(false);
@@ -395,9 +384,6 @@ describe('plugins selector dialogs', () => {
       const darkOut = renderRaw(panel);
       currentTheme.setPalette(lightColors);
       const lightOut = renderRaw(panel);
-      // A palette snapshot cached at construction would render identically
-      // after the switch; reading currentTheme.palette at render time must
-      // produce different ANSI output for the same panel instance.
       expect(darkOut).not.toBe(lightOut);
     } finally {
       currentTheme.setPalette(previous);
@@ -492,7 +478,7 @@ describe('plugins selector dialogs', () => {
 
   it('lazily loads the Official catalog', () => {
     const { panel, onRequestMarketplace } = makePanel({ installed: [superpowers] });
-    panel.handleInput('\t'); // → Official
+    panel.handleInput('\t');
     expect(onRequestMarketplace).toHaveBeenCalledTimes(1);
     expect(strip(renderRaw(panel))).toContain('Loading marketplace');
 
@@ -829,9 +815,7 @@ describe('plugins selector dialogs', () => {
 
   it('keeps a valid selection if ↓ is pressed while the catalog is loading', () => {
     const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
-    // Catalog still loading (entries empty); pressing ↓ must not drive the
-    // selection negative, or the later Enter would read entries[-1].
-    panel.handleInput('\u001B[B'); // ↓
+    panel.handleInput('\u001B[B');
     panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
@@ -1124,8 +1108,6 @@ describe('plugins selector dialogs', () => {
   it('does not show an update badge on the Installed tab before the marketplace loads', () => {
     const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0', origin: 'unknown' as const }];
     const { panel } = makePanel({ installed });
-    // The marketplace has not been loaded yet, so the badge stays hidden rather
-    // than guessing.
     const out = strip(renderRaw(panel));
     expect(out).not.toContain('update');
   });
@@ -1156,7 +1138,7 @@ describe('plugins selector dialogs', () => {
 
   it('shows an inline error when the Official catalog fails', () => {
     const { panel } = makePanel({ installed: [superpowers] });
-    panel.handleInput('\t'); // → Official
+    panel.handleInput('\t');
     panel.setMarketplaceError('fetch failed');
     const out = strip(renderRaw(panel));
     expect(out).toContain('Marketplace unavailable: fetch failed');
@@ -1293,7 +1275,6 @@ describe('plugins selector dialogs', () => {
     picker.handleInput('\u001B[B');
     const raw = renderRaw(picker);
     expect(strip(raw)).toContain('Enter/Space select');
-    // The destructive option label keeps its danger styling (error + bold).
     expect(raw).toContain(dangerShortcut('Remove plugin'));
 
     picker.handleInput('\r');
@@ -1316,8 +1297,6 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('  ? Exit');
     expect(out).toContain('    Cancel the installation.');
     expect(out).toContain('    Install this third-party plugin anyway.');
-    // The warning explains why confirmation is required and uses the
-    // design-system warning color rather than muted/default text.
     expect(out.some((line) => line.includes('Kimi has not reviewed'))).toBe(true);
     expect(out.some((line) => line.includes('trust the source'))).toBe(true);
     expect(raw).toContain(warningMark());
@@ -1339,7 +1318,6 @@ describe('plugins selector dialogs', () => {
     picker.handleInput('\u001B[B');
     const raw = renderRaw(picker);
     expect(strip(raw)).toContain('Enter/Space select');
-    // The opt-in option keeps its danger styling (error + bold).
     expect(raw).toContain(dangerShortcut('Trust and install'));
 
     picker.handleInput('\r');

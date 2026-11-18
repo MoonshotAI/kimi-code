@@ -1,10 +1,3 @@
-/**
- * `sessionApprovalService` — session-scope approval broker. Mirrors
- * `agent-core-v2/agent/interaction/approval.ts`. `ApprovalRequest.display` is
- * the protocol `ToolInputDisplay` union (huge); it crosses the wire
- * uninspected, so it is `z.unknown()` here.
- */
-
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';
@@ -18,7 +11,6 @@ export const approvalRequestSchema = z.object({
   toolCallId: z.string().optional(),
   toolName: z.string(),
   action: z.string(),
-  /** Protocol `ToolInputDisplay` — mirrored as `unknown` (see file header). */
   display: z.unknown(),
 });
 

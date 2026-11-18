@@ -141,7 +141,6 @@ describe('tool-result registry', () => {
         40,
       ),
     );
-    // The samples are cut to fit; the count in the fixed tail always survives.
     expect(out.endsWith(', +2 more')).toBe(true);
     expect(out).toContain('…');
   });

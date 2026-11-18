@@ -1,8 +1,3 @@
-/**
- * Parses raw tool call arguments (JSON string, object, or empty) into a value, reporting malformed JSON
- * instead of throwing.
- */
-
 export function parseToolCallArguments(raw: unknown): {
   readonly data: unknown;
   readonly parseFailed: boolean;

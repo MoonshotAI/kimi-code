@@ -4,12 +4,9 @@ import { CopyButton } from './CopyButton';
 
 interface JsonViewerProps {
   value: unknown;
-  /** Default-open nesting depth */
   defaultOpenDepth?: number;
 }
 
-/** Strings longer than this get an inline expand affordance instead of a
- *  truncated preview-only display. */
 const LONG_STRING_THRESHOLD = 200;
 
 export function JsonViewer({ value, defaultOpenDepth = 2 }: JsonViewerProps) {

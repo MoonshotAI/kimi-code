@@ -1,10 +1,3 @@
-/**
- * `oauthService` + `authSummaryService` — app-scope OAuth flow and auth
- * summary. Mirrors `agent-core-v2/app/auth/auth.ts`; wire shapes mirror
- * `protocol/src/rest/oauth.ts` (snake_case fields). `resolveTokenProvider`
- * and `getCachedAccessToken` are excluded (non-serializable).
- */
-
 import { z } from 'zod';
 
 import { maybe, noResult } from '../helpers.js';
@@ -66,8 +59,6 @@ export const authStatusSchema = z.object({
   provider: z.string().optional(),
 });
 
-/** Subset of `refreshProviderModelsResponseSchema` in `./providerDiscovery.js`: the
- * OAuth-only login refresh never produces its optional `retired_default`. */
 export const refreshOAuthProviderModelsResponseSchema = z.object({
   changed: z.array(
     z.object({

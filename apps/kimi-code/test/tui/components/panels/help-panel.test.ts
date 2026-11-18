@@ -80,7 +80,7 @@ describe('HelpPanelComponent', () => {
       commands: [],
       onClose,
     });
-    panel.handleInput('\u001B'); // Esc
+    panel.handleInput('\u001B');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -113,11 +113,11 @@ describe('HelpPanelComponent', () => {
       onClose: () => {},
       maxVisible: 6,
     });
-    panel.handleInput('\u001B[B'); // ↓
-    panel.handleInput('\u001B[B'); // ↓
+    panel.handleInput('\u001B[B');
+    panel.handleInput('\u001B[B');
     const out = strip(panel.render(80).join('\n'));
     expect(out).toMatch(/showing 3-8 of/);
-    panel.handleInput('\u001B[A'); // ↑
+    panel.handleInput('\u001B[A');
     const out2 = strip(panel.render(80).join('\n'));
     expect(out2).toMatch(/showing 2-7 of/);
   });

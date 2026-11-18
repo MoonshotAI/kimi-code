@@ -1,3 +1,4 @@
+import type { HostSnapshot } from '../../../protocol/events-zod';
 import type { CapabilityInstallProgressWire } from '../../../protocol/rest-capability';
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session } from '../../../protocol/session';
@@ -66,12 +67,18 @@ export interface CapabilityChangedEvent {
   readonly install: CapabilityInstallProgressWire;
 }
 
+export interface HostChangedEvent {
+  readonly type: 'event.host.changed';
+  readonly hosts: readonly HostSnapshot[];
+}
+
 export type PushEvent =
   | SessionGlobalEvent
   | WorkspaceGlobalEvent
   | ConfigGlobalEvent
   | InvalidatedGlobalEvent
-  | CapabilityChangedEvent;
+  | CapabilityChangedEvent
+  | HostChangedEvent;
 
 export type Event = PushEvent & {
   readonly agentId?: string;

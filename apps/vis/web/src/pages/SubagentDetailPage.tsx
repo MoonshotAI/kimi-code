@@ -36,7 +36,6 @@ export function SubagentDetailPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Breadcrumb + header */}
       <div className="shrink-0 border-b border-border bg-surface-1 px-4 py-3">
         <div className="flex items-center gap-2 font-mono text-[11px] text-fg-2">
           <Link

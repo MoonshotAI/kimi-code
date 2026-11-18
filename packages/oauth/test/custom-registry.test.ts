@@ -565,7 +565,6 @@ describe('applyCustomRegistryProvider', () => {
 
     const alias = config.models?.['registry_chat-completions/gpt-5.5'];
     expect(alias?.['betaApi']).toBe(true);
-    // Upstream-owned fields are still refreshed.
     expect(alias?.['displayName']).toBe('GPT 5.5');
   });
 
@@ -837,11 +836,6 @@ describe('removeCustomRegistryProvider', () => {
 });
 
 describe('applyCustomRegistryEntries', () => {
-  // Regression: re-importing the same multi-provider api.json used to lose all
-  // but the last provider because the caller mixed in-memory mutations with the
-  // `harness.removeProvider` RPC (which read/wrote disk inside the loop and
-  // returned a fresh config object, discarding prior iterations' additions).
-  // The pure in-memory helper must keep every entry across repeated imports.
   it('keeps every provider when the same multi-provider source is applied twice', () => {
     const source: CustomRegistrySource = {
       kind: 'apiJson',
@@ -903,16 +897,9 @@ describe('applyCustomRegistryEntries', () => {
     expect(config.models?.['x/old-model']).toBeUndefined();
     expect(config.models?.['x/new-model']).toBeDefined();
     expect(config.models?.['other/keep']).toBeDefined();
-    // defaultModel pointed at the now-removed alias, so it must be cleared
-    // (matches the old harness.removeProvider semantics that the caller relied
-    // on before the refactor).
     expect(config.defaultModel).toBeUndefined();
   });
 
-  // Re-import semantics: when a provider that existed in a previous import is
-  // gone from the new fetch (same source URL), it must be removed along with
-  // its aliases and any `defaultModel` pointing at it. Without this, deleting a
-  // provider upstream silently leaves orphan records and a dangling default.
   it('removes providers from the same source URL that disappeared on re-import', () => {
     const source: CustomRegistrySource = {
       kind: 'apiJson',
@@ -926,7 +913,6 @@ describe('applyCustomRegistryEntries', () => {
 
     const config: ManagedKimiConfigShape = {
       providers: {
-        // Provider from an unrelated source — must not be touched.
         keepme: {
           type: 'openai',
           baseUrl: 'https://keepme.test/v1',
@@ -944,10 +930,8 @@ describe('applyCustomRegistryEntries', () => {
     };
 
     applyCustomRegistryEntries(config, firstEntries, source);
-    // After first import, default points at one of the now-orphaned aliases.
     config.defaultModel = 'b/m1';
 
-    // Second import drops provider `b`.
     applyCustomRegistryEntries(
       config,
       {
@@ -962,7 +946,6 @@ describe('applyCustomRegistryEntries', () => {
     expect(config.models?.['b/m1']).toBeUndefined();
     expect(config.defaultModel).toBeUndefined();
 
-    // Unrelated provider from a different source URL is preserved.
     expect(config.providers['keepme']).toBeDefined();
     expect(config.models?.['keepme/m1']).toBeDefined();
   });
@@ -994,8 +977,6 @@ describe('applyCustomRegistryEntries', () => {
       sourceB,
     );
 
-    // Importing source A with no overlapping ids must not delete the provider
-    // sitting under source B.
     applyCustomRegistryEntries(
       config,
       {

@@ -1,7 +1,3 @@
-/**
- * OpenAI Responses decoding: the stream decoder that turns response events into streamed parts,
- * usage, and finish info, and replay of a non-streaming response as stream events.
- */
 import type { LlmRemoteErrorMessage } from '#/llm/response';
 import { NO_FINISH, type FinishInfo } from '#/llm/response';
 import type { StreamedMessagePart } from '#/llm/message';

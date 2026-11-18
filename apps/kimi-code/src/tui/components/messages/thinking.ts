@@ -1,10 +1,3 @@
-/**
- * Renders thinking content in the transcript.
- * Supports live in-place updates while thinking streams, then finalizes
- * without replacing the component.
- * Supports expand/collapse via Ctrl+O (shared with tool output).
- */
-
 import { Text, truncateToWidth, visibleWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
 
 import { renderHeaderContent } from '#/tui/components/messages/truncated-header-line';
@@ -43,10 +36,6 @@ export class ThinkingComponent implements Component {
   private shownAnimation: string | undefined;
   private elapsed: Elapsed | undefined;
   private projectionVersion = 0;
-  // Hold a single Text instance so pi-tui's (text, width) → lines cache
-  // actually survives across renders. Re-constructing per render destroys
-  // the cache and forces full re-wrap on every frame, which dominates CPU
-  // once the transcript accumulates many finalized thinking blocks.
   private readonly textComponent: Text;
 
   private renderCache: { width: number; lines: string[] } | undefined;
@@ -182,7 +171,6 @@ export class ThinkingComponent implements Component {
       if (this.expanded || !this.previewHidesLines) {
         rendered = lines;
       } else {
-        // Leading blank + first PREVIEW_LINES content lines + hint line.
         const truncated = lines.slice(0, 1 + THINKING_PREVIEW_LINES);
         const remaining = contentLines.length - THINKING_PREVIEW_LINES;
         const hint = `… (${String(remaining)} more lines, ctrl+o to expand)`;

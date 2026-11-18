@@ -1,6 +1,3 @@
-/**
- * Recognizes Kimi quota-exhausted errors from nested error codes and classifies them as remote errors.
- */
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import type { LlmRemoteErrorMessage } from '#/llm/response';
 

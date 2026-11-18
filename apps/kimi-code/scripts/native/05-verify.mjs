@@ -31,9 +31,6 @@ export async function runVerifyStep({ requireGatekeeper = false } = {}) {
   await run('codesign', ['-dv', '--verbose=2', executable]);
 
   if (requireGatekeeper) {
-    // spctl in 'install' mode simulates the Gatekeeper online check — only a
-    // fully notarized binary passes. Ad-hoc signed binaries fail, so this is
-    // only run under the release profile.
     console.log(`==> spctl -a -vvv -t install ${executable}`);
     await run('spctl', ['-a', '-vvv', '-t', 'install', executable]);
   } else {

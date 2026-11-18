@@ -1,11 +1,3 @@
-/**
- * `kimi session` sub-command group.
- *
- * CLI glue only: listing semantics (workspace scoping, recency order,
- * archived filtering) are owned by the SDK/engine; this file parses options
- * and formats rows.
- */
-
 import { setTelemetryContext, track, withTelemetryContext } from '@moonshot-ai/kimi-telemetry';
 import {
   createKimiHarness,

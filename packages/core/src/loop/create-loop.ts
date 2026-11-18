@@ -1,7 +1,3 @@
-/**
- * `Loop` interface and `createLoop` entry: the options a host supplies (tool executor, requester,
- * hooks, restored input) and the operations it can call on a running loop.
- */
 import type { Message, SystemMessage, ToolCall, ToolDescription, UserMessage } from '#/llm/message';
 import type { PolicyRegistry } from '#/llm/policy/registry';
 import type { ToolExecutionHandler } from '#/tool/runtime';
@@ -19,6 +15,7 @@ import type { WaitForTasks } from './tool/tasks';
 import type { ToolCompletionFactory } from './tool/outcome';
 
 export interface LoopToolContext {
+  readonly origin: 'loop';
   readonly turnId: number;
   readonly step?: number;
   readonly requestId?: string;
@@ -35,12 +32,13 @@ export interface LoopToolExecutor {
 export interface CreateLoopOptions {
   readonly requester?: LoopLlmRequester;
   readonly executor: LoopToolExecutor;
-  readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'turnId'>;
+  readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'origin' | 'turnId'>;
   readonly hooks?: readonly HookRegistration[];
   readonly input?: LoopInput;
   readonly prepareInitialTools?: (tools: readonly ToolDescription[], signal: AbortSignal) => Promise<readonly ToolDescription[]>;
   readonly abortGraceMs?: number;
   readonly completionMessage?: ToolCompletionFactory;
+  readonly shouldQueueTaskNotification?: (taskId: string) => boolean;
   readonly onListenerError?: (error: unknown, event: LoopEmitted) => void;
 }
 
@@ -53,6 +51,7 @@ export interface Loop {
   readonly policy: PolicyRegistry;
   submit(message: UserMessage): LoopAck<'prompt.submitted'> | undefined;
   notify(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
+  recordNotification(message: UserMessage): LoopAck<'prompt.notified'> | undefined;
   remind(...messages: readonly RemindMessage[]): LoopAck<'prompt.reminded'> | undefined;
   flushReminders(): void;
   steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined;

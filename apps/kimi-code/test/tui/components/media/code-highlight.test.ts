@@ -39,8 +39,6 @@ describe('code-highlight', () => {
   });
 
   it('emits no red SGR for strings and regexps', () => {
-    // cli-highlight styles through its own chalk v4 instance; force colors on
-    // so the assertions below observe real SGR sequences.
     const req = createRequire(import.meta.url);
     const chalkV4 = req(
       req.resolve('chalk', { paths: [dirname(req.resolve('cli-highlight'))] }),
@@ -50,7 +48,7 @@ describe('code-highlight', () => {
     try {
       const js = highlightLines("const s = 'str';\nconst r = /re+/g;", 'javascript').join('\n');
       expect(js).not.toContain(`${ESC}[31m`);
-      expect(js).toContain(`${ESC}[34m`); // keywords stay highlighted
+      expect(js).toContain(`${ESC}[34m`);
     } finally {
       chalkV4.level = prevLevel;
     }

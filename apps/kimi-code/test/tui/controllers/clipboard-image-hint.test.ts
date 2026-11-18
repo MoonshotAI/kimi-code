@@ -71,16 +71,12 @@ function createFakeTUIWithConsumingFocusTracker(): FakeTUI {
   } as unknown as FakeTUI;
 }
 
-// Drive the controller through its first clipboard observation with an empty
-// clipboard. The first observation only establishes a baseline and never shows
-// a hint, leaving the controller armed and ready for the next new image.
 async function primeEmptyBaseline(ui: FakeTUI): Promise<void> {
   vi.mocked(clipboardHasImage).mockResolvedValue(false);
   ui.emitInput(TERMINAL_FOCUS_IN);
   await vi.advanceTimersByTimeAsync(1000);
 }
 
-// Simulate the user returning to the terminal and let the debounced check fire.
 async function focusReturnAndFlush(ui: FakeTUI): Promise<void> {
   ui.emitInput(TERMINAL_FOCUS_OUT);
   ui.emitInput(TERMINAL_FOCUS_IN);
@@ -117,12 +113,9 @@ describe('ClipboardImageHintController', () => {
     const controller = new ClipboardImageHintController(host);
     controller.start();
 
-    // Startup baseline observes the image already present; the focus check
-    // runs too but must stay quiet for that same image.
     ui.emitInput(TERMINAL_FOCUS_IN);
     await vi.advanceTimersByTimeAsync(1000);
 
-    // One call is the startup baseline; the second is the focus check.
     expect(clipboardHasImage).toHaveBeenCalledTimes(2);
     expect(footer.getTransientHint()).toBeNull();
 
@@ -215,13 +208,11 @@ describe('ClipboardImageHintController', () => {
     const controller = new ClipboardImageHintController(host);
     controller.start();
 
-    // Establish the baseline and show a hint for the first image.
     await primeEmptyBaseline(ui);
     vi.mocked(clipboardHasImage).mockResolvedValue(true);
     await focusReturnAndFlush(ui);
     expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
 
-    // The same image is still in the clipboard: focusing again must not nag.
     vi.mocked(clipboardHasImage).mockClear();
     footer.setTransientHint(null);
     await focusReturnAndFlush(ui);
@@ -244,19 +235,16 @@ describe('ClipboardImageHintController', () => {
     const controller = new ClipboardImageHintController(host);
     controller.start();
 
-    // Establish the baseline, then show a hint for the first image.
     await primeEmptyBaseline(ui);
     vi.mocked(clipboardHasImage).mockResolvedValue(true);
     await focusReturnAndFlush(ui);
     expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
 
-    // Clipboard cleared: the empty check re-arms the controller.
     vi.mocked(clipboardHasImage).mockResolvedValue(false);
     footer.setTransientHint(null);
     await focusReturnAndFlush(ui);
     expect(footer.getTransientHint()).toBeNull();
 
-    // A genuinely new image: hint shows again.
     vi.mocked(clipboardHasImage).mockResolvedValue(true);
     await focusReturnAndFlush(ui);
     expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
@@ -365,7 +353,6 @@ describe('ClipboardImageHintController', () => {
 
     ui.emitInput(TERMINAL_FOCUS_IN);
     await vi.advanceTimersByTimeAsync(1000);
-    // One call is the startup baseline; the second is the debounced focus check.
     expect(clipboardHasImage).toHaveBeenCalledTimes(2);
 
     ui.emitInput(TERMINAL_FOCUS_OUT);
@@ -397,7 +384,6 @@ describe('ClipboardImageHintController', () => {
 
     ui.emitInput(TERMINAL_FOCUS_IN);
     await vi.advanceTimersByTimeAsync(1000);
-    // One call is the startup baseline; the second is the debounced focus check.
     expect(clipboardHasImage).toHaveBeenCalledTimes(2);
 
     controller.stop();
@@ -445,7 +431,6 @@ describe('ClipboardImageHintController', () => {
     const controller = new ClipboardImageHintController(host);
     controller.start();
 
-    // First observation only establishes the baseline and sets no hint.
     ui.emitInput(TERMINAL_FOCUS_IN);
     await vi.advanceTimersByTimeAsync(1000);
     const otherHint = 'Other hint';
@@ -470,7 +455,6 @@ describe('ClipboardImageHintController', () => {
     const controller = new ClipboardImageHintController(host);
     controller.start();
 
-    // Establish an empty baseline with a normal resolved read first.
     await primeEmptyBaseline(ui);
 
     const deferreds: Array<{ resolve: (value: boolean) => void; promise: Promise<boolean> }> = [];
@@ -522,15 +506,11 @@ describe('ClipboardImageHintController', () => {
     await focusReturnAndFlush(ui);
     expect(footer.getTransientHint()).not.toBeNull();
 
-    // Trigger a re-check that exits early because the clipboard is now empty.
     vi.mocked(clipboardHasImage).mockResolvedValue(false);
     await focusReturnAndFlush(ui);
 
-    // The previous hint should still be visible because its auto-clear timer
-    // was preserved through the re-check.
     expect(footer.getTransientHint()).not.toBeNull();
 
-    // Advance the remaining original display duration and verify it expires.
     await vi.advanceTimersByTimeAsync(3000);
     expect(footer.getTransientHint()).toBeNull();
 
@@ -559,7 +539,6 @@ describe('ClipboardImageHintController', () => {
     await vi.advanceTimersByTimeAsync(4000);
     expect(footer.getTransientHint()).toBeNull();
 
-    // Another caller sets the same hint text the controller previously used.
     footer.setTransientHint(hintText);
 
     controller.stop();
@@ -581,7 +560,6 @@ describe('ClipboardImageHintController', () => {
     const controller = new ClipboardImageHintController(host);
     controller.start();
 
-    // Image already present at start: baseline only, no hint.
     ui.emitInput(TERMINAL_FOCUS_IN);
     await vi.advanceTimersByTimeAsync(1000);
     expect(footer.getTransientHint()).toBeNull();
@@ -589,16 +567,13 @@ describe('ClipboardImageHintController', () => {
     controller.stop();
     controller.start();
 
-    // After restart the image is still present: baseline again, no hint.
     await focusReturnAndFlush(ui);
     expect(footer.getTransientHint()).toBeNull();
 
-    // Clipboard cleared: re-arms the controller.
     vi.mocked(clipboardHasImage).mockResolvedValue(false);
     await focusReturnAndFlush(ui);
     expect(footer.getTransientHint()).toBeNull();
 
-    // A genuinely new image: hint shows.
     vi.mocked(clipboardHasImage).mockResolvedValue(true);
     await focusReturnAndFlush(ui);
     expect(footer.getTransientHint()).toMatch(/Image in clipboard/);
@@ -619,7 +594,6 @@ describe('ClipboardImageHintController', () => {
     const controller = new ClipboardImageHintController(host);
     controller.start();
 
-    // Register a second listener that consumes focus events, like installTerminalFocusTracking.
     const consumedEvents: string[] = [];
     ui.addInputListener((data) => {
       if (data === TERMINAL_FOCUS_IN || data === TERMINAL_FOCUS_OUT) {
@@ -629,7 +603,6 @@ describe('ClipboardImageHintController', () => {
       return undefined;
     });
 
-    // Baseline observation (consumed), then a new image on the next focus.
     vi.mocked(clipboardHasImage).mockResolvedValue(false);
     ui.emitInput(TERMINAL_FOCUS_IN);
     await vi.advanceTimersByTimeAsync(1000);

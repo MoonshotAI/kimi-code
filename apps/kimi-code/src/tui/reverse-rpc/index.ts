@@ -17,7 +17,6 @@ export function registerReverseRPCHandlers(
 ): Array<() => void> {
   const modalCoordinator = new ReverseRpcModalCoordinator(uiHooks);
 
-  // Setup UI hooks for controllers
   approvalController.setUIHooks({
     showPanel: (payload) => {
       modalCoordinator.showApproval(payload);

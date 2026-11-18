@@ -1,10 +1,3 @@
-/**
- * Shape-aware reading of Grep and Glob output for the header chip and the
- * glance row. Both tools append notices (pagination, sensitive-file
- * filtering, timeouts) and an empty-result sentence around the result lines;
- * those must stay out of the counts and the path samples.
- */
-
 import type { ToolCallBlockData } from '#/tui/types';
 
 import { strArg, stripSpillPointer } from './types';
@@ -12,55 +5,30 @@ import { strArg, stripSpillPointer } from './types';
 export type GrepMode = 'files_with_matches' | 'content' | 'count_matches';
 
 export interface GrepEntry {
-  /** File the entry belongs to. */
   readonly path: string;
-  /** What the glance shows for it: `path`, `path:line`, or `path:count`. */
   readonly label: string;
 }
 
 export interface GrepStats {
   readonly mode: GrepMode;
-  /** Glance samples in output order; unnumbered content rows collapse to one entry per file. */
   readonly entries: readonly GrepEntry[];
-  /**
-   * Entries in the whole result set — the tool-reported total when the
-   * result is paginated — which the glance counts its "+N more" against.
-   */
   readonly total: number;
-  /**
-   * What the mode counts: files in `files_with_matches`, matching lines in
-   * `content`, the summed per-file counts in `count_matches`. `null` when the
-   * count is not derivable from the text: unnumbered content rows with
-   * context flags are indistinguishable from context rows.
-   */
   readonly matches: number | null;
-  /** Files in the whole result set when the tool reported a total (paginated results), else the files seen. */
   readonly files: number;
-  /** True when a paginated content result only shows the files on its page, so `files` is a lower bound. */
   readonly filesPartial: boolean;
-  /** True when the tool reported an incomplete result set (timeout or output cap): every count is a lower bound. */
   readonly partial: boolean;
 }
 
 export interface GlobStats {
   readonly entries: readonly string[];
-  /** True when Glob timed out or hit its match cap: the count is a lower bound. */
   readonly partial: boolean;
 }
 
-// Lines the tools add around the results: the empty-result sentence, the
-// count-mode summary, and the pagination / filtering / timeout notices.
-// Glob prepends its own diagnostics (timeout, truncation, read warnings whose
-// ripgrep stderr continues on `rg:` lines) and appends an exact-cap count line.
 const NOTICE =
   /^(?:No matches found|No non-sensitive matches found|Found \d+ total (?:non-sensitive )?occurrences? across |Found \d+ matches$|Filtered \d+ sensitive file|Results truncated to \d+ lines|\[Output truncated at \d+ bytes|Grep timed out after |Glob timed out after |Glob completed with warnings|\[stdout truncated at |\[Truncated at |Only the first |rg: )/;
 
-// Totals the tool reports for the whole result set when it paginates: the
-// count-mode summary covers every file, and the pagination notice's total is
-// the full line count — the file count in files mode.
 const COUNT_SUMMARY = /^Found (\d+) total (?:non-sensitive )?occurrences? across (\d+) files?\.$/m;
 const PAGINATION_TOTAL = /^Results truncated to \d+ lines \(total: (\d+)/m;
-// Notices that mark the result set itself as incomplete, as opposed to merely paginated.
 const INCOMPLETE =
   /^(?:\[Output truncated at \d+ bytes|Grep timed out after |Glob timed out after |Glob completed with warnings|\[stdout truncated at |\[Truncated at \d+ matches|Only the first \d+ matches)/m;
 
@@ -68,10 +36,8 @@ const GLOB_PAGE = /^Showing matches (\d+)–(\d+) of (\d+)( collected matches \(
 const GLOB_CONTINUATION = /^(?:Continue with the same search arguments and offset=\d+\.|(?:To retrieve all collected matches in one search|To remove the match-count limit), omit offset and use head_limit=0\.|Character limit reached; only complete paths are returned\.)$/;
 const GLOB_EMPTY = /^(?:No more matches at offset=\d+ in the (?:current|collected partial) result set \(\d+ matches\)\.|No matches collected; search incomplete\.)$/m;
 
-// `path:line:text`; context lines use `-` separators and are not matches.
 const CONTENT_MATCH = /^(.+?):(\d+):/;
 const COUNT_LINE = /^(.+):(\d+)$/;
-// A Windows drive letter carries its own colon; the separator search skips it.
 const DRIVE_PREFIX = /^[A-Za-z]:[\\/]/;
 
 function resultLines(output: string): string[] {
@@ -130,13 +96,7 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
     };
   }
 
-  // Content mode: with line numbers (the default) only `path:line:` rows are
-  // matches; without them every match row is `path:text`, and context rows
-  // (`-A`/`-B`/`-C`) look exactly the same — the backend separates fields
-  // with ':' unconditionally — so an exact match count is unknowable then.
   const numbered = toolCall.args['-n'] !== false;
-  // The schema allows zero, which asks for no context rows at all, and a
-  // defined `-C` makes the backend drop `-A`/`-B` entirely.
   const positive = (flag: string): boolean => {
     const value = toolCall.args[flag];
     return typeof value === 'number' && value > 0;
@@ -156,8 +116,6 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
       entries.push({ path, label: `${path}:${lineNumber}` });
       continue;
     }
-    // Unnumbered rows are labelled by their path alone, so the glance lists
-    // each file once instead of repeating it per match or context row.
     const idx = line.indexOf(':', DRIVE_PREFIX.test(line) ? 2 : 0);
     const path = idx > 0 ? line.slice(0, idx) : line;
     rows++;
@@ -165,8 +123,6 @@ export function parseGrepOutput(toolCall: ToolCallBlockData, output: string): Gr
     paths.add(path);
     entries.push({ path, label: path });
   }
-  // Without context flags every paginated row is a match, so the tool's
-  // total is the exact match count; the files beyond the page stay unknown.
   const paginatedTotal = hasContext ? undefined : PAGINATION_TOTAL.exec(output)?.[1];
   const matches = countable ? (paginatedTotal === undefined ? rows : Number(paginatedTotal)) : null;
   return {
@@ -190,16 +146,8 @@ export function parseGlobOutput(output: string): GlobStats {
   return { entries, partial };
 }
 
-// Every match was a file the tool excludes as sensitive: the search did find
-// something, and the notice says why nothing is listed.
 const SENSITIVE_ONLY = /^No non-sensitive matches found/m;
 
-/**
- * Whether a Grep or Glob result is only the tool's notice: the search was cut
- * short (timeout, output cap, unreadable directories) before any row, or every
- * match was a filtered sensitive file. Such a card shows the notice as a plain
- * outcome row, the same way in both states, and carries no count.
- */
 export function searchNoticeOnly(toolCall: ToolCallBlockData, output: string): boolean {
   const noRows =
     toolCall.name === 'Glob'

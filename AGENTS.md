@@ -22,7 +22,6 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - `packages/node-sdk`: the public TypeScript SDK and harness.
 - `packages/oauth`: Kimi OAuth and managed auth utilities.
 - `packages/telemetry`: shared client-side telemetry infrastructure.
-- `packages/transcript`: the isomorphic transcript rendering data layer — L1 agent-granular store, L2 idempotent operations, L3 `off/turn/block/delta` subscription granularity, L4 framework-free view registry, plus turn-cursor pagination. Pure TypeScript (browser-safe, no engine imports); the sole owner of the transcript contract types (`src/contract/`) and the op-batch sequencing contract.
 - `packages/session-import`: standalone Node.js conversion of external sessions into a single user message that carries the conversation, full effective-history attachments, and image references. It has no engine or UI dependency; callers provide the destination session attachment directory and context budget.
 - `packages/kap-server`: the Kimi Code server, backed by `@moonshot-ai/agent-core-v2`; exposes sessions over REST + WebSocket (`/api/v1` + `/api/v1/ws`), plus the `/api/v1/debug/*` reflection RPC surface (`--debug-endpoints`, loopback bind + bearer auth).
 - `packages/remote-control`: the Kimi Remote Control tunnel client — registers this machine with the relay and forwards HTTP/WebSocket traffic to the local server, with a machine-wide single-instance lock; consumed by kap-server (the `/api/v1/remote-control` toggle) and by the CLI (`kimi web --remote-control`).
@@ -48,7 +47,8 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 ## General Coding Rules
 
-- Unless the user explicitly asks, do not modify, add, or delete comments. This includes line comments, block comments, and JSDoc.
+- Do not write comments in JS/TS code. `pnpm lint` (`scripts/check-comments.mjs`) rejects every comment except tool directives (`@ts-*`, `oxlint-`/`eslint-` disables, `prettier-ignore`, and the like), the shebang, `/// <reference>`, and single-tag JSDoc `@type` casts in JS files. Let names, types, and structure say what the code does, and turn a constraint into a type, a test, or a lint rule instead of a note.
+- Paths listed in `.commentignore` (gitignore syntax) are exempt from that check. Leave their existing comments alone unless the user asks, and add an entry only when the user asks.
 - For optional object properties, pass `undefined` directly instead of using conditional spread.
   - YES: `{ user }`
   - NO: `{ ...(user ? { user } : undefined) }`

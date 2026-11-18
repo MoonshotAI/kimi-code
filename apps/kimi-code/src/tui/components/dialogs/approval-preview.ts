@@ -1,21 +1,3 @@
-/**
- * ApprovalPreviewViewer — full-screen preview of an Edit diff or Write
- * file content for the approval flow.
- *
- * Mounted by `kimi-tui.ts` via the same nested-takeover pattern as
- * `TaskOutputViewer`: the active approval panel is preserved underneath
- * and restored on close. The viewer is intentionally a snapshot — its
- * lines are rendered once at construction and only sliced on scroll, so
- * the per-frame render cost stays in `O(viewport)` even when the
- * underlying diff/content is very large.
- *
- * This avoids the prior failure mode where pressing ctrl+e on an Edit
- * with a long hunk inflated the approval panel past one screen, which
- * collided with pi-tui's inline differential renderer and the terminal
- * emulator's "snap to bottom on stdout" reflex, causing flicker and an
- * unscrollable history pane.
- */
-
 import {
   Container,
   Key,
@@ -59,11 +41,8 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
 
   private readonly props: ApprovalPreviewViewerProps;
   private readonly terminal: Terminal;
-  /** Pre-rendered body lines (ANSI-styled, no border / no gutter). */
   private bodyLines: string[];
-  /** Title shown in the header (path + diff stats / "Write" label). */
   private headerTitle: string;
-  /** Index of the topmost visible line. */
   private scrollTop = 0;
 
   constructor(props: ApprovalPreviewViewerProps, terminal: Terminal) {
@@ -133,7 +112,6 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
     return Math.max(0, this.bodyLines.length - this.viewableRows());
   }
 
-  /** Body rows = terminal rows − header(1) − top border(1) − bottom border(1) − footer(1). */
   private viewableRows(): number {
     return Math.max(1, this.terminal.rows - 4);
   }
@@ -218,10 +196,6 @@ function buildBody(block: ApprovalPreviewBlock): BuiltBody {
 }
 
 function buildDiffBody(block: DiffDisplayBlock): BuiltBody {
-  // renderDiffLinesClustered emits a `+N -M path` header on its first line
-  // followed by every changed line plus surrounding context. We pull the
-  // header out into the viewer chrome so the body is purely scrollable diff
-  // content; this also means we don't double-render the path.
   const rendered = renderDiffLinesClustered(
     block.old_text,
     block.new_text,

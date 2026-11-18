@@ -91,9 +91,6 @@ describe('approval adapter', () => {
     ]);
   });
 
-  // The builtin Write tool emits its display as file_io (operation=write) with
-  // the file content alongside the path, so the approval panel can show — and
-  // ctrl+e expand — the bytes about to land on disk.
   it('emits a file_content block for file_io write with content', () => {
     const adapted = adaptApprovalRequest({
       toolCallId: 'tc-write-io',
@@ -116,9 +113,6 @@ describe('approval adapter', () => {
     ]);
   });
 
-  // The builtin Edit tool emits its display as file_io (operation=edit) with
-  // before/after carrying old_string/new_string, so the panel can render the
-  // hunk as a diff just like the generic-fallback path used to.
   it('emits a diff block for file_io edit with before/after', () => {
     const adapted = adaptApprovalRequest({
       toolCallId: 'tc-edit-io',
@@ -138,8 +132,6 @@ describe('approval adapter', () => {
     ]);
   });
 
-  // Read/Glob/Grep have no content to preview, so file_io without
-  // content/before/after still collapses to a path-only file_op row.
   it('keeps a path-only file_op block for file_io without preview fields', () => {
     const adapted = adaptApprovalRequest({
       toolCallId: 'tc-read',
@@ -234,16 +226,12 @@ describe('approval adapter', () => {
       },
     });
 
-    // Objective + criterion are previewed as a brief block.
     expect(adapted.display).toEqual([
       {
         type: 'brief',
         text: 'Start goal: Fix the failing auth tests\nDone when: npm test -- auth exits 0',
       },
     ]);
-    // Choices mirror the manual-mode /goal start menu; mode options approve and
-    // carry the mode in selected_label, "Do not start" cancels. Each keeps the
-    // /goal menu's description.
     expect(adapted.choices).toEqual([
       {
         label: 'Switch to Never Ask and start',

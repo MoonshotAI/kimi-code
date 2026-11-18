@@ -1,13 +1,3 @@
-/**
- * HelpPanel — modal `/help` display. Lists keyboard shortcuts, slash
- * commands (with aliases + descriptions) in colour-coded sections.
- *
- * Mirrors the container-replacement pattern used by SessionPicker /
- * ApprovalPanel: host mounts the panel into `editorContainer`, picks
- * it as the focused component, and tears it down on the `onClose`
- * callback (fired on Esc / Enter / q).
- */
-
 import {
   Container,
   matchesKey,
@@ -41,7 +31,6 @@ const SUBMIT_DESCRIPTIONS: Readonly<Record<FollowUpDelivery, string>> = {
   queue: 'Submit; queues while Kimi is working',
 };
 
-/** Keep in sync with the global editor bindings. */
 export function keyboardShortcuts(
   followUpBehavior: FollowUpBehavior,
   ctrlEnterRecognized: boolean,
@@ -69,7 +58,6 @@ export interface HelpPanelOptions {
   readonly commands: readonly HelpPanelCommand[];
   readonly shortcuts?: readonly KeyboardShortcut[];
   readonly onClose: () => void;
-  /** Terminal height — used to decide whether to show the hint tail. */
   readonly maxVisible?: number;
 }
 
@@ -99,7 +87,7 @@ export class HelpPanelComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.down)) {
-      this.scrollTop += 1; // render clamps
+      this.scrollTop += 1;
       return;
     }
     if (matchesKey(data, Key.pageUp)) {
@@ -130,14 +118,11 @@ export class HelpPanelComponent extends Container implements Focusable {
       accent('─'.repeat(width)),
       currentTheme.boldFg('primary', ' help ') + muted('· Esc / Enter / q to cancel · ↑↓ scroll'),
       '',
-      // Greeting
       `  ${dim('Sure, Kimi is ready to help! Just send a message to get started.')}`,
       '',
-      // Section: keyboard shortcuts
       `  ${currentTheme.bold('Keyboard shortcuts')}`,
       ...shortcuts.map((s) => `    ${kbdColor(s.keys.padEnd(kbdWidth))}  ${dim(s.description)}`),
       '',
-      // Section: slash commands
       `  ${currentTheme.bold('Slash commands')}`,
       ...sortedCmds.map((cmd, i) => {
         const label = cmdLabels[i] ?? `/${cmd.name}`;
@@ -147,7 +132,6 @@ export class HelpPanelComponent extends Container implements Focusable {
       accent('─'.repeat(width)),
     ];
 
-    // Apply scroll windowing — keep the borders visible.
     const content = lines.slice(1, lines.length - 1);
     const maxVisible = Math.max(5, this.opts.maxVisible ?? 24);
     if (content.length > maxVisible) {

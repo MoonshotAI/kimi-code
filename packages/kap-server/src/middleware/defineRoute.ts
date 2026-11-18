@@ -30,7 +30,7 @@ function buildErrorEnvelopeSchema(
   });
 }
 
-function buildSuccessEnvelopeSchema(successDataSchema: z.ZodTypeAny): z.ZodTypeAny {
+export function buildSuccessEnvelopeSchema(successDataSchema: z.ZodTypeAny): z.ZodTypeAny {
   return z.object({
     code: z.literal(0),
     msg: z.string(),
@@ -100,6 +100,7 @@ export interface DefineRouteOptions<
   tags?: string[];
   operationId?: string;
   consumes?: string[];
+  hide?: boolean;
 }
 
 export interface RouteDefinition<
@@ -195,6 +196,9 @@ export function defineRoute<
   }
   if (options.consumes) {
     schema['consumes'] = options.consumes;
+  }
+  if (options.hide === true) {
+    schema['hide'] = true;
   }
 
   return {

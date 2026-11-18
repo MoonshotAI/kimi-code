@@ -614,12 +614,6 @@ export class Session {
     return this.rpc.handlePrintMainTurnCompleted({ sessionId: this.id });
   }
 
-  // --- Goal lifecycle ---------------------------------------------------
-  // Deterministic user/host control surface. There is intentionally no
-  // `updateGoal`: the goal's terminal status is decided by the model via the
-  // in-conversation UpdateGoal tool (or the goal driver on budget/error), not
-  // by the host.
-
   async createGoal(input: CreateGoalInput): Promise<GoalSnapshot> {
     this.ensureOpen();
     return this.rpc.createGoal({ sessionId: this.id, ...input });

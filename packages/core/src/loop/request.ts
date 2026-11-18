@@ -1,7 +1,3 @@
-/**
- * Bridges a loop step to an LLM request by combining the active requester, profile, history, and
- * step-scoped abort signal.
- */
 import type { Message } from '#/llm/message';
 import type { LlmPolicy, LlmRunControl } from '#/llm/policy/policy';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';

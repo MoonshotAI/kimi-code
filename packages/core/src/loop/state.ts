@@ -1,8 +1,3 @@
-/**
- * Loop state model: the read-only `LoopState` view, the live turn, step, and tool records the actor
- * mutates, and pure helpers over them (turn creation, step outcome drafting, tool settlement,
- * resumability checks).
- */
 import { annotateBundledSkillParts, type UserPromptOrigin } from '#/llm/origin';
 import type { AssistantMessage, Message, ToolCall, ToolMessage, UserMessage } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
@@ -267,7 +262,9 @@ export function schedule(tx: StateTx): void {
   const head = normalHead ?? inbox.notify[0]!;
   const kind = normalHead === undefined ? 'notify' as const : 'normal' as const;
   const notify = normalHead === undefined ? inbox.notify.slice(1) : inbox.notify;
-  const promptOnly = notify.length > 0;
+  const promptOnly =
+    head.attributes?.promptOnly === true ||
+    notify.some((entry) => entry.attributes?.promptOnly !== true);
   patch(tx, {
     inbox: {
       normal: normalHead === undefined ? inbox.normal : inbox.normal.slice(1),

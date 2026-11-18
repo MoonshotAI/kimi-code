@@ -22,8 +22,6 @@ function render(labels: readonly string[], width: number, activeIndex = 0): stri
 
 describe('renderTabStrip', () => {
   const labels = ['Installed', 'Official', 'Third-party', 'Custom'];
-  // Cell widths: ` ${label} ` → 11 / 10 / 13 / 8 = 42, plus 3 separators and a
-  // leading space → 46 columns total.
   const FULL_WIDTH = 46;
 
   it('shows the full strip when it exactly fits', () => {
@@ -41,9 +39,6 @@ describe('renderTabStrip', () => {
   });
 
   it('does not truncate the last tab when separators just barely fit', () => {
-    // Regression: the old fit check summed only cell widths and ignored the
-    // three inter-tab spaces, so at 43–45 columns it declared a fit while the
-    // joined line was wider and the trailing tab got truncated.
     const out = render(labels, FULL_WIDTH);
     expect(out.endsWith(' Custom ')).toBe(true);
   });

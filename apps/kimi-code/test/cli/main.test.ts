@@ -186,7 +186,6 @@ async function waitForAssertion(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
-/** main() now boots asynchronously (after the staged-swap check resolves). */
 async function waitForProgramArgs(): Promise<unknown[]> {
   await waitForAssertion(() => {
     expect(mocks.createProgram).toHaveBeenCalled();
@@ -291,9 +290,6 @@ describe('main entry command handling', () => {
 
     const outcome = await handleMainCommand(opts, '0.0.1-alpha.2');
 
-    // Process disposition belongs to the entrypoint, never to this reusable,
-    // unit-tested handler: arming a process.exit here would kill the test runner
-    // or any embedding host. The handler only reports what ran.
     expect(mocks.finalizeHeadlessRun).not.toHaveBeenCalled();
     expect(outcome).toEqual({ headlessCompleted: true });
   });
@@ -325,7 +321,6 @@ describe('main entry command handling', () => {
     await waitForAssertion(() => {
       expect(mocks.finalizeHeadlessRun).toHaveBeenCalledTimes(1);
     });
-    // The exit code is resolved lazily so a goal turn that sets process.exitCode wins.
     const forceExitArgs = mocks.finalizeHeadlessRun.mock.calls[0] as unknown as unknown[];
     expect(typeof forceExitArgs[2]).toBe('function');
   });
@@ -393,7 +388,6 @@ describe('main entry command handling', () => {
     await waitForAssertion(() => {
       expect(mocks.maybeRelaunch).toHaveBeenCalledTimes(1);
     });
-    // Relaunched → the parent must sit on the child, never bootstrap.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mocks.createProgram).not.toHaveBeenCalled();
   });

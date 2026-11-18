@@ -1,20 +1,3 @@
-/**
- * Container that reserves left/right gutter columns around its children,
- * so the chrome (statusline, transcript, panels) lines up with the input
- * box's inner content area instead of butting up against the terminal edge.
- *
- * Children are rendered at `width - left - right` and each emitted line is
- * prefixed with `left` plain spaces. Right padding is logical only — we
- * never emit trailing spaces, since terminals already paint background to
- * the edge and adding them would just churn the diff renderer.
- *
- * The render cache below validates per child (component identity + the
- * identity of its rendered line array), so structural child-list changes —
- * append, splice-removal, in-place replacement — are picked up correctly
- * without a tree-wide `invalidate()`. Reserve `invalidate()` for global
- * style changes that genuinely dirty every child (e.g. theme switches).
- */
-
 import { Container } from '@moonshot-ai/pi-tui';
 import type {
   Component,
@@ -99,8 +82,6 @@ export class GutterContainer extends Container {
         prefixed.push(cache.prefixed[i]!);
       } else {
         allReused = false;
-        // OSC 133 zone markers must stay at byte 0 for the fullscreen
-        // renderer's prompt navigation, so the gutter goes after them.
         prefixed.push(lines.map((line) => prefixPreservingOsc133Zone(line, lead)));
       }
       i++;
@@ -133,9 +114,6 @@ export class GutterContainer extends Container {
     return out;
   }
 
-  // Mouse events arrive in this container's frame, which includes the
-  // gutters; children render at the shrunk inner width after the left pad,
-  // so translate before delegating or clicks land a gutter-width off.
   override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
     const inner = Math.max(1, event.width - this.leftPad - this.rightPad);
     const adjusted: TuiMouseEvent = { ...event, x: event.x - this.leftPad, width: inner };

@@ -1,7 +1,3 @@
-/**
- * OpenAI Chat Completions legality rules: resolving which reasoning key carries thinking content,
- * stamping it onto history thinking parts, and the supported sampling parameters.
- */
 import type { ContentPart, Message, ThinkPart } from '#/llm/message';
 import type { ModelLegality } from '#/llm/protocol/rules/model';
 import type { Pattern } from '#/llm/protocol/pattern';
@@ -39,27 +35,6 @@ export function resolveOpenAIReasoningKey(
   );
 }
 
-/**
- * Converts a message with untagged thinking parts into a copy where every such part has the
- * resolved reasoning key, leaving all other content unchanged.
- *
- * @example
- * // With `reasoningKey = 'reasoning_content'`:
- * // Input:
- * {
- *   role: 'assistant',
- *   toolCalls: [],
- *   content: [{ type: 'think', think: 'Compare options' }], // ←
- * }
- * // Output:
- * {
- *   role: 'assistant',
- *   toolCalls: [],
- *   content: [
- *     { type: 'think', think: 'Compare options', reasoningKey: 'reasoning_content' }, // ←
- *   ],
- * }
- */
 function stampReasoningKey(reasoningKey: string): Pattern<Message> {
   const needsReasoningKey = (part: ContentPart): part is ThinkPart =>
     part.type === 'think' && part.reasoningKey === undefined;

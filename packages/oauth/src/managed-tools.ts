@@ -1,14 +1,3 @@
-/**
- * Managed-platform `/tools` dispatch: POSTs `{method, params}` to
- * `{kimiCodeBaseUrl}/tools` with a Bearer access token, the same wire
- * shape the backend tool surface expects (see `chat_title` below).
- *
- * `chat_title` generates a short session title from a chat excerpt:
- *
- *   { "method": "chat_title", "params": { "chat_content": "user: ...\nassistant: ..." } }
- *   → { "title": "..." }
- */
-
 import { readApiErrorMessage } from './api-error';
 import { kimiCodeBaseUrl } from './managed-usage';
 import { isRecord } from './utils';

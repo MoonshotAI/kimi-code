@@ -89,10 +89,33 @@ export const modelCatalogChangedEventSchema = z.object({
     .optional(),
 });
 
+export const hostSnapshotSchema = z.object({
+  id: z.string(),
+  host: z.string(),
+  identity_file: z.string().optional(),
+  remote_bin: z.string().optional(),
+  name: z.string().optional(),
+  enabled: z.boolean().optional(),
+  status: z.enum(['pending', 'connecting', 'ready', 'disconnected']),
+  remote_version: z.string().optional(),
+  connect_error: z.string().optional(),
+  connect_failure: z.string().optional(),
+});
+
+export type HostSnapshot = z.infer<typeof hostSnapshotSchema>;
+
+export const hostChangedEventSchema = z.object({
+  type: z.literal('event.host.changed'),
+  hosts: z.array(hostSnapshotSchema),
+});
+
+export const hostGlobalEventSchema = hostChangedEventSchema.extend(eventCreatedAt);
+
 export const pushEventSchema = z.discriminatedUnion('type', [
   sessionGlobalEventSchema,
   workspaceGlobalEventSchema,
   configGlobalEventSchema,
   invalidatedGlobalEventSchema,
   capabilityGlobalEventSchema,
+  hostGlobalEventSchema,
 ]);

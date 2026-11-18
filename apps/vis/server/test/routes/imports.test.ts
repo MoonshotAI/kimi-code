@@ -64,7 +64,6 @@ describe('imports + logs routes', () => {
     const res = await wireRoute(home).request(`/${importId}/wire?agent=main`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { records: { data: { type: string } }[] };
-    // metadata is the wire header; the one remaining record is the prompt.
     expect(body.records.length).toBeGreaterThanOrEqual(1);
     expect(body.records.some((r) => r.data.type === 'turn.prompt')).toBe(true);
   });
@@ -96,8 +95,6 @@ describe('imports + logs routes', () => {
 
   it('falls back to disk agent discovery when an imported bundle state omits agents', async () => {
     home = await mkdtemp(join(tmpdir(), 'vis-imp-route-'));
-    // Readable state.json, but no `agents` map (best-effort bundle). The main
-    // wire is present on disk, so the agent must still be discoverable.
     const noAgents: Record<string, string> = {
       'manifest.json': JSON.stringify({ sessionId: 'session_orig' }),
       'state.json': JSON.stringify({ createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T01:00:00.000Z', title: 'demo', custom: {} }),
@@ -107,7 +104,6 @@ describe('imports + logs routes', () => {
     expect(importRes.status).toBe(200);
     const importId = ((await importRes.json()) as { sessionId: string }).sessionId;
 
-    // Despite the empty state.agents, the wire route resolves `main` via disk.
     const wireRes = await wireRoute(home).request(`/${importId}/wire?agent=main`);
     expect(wireRes.status).toBe(200);
     expect(((await wireRes.json()) as { records: unknown[] }).records.length).toBeGreaterThanOrEqual(1);
@@ -115,8 +111,6 @@ describe('imports + logs routes', () => {
 
   it('falls back to disk discovery when an imported agents map is type-corrupt', async () => {
     home = await mkdtemp(join(tmpdir(), 'vis-imp-route-'));
-    // state.json present, agents map non-empty but the entry is null — must not
-    // 500; the on-disk main wire should still be discoverable.
     const corruptAgents: Record<string, string> = {
       'manifest.json': JSON.stringify({ sessionId: 'session_orig' }),
       'state.json': JSON.stringify({ createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T01:00:00.000Z', title: 'demo', agents: { main: null }, custom: {} }),
@@ -132,7 +126,6 @@ describe('imports + logs routes', () => {
   it('sanitizes type-corrupt manifest fields so the session list cannot crash', async () => {
     home = await mkdtemp(join(tmpdir(), 'vis-imp-route-'));
     const corrupt: Record<string, string> = {
-      // workspaceDir / kimiCodeVersion are the wrong type — must not reach workDir.
       'manifest.json': JSON.stringify({ sessionId: 'session_orig', workspaceDir: 123, kimiCodeVersion: 7, title: 'demo' }),
       'state.json': JSON.stringify({ createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T01:00:00.000Z', title: 'demo', agents: { main: { homedir: '/o', type: 'main', parentAgentId: null } }, custom: {} }),
       'agents/main/wire.jsonl': `${META}\n${PROMPT}\n`,
@@ -143,10 +136,10 @@ describe('imports + logs routes', () => {
       sessions: { sessionId: string; workDir: unknown; importMeta: { manifest: { workspaceDir?: unknown; kimiCodeVersion?: unknown; sessionId?: unknown } | null } | null }[];
     };
     const s = body.sessions.find((x) => x.sessionId === importId)!;
-    expect(typeof s.workDir).toBe('string'); // not the number 123
+    expect(typeof s.workDir).toBe('string');
     expect(s.workDir).toBe('');
-    expect(s.importMeta?.manifest?.workspaceDir).toBeUndefined(); // dropped
-    expect(s.importMeta?.manifest?.kimiCodeVersion).toBeUndefined(); // dropped
-    expect(s.importMeta?.manifest?.sessionId).toBe('session_orig'); // valid string kept
+    expect(s.importMeta?.manifest?.workspaceDir).toBeUndefined();
+    expect(s.importMeta?.manifest?.kimiCodeVersion).toBeUndefined();
+    expect(s.importMeta?.manifest?.sessionId).toBe('session_orig');
   });
 });

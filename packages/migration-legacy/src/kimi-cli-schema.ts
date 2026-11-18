@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-// Mirrors kimi-cli's `Metadata` pydantic model (metadata.py:43–49).
 export const OldWorkDirMetaSchema = z.object({
   path: z.string(),
   kaos: z.string().default('local'),
@@ -11,9 +10,6 @@ export const OldKimiJsonSchema = z.object({
   work_dirs: z.array(OldWorkDirMetaSchema).default([]),
 });
 
-// Mirrors kimi-cli's `SessionState` (session_state.py:28–45).
-// We use `.passthrough()` because old persisted state may carry extra
-// fields from newer kimi-cli versions; we only consume a known subset.
 export const OldSessionStateSchema = z
   .object({
     version: z.number().optional(),
@@ -40,8 +36,6 @@ export const OldSessionStateSchema = z
   })
   .passthrough();
 
-// Mirrors kimi-cli's pre-state.json `metadata.json` (merged into SessionState
-// by load_session_state, session_state.py:50–96).
 export const OldSessionMetadataSchema = z
   .object({
     session_id: z.string().optional(),

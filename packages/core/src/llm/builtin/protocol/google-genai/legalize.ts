@@ -1,7 +1,3 @@
-/**
- * Google GenAI legality rules: supported sampling parameters and the pattern that reorders tool
- * results to match call order, rejecting missing, duplicate, or unexpected results.
- */
 import type { Message, ToolMessage } from '#/llm/message';
 import type { ModelLegality } from '#/llm/protocol/rules/model';
 import type { Pattern } from '#/llm/protocol/pattern';
@@ -11,34 +7,6 @@ export const googleGenAIModelLegality: ModelLegality = {
   sampling: ['temperature', 'topP', 'topK', 'stop', 'seed', 'presencePenalty', 'frequencyPenalty'],
 };
 
-/**
- * Reorders the consecutive tool messages after an assistant message to match its tool-call order,
- * preserving the assistant message and rejecting duplicate, missing, or unexpected tool-call ids.
- *
- * @example
- * const assistant = {
- *   role: 'assistant',
- *   content: [],
- *   toolCalls: [
- *     { type: 'function', id: 'call-1', name: 'read', arguments: '{}' },
- *     { type: 'function', id: 'call-2', name: 'write', arguments: '{}' },
- *   ],
- * };
- * const read = {
- *   role: 'tool',
- *   toolCallId: 'call-1',
- *   content: [{ type: 'text', text: 'read' }],
- * };
- * const write = {
- *   role: 'tool',
- *   toolCallId: 'call-2',
- *   content: [{ type: 'text', text: 'written' }],
- * };
- * // Input:
- * [assistant, write, read] // ←
- * // Output:
- * [assistant, read, write] // ←
- */
 export const sortToolRunByCallOrder: Pattern<Message> = {
   name: 'sortToolRunByCallOrder',
   rewrite(items, index) {

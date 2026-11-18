@@ -42,8 +42,6 @@ const mocks = vi.hoisted(() => ({
   resolveUpdateDeviceId: vi.fn(),
   appendRolloutDecisionLog: vi.fn(),
   spawn: vi.fn(),
-  // Identity by default: resolution is covered by resolve-command.test.ts;
-  // here we only care which command string reaches spawn().
   resolveCommandPath: vi.fn((cmd: string) => cmd as string | undefined),
 }));
 
@@ -114,7 +112,6 @@ vi.mock('../../../src/cli/update/rollout', async () => {
   return {
     ...actual,
     resolveUpdateDeviceId: mocks.resolveUpdateDeviceId,
-    // Stubbed so preflight tests never write a real rollout.log.
     appendRolloutDecisionLog: mocks.appendRolloutDecisionLog,
   };
 });
@@ -172,7 +169,6 @@ function switchPlan(
   };
 }
 
-/** Every bucket delayed by 24h and the clock just started: nobody is eligible. */
 function heldForEveryone(version: string): UpdateManifest {
   return manifestFor(version, {
     publishedAt: new Date(Date.now() - 1_000).toISOString(),
@@ -180,7 +176,6 @@ function heldForEveryone(version: string): UpdateManifest {
   });
 }
 
-/** Every bucket immediate and publishedAt long past: everybody is eligible. */
 function releasedForEveryone(version: string): UpdateManifest {
   return manifestFor(version, {
     rollout: [{ percent: 100, delaySeconds: 0 }],
@@ -266,13 +261,8 @@ async function flushBackgroundInstall(): Promise<void> {
 
 describe('runUpdatePreflight', () => {
   beforeEach(() => {
-    // Pin the experimental flag off so rollout gating is deterministic
-    // regardless of the host environment (the flag bypasses batch holds).
-    // Tests that exercise the bypass opt back in with `vi.stubEnv(..., '1')`.
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
     vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', '');
-    // Pin the region to cn so address assertions don't follow the dev
-    // machine's own login/marker state; global tests override below.
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
     resetKimiRegionCache();
     mocks.readUpdateInstallState.mockResolvedValue(emptyUpdateInstallState());
@@ -485,7 +475,6 @@ describe('runUpdatePreflight', () => {
       const { options } = captureOutput();
       await runUpdatePreflight('0.4.0', options);
       expect(mocks.spawn).toHaveBeenCalledWith(
-        // Resolved to an absolute path and quoted for the cmd.exe shell.
         '"pnpm.cmd"',
         ['add', '-g', '@moonshot-ai/kimi-code@0.5.0'],
         { stdio: 'inherit', shell: true },
@@ -595,8 +584,6 @@ describe('runUpdatePreflight', () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
     try {
-      // Native updates self-spawn the staged downloader silently, so the
-      // region surface there is the manual install command text.
       expect(installCommandFor('native', '0.5.0', 'win32')).toBe(
         'irm https://code.kimi.ai/kimi-code/install.ps1 | iex',
       );
@@ -643,7 +630,6 @@ describe('runUpdatePreflight', () => {
     const { stdout, stderr, options } = captureOutput();
     await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
     expect(stderr.join('')).toContain('warning: failed to install');
-    // A failed install must never print the "Updated …" success line.
     expect(stdout.join('')).not.toContain('Updated @moonshot-ai/kimi-code');
   });
 
@@ -673,7 +659,6 @@ describe('runUpdatePreflight', () => {
     mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.detectInstallSource.mockResolvedValue('npm-global');
     mocks.promptForInstallChoice.mockResolvedValue('install');
-    // Only resolvable inside the cwd (or missing entirely): refuse to run it.
     mocks.resolveCommandPath.mockReturnValue(undefined);
     const { stdout, stderr, options } = captureOutput();
 
@@ -756,7 +741,6 @@ describe('runUpdatePreflight', () => {
       const { options } = captureOutput();
       await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
       expect(mocks.spawn).toHaveBeenCalledWith(
-        // Resolved to an absolute path and quoted for the cmd.exe shell.
         '"npm.cmd"',
         ['install', '-g', '@moonshot-ai/kimi-code@0.5.0'],
         { detached: true, stdio: 'ignore', shell: true, windowsHide: true },
@@ -767,8 +751,6 @@ describe('runUpdatePreflight', () => {
   });
 
   it('native: retries the background install when an old active record has no live lock', async () => {
-    // Orphaned `active`: older than the spawn grace window and the lock is
-    // free (beforeEach default) ⇒ the previous downloader is gone; retry.
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.readUpdateInstallState.mockResolvedValue(installState({
       active: {
@@ -801,7 +783,6 @@ describe('runUpdatePreflight', () => {
     }));
     mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.detectInstallSource.mockResolvedValue('native');
-    // Lock probe fails ⇒ a downloader is actually in flight; trust it.
     mocks.tryAcquireUpdateInstallLock.mockResolvedValue(null);
     mockSpawnExit(0);
     const { options } = captureOutput();
@@ -826,8 +807,6 @@ describe('runUpdatePreflight', () => {
 
     await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
     expect(mocks.spawn).not.toHaveBeenCalled();
-    // Inside the grace window the lock is never probed — the freshly spawned
-    // worker may simply not have reached its self-acquire yet.
     expect(mocks.tryAcquireUpdateInstallLock).not.toHaveBeenCalled();
   });
 
@@ -1103,10 +1082,7 @@ describe('runUpdatePreflight', () => {
       expect(promptForInstallChoice).not.toHaveBeenCalled();
       expect(detectInstallSource).toHaveBeenCalledTimes(1);
       expect(mocks.spawn).not.toHaveBeenCalled();
-      // The launch still refreshes the cache in the background so the device
-      // flips to eligible purely by time passing.
       expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
-      // Both checks of this launch are recorded in the rollout log.
       expect(mocks.appendRolloutDecisionLog).toHaveBeenCalledWith(expect.objectContaining({
         phase: 'startup-cache',
         reason: 'held',

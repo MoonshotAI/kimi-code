@@ -31,7 +31,6 @@ describe('computeIssues — runtime error categories', () => {
     expect(byKind.get('model_filtered')).toMatchObject({ severity: 'error', detail: 'content_filter' });
     expect(byKind.get('model_max_tokens')).toMatchObject({ severity: 'warning' });
 
-    // The tool.result rows are properly paired, so no orphan noise.
     expect(issues.some((i) => i.kind === 'orphan_tool_call' || i.kind === 'missing_tool_result')).toBe(false);
   });
 });

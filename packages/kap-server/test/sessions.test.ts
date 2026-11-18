@@ -902,14 +902,6 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(generated.status).toBe(200);
     expect(generated.body.code).toBe(40931);
     generateTitle.mockRestore();
-
-    const createChild = vi
-      .spyOn((server as RunningServer).core.accessor.get(ISessionManager), 'createChild')
-      .mockRejectedValue(occupied);
-    const child = await postJson(`/api/v1/sessions/${id}/children`, {});
-    expect(child.status).toBe(200);
-    expect(child.body.code).toBe(40931);
-    createChild.mockRestore();
   });
 
   it('no longer serves GET /status', async () => {
@@ -983,8 +975,6 @@ describe('server-v2 /api/v1/sessions', () => {
 
     expect(created.body.code).toBe(0);
     expect(created.body.data.metadata).toBeUndefined();
-    const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
-    expect(children.body.data.items.some((s) => s.id === created.body.data.id)).toBe(false);
   });
 
   it('drops the reserved metadata keys when updating the session profile', async () => {
@@ -1006,8 +996,6 @@ describe('server-v2 /api/v1/sessions', () => {
 
     expect(updated.body.code).toBe(0);
     expect(updated.body.data.session.metadata).toEqual({ source: 'composer' });
-    const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
-    expect(children.body.data.items.some((s) => s.id === id)).toBe(false);
   });
 
   it.each([
@@ -1018,16 +1006,18 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
-    const child = await postJson<SessionWire>(`/api/v1/sessions/${parentId}/children`, {});
-    const childId = child.body.data.id;
+    const childMeta = await (server as RunningServer).core.accessor.get(ISessionManager).createChild({
+      sourceSessionId: parentId,
+    });
+    const childId = childMeta.id;
 
-    const updated = await postJson<SessionWire>(`/api/v1/sessions/${childId}/profile`, {
+    const updated = await postJson<ProfileWire>(`/api/v1/sessions/${childId}/profile`, {
       metadata: patch,
     });
 
     expect(updated.body.code).toBe(0);
-    const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
-    expect(children.body.data.items.some((s) => s.id === childId)).toBe(true);
+    expect(updated.body.data.session.metadata?.['parent_session_id']).toBe(parentId);
+    expect(updated.body.data.session.metadata?.['child_session_kind']).toBe('child');
   });
 
   it('replaces the custom metadata even when the profile metadata names only reserved keys', async () => {
@@ -1286,23 +1276,16 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(readAgentState(await mainAgentOf(id), false).tower_mode).toBe(false);
   });
 
-  it('returns the current goal via GET /goal', async () => {
-    const cwd = home as string;
-    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+  it('no longer serves the legacy goal, profile GET, messages, or children routes', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
     const id = created.body.data.id;
 
-    const before = await getJson<unknown>(`/api/v1/sessions/${id}/goal`);
-    expect(before.body.data).toBeNull();
-
-    await postJson(`/api/v1/sessions/${id}/profile`, {
-      agent_config: { goal_objective: 'fix all lint warnings' },
-    });
-
-    const after = await getJson<{ objective: string; status: string } | null>(
-      `/api/v1/sessions/${id}/goal`,
-    );
-    expect(after.body.data?.objective).toBe('fix all lint warnings');
-    expect(after.body.data?.status).toBe('active');
+    expect((await getJson(`/api/v1/sessions/${id}/goal`)).status).toBe(404);
+    expect((await patchJson(`/api/v1/sessions/${id}/goal`, { objective: 'work' })).status).toBe(404);
+    expect((await getJson(`/api/v1/sessions/${id}/profile`)).status).toBe(404);
+    expect((await getJson(`/api/v1/sessions/${id}/messages`)).status).toBe(404);
+    expect((await getJson(`/api/v1/sessions/${id}/children`)).status).toBe(404);
+    expect((await postJson(`/api/v1/sessions/${id}/children`, {})).body.code).toBe(40001);
   });
 
   it('edits the current goal through profile goal_control edit', async () => {
@@ -1808,71 +1791,21 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('rejects unsupported actions and serves prediction actions with disconnect cancellation', async () => {
+  it('rejects unsupported actions including removed abort and prediction actions', async () => {
     const { body } = await postJson<null>('/api/v1/sessions/sess_missing:delete');
     expect(body.code).toBe(40401);
 
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
-    const suffix = await postJson<null>(`/api/v1/sessions/${id}:restart`);
-    expect(suffix.body.code).toBe(40001);
-
-    const predicted = await postJson<{ prediction: string | null }>(`/api/v1/sessions/${id}:predict-prompt`, {
-      prediction_id: 'prediction-1',
-      expected_turn_id: 0,
-    });
-    expect(predicted.body.data).toEqual({ prediction: null });
-    const cancelled = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
-      prediction_id: 'prediction-1',
-    });
-    expect(cancelled.body.data).toEqual({ cancelled: false });
-
-    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
-    if (session === undefined) throw new Error('expected live session');
-    const service = session.accessor.get(ISessionPromptPredictionService);
-    let releasePrediction!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      releasePrediction = resolve;
-    });
-    let markPredictionSettled!: () => void;
-    const predictionSettled = new Promise<void>((resolve) => {
-      markPredictionSettled = resolve;
-    });
-    const predict = vi.spyOn(service, 'predict').mockImplementation(async () => {
-      await gate;
-      markPredictionSettled();
-      return null;
-    });
-    const cancel = vi.spyOn(service, 'cancel');
-    const cancelledWithReason = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
-      prediction_id: 'visibility-check',
-      reason: 'visibility',
-    });
-    expect(cancelledWithReason.body.data).toEqual({ cancelled: false });
-    expect(cancel).toHaveBeenCalledWith('visibility-check', 'visibility');
-    const cancelledForPlan = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
-      prediction_id: 'plan-check',
-      reason: 'plan',
-    });
-    expect(cancelledForPlan.body.data).toEqual({ cancelled: false });
-    expect(cancel).toHaveBeenCalledWith('plan-check', 'plan');
-    const abortController = new AbortController();
-    const request = fetch(`${base}/api/v1/sessions/${id}:predict-prompt`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify({ prediction_id: 'disconnect-me', expected_turn_id: 0 }),
-      signal: abortController.signal,
-    } as never).catch(() => undefined);
-    await vi.waitFor(() => expect(predict).toHaveBeenCalledOnce());
-    abortController.abort();
-    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('disconnect-me', 'disconnect'));
-    releasePrediction();
-    await request;
-    await predictionSettled;
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
+    expect((await postJson<null>(`/api/v1/sessions/${id}:restart`)).body.code).toBe(40001);
+    expect((await postJson<null>(`/api/v1/sessions/${id}:abort`)).body.code).toBe(40001);
+    expect(
+      (await postJson<null>(`/api/v1/sessions/${id}:predict-prompt`, { prediction_id: 'p1', expected_turn_id: 0 })).body.code,
+    ).toBe(40001);
+    expect(
+      (await postJson<null>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, { prediction_id: 'p1' })).body.code,
+    ).toBe(40001);
   });
 
   it('cold-loads a persisted session on :undo and reports an unknown turn instead of 40401', async () => {
@@ -1971,64 +1904,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('creates a child session tagged with parent_session_id and child_session_kind', async () => {
-    const cwd = home as string;
-    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    expect(parent.body.code).toBe(0);
-    const parentId = parent.body.data.id;
-
-    const child = await postJson<SessionWire>(`/api/v1/sessions/${parentId}/children`, {
-      title: 'child-title',
-      metadata: { branch: 'direct-child' },
-    });
-    expect(child.status).toBe(200);
-    expect(child.body.code).toBe(0);
-    expect(child.body.data.id).not.toBe(parentId);
-    expect(child.body.data.title).toBe('child-title');
-    expect(child.body.data.metadata['parent_session_id']).toBe(parentId);
-    expect(child.body.data.metadata['child_session_kind']).toBe('child');
-    expect(child.body.data.metadata['branch']).toBe('direct-child');
-    expect(child.body.data.cwd).toBe(cwd);
-  });
-
-  it('defaults the child title to "Child: <parent title>"', async () => {
-    const cwd = home as string;
-    const parent = await postJson<SessionWire>('/api/v1/sessions', {
-      title: 'parent-title',
-      metadata: { cwd },
-    });
-    const child = await postJson<SessionWire>(
-      `/api/v1/sessions/${parent.body.data.id}/children`,
-      {},
-    );
-    expect(child.body.code).toBe(0);
-    expect(child.body.data.title).toBe('Child: parent-title');
-  });
-
-  it('lists direct children and omits grandchildren', async () => {
-    const cwd = home as string;
-    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const parentId = parent.body.data.id;
-    const child = await postJson<SessionWire>(`/api/v1/sessions/${parentId}/children`, {
-      metadata: { branch: 'child' },
-    });
-    const childId = child.body.data.id;
-    const grandchild = await postJson<SessionWire>(`/api/v1/sessions/${childId}/children`, {
-      metadata: { branch: 'grandchild' },
-    });
-    const grandchildId = grandchild.body.data.id;
-
-    const parentChildren = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
-    expect(parentChildren.body.code).toBe(0);
-    expect(parentChildren.body.data.items.some((s) => s.id === childId)).toBe(true);
-    expect(parentChildren.body.data.items.some((s) => s.id === grandchildId)).toBe(false);
-
-    const childChildren = await getJson<PageWire>(`/api/v1/sessions/${childId}/children`);
-    expect(childChildren.body.code).toBe(0);
-    expect(childChildren.body.data.items.some((s) => s.id === grandchildId)).toBe(true);
-  });
-
-  it('does not list a plain fork as a child and rejects an incompatible source', async () => {
+  it('forks a session and rejects an incompatible source', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
@@ -2043,10 +1919,6 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(invalid.body.code).toBe(40001);
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(forked.body.code).toBe(0);
-
-    const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
-    expect(children.body.code).toBe(0);
-    expect(children.body.data.items.some((s) => s.id === forked.body.data.id)).toBe(false);
 
     const sessionDir = sessionDirOf(
       (server as RunningServer).core.accessor.get(IBootstrapService).homeDir,
@@ -2709,16 +2581,6 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('returns 40401 when listing children of a missing parent', async () => {
-    const { body } = await getJson<null>('/api/v1/sessions/sess_missing_parent/children');
-    expect(body.code).toBe(40401);
-  });
-
-  it('returns 40401 when creating a child for a missing parent', async () => {
-    const { body } = await postJson<null>('/api/v1/sessions/sess_missing_parent/children', {});
-    expect(body.code).toBe(40401);
-  });
-
   it('returns an empty warnings list for an existing session', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -2948,23 +2810,6 @@ describe('server-v2 /api/v1/sessions', () => {
     } finally {
       state.mockRestore();
     }
-  });
-
-  it('filters child sessions by the busy query', async () => {
-    const cwd = home as string;
-    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const parentId = parent.body.data.id;
-    const child = await postJson<SessionWire>(`/api/v1/sessions/${parentId}/children`, {});
-    const childId = child.body.data.id;
-    expect(child.body.data.activity).toBe('idle');
-
-    const idle = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children?busy=false`);
-    expect(idle.body.code).toBe(0);
-    expect(idle.body.data.items.some((s) => s.id === childId)).toBe(true);
-
-    const running = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children?busy=true`);
-    expect(running.body.code).toBe(0);
-    expect(running.body.data.items.some((s) => s.id === childId)).toBe(false);
   });
 
   it('hides a session from lists after its workspace is unregistered while keeping it gettable (gap G3)', async () => {

@@ -129,8 +129,6 @@ export function createProgram(
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
     .addOption(
-      // The [environments] config layer resolves the id and default cwd.
-      // Hidden from help output.
       new Option('--environment <id>', 'Bind the new session to the configured environment <id>.')
         .hideHelp(),
     )
@@ -173,9 +171,6 @@ export function createProgram(
       onPluginNodeRunner(entry, args);
     });
 
-  // Self-spawned worker for native staged updates (detached background
-  // download, or foreground from `kimi upgrade` — `--manual` marks the
-  // latter's stage as user-requested). Hidden: not user-facing.
   program
     .command('__update_download', { hidden: true })
     .argument('<version>')
@@ -191,13 +186,6 @@ export function createProgram(
       );
     });
 
-  // Remote-executor entry (remote-environment spec §6). The exact argv shapes
-  // `exec-server` and `exec-server --listen stdio` are pre-dispatched in
-  // `src/main.ts` before this program is even loaded; this hidden command owns
-  // every other spelling (`--listen=stdio`, unsupported transports, excess
-  // args) so they still route to the executor or fail with a clean stderr
-  // error. `--listen` defaults to stdio, the only supported transport, so a
-  // bare invocation reaching this program agrees with the light path.
   program
     .command(EXEC_SERVER_COMMAND, { hidden: true })
     .option('--listen <transport>', 'Transport to listen on. Only "stdio" is supported.', 'stdio')

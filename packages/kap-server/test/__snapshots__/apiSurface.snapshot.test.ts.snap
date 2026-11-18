@@ -26,6 +26,18 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "DELETE",
+      "/api/v1/hosts/{id}",
+    ],
+    [
+      "DELETE",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "DELETE",
+      "/api/v1/hosts/{id}/proxy/{*}",
+    ],
+    [
+      "DELETE",
       "/api/v1/mcp/servers/{name}",
     ],
     [
@@ -67,10 +79,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/config",
-    ],
-    [
-      "GET",
-      "/api/v1/connections",
     ],
     [
       "GET",
@@ -122,15 +130,23 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/gui/store/getItem",
-    ],
-    [
-      "GET",
-      "/api/v1/gui/store/length",
-    ],
-    [
-      "GET",
       "/api/v1/healthz",
+    ],
+    [
+      "GET",
+      "/api/v1/hosts",
+    ],
+    [
+      "GET",
+      "/api/v1/hosts:ssh-hosts",
+    ],
+    [
+      "GET",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "GET",
+      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "GET",
@@ -210,10 +226,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/children",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/environment",
     ],
     [
@@ -234,23 +246,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/goal",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/media/{file_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/messages",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/messages/{message_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/profile",
     ],
     [
       "GET",
@@ -293,12 +289,24 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
       "/openapi.json",
     ],
     [
-      "PATCH",
-      "/api/v1/remote-control/devices/{id}",
+      "HEAD",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "HEAD",
+      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "PATCH",
-      "/api/v1/sessions/{session_id}/goal",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "PATCH",
+      "/api/v1/hosts/{id}/proxy/{*}",
+    ],
+    [
+      "PATCH",
+      "/api/v1/remote-control/devices/{id}",
     ],
     [
       "PATCH",
@@ -307,10 +315,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/capabilities/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/client_configs",
     ],
     [
       "POST",
@@ -342,15 +346,23 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/gui/store/clear",
+      "/api/v1/hosts:connect",
     ],
     [
       "POST",
-      "/api/v1/gui/store/removeItem",
+      "/api/v1/hosts:copy-providers",
     ],
     [
       "POST",
-      "/api/v1/gui/store/setItem",
+      "/api/v1/hosts:test",
+    ],
+    [
+      "POST",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "POST",
+      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "POST",
@@ -446,6 +458,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/sessions/{session_id}:cancel",
+    ],
+    [
+      "POST",
       "/api/v1/sessions/{session_id}:delete",
     ],
     [
@@ -459,10 +475,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/children",
     ],
     [
       "POST",
@@ -535,6 +547,18 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/workspaces/{workspace_id}/untrust",
+    ],
+    [
+      "PUT",
+      "/api/v1/hosts/{id}",
+    ],
+    [
+      "PUT",
+      "/api/v1/hosts/{id}/proxy",
+    ],
+    [
+      "PUT",
+      "/api/v1/hosts/{id}/proxy/{*}",
     ],
     [
       "PUT",

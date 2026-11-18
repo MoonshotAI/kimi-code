@@ -785,7 +785,7 @@ describe('FullCompaction', () => {
       return {
         parts: [{ type: 'text', text: 'Recovered compacted summary.' }],
         usage: null,
-        finishReason: null,
+        finishReason: 'completed',
       };
     });
     const ctx = testAgent({ generate });
@@ -2418,7 +2418,7 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('compacts and retries when the provider reports context overflow', async () => {
+  it('compacts and retries when provider context overflow follows an earlier LLM retry', async () => {
     let callCount = 0;
     const inputs: string[][] = [];
     const generate: GenerateFn = createMockProvider(async (request, _signal) => {
@@ -2426,13 +2426,15 @@ describe('FullCompaction', () => {
       callCount += 1;
       inputs.push(inputHistorySnapshot(history));
       if (callCount === 1) {
-        return providerHttpError(400, 'Context length exceeded', { requestId: 'req-context-overflow' })
+        return providerHttpError(429, 'first attempt rate limited', { requestId: 'req-first-429', retryAfterMs: 1 });
       }
       if (callCount === 2) {
-        return textResult('Overflow compacted summary.');
+        return providerHttpError(400, 'Context length exceeded', { requestId: 'req-context-overflow' });
       }
       if (callCount === 3) {
-        
+        return textResult('Overflow compacted summary.');
+      }
+      if (callCount === 4) {
         return textResult('Recovered after overflow compaction.');
       }
       throw new Error(`Unexpected generate call ${String(callCount)}`);
@@ -2448,7 +2450,7 @@ describe('FullCompaction', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry after provider overflow' }] });
     const events = await ctx.untilTurnEnd();
 
-    expect(callCount).toBe(3);
+    expect(callCount).toBe(4);
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'compaction.started',
@@ -2474,6 +2476,11 @@ describe('FullCompaction', () => {
     );
     expect(inputs).toMatchInlineSnapshot(`
       [
+        [
+          "user: old user one",
+          "assistant: old assistant one",
+          "user: Retry after provider overflow",
+        ],
         [
           "user: old user one",
           "assistant: old assistant one",

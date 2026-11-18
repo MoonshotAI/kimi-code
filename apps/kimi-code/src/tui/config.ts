@@ -1,10 +1,3 @@
-/**
- * Client-owned preferences.
- *
- * Agent/runtime settings live in core's `config.toml`; this file owns
- * kimi-code client preferences such as terminal UI and update behavior.
- */
-
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -145,9 +138,7 @@ export const StatusLineFileConfigSchema = z.object({
 });
 
 export const StatusLineConfigSchema = z.object({
-  /** Ordered built-in slots for footer line 1; null means the default layout. */
   items: z.array(z.enum(STATUS_LINE_ITEMS)).nullable(),
-  /** User command whose first stdout line replaces footer line 1; null disables. */
   command: z.string().nullable(),
 });
 export type StatusLineConfig = z.infer<typeof StatusLineConfigSchema>;
@@ -270,26 +261,16 @@ export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
   tuiMode: TuiModeSchema.optional(),
   copyOnSelect: z.boolean().optional(),
-  /** LaTeX math rendering in Markdown; optional only so older hand-built test
-   * fixtures still typecheck. */
   renderLatex: z.boolean().optional(),
   disablePasteBurst: z.boolean(),
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   cacheExpiryHint: z.boolean().optional(),
   disableFeedbackSurvey: z.boolean().optional(),
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   autoSessionTitle: z.boolean().optional(),
   followUpBehavior: FollowUpBehaviorSchema.optional(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   statusLine: StatusLineConfigSchema.optional(),
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   markdown: MarkdownConfigSchema.optional(),
   transcript: TranscriptConfigSchema,
 });
@@ -323,12 +304,6 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   transcript: DEFAULT_TRANSCRIPT_CONFIG,
 });
 
-/**
- * Thrown by `loadTuiConfig` when the on-disk TOML cannot be parsed.
- * Carries `fallback` so the caller can recover without re-running the
- * I/O, and use `message` (== `INVALID_TUI_CONFIG_MESSAGE`) as a
- * user-facing notice.
- */
 export class TuiConfigParseError extends Error {
   override readonly name = 'TuiConfigParseError';
   readonly fallback: TuiConfig;
@@ -518,11 +493,6 @@ export function normalizeTuiConfig(
 }
 
 export function renderTuiConfig(config: TuiConfig): string {
-  // An active status_line must round-trip: any preference save rewrites the
-  // whole file, so the section is emitted live when set and left as a
-  // commented-out guide when unset. The [markdown] section follows the same
-  // pattern: live when mermaid rendering is turned off, commented guide at
-  // the default.
   const statusItems = config.statusLine?.items;
   const statusCommand = config.statusLine?.command;
   const statusLines: string[] = [];

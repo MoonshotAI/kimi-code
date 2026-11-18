@@ -1,8 +1,3 @@
-/**
- * ImportSessionsScreenComponent — the page behind `/import-sessions` and
- * `kimi import-sessions`: scan → choose a window → import with progress →
- * summary. Rendering follows the migration screen conventions.
- */
 import { basename } from 'node:path';
 
 import { Container, matchesKey, Key, truncateToWidth, type Focusable } from '@moonshot-ai/pi-tui';
@@ -36,7 +31,6 @@ export interface ImportSessionsScreenOptions {
     candidates: readonly ImportCandidate[],
     hooks: { readonly onProgress: (progress: ImportProgress) => void; readonly shouldStop: () => boolean },
   ) => Promise<ImportReport>;
-  /** Called once when the page closes; `report` is absent when nothing was imported. */
   readonly onClose: (report: ImportReport | undefined) => void;
   readonly requestRender?: () => void;
   readonly colors?: ColorPalette;

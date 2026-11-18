@@ -1,12 +1,13 @@
 import {
   ErrorCodes,
   IAgentChangeNotifierService,
-  IAgentGoalService,
   IAgentLoopService,
   IAgentFullCompactionService,
   IAgentLifecycleService,
   IAgentPluginService,
+  IAgentTaskService,
   IAuthSummaryService,
+  IBootstrapService,
   IConfigService,
   IPluginService,
   ISessionAgentProfileCatalog,
@@ -15,8 +16,7 @@ import {
   ISessionContext,
   ISessionIndex,
   ISessionMetadata,
-  ISessionLegacyService,
-  ISessionPromptPredictionService,
+  type SessionMeta,
   ISessionTitleService,
   IEventService,
   SessionCreated,
@@ -24,7 +24,6 @@ import {
   IWorkspaceInstanceManager,
   IWorkspaceService,
   closeSessionById,
-  ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
   getOrRestoreAgent,
   programForSession,
@@ -38,26 +37,25 @@ import {
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
+import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
+import {
+  legacySessionMetaScopeOf,
+  sessionScopeOf,
+  workspacePersistenceScope,
+} from '@moonshot-ai/agent-core-v2/workspace/sessionLifecycle/internal/addressing';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
 import type { ConversationService } from '../services/conversation/conversationService';
+import { findOnHosts, hostGet, HostSourceError, type HostSources } from '../services/hosts/hostFanout';
 import {
   archiveSessionResponseSchema,
-  cancelPromptPredictionRequestSchema,
-  cancelPromptPredictionResponseSchema,
+  cancelSessionRequestSchema,
   compactSessionRequestSchema,
   compactSessionResponseSchema,
-  createSessionChildRequestSchema,
   createSessionRequestSchema,
   deleteSessionResponseSchema,
   forkSessionRequestSchema,
-  editSessionGoalRequestSchema,
-  editSessionGoalResponseSchema,
-  getSessionGoalResponseSchema,
-  listSessionChildrenResponseSchema,
-  predictPromptRequestSchema,
-  predictPromptResponseSchema,
-  sessionAbortResponseSchema,
+  sessionCancelResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
   takeoverSessionResponseSchema,
@@ -110,43 +108,26 @@ interface SessionRouteHost {
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
-  patch(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
 }
-
-const booleanQueryParam = z.preprocess((value) => {
-  if (value === 'true' || value === '1' || value === 1 || value === true) return true;
-  if (value === 'false' || value === '0' || value === 0 || value === false) return false;
-  return value;
-}, z.boolean().optional());
 
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
-const sessionChildrenListQueryCoercion = z
-  .object({
-    before_id: z.string().min(1).optional(),
-    after_id: z.string().min(1).optional(),
-    page_size: z.coerce.number().int().min(1).max(100).optional(),
-    busy: booleanQueryParam,
-  })
-  .superRefine((value, ctx) => {
-    if (value.before_id !== undefined && value.after_id !== undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'before_id and after_id are mutually exclusive',
-        path: ['before_id'],
-        params: { code: ErrorCode.VALIDATION_FAILED },
-      });
+const sessionGetQuerySchema = z.object({ hosts: z.literal('include').optional() });
+
+const hostSessionSchema = sessionSchema;
+
+async function sessionOnHosts(hosts: HostSources, id: string) {
+  return findOnHosts(hosts, async (session) => {
+    try {
+      return await hostGet<Session>(session, `/api/v1/sessions/${encodeURIComponent(id)}`);
+    } catch (error) {
+      if (error instanceof HostSourceError && error.code === ErrorCode.SESSION_NOT_FOUND) return undefined;
+      throw error;
     }
   });
+}
 
 const sessionActionTailParamSchema = z.object({
   tail: z.string().min(1),
@@ -161,17 +142,20 @@ const sessionActionRequestSchema = z.preprocess(
     instruction: z.string().optional(),
     turn_id: z.string().min(1).optional(),
     agent_id: z.string().min(1).optional(),
-     count: z.number().int().positive().optional(),
-     page_size: z.number().int().min(1).max(100).optional(),
-    prediction_id: z.string().min(1).optional(),
-    expected_turn_id: z.number().int().nonnegative().optional(),
-    reason: cancelPromptPredictionRequestSchema.shape.reason,
+    include_background: z.boolean().optional(),
+    count: z.number().int().positive().optional(),
+    page_size: z.number().int().min(1).max(100).optional(),
   }),
 );
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conversations: ConversationService): void {
+export function registerSessionsRoutes(
+  app: SessionRouteHost,
+  core: Scope,
+  conversations: ConversationService,
+  hosts?: HostSources,
+): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -303,17 +287,37 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
       method: 'GET',
       path: '/sessions/{session_id}',
       params: sessionIdParamSchema,
-      success: { data: sessionSchema },
+      querystring: sessionGetQuerySchema,
+      success: { data: hostSessionSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.HOST_UNAVAILABLE]: {},
       },
-      description: 'Get a session by ID',
+      description:
+        'Get a session by ID. hosts=include also looks the session up on each SSH host and tags it with host_id; when it is not found and a host cannot answer, the result is HOST_UNAVAILABLE',
       tags: ['sessions'],
     },
     async (req, reply) => {
       const { session_id } = req.params;
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
+      if (summary === undefined && req.query.hosts === 'include' && hosts !== undefined) {
+        const lookup = await sessionOnHosts(hosts, session_id);
+        if (lookup.found !== undefined) {
+          reply.send(okEnvelope(lookup.found, req.id));
+        } else if (lookup.unavailable.length > 0) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.HOST_UNAVAILABLE,
+              `session ${session_id} may be on an unavailable host: ${lookup.unavailable.join(', ')}`,
+              req.id,
+            ),
+          );
+        } else {
+          reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id));
+        }
+        return;
+      }
       if (summary === undefined) {
         reply.send(
           errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
@@ -341,51 +345,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
     getRoute.path,
     getRoute.options,
     getRoute.handler as Parameters<SessionRouteHost['get']>[2],
-  );
-
-  const getProfileRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/sessions/{session_id}/profile',
-      params: sessionIdParamSchema,
-      success: { data: sessionSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-      },
-      description: 'Get session profile',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      const { session_id } = req.params;
-      const summary = await core.accessor.get(ISessionIndex).get(session_id);
-      if (summary === undefined) {
-        reply.send(
-          errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
-        );
-        return;
-      }
-      const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
-      if (cwd === undefined) {
-        reply.send(
-          errEnvelope(
-            ErrorCode.SESSION_NOT_FOUND,
-            `session ${session_id} has no recoverable cwd`,
-            req.id,
-          ),
-        );
-        return;
-      }
-      reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
-      );
-    },
-  );
-  app.get(
-    getProfileRoute.path,
-    getProfileRoute.options,
-    getProfileRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
 
   const updateProfileRoute = defineRoute(
@@ -513,10 +472,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           sessionSchema,
           compactSessionResponseSchema,
           undoSessionResponseSchema,
-          sessionAbortResponseSchema,
+          sessionCancelResponseSchema,
           startBtwSessionResponseSchema,
-          predictPromptResponseSchema,
-          cancelPromptPredictionResponseSchema,
           archiveSessionResponseSchema,
           deleteSessionResponseSchema,
           takeoverSessionResponseSchema,
@@ -556,192 +513,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
     sessionActionRoute.path,
     sessionActionRoute.options,
     sessionActionRoute.handler as Parameters<SessionRouteHost['post']>[2],
-  );
-
-  const listChildrenRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/sessions/{session_id}/children',
-      params: sessionIdParamSchema,
-      querystring: sessionChildrenListQueryCoercion,
-      success: { data: listSessionChildrenResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-      },
-      description: 'List child sessions',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const { session_id } = req.params;
-        const exists =
-          getLiveSessionById(core.accessor, session_id) !== undefined ||
-          (await core.accessor.get(ISessionIndex).get(session_id)) !== undefined;
-        if (!exists) {
-          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
-        }
-
-        const pageSize = req.query.page_size ?? 100;
-        const page = await core.accessor.get(ISessionIndex).listRecent({
-          childOf: session_id,
-          before: req.query.before_id,
-          after: req.query.after_id,
-          limit: pageSize + 1,
-        });
-        const window = page.items.slice(0, pageSize);
-
-        const roots = new Map(
-          (await core.accessor.get(IWorkspaceService).list()).map((w) => [w.id, w.root]),
-        );
-        const projected = window.map((summary) =>
-          toWireSession(
-            summary,
-            summary.cwd ?? roots.get(summary.workspaceId) ?? '',
-            resolveSessionFacts(core, summary.id),
-          ),
-        );
-        const items =
-          req.query.busy !== undefined
-            ? projected.filter((session) => (session.activity !== 'idle') === req.query.busy)
-            : projected;
-        reply.send(okEnvelope({ items, has_more: page.nextCursor !== undefined }, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.get(
-    listChildrenRoute.path,
-    listChildrenRoute.options,
-    listChildrenRoute.handler as Parameters<SessionRouteHost['get']>[2],
-  );
-
-  const createChildRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/sessions/{session_id}/children',
-      params: sessionIdParamSchema,
-      body: createSessionChildRequestSchema,
-      success: { data: sessionSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.SESSION_BUSY]: {},
-        ...sessionConflictErrors,
-      },
-      description: 'Create a child session',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const { session_id } = req.params;
-        const lease = await programForSession(core.accessor, session_id);
-        if (lease === undefined) {
-          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
-        }
-        try {
-          const meta = await core.accessor.get(ISessionManager).createChild({
-            sourceSessionId: session_id,
-            title: req.body.title,
-            metadata: req.body.metadata,
-          });
-          const session = toWireSession(
-            { ...meta, workspaceId: lease.instance.program.workspaceId },
-            meta.cwd ?? '',
-            resolveSessionFacts(core, meta.id),
-          );
-          core.accessor.get(IEventService).publish(
-            new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
-          );
-          reply.send(okEnvelope(session, req.id));
-        } finally {
-          lease.dispose();
-        }
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.post(
-    createChildRoute.path,
-    createChildRoute.options,
-    createChildRoute.handler as Parameters<SessionRouteHost['post']>[2],
-  );
-
-  const goalRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/sessions/{session_id}/goal',
-      params: sessionIdParamSchema,
-      success: { data: getSessionGoalResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
-      },
-      description: 'Get the current session goal (null when none is active)',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const { session_id } = req.params;
-        const goal = await core.accessor.get(ISessionLegacyService).goal(session_id);
-        reply.send(okEnvelope(goal, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.get(
-    goalRoute.path,
-    goalRoute.options,
-    goalRoute.handler as Parameters<SessionRouteHost['get']>[2],
-  );
-
-  const editGoalRoute = defineRoute(
-    {
-      method: 'PATCH',
-      path: '/sessions/{session_id}/goal',
-      params: sessionIdParamSchema,
-      body: editSessionGoalRequestSchema,
-      success: { data: editSessionGoalResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.GOAL_NOT_FOUND]: {},
-        [ErrorCode.GOAL_STATUS_INVALID]: {},
-        [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
-        [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
-      },
-      description: 'Edit the objective of the current session goal in place',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const { session_id } = req.params;
-        const session = await resumeSessionById(core.accessor, session_id);
-        if (session === undefined) {
-          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
-        }
-        const { agentId } = await ensureMainAgentContext(session);
-        const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentId);
-        if (agent === undefined) {
-          throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
-        }
-        const goal = await agent.accessor
-          .get(IAgentGoalService)
-          .editGoalObjective({ objective: req.body.objective });
-        reply.send(okEnvelope(goal, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.patch(
-    editGoalRoute.path,
-    editGoalRoute.options,
-    editGoalRoute.handler as Parameters<SessionRouteHost['patch']>[2],
   );
 
   const sessionWarningsRoute = defineRoute(
@@ -797,10 +568,8 @@ type SessionAction =
   | 'fork'
   | 'compact'
   | 'undo'
-  | 'abort'
+  | 'cancel'
   | 'btw'
-  | 'predict-prompt'
-  | 'cancel-prompt-prediction'
   | 'restore'
   | 'archive'
   | 'delete'
@@ -812,19 +581,9 @@ interface SessionActionExtra {
   readonly conversations: ConversationService;
   readonly req: {
     readonly id: string;
-    readonly raw?: {
-      readonly aborted: boolean;
-      once(event: 'aborted', listener: () => void): unknown;
-      off(event: 'aborted', listener: () => void): unknown;
-    };
   };
   readonly reply: {
     readonly send: (payload: unknown) => unknown;
-    readonly raw?: {
-      readonly destroyed: boolean;
-      once(event: 'close', listener: () => void): unknown;
-      off(event: 'close', listener: () => void): unknown;
-    };
   };
 }
 
@@ -837,16 +596,8 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   fork: { body: forkSessionRequestSchema, handle: forkSessionAction },
   compact: { body: compactSessionRequestSchema, handle: compactSessionAction },
   undo: { body: undoSessionRequestSchema, handle: undoSessionAction },
-  abort: { handle: abortSessionAction },
+  cancel: { body: cancelSessionRequestSchema, handle: cancelSessionAction },
   btw: { handle: btwSessionAction },
-  'predict-prompt': {
-    body: predictPromptRequestSchema,
-    handle: predictPromptAction,
-  },
-  'cancel-prompt-prediction': {
-    body: cancelPromptPredictionRequestSchema,
-    handle: cancelPromptPredictionAction,
-  },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
   delete: { handle: deleteSessionAction },
@@ -921,12 +672,92 @@ async function undoSessionAction(
   reply.send(okEnvelope({ removed_turn_ids: removed }, req.id));
 }
 
-async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
-  const { core, req, reply, id } = ctx;
-  const agent = await resolveMainAgent(core, id);
-  agent.accessor.get(IAgentLoopService).cancel();
-  requestLog(req)?.info({ session_id: id, action: 'abort' }, 'session action completed');
-  reply.send(okEnvelope({ aborted: true }, req.id));
+async function cancelSessionAction(
+  ctx: SessionActionCtx<z.infer<typeof cancelSessionRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const targetAgentId = body.agent_id ?? MAIN_AGENT_ID;
+  let live = getLiveSessionById(core.accessor, id);
+  if (live === undefined) {
+    try {
+      await core.accessor.get(ISessionManager).whenResumeSettled(id);
+    } catch {
+    }
+    live = getLiveSessionById(core.accessor, id);
+  }
+  if (live === undefined) {
+    const summary = await core.accessor.get(ISessionIndex).get(id);
+    if (summary === undefined) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+    }
+    if (targetAgentId !== MAIN_AGENT_ID) {
+      const docs = core.accessor.get(IAtomicDocumentStore);
+      const metaScope = sessionScopeOf(
+        workspacePersistenceScope(
+          core.accessor.get(IBootstrapService).scope('sessions'),
+          summary.workspaceId,
+        ),
+        id,
+      );
+      const raw =
+        (await docs.get<SessionMeta>(metaScope, 'state.json')) ??
+        (await docs.get<SessionMeta>(legacySessionMetaScopeOf(metaScope), 'state.json'));
+      if (raw?.agents?.[targetAgentId] === undefined) {
+        throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent ${targetAgentId} does not exist`);
+      }
+    }
+    requestLog(req)?.info({ session_id: id, action: 'cancel', cancelled: false }, 'session action completed');
+    reply.send(okEnvelope({ cancelled: false }, req.id));
+    return;
+  }
+
+  const lifecycle = live.accessor.get(IAgentLifecycleService);
+  let agent = lifecycle.handleOf(targetAgentId);
+  if (agent === undefined) {
+    await lifecycle.whenCreateSettled?.(targetAgentId);
+    agent = lifecycle.handleOf(targetAgentId);
+  }
+  if (targetAgentId !== MAIN_AGENT_ID && agent === undefined) {
+    const persisted = (await live.accessor.get(ISessionMetadata).read()).agents?.[targetAgentId];
+    if (persisted === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent ${targetAgentId} does not exist`);
+    }
+    requestLog(req)?.info(
+      { session_id: id, action: 'cancel', agent_id: targetAgentId, include_background: body.include_background === true, cancelled: false },
+      'session action completed',
+    );
+    reply.send(okEnvelope({ cancelled: false }, req.id));
+    return;
+  }
+
+  let cancelled = agent !== undefined ? agent.accessor.get(IAgentLoopService).cancel() : false;
+  if (body.include_background === true) {
+    const handles: IAgentScopeHandle[] = [];
+    if (body.agent_id !== undefined) {
+      if (agent !== undefined) handles.push(agent);
+    } else {
+      await lifecycle.whenCreateSettled?.();
+      for (const entry of lifecycle.list()) {
+        const handle = lifecycle.handleOf(entry.agentId);
+        if (handle !== undefined) handles.push(handle);
+      }
+    }
+    for (const handle of handles) {
+      const taskService = handle.accessor.get(IAgentTaskService);
+      for (const task of taskService.list(true)) {
+        if (task.detached) {
+          await taskService.stopByUser(task.taskId);
+          cancelled = true;
+        }
+      }
+    }
+  }
+
+  requestLog(req)?.info(
+    { session_id: id, action: 'cancel', agent_id: targetAgentId, include_background: body.include_background === true, cancelled },
+    'session action completed',
+  );
+  reply.send(okEnvelope({ cancelled }, req.id));
 }
 
 async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
@@ -940,50 +771,6 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
   await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
   const agentId = await session.accessor.get(ISessionBtwService).start();
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
-}
-
-async function predictPromptAction(
-  ctx: SessionActionCtx<z.infer<typeof predictPromptRequestSchema>>,
-): Promise<void> {
-  const { core, req, reply, id, body } = ctx;
-  const session = await resumeSessionById(core.accessor, id);
-  if (session === undefined) {
-    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
-  }
-  const service = session.accessor.get(ISessionPromptPredictionService);
-  const disconnected = (): boolean => req.raw?.aborted === true || reply.raw?.destroyed === true;
-  const onAborted = (): void => {
-    service.cancel(body.prediction_id, 'disconnect');
-  };
-  req.raw?.once('aborted', onAborted);
-  reply.raw?.once('close', onAborted);
-  try {
-    if (disconnected()) return;
-    const prediction = await service.predict({
-      predictionId: body.prediction_id,
-      expectedTurnId: body.expected_turn_id,
-    });
-    if (!disconnected()) {
-      reply.send(okEnvelope(predictPromptResponseSchema.parse({ prediction }), req.id));
-    }
-  } finally {
-    req.raw?.off('aborted', onAborted);
-    reply.raw?.off('close', onAborted);
-  }
-}
-
-async function cancelPromptPredictionAction(
-  ctx: SessionActionCtx<z.infer<typeof cancelPromptPredictionRequestSchema>>,
-): Promise<void> {
-  const { core, req, reply, id, body } = ctx;
-  const session = await resumeSessionById(core.accessor, id);
-  if (session === undefined) {
-    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
-  }
-  const cancelled = session.accessor
-    .get(ISessionPromptPredictionService)
-    .cancel(body.prediction_id, body.reason);
-  reply.send(okEnvelope(cancelPromptPredictionResponseSchema.parse({ cancelled }), req.id));
 }
 
 async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {

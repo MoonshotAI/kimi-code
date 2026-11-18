@@ -1,11 +1,3 @@
-/**
- * OAuth device-code panel rendered inside the transcript.
- *
- * Borrows the rounded-border layout from `WelcomeComponent` so the login
- * prompt matches the rest of the chrome. All colors flow through the
- * active palette so theme switches take effect on the next render.
- */
-
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 

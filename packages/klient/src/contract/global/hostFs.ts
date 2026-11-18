@@ -1,9 +1,3 @@
-/**
- * `hostFolderBrowser` — host-side folder picker for choosing a workspace
- * folder. Mirrors `agent-core-v2/app/hostFolderBrowser/hostFolderBrowser.ts`;
- * wire shapes mirror `protocol/src/rest/fsBrowse.ts` (snake_case fields).
- */
-
 import { z } from 'zod';
 
 import type { ServiceContract } from '../types.js';

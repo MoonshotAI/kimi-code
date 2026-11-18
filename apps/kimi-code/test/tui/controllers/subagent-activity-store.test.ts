@@ -103,7 +103,6 @@ describe('SubagentActivityStore', () => {
     );
 
     let record = store.get('agent-1');
-    // No step event yet — a synthetic step holds the in-flight call.
     expect(record?.steps).toHaveLength(1);
     expect(record?.steps[0]?.toolCalls[0]?.args).toEqual({ command: 'ls -la' });
 
@@ -300,7 +299,6 @@ describe('SubagentActivityStore', () => {
   it('drops delta-only arg buffers when their step is evicted', () => {
     const store = new SubagentActivityStore();
     store.ensureRecord(spawn());
-    // A call truncated before started/result only ever produced deltas.
     store.applyEvent(
       ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 't-trunc', name: 'Write', argumentsPart: '{"path":"a"' }),
     );

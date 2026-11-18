@@ -1,18 +1,4 @@
 #!/usr/bin/env node
-/**
- * Enforce the VS Code-style service naming convention finalized in
- * Phase 5 of the 2026.06.07 services-alignment plan:
- *
- *   - packages/services/src/<domain>/<domain>.ts (+ <domain>Service.ts)
- *   - packages/kap-server/src/services/<domain>/<domain>.ts (+ <domain>Service.ts)
- *
- * Domain dirs and service-related .ts files must be camelCase — never
- * kebab-case (no `-` in the name). Anything outside these two roots is
- * ignored (test fixtures, etc.).
- *
- * Exit code 0 if clean, 1 with an actionable report otherwise.
- */
-
 import { readdirSync, statSync, existsSync } from "node:fs";
 import { resolve, join, relative } from "node:path";
 
@@ -31,11 +17,6 @@ function report(kind, absPath) {
   violations.push({ kind, path: relative(ROOT, absPath) });
 }
 
-/**
- * Both roots are organised as <domain>/<files>.ts plus a few top-level files
- * (index.ts, module.ts, pinoLoggerService.ts). Flag kebab in dir names and in
- * any .ts file directly under a domain dir.
- */
 function scanServicesSrc(srcRoot = SERVICES_SRC) {
   if (!existsSync(srcRoot)) return;
   for (const entry of readdirSync(srcRoot)) {

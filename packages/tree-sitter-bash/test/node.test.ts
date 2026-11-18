@@ -4,15 +4,6 @@ import { createNode, descendantsOfType } from '#/node';
 
 const SOURCE = 'echo foo; echo bar';
 
-/** program
- *      ├─ command "echo foo"
- *      │    ├─ command_name "echo"
- *      │    │    └─ word "echo"
- *      │    └─ word "foo"
- *      ├─ ";" (anonymous)
- *      └─ command "echo bar"
- *           └─ word "bar"
- */
 function buildTree() {
   const program = createNode({ type: 'program', source: SOURCE, startIndex: 0, endIndex: SOURCE.length });
   const cmd1 = program.addChild(createNode({ type: 'command', source: SOURCE, startIndex: 0, endIndex: 8 }));
@@ -65,7 +56,6 @@ describe('createNode', () => {
     expect(() => parent.addChild(createNode({ type: 'word', source: SOURCE, startIndex: 0, endIndex: 2 }))).toThrow(
       RangeError,
     );
-    // Adjacent (start == previous end) is fine.
     parent.addChild(createNode({ type: 'word', source: SOURCE, startIndex: 5, endIndex: 8 }));
     expect(parent.children).toHaveLength(2);
   });
@@ -118,7 +108,6 @@ describe('descendantsOfType', () => {
   });
 
   it('handles pathologically deep trees without overflowing the stack', () => {
-    // 200k-deep chain; a recursive walk would overflow the call stack.
     const depth = 200_000;
     const nodes = [];
     for (let i = 0; i < depth; i++) {

@@ -1,7 +1,3 @@
-/**
- * Retry policy: attempt limits, exponential backoff with jitter, `Retry-After` handling, and which
- * errors are retryable.
- */
 import { llmStatusErrorMessage, type LlmErrorMessage } from '#/llm/response';
 
 export const DEFAULT_MAX_RETRY_ATTEMPTS = 10;

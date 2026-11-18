@@ -1,7 +1,3 @@
-/**
- * SessionPicker — pi-tui version of the session selection dialog.
- */
-
 import {
   Container,
   matchesKey,
@@ -29,8 +25,6 @@ export interface SessionRow {
 const ELLIPSIS = '…';
 
 function formatRelativeTime(ts: number): string {
-  // SessionSummary timestamps come from filesystem stat `*timeMs`,
-  // so they use the same millisecond unit as `Date.now()`.
   if (!Number.isFinite(ts) || ts <= 0) return '';
   const diffSec = Math.floor(Math.max(0, Date.now() - ts) / 1000);
   if (diffSec < 60) return 'just now';
@@ -48,18 +42,14 @@ function homeAlias(path: string): string {
   return path;
 }
 
-// Truncates from the LEFT (keeps the tail), prefixing an ellipsis when clipped.
-// Paths typically carry the relevant info near the end, so we drop the prefix.
 function truncatePathLeft(path: string, maxWidth: number): string {
   if (maxWidth <= 0) return '';
   if (visibleWidth(path) <= maxWidth) return path;
   if (maxWidth === 1) return ELLIPSIS;
-  // Walk graphemes from the end accumulating width, keep the longest tail
-  // whose width + ellipsis fits.
   const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
   const segments = [...segmenter.segment(path)].map((s) => s.segment);
   let used = 0;
-  const budget = maxWidth - 1; // reserve 1 column for ellipsis
+  const budget = maxWidth - 1;
   let i = segments.length - 1;
   while (i >= 0) {
     const seg = segments[i];
@@ -118,15 +108,10 @@ export class SessionPickerComponent extends Container implements Focusable {
     onToggleScope?: (selectedSessionId: string) => void;
     requestRender?: () => void;
     maxVisibleSessions?: number;
-    /** More pages exist on the backend (keyset paging). */
     hasMore?: boolean;
-    /** A follow-up page fetch is in flight. */
     loadingMore?: boolean;
-    /** Fired when the cursor reaches the end of every row fetched so far. */
     onLoadMore?: () => void;
-    /** Fired when a search query becomes active while pages remain unfetched. */
     onSearchDrain?: () => void;
-    /** Fired after the user confirms deletion with `y`; the picker clears its delete state once the request settles. */
     onDeleteRequest?: (session: SessionRow) => Promise<void>;
   }) {
     super();
@@ -165,19 +150,15 @@ export class SessionPickerComponent extends Container implements Focusable {
   private readonly onSearchDrain?: () => void;
   private readonly onDeleteRequest?: (session: SessionRow) => Promise<void>;
 
-  /** Appends a freshly fetched page, keeping the cursor and active query. */
   appendSessions(rows: SessionRow[]): void {
     this.sessions = [...this.sessions, ...rows];
     this.list.setItems(this.sessions);
-    // Rows arriving while a query is active must become visible without
-    // waiting for the next keypress; only grow, never shrink the window.
     this.visibleCount = Math.max(
       this.visibleCount,
       Math.min(this.list.view().items.length, this.pageSize),
     );
   }
 
-  /** Updates the backend-paging facts after an in-flight fetch settles. */
   setPaging(hasMore: boolean, loadingMore: boolean): void {
     this.hasMore = hasMore;
     this.loadingMore = loadingMore;
@@ -201,8 +182,6 @@ export class SessionPickerComponent extends Container implements Focusable {
     const view = this.list.view();
     if (view.query !== previousQuery) {
       this.visibleCount = Math.min(view.items.length, this.pageSize);
-      // A fresh query only searches the pages fetched so far; ask the host to
-      // drain the rest in the background so search covers every session.
       if (view.query.length > 0 && previousQuery.length === 0 && this.hasMore) {
         this.onSearchDrain?.();
       }
@@ -213,7 +192,6 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (view.selectedIndex >= loadedCount - 1 && loadedCount < view.items.length) {
       this.visibleCount = Math.min(view.items.length, this.visibleCount + this.pageSize);
     }
-    // The cursor reached the end of everything fetched: pull the next page.
     if (
       this.hasMore &&
       !this.loadingMore &&
@@ -229,8 +207,6 @@ export class SessionPickerComponent extends Container implements Focusable {
       this.handleDeleteInput(data);
       return;
     }
-    // A selection runs resume/switch asynchronously; input during that window
-    // (e.g. Ctrl+X delete) would race the session swap.
     if (this.selectInFlight) return;
     if (matchesKey(data, Key.ctrl('c'))) {
       this.onCtrlC?.();
@@ -305,7 +281,6 @@ export class SessionPickerComponent extends Container implements Focusable {
         this.deleteState = undefined;
         this.invalidate();
       };
-      // then(clear, clear): rejections settle too — the host has already surfaced the failure.
       void this.onDeleteRequest?.(state.session).then(clear, clear);
     }
   }
@@ -321,8 +296,6 @@ export class SessionPickerComponent extends Container implements Focusable {
     const suffix = state.phase === 'confirm' ? '"? [y/N]' : '"…';
     const labelBudget = Math.max(0, width - visibleWidth(prefix) - visibleWidth(suffix));
     const shown = truncateToWidth(label, labelBudget, ELLIPSIS);
-    // The suffix carries the confirm/cancel keys: it survives by truncating
-    // the head (prefix + label) instead of the composed line.
     const head = truncateToWidth(
       prefix + shown,
       Math.max(0, width - visibleWidth(suffix)),
@@ -343,12 +316,6 @@ export class SessionPickerComponent extends Container implements Focusable {
     return this.renderLines(width).map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
 
-  // Builds the raw lines; `render()` applies a final width clamp so no line
-  // can ever exceed the terminal width. The per-line budgets below keep the
-  // layout tidy at normal widths, but on a very narrow terminal those budgets
-  // floor at a minimum and the trailing time/badge are appended in full, so
-  // the clamp in `render()` is what guarantees the renderer's invariant and
-  // prevents the "Rendered line exceeds terminal width" crash (issue #240).
   private renderLines(width: number): string[] {
     const lines: string[] = [currentTheme.fg('primary', '─'.repeat(width))];
     const title = this.scope === 'all' ? 'All sessions' : 'Sessions';
@@ -489,11 +456,10 @@ export class SessionPickerComponent extends Container implements Focusable {
     const rawTitle = (session.title ?? session.id).trim() || session.id;
     const titleSource = formatSessionLabel({ title: rawTitle, metadata: session.metadata });
 
-    // Inline trailing parts after the title: "<title>  <time>  ← current".
     const trailingParts = [time, badge].filter((p) => p.length > 0);
     const trailingText = trailingParts.length > 0 ? '  ' + trailingParts.join('  ') : '';
     const trailingWidth = visibleWidth(trailingText);
-    const headerPrefixWidth = visibleWidth(pointer) + 1; // pointer + space
+    const headerPrefixWidth = visibleWidth(pointer) + 1;
     const titleBudget = Math.max(8, width - headerPrefixWidth - trailingWidth);
     const shownTitle = truncateToWidth(singleLine(titleSource), titleBudget, ELLIPSIS);
 
@@ -503,9 +469,6 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (badge.length > 0) header += '  ' + currentTheme.fg('success', badge);
     const card: string[] = [header];
 
-    // Session id is rendered in full at normal widths (the final clamp in
-    // `render()` truncates it only when the terminal is narrower than the id).
-    // The directory wraps to its own line if it would push past the edge.
     const fullId = session.id;
     const idWidth = visibleWidth(fullId);
     const metaGap = '   ';
@@ -522,8 +485,6 @@ export class SessionPickerComponent extends Container implements Focusable {
           currentTheme.fg('textMuted', aliasedDir),
       );
     } else {
-      // Not enough room for both on one line — keep the id intact and put the
-      // directory on the next line (left-truncated only if it still doesn't fit).
       card.push(
         indent +
           currentTheme.fg(

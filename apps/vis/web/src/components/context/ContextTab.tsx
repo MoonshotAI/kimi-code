@@ -11,15 +11,12 @@ import { UndoRibbon } from './UndoRibbon';
 
 interface ContextTabProps {
   sessionId: string;
-  /** Override starting agentId; defaults to 'main'. */
   initialAgentId?: string;
 }
 
 export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabProps) {
   const [agentId, setAgentId] = useState<string>(initialAgentId);
   const [history, setHistory] = useState<'model' | 'full'>('model');
-  // Re-sync on session OR agent id change — see WireTab for the same
-  // rationale (session navigation must reset a stale subagent pick).
   useEffect(() => {
     setAgentId(initialAgentId);
   }, [sessionId, initialAgentId]);
@@ -43,8 +40,6 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
     inputCacheCreation:
       sessionUsage.inputCacheCreation + turnUsage.inputCacheCreation + predictionUsage.inputCacheCreation,
   };
-  // Live context-window fill (latest step.end usage), distinct from the
-  // cumulative session-scoped + turn-scoped spend the bar breaks down.
   const contextTokens = ctx?.contextTokens ?? 0;
   const config = ctx?.config ?? {};
   const permissionMode = ctx?.permission.mode ?? null;
@@ -54,7 +49,6 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Toolbar — agent selector + status pills */}
       <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface-1 px-3 py-2">
         <label className="flex items-center gap-2 font-mono text-[11px] text-fg-2">
           <span className="text-fg-3">agent</span>
@@ -86,8 +80,6 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
           </span>
         ) : null}
         <div className="ml-auto flex items-center gap-2">
-          {/* History view toggle — 'model' (post-compaction, what the model
-              sees) vs 'full' (full reconstructed history for debugging). */}
           <div
             role="group"
             aria-label="history view"
@@ -136,19 +128,14 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
         </div>
       </div>
 
-      {/* Full-history hint — clarifies that this is the reconstructed history
-          and the model itself only sees the compacted view. */}
       {history === 'full' ? (
         <div className="shrink-0 border-b border-border bg-surface-1 px-3 py-1 font-mono text-[10.5px] text-fg-3">
           full reconstructed history — the model actually sees the compacted view
         </div>
       ) : null}
 
-      {/* Live context-window fill (contextTokens) + the 4-segment cumulative
-          session-scoped and turn-scoped usage breakdown. */}
       <TokenBar usage={cumulativeUsage} contextTokens={contextTokens} />
 
-      {/* Message stream */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex flex-col gap-3 px-3 py-4">
           {goal ? (
@@ -203,12 +190,6 @@ const EMPTY_USAGE: TokenUsage = {
   inputCacheCreation: 0,
 };
 
-// Colors are chosen from the existing semantic palette so the bar reads
-// coherently with the rest of the app:
-//   inputCacheRead     = success   (cache hit — the "good" share)
-//   inputOther         = info      (billed input)
-//   output             = assistant (what the model produced)
-//   inputCacheCreation = warning   (billed once, amortised next call)
 const SEG_COLORS = {
   inputCacheRead: 'var(--color-sev-success)',
   inputOther: 'var(--color-sev-info)',

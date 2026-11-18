@@ -45,6 +45,7 @@ export const sessionSchema = z.object({
   last_prompt: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   git: sessionGitSchema.optional(),
+  host_id: z.string().optional(),
 });
 
 export type Session = z.infer<typeof sessionSchema>;
@@ -91,10 +92,3 @@ export const sessionForkSchema = z.object({
 });
 
 export type SessionFork = z.infer<typeof sessionForkSchema>;
-
-export const sessionChildCreateSchema = z.object({
-  title: z.string().min(1).optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
-
-export type SessionChildCreate = z.infer<typeof sessionChildCreateSchema>;

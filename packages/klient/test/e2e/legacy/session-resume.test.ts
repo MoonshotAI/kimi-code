@@ -1,21 +1,3 @@
-/**
- * Session-resume / activity invariants — assertions for the two gaps the
- * "browser refresh" walkthrough flagged:
- *
- *   1. **Cold-session `GET /messages` must NOT 401.** Pre-fix, the
- *      messageService threw `SESSION_NOT_FOUND` (40401) for any session that
- *      wasn't loaded in the bridge's in-memory map. Fixed by
- *      `services/src/message/messageService.ts:106` calling
- *      `core.rpc.resumeSession({sessionId})` before `getContext`, so any
- *      session whose snapshot exists on disk is rehydrated transparently.
- *
- *   2. **`GET /sessions/{sid}.activity` must reflect runtime work.** Session
- *      activity is aggregated from agent turns and background tasks, so this
- *      test asserts the live server transitions `idle → turn → idle` across
- *      a prompt.
- *
- * Both tests gate on `daemonReachable()` so CI without a server stays green.
- */
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { DaemonClient } from '../harness/index.js';
@@ -46,28 +28,20 @@ afterEach(async () => {
   for (const { client, sid } of created.splice(0)) {
     try {
       await client.http.archiveSession(sid);
-    } catch {
-      // ignore
-    }
+    } catch {}
     try {
       await client.close();
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 });
 
 describeLive('session resume + activity (live server required)', () => {
-  // ── Gap 1: cold-session /messages ──────────────────────────────────────
   it(
     'GET /messages on a persisted session returns 200 (resumeSession injection)',
     async () => {
       const log = createCaseLogger('session resume: persisted messages');
       const probe = new DaemonClient({ baseUrl: BASE_URL });
 
-      // Seed: ensure at least one session exists in the store. (If a prior
-      // server process already left some, we'll still pick one of those —
-      // either way, the resumeSession code path is the same.)
       const seeded = await probe.createSession({ metadata: { cwd: process.cwd() } });
       created.push({ client: probe, sid: seeded.id });
       log('seeded session', seeded);
@@ -86,9 +60,6 @@ describeLive('session resume + activity (live server required)', () => {
       await probe.close();
       log('closed seed client');
 
-      // Fresh client — closing the previous WS doesn't evict the bridge's
-      // in-memory session, but it ensures the call goes through the REST
-      // resume path (no stale subscription state).
       const fresh = new DaemonClient({ baseUrl: BASE_URL });
       const { items: sessions } = await fresh.listSessions({ page_size: 20 });
       log('fresh listSessions snapshot', {
@@ -97,17 +68,15 @@ describeLive('session resume + activity (live server required)', () => {
       });
       expect(sessions.length).toBeGreaterThan(0);
 
-      // Probe up to 3 sessions to keep the test deterministic across server
-      // states (fresh-start vs. long-running). Every one must return 200.
       const probeSet = sessions.slice(0, 3);
       for (const s of probeSet) {
-        const { items: msgs } = await fresh.listMessages(s.id, { page_size: 5 });
-        log('fresh listMessages snapshot', {
+        const { turns } = await fresh.listTurns(s.id);
+        log('fresh listTurns snapshot', {
           session: sessionSummaryForLog(s),
-          count: msgs.length,
-          messages: msgs,
+          count: turns.length,
+          turns,
         });
-        expect(Array.isArray(msgs), `messages for ${s.id} should be an array`).toBe(true);
+        expect(Array.isArray(turns), `turns for ${s.id} should be an array`).toBe(true);
       }
       await fresh.close();
       log('closed fresh client');
@@ -115,9 +84,6 @@ describeLive('session resume + activity (live server required)', () => {
     PROMPT_TIMEOUT_MS + 30_000,
   );
 
-  // ── Gap 2: live activity field ──────────────────────────────────────────
-  // Asserts the live server transitions `idle → turn → idle` across a
-  // prompt, using the aggregate work fact exposed by both backends.
   it(
     'GET /sessions/{sid}.activity transitions idle → turn → idle across a prompt',
     async () => {
@@ -132,8 +98,6 @@ describeLive('session resume + activity (live server required)', () => {
       await client.subscribe(session.id);
       log('subscribe accepted', { session_id: session.id });
 
-      // Poll busy while the prompt is mid-flight; `runUntilIdle` resolves
-      // once `event.session.work_changed` reports the session idle again.
       let seenBusy = false;
       const busySamples: Array<{ at_ms: number; busy: boolean; activity: string }> = [];
       const startedAt = Date.now();

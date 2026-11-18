@@ -1,16 +1,9 @@
 import type { ProjectedMessage } from '../../types';
 
 interface CompactionRibbonProps {
-  /** The synthetic compaction-summary message emitted by the projector. */
   message: ProjectedMessage;
 }
 
-/**
- * Horizontal ribbon that marks where a `context.apply_compaction` record
- * collapsed earlier messages into a single summary. Receives the
- * `ProjectedMessage` whose `source === 'compaction_summary'` so we can
- * render the summary text inline.
- */
 export function CompactionRibbon({ message }: CompactionRibbonProps) {
   const summary = extractSummary(message);
   const stats = message.compaction;

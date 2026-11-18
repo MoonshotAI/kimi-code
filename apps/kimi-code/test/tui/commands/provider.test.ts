@@ -1,15 +1,3 @@
-/**
- * Scenario: /provider post-add default-model selection, and the
- * `/provider refresh [providerId]` subcommand.
- * Responsibilities: the picked effort is gated for persistence by the model's
- * effective default, and a session-only pick is still applied to the runtime
- * after the config refresh (which only reactivates from persisted values);
- * refresh scopes to one provider when given, reports added/removed/failed,
- * and routes a retired default into the model-migration flow.
- * Wiring: real setDefaultModel / handleProviderCommand with the
- * harness/authFlow boundaries stubbed by a small host rig.
- * Run: pnpm -C apps/kimi-code exec vitest run test/tui/commands/provider.test.ts
- */
 import type { ModelAlias, RefreshProviderModelsResponse } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -25,8 +13,6 @@ function makeHost(
 ) {
   const appState = {
     availableModels: {
-      // Declares no efforts; the Anthropic profile inference supplies
-      // [low, medium, high, xhigh, max] with the default resolved to 'high'.
       opus: {
         provider: 'compatible',
         model: 'claude-opus-4-7',
@@ -118,13 +104,9 @@ describe('setDefaultModel', () => {
       thinking: { enabled: true },
     });
     expect(host.authFlow.activateModelAfterLogin).toHaveBeenCalledWith('opus', 'xhigh');
-    // The application must come after the refresh, or the persisted value
-    // reactivated by refreshConfigAfterLogin would clobber the pick.
     expect(
       host.authFlow.activateModelAfterLogin.mock.invocationCallOrder[0]!,
     ).toBeGreaterThan(host.authFlow.refreshConfigAfterLogin.mock.invocationCallOrder[0]!);
-    // Without a session the engine never sees the pick, so the TUI stays the
-    // sole model_switch producer.
     expect(host.track).toHaveBeenCalledWith('model_switch', { model: 'opus' });
   });
 
@@ -157,17 +139,10 @@ describe('setDefaultModel', () => {
 
     await setDefaultModel(host, 'opus', 'high');
 
-    // refreshConfigAfterLogin routed through session.setModel with a changed
-    // alias, which the engine already tracks — a TUI-side event would
-    // double-count the switch.
     expect(host.track).not.toHaveBeenCalled();
   });
 
   it('leaves model_switch to the engine when a lazy session came live mid-flow and rebounded', async () => {
-    // Session-less at entry, but the first prompt's lazy creation completes
-    // while setConfig / the refresh are pending, so the session-only re-apply
-    // lands on the now-live session and actually switches its alias (engine
-    // emits).
     const { host } = makeHost({ activateReachedLiveSession: true });
 
     await setDefaultModel(host, 'opus', 'xhigh');
@@ -177,10 +152,6 @@ describe('setDefaultModel', () => {
   });
 
   it('emits model_switch when a v1-created session only rebinds the same alias', async () => {
-    // v1 session-less + session-only effort: the refresh creates the session
-    // with the picked model (creation emits nothing), then the re-apply
-    // reaches that live session but its setModel is an alias no-op (no engine
-    // event either) — the TUI must stay the producer for the pick.
     const { host } = makeHost({
       refreshReachedLiveSession: false,
       activateReachedLiveSession: false,
