@@ -1,5 +1,4 @@
 
-import { IEnvironmentService } from '#/app/environment/environment';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
@@ -71,7 +70,6 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
-    @IEnvironmentService private readonly environments: IEnvironmentService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
   ) {}
@@ -95,7 +93,6 @@ export class SessionManager implements ISessionManager {
   }
 
   private async openCreation(options: CreateManagedSessionOptions) {
-    await this.environments.ready;
     if (options.workDir !== undefined) await this.assertUsableWorkDir(options.workDir);
     const lease = await this.workspaces.acquire(
       options.workspaceId === undefined
@@ -458,7 +455,6 @@ export class SessionManager implements ISessionManager {
     if (live !== undefined) return this.retainController(live);
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
-    await this.environments.ready;
     return this.controllerForWorkspace({ workspaceId: summary.workspaceId, root: summary.cwd });
   }
 }

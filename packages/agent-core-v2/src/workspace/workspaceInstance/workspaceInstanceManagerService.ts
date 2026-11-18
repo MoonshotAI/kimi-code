@@ -32,7 +32,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IEnvironmentService } from '#/app/environment/environment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
@@ -58,6 +58,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IWorkspaceService private readonly workspaces: IWorkspaceService,
     @IHostEnvironment private readonly environment: IHostEnvironment,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
+    @IHostProcessService private readonly process: IHostProcessService,
     @IAppStateService private readonly appState: IAppStateService,
     @IConfigService private readonly config: IConfigService,
     @IEventService private readonly event: IEventService,
@@ -82,7 +83,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
-    @IEnvironmentService private readonly environments: IEnvironmentService,
     @IWorkspacePersistence private readonly workspaceStore: IWorkspacePersistence,
     @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
   ) {
@@ -241,10 +241,11 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
 
   private async materialize(workspace: Workspace): Promise<WorkspaceInstance> {
     await this.environment.ready;
-    await this.environments.ready;
     const instance = new WorkspaceInstance(
       workspace,
-      this.environments,
+      this.hostFs,
+      this.process,
+      this.environment,
       {
         _serviceBrand: undefined,
         workspaceId: workspace.id,
@@ -296,10 +297,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           input.mcp,
           this.models,
           this.modelProviders,
-          this.environments,
           input.trust,
           input.acquireWorkdir,
-          input.onDispose,
         ),
       },
     );

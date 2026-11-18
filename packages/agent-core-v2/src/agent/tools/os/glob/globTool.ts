@@ -1,19 +1,17 @@
 import { dirname, normalize, relative, resolve } from 'pathe';
 
 import { ensureRgPath, rgUnavailableMessage, type RgProbe } from '#/os/backends/node-local/tools/rgLocator';
-import type { Environment } from '#/environment/environment';
 import {
   DEFAULT_TIMEOUT_MS,
   MAX_OUTPUT_BYTES,
   runRgOnce,
   shouldRetryRipgrepEagain,
 } from '#/os/backends/node-local/tools/runRg';
-import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
-import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { IHostProcessService } from '#/os/interface/hostProcess';
+import { HostWorkspaceView } from '#/session/workspaceContext/hostWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -65,7 +63,9 @@ export class GlobTool implements IGlobTool {
   readonly name = 'Glob' as const;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GlobInputSchema);
   constructor(
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IHostProcessService private readonly processService: IHostProcessService,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
@@ -73,28 +73,26 @@ export class GlobTool implements IGlobTool {
   ) {}
 
   get description(): string {
-    return this.environment.inspect().host?.pathClass === 'win32'
+    return this.environment.pathClass === 'win32'
       ? globDescription + WINDOWS_PATH_HINT
       : globDescription;
   }
 
-  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
+  private workspaceConfig(view: HostWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
   async resolveExecution(args: GlobInput): Promise<ToolExecution> {
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
-    try {
-      const inspected = resolutionLease.environment;
-      const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, {
+    await this.environment.ready;
+    {
+      const view = new HostWorkspaceView(this.environment, {
         workDir: this.workspaceCtx.workDir,
         additionalDirs: [
           ...this.workspaceCtx.additionalDirs,
           ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
         ],
       });
-      const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
+      const env = view.host;
       const workspace = this.workspaceConfig(view);
       let path: string | undefined;
       if (args.path !== undefined) {
@@ -127,34 +125,12 @@ export class GlobTool implements IGlobTool {
         },
         approvalRule: literalRulePattern(this.name, args.pattern),
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
-        execute: async ({ signal }) => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs', 'process']);
-          try {
-            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
-              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
-            }
-            return await this.execution(
-              lease.environment,
-              lease.environment.fs!,
-              lease.environment.process!,
-              env,
-              workspace,
-              args,
-              signal,
-              searchRoots,
-            );
-          } finally {
-            lease.dispose();
-          }
-        },
+        execute: ({ signal }) => this.execution(this.fs, this.processService, env, workspace, args, signal, searchRoots),
       };
-    } finally {
-      resolutionLease.dispose();
     }
   }
 
   private async execution(
-    environment: Environment,
     fs: IHostFileSystem,
     processService: IHostProcessService,
     env: IHostEnvironment,
@@ -186,7 +162,6 @@ export class GlobTool implements IGlobTool {
       const resolution = await ensureRgPath(createRgProbe(processService, globSearchCwd(workspace.workspaceDir, env.pathClass)), {
         signal,
         allowCachedFallback: true,
-        environment,
         resolveRegion: () => this.auth?.getRegion(),
       });
       rgPath = resolution.path;
@@ -201,7 +176,7 @@ export class GlobTool implements IGlobTool {
         return { isError: true, output: 'Glob aborted' };
       }
       this.telemetry.track2('glob_tool_rg_fallback', { outcome: 'failed' });
-      return { isError: true, output: rgUnavailableMessage(error, environment) };
+      return { isError: true, output: rgUnavailableMessage(error) };
     }
 
     const searchCwd = globSearchCwd(searchRoot, env.pathClass);
@@ -209,7 +184,7 @@ export class GlobTool implements IGlobTool {
     try {
       run = await runRgOnce(processService, buildRgArgs(rgPath, args, false, searchRoot, searchCwd), signal, { cwd: searchCwd });
     } catch (error) {
-      return { isError: true, output: formatSpawnError(error, environment) };
+      return { isError: true, output: formatSpawnError(error) };
     }
     if (run.kind === 'aborted') {
       return { isError: true, output: 'Glob aborted' };
@@ -219,7 +194,7 @@ export class GlobTool implements IGlobTool {
       try {
         run = await runRgOnce(processService, buildRgArgs(rgPath, args, true, searchRoot, searchCwd), signal, { cwd: searchCwd });
       } catch (error) {
-        return { isError: true, output: formatSpawnError(error, environment) };
+        return { isError: true, output: formatSpawnError(error) };
       }
       if (run.kind === 'aborted') {
         return { isError: true, output: 'Glob aborted' };
@@ -344,7 +319,6 @@ export class GlobTool implements IGlobTool {
 registerAgentToolService(IGlobTool, GlobTool, {
   name: 'Glob',
   domain: 'os/backends',
-  requiredEnvironmentCapabilities: ['fs', 'process'],
 });
 
 function createRgProbe(processService: IHostProcessService, cwd: string): RgProbe {
@@ -425,9 +399,9 @@ function formatGlobWarning(stderr: string): string {
     : 'Glob completed with warnings; some directories could not be read.';
 }
 
-function formatSpawnError(error: unknown, environment: Environment): string {
+function formatSpawnError(error: unknown): string {
   return isHostFsNotFound(error)
-    ? rgUnavailableMessage(error, environment)
+    ? rgUnavailableMessage(error)
     : error instanceof Error
       ? error.message
       : String(error);

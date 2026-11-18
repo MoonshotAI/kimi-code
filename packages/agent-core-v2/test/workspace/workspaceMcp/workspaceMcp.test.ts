@@ -25,7 +25,8 @@ import {
 } from '#/mcpCore/connection-manager';
 import { McpOAuthService, type McpOAuthEvent } from '#/mcpCore/oauth/service';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
@@ -33,7 +34,6 @@ import { ISessionContext, makeSessionContext } from '#/session/sessionContext/se
 import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceMcpService,
   type ISessionMcpOverlay,
@@ -132,32 +132,17 @@ describe('WorkspaceMcpService', () => {
         reg.definePartialInstance(IMcpOAuthService, oauthService);
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
-        const environment = Object.assign(
-          new FakeEnvironment(
-            { environmentId: 'local', generation: 'test-generation' },
-            { capabilities: ['process'] },
-          ),
-          { process: new HostProcessService() },
-        );
-        reg.definePartialInstance(IEnvironmentService, {
+        reg.defineInstance(IHostProcessService, new HostProcessService());
+        reg.defineInstance(IHostEnvironment, {
           _serviceBrand: undefined,
-          inspect: () => environment,
-          acquire: () => ({
-            environment,
-            track: <T,>(resource: T, sessionId?: string): T => {
-              trackedSessions.push(sessionId);
-              return resource;
-            },
-            dispose: () => {},
-          }),
-          acquireWhenReady: async () => ({
-            environment,
-            track: <T,>(resource: T, sessionId?: string): T => {
-              trackedSessions.push(sessionId);
-              return resource;
-            },
-            dispose: () => {},
-          }),
+          osKind: 'Linux',
+          osArch: 'x64',
+          osVersion: '',
+          shellName: 'bash',
+          shellPath: '/bin/bash',
+          pathClass: 'posix',
+          homeDir: cwd,
+          ready: Promise.resolve(),
         });
         reg.definePartialInstance(ISessionManager, {
           onWillCreateSession: assemblyEvents.event,

@@ -3,11 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IReadTool } from '#/agent/tools/os/read/read';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { createMapFs, stubPlanEnvironment } from '../../features/plan/stubs';
+import { createMapFs } from '../../features/plan/stubs';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import {
@@ -110,18 +109,10 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     expect(snapshot.fullOutputAvailable).toBe(true);
   });
 
-  it('reads the actual server-local fallback under a remote binding without exposing unrelated host files', async () => {
-    const remoteFiles = new Map<string, string>();
-    const remoteFs = createMapFs(remoteFiles, {
-      mkdir: async () => { throw new Error('remote offline'); },
-      writeText: async () => { throw new Error('remote offline'); },
-      appendText: async () => { throw new Error('remote offline'); },
-    });
-    const environment = stubPlanEnvironment({ fs: remoteFs, tempDir: '/remote/tmp' });
+  it('reads task output and other local files through the workspace permission policy', async () => {
     const remoteCtx = createTestAgent([
       homeDirServices(join(sessionDir, 'remote-home')),
       taskServices(),
-      agentService(IAgentEnvironmentService, environment),
     ]);
     const remoteFixture = createTaskService(join(sessionDir, 'remote-home'));
     const remoteManager = remoteFixture.manager;
@@ -130,13 +121,10 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
       await remoteManager.wait(id);
       const snapshot = await remoteManager.getOutputSnapshot(id, 1_000);
       expect(snapshot.outputPath).toBe(join(remoteCtx.get(ISessionContext).sessionDir, 'agents', 'main', 'tasks', id, 'output.log'));
-      const acquire = vi.spyOn(environment, 'acquire').mockImplementation(() => { throw new Error('remote disconnected'); });
       const read = remoteCtx.get(IReadTool);
       const result = await executeTool(read, toolContext('read_local_fallback', { path: snapshot.outputPath! }));
       expect(result.isError ?? false).toBe(false);
       expect(outputString(result)).toContain('retained local output');
-      expect(acquire).not.toHaveBeenCalled();
-      acquire.mockRestore();
       const current = remoteCtx.get(ISessionContext).sessionDir;
       const unrelated = [
         join(current, 'private.txt'),
@@ -147,10 +135,9 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
       for (const path of unrelated) {
         await host.mkdir(path.slice(0, path.lastIndexOf('/')), { recursive: true });
         await host.writeText(path, 'host secret');
-        remoteFiles.set(path, 'remote counterpart');
         const other = await executeTool(read, toolContext('read_not_local', { path }));
-        expect(outputString(other)).toContain('remote counterpart');
-        expect(outputString(other)).not.toContain('host secret');
+        expect(other.isError ?? false).toBe(false);
+        expect(outputString(other)).toContain('host secret');
       }
     } finally {
       await remoteCtx.dispose();

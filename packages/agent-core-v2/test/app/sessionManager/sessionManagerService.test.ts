@@ -1,4 +1,3 @@
-import { IEnvironmentService } from '#/app/environment/environment';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
@@ -11,8 +10,6 @@ import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { reloadOnStale } from '#/app/sessionManager/sessionLookup';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { ErrorCodes } from '#/errors';
 import { IAgentCronService } from '#/features/cron/cronService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -21,7 +18,6 @@ import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
-import { fakeEnvironment, connectableEnvironment } from '../../environment/stubs';
 import type {
   SessionArchivedEvent,
   SessionCloseReason,
@@ -35,14 +31,6 @@ import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceI
 import type { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 
-function environmentRegistryOf(workspaces: IWorkspaceInstanceManager): EnvironmentRegistry | undefined {
-  for (const id of ['workspace', 'workspace-1']) {
-    const holder = workspaces.get(id) as { environments?: EnvironmentRegistry } | undefined;
-    if (holder?.environments !== undefined) return holder.environments;
-  }
-  return undefined;
-}
-
 function makeSessionManager(
   workspaces: IWorkspaceInstanceManager,
   index: ISessionIndex,
@@ -53,24 +41,9 @@ function makeSessionManager(
   } = {},
 ): SessionManager {
   const log = { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService;
-  const environments = {
-    ready: Promise.resolve(),
-    current: (id: string) => environmentRegistryOf(workspaces)?.current(id),
-    acquireWhenReady: (binding: { environmentId: string }, required: never) => {
-      const registry = environmentRegistryOf(workspaces);
-      if (registry === undefined) throw new Error('environment registry is not stubbed');
-      return registry.acquireWhenReady(binding, required);
-    },
-    acquire: (binding: { environmentId: string }, required: never) => {
-      const registry = environmentRegistryOf(workspaces);
-      if (registry === undefined) throw new Error('environment registry is not stubbed');
-      return registry.acquire(binding, required);
-    },
-  } as unknown as IEnvironmentService;
   return new SessionManager(
     workspaces,
     index,
-    environments,
     overrides.hostFs ??
       ({
         _serviceBrand: undefined,
@@ -724,16 +697,16 @@ describe('SessionManager closeIfIdle', () => {
 
 describe('SessionManager controller retirement', () => {
   function liveProgram(): {
-    readonly registry: EnvironmentRegistry;
     readonly program: Program;
     readonly controllers: { readonly service: SessionLifecycleService; readonly dispose: ReturnType<typeof vi.fn> }[];
   } {
-    const registry = new EnvironmentRegistry();
     const controllers: { readonly service: SessionLifecycleService; readonly dispose: ReturnType<typeof vi.fn> }[] = [];
     let nextSession = 0;
     const program = new Program(
       'workspace',
-      registry as unknown as IEnvironmentService,
+      {} as never,
+      {} as never,
+      {} as never,
       {
         _serviceBrand: undefined,
         workspaceId: 'workspace',
@@ -751,14 +724,19 @@ describe('SessionManager controller retirement', () => {
       },
       {
         agentProfiles: { entries: () => [] },
-        environmentDeclarations: { assertAllowed: () => {} },
+        log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+        appState: {},
+        bootstrap: {},
+        config: {},
+        workspaces: {},
+        workspaceStore: {},
+        git: { current: undefined },
         createSessionController: (input: ProgramSessionControllerInput) => {
           const didCreate = new Emitter<SessionCreatedEvent>();
           const didClose = new Emitter<SessionClosedEvent>();
           const didArchive = new Emitter<SessionArchivedEvent>();
           const live = new Map<string, ISessionScopeHandle>();
           const dispose = vi.fn(() => {
-            input.onDispose();
             didCreate.dispose();
             didClose.dispose();
             didArchive.dispose();
@@ -802,10 +780,7 @@ describe('SessionManager controller retirement', () => {
         },
       } as never,
     );
-    const createGeneration = vi.fn(() => {
-      const lease = registry.acquire({ environmentId: 'local' }, ['fs', 'process']);
-      const id = lease.environment.identity.generation;
-      lease.dispose();
+    const createGeneration = () => {
       const behavior = {
         ready: Promise.resolve(),
         dispose: () => {},
@@ -817,7 +792,7 @@ describe('SessionManager controller retirement', () => {
         getSkillRoots: () => [],
       };
       return {
-        id,
+        workdirs: { root: { state: behavior, dirs: behavior, fs: behavior, git: behavior, instructions: { ...behavior, snapshot: {} }, skills: { ...behavior, catalog }, agentProfiles: behavior }, acquire: async () => behavior, reload: async () => {}, dispose: () => {} },
         state: behavior,
         dirs: behavior,
         fs: behavior,
@@ -836,16 +811,14 @@ describe('SessionManager controller retirement', () => {
         disposables: [behavior],
         ready: false,
         failed: false,
-        references: 1,
-        retired: false,
       };
-    });
-    (program as unknown as { createGeneration: typeof createGeneration }).createGeneration = createGeneration;
-    return { registry, program, controllers };
+    };
+    (program as unknown as { generation: unknown }).generation = createGeneration();
+    return { program, controllers };
   }
 
-  function managerFor(program: Program, registry?: EnvironmentRegistry, config?: IConfigService): SessionManager {
-    const workspace = { id: 'workspace', program, environments: registry } as unknown as WorkspaceInstance;
+  function managerFor(program: Program, config?: IConfigService): SessionManager {
+    const workspace = { id: 'workspace', program } as unknown as WorkspaceInstance;
     return makeSessionManager(
       workspaceManager(workspace),
       { get: async () => undefined } as unknown as ISessionIndex,
@@ -853,37 +826,10 @@ describe('SessionManager controller retirement', () => {
     );
   }
 
-  it('keeps the superseded session controller until its last session closes', async () => {
-    const { registry, program, controllers } = liveProgram();
-    const first = fakeEnvironment('local', 'one');
-    const registration = registry.register(first);
-    await program.ready;
-    const manager = managerFor(program, registry);
-
-    const handleOne = await manager.create({ workDir: '/workspace' });
-    await registration.remove();
-    registry.register(fakeEnvironment('local', 'two'));
-    const handleTwo = await manager.create({ workDir: '/workspace' });
-    expect(manager.list()).toEqual([handleOne, handleTwo]);
-    expect(first.disposed).toBe(true);
-
-    await manager.close(handleOne.id);
-    expect(controllers[0]!.dispose).toHaveBeenCalledTimes(1);
-    expect(controllers[1]!.dispose).not.toHaveBeenCalled();
-    expect(manager.get(handleTwo.id)).toBe(handleTwo);
-
-    manager.dispose();
-    expect(controllers[0]!.dispose).toHaveBeenCalledTimes(1);
-    expect(controllers[1]!.dispose).toHaveBeenCalledTimes(1);
-    await program.dispose();
-    await registry.dispose();
-  });
-
   it('retires an idle current-generation controller and rebuilds it for the next session', async () => {
-    const { registry, program, controllers } = liveProgram();
-    registry.register(fakeEnvironment('local', 'one'));
+    const { program, controllers } = liveProgram();
     await program.ready;
-    const manager = managerFor(program, registry);
+    const manager = managerFor(program);
 
     const first = await manager.create({ workDir: '/workspace' });
     expect(controllers).toHaveLength(1);
@@ -897,8 +843,8 @@ describe('SessionManager controller retirement', () => {
     manager.dispose();
     expect(controllers[1]!.dispose).toHaveBeenCalledTimes(1);
     await program.dispose();
-    await registry.dispose();
   });
+
 
 });
 

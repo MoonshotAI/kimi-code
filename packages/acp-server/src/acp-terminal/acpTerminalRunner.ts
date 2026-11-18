@@ -1,19 +1,17 @@
 import { PassThrough, Writable, type Readable } from 'node:stream';
 
 import {
-  IAgentEnvironmentOverlay,
-  LOCAL_ENVIRONMENT_ID,
+  HostProcessService,
+  IHostProcessService,
   LifecycleScope,
   ScopeActivation,
-  overrideScopedService,
-  type EnvironmentLease,
+  registerScopedService,
   type HostProcessOptions,
   type IHostProcess,
-  type IHostProcessService,
   ISessionContext,
 } from '@moonshot-ai/agent-core-v2';
 
-import { AcpHostFileSystem, IAcpConnection, type IAcpTerminalHandle } from '../acp-fs';
+import { IAcpConnection, type IAcpTerminalHandle } from '../acp-fs';
 
 const OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const OUTPUT_POLL_MS = 250;
@@ -151,35 +149,29 @@ class AcpTerminalProcess implements IHostProcess {
   }
 }
 
-export class AcpEnvironmentOverlay implements IAgentEnvironmentOverlay {
+export class AcpProcessOverride implements IHostProcessService {
   declare readonly _serviceBrand: undefined;
+  readonly delegate: IHostProcessService;
 
   constructor(
-    @ISessionContext private readonly session: ISessionContext,
-    @IAcpConnection private readonly connection: IAcpConnection,
-  ) {}
+    @ISessionContext session: ISessionContext,
+    @IAcpConnection connection: IAcpConnection,
+    local?: IHostProcessService,
+  ) {
+    this.delegate = connection.terminalEnabled
+      ? new AcpProcessService(session.sessionId, session.cwd, connection, local ?? new HostProcessService())
+      : local ?? new HostProcessService();
+  }
 
-  decorate(lease: EnvironmentLease): EnvironmentLease {
-    if (lease.environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID) return lease;
-    const process = this.connection.terminalEnabled
-      ? new AcpProcessService(this.session.sessionId, this.session.cwd, this.connection, lease.environment.process!)
-      : lease.environment.process;
-    const fs = new AcpHostFileSystem(this.session, this.connection);
-    const environment = new Proxy(lease.environment, {
-      get: (target, property) => {
-        if (property === 'fs') return fs;
-        if (property === 'process') return process;
-        return Reflect.get(target, property, target);
-      },
-    });
-    return { ...lease, environment };
+  spawn(command: string, args?: readonly string[], options?: HostProcessOptions): Promise<IHostProcess> {
+    return this.delegate.spawn(command, args, options);
   }
 }
 
-overrideScopedService(
+registerScopedService(
   LifecycleScope.Session,
-  IAgentEnvironmentOverlay,
-  AcpEnvironmentOverlay,
+  IHostProcessService,
+  AcpProcessOverride,
   ScopeActivation.OnDemand,
   'acp',
 );

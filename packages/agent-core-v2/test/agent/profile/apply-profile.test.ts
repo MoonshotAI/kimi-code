@@ -9,10 +9,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { Environment, EnvironmentCapability, EnvironmentStatus } from '#/environment/environment';
-import { stubAgentEnvironment } from '../../environment/stubs';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSystemPrompt } from '#/app/plugin/types';
@@ -201,43 +198,6 @@ describe('AgentLoopService.applyProfile', () => {
     expect(svc.data().systemPrompt).toBe(exactSystemPrompt(workDir, 'project instructions'));
   });
 
-  it('maps prompt context roots through the bound environment workspace view', async () => {
-    const mappedDir = await mkdtemp(join(tmpdir(), 'kimi-apply-mapped-'));
-    const localExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-local-'));
-    const mappedExtra = await mkdtemp(join(tmpdir(), 'kimi-apply-extra-mapped-'));
-    try {
-      await writeFile(join(workDir, 'local-only.txt'), 'x', 'utf-8');
-      await writeFile(join(mappedDir, 'mapped-only.txt'), 'x', 'utf-8');
-      await writeFile(join(localExtra, 'extra-local.txt'), 'x', 'utf-8');
-      await writeFile(join(mappedExtra, 'extra-mapped.txt'), 'x', 'utf-8');
-      const mapping = new Map([
-        [workDir, mappedDir],
-        [localExtra, mappedExtra],
-      ]);
-      const fs = new HostFileSystem();
-      const { profile: svc } = buildContext(
-        agentService(
-          IAgentEnvironmentService,
-          mappedEnvironmentService(fs, homeDir, (path) => mapping.get(path) ?? path, ['fs'], workDir),
-        ),
-      );
-
-      await svc.applyProfile(exactProfile, { additionalDirs: [localExtra] });
-
-      const prompt = svc.data().systemPrompt;
-      expect(prompt).toContain(`cwd:${mappedDir}`);
-      expect(prompt).toContain('mapped-only.txt');
-      expect(prompt).not.toContain('local-only.txt');
-      expect(prompt).toContain(`### ${mappedExtra}`);
-      expect(prompt).toContain('extra-mapped.txt');
-      expect(prompt).not.toContain('extra-local.txt');
-    } finally {
-      await rm(mappedDir, { recursive: true, force: true });
-      await rm(localExtra, { recursive: true, force: true });
-      await rm(mappedExtra, { recursive: true, force: true });
-    }
-  });
-
   it('renders the binding-derived workspace workDir instead of the host session cwd', async () => {
     const bindingDir = await mkdtemp(join(tmpdir(), 'kimi-apply-binding-'));
     try {
@@ -265,19 +225,6 @@ describe('AgentLoopService.applyProfile', () => {
     } finally {
       await rm(bindingDir, { recursive: true, force: true });
     }
-  });
-
-  it('skips the directory listing when the bound environment has no fs capability', async () => {
-    const fs = new HostFileSystem();
-    const { profile: svc } = buildContext(
-      agentService(IAgentEnvironmentService, mappedEnvironmentService(fs, homeDir, (path) => path, [], workDir)),
-    );
-
-    await svc.applyProfile(exactProfile);
-
-    const prompt = svc.data().systemPrompt;
-    expect(prompt).toContain(`cwd:${workDir}`);
-    expect(prompt).toContain('ls:\nextra:');
   });
 
   it('keeps the system prompt frozen until an explicit applyProfile rebuild', async () => {
@@ -571,51 +518,4 @@ function exactSystemPrompt(workDir: string, agentsMd: string): string {
     'ls:\u2514\u2500\u2500 AGENTS.md',
     'extra:',
   ].join('\n');
-}
-
-function mappedEnvironmentService(
-  fs: HostFileSystem,
-  homeDir: string,
-  map: (path: string) => string,
-  capabilities: readonly EnvironmentCapability[] = ['fs'],
-  workDir?: string,
-): IAgentEnvironmentService {
-  const environment: Environment = {
-    identity: { environmentId: 'mapped', generation: 'g1' },
-    capabilities: new Set(capabilities),
-    host: {
-      osKind: 'Linux',
-      osArch: 'x64',
-      osVersion: 'test',
-      shellName: 'bash',
-      shellPath: '/bin/bash',
-      pathClass: 'posix',
-      homeDir,
-    },
-    path: {
-      separator: '/',
-      delimiter: ':',
-      isAbsolute: (path) => isAbsolute(path),
-      join: (...paths) => join(...paths),
-      relative: (from, to) => relative(from, to),
-      resolve: (...paths) => resolve(...paths),
-      basename: (path) => basename(path),
-      dirname: (path) => dirname(path),
-    },
-    workspace: {
-      mapRoots: (roots) => ({
-        workDir: map(roots.workDir),
-        additionalDirs: roots.additionalDirs?.map(map),
-      }),
-    },
-    fs,
-    status: 'ready',
-    onDidChangeStatus: Event.None as Event<EnvironmentStatus>,
-    dispose: () => {},
-  };
-  return stubAgentEnvironment(environment, {
-    workDir,
-    isAvailable: (required = []) =>
-      required.every((capability) => environment.capabilities.has(capability)),
-  });
 }

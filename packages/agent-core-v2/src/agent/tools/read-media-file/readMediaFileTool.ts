@@ -4,8 +4,9 @@ import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
 import { attachmentFileSource, environmentFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
 
-import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
-import { acquireOrWhenReady, pinnedGeneration, type IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostWorkspaceView } from '#/session/workspaceContext/hostWorkspaceView';
 import {
   ToolAccesses,
   type AgentTool,
@@ -155,7 +156,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   private readonly telemetry: ITelemetryService | undefined;
   constructor(
-    private readonly environment: IAgentEnvironmentService,
+    private readonly fs: IHostFileSystem,
+    private readonly environment: IHostEnvironment,
     private readonly workspace: WorkspaceConfig,
     private readonly attachmentStore: ISessionMediaStore,
     telemetry?: ITelemetryService,
@@ -171,11 +173,9 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     if (isDaemonFileUrl(args.path)) {
       return this.attachmentExecution(args);
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
-    try {
-      const inspected = resolutionLease.environment;
-      const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, {
+    await this.environment.ready;
+    {
+      const view = new HostWorkspaceView(this.environment, {
         workDir: this.workspace.workspaceDir,
         additionalDirs: this.workspace.additionalDirs,
       });
@@ -198,20 +198,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
             pathClass: env.pathClass,
             homeDir: env.homeDir,
           }),
-        execute: async ({ signal }) => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
-          try {
-            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
-              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
-            }
-            return await this.execution(args, environmentFileSource(lease.environment.fs!, path), signal);
-          } finally {
-            lease.dispose();
-          }
-        },
+        execute: ({ signal }) => this.execution(args, environmentFileSource(this.fs, path), signal),
       };
-    } finally {
-      resolutionLease.dispose();
     }
   }
 

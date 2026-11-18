@@ -63,7 +63,6 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { createAgentAwaitingClose } from '#/session/agentLifecycle/createAwaitingClose';
@@ -100,7 +99,6 @@ import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { stubProviderDiscovery } from '../../stubs';
@@ -308,20 +306,8 @@ describe('SessionSubagentScopeCacheService', () => {
       additionalDirs: [],
       onDidChange: Event.None,
     } as ISessionWorkspaceInfo);
-    ix.stub(IEnvironmentService, {
-      onDidChange: () => ({ dispose: () => {} }),
-      _serviceBrand: undefined,
-      current: () => undefined,
-      inspect: (binding) => new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
-      acquire: (binding) => ({
-        environment: new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
-        track: (resource) => resource,
-        dispose: () => {},
-      }),
-    });
     ix.stub(ISessionWorkdir, {
       _serviceBrand: undefined,
-      environmentId: 'local',
       fs: undefined,
     } as unknown as ISessionWorkdir);
     ix.stub(IWorkspaceTrust, {

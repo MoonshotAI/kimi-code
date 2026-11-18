@@ -45,7 +45,7 @@ describe('AgentTaskPersistence', () => {
   }
 
   function spillPersistence(target: () => AgentTaskSpillTarget | undefined): AgentTaskPersistence {
-    return new AgentTaskPersistence(join(sessionDir, AGENT_SCOPE), AGENT_SCOPE, bytes, undefined, target);
+    return new AgentTaskPersistence(join(sessionDir, AGENT_SCOPE), AGENT_SCOPE, bytes, undefined, target, true);
   }
 
   it('round-trips appended output through output.log snapshots', async () => {

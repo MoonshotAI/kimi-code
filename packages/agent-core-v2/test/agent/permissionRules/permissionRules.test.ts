@@ -237,7 +237,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
   });
 
-  it('loads local trusted rules, ignores legacy user runtime scopes, and rejects remote project IO', async () => {
+  it('loads trusted local rules and ignores legacy user runtime scopes', async () => {
     const projectRule: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash' };
     const appendedRule: PermissionRule = { decision: 'allow', scope: 'project', pattern: 'Write' };
     const runtimeRule: PermissionRule = { decision: 'deny', scope: 'session-runtime', pattern: 'Bash' };
@@ -260,7 +260,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     const trust = { get: async () => trusted } as never;
     const untrusted = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
-      { environmentId: 'local', cwd: '/local/project' } as never,
+      { cwd: '/local/project' } as never,
       localConfig,
       trust,
     );
@@ -272,7 +272,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     rawRules = [projectRule];
     const local = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
-      { environmentId: 'local', cwd: '/local/project' } as never,
+      { cwd: '/local/project' } as never,
       localConfig,
       trust,
     );
@@ -297,21 +297,12 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     rawRules = [runtimeRule];
     const invalid = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
-      { environmentId: 'local', cwd: '/local/project' } as never,
+      { cwd: '/local/project' } as never,
       localConfig,
       trust,
     );
     await expect(invalid.ready).rejects.toThrow('Invalid project permission rule');
 
-    const remote = new ProjectPermissionRulesService(
-      { cwd: '/local-association' } as never,
-      { environmentId: 'ssh', cwd: '/remote/project' } as never,
-      localConfig,
-      { get: async () => { throw new Error('remote trust must not be read'); } } as never,
-    );
-    await remote.ready;
-    expect(remote.rules).toEqual([]);
-    await expect(remote.appendRules([appendedRule])).rejects.toThrow('not supported');
     expect(calls).toEqual([
       '/local/project',
       '/local/project',

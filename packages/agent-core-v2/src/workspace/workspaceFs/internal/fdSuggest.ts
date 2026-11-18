@@ -1,8 +1,7 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 
-import type { Environment, EnvironmentPath } from '#/environment/environment';
-import { isRemoteEnvironment } from '#/environment/shareBinRg';
+import { getShareBinFdPath } from '#/os/backends/node-local/shareBin';
+import type { HostPath } from '#/session/workspaceContext/hostWorkspaceView';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 
@@ -60,7 +59,7 @@ interface FdSuggestOptions {
   readonly includeGlobs?: readonly string[];
   readonly excludeGlobs?: readonly string[];
   readonly roots: readonly FdRoot[];
-  readonly path: EnvironmentPath;
+  readonly path: HostPath;
   readonly hostFs: Pick<IHostFileSystem, 'stat' | 'realpath'>;
   readonly process: IHostProcessService;
   readonly workDir: string;
@@ -88,31 +87,14 @@ function fdPathQuery(query: string): string {
   return pattern;
 }
 
-function inside(path: EnvironmentPath, candidate: string, root: string): boolean {
+function inside(path: HostPath, candidate: string, root: string): boolean {
   const rel = path.relative(root, candidate);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
-function binaryName(): string {
-  return process.platform === 'win32' ? 'fd.exe' : 'fd';
-}
-
-function cachedBinaryPath(environment: Environment | undefined): string {
-  if (isRemoteEnvironment(environment)) {
-    const homeDir = environment.host?.homeDir;
-    if (homeDir !== undefined) {
-      const binary = environment.host?.pathClass === 'win32' ? 'fd.exe' : 'fd';
-      return environment.path?.join(homeDir, '.kimi-code', 'bin', binary) ?? `${homeDir}/.kimi-code/bin/${binary}`;
-    }
-  }
-  const override = process.env['KIMI_CODE_HOME'];
-  if (override !== undefined && override !== '') return join(override, 'bin', binaryName());
-  return join(homedir(), '.kimi-code', 'bin', binaryName());
-}
-
 export async function ensureFdPath(
   probe: FdProbe,
-  options: { readonly signal?: AbortSignal; readonly environment?: Environment } = {},
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<FdResolution> {
   if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   for (const binary of ['fd', 'fdfind']) {
@@ -120,7 +102,7 @@ export async function ensureFdPath(
     if (result.exitCode === 0) return { path: binary, source: 'system-path' };
   }
   if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  const cached = cachedBinaryPath(options.environment);
+  const cached = getShareBinFdPath();
   const result = await probe.exec([cached, '--version']).catch(() => ({ exitCode: -1 }));
   if (result.exitCode === 0) return { path: cached, source: 'share-bin-cached' };
   throw new Error('fd is not available');

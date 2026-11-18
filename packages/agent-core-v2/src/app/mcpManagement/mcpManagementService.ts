@@ -28,7 +28,8 @@ import {
   type McpRegistryEntry,
   type McpRegistryQuery,
 } from '#/app/mcpRegistry/mcpRegistry';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import {
   IMcpManagementService,
@@ -64,7 +65,8 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     @IMcpOAuthService private readonly oauth: McpOAuthService,
     @IConfigService private readonly config: IConfigService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
-    @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
+    @IHostProcessService private readonly processService: IHostProcessService,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -198,8 +200,8 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     const manager = new McpConnectionManager({
       log: this.log,
       stdioCwd,
-      environmentResolver: this.environmentResolver,
-      environmentId: 'local',
+      processService: this.processService,
+      environment: this.environment,
       oauthService: this.oauth,
       resolveClientName: () => this.identity.current().slug,
       resolveDefaults: () => ({

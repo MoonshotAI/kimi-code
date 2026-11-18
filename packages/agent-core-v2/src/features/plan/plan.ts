@@ -1,13 +1,13 @@
 import { createDecorator } from '#/_base/di/instantiation';
 
-import type { EnvironmentPath } from '#/environment/environment';
+import type { HostPath } from '#/session/workspaceContext/hostWorkspaceView';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { PathClass } from '#/os/interface/hostEnvironment';
 
 export interface PlanFileTarget {
   readonly fs: IHostFileSystem;
   readonly path: string;
-  readonly environmentPath: EnvironmentPath;
+  readonly environmentPath: HostPath;
   readonly pathClass: PathClass;
 }
 

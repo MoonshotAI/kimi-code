@@ -7,7 +7,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   closeSessionById,
   getLiveSessionById,
-  IAgentEnvironmentService,
+  ISessionWorkspaceContext,
+  ISessionWorkdir,
   IAgentLifecycleService,
   IAgentToolRegistryService,
   IAtomicDocumentStore,
@@ -791,7 +792,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     let session = getLiveSessionById((server as RunningServer).core.accessor, sessionId)!;
     let agent = await ensureAgent(session);
     let registry = agent.accessor.get(IAgentToolRegistryService);
-    let environment = agent.accessor.get(IAgentEnvironmentService);
+    let environment = agent.accessor.get(ISessionWorkspaceContext);
     const toolNames = ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'];
     const identities = () => Object.fromEntries(toolNames.map((name) => [name, registry.resolve(name)]));
     const initialTools = identities();
@@ -821,11 +822,11 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(promoted.body.code).toBe(0);
     await vi.waitFor(() => {
       expect(instance.root).toBe(dirB);
-      expect(environment.workspaceRoots().workDir).toBe(dirB);
+      expect(environment.workDir).toBe(dirB);
     });
     expect(manager.get(workspaceId)).toBe(instance);
     expect(instance.program).toBe(program);
-    expect(environment.workspaceRoots().additionalDirs).toEqual([dirA]);
+    expect(environment.additionalDirs).toEqual([dirA]);
     expect(identities()).toEqual(initialTools);
     for (const name of toolNames) expect(registry.resolve(name)).toBe(initialTools[name]);
     expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
@@ -837,14 +838,14 @@ describe('server-v2 /api/v1/workspaces', () => {
 
     const explicitLive = getLiveSessionById((server as RunningServer).core.accessor, explicitSession.body.data.id)!;
     const explicitAgent = await ensureAgent(explicitLive);
-    expect(explicitAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(dirA);
+    expect(explicitAgent.accessor.get(ISessionWorkdir).cwd).toBe(dirA);
 
     const added = await patchJson<WorkspaceWire>(`/api/v1/workspaces/${workspaceId}`, {
       additional_dirs: [dirA, dirC],
     });
     expect(added.body.code).toBe(0);
     await vi.waitFor(() => {
-      expect(environment.workspaceRoots().additionalDirs).toEqual([dirA, dirC]);
+      expect(environment.additionalDirs).toEqual([dirA, dirC]);
     });
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
     for (const name of toolNames) expect(registry.resolve(name)).toBe(initialTools[name]);
@@ -854,8 +855,9 @@ describe('server-v2 /api/v1/workspaces', () => {
     session = (await resumeSessionById((server as RunningServer).core.accessor, sessionId))!;
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
-    environment = agent.accessor.get(IAgentEnvironmentService);
-    expect(environment.workspaceRoots()).toMatchObject({ workDir: dirB, additionalDirs: [dirA, dirC] });
+    environment = agent.accessor.get(ISessionWorkspaceContext);
+    expect(environment.workDir).toBe(dirB);
+    expect(environment.additionalDirs).toEqual([dirA, dirC]);
     expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
     expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirB}\n`));
@@ -866,7 +868,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     session = getLiveSessionById((server as RunningServer).core.accessor, sessionId)!;
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
-    environment = agent.accessor.get(IAgentEnvironmentService);
+    environment = agent.accessor.get(ISessionWorkspaceContext);
     for (const name of toolNames) expect(registry.resolve(name), name).toBeDefined();
     expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
@@ -883,8 +885,9 @@ describe('server-v2 /api/v1/workspaces', () => {
     session = (await resumeSessionById(server.core.accessor, sessionId))!;
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
-    environment = agent.accessor.get(IAgentEnvironmentService);
-    expect(environment.workspaceRoots()).toMatchObject({ workDir: dirB, additionalDirs: [dirA, dirC] });
+    environment = agent.accessor.get(ISessionWorkspaceContext);
+    expect(environment.workDir).toBe(dirB);
+    expect(environment.additionalDirs).toEqual([dirA, dirC]);
     for (const name of toolNames) expect(registry.resolve(name), name).toBeDefined();
     expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
@@ -892,6 +895,6 @@ describe('server-v2 /api/v1/workspaces', () => {
 
     const explicitResumed = (await resumeSessionById(server.core.accessor, explicitSession.body.data.id))!;
     const explicitResumedAgent = await ensureAgent(explicitResumed);
-    expect(explicitResumedAgent.accessor.get(IAgentEnvironmentService).workspaceRoots().workDir).toBe(dirA);
+    expect(explicitResumedAgent.accessor.get(ISessionWorkdir).cwd).toBe(dirA);
   }, 30_000);
 });

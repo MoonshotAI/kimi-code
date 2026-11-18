@@ -18,7 +18,6 @@ import {
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
-  IEnvironmentService,
   IEventBus,
   IEventDispatcher,
   IEventService,
@@ -365,7 +364,6 @@ function makeFakeHarness(toolUpdates = false) {
     ],
     [IFileSystemStorageService, {}],
     [IHostFileSystem, {}],
-    [IEnvironmentService, { addProvider: vi.fn(async () => ({ dispose: vi.fn() })) }],
     [
       IWorkspaceInstanceManager,
       {
@@ -453,23 +451,6 @@ describe('runV2Print', () => {
     expect(stderr.text()).toContain('chunk\n');
     expect(stdout.text()).toContain('hello world');
     expect(app.dispose).toHaveBeenCalled();
-  });
-
-  it('keeps local print usable when remote provider registration fails', async () => {
-    const stdout = writer();
-    const stderr = writer();
-    const { app, appServices } = makeFakeHarness();
-    const environments = appServices.get(IEnvironmentService) as {
-      addProvider: ReturnType<typeof vi.fn>;
-    };
-    environments.addProvider.mockRejectedValueOnce(new Error('provider unavailable'));
-    mocks.bootstrap.mockReturnValue({ app });
-    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
-
-    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
-
-    expect(stdout.text()).toContain('hello world');
-    expect(app.dispose).toHaveBeenCalledOnce();
   });
 
   it('reloads a stale session in place, retries once, and still reports occupied', async () => {

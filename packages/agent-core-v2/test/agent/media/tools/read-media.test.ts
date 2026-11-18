@@ -1,4 +1,3 @@
-import * as posixPath from 'node:path/posix';
 import { Readable } from 'node:stream';
 
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
@@ -12,9 +11,6 @@ import { OrderedHookSlot } from '#/hooks';
 import type { IEventDispatcher } from '#/state/eventDispatcher';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { Environment } from '#/environment/environment';
-import { stubAgentEnvironment } from '../../../environment/stubs';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import {
   ReadMediaFileInputSchema,
@@ -181,23 +177,6 @@ function createTestEnv(): IHostEnvironment {
   };
 }
 
-function environmentFor(fs: IHostFileSystem, env: IHostEnvironment = createTestEnv()): IAgentEnvironmentService {
-  const environment = {
-    identity: { environmentId: 'local', generation: 'test' },
-    capabilities: new Set(['fs'] as const),
-    host: env,
-    path: posixPath,
-    workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
-    fs,
-    status: 'ready',
-    onDidChangeStatus: () => ({ dispose: () => {} }),
-    dispose: () => {},
-  } as unknown as Environment;
-  return stubAgentEnvironment(environment, {
-    isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
-  });
-}
-
 function testMediaStore(): ISessionMediaStore {
   const storage = new InMemoryStorageService();
   return new SessionMediaStoreService(
@@ -219,7 +198,8 @@ function makeTool(
   attachmentStore: ISessionMediaStore = testMediaStore(),
 ): ReadMediaFileTool {
   return new ReadMediaFileTool(
-    environmentFor(createTestFs(files)),
+    createTestFs(files),
+    createTestEnv(),
     WORKSPACE,
     attachmentStore,
     telemetry,
@@ -416,7 +396,7 @@ describe('ReadMediaFileTool', () => {
     const fs = createTestFs({
       '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, testMediaStore());
 
     const result = await execute(tool, { path: '/workspace/huge.png' });
 
@@ -437,7 +417,7 @@ describe('ReadMediaFileTool', () => {
     const fs = createTestFs({
       '/workspace/large.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, testMediaStore());
 
     const result = await execute(tool, { path: '/workspace/large.png' });
 
@@ -450,7 +430,7 @@ describe('ReadMediaFileTool', () => {
     const fs = createTestFs({
       '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, testMediaStore());
 
     const result = await execute(tool, {
       path: '/workspace/huge.png',
@@ -533,7 +513,7 @@ describe('ReadMediaFileTool', () => {
   it('returns the configured full_resolution limit error before loading an over-budget image', async () => {
     const data = Buffer.concat([pngBuffer(), Buffer.alloc(4 * 1024 * 1024, 1)]);
     const fs = createTestFs({ '/workspace/huge.png': { data } });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, testMediaStore());
 
     const result = await execute(tool, {
       path: '/workspace/huge.png',
@@ -554,7 +534,7 @@ describe('ReadMediaFileTool', () => {
     const fs = createTestFs({
       '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
     });
-    const tool = new ReadMediaFileTool(environmentFor(fs), WORKSPACE, testMediaStore());
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, testMediaStore());
 
     const result = await execute(tool, {
       path: '/workspace/huge.png',
@@ -852,7 +832,8 @@ describe('registerMediaTools', () => {
   it('registers ReadMediaFile by default and unregisters on dispose', () => {
     const registry = new AgentToolRegistryService();
     const disposable = registerMediaTools(registry, {
-      environment: environmentFor(fs, env),
+      fs,
+      environment: env,
       workspace: WORKSPACE,
       attachmentStore: testMediaStore(),
     });
@@ -864,7 +845,8 @@ describe('registerMediaTools', () => {
   it('puts a video through the default-registered tool', async () => {
     const registry = new AgentToolRegistryService();
     registerMediaTools(registry, {
-      environment: environmentFor(createTestFs({ '/workspace/clip.mp4': { data: mp4Buffer() } }), env),
+      fs: createTestFs({ '/workspace/clip.mp4': { data: mp4Buffer() } }),
+      environment: env,
       workspace: WORKSPACE,
       attachmentStore: testMediaStore(),
     });
@@ -876,7 +858,8 @@ describe('registerMediaTools', () => {
   it('registers without requiring media capability metadata', () => {
     const registry = new AgentToolRegistryService();
     const disposable = registerMediaTools(registry, {
-      environment: environmentFor(fs, env),
+      fs,
+      environment: env,
       workspace: WORKSPACE,
       attachmentStore: testMediaStore(),
     });
@@ -884,16 +867,6 @@ describe('registerMediaTools', () => {
     expect(() => disposable.dispose()).not.toThrow();
   });
 
-  it('keeps attachment reads available when the environment lacks filesystem availability', () => {
-    const registry = new AgentToolRegistryService();
-    const availableEnvironment = environmentFor(fs, env);
-    registerMediaTools(registry, {
-      environment: { ...availableEnvironment, isAvailable: () => false },
-      workspace: WORKSPACE,
-      attachmentStore: testMediaStore(),
-    });
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-  });
 });
 
 describe('AgentMediaToolsRegistrar', () => {
@@ -920,25 +893,13 @@ describe('AgentMediaToolsRegistrar', () => {
       workDir: '/workspace',
       additionalDirs: [],
     } as unknown as ISessionWorkspaceContext;
-    const baseEnvironment = environmentFor(createTestFs(files));
-    const environmentChanges = new Emitter<void>();
-    let environmentAvailable = true;
-    const environment: IAgentEnvironmentService = {
-      _serviceBrand: undefined,
-      onDidChange: environmentChanges.event,
-      isAvailable: (required = []) => environmentAvailable && baseEnvironment.isAvailable(required),
-      inspect: () => {
-        if (!environmentAvailable) throw new Error('environment unavailable');
-        return baseEnvironment.inspect();
-      },
-      acquire: (required = []) => baseEnvironment.acquire(required),
-      acquireWhenReady: async (required = []) => baseEnvironment.acquire(required),
-      workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
-    };
+    const fs = createTestFs(files);
+    const environment = createTestEnv();
     const registrar = new AgentMediaToolsRegistrar(
       registry,
       eventBus,
       dispatcher,
+      fs,
       environment,
       workspaceCtx,
       recordingTelemetry([]),
@@ -958,11 +919,7 @@ describe('AgentMediaToolsRegistrar', () => {
         agentContext,
       );
     };
-    const setEnvironmentAvailable = (available: boolean): void => {
-      environmentAvailable = available;
-      environmentChanges.fire();
-    };
-    return { registry, registrar, state, onDidRestore, bindModel, setEnvironmentAvailable };
+    return { registry, registrar, state, onDidRestore, bindModel };
   }
 
   it('registers before model binding and keeps the same tool across model updates', () => {
@@ -1023,19 +980,7 @@ describe('AgentMediaToolsRegistrar', () => {
     expect(registry.resolve('ReadMediaFile')).toBe(first);
   });
 
-  it('keeps attachment reads available across environment filesystem changes', () => {
-    const { registry, bindModel, setEnvironmentAvailable } = createRegistrarHarness();
-    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-
-    setEnvironmentAvailable(false);
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-
-    setEnvironmentAvailable(true);
-    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
-  });
-
-  it.each([undefined, { x: 0, y: 0, width: 16, height: 16 }])('keeps session-image reads available while the workspace environment is unavailable (region=%j)', async (region) => {
+  it.each([undefined, { x: 0, y: 0, width: 16, height: 16 }])('reads session images (region=%j)', async (region) => {
     const storage = new InMemoryStorageService();
     const store = new SessionMediaStoreService(makeSessionContext({
       sessionId: 'session', workspaceId: 'workspace', cwd: '/workspace',
@@ -1043,9 +988,8 @@ describe('AgentMediaToolsRegistrar', () => {
     }), storage, new JsonAtomicDocumentStore(storage));
     const bytes = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
     await store.materialize({ fileId: 'f_picture', name: 'picture.png', mimeType: 'image/png', size: bytes.length, stream: () => Readable.from([bytes]) });
-    const { registry, bindModel, setEnvironmentAvailable } = createRegistrarHarness({}, store);
+    const { registry, bindModel } = createRegistrarHarness({}, store);
     bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
-    setEnvironmentAvailable(false);
     const tool = registry.resolve('ReadMediaFile');
     expect(tool).toBeDefined();
     const execution = await tool!.resolveExecution({ path: 'kimi-file://f_picture', region });

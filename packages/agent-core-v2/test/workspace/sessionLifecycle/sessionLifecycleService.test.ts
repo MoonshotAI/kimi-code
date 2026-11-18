@@ -84,7 +84,6 @@ describe('SessionLifecycleService', () => {
             workDir: string;
             additionalDirs: readonly string[];
           },
-          environment: undefined,
           workdir: unknown,
         ): Promise<unknown>;
       }
@@ -94,7 +93,6 @@ describe('SessionLifecycleService', () => {
         workDir: '/workspace',
         additionalDirs: ['/additional'],
       },
-      undefined,
       workdir,
     );
 
@@ -110,15 +108,14 @@ describe('SessionLifecycleService', () => {
     }
   });
 
-  it('keeps remote resume cwd independent from the local primary', () => {
+  it('keeps a pinned cwd independent from the local primary', () => {
     const service = Object.assign(Object.create(SessionLifecycleService.prototype), {
       workspaceContext: { workspaceId: 'workspace', meta: { root: '/new-primary' } },
     }) as unknown as {
-      sessionWorkDir(fallbackCwd: string, environment: { environmentId: string; cwd?: string } | undefined): string;
+      sessionWorkDir(fallbackCwd: string, pinnedCwd?: string): string;
     };
 
-    expect(service.sessionWorkDir('/local-anchor', { environmentId: 'ssh-dev', cwd: '/srv/app' })).toBe('/local-anchor');
-    expect(service.sessionWorkDir('/old', undefined)).toBe('/new-primary');
-    expect(service.sessionWorkDir('/old', { environmentId: 'local', cwd: '/explicit' })).toBe('/explicit');
+    expect(service.sessionWorkDir('/local-anchor')).toBe('/new-primary');
+    expect(service.sessionWorkDir('/old', '/explicit')).toBe('/explicit');
   });
 });

@@ -90,10 +90,6 @@ interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
 import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
 import { IAgentSkillService } from '#/features/skill/skillService';
-import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
-import { LocalEnvironment } from '#/environment/localEnvironment';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
   ExecutableToolOutput as ToolOutput,
@@ -1329,7 +1325,6 @@ export class AgentTestContext {
             } satisfies ISessionWorkspaceInfo);
             reg.defineInstance(ISessionWorkdir, {
               _serviceBrand: undefined,
-              environmentId: 'local',
               cwd: this.cwd,
               fs: undefined as never,
             });
@@ -1377,43 +1372,6 @@ export class AgentTestContext {
       seeds: collectScopeSeed(
         [
           (reg) => {
-            reg.defineInstance(IAgentEnvironmentBindingSeed, {
-              _serviceBrand: undefined,
-              binding: { environmentId: 'local' },
-            });
-            const harnessBinding = { environmentId: 'local' };
-            reg.defineInstance<IAgentEnvironmentBindingService>(IAgentEnvironmentBindingService, {
-              _serviceBrand: undefined,
-              onDidChange: Event.None as IAgentEnvironmentBindingService['onDidChange'],
-              get current() {
-                return harnessBinding;
-              },
-              bind: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
-            });
-            const environment = new LocalEnvironment(this.root.accessor.get(IHostEnvironment),
-              this.root.accessor.get(IHostFileSystem),
-              this.root.accessor.get(IHostProcessService),
-            );
-            reg.defineInstance<IAgentEnvironmentService>(IAgentEnvironmentService, {
-              _serviceBrand: undefined,
-              onDidChange: () => ({ dispose: () => {} }),
-              isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
-              inspect: () => environment,
-              acquire: (required = []): EnvironmentLease => {
-                const missing = required.filter((capability) => !environment.capabilities.has(capability));
-                if (missing.length > 0) {
-                  throw new Error(`test environment missing capabilities: ${missing.join(', ')}`);
-                }
-                return { environment, track: (resource) => resource, dispose: () => {} };
-              },
-              acquireWhenReady(required = []) { return Promise.resolve(this.acquire(required)); },
-              workspaceRoots: () => ({
-                workDir: this.session.accessor.get(ISessionContext).cwd,
-                additionalDirs: this.session.accessor
-                  .get(ISessionStateService)
-                  .get(workspaceContextAdditionalDirsKey),
-              }),
-            });
             reg.defineDescriptor(
               IWireService,
               new SyncDescriptor(WireService),

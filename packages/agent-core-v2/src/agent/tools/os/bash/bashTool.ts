@@ -4,11 +4,11 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
-import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { acquireOrWhenReady, pinnedGeneration, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { HostWorkspaceView } from '#/session/workspaceContext/hostWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
@@ -75,7 +75,8 @@ export class BashTool implements IBashTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(BashInputSchema);
 
   constructor(
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IHostProcessService private readonly processService: IHostProcessService,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
@@ -105,7 +106,7 @@ export class BashTool implements IBashTool {
   get description(): string {
     const allowBackground = this.allowBackground();
     return renderPrompt(bashDescriptionTemplate, {
-      SHELL_NAME: this.environment.inspect().host?.shellName ?? 'sh',
+      SHELL_NAME: this.environment.shellName,
       TIMEOUT_GUIDANCE: !allowBackground
         ? TIMEOUT_KILLS
         : this.autoBackgroundOnTimeout()
@@ -116,7 +117,6 @@ export class BashTool implements IBashTool {
   }
 
   resolveExecution(args: BashInput): ToolExecution {
-    const expectedGeneration = this.reviewedGeneration();
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
     let stop = ({ abandon }: {
       readonly reason: unknown;
@@ -138,23 +138,15 @@ export class BashTool implements IBashTool {
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
       stopping: (context) => stop?.(context),
-      execute: (ctx) => this.execution(args, ctx, expectedGeneration, (next) => {
+      execute: (ctx) => this.execution(args, ctx, (next) => {
         stop = next;
       }),
     };
   }
 
-  private reviewedGeneration(): string | undefined {
-    try {
-      return pinnedGeneration(this.environment.inspect());
-    } catch {
-      return undefined;
-    }
-  }
-
   private executionCwd(args: BashInput): string {
     try {
-      const view = new EnvironmentWorkspaceView(this.environment.inspect(), this.workspaceCtx);
+      const view = new HostWorkspaceView(this.environment, this.workspaceCtx);
       return view.resolve(args.cwd ?? view.workDir);
     } catch {
       return args.cwd ?? this.ctx.cwd;
@@ -163,7 +155,7 @@ export class BashTool implements IBashTool {
 
   private spawn(
     processService: IHostProcessService,
-    view: EnvironmentWorkspaceView,
+    view: HostWorkspaceView,
     cwd: string | undefined,
     command: string,
   ): Promise<IHostProcess> {
@@ -184,7 +176,6 @@ export class BashTool implements IBashTool {
   private async execution(
     args: BashInput,
     ctx: ExecutableToolContext,
-    expectedGeneration: string | undefined,
     setStop: (stop: (context: {
       readonly reason: unknown;
       readonly abandon: (result?: ExecutableToolResult) => void;
@@ -196,12 +187,8 @@ export class BashTool implements IBashTool {
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const lease = await acquireOrWhenReady(this.environment, ['process']);
-    if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
-      lease.dispose();
-      return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
-    }
-    const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
+    await this.environment.ready;
+    const view = new HostWorkspaceView(this.environment, this.workspaceCtx);
     const command = view.host.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground
@@ -214,9 +201,8 @@ export class BashTool implements IBashTool {
     const builder = new ToolOutputAccumulator();
     let proc: IHostProcess;
     try {
-      proc = lease.track(await this.spawn(lease.environment.process!, view, args.cwd, command), this.ctx.sessionId);
+      proc = await this.spawn(this.processService, view, args.cwd, command);
     } catch (error) {
-      lease.dispose();
       return {
         isError: true,
         output: error instanceof Error ? error.message : String(error),
@@ -246,7 +232,6 @@ export class BashTool implements IBashTool {
         if (proc.exitCode === null) await proc.kill('SIGKILL');
       } finally {
         await disposeProcess(proc);
-        lease.dispose();
       }
     };
     const setFields = (status: 'running' | 'completed' | 'failed' | 'timed_out' | 'killed', exitCode: number | null): void => {
@@ -353,7 +338,6 @@ export class BashTool implements IBashTool {
           stopReason = error instanceof Error ? error.message : String(error);
         }
       } finally {
-        lease.dispose();
       }
       setFields(status, proc.exitCode);
       return await this.completionResult(taskId, proc, builder, timeoutMs ?? foregroundTimeoutMs, {
@@ -519,7 +503,6 @@ export class BashTool implements IBashTool {
 registerAgentToolService(IBashTool, BashTool, {
   name: 'Bash',
   domain: 'os/backends',
-  requiredEnvironmentCapabilities: ['process'],
 });
 
 function formatTimeoutLabel(timeoutMs: number): string {

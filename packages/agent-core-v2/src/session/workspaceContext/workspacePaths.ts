@@ -1,11 +1,11 @@
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import { ErrorCodes, Error2 } from '#/errors';
-import type { EnvironmentPath } from '#/environment/environment';
+import type { HostPath } from './hostWorkspaceView';
 
 import type { PathAccessOperation } from './workspaceContext';
 
-export type WorkspacePathSemantics = Pick<EnvironmentPath, 'isAbsolute' | 'relative' | 'resolve'>;
+export type WorkspacePathSemantics = Pick<HostPath, 'isAbsolute' | 'relative' | 'resolve'>;
 
 export const hostWorkspacePathSemantics: WorkspacePathSemantics = { isAbsolute, relative, resolve };
 

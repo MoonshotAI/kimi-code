@@ -80,8 +80,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     cwd: string,
     workspaceId: string,
     kind: 'managed' | 'implicit' = 'implicit',
-    environmentId = 'local',
-    followsPrimary = environmentId === 'local',
+    followsPrimary = true,
   ): WorkspaceDirsService {
     const bootstrap = stubBootstrap(homeDir);
     const hostFs = new HostFileSystem();
@@ -101,7 +100,6 @@ describe('WorkspaceDirsService (registry source)', () => {
         persistence,
         noopLog,
         new WorkspaceStateService(),
-        environmentId,
         followsPrimary,
       ),
     );
@@ -399,8 +397,8 @@ describe('WorkspaceDirsService (registry source)', () => {
 
   it('pins explicit local roots without expanding directory access', async () => {
     const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
-    const pinned = createDirs(dirC, project.id, 'managed', 'local', false);
-    const following = createDirs(dirC, project.id, 'managed', 'local', true);
+    const pinned = createDirs(dirC, project.id, 'managed', false);
+    const following = createDirs(dirC, project.id, 'managed', true);
     await Promise.all([pinned.ready, following.ready]);
 
     expect(pinned.primary).toBe(dirC);
@@ -443,14 +441,14 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(dirs.primary).toBe(dirB);
   });
 
-  it('keeps a remote workdir rooted at its environment cwd without local registry roots', async () => {
+  it('keeps a pinned workdir rooted at its cwd without local registry roots', async () => {
     const project = await workspaces.create({
       root: dirA,
       additionalDirs: [dirB],
       name: 'proj',
     });
     const remoteCwd = join(dirC, 'remote-workdir');
-    const dirs = createDirs(remoteCwd, project.id, 'managed', 'ssh-dev');
+    const dirs = createDirs(remoteCwd, project.id, 'managed', false);
     await dirs.ready;
 
     expect(dirs.primary).toBe(remoteCwd);

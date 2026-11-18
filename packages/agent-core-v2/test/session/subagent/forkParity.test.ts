@@ -20,13 +20,6 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { LocalEnvironment } from '#/environment/localEnvironment';
-import type {
-  Environment,
-  EnvironmentBinding,
-  EnvironmentCapability,
-  EnvironmentLease,
-} from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
@@ -51,7 +44,6 @@ const SUBAGENT_BACKGROUND_TASK_NOTICE =
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
   appService,
@@ -126,32 +118,6 @@ class ScopedAppendLogStore implements IAppendLogStore {
   }
 }
 
-class TestEnvironmentResolver implements EnvironmentResolver {
-  readonly onDidChange = () => ({ dispose: () => {} });
-  declare readonly _serviceBrand: undefined;
-  private readonly environment: LocalEnvironment;
-
-  constructor(
-    @IHostEnvironment environment: IHostEnvironment,
-    @IHostFileSystem fs: IHostFileSystem,
-    @IHostProcessService processes: IHostProcessService,
-  ) {
-    this.environment = new LocalEnvironment(environment, fs, processes);
-  }
-
-  inspect(_binding: EnvironmentBinding): Environment {
-    return this.environment;
-  }
-
-  acquire(_binding: EnvironmentBinding, _required?: readonly EnvironmentCapability[]): EnvironmentLease {
-    return { environment: this.environment, track: (resource) => resource, dispose: () => {} };
-  }
-
-  acquireWhenReady(_binding: EnvironmentBinding, _required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease> {
-    return Promise.resolve({ environment: this.environment, track: (resource) => resource, dispose: () => {} });
-  }
-}
-
 class ToolContributions {
   constructor(@AgentToolContribution readonly view: CollectionView<AgentToolContribution>) {}
 }
@@ -204,7 +170,6 @@ describe('subagent task reminders and fork request parity', () => {
       appService(IFlagService, stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID)),
       telemetryServices(recordingTelemetry(telemetry)),
       sessionServices((reg) => {
-        reg.defineDescriptor(IEnvironmentService, new SyncDescriptor(TestEnvironmentResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
           get: () => undefined,
@@ -320,7 +285,6 @@ describe('subagent task reminders and fork request parity', () => {
       }),
       telemetryServices(recordingTelemetry(telemetry)),
       sessionServices((reg) => {
-        reg.defineDescriptor(IEnvironmentService, new SyncDescriptor(TestEnvironmentResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
           get: () => undefined,

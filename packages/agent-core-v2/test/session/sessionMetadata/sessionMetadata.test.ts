@@ -116,7 +116,7 @@ describe('SessionMetadata', () => {
     expect(mirror.recorded.at(-1)).toMatchObject({ cwd: makeContext().cwd });
   });
 
-  it('exposes the live effective cwd while preserving explicit and remote bindings', async () => {
+  it('exposes the live effective cwd and reads legacy environment bindings', async () => {
     const primaryByWorkspace: Record<string, string> = { wd_test: '/old' };
     ix.stub(ISessionWorkspaceInfo, {
       _serviceBrand: undefined,

@@ -10,7 +10,6 @@ import { PathSecurityError, type PathClass } from '#/tool/path-access';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
-import { stubAgentEnvironment } from '../../../../environment/stubs';
 import {
   type GlobInput,
   GlobInputSchema,
@@ -21,8 +20,6 @@ import { GlobTool, splitCompletePaths } from '#/agent/tools/os/glob/globTool';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
@@ -95,21 +92,6 @@ function createTestEnv(opts: { home?: string; pathClass?: PathClass } = {}): IHo
 
 function createTestProcessService(spawn: ReturnType<typeof vi.fn>): IHostProcessService {
   return { _serviceBrand: undefined, spawn } as unknown as IHostProcessService;
-}
-
-function createEnvironment(
-  fs: IHostFileSystem,
-  environment: IHostEnvironment,
-  process: IHostProcessService,
-): IAgentEnvironmentService {
-  const backend = Object.assign(
-    new FakeEnvironment(
-      { environmentId: 'local', generation: 'test' },
-      { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
-    ),
-    { fs, host: environment, process },
-  );
-  return stubAgentEnvironment(backend);
 }
 
 function createRealRgProbe(processService: IHostProcessService): RgProbe {
@@ -230,7 +212,9 @@ function makeTool(
   const processService = createTestProcessService(exec);
   const env = createTestEnv({ home: opts.home, pathClass: opts.pathClass });
   const tool = new GlobTool(
-    createEnvironment(fs, env, processService),
+    fs,
+    processService,
+    env,
     workspaceConfig,
     opts.telemetry ?? noopTelemetryService,
   );
@@ -605,22 +589,13 @@ describe('GlobTool', () => {
     );
     const { fs } = createTestFs();
     const processService = createTestProcessService(exec);
-    const backend = Object.assign(
-      new FakeEnvironment(
-        { environmentId: 'ssh-dev', generation: 'rg-probe-cwd' },
-        { capabilities: ['fs', 'process'], pathClass: 'posix' },
-      ),
-      { fs, host: createTestEnv({ home: '/home/remote' }), process: processService },
-    );
-    const tool = new GlobTool(stubAgentEnvironment(backend), workspace, noopTelemetryService);
+    const tool = new GlobTool(fs, processService, createTestEnv(), workspace, noopTelemetryService);
 
     const result = await execute(tool, { pattern: '**/*.ts' });
 
     expect(result.isError).not.toBe(true);
     expect(result.output).toContain('src/a.ts');
-    expect(exec.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(exec.mock.calls[0]?.[0]).toBe('rg');
-    expect(exec.mock.calls[0]?.[1]).toEqual(['--version']);
+    expect(exec.mock.calls.length).toBeGreaterThanOrEqual(1);
     for (const call of exec.mock.calls) {
       expect(call[2]?.cwd).toBe('/workspace');
     }
@@ -969,7 +944,7 @@ describe('GlobTool integration (real ripgrep)', () => {
     };
     realProcessService = new HostProcessService();
     realFs = new HostFileSystem();
-    tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), stubWorkspaceContext(tmpDir!), noopTelemetryService);
+    tool = new GlobTool(realFs, realProcessService, realEnv, stubWorkspaceContext(tmpDir!), noopTelemetryService);
   });
 
   afterEach(async () => {
@@ -1091,9 +1066,8 @@ describe('GlobTool integration (real ripgrep)', () => {
         await fs.utimes(target, mtime, mtime);
       }
     }
-    const environment = createEnvironment(realFs, realEnv, realProcessService);
-    const normal = new GlobTool(environment, stubWorkspaceContext(shortRoot), noopTelemetryService);
-    const long = new GlobTool(environment, stubWorkspaceContext(longRoot), noopTelemetryService);
+    const normal = new GlobTool(realFs, realProcessService, realEnv, stubWorkspaceContext(shortRoot), noopTelemetryService);
+    const long = new GlobTool(realFs, realProcessService, realEnv, stubWorkspaceContext(longRoot), noopTelemetryService);
     for (const include_ignored of [false, true]) {
       for (const pattern of ['*.ts', '/top.ts', 'src/*.ts', '/src/**/*.ts', '{src,nested}/*.ts', '!src/*.ts', '**', '!']) {
         const args = { pattern, include_ignored, head_limit: 0 };

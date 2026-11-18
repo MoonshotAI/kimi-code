@@ -45,13 +45,16 @@ function isResourceNotFound(error: unknown): boolean {
 
 export class AcpHostFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
+  private readonly inner: IHostFileSystem;
 
-  private readonly inner = new HostFileSystem();
 
   constructor(
     @ISessionContext private readonly ctx: ISessionContext,
     @IAcpConnection private readonly connection: IAcpConnection,
-  ) {}
+    inner?: IHostFileSystem,
+  ) {
+    this.inner = inner ?? new HostFileSystem();
+  }
 
   async readText(path: string, options?: ReadTextOptions): Promise<string> {
     if (!this.connection.fsReadTextFile) {

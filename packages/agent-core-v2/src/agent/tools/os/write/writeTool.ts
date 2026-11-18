@@ -1,10 +1,10 @@
 import { dirname } from 'pathe';
 
-import { type HostFileStat, type IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { HostWorkspaceView } from '#/session/workspaceContext/hostWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -29,13 +29,14 @@ export class WriteTool implements IWriteTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(WriteInputSchema);
 
   constructor(
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {}
 
-  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
+  private workspaceConfig(view: HostWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
@@ -58,18 +59,16 @@ export class WriteTool implements IWriteTool {
         },
       };
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
-    try {
-      const inspected = resolutionLease.environment;
-      const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, {
+    await this.environment.ready;
+    {
+      const view = new HostWorkspaceView(this.environment, {
         workDir: this.workspaceCtx.workDir,
         additionalDirs: [
           ...this.workspaceCtx.additionalDirs,
           ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
         ],
       });
-      const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
+      const env = view.host;
       const workspace = this.workspaceConfig(view);
       const path = resolvePathAccessPath(args.path, {
         env,
@@ -88,20 +87,8 @@ export class WriteTool implements IWriteTool {
             pathClass: env.pathClass,
             homeDir: env.homeDir,
           }),
-        execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
-          try {
-            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
-              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
-            }
-            return await this.execution(lease.environment.fs!, args, path);
-          } finally {
-            lease.dispose();
-          }
-        },
+        execute: () => this.execution(this.fs, args, path),
       };
-    } finally {
-      resolutionLease.dispose();
     }
   }
 
@@ -163,5 +150,4 @@ export class WriteTool implements IWriteTool {
 registerAgentToolService(IWriteTool, WriteTool, {
   name: 'Write',
   domain: 'os/backends',
-  requiredEnvironmentCapabilities: ['fs'],
 });

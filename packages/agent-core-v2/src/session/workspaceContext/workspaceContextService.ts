@@ -41,7 +41,7 @@ export class SessionWorkspaceContextService extends Service implements ISessionW
   private syncRoots(): void {
     const roots = resolveEffectiveWorkspaceRoots(
       this.ctx,
-      { environmentId: this.workdir.environmentId, cwd: this.workdir.cwd },
+      this.workdir.cwd,
       this.workspaceInfo,
     );
     this.states.set(workspaceContextWorkDirKey, roots.workDir);

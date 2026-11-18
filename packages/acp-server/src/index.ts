@@ -86,7 +86,7 @@ export {
   questionRequestToElicitationParams,
 } from './question';
 export { projectHistoryToSessionUpdates } from './replay';
-export { AcpEnvironmentOverlay } from './acp-terminal';
+export { AcpProcessOverride } from './acp-terminal';
 export type {
   AcpTerminalCreatedEvent,
   AcpTerminalCreatedListener,

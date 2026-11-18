@@ -4,7 +4,6 @@ import { okEnvelope } from '../protocol/envelope';
 import { mapDebugError, withTimeout } from './errors';
 import type { RouteHost } from './serviceDispatcherRoutes';
 import {
-  agentEnvironmentBindingSnapshot,
   sessionWorkspaceAssociation,
   workspaceSnapshot,
   workspaceSnapshots,
@@ -39,17 +38,6 @@ export function registerBusinessSnapshotRoutes(
       req,
       reply,
       () => sessionWorkspaceAssociation(core, requestParams(req)['session_id'] ?? ''),
-      callTimeoutMs,
-    ));
-  app.get(`${basePath}/session/:session_id/agent/:agent_id/environment-binding`, async (req, reply) =>
-    sendSnapshot(
-      req,
-      reply,
-      () => agentEnvironmentBindingSnapshot(
-        core,
-        requestParams(req)['session_id'] ?? '',
-        requestParams(req)['agent_id'] ?? '',
-      ),
       callTimeoutMs,
     ));
 }

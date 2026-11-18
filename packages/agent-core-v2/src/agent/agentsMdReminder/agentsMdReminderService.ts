@@ -9,11 +9,10 @@ import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { AgentsMdReminderShownEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WatchChange } from '#human/utils/watch';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { acquireEnvironmentLease } from '#/agent/permissionPolicy/policies/environment-lease';
-import { DEFAULT_ENVIRONMENT_HOST } from '#/environment/environmentDefaults';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { normalizeUserPath } from '#/tool/path-access';
@@ -78,7 +77,9 @@ export class AgentAgentsMdReminderService
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionContext private readonly sessionContext: ISessionContext,
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IBashParserService private readonly bashParser: IBashParserService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -170,20 +171,12 @@ export class AgentAgentsMdReminderService
 
   private async ensureSeeded(): Promise<void> {
     if (this.states.get(agentsMdReminderSeededKey)) return;
-    const lease = acquireEnvironmentLease(this.environment, ['fs']);
-    if (lease === undefined) return;
-    try {
-      const homeDir = lease.environment.host?.homeDir;
-      if (homeDir === undefined) return;
-      const { paths } = await loadAgentsMdDetailed(
-        { fs: lease.environment.fs!, homeDir },
-        this.agentCwd,
-        this.bootstrap.homeDir,
-      );
-      this.seedInjected(paths, this.agentCwd);
-    } finally {
-      lease.dispose();
-    }
+    const { paths } = await loadAgentsMdDetailed(
+      { fs: this.fs, homeDir: this.environment.homeDir },
+      this.agentCwd,
+      this.bootstrap.homeDir,
+    );
+    this.seedInjected(paths, this.agentCwd);
   }
 
   private async probeAndRemind(ctx: ToolDidExecuteContext): Promise<void> {
@@ -241,10 +234,7 @@ export class AgentAgentsMdReminderService
 
   private targetDirs(ctx: ToolDidExecuteContext): { dirs: string[]; selfKnown: string[] } {
     const selfKnown: string[] = [];
-    const lease = acquireEnvironmentLease(this.environment);
-    if (lease === undefined) return { dirs: [], selfKnown };
-    const env = lease.environment.host ?? DEFAULT_ENVIRONMENT_HOST;
-    lease.dispose();
+    const env = this.environment;
     switch (ctx.toolCall.name) {
       case 'Read':
       case 'Edit':
@@ -257,7 +247,7 @@ export class AgentAgentsMdReminderService
         const command = stringArg(args, 'command');
         if (command === undefined) return { dirs: [], selfKnown };
         const cwdArg = stringArg(args, 'cwd');
-        const base = hostPath(this.environment.workspaceRoots().workDir, env.pathClass);
+        const base = hostPath(this.workspace.workDir, env.pathClass);
         const normalizedCwdArg =
           cwdArg === undefined ? undefined : normalizeUserPath(cwdArg, env.pathClass);
         const effectiveCwd =
@@ -314,27 +304,20 @@ export class AgentAgentsMdReminderService
   }
 
   private async probeDir(dir: string): Promise<string[]> {
-    const lease = acquireEnvironmentLease(this.environment, ['fs']);
-    if (lease === undefined) return [];
-    try {
-      const fs = lease.environment.fs!;
-      const anchor = await this.nearestExistingDir(fs, dir);
-      if (anchor === undefined) return [];
-      const deps = { fs };
-      const projectRoot = await findProjectRoot(deps, anchor);
-      const chain = dirsRootToLeaf(anchor, projectRoot);
-      const found: string[] = [];
-      for (const chainDir of chain) {
-        const candidates = agentsMdCandidatePaths(chainDir);
-        if (candidates.every((candidate) => this.known.has(normalize(candidate)))) continue;
-        for (const path of await findAgentsMdInDir(deps, chainDir)) {
-          found.push(normalize(path));
-        }
+    const anchor = await this.nearestExistingDir(this.fs, dir);
+    if (anchor === undefined) return [];
+    const deps = { fs: this.fs };
+    const projectRoot = await findProjectRoot(deps, anchor);
+    const chain = dirsRootToLeaf(anchor, projectRoot);
+    const found: string[] = [];
+    for (const chainDir of chain) {
+      const candidates = agentsMdCandidatePaths(chainDir);
+      if (candidates.every((candidate) => this.known.has(normalize(candidate)))) continue;
+      for (const path of await findAgentsMdInDir(deps, chainDir)) {
+        found.push(normalize(path));
       }
-      return found;
-    } finally {
-      lease.dispose();
     }
+    return found;
   }
 
   private async nearestExistingDir(fs: IHostFileSystem, path: string): Promise<string | undefined> {

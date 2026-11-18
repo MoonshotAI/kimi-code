@@ -11,9 +11,8 @@ import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSyste
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { Environment } from '#/environment/environment';
-import { stubAgentEnvironment } from '../../environment/stubs';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
@@ -49,10 +48,6 @@ function stubHostFs(entries: Record<string, string>): IHostFileSystem {
       throw new Error(`ENOENT: ${path}`);
     }),
   } as unknown as IHostFileSystem;
-}
-
-function stubEnvironmentService(workDir: string, fs: IHostFileSystem, homeDir: string): IAgentEnvironmentService {
-  return stubAgentEnvironment({ fs, host: { homeDir } } as unknown as Environment, { workDir });
 }
 
 describe('SessionInitService', () => {
@@ -121,9 +116,6 @@ describe('SessionInitService', () => {
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
           if (id === IAgentReminderService) return { notify: appendReminder };
-          if (id === IAgentEnvironmentService) {
-            return stubEnvironmentService(environmentWorkDir, hostFs, '/home');
-          }
           if (id === IEventDispatcher) {
             return {
               flush,
@@ -162,6 +154,23 @@ describe('SessionInitService', () => {
       _serviceBrand: undefined,
       homeDir: '/home/brand',
     } as unknown as IBootstrapService);
+    ix.stub(ISessionWorkspaceContext, {
+      _serviceBrand: undefined,
+      get workDir() { return environmentWorkDir; },
+      additionalDirs: [],
+    } as unknown as ISessionWorkspaceContext);
+    ix.stub(IHostFileSystem, { readText: (path: string) => hostFs.readText(path), stat: (path: string) => hostFs.stat(path) } as IHostFileSystem);
+    ix.stub(IHostEnvironment, {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: '',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: '/home',
+      ready: Promise.resolve(),
+    });
     ix.set(ISessionInitService, new SyncDescriptor(SessionInitService));
   });
 
@@ -217,22 +226,22 @@ describe('SessionInitService', () => {
     );
   });
 
-  it('reloads and seeds AGENTS.md from the bound environment at the binding cwd', async () => {
-    const remoteWorkDir = '/remote/work';
-    const remoteAgentsMdPath = `${remoteWorkDir}/AGENTS.md`;
+  it('reloads and seeds AGENTS.md from the pinned cwd', async () => {
+    const pinnedWorkDir = '/pinned/work';
+    const pinnedAgentsMdPath = `${pinnedWorkDir}/AGENTS.md`;
     hostFs = stubHostFs({
-      [remoteAgentsMdPath]: 'remote target instructions',
-      [`${remoteWorkDir}/.git`]: '',
+      [pinnedAgentsMdPath]: 'pinned target instructions',
+      [`${pinnedWorkDir}/.git`]: '',
     });
-    environmentWorkDir = remoteWorkDir;
+    environmentWorkDir = pinnedWorkDir;
 
     const svc = ix.get(ISessionInitService);
     await svc.generateAgentsMd();
 
     expect(appendReminder).toHaveBeenCalledTimes(1);
     const [content] = appendReminder.mock.calls[0] as [string, { variant: string }];
-    expect(content).toContain('remote target instructions');
-    expect(seedInjected).toHaveBeenCalledWith([remoteAgentsMdPath], remoteWorkDir);
+    expect(content).toContain('pinned target instructions');
+    expect(seedInjected).toHaveBeenCalledWith([pinnedAgentsMdPath], pinnedWorkDir);
   });
 
   it('wraps a subagent failure in SESSION_INIT_FAILED', async () => {

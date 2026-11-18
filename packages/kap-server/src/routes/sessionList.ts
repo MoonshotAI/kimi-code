@@ -4,7 +4,6 @@ import {
   ISessionIndex,
   ISessionIndexMirror,
   IWorkspaceAliases,
-  LOCAL_ENVIRONMENT_ID,
   setSessionArchivedBatch,
   type Scope,
   type SessionSummary,
@@ -178,7 +177,7 @@ interface GitTarget {
 }
 
 function gitTarget(summary: SessionSummary, workspaceCwd: string): GitTarget | undefined {
-  if (summary.environmentId !== undefined && summary.environmentId !== LOCAL_ENVIRONMENT_ID) return undefined;
+  if (summary.environmentId !== undefined && summary.environmentId !== 'local') return undefined;
   if (workspaceCwd.length === 0) return undefined;
   return { key: workspaceCwd, cwd: workspaceCwd };
 }

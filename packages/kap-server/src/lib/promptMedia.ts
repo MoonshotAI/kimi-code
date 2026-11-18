@@ -37,7 +37,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 import { isSensitiveFile } from '@moonshot-ai/agent-core-v2/tool/path-access';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
-import type { EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { HostPath } from '@moonshot-ai/agent-core-v2/session/workspaceContext/hostWorkspaceView';
 
 import type { PromptSubmission } from '../protocol/rest-prompt';
 
@@ -142,7 +142,7 @@ export interface ResolvePromptMediaOptions {
 export interface PromptAttachmentsTarget {
   readonly dir: string;
   readonly fs?: IHostFileSystem;
-  readonly path?: EnvironmentPath;
+  readonly path?: HostPath;
 }
 
 export interface EnvironmentMediaTargets {
@@ -173,7 +173,7 @@ function localAttachmentSink(dir: string): AttachmentSink {
   };
 }
 
-function environmentAttachmentSink(target: { readonly dir: string; readonly fs: IHostFileSystem; readonly path: EnvironmentPath }): AttachmentSink {
+function environmentAttachmentSink(target: { readonly dir: string; readonly fs: IHostFileSystem; readonly path: HostPath }): AttachmentSink {
   return {
     dir: target.dir,
     join: (...parts) => target.path.join(...parts),

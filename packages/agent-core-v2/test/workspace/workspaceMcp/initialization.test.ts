@@ -25,8 +25,8 @@ import { HostProcessService } from '#/os/backends/node-local/hostProcessService'
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
@@ -91,11 +91,18 @@ describe('Workspace MCP initialization', () => {
         });
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
-        const environment = Object.assign(
-          new FakeEnvironment({ environmentId: 'local', generation: 'test-generation' }, { capabilities: ['process'] }),
-          { process: new HostProcessService() },
-        );
-        reg.definePartialInstance(IEnvironmentService, { _serviceBrand: undefined, inspect: () => environment, acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }), acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }) });
+        reg.defineInstance(IHostProcessService, new HostProcessService());
+        reg.defineInstance(IHostEnvironment, {
+          _serviceBrand: undefined,
+          osKind: 'Linux',
+          osArch: 'x64',
+          osVersion: '',
+          shellName: 'bash',
+          shellPath: '/bin/bash',
+          pathClass: 'posix',
+          homeDir,
+          ready: Promise.resolve(),
+        });
         reg.definePartialInstance(IConfigService, {
           ready,
           onDidSectionChange: Event.None as IConfigService['onDidSectionChange'],

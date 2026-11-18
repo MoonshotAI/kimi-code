@@ -7,6 +7,9 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { LifecycleScope } from '#/app/scopes';
@@ -48,6 +51,9 @@ describe('SessionInitFeature', () => {
       stubPair(IAgentLifecycleService, {} as IAgentLifecycleService),
       stubPair(ISessionSubagentService, {} as ISessionSubagentService),
       stubPair(IBootstrapService, {} as IBootstrapService),
+      stubPair(IHostEnvironment, {} as IHostEnvironment),
+      stubPair(IHostFileSystem, {} as IHostFileSystem),
+      stubPair(ISessionWorkspaceContext, {} as ISessionWorkspaceContext),
     ]);
     const manager = host.app.accessor.get(IFeatureManager);
 

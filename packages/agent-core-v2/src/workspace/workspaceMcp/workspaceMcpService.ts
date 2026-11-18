@@ -19,7 +19,8 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChange,
@@ -48,7 +49,8 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
-    @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
+    @IHostProcessService private readonly processService: IHostProcessService,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
     @IMcpOAuthService oauthService: McpOAuthService,
     @ILogService private readonly log: ILogService,
@@ -64,8 +66,8 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       log: this.log,
       oauthService: this.oauthService,
       stdioCwd: () => this.dirs.primary,
-      environmentResolver: this.environmentResolver,
-      environmentId: 'local',
+      processService: this.processService,
+      environment: this.environment,
       reconnectRetryEnabled: true,
       resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
@@ -161,9 +163,8 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       log: this.log,
       oauthService: this.oauthService,
       stdioCwd: opts?.stdioCwd ?? (() => this.dirs.primary),
-      environmentResolver: this.environmentResolver,
-      environmentId: 'local',
-      requireStdioEnvironmentId: true,
+      processService: this.processService,
+      environment: this.environment,
       reconnectRetryEnabled: true,
       sessionId: opts?.sessionId,
       resolveDefaults: () => this.mcpConfig.tunables(),

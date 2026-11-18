@@ -8,7 +8,6 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPluginCommandService,
-  IAgentEnvironmentBindingService,
   IAgentShellCommandService,
   IAppendLogStore,
   IDebugEventsService,
@@ -23,7 +22,7 @@ import {
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import type {
-  AgentEnvironmentBindingSnapshot,
+  ProfileData,
   ServiceIdentifier,
   SessionWorkspaceAssociationSnapshot,
   WorkspaceInstanceSnapshot,
@@ -236,7 +235,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(got.body.data.root).toBe(cwd);
   });
 
-  it('exposes workspace, session association, and agent binding business snapshots', async () => {
+  it('exposes workspace and session association business snapshots', async () => {
     const sessionId = await createSession(home as string);
     await createMainAgent(sessionId);
     const summary = await server!.core.accessor.get(ISessionIndex).get(sessionId);
@@ -251,7 +250,7 @@ describe('server-v2 /api/v1/debug RPC', () => {
       metadata: { id: workspaceId, root: home },
       lifecycle: 'active',
       program: {
-        binding: { environmentId: 'local' },
+        status: 'ready',
       },
     });
     expect(workspace.body.data).not.toHaveProperty('accessor');
@@ -265,16 +264,6 @@ describe('server-v2 /api/v1/debug RPC', () => {
       sessionId,
       workspaceId,
       cwd: home,
-    });
-
-    const binding = await call<AgentEnvironmentBindingSnapshot>(
-      'GET',
-      `/api/v1/debug/session/${sessionId}/agent/main/environment-binding`,
-    );
-    expect(binding.body.data).toMatchObject({
-      binding: { environmentId: 'local' },
-      available: true,
-      environment: { environmentId: 'local', status: 'ready' },
     });
 
     const legacy = await fetch(
@@ -590,12 +579,12 @@ describe('server-v2 /api/v1/debug RPC', () => {
     await lifecycle.remove(lifecycle.get('sub-rebuild')!);
     expect(lifecycle.handleOf('sub-rebuild')).toBeUndefined();
 
-    const { body } = await call<{ workspaceId: string; environmentId: string }>(
+    const { body } = await call<ProfileData>(
       'POST',
-      rpc('agent', IAgentEnvironmentBindingService, 'current', { sid: id, aid: 'sub-rebuild' }),
+      rpc('agent', IAgentLoopService, 'data', { sid: id, aid: 'sub-rebuild' }),
     );
     expect(body.code).toBe(0);
-    expect(body.data.environmentId).toBe('local');
+    expect(body.data.profileName).toBe('coder');
     expect(lifecycle.handleOf('sub-rebuild')).toBeDefined();
   });
 

@@ -16,8 +16,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { resolveEffectiveWorkspaceRoots, type EffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
@@ -88,8 +88,8 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     @ISessionAgentProfileCatalog private readonly agentCatalog: ISessionAgentProfileCatalog,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @IAgentEnvironmentBindingService private readonly environmentBinding: IAgentEnvironmentBindingService,
+    @ISessionWorkdir private readonly sessionWorkdir: ISessionWorkdir,
+    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IHostFileSystem private readonly localFs: IHostFileSystem,
     @IHostEnvironment private readonly localEnvironment: IHostEnvironment,
     @IConfigService private readonly config: IConfigService,
@@ -151,18 +151,12 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     try {
       const profileData = this.profile.data();
       if (profileData.profileName === undefined) return;
-      const lease = this.environment.acquire(['fs']);
-      let fresh: LoadedAgentsMd;
-      try {
-        fresh = await loadAgentsMdForRoots(
-          { fs: lease.environment.fs!, homeDir: this.localEnvironment.homeDir },
-          this.bootstrap.homeDir,
-          [this.environment.workspaceRoots().workDir],
-          this.localFs,
-        );
-      } finally {
-        lease.dispose();
-      }
+      const fresh: LoadedAgentsMd = await loadAgentsMdForRoots(
+        { fs: this.localFs, homeDir: this.localEnvironment.homeDir },
+        this.bootstrap.homeDir,
+        [this.workspaceCtx.workDir],
+        this.localFs,
+      );
       const contents = fresh.files;
       const hash = hashText(`${fresh.paths.join('\n')}\n\n${fresh.content}`);
       const snapshot = this.snapshot;
@@ -382,21 +376,14 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         additionalDirs,
       );
       if (changes.primary.length + changes.added.length + changes.removed.length === 0) return;
-      let host;
-      try {
-        host = this.environment.inspect().host;
-      } catch {
-        host = undefined;
-      }
-      const binding = this.environmentBinding.current;
+      const pinnedCwd = this.sessionWorkdir.cwd;
       const roots = resolveEffectiveWorkspaceRoots(
         this.sessionContext,
-        binding,
+        pinnedCwd,
         this.workspaceInfo,
-        host,
       );
       this.reminder.notify(
-        workspaceDirsChangeText(changes, roots, this.sessionContext.workspaceId, binding.cwd !== undefined),
+        workspaceDirsChangeText(changes, roots, this.sessionContext.workspaceId, pinnedCwd !== undefined),
         { variant: WORKSPACE_DIRS_CHANGE_VARIANT },
       );
     } catch (error) {

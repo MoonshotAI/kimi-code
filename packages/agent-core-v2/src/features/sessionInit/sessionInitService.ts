@@ -4,9 +4,10 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import { EnvironmentError } from '#/environment/environmentRegistry';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -31,6 +32,9 @@ export class SessionInitService implements ISessionInitService {
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
   ) {}
 
   cancelInit(): void {
@@ -83,24 +87,12 @@ export class SessionInitService implements ISessionInitService {
         cancel: (reason) => controller.abort(reason),
       });
 
-      const environment = main.accessor.get(IAgentEnvironmentService);
-      const workDir = environment.workspaceRoots().workDir;
-      const lease = environment.acquire(['fs']);
-      let agentsMd: string;
-      let agentsMdPaths: readonly string[];
-      try {
-        const homeDir = lease.environment.host?.homeDir;
-        if (homeDir === undefined) {
-          throw new EnvironmentError('environment.unavailable', 'environment host information is not available');
-        }
-        ({ content: agentsMd, paths: agentsMdPaths } = await loadAgentsMdDetailed(
-          { fs: lease.environment.fs!, homeDir },
-          workDir,
-          this.bootstrap.homeDir,
-        ));
-      } finally {
-        lease.dispose();
-      }
+      const workDir = this.workspace.workDir;
+      const { content: agentsMd, paths: agentsMdPaths } = await loadAgentsMdDetailed(
+        { fs: this.fs, homeDir: this.environment.homeDir },
+        workDir,
+        this.bootstrap.homeDir,
+      );
       main.accessor
         .get(IAgentAgentsMdReminderService)
         .seedInjected(agentsMdPaths, workDir);

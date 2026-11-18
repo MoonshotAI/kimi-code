@@ -113,9 +113,8 @@ export interface McpDefaults {
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string | (() => string);
-  readonly environmentResolver?: import('#/app/environment/environment').EnvironmentResolver;
-  readonly environmentId?: string;
-  readonly requireStdioEnvironmentId?: boolean;
+  readonly processService?: import('#/os/interface/hostProcess').IHostProcessService;
+  readonly environment?: import('#/os/interface/hostEnvironment').IHostEnvironment;
   readonly sessionId?: string;
   readonly reconnectRetryEnabled?: boolean;
   readonly oauthService?: McpOAuthService;
@@ -794,12 +793,12 @@ export class McpConnectionManager implements McpConnectionView {
       config.toolTimeoutMs ?? this.options.resolveDefaults?.().toolTimeoutMs;
     const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
-      const environmentResolver = this.options.environmentResolver;
-      const environmentId = this.options.environmentId;
-      if (environmentResolver === undefined || environmentId === undefined) {
+      const processService = this.options.processService;
+      const environment = this.options.environment;
+      if (processService === undefined || environment === undefined) {
         throw new McpClassifiedStartupError(
           'config',
-          'MCP stdio requires environment_id and environment binding',
+          'MCP stdio requires host process and environment services',
         );
       }
       return new StdioMcpClient(config, {
@@ -807,8 +806,8 @@ export class McpConnectionManager implements McpConnectionView {
         toolCallTimeoutMs,
         defaultCwd: typeof this.options.stdioCwd === 'function' ? this.options.stdioCwd() : this.options.stdioCwd,
         clientName,
-        environmentResolver,
-        environmentId,
+        processService,
+        environment,
         sessionId: this.options.sessionId,
       });
     }

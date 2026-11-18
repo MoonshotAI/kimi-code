@@ -5,11 +5,12 @@ import { fileURLToPath } from 'node:url';
 
 import {
   IOAuthToolkit,
-  IAgentEnvironmentBindingService,
+  IAgentToolRegistryService,
   IAgentLifecycleService,
   ensureMainAgent,
   ISessionManager,
   ISessionMcpHandle,
+  ISessionWorkspaceInfo,
   IWorkspaceInstanceManager,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -204,7 +205,7 @@ describe('acp-server session lifecycle', () => {
       const forkedHandle = c.server.core.accessor.get(ISessionManager).get(forked.sessionId)!;
       const forkedMain = await ensureMainAgent(forkedHandle);
       expect(forkedHandle.accessor.get(IAgentLifecycleService).handleOf(forkedMain.agentId)!
-        .accessor.get(IAgentEnvironmentBindingService).current.environmentId).toBe('local');
+        .accessor.get(IAgentToolRegistryService).resolve('Bash')).not.toBeUndefined();
       expect(Array.isArray(forked.configOptions)).toBe(true);
       expect(forked.modes).toBeDefined();
 
@@ -265,7 +266,7 @@ describe('acp-server session lifecycle', () => {
       const legacyHandle = c.server.core.accessor.get(ISessionManager).get(legacyForked.sessionId)!;
       const legacyMain = await ensureMainAgent(legacyHandle);
       expect(legacyHandle.accessor.get(IAgentLifecycleService).handleOf(legacyMain.agentId)!
-        .accessor.get(IAgentEnvironmentBindingService).current.environmentId).toBe('local');
+        .accessor.get(IAgentToolRegistryService).resolve('Bash')).not.toBeUndefined();
     },
     30_000,
   );
@@ -395,9 +396,10 @@ describe('acp-server session lifecycle', () => {
         .get(IWorkspaceInstanceManager)
         .acquire({ root: homeDir! });
       try {
-        const dirs = lease.instance.program.dirs;
-        await dirs.ready;
-        expect(dirs.additionalDirs).toContain(extraDir);
+        const info = c.server.core.accessor.get(ISessionManager).get(created.sessionId)!
+          .accessor.get(ISessionWorkspaceInfo);
+        await info.ready;
+        expect(info.additionalDirs).toContain(extraDir);
       } finally {
         lease.dispose();
       }

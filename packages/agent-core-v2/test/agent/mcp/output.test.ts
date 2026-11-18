@@ -14,7 +14,7 @@ import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender
 import { StdioMcpClient } from '#/mcpCore/client-stdio';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
@@ -974,13 +974,17 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
   const fixture = join(import.meta.dirname, '../../mcpCore/fixtures/structured-content-stdio-server.mjs');
 
   async function callFixtureTool(name: string) {
-    const environment = Object.assign(
-      new FakeEnvironment(
-        { environmentId: 'local', generation: 'test' },
-        { capabilities: ['process'] },
-      ),
-      { process: new HostProcessService() },
-    );
+    const environment: IHostEnvironment = {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: '',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: process.cwd(),
+      ready: Promise.resolve(),
+    };
     const client = new StdioMcpClient(
       {
         transport: 'stdio',
@@ -988,21 +992,8 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
         args: [fixture],
       },
       {
-        environmentResolver: {
-          _serviceBrand: undefined,
-          inspect: () => environment,
-          acquire: () => ({
-            environment,
-            track: (resource) => resource,
-            dispose: () => {},
-          }),
-          acquireWhenReady: async () => ({
-            environment,
-            track: (resource) => resource,
-            dispose: () => {},
-          }),
-        },
-        environmentId: 'local',
+        processService: new HostProcessService(),
+        environment,
         defaultCwd: process.cwd(),
       },
     );

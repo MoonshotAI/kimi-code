@@ -4,14 +4,16 @@ import type { ISessionMediaStore } from './sessionMediaStore';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { WorkspaceConfig } from '#/tool/path-access';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import type { VideoUploader } from '#/llm-adapter/model/media';
 
 export interface RegisterMediaToolsDeps {
   readonly attachmentStore: ISessionMediaStore;
-  readonly environment: IAgentEnvironmentService;
+  readonly fs: IHostFileSystem;
+  readonly environment: IHostEnvironment;
   readonly workspace: WorkspaceConfig;
   readonly telemetry?: ITelemetryService;
 }
@@ -21,7 +23,7 @@ export function registerMediaTools(
   deps: RegisterMediaToolsDeps,
 ): IDisposable {
   return toolRegistry.register(
-    new ReadMediaFileTool(deps.environment, deps.workspace, deps.attachmentStore, deps.telemetry),
+    new ReadMediaFileTool(deps.fs, deps.environment, deps.workspace, deps.attachmentStore, deps.telemetry),
   );
 }
 

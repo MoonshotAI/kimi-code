@@ -50,8 +50,6 @@ export async function setColdSessionArchived(
         id: sessionId,
         workspaceId: summary.workspaceId,
         cwd: nextMeta.cwd ?? summary.cwd,
-        environmentId: nextMeta.environmentId,
-        environmentCwd: nextMeta.environmentCwd,
         title: nextMeta.title,
         lastPrompt: nextMeta.lastPrompt,
         createdAt: nextMeta.createdAt,

@@ -1,4 +1,4 @@
-import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -8,7 +8,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -32,7 +33,8 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher dispatcher: IEventDispatcher,
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -49,8 +51,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         await next();
       }),
     );
-    this._register(this.environment.onDidChange(() => this.refresh()));
-    this._register(toDisposable(() => this.registration?.dispose()));
+    this._register({ dispose: () => this.registration?.dispose() });
   }
 
   private get registeredKey(): string | undefined {
@@ -62,28 +63,17 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
   }
 
   private refresh(): void {
-    const hasEnvironmentFs = this.environment.isAvailable(['fs']);
-    const inspected = hasEnvironmentFs ? this.environment.inspect() : undefined;
-    const identityKey = inspected === undefined ? 'session-attachments' : [
-      inspected.identity.environmentId,
-      inspected.identity.generation,
-    ].join('|');
-    const key = [
-      identityKey,
-      inspected?.status,
-      inspected?.host?.pathClass,
-      String(hasEnvironmentFs),
-    ].join('|');
+    const key = this.environment.pathClass;
     if (key === this.registeredKey) return;
     this.registeredKey = key;
     this.registration?.dispose();
     const workspaceCtx = this.workspaceCtx;
     const skillCatalog = this.skillCatalog;
-    const environment = this.environment;
-    const pathClass = inspected?.host?.pathClass;
+    const pathClass = this.environment.pathClass;
     this.registration = registerMediaTools(this.toolRegistry, {
       attachmentStore: this.attachmentStore,
-      environment,
+      fs: this.fs,
+      environment: this.environment,
       workspace: {
         get workspaceDir() {
           return workspaceCtx.workDir;

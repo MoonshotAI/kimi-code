@@ -3,10 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
-import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { type WriteInput, WriteInputSchema } from '#/agent/tools/os/write/write';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -61,15 +59,7 @@ function createWriteFs(options: WriteFsOptions = {}) {
 }
 
 function makeToolWithFs(fs: IHostFileSystem, workspace = PERMISSIVE_WORKSPACE) {
-  const backend = Object.assign(
-    new FakeEnvironment(
-      { environmentId: 'local', generation: 'test' },
-      { capabilities: ['fs'] },
-    ),
-    { fs, host: createTestEnv() },
-  );
-  const environment = stubAgentEnvironment(backend);
-  return new WriteTool(environment, workspace);
+  return new WriteTool(fs, createTestEnv(), workspace);
 }
 
 function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
@@ -173,15 +163,7 @@ describe('WriteTool', () => {
   it('expands leading tilde paths using the kaos home directory', async () => {
     const fakes = createWriteFs();
     const environment = createTestEnv('/home/test');
-    const backend = Object.assign(
-      new FakeEnvironment(
-        { environmentId: 'local', generation: 'test' },
-        { capabilities: ['fs'] },
-      ),
-      { fs: fakes.fs, host: environment },
-    );
-    const environmentService = stubAgentEnvironment(backend);
-    const tool = new WriteTool(environmentService, PERMISSIVE_WORKSPACE);
+    const tool = new WriteTool(fakes.fs, environment, PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '~/notes/today.txt', content: 'hello' });
 

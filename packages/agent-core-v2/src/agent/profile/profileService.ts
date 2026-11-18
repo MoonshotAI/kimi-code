@@ -29,8 +29,9 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { LoopControl } from '#/agent/loop/configSection';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostWorkspaceView } from '#/session/workspaceContext/hostWorkspaceView';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -142,7 +143,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionNotify private readonly notify: ISessionNotify,
@@ -811,29 +813,20 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   ): Promise<SystemPromptContext> {
     await this.notify.ready;
     const preloadedAgentsMd = await this.workspaceInstructionsSnapshot();
-    const fsAvailable = this.environment.isAvailable(['fs']);
-    const lease = this.environment.acquire(fsAvailable ? ['fs'] : []);
-    const view = new EnvironmentWorkspaceView(lease.environment, {
+    const view = new HostWorkspaceView(this.environment, {
       workDir: this.workspace.workDir,
       additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
     });
     const env = view.host;
-    let base: SystemPromptContext;
-    try {
-      base = !fsAvailable
-        ? {}
-        : await prepareSystemPromptContext(
-            { fs: lease.environment.fs!, homeDir: env.homeDir },
-            view.workDir,
-            this.bootstrap.homeDir,
-            {
-              additionalDirs: view.additionalDirs,
-              preloadedAgentsMd,
-            },
-          );
-    } finally {
-      lease.dispose();
-    }
+    const base = await prepareSystemPromptContext(
+      { fs: this.fs, homeDir: env.homeDir },
+      view.workDir,
+      this.bootstrap.homeDir,
+      {
+        additionalDirs: view.additionalDirs,
+        preloadedAgentsMd,
+      },
+    );
     const skills = await this.resolveSkillListing();
     const pluginSections = await this.resolvePluginSections();
     return {

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { RequestError } from '@agentclientprotocol/sdk';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2';
 import { isHostFsNotDirectory, isHostFsNotFound } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -44,6 +45,7 @@ function makeFileSystem(
   return new AcpHostFileSystem(
     { sessionId: 'session-test' } as never,
     makeConnection(client, capabilities),
+    new HostFileSystem(),
   );
 }
 

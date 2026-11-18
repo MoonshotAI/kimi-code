@@ -18,14 +18,12 @@ import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalo
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import type { Environment } from '#/environment/environment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { createHooks } from '#/hooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -72,6 +70,8 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IConfigService private readonly configService: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @ISessionWorkdir private readonly workdir: ISessionWorkdir,
+    @IHostProcessService private readonly process: IHostProcessService,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -144,85 +144,67 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
   async spawn(opts: SpawnSubagentOptions): Promise<SpawnedSubagent> {
     const caller = this.requireCaller(opts.callerAgentId);
     const { plan } = opts;
-    const callerBinding = caller.accessor.get(IAgentEnvironmentBindingService).current;
-    const lease = plan.fork
-      ? undefined
-      : await caller.accessor.get(IAgentEnvironmentService).acquireWhenReady(['process']);
+    let created: IAgentScopeHandle;
     try {
-      let created: IAgentScopeHandle;
-      try {
-        if (plan.fork) {
-          const forked = await this.agentLifecycle.fork(agentContextOf(caller), {
-            labels: opts.labels,
-          });
-          created = this.agentLifecycle.handleOf(forked.agentId)!;
-          created.accessor
-            .get(IAgentReminderService)
-            .notify(FORK_CONTEXT_NOTICE, { variant: 'fork_context' });
-        } else {
-          const createdContext = await this.agentLifecycle.create({
-            binding: {
-              profile: plan.profileName,
-              model: plan.model,
-              thinking: plan.thinking,
-            },
-            labels: opts.labels,
-            environmentId: callerBinding.environmentId,
-            environmentCwd: callerBinding.cwd,
-          });
-          created = this.agentLifecycle.handleOf(createdContext.agentId)!;
-        }
-      } catch (error) {
-        throw wrapSubagentModelError(
-          error,
-          plan.model,
-          caller.accessor.get(IAgentLoopService).data().modelAlias,
-        );
-      }
-      created.accessor
-        .get(IAgentPermissionModeService)
-        .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
-      const createdUserTools = created.accessor.get(IAgentUserToolService);
-      const callerUserTools = caller.accessor.get(IAgentUserToolService);
       if (plan.fork) {
-        const activeToolNames = created.accessor.get(IAgentLoopService).getActiveToolNames();
-        createdUserTools.inheritUserTools(callerUserTools, activeToolNames);
+        const forked = await this.agentLifecycle.fork(agentContextOf(caller), {
+          labels: opts.labels,
+        });
+        created = this.agentLifecycle.handleOf(forked.agentId)!;
+        created.accessor
+          .get(IAgentReminderService)
+          .notify(FORK_CONTEXT_NOTICE, { variant: 'fork_context' });
       } else {
-        createdUserTools.inheritUserTools(callerUserTools);
+        const createdContext = await this.agentLifecycle.create({
+          binding: {
+            profile: plan.profileName,
+            model: plan.model,
+            thinking: plan.thinking,
+          },
+          labels: opts.labels,
+        });
+        created = this.agentLifecycle.handleOf(createdContext.agentId)!;
       }
-      const promptText = plan.fork
-        ? opts.prompt
-        : await this.applyPromptPrefix(plan.profileName, opts.prompt, lease!.environment, callerBinding.cwd);
-      return {
-        agentId: created.id,
-        profileName: plan.profileName,
-        model: plan.model,
-        modelSource: plan.modelSource,
-        promptText,
-      };
-    } finally {
-      lease?.dispose();
+    } catch (error) {
+      throw wrapSubagentModelError(
+        error,
+        plan.model,
+        caller.accessor.get(IAgentLoopService).data().modelAlias,
+      );
     }
+    created.accessor
+      .get(IAgentPermissionModeService)
+      .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
+    const createdUserTools = created.accessor.get(IAgentUserToolService);
+    const callerUserTools = caller.accessor.get(IAgentUserToolService);
+    if (plan.fork) {
+      const activeToolNames = created.accessor.get(IAgentLoopService).getActiveToolNames();
+      createdUserTools.inheritUserTools(callerUserTools, activeToolNames);
+    } else {
+      createdUserTools.inheritUserTools(callerUserTools);
+    }
+    const promptText = plan.fork
+      ? opts.prompt
+      : await this.applyPromptPrefix(plan.profileName, opts.prompt);
+    return {
+      agentId: created.id,
+      profileName: plan.profileName,
+      model: plan.model,
+      modelSource: plan.modelSource,
+      promptText,
+    };
   }
 
   notifyAgentTaskStopped(context: AgentTaskStopHookContext): void {
     this.onDidStopAgentTaskEmitter.fire(context);
   }
 
-  private async applyPromptPrefix(
-    profileName: string,
-    prompt: string,
-    environment: Environment,
-    cwd: string | undefined,
-  ): Promise<string> {
+  private async applyPromptPrefix(profileName: string, prompt: string): Promise<string> {
     const profile = this.catalog.get(profileName);
     if (profile?.promptPrefix === undefined) return prompt;
-    const view = new EnvironmentWorkspaceView(environment, {
-      workDir: cwd ?? this.sessionContext.cwd,
-    });
     return applyProfilePromptPrefix(profile, prompt, {
-      cwd: view.workDir,
-      process: environment.process!,
+      cwd: this.workdir.cwd ?? this.sessionContext.cwd,
+      process: this.process,
       log: this.log,
     });
   }

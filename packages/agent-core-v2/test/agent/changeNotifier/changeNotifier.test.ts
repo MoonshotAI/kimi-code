@@ -15,9 +15,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { EnvironmentLease } from '#/environment/environment';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -26,6 +24,7 @@ import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../../features/reminder/stubs';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -266,47 +265,16 @@ function createHarness(options: {
       } as unknown as IBootstrapService);
       reg.defineInstance(IHostFileSystem, hostFs);
       reg.defineInstance(IHostEnvironment, hostEnvironment);
-      reg.defineInstance(IAgentEnvironmentService, {
+      reg.defineInstance(ISessionWorkspaceContext, {
         _serviceBrand: undefined,
-        onDidChange: () => ({ dispose: () => {} }),
-        isAvailable: () => true,
-        inspect() {
-          return this.acquire().environment;
-        },
-        acquire: (): EnvironmentLease => ({
-          environment: {
-            identity: { environmentId: 'local', generation: 'test' },
-            capabilities: new Set(['fs', 'process']),
-            host: hostEnvironment,
-            path: {
-              separator: '/',
-              delimiter: ':',
-              isAbsolute: (path: string) => path.startsWith('/'),
-              join,
-              relative: (from: string, to: string) =>
-                normalize(to).replace(`${normalize(from)}/`, ''),
-              resolve: (...paths: readonly string[]) => normalize(join(...paths)),
-              basename: (path: string) => basename(path),
-              dirname: (path: string) => dirname(path),
-            },
-            workspace: { mapRoots: (roots) => roots },
-            fs: hostFs,
-            status: 'ready',
-            onDidChangeStatus: () => ({ dispose: () => {} }),
-            dispose: () => {},
-          },
-          track: (resource) => resource,
-          dispose: () => {},
-        }),
-        async acquireWhenReady() {
-          return this.acquire();
-        },
-        workspaceRoots: () => ({ workDir }),
-      } satisfies IAgentEnvironmentService);
-      reg.defineInstance(IAgentEnvironmentBindingService, {
+        get workDir() { return workspaceDirs.primaryByWorkspace['wm_project'] ?? workDir; },
+        get additionalDirs() { return workspaceDirs.additionalDirs; },
+      } as unknown as ISessionWorkspaceContext);
+      reg.defineInstance(ISessionWorkdir, {
         _serviceBrand: undefined,
-        current: { environmentId: 'local' },
-      } as IAgentEnvironmentBindingService);
+        cwd: undefined,
+        fs: undefined,
+      } as unknown as ISessionWorkdir);
       reg.defineInstance(IEventDispatcher, {
         _serviceBrand: undefined,
         hooks: { onDidRestore: new OrderedHookSlot() },

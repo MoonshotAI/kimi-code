@@ -6,7 +6,6 @@ import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
 import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
@@ -63,8 +62,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     @IWorkspacePersistence private readonly workspaceStore: IWorkspacePersistence,
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
-    private readonly environmentId = LOCAL_ENVIRONMENT_ID,
-    private readonly followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID,
+    private readonly followsPrimary = true,
   ) {
     this.states.contributeState(workspaceDirsFileDirsKey);
     this.states.contributeState(workspaceDirsEphemeralDirsKey);
@@ -121,7 +119,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   get primary(): string {
-    if (this.environmentId !== LOCAL_ENVIRONMENT_ID || !this.followsPrimary) return this.workspace.cwd;
+    if (!this.followsPrimary) return this.workspace.cwd;
     return this.primaryByWorkspace[this.workspace.workspaceId] ?? this.workspace.meta.root;
   }
 
@@ -258,7 +256,6 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
       const set = [entry.root, ...entry.additionalDirs];
       const currentEntry =
         this.followsPrimary &&
-        this.environmentId === LOCAL_ENVIRONMENT_ID &&
         entry.id === this.workspace.workspaceId;
       if (!currentEntry && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
       primary[entry.id] = entry.root;

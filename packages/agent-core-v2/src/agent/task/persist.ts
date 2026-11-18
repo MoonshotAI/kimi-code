@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'pathe';
-import type { EnvironmentPath } from '#/environment/environment';
+import type { HostPath } from '#/session/workspaceContext/hostWorkspaceView';
 
 import { BugIndicatingError } from '#/errors';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -25,7 +25,7 @@ export interface AgentTaskPersistenceRoot {
 export interface AgentTaskSpillTarget {
   readonly fs: IHostFileSystem;
   readonly dir: string;
-  readonly path?: Pick<EnvironmentPath, 'join'>;
+  readonly path?: Pick<HostPath, 'join'>;
 }
 
 export interface AgentTaskStoredOutputSnapshot {
@@ -47,7 +47,7 @@ function validateTaskId(taskId: string): void {
   }
 }
 
-export function isTaskOutputFilePath(path: string, agentDir: string, pathApi: Pick<EnvironmentPath, 'isAbsolute' | 'relative'>): boolean {
+export function isTaskOutputFilePath(path: string, agentDir: string, pathApi: Pick<HostPath, 'isAbsolute' | 'relative'>): boolean {
   if (!pathApi.isAbsolute(path) || path.includes('\0')) return false;
   const parts = pathApi.relative(agentDir, path).replaceAll('\\', '/').split('/');
   return parts.length === 3 && parts[0] === TASKS_SCOPE && VALID_TASK_ID.test(parts[1]!) && parts[2] === OUTPUT_LOG_KEY;
@@ -65,6 +65,7 @@ export class AgentTaskPersistence {
     private readonly bytes: IFileSystemStorageService,
     private readonly fallbackRoot?: AgentTaskPersistenceRoot,
     private readonly spillTarget?: () => AgentTaskSpillTarget | undefined,
+    private readonly mirrorPrimary = false,
   ) {}
 
   private primaryRoot(): AgentTaskPersistenceRoot {
@@ -90,7 +91,7 @@ export class AgentTaskPersistence {
   }
 
   private async outputPathFor(taskId: string, output: TaskOutputData): Promise<string> {
-    const target = this.spillTarget?.();
+    const target = this.mirrorPrimary || output.root.scope !== this.agentScope ? this.spillTarget?.() : undefined;
     if (target !== undefined && await this.mirrorOutput(taskId, output, target)) {
       return (target.path?.join ?? join)(target.dir, `${taskId}.log`);
     }

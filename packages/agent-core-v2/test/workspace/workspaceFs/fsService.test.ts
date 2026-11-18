@@ -11,7 +11,6 @@ import {
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { ErrorCodes, Error2 } from '#/errors';
-import { EnvironmentError } from '#/environment/environmentRegistry';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError } from '#/os/interface/hostFsErrors';
 import { walkDirectoryTree } from '#/os/backends/node-local/hostFsService';
@@ -19,10 +18,9 @@ import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProce
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
 import { suggestWithFd } from '#/workspace/workspaceFs/internal/fdSuggest';
-import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { HostPath } from '#/session/workspaceContext/hostWorkspaceView';
+import * as posixPath from 'node:path/posix';
 import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -433,14 +431,12 @@ function makeSession(
       osVersion: 'test',
       shellName: 'bash',
       shellPath: '/bin/bash',
-      pathClass: 'posix',
+      pathClass,
       homeDir: '/home/test',
       ready: Promise.resolve(),
     }),
   ]);
-  const environment = new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
-  Object.defineProperty(environment, 'process', { value: runner ?? fakeRunner(handler) });
-  host.app.instantiation.provide(IEnvironmentService, resolverFor(environment));
+
   const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
     stubPair(IWorkspaceDirs, stubWorkspaceDirs(additionalDirs)),
@@ -456,44 +452,39 @@ function makeSession(
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
 
-function resolverFor(environment: FakeEnvironment): EnvironmentResolver {
-  return {
-    _serviceBrand: undefined,
-    inspect: () => environment,
-    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-  };
-}
-
-function makeRemoteSession(
+function makeHostSession(
   files: Record<string, string | Buffer>,
   handler: RunHandler,
   events: Array<{ event: string; properties: Record<string, unknown> }> = [],
-  environmentId = 'ssh-dev',
   homeDir = '/home/target',
   hostFs?: IHostFileSystem,
 ): IWorkspaceFsService {
-  const environment = new FakeEnvironment(
-    { environmentId, generation: 'test' },
-    { capabilities: ['process'], host: { homeDir } },
-  );
-  Object.defineProperty(environment, 'process', { value: fakeRunner(handler) });
-  const resolver = resolverFor(environment);
+  const environment = {
+    _serviceBrand: undefined,
+    osKind: 'Linux',
+    osArch: 'x64',
+    osVersion: '',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+    pathClass: 'posix',
+    homeDir,
+    ready: Promise.resolve(),
+  } as const;
   const service = new WorkspaceFsService(
     stubWorkspaceContext(),
     stubWorkspaceDirs(),
     hostFs ?? fakeFs(files),
-    resolver,
+    fakeRunner(handler),
+    environment,
     telemetryStub(events),
     workspaceGitStub(defaultGitStub()),
-    environmentId,
   );
   Object.defineProperty(service, 'fdResolution', { value: null, configurable: true, writable: true });
   return service;
 }
 
 function makeRemoteWalkSession(backend: IHostFileSystem): IWorkspaceFsService {
-  return makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+  return makeHostSession({}, () => ({ stdout: '', exitCode: 127 }), [], '/home/target', backend);
 }
 
 describe('WorkspaceGitService', () => {
@@ -706,18 +697,14 @@ describe('WorkspaceFsService git batches', () => {
     const git: IGitService = {
       _serviceBrand: undefined,
       status: async (cwd) => {
-        if (cwd === '/missing-env') throw new EnvironmentError('environment.not_found', 'missing');
-        if (cwd === '/invalid-cwd') throw new EnvironmentError('environment.invalid_cwd', 'invalid');
-        if (cwd === '/conflict') throw new EnvironmentError('environment.conflict', 'conflict');
-        if (cwd === '/unavailable') throw new EnvironmentError('environment.unavailable', 'unavailable');
-        if (cwd === '/capability') throw new EnvironmentError('environment.capability_unavailable', 'capability');
+        if (cwd === '/missing-env') throw new Error('missing');
         return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
       },
       pullRequest: async () => null,
       diff: async () => ({ path: '', diff: '', truncated: false }),
       findWorkTree: async () => null,
     };
-    const roots = ['__proto__', '/missing-env', '/invalid-cwd', '/conflict', '/unavailable', '/capability'];
+    const roots = ['__proto__', '/missing-env'];
     const files = Object.fromEntries(roots.filter(root => root.startsWith('/')).map(root => [`${root}/placeholder`, '']));
     const fs = makeSession(
       { '__proto__/placeholder': '', ...files },
@@ -736,11 +723,7 @@ describe('WorkspaceFsService git batches', () => {
     expect(JSON.stringify(status.results)).toContain('"__proto__"');
     expect(status.errors).toEqual({
       '/outside': { code: 41304, msg: 'path "/outside" escapes workspace' },
-      '/missing-env': { code: 40420, msg: 'missing' },
-      '/invalid-cwd': { code: 40001, msg: 'invalid' },
-      '/conflict': { code: 40901, msg: 'conflict' },
-      '/unavailable': { code: 40926, msg: 'unavailable' },
-      '/capability': { code: 40926, msg: 'capability' },
+      '/missing-env': { code: 50001, msg: 'missing' },
     });
   });
 });
@@ -1181,7 +1164,7 @@ describe('WorkspaceFsService.suggest', () => {
       cap: 20,
       followGitignore: false,
       roots: [{ dir: WORK_DIR, real: WORK_DIR, primary: true }],
-      path: POSIX_ENVIRONMENT_PATH,
+      path: { ...posixPath, separator: posixPath.sep, delimiter: posixPath.delimiter } satisfies HostPath,
       hostFs: fakeFs({}),
       process: runner,
       workDir: WORK_DIR,
@@ -2370,7 +2353,7 @@ describe('WorkspaceFsService.list', () => {
       }
       return readdir(path);
     };
-    const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+    const fs = makeHostSession({}, () => ({ stdout: '', exitCode: 127 }), [], '/home/target', backend);
 
     const result = operation === 'list'
       ? fs.list({ path: '.', depth: 2, limit: 200, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false })
@@ -2934,15 +2917,12 @@ describe('WorkspaceFsService.list', () => {
 describe('WorkspaceFsService.read', () => {
   it('resolves relative paths against the latest primary', async () => {
     const dirs = { primary: WORK_DIR, additionalDirs: [] as readonly string[] };
-    const environment = new FakeEnvironment(
-      { environmentId: 'local', generation: 'test' },
-      { capabilities: ['fs', 'process'] },
-    );
     const fs = new WorkspaceFsService(
       stubWorkspaceContext(),
       dirs,
       fakeFs({ 'a.txt': 'old primary', '/other/b.txt': 'new primary' }),
-      resolverFor(environment),
+      { _serviceBrand: undefined, spawn: async () => { throw new Error('not used'); } },
+      { _serviceBrand: undefined, osKind: 'Linux', osArch: 'x64', osVersion: '', shellName: 'bash', shellPath: '/bin/bash', pathClass: 'posix', homeDir: '/home', ready: Promise.resolve() },
       telemetryStub([]),
       workspaceGitStub(defaultGitStub()),
     );
