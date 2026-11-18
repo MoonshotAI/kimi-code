@@ -7,7 +7,6 @@ import type {
   ToolDisclosure,
   ToolSource,
 } from '#/tool/toolContract';
-import type { EnvironmentCapability } from '#/environment/environment';
 
 export type AnyAgentTool = AgentTool<any>;
 
@@ -18,7 +17,6 @@ export interface AgentToolContributionOptions {
   readonly source?: ToolSource;
   readonly disclosure?: ToolDisclosure;
   readonly when?: (accessor: ServicesAccessor) => boolean;
-  readonly requiredEnvironmentCapabilities?: readonly EnvironmentCapability[];
   readonly domain?: string;
 }
 

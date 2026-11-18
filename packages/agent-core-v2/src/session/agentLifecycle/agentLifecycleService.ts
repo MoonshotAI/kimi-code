@@ -30,7 +30,6 @@ import {
   IAgentScopeContext,
   makeAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
-import { IEnvironmentService } from '#/app/environment/environment';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import {
@@ -49,10 +48,6 @@ import { IAgentPermissionRulesService } from '#/agent/permissionRules/permission
 
 import { historyFromContextPreservingToolNotes } from '#/agent/loop/history';
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
-import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import '#/agent/environmentBinding/environmentBindingService';
-import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IWireService } from '#/wire/wire';
@@ -110,7 +105,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionWorkdir private readonly workdir: ISessionWorkdir,
-    @IEnvironmentService private readonly environments: IEnvironmentService,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
@@ -257,12 +251,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
           seeds: [
             [IAgentScopeContext, scopeContext],
             [ITelemetryService, telemetryBinding.telemetry],
-            [IAgentEnvironmentBindingSeed, {
-              _serviceBrand: undefined,
-              binding: opts.environmentId === undefined
-                ? { environmentId: this.workdir.environmentId, cwd: this.workdir.cwd }
-                : { environmentId: opts.environmentId, cwd: opts.environmentCwd },
-            }],
+
             [IAgentBlobService, blobView],
             [IWireService, wire],
           ],
@@ -306,23 +295,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
       this.onDidCreateScopeEmitter.fire({ context: agent, handle, meta });
-      stage = 'binding';
-      if (opts.environmentId !== undefined && opts.environmentId !== LOCAL_ENVIRONMENT_ID) {
-        await handle.accessor.get(IEventDispatcher).dispatch(
-          new EnvironmentSetBinding({
-            agentId,
-            environmentId: opts.environmentId,
-            cwd: opts.environmentCwd,
-          }),
-        );
-      }
       stage = 'restore';
       handle.accessor.get(IAgentPermissionRulesService);
       await handle.accessor.get(IEventDispatcher).restore();
-      const binding = handle.accessor.get(IAgentEnvironmentBindingService);
-      if (binding.current.environmentId.startsWith('acp:') && this.environments.current(binding.current.environmentId) === undefined) {
-        binding.bind(this.workdir.environmentId, binding.current.cwd ?? this.workdir.cwd);
-      }
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
       stage = 'bootstrap';
       const initialProfile = await this.bindBootstrap(handle, opts);
@@ -399,7 +374,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const sourceLoop = source.accessor.get(IAgentLoopService);
     const sourceData = sourceLoop.data();
     const override = opts?.binding;
-    const sourceBinding = source.accessor.get(IAgentEnvironmentBindingService).current;
     const childContext = await this.create({
       agentId: opts?.agentId,
       binding: override?.profile === undefined ? undefined : {
@@ -409,8 +383,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       },
       initialProfile: override?.profile === undefined ? sourceData : undefined,
       initialTools: override?.profile === undefined ? sourceLoop.baselineTools() : undefined,
-      environmentId: sourceBinding.environmentId,
-      environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,
       labels: withSubagentProfile(opts?.labels, override?.profile ?? sourceData.profileName),
     });

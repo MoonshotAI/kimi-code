@@ -1,56 +1,32 @@
-import * as posixPath from 'node:path/posix';
 
-import { Event } from '#/_base/event';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { Environment, EnvironmentPath, EnvironmentStatus } from '#/environment/environment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import type { HostFileStat } from '#/os/interface/hostFileSystem';
 
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
-import { stubAgentEnvironment } from '../../environment/stubs';
-
-function posixEnvironmentPath(): EnvironmentPath {
-  return {
-    separator: '/',
-    delimiter: ':',
-    isAbsolute: (path) => posixPath.isAbsolute(path),
-    join: (...paths) => posixPath.join(...paths),
-    relative: (from, to) => posixPath.relative(from, to),
-    resolve: (...paths) => posixPath.resolve(...paths),
-    basename: (path) => posixPath.basename(path),
-    dirname: (path) => posixPath.dirname(path),
-  };
-}
 
 export interface PlanEnvironmentOptions {
   readonly fs: IHostFileSystem;
   readonly tempDir: string;
 }
 
-export function stubPlanEnvironment(options: PlanEnvironmentOptions): IAgentEnvironmentService {
-  const environment: Environment = {
-    identity: {
-      environmentId: 'remote',
-      generation: 'test-generation',
-    },
-    capabilities: new Set(['fs']),
-    host: {
+export function stubPlanEnvironment(options: PlanEnvironmentOptions) {
+  return (reg: {
+    defineInstance<T>(id: import('#/_base/di/instantiation').ServiceIdentifier<T>, value: T): void;
+  }): void => {
+    reg.defineInstance(IHostFileSystem, options.fs);
+    reg.defineInstance(IHostEnvironment, {
+      _serviceBrand: undefined,
       osKind: 'Linux',
       osArch: 'x64',
       osVersion: 'test',
       shellName: 'bash',
       shellPath: '/bin/bash',
       pathClass: 'posix',
-      homeDir: '/home/remote',
-      tempDir: options.tempDir,
-    },
-    path: posixEnvironmentPath(),
-    workspace: { mapRoots: (roots) => roots },
-    fs: options.fs,
-    status: 'ready',
-    onDidChangeStatus: Event.None as Event<EnvironmentStatus>,
-    dispose: () => {},
+      homeDir: '/home/test',
+      ready: Promise.resolve(),
+    });
   };
-  return stubAgentEnvironment(environment);
 }
 
 function missingFileError(path: string): Error {

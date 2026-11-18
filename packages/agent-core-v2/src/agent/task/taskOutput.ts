@@ -1,4 +1,5 @@
 import { join } from 'pathe';
+import { tmpdir } from 'node:os';
 import { createDecorator } from '#/_base/di/instantiation';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
@@ -7,7 +8,7 @@ import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escap
 import { userCancellationReason } from '#/_base/utils/abort';
 import { createUserMessage, type UserMessage } from '@moonshot-ai/core/llm/message';
 import type { TaskOrigin } from '#/agent/contextMemory/types';
-import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -55,7 +56,7 @@ export class AgentTaskOutputService implements IAgentTaskOutputService {
     @IFileSystemStorageService byteStore: IFileSystemStorageService,
     @ISessionContext session: ISessionContext,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
-    @IAgentEnvironmentService environment: IAgentEnvironmentService | undefined,
+    @IHostFileSystem fs: IHostFileSystem,
     @ILogService private readonly log: ILogService,
   ) {
     const fallbackRoot = scopeContext.agentId === 'main'
@@ -66,7 +67,7 @@ export class AgentTaskOutputService implements IAgentTaskOutputService {
       scopeContext.scope(),
       byteStore,
       fallbackRoot,
-      () => environment === undefined ? undefined : environmentTempTarget(environment, 'task-output'),
+      () => ({ fs, dir: join(tmpdir(), 'kimi-code', 'task-output') }),
     );
   }
 

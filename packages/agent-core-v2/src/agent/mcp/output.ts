@@ -21,12 +21,12 @@ import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { buildDaemonFileUrl, mediaExtensionForMime } from '#/agent/media/mediaRef';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
-import type { EnvironmentPath } from '#/environment/environment';
+import type { HostPath } from '#/session/workspaceContext/hostWorkspaceView';
 
 export interface McpOriginalsTarget {
   readonly fs: IHostFileSystem;
   readonly dir: string;
-  readonly path?: EnvironmentPath;
+  readonly path?: HostPath;
 }
 
 export interface McpOutputOptions {

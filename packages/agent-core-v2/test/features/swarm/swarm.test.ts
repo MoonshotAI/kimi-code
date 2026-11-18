@@ -271,6 +271,8 @@ function realSubagents(
     config,
     modelCatalog,
     sessionContext,
+    { _serviceBrand: undefined, cwd: undefined, fs: undefined as never },
+    { _serviceBrand: undefined, spawn: async () => { throw new Error('not used'); } },
     stubLog(),
   );
 }

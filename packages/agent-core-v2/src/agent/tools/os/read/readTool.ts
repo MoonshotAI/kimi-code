@@ -1,13 +1,12 @@
 import * as posixPath from 'node:path/posix';
 import * as win32Path from 'node:path/win32';
 
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { isTaskOutputFilePath } from '#/agent/task/persist';
 import { type HostFileHead, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
+import { IHostEnvironment as ILocalHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPlanService, type PlanFileTarget } from '#/features/plan/plan';
@@ -15,7 +14,7 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
 import { attachmentFileSource, environmentFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
-import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { HostWorkspaceView } from '#/session/workspaceContext/hostWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -222,7 +221,6 @@ export class ReadTool implements IReadTool {
   }
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
@@ -230,10 +228,10 @@ export class ReadTool implements IReadTool {
     @IAgentLoopService private readonly profile: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
+    @ILocalHostEnvironment private readonly hostEnvironment: ILocalHostEnvironment,
     @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
     @IAgentPlanService private readonly planService?: IAgentPlanService,
-    @IHostFileSystem private readonly hostFs?: IHostFileSystem,
-    @IHostEnvironment private readonly hostEnvironment?: IHostEnvironment,
     @ISessionContext private readonly session?: ISessionContext,
     @IAgentScopeContext private readonly agent?: IAgentScopeContext,
   ) {}
@@ -247,7 +245,7 @@ export class ReadTool implements IReadTool {
     };
   }
 
-  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
+  private workspaceConfig(view: HostWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
@@ -260,15 +258,13 @@ export class ReadTool implements IReadTool {
     if (planTarget !== undefined) return this.localArtifactExecution(args, planTarget, true);
     const artifactTarget = this.localOutputTarget(args.path);
     if (artifactTarget !== undefined) return this.localArtifactExecution(args, artifactTarget, false);
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
-    try {
-      const inspected = resolutionLease.environment;
-      const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, {
+    await this.hostEnvironment.ready;
+    {
+      const view = new HostWorkspaceView(this.hostEnvironment, {
         workDir: this.workspaceCtx.workDir,
         additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
       });
-      const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
+      const env = view.host;
       const workspace = this.workspaceConfig(view);
       const path = resolvePathAccessPath(args.path, {
         env,
@@ -288,21 +284,11 @@ export class ReadTool implements IReadTool {
             homeDir: env.homeDir,
           }),
         execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
-          try {
-            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
-              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
-            }
-            const eventLog = this.resultTruncation.isWireJournalPath(path);
-            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
-            return { ...result, spillExempt: true };
-          } finally {
-            lease.dispose();
-          }
+          const eventLog = this.resultTruncation.isWireJournalPath(path);
+          const result = await this.execution(environmentFileSource(this.hostFs, path), args, eventLog);
+          return { ...result, spillExempt: true };
         },
       };
-    } finally {
-      resolutionLease.dispose();
     }
   }
 

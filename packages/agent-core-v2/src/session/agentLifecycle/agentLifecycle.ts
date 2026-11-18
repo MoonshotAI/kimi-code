@@ -20,8 +20,6 @@ export interface CreateAgentOptions {
   readonly binding?: BindAgentInput;
   readonly initialProfile?: ProfileBindingSnapshot;
   readonly initialTools?: readonly Tool[];
-  readonly environmentId?: string;
-  readonly environmentCwd?: string;
   readonly forkedFrom?: string;
   readonly labels?: Readonly<Record<string, string>>;
 }

@@ -5,7 +5,8 @@ import {
   ErrorCodes,
   IHostFileSystem,
   ISessionWorkdir,
-  IEnvironmentService,
+  IHostProcessService,
+  IHostEnvironment,
   IWorkspaceFsService,
   IWorkspaceService,
   getLiveSessionById,
@@ -40,7 +41,6 @@ import {
   fsSuggestResponseSchema,
   type FsSuggestRequest,
 } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
-import type { EnvironmentLease } from '@moonshot-ai/agent-core-v2/environment/environment';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -169,10 +169,9 @@ function acquireLocalRootedFs(
   roots: { readonly workDir: string; readonly additionalDirs: readonly string[] },
 ): FsScope {
   const hostFs = core.accessor.get(IHostFileSystem);
-  const environments = core.accessor.get(IEnvironmentService);
   const context = { workspaceId, cwd: roots.workDir };
   const git = new WorkspaceGitService({ primary: roots.workDir }, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
-  const fs = new WorkspaceFsService(context, { primary: roots.workDir, additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
+  const fs = new WorkspaceFsService(context, { primary: roots.workDir, additionalDirs: roots.additionalDirs }, hostFs, core.accessor.get(IHostProcessService), core.accessor.get(IHostEnvironment), core.accessor.get(ITelemetryService), git);
   return { fs, hostFs, lease: NO_LEASE };
 }
 
@@ -719,7 +718,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
 export interface EnvironmentReadStreamSource {
   readonly hostFs: IHostFileSystem;
-  readonly lease: Pick<EnvironmentLease, 'track' | 'dispose'>;
+  readonly lease: { track<T>(resource: T): T; dispose(): void };
 }
 
 export function createEnvironmentReadStream(

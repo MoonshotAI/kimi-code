@@ -25,7 +25,6 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '@moonshot-ai/core/llm/message';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -155,7 +154,7 @@ describe('AgentPlanService plan-guard listener', () => {
     buildServices(availableEnvironment());
   });
 
-  function availableEnvironment(): IAgentEnvironmentService {
+  function availableEnvironment(): ReturnType<typeof stubPlanEnvironment> {
     return stubPlanEnvironment({
       fs: createFakeHostFs({
         mkdir: vi.fn().mockResolvedValue(undefined),
@@ -171,17 +170,7 @@ describe('AgentPlanService plan-guard listener', () => {
     });
   }
 
-  function unavailableEnvironment(): IAgentEnvironmentService {
-    const stub = availableEnvironment();
-    return {
-      ...stub,
-      acquire: () => {
-        throw new Error('environment unavailable');
-      },
-    };
-  }
-
-  function buildServices(environment: IAgentEnvironmentService, sessionDir = TEMP_DIR): void {
+  function buildServices(environment: ReturnType<typeof availableEnvironment>, sessionDir = TEMP_DIR): void {
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
       resolvePermissionResolution: async () => {
@@ -200,9 +189,8 @@ describe('AgentPlanService plan-guard listener', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         registerTestAgentWireServices(reg, 'wire/main', MAIN_AGENT_ID);
-        reg.defineInstance(IAgentEnvironmentService, environment);
+        environment(reg);
         reg.definePartialInstance(IHostEnvironment, { pathClass: 'posix' });
-        reg.defineInstance(IHostFileSystem, environment.inspect().fs ?? createFakeHostFs());
         reg.defineInstance(ISessionContext, makeSessionContext({
           sessionId: 'session',
           workspaceId: 'workspace',
@@ -424,9 +412,9 @@ describe('AgentPlanService plan-guard listener', () => {
   });
 
   it('keeps plan files local and isolated by session', async () => {
-    buildServices(unavailableEnvironment(), `${TEMP_DIR}/session-a`);
+    buildServices(availableEnvironment(), `${TEMP_DIR}/session-a`);
     const first = ix;
-    buildServices(unavailableEnvironment(), `${TEMP_DIR}/session-b`);
+    buildServices(availableEnvironment(), `${TEMP_DIR}/session-b`);
     const second = ix;
     const firstPlan = first.get(IAgentPlanService);
     const secondPlan = second.get(IAgentPlanService);

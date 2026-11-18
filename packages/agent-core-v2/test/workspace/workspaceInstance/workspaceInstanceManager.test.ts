@@ -1,9 +1,6 @@
-import { EnvironmentService } from '#/app/environment/environmentService';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Workspace, IWorkspaceService } from '#/app/workspace/workspace';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import type { Environment } from '#/environment/environment';
 import { WorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
 
 function deferred(): { readonly promise: Promise<void>; resolve(): void } {
@@ -16,28 +13,10 @@ function workspace(id: string): Workspace {
   return { id, root: `/${id}`, name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
 }
 
-function environment(_workspaceId: string, environmentId: string, status: Environment['status'] = 'connecting'): FakeEnvironment {
-  return new FakeEnvironment({ environmentId, generation: `${environmentId}-one` }, { status });
-}
-
-const environmentServices: EnvironmentService[] = [];
-
-afterEach(async () => {
-  for (const service of environmentServices.splice(0)) await service.dispose();
-});
-
-function environmentService(ready: Promise<void> = Promise.resolve()): EnvironmentService {
-  const service = new EnvironmentService({} as never, { ready, pathClass: 'posix', homeDir: '/home/test' } as never, undefined as never, undefined as never);
-  environmentServices.push(service);
-  return service;
-}
-
 function manager(
   values: readonly Workspace[],
   ready: Promise<void> = Promise.resolve(),
-  _events: string[] = [],
   customize?: (args: unknown[]) => void,
-  environments = environmentService(ready),
 ): WorkspaceInstanceManager {
   const byId = new Map(values.map((value) => [value.id, value]));
   const workspaces: IWorkspaceService = {
@@ -65,10 +44,9 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 27 }, () => undefined),
+    ...Array.from({ length: 26 }, () => undefined),
   ];
-  args[19] = { entries: () => [] };
-  args[29] = environments;
+  args[20] = { entries: () => [] };
   args[30] = { onDidChange: () => ({ dispose: () => {} }) };
   args[31] = { assertAllowed: () => {} };
   customize?.(args);
@@ -115,22 +93,6 @@ describe('WorkspaceInstanceManager', () => {
     await value.dispose();
   });
 
-  it('rolls back environments registered by a provider that fails to attach', async () => {
-    const environments = environmentService();
-    const remote = environment('unused', 'remote');
-    await expect(environments.addProvider({
-      id: 'broken',
-      attach: async (host) => {
-        host.registerEnvironment(remote);
-        throw new Error('attach failed');
-      },
-    })).rejects.toThrow('attach failed');
-    expect(environments.current('remote')).toBeUndefined();
-    expect(remote.disposed).toBe(true);
-    const registration = await environments.addProvider({ id: 'broken', attach: async () => ({ dispose: () => {} }) });
-    await registration.dispose();
-  });
-
   it('materializes the workspace even when project services are unavailable', async () => {
     const value = manager([workspace('one')]);
     const lease = await value.acquire({ workspaceId: 'one' });
@@ -173,68 +135,6 @@ describe('WorkspaceInstanceManager', () => {
       expect(value.findContaining('/outside')).toBeUndefined();
       repo.dispose();
       sub.dispose();
-      await value.dispose();
-    });
-
-    it('matches exact and nested cwds under additional source roots', async () => {
-      const value = manager([
-        {
-          ...rootedWorkspace('multi', '/primary'),
-          additionalDirs: ['/extra'],
-        },
-      ]);
-      const lease = await value.acquire({ workspaceId: 'multi' });
-      stubDirs(lease, ['/extra']);
-
-      expect(value.findContaining('/extra')?.id).toBe('multi');
-      expect(value.findContaining('/extra/nested/pkg')?.id).toBe('multi');
-      expect(value.findContaining('/extra-other')).toBeUndefined();
-      expect(value.findContaining('/outside')).toBeUndefined();
-      lease.dispose();
-      await value.dispose();
-    });
-
-    it('uses current program dirs instead of the instance metadata snapshot', async () => {
-      const initial = rootedWorkspace('multi', '/primary');
-      const value = manager([initial]);
-      const lease = await value.acquire({ workspaceId: 'multi' });
-      const dirs = stubDirs(lease, []);
-
-      dirs.additionalDirs = ['/extra'];
-      expect(value.findContaining('/extra/nested')?.id).toBe('multi');
-      dirs.additionalDirs = [];
-      expect(value.findContaining('/extra/nested')).toBeUndefined();
-      lease.dispose();
-      await value.dispose();
-    });
-
-    it('matches across Windows spelling variants', async () => {
-      const value = manager([rootedWorkspace('win', 'C:\\Users\\Foo\\Repo')]);
-      const lease = await value.acquire({ workspaceId: 'win' });
-      stubDirs(lease, []);
-
-      expect(value.findContaining('c:/users/foo/repo')?.id).toBe('win');
-      expect(value.findContaining('C:/Users/Foo/Repo/sub')?.id).toBe('win');
-      expect(value.findContaining('D:/elsewhere')).toBeUndefined();
-      lease.dispose();
-      await value.dispose();
-    });
-
-    it('matches any absolute cwd against a workspace rooted at /', async () => {
-      const value = manager([
-        rootedWorkspace('root', '/'),
-        rootedWorkspace('repo', '/repo'),
-      ]);
-      const root = await value.acquire({ workspaceId: 'root' });
-      const repo = await value.acquire({ workspaceId: 'repo' });
-      stubDirs(root, []);
-      stubDirs(repo, []);
-
-      expect(value.findContaining('/')?.id).toBe('root');
-      expect(value.findContaining('/elsewhere')?.id).toBe('root');
-      expect(value.findContaining('/repo/sub')?.id).toBe('repo');
-      root.dispose();
-      repo.dispose();
       await value.dispose();
     });
   });

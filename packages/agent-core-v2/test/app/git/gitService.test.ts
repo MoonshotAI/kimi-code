@@ -16,9 +16,7 @@ import { HostProcessService } from '#/os/backends/node-local/hostProcessService'
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { Event } from '#/_base/event';
-import type { Environment } from '#/environment/environment';
 import { normalize } from 'pathe';
 
 function git(cwd: string, ...args: string[]): string {
@@ -45,17 +43,10 @@ describe('GitService', () => {
     git(repo, 'config', 'commit.gpgsign', 'false');
     disposables = new DisposableStore();
     const process = new HostProcessService();
-    const environment = { process } as unknown as Environment;
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.define(IHostProcessService, HostProcessService);
         reg.define(IHostFileSystem, HostFileSystem);
-        reg.definePartialInstance(IEnvironmentService, {
-          _serviceBrand: undefined,
-          inspect: () => environment,
-          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-        });
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           findContaining: () => ({ id: 'workspace-1' } as never),
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,

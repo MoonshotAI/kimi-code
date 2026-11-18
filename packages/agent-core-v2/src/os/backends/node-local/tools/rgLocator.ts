@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -8,14 +8,13 @@ import { pipeline } from 'node:stream/promises';
 import { kimiRegionProfile, resolveKimiRegion, type KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 import { extract as extractTar } from 'tar';
 import { type Entry, fromBuffer as yauzlFromBuffer } from 'yauzl';
-import { basename, dirname, join } from 'pathe';
+import { basename, join } from 'pathe';
 
 import { abortable } from '#/_base/utils/abort';
 import { ErrorCodes, Error2 } from '#/errors';
-import { LOCAL_ENVIRONMENT_ID, type Environment } from '#/environment/environment';
-import { getShareBinRgPath, isRemoteEnvironment, shareBinRgPath } from '#/environment/shareBinRg';
+import { getShareBinRgPath } from '#/os/backends/node-local/shareBin';
 
-export { getShareBinRgPath } from '#/environment/shareBinRg';
+export { getShareBinRgPath } from '#/os/backends/node-local/shareBin';
 
 const RG_VERSION = '15.0.0';
 const DOWNLOAD_TIMEOUT_MS = 600_000;
@@ -53,7 +52,6 @@ export interface EnsureRgPathOptions {
   readonly shareDir?: string | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly allowCachedFallback?: boolean;
-  readonly environment?: Environment | undefined;
   readonly resolveRegion?: () => KimiRegion | undefined;
 }
 
@@ -83,11 +81,6 @@ export async function ensureRgPath(
   options: EnsureRgPathOptions = {},
 ): Promise<RgResolution> {
   throwIfAborted(options.signal);
-  const environment = options.environment;
-  if (environment !== undefined && environment.identity.environmentId !== LOCAL_ENVIRONMENT_ID) {
-    const resolution = ensureRemoteRgPath(probe, environment, options);
-    return options.signal === undefined ? resolution : abortable(resolution, options.signal);
-  }
   const shareDir = options.shareDir ?? getShareDir();
   const resolution = resolveRgPath(probe, shareDir, options);
   return options.signal === undefined ? resolution : abortable(resolution, options.signal);
@@ -105,106 +98,6 @@ async function resolveRgPath(
     return downloadRgWithLock(probe, shareDir, options.resolveRegion);
   }
   throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
-}
-
-const remoteRgResolutions = new Map<string, Promise<RgResolution>>();
-
-function ensureRemoteRgPath(
-  probe: RgProbe,
-  environment: Environment,
-  options: EnsureRgPathOptions,
-): Promise<RgResolution> {
-  const key = `${environment.identity.environmentId} ${environment.identity.generation}`;
-  let pending = remoteRgResolutions.get(key);
-  if (pending === undefined) {
-    pending = resolveRemoteRgPath(probe, environment, options).catch((error: unknown) => {
-      remoteRgResolutions.delete(key);
-      throw error;
-    });
-    remoteRgResolutions.set(key, pending);
-  }
-  return pending;
-}
-
-async function resolveRemoteRgPath(
-  probe: RgProbe,
-  environment: Environment,
-  options: EnsureRgPathOptions,
-): Promise<RgResolution> {
-  throwIfAborted(options.signal);
-  const system = await probe.exec(['rg', '--version']).catch(() => ({ exitCode: -1 }));
-  if (system.exitCode === 0) return { path: 'rg', source: 'system-path' };
-  if (options.allowCachedFallback !== true) {
-    throw new Error2(ErrorCodes.OS_FS_UNAVAILABLE, 'ripgrep (rg) is not available on PATH');
-  }
-  throwIfAborted(options.signal);
-  const binPath = shareBinRgPath(environment);
-  const binDir = environment.path?.dirname(binPath) ?? dirname(binPath);
-  const cached = await probe.exec([binPath, '--version']).catch(() => ({ exitCode: -1 }));
-  if (cached.exitCode === 0) return { path: binPath, source: 'share-bin-cached' };
-  throwIfAborted(options.signal);
-  await installRemoteRg(probe, environment, binDir, binPath, options.resolveRegion);
-  const installed = await probe.exec([binPath, '--version']).catch(() => ({ exitCode: -1 }));
-  if (installed.exitCode !== 0) {
-    throw new Error2(
-      ErrorCodes.OS_FS_UNAVAILABLE,
-      `ripgrep was installed to ${binPath} but failed to run`,
-    );
-  }
-  return { path: binPath, source: 'share-bin-downloaded' };
-}
-
-async function installRemoteRg(
-  probe: RgProbe,
-  environment: Environment,
-  binDir: string,
-  binPath: string,
-  resolveRegion: (() => KimiRegion | undefined) | undefined,
-): Promise<void> {
-  const host = environment.host;
-  if (host === undefined) {
-    throw new Error2(
-      ErrorCodes.OS_FS_UNAVAILABLE,
-      'environment does not provide host information for the ripgrep install',
-    );
-  }
-  const target = detectRemoteTarget(host.osKind, host.osArch);
-  if (target === undefined) {
-    throw new Error2(
-      ErrorCodes.OS_FS_UNAVAILABLE,
-      `Unsupported platform/arch for ripgrep download: ${host.osKind}/${host.osArch}`,
-      { details: { osKind: host.osKind, osArch: host.osArch } },
-    );
-  }
-  const fs = environment.fs;
-  if (fs === undefined) {
-    throw new Error2(
-      ErrorCodes.OS_FS_UNAVAILABLE,
-      'environment does not provide fs for the ripgrep install',
-    );
-  }
-  const binary = await downloadRgBinary(target, resolveRegion);
-  await fs.mkdir(binDir, { recursive: true });
-  const staged = `${binPath}.download-${randomUUID()}`;
-  try {
-    await fs.writeBytes(staged, binary);
-    if (typeof fs.rename === 'function') {
-      await fs.rename(staged, binPath);
-    } else {
-      await fs.writeBytes(binPath, binary);
-      await fs.remove(staged).catch(() => {});
-    }
-  } finally {
-    await fs.remove(staged).catch(() => {});
-  }
-  if (host.pathClass === 'win32') return;
-  const chmodRun = await probe.exec(['chmod', '755', binPath]).catch(() => ({ exitCode: -1 }));
-  if (chmodRun.exitCode !== 0) {
-    throw new Error2(
-      ErrorCodes.OS_FS_UNAVAILABLE,
-      `failed to mark ${binPath} executable on the target`,
-    );
-  }
 }
 
 export async function findExistingRg(
@@ -414,22 +307,6 @@ async function downloadAndInstallRg(
   }
 }
 
-async function downloadRgBinary(
-  target: string,
-  resolveRegion: (() => KimiRegion | undefined) | undefined,
-): Promise<Uint8Array> {
-  const archive = rgArchiveForTarget(target, resolveRegion);
-  const tmp = await mkdtemp(join(tmpdir(), 'kimi-rg-'));
-  try {
-    const archivePath = join(tmp, archive.archiveName);
-    await fetchRgArchive(archive, archivePath);
-    const extracted = await extractRgArchive(archive, target, archivePath, tmp);
-    return await readFile(extracted);
-  } finally {
-    await rm(tmp, { recursive: true, force: true });
-  }
-}
-
 export async function verifyArchiveChecksum(
   archivePath: string,
   archiveName: string,
@@ -522,24 +399,9 @@ export async function extractRgFromZip(archivePath: string, destination: string)
   });
 }
 
-export function rgUnavailableMessage(cause: unknown, environment?: Environment): string {
+export function rgUnavailableMessage(cause: unknown): string {
   const detail =
     cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : 'unknown error';
-  if (isRemoteEnvironment(environment)) {
-    const shareBin = shareBinRgPath(environment);
-    return (
-      `ripgrep (rg) is not available on environment "${environment.identity.environmentId}" and the automatic bootstrap failed.\n` +
-      `\n` +
-      `Error: ${detail}\n` +
-      `\n` +
-      `Fix options (install on the target):\n` +
-      `  macOS:   brew install ripgrep\n` +
-      `  Ubuntu:  sudo apt-get install ripgrep\n` +
-      `  Other:   https://github.com/BurntSushi/ripgrep#installation\n` +
-      `\n` +
-      `Alternatively, drop a static rg binary at ${shareBin} on the target`
-    );
-  }
   const shareBin = getShareBinRgPath();
   return (
     `ripgrep (rg) is not available and the automatic bootstrap failed.\n` +

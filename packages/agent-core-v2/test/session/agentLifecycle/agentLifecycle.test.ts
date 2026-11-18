@@ -31,8 +31,6 @@ import {
   permissionModeConfiguredKey,
   permissionModeKey,
 } from '#/agent/permissionMode/permissionModeOps';
-import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import { IAgentEnvironmentOverlay, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { AgentReminderService, IAgentReminderService } from '#/features/reminder/reminderService';
@@ -125,12 +123,8 @@ import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import type { EnvironmentBinding } from '#/environment/environment';
-import { EnvironmentError } from '#/environment/environmentRegistry';
 import { ScopeUnits, type Fiber } from '#/_base/di/fiber';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
@@ -240,10 +234,6 @@ describe('AgentLifecycleService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
-    ix.stub(IAgentEnvironmentOverlay, {
-      _serviceBrand: undefined,
-      decorate: (lease) => lease,
-    });
     ix.set(ISessionEventBus, new SyncDescriptor(EventBusService));
     ix.get(IAgentStateService).contributeState(permissionModeKey);
     ix.get(IAgentStateService).contributeState(permissionModeConfiguredKey);
@@ -272,20 +262,8 @@ describe('AgentLifecycleService', () => {
       additionalDirs: [],
       onDidChange: Event.None,
     } as ISessionWorkspaceInfo);
-    ix.stub(IEnvironmentService, {
-      onDidChange: () => ({ dispose: () => {} }),
-      _serviceBrand: undefined,
-      current: () => undefined,
-      inspect: (binding) => new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
-      acquire: (binding) => ({
-        environment: new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
-        track: (resource) => resource,
-        dispose: () => {},
-      }),
-    });
     ix.stub(ISessionWorkdir, {
       _serviceBrand: undefined,
-      environmentId: 'local',
       fs: undefined,
     } as unknown as ISessionWorkdir);
     ix.stub(IWorkspaceTrust, {
@@ -1201,141 +1179,6 @@ describe('AgentLifecycleService', () => {
     expect(permissionModeSetMode).not.toHaveBeenCalled();
   });
 
-  it('restores the environment binding without persisting a generation', async () => {
-    ix.stub(IAppendLogStore, recordingAppendLog([
-      createWireMetadataRecord(1),
-      { type: 'environment.set_binding', workspaceId: 'ws_test', environmentId: 'remote', time: 2 },
-    ]).store);
-
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'main' });
-    const agent = svc.handleOf('main')!;
-
-    expect(agent.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
-      environmentId: 'remote',
-    });
-    expect(agent.accessor.get(IAgentEnvironmentService).inspect().identity.generation).toBe('remote-one');
-  });
-
-  function stubRemoteResolver(options: { remoteStatus?: 'ready' | 'disconnected' } = {}) {
-    const connectCalls: string[] = [];
-    const localEnvironment = new FakeEnvironment(
-      { environmentId: 'local', generation: 'local-one' },
-      { status: 'ready', capabilities: ['fs', 'process'] },
-    );
-    const remoteEnvironment = new FakeEnvironment(
-      { environmentId: 'remote', generation: 'remote-one' },
-      { status: options.remoteStatus ?? 'disconnected', capabilities: ['fs', 'process'] },
-    );
-    Object.assign(remoteEnvironment, {
-      connect: async () => {
-        connectCalls.push('remote');
-        remoteEnvironment.setStatus('ready');
-      },
-    });
-    const environmentFor = (binding: EnvironmentBinding): FakeEnvironment => {
-      if (binding.environmentId === 'local') return localEnvironment;
-      if (binding.environmentId === 'remote') return remoteEnvironment;
-      throw new EnvironmentError('environment.not_found', `environment ${binding.environmentId} does not exist in workspace ws_test`);
-    };
-    ix.stub(IEnvironmentService, {
-      onDidChange: () => ({ dispose: () => {} }),
-      _serviceBrand: undefined,
-      inspect: (binding: EnvironmentBinding) => environmentFor(binding),
-      acquire: (binding: EnvironmentBinding) => ({
-        environment: environmentFor(binding),
-        track: (resource: unknown) => resource,
-        dispose: () => {},
-      }),
-    } as unknown as EnvironmentResolver);
-    return { connectCalls, remoteEnvironment };
-  }
-
-  function expectCurrentBinding(agentId: string, expected: EnvironmentBinding): void {
-    const svc = ix.get(IAgentLifecycleService);
-    expect(svc.handleOf(agentId)!.accessor.get(IAgentEnvironmentBindingService).current).toEqual(expected);
-  }
-
-  it('persists a create-seeded remote binding at create time', async () => {
-    const log = recordingAppendLog();
-    ix.stub(IAppendLogStore, log.store);
-    stubRemoteResolver({ remoteStatus: 'ready' });
-
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'agent-1', environmentId: 'remote', environmentCwd: '/remote/work' });
-
-    expect(log.appended.filter((record) => record.type === 'environment.set_binding')).toEqual([
-      expect.objectContaining({
-        agentId: 'agent-1',
-        environmentId: 'remote',
-        cwd: '/remote/work',
-      }),
-    ]);
-    expectCurrentBinding('agent-1', { environmentId: 'remote', cwd: '/remote/work' });
-  });
-
-  it('inherits the session workdir when create omits the environment', async () => {
-    const log = recordingAppendLog();
-    ix.stub(IAppendLogStore, log.store);
-    stubRemoteResolver({ remoteStatus: 'ready' });
-    ix.stub(ISessionWorkdir, {
-      _serviceBrand: undefined,
-      environmentId: 'remote',
-      cwd: '/remote/work',
-      fs: undefined,
-    } as unknown as ISessionWorkdir);
-
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'agent-1' });
-
-    expect(log.appended.filter((record) => record.type === 'environment.set_binding')).toEqual([
-      expect.objectContaining({
-        agentId: 'agent-1',
-        environmentId: 'remote',
-        cwd: '/remote/work',
-      }),
-    ]);
-    expectCurrentBinding('agent-1', { environmentId: 'remote', cwd: '/remote/work' });
-  });
-
-  it('keeps an explicit local binding when the session workdir is remote', async () => {
-    const log = recordingAppendLog();
-    ix.stub(IAppendLogStore, log.store);
-    stubRemoteResolver({ remoteStatus: 'ready' });
-    ix.stub(ISessionWorkdir, {
-      _serviceBrand: undefined,
-      environmentId: 'remote',
-      cwd: '/remote/work',
-      fs: undefined,
-    } as unknown as ISessionWorkdir);
-
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'agent-1', environmentId: 'local' });
-
-    expect(log.appended.filter((record) => record.type === 'environment.set_binding')).toEqual([
-      expect.objectContaining({ agentId: 'agent-1', environmentId: 'local' }),
-    ]);
-    expect(log.appended.some((record) => record['cwd'] === '/remote/work')).toBe(false);
-    expectCurrentBinding('agent-1', { environmentId: 'local' });
-  });
-
-  it('keeps a restored gone environment declaration bound and fails explicitly at use', async () => {
-    ix.stub(IAppendLogStore, recordingAppendLog([
-      createWireMetadataRecord(1),
-      { type: 'environment.set_binding', agentId: 'agent-1', workspaceId: 'ws_test', environmentId: 'ghost', cwd: '/ghost/work', time: 2 },
-    ]).store);
-    stubRemoteResolver();
-
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.create({ agentId: 'agent-1' });
-    const agent = svc.handleOf('agent-1')!;
-
-    expectCurrentBinding('agent-1', { environmentId: 'ghost', cwd: '/ghost/work' });
-    expect(() => agent.accessor.get(IAgentEnvironmentService).acquire()).toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
-    );
-  });
-
   it('attaches durable environments before restore and replays their records', async () => {
     ix.stub(IAppendLogStore, recordingAppendLog([
       createWireMetadataRecord(1),
@@ -1726,22 +1569,6 @@ describe('AgentLifecycleService', () => {
       disallowedTools: ['Bash'],
       subagents: ['explore'],
     });
-  });
-
-  it('fork snapshots the source environment and remains independent', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    const source = await svc.create({ agentId: 'main' });
-    const sourceEnvironment = svc.handleOf('main')!.accessor.get(IAgentEnvironmentBindingService);
-    sourceEnvironment.bind('remote');
-
-    const child = await svc.fork(source, { agentId: 'forked-environment' });
-    const childEnvironment = svc.handleOf(child.agentId)!.accessor.get(IAgentEnvironmentBindingService);
-    expect(childEnvironment.current.environmentId).toBe('remote');
-
-    sourceEnvironment.bind('local');
-    expect(childEnvironment.current.environmentId).toBe('remote');
-    childEnvironment.bind('local');
-    expect(sourceEnvironment.current.environmentId).toBe('local');
   });
 
   it('fork seeds the child context, closing the trailing open tool exchange', async () => {

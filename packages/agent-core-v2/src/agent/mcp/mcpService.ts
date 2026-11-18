@@ -10,7 +10,8 @@ import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { originalImageCacheDir } from '#/agent/media/image-originals';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -70,7 +71,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {
     super();
     this.states.contributeState(mcpDiscoveryKey);
@@ -369,7 +370,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
           createMcpTool(qualified, tool, client, {
             serverName,
             attachmentStore: this.attachmentStore,
-            originals: () => environmentTempTarget(this.environment, 'original-images'),
+            originals: () => ({ fs: this.fs, dir: originalImageCacheDir() }),
             telemetry: this.telemetry,
             providerType: () => this.loop.getModelProviderType(),
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),

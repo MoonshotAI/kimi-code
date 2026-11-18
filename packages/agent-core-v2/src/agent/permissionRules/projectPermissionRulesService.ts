@@ -2,7 +2,6 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2 } from '#/errors';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
@@ -15,7 +14,6 @@ export class ProjectPermissionRulesService implements IProjectPermissionRulesSer
   declare readonly _serviceBrand: undefined;
 
   private readonly cwd: string;
-  private readonly local: boolean;
   private currentRules: readonly PermissionRule[] = [];
   private trusted = false;
   readonly ready: Promise<void>;
@@ -28,8 +26,7 @@ export class ProjectPermissionRulesService implements IProjectPermissionRulesSer
     @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
   ) {
     this.cwd = workdir.cwd ?? session.cwd;
-    this.local = workdir.environmentId === LOCAL_ENVIRONMENT_ID;
-    this.ready = this.local ? this.enqueue(() => this.loadFromDisk()) : Promise.resolve();
+    this.ready = this.enqueue(() => this.loadFromDisk());
   }
 
   get rules(): readonly PermissionRule[] {
@@ -37,9 +34,6 @@ export class ProjectPermissionRulesService implements IProjectPermissionRulesSer
   }
 
   appendRules(rules: readonly PermissionRule[]): Promise<void> {
-    if (!this.local) {
-      return Promise.reject(new Error('Project permission rules are not supported in remote environments'));
-    }
     return this.enqueue(async () => {
       parseProjectPermissionRules(rules);
       const appended = await this.localConfig.appendPermissionRules(this.cwd, rules);

@@ -42,10 +42,8 @@ import { IHostProcessService } from '#/os/interface/hostProcess';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceTrustStore,
   WorkspaceTrustStore,
@@ -106,13 +104,6 @@ describe('McpManagementService', () => {
     }));
     findContaining = vi.fn<IWorkspaceInstanceManager['findContaining']>(() => undefined);
     const hostProcess = new HostProcessService();
-    const environment = Object.assign(
-      new FakeEnvironment(
-        { environmentId: 'local', generation: 'test-generation' },
-        { capabilities: ['process'], host: { homeDir: home } },
-      ),
-      { process: hostProcess },
-    );
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IFileSystemStorageService, storage);
@@ -159,12 +150,6 @@ describe('McpManagementService', () => {
           _serviceBrand: undefined,
           resolved: () => identityReady,
           current: () => identitySnapshot,
-        });
-        reg.definePartialInstance(IEnvironmentService, {
-          _serviceBrand: undefined,
-          inspect: () => environment,
-          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
-          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(IWorkspaceInstanceManager, { findContaining, acquire });
         reg.defineInstance(ILogService, stubLog());

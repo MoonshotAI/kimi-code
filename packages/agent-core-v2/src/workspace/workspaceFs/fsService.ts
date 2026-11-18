@@ -1,3 +1,6 @@
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
+
 import {
   type FsDiffRequest,
   type FsDiffResponse,
@@ -38,11 +41,9 @@ import {
 const FsWireErrorCode = {
   VALIDATION_FAILED: 40001,
   FS_PATH_NOT_FOUND: 40409,
-  ENVIRONMENT_NOT_FOUND: 40420,
   SESSION_BUSY: 40901,
   FS_IS_DIRECTORY: 40906,
   FS_IS_BINARY: 40907,
-  ENVIRONMENT_UNAVAILABLE: 40926,
   FS_TOO_LARGE: 41302,
   FS_TOO_MANY_RESULTS: 41303,
   FS_PATH_ESCAPES_SESSION: 41304,
@@ -59,13 +60,12 @@ import {
   guessMime,
 } from '#/_base/utils/fileMeta';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
-import { EnvironmentError } from '#/environment/environmentRegistry';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import { type EnvironmentPath } from '#/environment/environment';
-import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { HostWorkspaceView, type HostPath } from '#/session/workspaceContext/hostWorkspaceView';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
@@ -153,19 +153,19 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     | { readonly key: string; readonly roots: readonly { dir: string; real: string }[] }
     | undefined = undefined;
   private readonly workspaceId: string;
-  private readonly path: EnvironmentPath;
+  private readonly path: HostPath;
 
   constructor(
-    @IWorkspaceContext workspace: Pick<IWorkspaceContext, 'workspaceId' | 'cwd'>,
+    @IWorkspaceContext workspace: Pick<IWorkspaceContext, 'workspaceId'> & { readonly cwd: string },
     @IWorkspaceDirs private readonly workspaceDirs: Pick<IWorkspaceDirs, 'additionalDirs' | 'primary'>,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
-    @IEnvironmentService private readonly resolver: EnvironmentResolver,
+    @IHostProcessService private readonly process: IHostProcessService,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWorkspaceGitService private readonly git: IWorkspaceGitService,
-    private readonly environmentId = 'local',
   ) {
     this.workspaceId = workspace.workspaceId;
-    this.path = resolver.inspect({ environmentId }).path ?? POSIX_ENVIRONMENT_PATH;
+    this.path = new HostWorkspaceView(environment, { workDir: workspace.cwd }).path;
   }
 
   private get workDir(): string {
@@ -800,7 +800,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       if (roots.length === 0) return { items: [], truncated: false };
       const fd = await this.resolveFd(signal);
       if (fd !== null) {
-        const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
         try {
           return await suggestWithFd({
             fdBinary: fd.path,
@@ -812,15 +811,14 @@ export class WorkspaceFsService implements IWorkspaceFsService {
             roots,
             path: this.path,
             hostFs: this.hostFs,
-            process: lease.environment.process!,
+            process: this.process,
             workDir: this.workDir,
-            homeDir: lease.environment.host?.homeDir,
+            homeDir: this.environment.homeDir,
             signal,
           });
         } catch (error) {
           if (signal.aborted) throw error;
         } finally {
-          lease.dispose();
         }
       }
       if (req.query === '') {
@@ -868,7 +866,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       }
       const fd = await this.resolveFd(signal);
       if (fd !== null) {
-        const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
         try {
           for await (const event of suggestWithFdEvents({
             fdBinary: fd.path,
@@ -880,9 +877,9 @@ export class WorkspaceFsService implements IWorkspaceFsService {
             roots,
             path: this.path,
             hostFs: this.hostFs,
-            process: lease.environment.process!,
+            process: this.process,
             workDir: this.workDir,
-            homeDir: lease.environment.host?.homeDir,
+            homeDir: this.environment.homeDir,
             signal,
           })) {
             yield event;
@@ -891,7 +888,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         } catch (error) {
           if (signal.aborted) throw error;
         } finally {
-          lease.dispose();
         }
       }
       yield { phase: 'final', response: await this.suggest(req, externalSignal) };
@@ -1130,11 +1126,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         for (const root of roots) args.push(root.dir);
       }
 
-      const lease = this.resolver.acquire(
-        { environmentId: this.environmentId },
-        ['process'],
-      );
-      const proc = await lease.environment.process!.spawn(rgBinary, args, { cwd: this.workDir });
+      const proc = await this.process.spawn(rgBinary, args, { cwd: this.workDir });
       let killed = false;
       const kill = (): void => {
         if (killed) return;
@@ -1177,7 +1169,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           void proc.dispose();
         } catch {
         }
-        lease.dispose();
       }
 
       if (!killed && exitCode !== 0 && exitCode !== 1) {
@@ -1393,8 +1384,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const roots = await this.suggestRoots();
     args.push('.', ...roots.filter((root) => !root.primary).map((root) => root.dir));
 
-    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
-    const proc = await lease.environment.process!.spawn(rgPath, args, { cwd: this.workDir });
+    const proc = await this.process.spawn(rgPath, args, { cwd: this.workDir });
 
     const primary = roots.find((root) => root.primary);
     const acc = new RgJsonAccumulator(req, (path) => {
@@ -1444,7 +1434,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         void proc.dispose();
       } catch {
       }
-      lease.dispose();
     }
 
     return acc.finish(signal.aborted, Date.now() - startedAt);
@@ -1591,35 +1580,30 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async resolveFd(signal: AbortSignal): Promise<FdResolution | null> {
     if (this.fdResolution !== undefined) return this.fdResolution;
-    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
     try {
       this.fdResolution = await ensureFdPath({
-        exec: (args) => runCommand(lease.environment.process!, args, { cwd: this.workDir, signal }),
-      }, { environment: lease.environment, signal });
+        exec: (args) => runCommand(this.process, args, { cwd: this.workDir, signal }),
+      }, { signal });
     } catch (error) {
       if (signal.aborted) throw error;
       this.fdResolution = null;
     } finally {
-      lease.dispose();
     }
     return this.fdResolution;
   }
 
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
-    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
     const probe: RgProbe = {
-      exec: (args) => runCommand(lease.environment.process!, args, { cwd: this.workDir }),
+      exec: (args) => runCommand(this.process, args, { cwd: this.workDir }),
     };
     try {
       this.rgResolution = await ensureRgPath(probe, {
         allowCachedFallback: true,
-        environment: lease.environment,
       });
     } catch {
       this.rgResolution = null;
     } finally {
-      lease.dispose();
     }
     return this.rgResolution;
   }
@@ -1927,7 +1911,9 @@ function isMissingPathError(err: unknown): boolean {
   return isHostFsNotFound(err) || isHostFsNotDirectory(err);
 }
 
-function isInsideOrEqual(path: EnvironmentPath, child: string, parent: string): boolean {
+registerScopedService(LifecycleScope.Session, IWorkspaceFsService, WorkspaceFsService, ScopeActivation.OnDemand, 'workspaceFs');
+
+function isInsideOrEqual(path: HostPath, child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
   if (rel === '') return true;
   if (rel.startsWith('..')) return false;
@@ -1948,19 +1934,6 @@ function mapFsError(err: unknown, inputPath: string): Error {
 }
 
 function toGitBatchError(err: unknown): FsBatchError {
-  if (err instanceof EnvironmentError) {
-    switch (err.code) {
-      case 'environment.not_found':
-        return { code: FsWireErrorCode.ENVIRONMENT_NOT_FOUND, msg: err.message };
-      case 'environment.invalid_cwd':
-        return { code: FsWireErrorCode.VALIDATION_FAILED, msg: err.message };
-      case 'environment.conflict':
-        return { code: FsWireErrorCode.SESSION_BUSY, msg: err.message };
-      case 'environment.unavailable':
-      case 'environment.capability_unavailable':
-        return { code: FsWireErrorCode.ENVIRONMENT_UNAVAILABLE, msg: err.message };
-    }
-  }
   if (err instanceof Error2) {
     if (err.code === ErrorCodes.FS_GIT_UNAVAILABLE) return { code: 40908, msg: err.message };
     if (err.code === ErrorCodes.FS_PATH_ESCAPES) {

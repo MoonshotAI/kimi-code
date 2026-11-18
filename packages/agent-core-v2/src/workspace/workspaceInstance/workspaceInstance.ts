@@ -1,7 +1,9 @@
 import type { Workspace } from '#/app/workspace/workspace';
 import { Program, type ProgramSnapshot } from '#/program/program';
 import type { ProgramDependencies } from '#/program/programDependencies';
-import type { IEnvironmentService } from '#/app/environment/environment';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { IHostProcessService } from '#/os/interface/hostProcess';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export type WorkspaceInstanceLifecycle = 'materializing' | 'active' | 'closing' | 'disposed';
@@ -19,14 +21,16 @@ export class WorkspaceInstance {
 
   constructor(
     metadata: Workspace,
-    environments: IEnvironmentService,
+    hostFs: IHostFileSystem,
+    process: IHostProcessService,
+    environment: IHostEnvironment,
     context: IWorkspaceContext,
     dependencies: ProgramDependencies,
   ) {
     this.metadataValue = metadata;
     const liveContext = { ...context };
     Object.defineProperty(liveContext, 'meta', { get: () => this.metadata });
-    this.program = new Program(metadata.id, environments, liveContext, dependencies);
+    this.program = new Program(metadata.id, hostFs, process, environment, liveContext, dependencies);
   }
 
   get metadata(): Workspace {

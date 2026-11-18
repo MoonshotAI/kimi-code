@@ -120,7 +120,8 @@ function srcRelative(file: string): string {
 }
 
 function repoRelative(file: string): string {
-  return relative(REPO_ROOT, file).split('\\').join('/');
+  const workspaceFile = /(?:^|[\\/])((?:packages|apps)[\\/].*)$/.exec(file)?.[1];
+  return (workspaceFile ?? relative(REPO_ROOT, file)).split('\\').join('/');
 }
 
 function tsFieldKey(key: string): string {

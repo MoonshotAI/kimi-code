@@ -15,15 +15,11 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { IEnvironmentService } from '#/app/environment/environment';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { Program, type ProgramWorkdir } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import { environmentBindingId } from '#/environment/environment';
-import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
-import { fakeEnvironment } from '../environment/stubs';
 import { noopLogger } from '../wire/stubs';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
@@ -68,242 +64,6 @@ function programWorkspace(cwd: string): IWorkspaceContext {
   };
 }
 
-function setup(readiness = new Map<string, Promise<void>>(), order: string[] = []) {
-  const registry = Object.assign(new EnvironmentRegistry(), {
-    _serviceBrand: undefined,
-    ready: Promise.resolve(),
-    addProvider: vi.fn(async () => ({ dispose: async () => {} })),
-  });
-  const controllerInputs: ProgramSessionControllerInput[] = [];
-  const program = new Program(
-    'workspace',
-    registry as unknown as IEnvironmentService,
-    programWorkspace('/workspace'),
-    {
-      agentProfiles: { entries: () => [] },
-      createSessionController: (input: ProgramSessionControllerInput) => {
-        controllerInputs.push(input);
-        return { dispose: input.onDispose } as never;
-      },
-    } as never,
-  );
-  const create = vi.fn(() => {
-    const lease = registry.acquire({ environmentId: 'local' }, ['fs', 'process']);
-    const id = lease.environment.identity.generation;
-    lease.dispose();
-    const behavior = {
-      ready: readiness.get(id) ?? Promise.resolve(),
-      reload: async () => {},
-      dispose: () => { order.push(`behavior:${id}`); },
-    };
-    const catalog = {
-      listSkills: () => [],
-      listInvocableSkills: () => [],
-      getSkippedByPolicy: () => [],
-      getSkillRoots: () => [],
-    };
-    const root = {
-      state: behavior,
-      dirs: behavior,
-      fs: behavior,
-      git: behavior,
-      instructions: { ...behavior, snapshot: {} },
-      skills: { ...behavior, catalog },
-      agentProfiles: behavior,
-    };
-    return {
-      id,
-      workdirs: { root, reload: async () => {}, dispose: () => {} },
-      mcpConfig: { ...behavior, servers: () => ({}) },
-      mcp: behavior,
-      trust: { ...behavior, isTrusted: () => false },
-      userAgentProfiles: behavior,
-      pluginAgentProfiles: behavior,
-      explicitAgentProfiles: behavior,
-      extraAgentProfiles: behavior,
-      disposables: [behavior],
-      ready: false,
-      failed: false,
-      references: 1,
-      retired: false,
-    };
-  });
-  (program as unknown as { createGeneration: typeof create }).createGeneration = create;
-  return { registry, program, create, controllerInputs };
-}
-
-describe('Program', () => {
-  it('acquires only available local generations and recovers after reconnect', async () => {
-    const { registry, program, create } = setup();
-    const current = fakeEnvironment('local', 'one', { status: 'disconnected' });
-    registry.register(current);
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(program.status).toBe('degraded');
-    expect(() => program.dirs).toThrow('no available local environment generation');
-
-    current.setStatus('ready');
-    await program.ready;
-    expect(create).toHaveBeenCalledTimes(2);
-    expect(program.sessionControllerGeneration).toBe('one');
-    expect(program.status).toBe('ready');
-    await program.dispose();
-    await registry.dispose();
-  });
-
-  it('stays preparing until the fixed local generation behavior becomes ready', async () => {
-    const pending = deferred();
-    const { registry, program } = setup(new Map([['one', pending.promise]]));
-    registry.register(fakeEnvironment('local', 'one'));
-
-    expect(program.binding).toEqual({ environmentId: 'local' });
-    expect(program.status).toBe('preparing');
-    expect(program.snapshot().ready).toBe(false);
-
-    pending.resolve();
-    await program.ready;
-    await Promise.resolve();
-    expect(program.status).toBe('ready');
-    expect(program.snapshot().ready).toBe(true);
-    await program.dispose();
-    await registry.dispose();
-  });
-
-  it('marks rejected behavior readiness degraded', async () => {
-    const failed = deferred();
-    const { registry, program } = setup(new Map([['one', failed.promise]]));
-    registry.register(fakeEnvironment('local', 'one'));
-    failed.reject(new Error('failed'));
-    await program.ready;
-    await Promise.resolve();
-    expect(program.status).toBe('degraded');
-    await program.dispose();
-    await registry.dispose();
-  });
-
-  it('stops serving new sessions from the previous generation when its successor is unavailable', async () => {
-    const order: string[] = [];
-    const { registry, program, create } = setup(new Map(), order);
-    const first = fakeEnvironment('local', 'one');
-    const registration = registry.register(first);
-    await program.ready;
-    const controller = program.createSessionController();
-    expect(program.sessionControllerGeneration).toBe('one');
-
-    const second = fakeEnvironment('local', 'two', { status: 'disconnected' });
-    await registration.remove();
-    registry.register(second);
-    await Promise.resolve();
-
-    expect(create).toHaveBeenCalledTimes(2);
-    expect(() => program.sessionControllerGeneration).toThrow('no available local environment generation');
-    expect(() => program.createSessionController()).toThrow('no available local environment generation');
-    expect(order).toEqual([]);
-
-    second.setStatus('ready');
-    await vi.waitFor(() => {
-      expect(program.sessionControllerGeneration).toBe('two');
-    });
-    const next = program.createSessionController();
-    expect(create).toHaveBeenCalledTimes(3);
-
-    controller.dispose();
-    expect(order).toEqual(['behavior:one']);
-    next.dispose();
-    await program.dispose();
-    await registry.dispose();
-  });
-
-  it('owns catalog, instructions, MCP, provenance, and current environment in one generation', async () => {
-    const { registry, program, create } = setup();
-    registry.register(fakeEnvironment('local', 'one'));
-    const generation = create.mock.results[0]?.value as unknown as {
-      workdirs: { root: {
-        skills: { catalog: {
-          listSkills(): unknown[];
-          listInvocableSkills(): unknown[];
-          getSkippedByPolicy(): unknown[];
-          getSkillRoots(): string[];
-        } };
-        instructions: { snapshot: { agentsMdPaths?: readonly string[] } };
-      } };
-      mcpConfig: { servers(): Record<string, unknown> };
-      mcp: unknown;
-    };
-    const skill = { source: 'workspace' };
-    generation.workdirs.root.skills.catalog.listSkills = () => [skill];
-    generation.workdirs.root.skills.catalog.listInvocableSkills = () => [skill];
-    generation.workdirs.root.skills.catalog.getSkippedByPolicy = () => [];
-    generation.workdirs.root.skills.catalog.getSkillRoots = () => ['/workspace/.agents/skills'];
-    generation.workdirs.root.instructions.snapshot = { agentsMdPaths: ['/workspace/AGENTS.md'] };
-    generation.mcpConfig.servers = () => ({ baseline: {} });
-    await program.ready;
-    await Promise.resolve();
-
-    expect(program.skills).toBe(generation.workdirs.root.skills);
-    expect(program.instructions).toBe(generation.workdirs.root.instructions);
-    expect(program.mcpConfig).toBe(generation.mcpConfig);
-    expect(program.mcp).toBe(generation.mcp);
-    expect(program.snapshot()).toMatchObject({
-      workspaceId: 'workspace',
-      binding: { environmentId: 'local' },
-      status: 'ready',
-      ready: true,
-      generation: 'one',
-      trusted: false,
-      catalog: {
-        skills: { total: 1, invocable: 1, skipped: 0 },
-        agentProfiles: 0,
-        mcpServers: 1,
-      },
-      sources: {
-        skills: [{ source: 'workspace', count: 1 }],
-        skillRoots: ['/workspace/.agents/skills'],
-        agentProfiles: [],
-        instructionPaths: ['/workspace/AGENTS.md'],
-        mcpServers: ['baseline'],
-      },
-      environments: [{ environmentId: 'local', generation: 'one', status: 'ready' }],
-    });
-
-    await program.dispose();
-    await registry.dispose();
-  });
-
-  it('switches generations and disposes behavior of the replaced one', async () => {
-    const firstReady = deferred();
-    const order: string[] = [];
-    const { registry, program } = setup(new Map([['one', firstReady.promise]]), order);
-    const registration = registry.register(fakeEnvironment('local', 'one'));
-    await registration.remove();
-    registry.register(fakeEnvironment('local', 'two'));
-    await Promise.resolve();
-    expect(program.sessionControllerGeneration).toBe('two');
-    await vi.waitFor(() => {
-      expect(program.status).toBe('ready');
-    });
-    expect(order).toEqual(['behavior:one']);
-
-    firstReady.resolve();
-    await Promise.resolve();
-    expect(program.sessionControllerGeneration).toBe('two');
-    expect(program.status).toBe('ready');
-    await program.dispose();
-    expect(order).toEqual(['behavior:one', 'behavior:two']);
-    await registry.dispose();
-  });
-
-  it('ignores non-local environments so remote churn never rebuilds the workspace generation', async () => {
-    const { registry, program, create } = setup();
-    registry.register(fakeEnvironment('local', 'one'));
-    const remote = registry.register(fakeEnvironment('remote', 'remote-one'));
-    await remote.remove();
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(program.sessionControllerGeneration).toBe('one');
-    await program.dispose();
-    await registry.dispose();
-  });
-});
-
 const execFileAsync = promisify(execFile);
 
 interface GenerationAccess {
@@ -318,10 +78,9 @@ interface GenerationAccess {
 }
 
 interface LocalityFixture {
-  readonly registry: EnvironmentRegistry;
   readonly program: Program;
   readonly local: () => GenerationAccess;
-  readonly workdir: (cwd: string, environmentId?: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>;
+  readonly workdir: (cwd: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>;
   readonly controllerInputs: ProgramSessionControllerInput[];
   readonly profileRegistry: AgentProfileRegistryService;
   readonly profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[];
@@ -331,7 +90,6 @@ interface LocalityFixture {
   readonly remoteAltRoot: string;
   readonly homeDir: string;
   readonly remoteHomeDir: string;
-  readonly replaceLocal: (generation: string) => Promise<void>;
   readonly cleanup: () => Promise<void>;
 }
 
@@ -435,7 +193,6 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     findWorkTree: async () => null,
   };
 
-  const registry = new EnvironmentRegistry();
   const controllerInputs: ProgramSessionControllerInput[] = [];
   const profileContainer = new InstantiationService(new ServiceCollection(), true);
   const profileRegistry = profileContainer.createInstance(AgentProfileRegistryService);
@@ -455,7 +212,19 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
   );
   const program = new Program(
     'workspace',
-    registry as unknown as IEnvironmentService,
+    new HostFileSystem(),
+    new HostProcessService(),
+    {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: '',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir,
+      ready: Promise.resolve(),
+    } satisfies IHostEnvironment,
     programWorkspace(localRoot),
     {
       appState: undefined,
@@ -509,29 +278,10 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       trustStore,
       createSessionController: (input: ProgramSessionControllerInput) => {
         controllerInputs.push(input);
-        return { dispose: input.onDispose } as never;
+        return { dispose: () => {} } as never;
       },
     } as never,
   );
-
-  const realFs = new HostFileSystem();
-  const localFs = scopedFs(localRoot, await realpath(localRoot), realFs, [homeDir, await realpath(homeDir)]);
-  const localRegistration = registry.register(Object.assign(
-    new FakeEnvironment(
-      { environmentId: 'local', generation: 'local-one' },
-      { capabilities: ['fs', 'process'], host: { homeDir } },
-    ),
-    { fs: localFs, process: new HostProcessService() },
-  ) as FakeEnvironment);
-  const remoteRegistration = registry.register(Object.assign(
-    new FakeEnvironment(
-      { environmentId: 'remote', generation: 'remote-one' },
-      { capabilities: ['fs', 'process'], host: { homeDir: remoteHomeDir } },
-    ),
-    remoteCwd === undefined
-      ? { fs: realFs, process: new HostProcessService() }
-      : { fs: scopedFs(remoteRoot, await realpath(remoteRoot), realFs), process: new HostProcessService() },
-  ) as FakeEnvironment);
 
   const local = (): GenerationAccess => {
     const generation = (program as unknown as {
@@ -541,14 +291,13 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
   };
   const workdirs: ProgramWorkdir[] = [];
   let controller: { dispose(): void } | undefined;
-  const workdir = async (cwd: string, environmentId = 'remote', followsPrimary?: boolean): Promise<ProgramWorkdir> => {
+  const workdir = async (cwd: string, followsPrimary = false): Promise<ProgramWorkdir> => {
     controller ??= program.createSessionController();
-    const created = await controllerInputs[0]!.acquireWorkdir(environmentId, cwd, followsPrimary);
+    const created = await controllerInputs[0]!.acquireWorkdir(cwd, followsPrimary);
     workdirs.push(created);
     return created;
   };
   return {
-    registry,
     program,
     local,
     workdir,
@@ -561,16 +310,6 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     remoteAltRoot,
     homeDir,
     remoteHomeDir,
-    replaceLocal: async (generation: string) => {
-      await localRegistration.remove();
-      registry.register(Object.assign(
-        new FakeEnvironment(
-          { environmentId: 'local', generation },
-          { capabilities: ['fs', 'process'], host: { homeDir } },
-        ),
-        { fs: realFs, process: new HostProcessService() },
-      ) as FakeEnvironment);
-    },
     cleanup: async () => {
       await Promise.allSettled([awaitLocality(local()), ...workdirs.map((created) => awaitWorkdir(created))]);
       for (const created of workdirs) created.dispose();
@@ -579,7 +318,6 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       userSkills.dispose();
       profileContainer.dispose();
       trustStore.dispose();
-      await registry.dispose();
       await rm(base, { recursive: true, force: true });
     },
   };
@@ -600,7 +338,7 @@ async function awaitLocality(generation: GenerationAccess): Promise<void> {
   ]);
 }
 
-describe('Program local generation and remote workdirs', () => {
+describe('Program local generation and pinned workdirs', () => {
   it('roots the local generation at the workspace root on the local fs, unchanged', async () => {
     const fixture = await localityFixture();
     try {
@@ -619,7 +357,7 @@ describe('Program local generation and remote workdirs', () => {
         { sourceId: 'workspace', profiles: ['local-agent'] },
       ]);
       expect(fixture.profileRegistry.entries().find((entry) => entry.sourceId === 'workspace')?.contextKey)
-        .toBe(environmentBindingId('local', fixture.localRoot));
+        .toBe(`local\0${fixture.localRoot}`);
 
       await local.git.status();
       expect(fixture.localGitCalls).toEqual([fixture.localRoot]);
@@ -631,7 +369,7 @@ describe('Program local generation and remote workdirs', () => {
     }
   });
 
-  it('roots a remote workdir at the session cwd on the target fs while user config and profiles stay local', async () => {
+  it('roots a pinned workdir at the session cwd while user config stays local', async () => {
     const fixture = await localityFixture();
     try {
       await awaitLocality(fixture.local());
@@ -651,9 +389,9 @@ describe('Program local generation and remote workdirs', () => {
 
       expect(remote.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(['target-skill', 'user-skill']);
       expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
-      expect(remoteProfiles).toEqual([]);
-      expect(remote.contextKey).toBe(environmentBindingId('remote', fixture.remoteRoot));
-      expect(fixture.profileRegistry.entries().some((entry) => entry.contextKey === remote.contextKey)).toBe(false);
+      expect(remoteProfiles).toEqual([{ sourceId: 'workspace', profiles: ['target-agent'] }]);
+      expect(remote.contextKey).toBe(`local\0${fixture.remoteRoot}\0pinned`);
+      expect(fixture.profileRegistry.entries().some((entry) => entry.contextKey === remote.contextKey)).toBe(true);
 
       const listed = await remote.fs.list({ path: '.', depth: 1, limit: 100, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false });
       expect(listed.items.map((entry) => entry.name)).toContain('AGENTS.md');
@@ -663,7 +401,7 @@ describe('Program local generation and remote workdirs', () => {
     }
   });
 
-  it('loads remote parent project instructions alongside local personal instructions from a subdirectory', async () => {
+  it('loads pinned parent project instructions alongside local personal instructions from a subdirectory', async () => {
     const fixture = await localityFixture();
     try {
       const cwd = join(fixture.remoteRoot, 'src');
@@ -680,7 +418,7 @@ describe('Program local generation and remote workdirs', () => {
     }
   });
 
-  it('expands a remote additional dir against the target home', async () => {
+  it('expands an additional dir against the local home', async () => {
     const fixture = await localityFixture({ remoteCwd: undefined });
     try {
       await mkdir(join(fixture.remoteHomeDir, 'shared'), { recursive: true });
@@ -691,20 +429,20 @@ describe('Program local generation and remote workdirs', () => {
       );
       const remote = await fixture.workdir(fixture.remoteRoot);
       await awaitWorkdir(remote);
-      expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteHomeDir, 'shared')]);
+      expect(remote.dirs.additionalDirs).toEqual([join(fixture.homeDir, 'shared')]);
     } finally {
       await fixture.cleanup();
     }
   });
 
-  it('separates pinned and primary-following local workdirs for the same environment and cwd', async () => {
+  it('separates pinned and primary-following local workdirs for the same cwd', async () => {
     const fixture = await localityFixture();
     try {
       const pinnedRoot = join(fixture.localRoot, 'pinned');
       await mkdir(pinnedRoot);
       await writeFile(join(pinnedRoot, 'AGENTS.md'), 'pinned project instructions');
-      const following = await fixture.workdir(pinnedRoot, 'local', true);
-      const pinned = await fixture.workdir(pinnedRoot, 'local', false);
+      const following = await fixture.workdir(pinnedRoot, true);
+      const pinned = await fixture.workdir(pinnedRoot, false);
       await Promise.all([awaitWorkdir(following), awaitWorkdir(pinned)]);
 
       expect(following.contextKey).not.toBe(pinned.contextKey);
@@ -719,7 +457,7 @@ describe('Program local generation and remote workdirs', () => {
     }
   });
 
-  it('roots each workdir at its own cwd and shares one workdir per environment and cwd', async () => {
+  it('roots each workdir at its own cwd and shares one workdir per cwd', async () => {
     const fixture = await localityFixture({ remoteCwd: undefined });
     try {
       await awaitLocality(fixture.local());
@@ -747,23 +485,6 @@ describe('Program local generation and remote workdirs', () => {
     }
   });
 
-  it('refreshes a shared remote workdir for every new holder because the target cannot be watched', async () => {
-    const fixture = await localityFixture();
-    try {
-      const first = await fixture.workdir(fixture.remoteRoot);
-      await awaitWorkdir(first);
-      await writeFile(join(fixture.remoteRoot, 'AGENTS.md'), 'edited target instructions');
-      expect(first.instructions.snapshot.agentsMd).toContain('target project instructions');
-
-      const second = await fixture.workdir(fixture.remoteRoot);
-
-      expect(second.instructions).toBe(first.instructions);
-      expect(second.instructions.snapshot.agentsMd).toContain('edited target instructions');
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
   it('rebuilds a workdir once every holder released it', async () => {
     const fixture = await localityFixture({ remoteCwd: undefined });
     try {
@@ -778,7 +499,7 @@ describe('Program local generation and remote workdirs', () => {
     }
   });
 
-  it('reloads remote workdirs together with the workspace root', async () => {
+  it('reloads pinned workdirs together with the workspace root', async () => {
     const fixture = await localityFixture();
     try {
       await awaitLocality(fixture.local());

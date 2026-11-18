@@ -30,38 +30,27 @@ import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import type { EnvironmentBinding } from '#/environment/environment';
 import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
 
-const testEnvironmentBinding: EnvironmentBinding = { environmentId: 'local' };
 const testProcess = new HostProcessService();
-const testEnvironment = Object.assign(
-  new FakeEnvironment({ ...testEnvironmentBinding, generation: 'test-generation' }, {
-    capabilities: ['process'],
-  }),
-  { process: testProcess },
-);
-const testEnvironmentResolver = {
+const testEnvironment: IHostEnvironment = {
   _serviceBrand: undefined,
-  inspect: () => testEnvironment,
-  acquire: () => ({
-    environment: testEnvironment,
-    track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
-    dispose: () => {},
-  }),
-  acquireWhenReady: async () => ({
-    environment: testEnvironment,
-    track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
-    dispose: () => {},
-  }),
+  osKind: 'Linux',
+  osArch: 'x64',
+  osVersion: '',
+  shellName: 'bash',
+  shellPath: '/bin/bash',
+  pathClass: 'posix',
+  homeDir: process.cwd(),
+  ready: Promise.resolve(),
 };
 
 function createManager(options: McpConnectionManagerOptions = {}): McpConnectionManager {
   return new McpConnectionManager({
-    environmentResolver: testEnvironmentResolver,
-    environmentId: testEnvironmentBinding.environmentId,
+    processService: testProcess,
+    environment: testEnvironment,
     stdioCwd: process.cwd(),
     ...options,
   });

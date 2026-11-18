@@ -35,19 +35,11 @@ export {
 export { Service } from '#/_base/di/service';
 export * from './errors';
 export * from './events';
-export * from '#/environment/environment';
-export * from '#/app/environment/environment';
-export * from '#/app/environment/environmentService';
-export * from '#/environment/environmentRegistry';
-export * from '#/environment/environmentProvider';
 import '#/app/config/environmentsConfigSection';
 export * from '#/program/program';
 export * from '#/workspace/workspaceInstance/workspaceInstance';
 export * from '#/workspace/workspaceInstance/workspaceInstanceManager';
 export * from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
-export * from '#/agent/environmentBinding/environmentBinding';
-export * from '#/agent/environmentBinding/environmentBindingService';
-export * from '#/agent/environmentBinding/agentEnvironment';
 export * from '#/app/sessionManager/sessionManager';
 export * from '#/app/sessionManager/sessionManagerService';
 
@@ -724,6 +716,7 @@ export * from '#/agent/permissionRules/projectPermissionRulesService';
 export * from '#/agent/pluginCommand/pluginCommand';
 export * from '#/agent/pluginCommand/pluginCommandService';
 export * from '#/agent/profile/profile';
+export * from '#/agent/profile/profileOps';
 export * from '#/agent/profile/profileService';
 export * from '#/agent/profile/context';
 export * from '#/agent/prompt/promptEvents';

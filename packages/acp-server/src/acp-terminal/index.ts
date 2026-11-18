@@ -1,1 +1,1 @@
-export { AcpEnvironmentOverlay } from './acpTerminalRunner';
+export { AcpProcessOverride } from './acpTerminalRunner';

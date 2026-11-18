@@ -40,7 +40,6 @@ import {
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import type { SubagentTaskInfo } from '#/agent/task/types';
 import {
   AgentRunBatch,
@@ -2412,14 +2411,6 @@ function agentHandle(
         const service = services.get(serviceId);
         if (service !== undefined) return service;
         if (serviceId === IAgentLoopService) return profile;
-        if (serviceId === IAgentEnvironmentBindingService) {
-          return {
-            _serviceBrand: undefined,
-            current: { environmentId: 'local' },
-            switch: () => {},
-            onDidChange: Event.None,
-          } as unknown as IAgentEnvironmentBindingService;
-        }
         if (serviceId === IAgentPermissionModeService) return permissionMode;
         if (serviceId === IAgentLoopService) {
           return {

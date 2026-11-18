@@ -1,8 +1,7 @@
 import { ErrorCodes, Error2 } from '#/errors';
-import type { Environment } from '#/environment/environment';
-import { shareBinRgPath } from '#/environment/shareBinRg';
+import { getShareBinRgPath } from '#/os/backends/node-local/shareBin';
 
-export { getShareBinRgPath } from '#/environment/shareBinRg';
+export { getShareBinRgPath } from '#/os/backends/node-local/shareBin';
 
 export type RgResolutionSource = 'system-path' | 'share-bin-cached';
 
@@ -18,7 +17,6 @@ export interface RgProbe {
 export interface EnsureRgPathOptions {
   readonly signal?: AbortSignal;
   readonly allowCachedFallback?: boolean;
-  readonly environment?: Environment;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -40,7 +38,7 @@ export async function ensureRgPath(
 
   if (options.allowCachedFallback === true) {
     throwIfAborted(options.signal);
-    const cached = shareBinRgPath(options.environment);
+    const cached = getShareBinRgPath();
     const cachedRun = await probe.exec([cached, '--version']).catch(() => ({ exitCode: -1 }));
     if (cachedRun.exitCode === 0) {
       return { path: cached, source: 'share-bin-cached' };

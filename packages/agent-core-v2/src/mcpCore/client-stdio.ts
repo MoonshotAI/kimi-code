@@ -1,14 +1,16 @@
+import * as posixPath from 'node:path/posix';
+import * as win32Path from 'node:path/win32';
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { EnvironmentError } from '#/environment/environmentRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { HostProcessError, HostProcessErrorCode, type IHostProcess } from '#/os/interface/hostProcess';
-import type { EnvironmentResolver } from '#/app/environment/environment';
+import { IHostProcessService } from '#/os/interface/hostProcess';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 
 import {
   buildRequestOptions,
@@ -30,9 +32,10 @@ export interface StdioMcpClientOptions {
   readonly startupTimeoutMs?: number;
   readonly toolCallTimeoutMs?: number;
   readonly defaultCwd?: string;
-  readonly environmentResolver: EnvironmentResolver;
-  readonly environmentId: string;
+  readonly processService: IHostProcessService;
+  readonly environment: IHostEnvironment;
   readonly sessionId?: string;
+  readonly track?: <T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string) => T;
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
@@ -168,8 +171,6 @@ class EnvironmentStdioTransport implements Transport {
   onmessage?: <T extends JSONRPCMessage>(message: T) => void;
   private readonly readBuffer = new ReadBuffer();
   private process: IHostProcess | undefined;
-  private lease: ReturnType<EnvironmentResolver['acquire']> | undefined;
-  private tracked: { dispose(): void | Promise<void> } | undefined;
   private started = false;
   private closed = false;
   private exitErrorPromise: Promise<Error | undefined> | undefined;
@@ -186,41 +187,21 @@ class EnvironmentStdioTransport implements Transport {
     if (this.config.executor !== undefined && this.config.executor !== 'local') {
       throw new Error2(
         ErrorCodes.NOT_IMPLEMENTED,
-        `MCP stdio executor '${this.config.executor}' is not supported; use environment_id to select the execution environment`,
+        `MCP stdio executor '${this.config.executor}' is not supported; use the local executor`,
       );
     }
     this.started = true;
-    const binding = {
-      environmentId: this.options.environmentId,
-    };
-    const required = ['process'] as const;
-    const lease = await this.options.environmentResolver.acquireWhenReady(binding, required);
-    this.lease = lease;
+    await this.options.environment.ready;
     try {
-      const host = lease.environment.host;
-      const path = lease.environment.path;
-      if (host === undefined || path === undefined) {
-        throw new EnvironmentError('environment.unavailable', `environment ${this.options.environmentId} is not ready`);
-      }
-      const base = path.resolve(
-        this.options.environmentId === LOCAL_ENVIRONMENT_ID
-          ? this.options.defaultCwd ?? host.homeDir
-          : host.cwd ?? host.homeDir,
-      );
-      const cwd =
-        this.config.cwd === undefined
-          ? base
-          : path.resolve(base, this.config.cwd);
-      const env =
-        this.options.environmentId === LOCAL_ENVIRONMENT_ID
-          ? mergeStdioEnv(this.config.env)
-          : (this.config.env ?? {});
-      const process = lease.track(
-        await lease.environment.process!.spawn(this.config.command, this.config.args, { cwd, env }),
-        this.options.sessionId,
-      );
+      const host = this.options.environment;
+      const path = host.pathClass === 'win32' ? win32Path : posixPath;
+      const base = path.resolve(this.options.defaultCwd ?? host.homeDir);
+      const cwd = this.config.cwd === undefined ? base : path.resolve(base, this.config.cwd);
+      const env = mergeStdioEnv(this.config.env);
+      const spawned = await this.options.processService.spawn(this.config.command, this.config.args, { cwd, env });
+      const process = this.options.track?.(spawned, this.options.sessionId) ?? spawned;
+      this.options.track?.(this, this.options.sessionId);
       this.process = process;
-      this.tracked = lease.track(this, this.options.sessionId);
       process.stdin.on('error', (error: Error) => this.onerror?.(error));
       process.stdout.on('data', (chunk: Buffer | string) => this.onData(chunk));
       process.stdout.on('end', () => this.finish());
@@ -238,8 +219,7 @@ class EnvironmentStdioTransport implements Transport {
         this.finish();
       });
     } catch (error) {
-      this.lease = undefined;
-      lease.dispose();
+      this.process = undefined;
       throw error;
     }
   }
@@ -306,12 +286,6 @@ class EnvironmentStdioTransport implements Transport {
       void process.dispose();
     }
     this.readBuffer.clear();
-    const tracked = this.tracked;
-    this.tracked = undefined;
-    void tracked?.dispose();
-    const lease = this.lease;
-    this.lease = undefined;
-    lease?.dispose();
     this.onclose?.();
   }
 
@@ -335,12 +309,6 @@ class EnvironmentStdioTransport implements Transport {
     this.process = undefined;
     void process?.dispose();
     this.readBuffer.clear();
-    const tracked = this.tracked;
-    this.tracked = undefined;
-    void tracked?.dispose();
-    const lease = this.lease;
-    this.lease = undefined;
-    lease?.dispose();
     this.onclose?.();
   }
 }

@@ -6,12 +6,11 @@ import type { ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import type { IHostFileSystem, HostFileStat } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { GrepTool } from '#/agent/tools/os/grep/grepTool';
 import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
-import { stubAgentEnvironment } from '../../../environment/stubs';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {
   const original =
@@ -36,10 +35,9 @@ function directoryStat(): HostFileStat {
 }
 
 function createBackend(options: {
-  readonly environmentId: string;
   readonly homeDir: string;
   readonly spawn?: IHostProcessService['spawn'];
-}): FakeEnvironment {
+}): { fs: IHostFileSystem; processService: IHostProcessService; environment: IHostEnvironment } {
   const processService: IHostProcessService = {
     _serviceBrand: undefined,
     spawn: options.spawn ?? (() => notImplemented('spawn')),
@@ -62,13 +60,21 @@ function createBackend(options: {
     remove: () => notImplemented('remove'),
     realpath: async (path: string) => path,
   };
-  return Object.assign(
-    new FakeEnvironment(
-      { environmentId: options.environmentId, generation: 'test' },
-      { capabilities: ['fs', 'process'], host: { homeDir: options.homeDir } },
-    ),
-    { process: processService, fs },
-  );
+  return {
+    fs,
+    processService,
+    environment: {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: '',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir: options.homeDir,
+      ready: Promise.resolve(),
+    },
+  };
 }
 
 async function finish(execution: ToolExecution): Promise<ExecutableToolResult> {
@@ -82,14 +88,16 @@ async function finish(execution: ToolExecution): Promise<ExecutableToolResult> {
 
 const TOOLS: readonly {
   readonly name: string;
-  readonly execute: (backend: FakeEnvironment) => Promise<ExecutableToolResult>;
+  readonly execute: (backend: ReturnType<typeof createBackend>) => Promise<ExecutableToolResult>;
 }[] = [
   {
     name: 'GlobTool',
     execute: async (backend) =>
       finish(
         await new GlobTool(
-          stubAgentEnvironment(backend),
+          backend.fs,
+          backend.processService,
+          backend.environment,
           stubWorkspaceContext('/workspace'),
           noopTelemetryService,
         ).resolveExecution({ pattern: '**/*.ts' }),
@@ -100,7 +108,9 @@ const TOOLS: readonly {
     execute: async (backend) =>
       finish(
         await new GrepTool(
-          stubAgentEnvironment(backend),
+          backend.fs,
+          backend.processService,
+          backend.environment,
           stubWorkspaceContext('/workspace'),
           noopTelemetryService,
         ).resolveExecution({ pattern: 'needle' }),
@@ -134,7 +144,7 @@ describe('rg-unavailable guidance', () => {
     describe(name, () => {
       it('keeps the local-binding guidance byte-identical', async () => {
         ensureRgPathMock.mockRejectedValue(new Error('boom'));
-        const result = await execute(createBackend({ environmentId: 'local', homeDir: '/home/test' }));
+        const result = await execute(createBackend({ homeDir: '/home/test' }));
 
         expect(result.isError).toBe(true);
         expect(outputOf(result)).toBe(

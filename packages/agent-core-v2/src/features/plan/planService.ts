@@ -26,7 +26,6 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { IBlobStore } from '#/persistence/interface/blobStore';
-import { realpathExistingPrefix } from '#/environment/environment';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -330,11 +329,21 @@ export class AgentPlanService extends Service implements IAgentPlanService {
 }
 
 async function canonicalizeExistingPrefix(target: PlanFileTarget, path: string): Promise<string> {
-  try {
-    return await realpathExistingPrefix(target.fs, target.environmentPath, path, isHostFsNotFound);
-  } catch {
-    return path;
+  const tail: string[] = [];
+  let current = path;
+  for (let i = 0; i < 256; i++) {
+    try {
+      const real = await target.fs.realpath(current);
+      return tail.length === 0 ? real : target.environmentPath.join(real, ...tail.toReversed());
+    } catch (error) {
+      if (!isHostFsNotFound(error)) return path;
+      const parent = target.environmentPath.dirname(current);
+      if (parent === current) return path;
+      tail.push(target.environmentPath.basename(current));
+      current = parent;
+    }
   }
+  return path;
 }
 
 function planModeWriteDeniedMessage(planFilePath: string | null): string {

@@ -24,7 +24,9 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostProcessService } from '#/os/interface/hostProcess';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
@@ -151,7 +153,9 @@ export class SubagentTool implements ISubagentTool {
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IInstantiationService private readonly instantiationService: IInstantiationService,
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IHostProcessService private readonly processService: IHostProcessService,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
@@ -237,7 +241,7 @@ export class SubagentTool implements ISubagentTool {
     this.instantiationService.invokeFunction((accessor) => {
       for (const { options } of this.contributions.items) {
         if (refs.get(options.name)?.source === 'user') continue;
-        if (isToolAvailable(options, accessor, this.environment)) {
+        if (isToolAvailable(options, accessor)) {
           refs.set(options.name, { name: options.name, source: options.source ?? 'builtin' });
         } else {
           refs.delete(options.name);
@@ -805,7 +809,6 @@ function truncateReason(reason: string): string {
 registerAgentToolService(ISubagentTool, SubagentTool, {
   name: 'Agent',
   domain: 'subagent',
-  requiredEnvironmentCapabilities: ['process'],
 });
 
 function buildProfileDescriptions(

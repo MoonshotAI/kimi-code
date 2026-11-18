@@ -12,7 +12,6 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
-import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
 
 import {
   ISessionMetadata,
@@ -207,14 +206,9 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   }
 
   get effectiveCwd(): string {
-    if (this.data.environmentId !== undefined && this.data.environmentId !== LOCAL_ENVIRONMENT_ID) {
-      return this.ctx.cwd;
-    }
-    const binding: EnvironmentBinding = {
-      environmentId: this.data.environmentId ?? LOCAL_ENVIRONMENT_ID,
-      cwd: this.data.environmentCwd,
-    };
-    return resolveEffectiveWorkspaceRoots(this.ctx, binding, this.workspaceInfo).workDir;
+    if (this.data.environmentId !== undefined && this.data.environmentId !== 'local') return this.data.cwd ?? this.ctx.cwd;
+    const pinnedCwd = (this.data as SessionMeta & { readonly pinnedCwd?: string }).pinnedCwd ?? this.data.environmentCwd;
+    return resolveEffectiveWorkspaceRoots(this.ctx, pinnedCwd, this.workspaceInfo).workDir;
   }
 
   private mirrorToReadModel(): void {
@@ -312,7 +306,7 @@ export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): Sessi
     customTitle: _legacyCustomTitle,
     ...clean
   } = legacy;
-  const localBinding = clean.environmentId === undefined || clean.environmentId === LOCAL_ENVIRONMENT_ID;
+  const localBinding = clean.environmentId === undefined || clean.environmentId === 'local';
   const cwd =
     (localBinding ? clean.environmentCwd ?? clean.cwd : clean.cwd) ??
     (typeof legacyWorkDir === 'string' && legacyWorkDir.length > 0 ? legacyWorkDir : undefined);

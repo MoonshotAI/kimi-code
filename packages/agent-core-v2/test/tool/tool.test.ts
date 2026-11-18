@@ -22,8 +22,6 @@ import { makeHookRunner } from '../features/externalHooks/runner-stub';
 import { stubLoopWithHooks } from '../agent/loop/stubs';
 import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -296,12 +294,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             data: () => ({ ...loop.data(), profileName: profileByAgentId.get(agentId) }),
           } as never;
         }
-        if (serviceId === IAgentEnvironmentBindingService) {
-          return {
-            _serviceBrand: undefined,
-            current: { environmentId: 'local' },
-          } as never;
-        }
         if (serviceId === IAgentPermissionModeService) {
           return {
             _serviceBrand: undefined,
@@ -469,7 +461,6 @@ function wireRealSubagentService(ctx: TestAgentContext, lifecycle: AgentLifecycl
     'agent',
     new Map<unknown, unknown>([
       [IAgentLoopService, ctx.get(IAgentLoopService)],
-      [IAgentEnvironmentService, ctx.get(IAgentEnvironmentService)],
     ]),
     ctx.get(IAgentScopeContext).agentContext,
   );
@@ -844,23 +835,6 @@ describe('Agent tool description', () => {
       name: 'WebSearch', source: 'user',
     });
     expect(agentDescription()).toContain('WebSearch');
-  });
-
-  it('filters descriptions by the inherited environment capabilities without churning the registry', async () => {
-    ctx = createTestAgent();
-    const environment = ctx.get(IAgentEnvironmentService);
-    vi.spyOn(environment, 'isAvailable').mockImplementation((required = []) => !required.includes('fs'));
-
-    for (const name of ['Edit', 'Write', 'Glob', 'Grep']) {
-      expect(agentDescription()).not.toMatch(new RegExp(`Tools:.*\\b${name}\\b`));
-    }
-    expect(agentDescription()).toMatch(/Tools:.*\bBash\b/);
-    await ctx.get(IAgentToolActivationService).activate();
-    expect(ctx.get(IAgentToolRegistryService).resolve('Edit')).toBeDefined();
-    expect(ctx.get(IAgentToolRegistryService).resolve('Bash')).toBeDefined();
-
-    vi.mocked(environment.isAvailable).mockReturnValue(true);
-    expect(agentDescription()).toMatch(/Tools:.*\bEdit\b/);
   });
 
   it.each([false, true])('uses the NotifyUser contribution condition when enabled=%s', (enabled) => {
@@ -1690,28 +1664,6 @@ describe('Agent tool execution contract', () => {
       }),
     );
     expect(allowed.output).toContain('actual_subagent_type: explore');
-  });
-
-  it('does not create a subagent when process disappears after tool activation', async () => {
-    const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle);
-    vi.spyOn(context.get(IAgentEnvironmentService), 'acquire').mockImplementation(() => {
-      throw new Error('process capability is no longer available');
-    });
-
-    const result = await executeAgentTool(context, {
-      prompt: 'Investigate',
-      description: 'Find cause',
-      subagent_type: 'explore',
-    });
-
-    expect(result).toEqual({
-      output: 'permitting hook failed for "Agent": process capability is no longer available',
-      isError: true,
-    });
-    expect(lifecycle.create).not.toHaveBeenCalled();
-    expect(lifecycle.run).not.toHaveBeenCalled();
-    expect(lifecycle.list()).toHaveLength(1);
   });
 
   it('spawns a subagent type inside the caller allowlist', async () => {

@@ -3,9 +3,8 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { resolveProgramPath } from '#/environment/programPath';
-import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { resolveProgramPath } from '#/os/backends/node-local/programPath';
+import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { IGitService } from './git';
 import { parseNumstat, parsePorcelain, parsePullRequest } from './gitParsers';
@@ -26,9 +25,8 @@ export class GitService implements IGitService {
   >();
 
   constructor(
-    @IEnvironmentService private readonly resolver: EnvironmentResolver,
+    @IHostProcessService private readonly process: IHostProcessService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
-    private readonly environmentId: string = LOCAL_ENVIRONMENT_ID,
   ) {}
 
   async status(cwd: string, options: GitStatusOptions = {}): Promise<FsGitStatusResponse> {
@@ -170,12 +168,11 @@ export class GitService implements IGitService {
     cwd: string,
     options: RunOptions = {},
   ): Promise<RunResult> {
-    const program = this.environmentId === LOCAL_ENVIRONMENT_ID ? localProgramPath(cmd, cwd) : cmd;
+    const program = localProgramPath(cmd, cwd);
     if (program === undefined) {
       return { exitCode: -1, stdout: '', stderr: '' };
     }
-    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
-    const spawned = await lease.environment.process!
+    const spawned = await this.process
       .spawn(program, args, { cwd, env: options.env })
       .then(
         (proc) => ({ ok: true as const, proc }),
@@ -217,7 +214,6 @@ export class GitService implements IGitService {
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       void proc.dispose();
-      lease.dispose();
     }
   }
 

@@ -1,6 +1,5 @@
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 
 import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from './sessionIndex';
@@ -259,15 +258,15 @@ export async function readSessionSummary(
   const originalCwd = recoverCwd(meta);
   const environmentId = typeof meta['environmentId'] === 'string'
     ? meta['environmentId']
-    : LOCAL_ENVIRONMENT_ID;
+    : 'local';
   const environmentCwd = typeof meta['environmentCwd'] === 'string'
     ? meta['environmentCwd']
     : undefined;
-  const cwd = primaryDir === undefined || environmentId !== LOCAL_ENVIRONMENT_ID
+  const cwd = primaryDir === undefined || environmentId !== 'local'
     ? originalCwd
     : resolveEffectiveWorkspaceRoots(
         { workspaceId, cwd: originalCwd ?? primaryDir },
-        { environmentId, cwd: environmentCwd },
+        environmentCwd,
         { primaryByWorkspace: { [workspaceId]: primaryDir }, additionalDirs: [] },
       ).workDir;
   return buildSessionSummary({

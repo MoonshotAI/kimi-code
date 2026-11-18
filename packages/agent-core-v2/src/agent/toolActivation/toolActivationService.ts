@@ -12,7 +12,6 @@ import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 
 import { IAgentToolActivationService } from './toolActivation';
 import { isToolAvailable } from './toolAvailability';
@@ -27,7 +26,6 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentLoopService private readonly profile: IAgentLoopService,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IEventBus eventBus: IEventBus,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
   ) {
@@ -69,7 +67,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
             ? isToolActive(disclosurePolicy, options.name, source)
             : isToolActive(policy, options.name, source);
         if (!activeByProfile) continue;
-        if (!isToolAvailable(options, accessor, this.environment)) continue;
+        if (!isToolAvailable(options, accessor)) continue;
         const tool = accessor.get(id);
         const registration = this.toolRegistry.register(tool, {
           source: options.source,

@@ -54,7 +54,6 @@ import {
   ISessionManager,
   ISessionLockService,
   IWorkspaceInstanceManager,
-  IEnvironmentService,
   IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
@@ -260,7 +259,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const resumed = await harness.resumeSession({ id: implicit.id });
       expect(resumed.id).toBe(implicit.id);
 
-      const local = await client.engineAccessor.get(ISessionManager).create({ workDir, cwd: workDir });
+      const local = await client.engineAccessor.get(ISessionManager).create({ workDir });
       expect(local.id).not.toBe('');
       expect(client.engineAccessor.get(IConfigService).diagnostics()).toContainEqual(
         expect.objectContaining({ severity: readFailure ? 'error' : 'warning' }),

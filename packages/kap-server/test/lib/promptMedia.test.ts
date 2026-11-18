@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { FileMeta, GetResult, IFileService } from '@moonshot-ai/agent-core-v2';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
-import type { EnvironmentPath } from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { HostPath } from '@moonshot-ai/agent-core-v2/session/workspaceContext/hostWorkspaceView';
 
 import {
   resolvePromptMediaFiles,
@@ -44,7 +44,7 @@ function fakeEnvironmentFs() {
   return { files, removed, fs };
 }
 
-const environmentPath: EnvironmentPath = {
+const environmentPath: HostPath = {
   separator: '/',
   delimiter: ':',
   isAbsolute: (path) => path.startsWith('/'),

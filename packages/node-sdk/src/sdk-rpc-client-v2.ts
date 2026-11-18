@@ -428,12 +428,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   private readonly app: Scope;
   /**
-   * The remote environment provider attach handle (`remote-exec` factory), held
-   * as a promise because the constructor is synchronous. Disposed in
-   * {@link close} before the app scope; an attach failure degrades to no
-   * remote environments instead of killing the client.
-   */
-  /**
    * The engine's config reads (`get`/`getAll`/`inspect`/`diagnostics`) are
    * synchronous over state that only exists once the initial load settles;
    * unlike the mutating methods they do not await `IConfigService.ready`

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { EnvironmentPath } from '#/environment/environment';
+import type { HostPath } from '#/session/workspaceContext/hostWorkspaceView';
 
 const DEFAULT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
 
@@ -43,13 +43,13 @@ const nodeFs: OriginalsFs = {
   remove: (path) => unlink(path),
 };
 
-const hostPath: Pick<EnvironmentPath, 'join'> = { join };
+const hostPath: Pick<HostPath, 'join'> = { join };
 
 export interface PersistOriginalImageOptions {
   readonly dir?: string;
   readonly maxTotalBytes?: number;
   readonly fs?: OriginalsFs;
-  readonly path?: Pick<EnvironmentPath, 'join'>;
+  readonly path?: Pick<HostPath, 'join'>;
 }
 
 export function originalImageCacheDir(): string {
@@ -93,7 +93,7 @@ async function sweepCache(
   fs: OriginalsFs,
   dir: string,
   maxTotalBytes: number,
-  pathClass: Pick<EnvironmentPath, 'join'>,
+  pathClass: Pick<HostPath, 'join'>,
 ): Promise<void> {
   const names = await fs.readdir(dir);
   const entries: { path: string; size: number; mtimeMs: number }[] = [];

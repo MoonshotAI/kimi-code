@@ -18,7 +18,6 @@ import { IEventBus } from '#/app/event/eventBus';
 import { Emitter, Event } from '#/_base/event';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ProfileData } from '#/agent/profile/profile';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
 import {
@@ -38,7 +37,6 @@ import {
   SELECT_TOOLS_TOOL_NAME,
 } from '#/agent/toolSelect/toolSelect';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
-import type { Environment, EnvironmentCapability } from '#/environment/environment';
 import type { AgentTool, ToolExecution } from '#/tool/toolContract';
 import '#/agent/tools/agent/agentTool';
 import '#/agent/tools/ask-user-question/askUserQuestionTool';
@@ -152,21 +150,6 @@ describe('AgentToolActivationService', () => {
     disallowedTools?: readonly string[];
   } = {};
   const gateData: { disabledTools: readonly string[] } = { disabledTools: [] };
-  const environmentChangeEmitter = new Emitter<void>();
-  const environmentData = {
-    available: true,
-    connectable: false,
-    capabilities: new Set<EnvironmentCapability>(['fs', 'process']),
-  };
-  const environmentStub = {
-    onDidChange: environmentChangeEmitter.event,
-    isAvailable: (required: readonly EnvironmentCapability[] = []) =>
-      environmentData.available && required.every((capability) => environmentData.capabilities.has(capability)),
-    inspect: () => {
-      if (!environmentData.connectable) throw new Error('environment unavailable');
-      return { connect: async () => {} } as unknown as Environment;
-    },
-  };
 
   function createActivationHost() {
     disposables = new DisposableStore();
@@ -179,7 +162,6 @@ describe('AgentToolActivationService', () => {
         reg.definePartialInstance(IEventBus, {
           subscribe: () => toDisposable(() => {}),
         });
-        reg.definePartialInstance(IAgentEnvironmentService, environmentStub);
         reg.defineInstance(ISessionToolPolicyGate, {
           _serviceBrand: undefined,
           get disabledTools() {
@@ -206,11 +188,6 @@ describe('AgentToolActivationService', () => {
     alphaConstructions = 0;
     betaConstructions = 0;
     gammaConstructions = 0;
-    environmentData.available = true;
-    environmentData.connectable = false;
-    environmentData.capabilities.clear();
-    environmentData.capabilities.add('fs');
-    environmentData.capabilities.add('process');
     _clearScopedRegistryForTests();
     _clearAgentToolContributionsForTests();
     delete profileData.activeToolNames;
@@ -252,152 +229,6 @@ describe('AgentToolActivationService', () => {
     const registry = ix.get(IAgentToolRegistryService);
     expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
     expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
-  });
-
-  it('declares the environment requirements used by every static environment-bound tool', () => {
-    const requirements = Object.fromEntries(
-      savedContributions.map((contribution) => [
-        contribution.options.name,
-        contribution.options.requiredEnvironmentCapabilities,
-      ]),
-    );
-
-    expect(requirements).toMatchObject({
-      Agent: ['process'],
-      Read: undefined,
-      Write: ['fs'],
-      Edit: ['fs'],
-      Bash: ['process'],
-      Grep: ['fs', 'process'],
-      Glob: ['fs', 'process'],
-    });
-  });
-
-  it('keeps Agent and environment-independent tools on a process-only environment', async () => {
-    environmentData.capabilities.delete('fs');
-    const agentOptions = savedContributions.find((record) => record.options.name === 'Agent')!.options;
-    registerAgentToolService(IAlphaTool, AlphaTool, {
-      name: 'Alpha',
-      requiredEnvironmentCapabilities: ['fs'],
-    });
-    registerAgentToolService(IAgentStubTool, AgentStubTool, agentOptions);
-    registerAgentToolService(IGammaTool, GammaTool, { name: 'Gamma' });
-    const ix = createActivationHost();
-
-    await ix.get(IAgentToolActivationService).activate();
-
-    const registry = ix.get(IAgentToolRegistryService);
-    expect(registry.resolve('Alpha')).toBeUndefined();
-    expect(registry.resolve('Agent')).toBeInstanceOf(AgentStubTool);
-    expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
-    expect(alphaConstructions).toBe(0);
-  });
-
-  it('keeps Agent registered with the same identity when process availability changes', async () => {
-    const agentOptions = savedContributions.find((record) => record.options.name === 'Agent')!.options;
-    registerAgentToolService(IAgentStubTool, AgentStubTool, agentOptions);
-    const ix = createActivationHost();
-    const registry = ix.get(IAgentToolRegistryService);
-    await ix.get(IAgentToolActivationService).activate();
-    const tool = registry.resolve('Agent');
-    expect(tool).toBeInstanceOf(AgentStubTool);
-
-    environmentData.capabilities.delete('process');
-    environmentChangeEmitter.fire();
-    expect(registry.resolve('Agent')).toBe(tool);
-
-    environmentData.capabilities.add('process');
-    environmentChangeEmitter.fire();
-    expect(registry.resolve('Agent')).toBe(tool);
-  });
-
-  it('freezes environment-bound tool registrations on capability and status changes', async () => {
-    registerAgentToolService(IAlphaTool, AlphaTool, {
-      name: 'Alpha',
-      requiredEnvironmentCapabilities: ['fs'],
-    });
-    registerAgentToolService(IBetaTool, BetaTool, {
-      name: 'Beta',
-      requiredEnvironmentCapabilities: ['process'],
-    });
-    registerAgentToolService(IGammaTool, GammaTool, { name: 'Gamma' });
-    const ix = createActivationHost();
-    const registry = ix.get(IAgentToolRegistryService);
-    await ix.get(IAgentToolActivationService).activate();
-    const before = registry.list();
-    const instances = before.map((info) => registry.resolve(info.name));
-
-    environmentData.capabilities.delete('fs');
-    environmentChangeEmitter.fire();
-    expect(registry.list()).toEqual(before);
-
-    environmentData.available = false;
-    environmentChangeEmitter.fire();
-    expect(registry.list()).toEqual(before);
-    expect(before.every((info, index) => registry.resolve(info.name) === instances[index])).toBe(true);
-
-    environmentData.available = true;
-    environmentData.capabilities.add('fs');
-    environmentChangeEmitter.fire();
-    expect(registry.list()).toEqual(before);
-  });
-
-  it('keeps environment-bound tools registered while the environment is unavailable but reconnectable', async () => {
-    registerAgentToolService(IAlphaTool, AlphaTool, {
-      name: 'Alpha',
-      requiredEnvironmentCapabilities: ['fs'],
-    });
-    registerAgentToolService(IBetaTool, BetaTool, {
-      name: 'Beta',
-      requiredEnvironmentCapabilities: ['process'],
-    });
-    registerAgentToolService(IGammaTool, GammaTool, { name: 'Gamma' });
-    environmentData.available = false;
-    environmentData.connectable = true;
-    const ix = createActivationHost();
-    const registry = ix.get(IAgentToolRegistryService);
-
-    await ix.get(IAgentToolActivationService).activate();
-    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
-    expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
-    expect(registry.resolve('Gamma')).toBeInstanceOf(GammaTool);
-
-    environmentChangeEmitter.fire();
-    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
-    expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
-
-    environmentData.available = true;
-    environmentData.connectable = false;
-    environmentChangeEmitter.fire();
-    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
-    expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
-  });
-
-  it('keeps conditional tools registered when an environment change preserves their requirements', async () => {
-    let available = true;
-    registerAgentToolService(IAlphaTool, AlphaTool, {
-      name: 'Alpha',
-      requiredEnvironmentCapabilities: ['fs'],
-      when: () => available,
-    });
-    registerAgentToolService(IGammaTool, GammaTool, {
-      name: 'Gamma',
-      when: () => available,
-    });
-    const ix = createActivationHost();
-    const registry = ix.get(IAgentToolRegistryService);
-    await ix.get(IAgentToolActivationService).activate();
-    const alpha = registry.resolve('Alpha');
-    const gamma = registry.resolve('Gamma');
-    expect(alpha).toBeInstanceOf(AlphaTool);
-    expect(gamma).toBeInstanceOf(GammaTool);
-
-    available = false;
-    environmentData.capabilities.delete('process');
-    environmentChangeEmitter.fire();
-
-    expect(registry.resolve('Alpha')).toBe(alpha);
-    expect(registry.resolve('Gamma')).toBe(gamma);
   });
 
   it('activates only the tools allowed by the profile allowlist', async () => {
@@ -535,7 +366,6 @@ describe('AgentToolActivationService', () => {
       return [
         [IAgentLoopService, { data: () => profileData as ProfileData }],
         [IEventBus, { subscribe: () => toDisposable(() => {}) }],
-        [IAgentEnvironmentService, { _serviceBrand: undefined, ...environmentStub }],
         ...extra,
       ];
     }

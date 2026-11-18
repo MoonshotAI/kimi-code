@@ -15,10 +15,7 @@ import type { ToolCall } from '#human/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { Environment } from '#/environment/environment';
-import { EnvironmentError } from '#/environment/environmentRegistry';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { stubAgentEnvironment } from '../../environment/stubs';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import type { WatchChange } from '#human/utils/watch';
@@ -110,7 +107,6 @@ function createHarness(
     readonly hostFs?: IHostFileSystem;
     readonly pathClass?: 'posix' | 'win32';
     readonly environmentWorkDir?: string;
-    readonly acquireError?: Error;
     readonly log?: ILogService;
     readonly restoredProfile?: {
       readonly systemPrompt: string;
@@ -205,39 +201,11 @@ function createHarness(
       } as unknown as IHostEnvironment;
       reg.defineInstance(IHostFileSystem, hostFs);
       reg.defineInstance(IHostEnvironment, hostEnvironment);
-      const environment = {
-        identity: { environmentId: 'local', generation: 'test' },
-        capabilities: new Set(['fs', 'process']),
-        host: hostEnvironment,
-        path: {
-          separator: options.pathClass === 'win32' ? '\\' : '/',
-          delimiter: options.pathClass === 'win32' ? ';' : ':',
-          isAbsolute: (path: string) => path.startsWith('/') || /^[A-Za-z]:[\\\\]/.test(path),
-          join,
-          relative: (from: string, to: string) => normalize(to).replace(`${normalize(from)}/`, ''),
-          resolve: (...paths: readonly string[]) => normalize(join(...paths)),
-          basename: (path: string) => basename(path),
-          dirname: (path: string) => dirname(path),
-        },
-        workspace: { mapRoots: (roots: { workDir: string; additionalDirs?: readonly string[] }) => roots },
-        fs: hostFs,
-        status: 'ready',
-        onDidChangeStatus: () => ({ dispose: () => {} }),
-        dispose: () => {},
-      } as unknown as Environment;
-      const agentEnvironment = stubAgentEnvironment(environment, {
+      reg.defineInstance(ISessionWorkspaceContext, {
+        _serviceBrand: undefined,
         workDir: options.environmentWorkDir ?? options.cwd ?? workDir,
-      });
-      if (options.acquireError !== undefined) {
-        const failure = options.acquireError;
-        agentEnvironment.acquire = () => {
-          throw failure;
-        };
-        agentEnvironment.acquireWhenReady = async () => {
-          throw failure;
-        };
-      }
-      reg.defineInstance(IAgentEnvironmentService, agentEnvironment);
+        additionalDirs: [],
+      } as unknown as ISessionWorkspaceContext);
       reg.defineInstance(IBashParserService, new BashParserService());
       reg.defineInstance(
         ITelemetryService,
@@ -1511,24 +1479,6 @@ describe('agentsMdReminder remote environment binding', () => {
 
     expect(outputText(result)).toBe('original result');
     expect(reminderText(h)).toContain(remoteAgentsMd);
-  });
-
-});
-
-describe('agentsMdReminder environment degradation', () => {
-  it('skips the reminder without escaping when the seeded environment is disconnected', async () => {
-    const h = createHarness({
-      acquireError: new EnvironmentError('environment.unavailable', 'environment remote is disconnected'),
-    });
-    const dir = join(workDir, 'pkg');
-    await writeAgentsMd(dir, 'pkg instructions');
-    h.reminder.seedInjected([], workDir);
-
-    const result = await fire(h, didCtx('Read', { path: join(dir, 'index.ts') }));
-
-    expect(outputText(result)).toBe('original result');
-    expect(agentsMdMessages(h)).toHaveLength(0);
-    expect(h.reminders).toHaveLength(0);
   });
 
 });

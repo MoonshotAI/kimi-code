@@ -45,11 +45,8 @@ import {
   IGrepTool,
 } from '#/agent/tools/os/grep/grep';
 import { GrepTool as ProductionGrepTool } from '#/agent/tools/os/grep/grepTool';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
-import { stubAgentEnvironment } from '../../../../environment/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../../../app/telemetry/stubs';
 import { registerStateServices } from '../../../../state/stubs';
 
@@ -182,24 +179,10 @@ class GrepTool extends ProductionGrepTool {
     workspaceConfig: WorkspaceConfig,
     telemetry: ITelemetryService = noopTelemetryService,
   ) {
-    const environment = createTestEnv(kaos);
-    const backend = Object.assign(
-      new FakeEnvironment(
-        { environmentId: 'local', generation: 'test' },
-        { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
-      ),
-      {
-        process: createTestProcessService(kaos),
-        fs: createTestFs(kaos),
-        host: environment,
-      },
-    );
-    const environmentService = stubAgentEnvironment(backend, {
-      workDir: workspaceConfig.workspaceDir,
-      additionalDirs: workspaceConfig.additionalDirs,
-    });
     super(
-      environmentService,
+      createTestFs(kaos),
+      createTestProcessService(kaos),
+      createTestEnv(kaos),
       stubWorkspaceContext(workspaceConfig.workspaceDir, workspaceConfig.additionalDirs),
       telemetry,
     );
@@ -339,14 +322,6 @@ describe('GrepTool', () => {
           const processService = createTestProcessService(kaos);
           const fs = createTestFs(kaos);
           reg.defineInstance(IHostEnvironment, environment);
-          const backend = Object.assign(
-            new FakeEnvironment(
-              { environmentId: 'local', generation: 'test' },
-              { capabilities: ['fs', 'process'], pathClass: environment.pathClass },
-            ),
-            { process: processService, fs, host: environment },
-          );
-          reg.defineInstance(IAgentEnvironmentService, stubAgentEnvironment(backend));
           reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
           reg.defineInstance(ITelemetryService, noopTelemetryService);
           reg.definePartialInstance(IOAuthService, {

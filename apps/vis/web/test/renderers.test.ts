@@ -55,6 +55,7 @@ const HISTORICAL_OR_HEADER_TYPES = new Set([
   'staleGuard.recorded',
   'staleGuard.cleared',
   'prompt.accepted',
+  'environment.set_binding',
   'task.waitDelivered',
   'turn.step.interrupted',
   'turn.step.retrying',

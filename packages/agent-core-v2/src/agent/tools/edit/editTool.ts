@@ -5,10 +5,10 @@ import {
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '#/app/edit/fileEdit';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostWorkspaceView } from '#/session/workspaceContext/hostWorkspaceView';
 import { IAgentPlanService } from '#/features/plan/plan';
-import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -29,13 +29,14 @@ export class EditTool implements IEditTool {
 
   constructor(
     @IFileEditService private readonly editor: IFileEditService,
-    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IHostEnvironment private readonly environment: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {}
 
-  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
+  private workspaceConfig(view: HostWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
@@ -58,11 +59,9 @@ export class EditTool implements IEditTool {
         },
       };
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
-    try {
-      const inspected = resolutionLease.environment;
-      const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, {
+    await this.environment.ready;
+    {
+      const view = new HostWorkspaceView(this.environment, {
         workDir: this.workspaceCtx.workDir,
         additionalDirs: [
           ...this.workspaceCtx.additionalDirs,
@@ -94,20 +93,8 @@ export class EditTool implements IEditTool {
             pathClass: env.pathClass,
             homeDir: env.homeDir,
           }),
-        execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
-          try {
-            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
-              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
-            }
-            return await this.execution(args, path, lease.environment.fs!);
-          } finally {
-            lease.dispose();
-          }
-        },
+        execute: () => this.execution(args, path, this.fs),
       };
-    } finally {
-      resolutionLease.dispose();
     }
   }
 
@@ -144,5 +131,4 @@ export class EditTool implements IEditTool {
 registerAgentToolService(IEditTool, EditTool, {
   name: 'Edit',
   domain: 'edit',
-  requiredEnvironmentCapabilities: ['fs'],
 });

@@ -27,7 +27,7 @@ import {
 import type { FoldContext } from '#/state/state';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ToolCall } from '@moonshot-ai/core/llm/message';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError } from '#/os/interface/hostFsErrors';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -91,20 +91,17 @@ describe('AgentFileHistoryService', () => {
     disposables.dispose();
   });
 
-  function stubEnvironment(remoteShape = false): IAgentEnvironmentService {
-    const environment = {
-      fs: hostFs(remoteShape),
-      path: posix,
-      workspace: { mapRoots: (roots: unknown) => roots },
-    };
-    return {
-      inspect: () => environment,
-      acquire: () => ({
-        environment,
-        dispose: () => {},
-      }),
-    } as unknown as IAgentEnvironmentService;
-  }
+  const environment: IHostEnvironment = {
+    _serviceBrand: undefined,
+    osKind: 'Linux',
+    osArch: 'x64',
+    osVersion: '',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+    pathClass: 'posix',
+    homeDir: '/home',
+    ready: Promise.resolve(),
+  };
 
   function hostFs(remoteShape = false): IHostFileSystem {
     const missing = (path: string): Error =>
@@ -151,7 +148,7 @@ describe('AgentFileHistoryService', () => {
           executorEvents.executor,
           eventBus,
           ix.get(IEventDispatcher),
-          stubEnvironment(remoteShape),
+          environment,
           blobs,
           workspace,
           {
@@ -168,6 +165,7 @@ describe('AgentFileHistoryService', () => {
           } as ISessionContext,
           new JsonAtomicDocumentStore(ix.get(IFileSystemStorageService)),
           {
+            ...hostFs(remoteShape),
             readdir: async () => [],
             remove: async () => {},
           } as unknown as IHostFileSystem,

@@ -1,6 +1,3 @@
-import { EnvironmentRegistry } from '#/environment/environmentRegistry';
-import { IEnvironmentService } from '#/app/environment/environment';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
@@ -241,14 +238,12 @@ function sessionManagerResuming(sessionId: string): SessionManager {
     id: summary.workspaceId,
     program: { sessionControllerGeneration: 'generation-1', createSessionController: () => controller },
   } as unknown as WorkspaceInstance;
-  const environments = new EnvironmentRegistry() as unknown as IEnvironmentService;
   return new SessionManager(
     {
       acquire: async () => ({ instance: workspace, dispose: () => {} }),
       get: () => workspace,
     } as unknown as IWorkspaceInstanceManager,
     { get: async () => summary } as unknown as ISessionIndex,
-    environments,
     {
       _serviceBrand: undefined,
       stat: async () => ({ isFile: false, isDirectory: true, size: 0 }),

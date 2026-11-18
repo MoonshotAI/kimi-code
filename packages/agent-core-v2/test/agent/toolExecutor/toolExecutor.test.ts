@@ -72,11 +72,9 @@ import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
-import { stubAgentEnvironment } from '../../environment/stubs';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -1149,7 +1147,7 @@ describe('truncation pipeline', () => {
   let readConfig: IConfigService;
   let globProcess: HostProcessService;
   let attachmentStore: SessionMediaStoreService;
-  let mediaEnvironment: IAgentEnvironmentService;
+  let mediaEnvironment: IHostEnvironment;
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-executor-truncation-'));
@@ -1182,14 +1180,19 @@ describe('truncation pipeline', () => {
     readConfig = truncationContainer.get(IConfigService);
     await readConfig.ready;
     globProcess = new HostProcessService();
-    const environment = Object.assign(new FakeEnvironment(
-      { environmentId: 'local', generation: 'test' },
-      { capabilities: ['fs', 'process'] },
-    ), { fs: new HostFileSystem(), process: globProcess });
-    const binding = stubAgentEnvironment(environment);
-    mediaEnvironment = binding;
+    const environment: IHostEnvironment = {
+      _serviceBrand: undefined,
+      osKind: 'Linux',
+      osArch: 'x64',
+      osVersion: '',
+      shellName: 'bash',
+      shellPath: '/bin/bash',
+      pathClass: 'posix',
+      homeDir,
+      ready: Promise.resolve(),
+    };
+    mediaEnvironment = environment;
     registry.register(new ReadTool(
-      binding,
       stubWorkspaceContext(homeDir),
       { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
       truncation,
@@ -1199,9 +1202,11 @@ describe('truncation pipeline', () => {
       } as unknown as IAgentLoopService,
       { isToolActive: () => true } as unknown as IAgentToolPolicyService,
       { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
+      new HostFileSystem(),
+      environment,
       attachmentStore,
     ));
-    registry.register(new GlobTool(binding, stubWorkspaceContext(homeDir), noopTelemetryService));
+    registry.register(new GlobTool(new HostFileSystem(), globProcess, environment, stubWorkspaceContext(homeDir), noopTelemetryService));
   });
 
   afterEach(async () => {
@@ -1396,13 +1401,7 @@ describe('truncation pipeline', () => {
   });
 
   it('resolves attachment references for media reads and exposes binary paths for converters', async () => {
-    const environmentFs = mediaEnvironment.inspect().fs!;
-    vi.spyOn(environmentFs, 'stat').mockRejectedValue(new Error('client cannot access daemon storage'));
-    vi.spyOn(environmentFs, 'readBytes').mockRejectedValue(new Error('client cannot access daemon storage'));
-    vi.spyOn(environmentFs, 'readLines').mockImplementation(() => {
-      throw new Error('client cannot access daemon storage');
-    });
-    registry.register(new ReadMediaFileTool(mediaEnvironment, { workspaceDir: homeDir, additionalDirs: [] }, attachmentStore));
+    registry.register(new ReadMediaFileTool(new HostFileSystem(), mediaEnvironment, { workspaceDir: homeDir, additionalDirs: [] }, attachmentStore));
     const png = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
     const bytes = [png, Buffer.from('%PDF-1.4\nexample\n%%EOF')];
     const client: MCPClient = {
@@ -1436,11 +1435,8 @@ describe('truncation pipeline', () => {
     expect(readFileSync(paths[1]!).equals(bytes[1]!)).toBe(true);
   });
 
-  it('reads session text from its owner while workspace text still uses the environment buffer', async () => {
-    const environmentFs = mediaEnvironment.inspect().fs!;
-    const clientRead = vi.spyOn(environmentFs, 'readLines').mockImplementation(async function* () {
-      yield 'unsaved client buffer\n';
-    });
+  it('reads session text from its owner and workspace text from disk', async () => {
+    const clientRead = vi.spyOn(HostFileSystem.prototype, 'readLines');
     const workspaceFile = join(homeDir, 'workspace.txt');
     await writeFile(workspaceFile, 'disk content\n');
     const bytes = Buffer.from('session attachment\n');
@@ -1460,7 +1456,7 @@ describe('truncation pipeline', () => {
     expect(attachment?.output).toBe('1\tsession attachment');
     expect(clientRead).not.toHaveBeenCalled();
     const [workspace] = await execute([toolCall('read_workspace', 'Read', { path: workspaceFile })]);
-    expect(workspace?.output).toBe('1\tunsaved client buffer');
+    expect(workspace?.output).toBe('1\tdisk content');
     expect(clientRead).toHaveBeenCalledTimes(1);
   });
 
