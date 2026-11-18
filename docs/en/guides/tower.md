@@ -73,12 +73,12 @@ Tower may snapshot uncommitted and untracked files into worker branches; when cr
 Tower supports three mission kinds. Choose according to what the worker may write and what must happen before the mission closes.
 
 - **Build (`kind: "build"`)**: reserves its scope for code changes, requires a committed diff and independent clean review, and performs a real merge.
-- **Artifact (`kind: "artifact"`)**: reserves its scope for business deliverables such as rendered results, training outputs, or analysis reports. It requires key committed deliverables and acceptance of the entire committed tip, but no independent reviewer, followed by a real merge.
+- **Artifact (`kind: "artifact"`)**: typically for one-off deliverables such as training outputs or industry analysis. Deliverables are committed first, then merged once the user confirms — no independent reviewer required.
 - **Survey (`kind: "survey"`)**: treats its scope as informational, remains read-only, and closes with zero diff, no review, and no Git merge.
 
 Use `artifact` when the work reads business inputs but must write deliverables. For example: "Create an artifact mission for the quarterly analysis. Commit `reports/q3/summary.html` and `reports/q3/data.csv`, then show me those files for acceptance."
 
-The worker commits all deliverables inside the reserved scope and marks `reports/q3/summary.html` and `reports/q3/data.csv` as key artifacts; uncommitted files are not accepted or merged. Tower presents the key artifacts and the number of additional committed files, with an optional full manifest when you want more detail. The acceptance authorizes the entire current tip, including changes not shown in the key-artifact list. Requested changes trigger rework, and any new commit or rebase requires fresh acceptance. Acceptance depends on your merge intent; the permission mode only determines how Tower handles unclear intent.
+The worker commits all deliverables inside the reserved scope and marks `reports/q3/summary.html` and `reports/q3/data.csv` as key artifacts; uncommitted files are not accepted or merged. Tower presents the key artifacts and the number of additional committed files, with an optional full manifest when you want more detail. The acceptance authorizes the entire current tip, including changes not shown in the key-artifact list. Requested changes trigger rework, and any new commit or rebase requires fresh acceptance. Acceptance depends on the user's merge intent; the permission mode only determines how Tower handles unclear intent.
 
 ## Check status and intervene
 
@@ -115,7 +115,7 @@ After Kimi Code restarts, if another session takes over the current project, the
 
 Tower is mutually exclusive with Goal, Plan, and swarm modes. Entering Tower exits Plan or swarm and pauses the active goal; activating a goal or entering Plan or swarm also exits Tower. Tower state remains on disk, and you can return later with `/tower on`.
 
-Workers follow the same model-selection rules as Agent and AgentSwarm: without `[secondary_model]` they inherit Tower's current model, and once it is configured, newly spawned workers use `default_model`. Reviewers always inherit Tower's current model by default, so the merge-gate review runs on the same model as the tower; a reviewer switches to another model only when an explicit pool alias is passed. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
+Without `[secondary_model]`, workers inherit Tower's current model; once it is configured, newly spawned workers use `default_model`. Reviewers always inherit Tower's current model by default, so the merge-gate review runs on the same model as the tower; a reviewer switches to another model only when an explicit pool alias is passed. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
 
 You can explicitly choose the model for an individual new spawn in a normal message. For example, assuming `smart/slow` is configured in the pool:
 
@@ -124,7 +124,7 @@ You can explicitly choose the model for an individual new spawn in a normal mess
 
 The only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); aliases that exist only in `[models]` are not accepted. The `model` parameter is available whenever a pool is configured, including single-entry pools, so a reviewer can explicitly keep the pool model.
 
-To control token costs, set the pool default to a cheaper model; workers use it by default, and an explicit pool alias overrides the default for one spawn — for workers and reviewers alike.
+To control token costs, set the pool default to a cheaper model: workers use it by default, and either workers or reviewers can override their own default for a single spawn by passing an explicit pool alias.
 
 ## Safety and resource cost
 
