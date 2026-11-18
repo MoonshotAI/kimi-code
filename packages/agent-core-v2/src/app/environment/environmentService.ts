@@ -30,7 +30,7 @@ export class EnvironmentService extends EnvironmentRegistry implements IEnvironm
     super();
     this.localReady = environment.ready.then(() => {
       if (!this.stopped) this.register(new LocalEnvironment(environment, fs, process));
-    });
+    }).catch(() => {});
   }
 
   async addProvider(factory: EnvironmentProviderFactory): Promise<{ dispose(): Promise<void> }> {
