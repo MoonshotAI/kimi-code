@@ -1,144 +1,104 @@
-import type { IAgentTaskService } from '#/agent/task/task';
-import type { AgentTask, AgentTaskInfoBase, AgentTaskSettlement, AgentTaskSink } from '#/agent/task/types';
-import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
+import type { IEventDispatcher } from '#/state/eventDispatcher';
+import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
+import type { SubagentTaskInfo } from '#/agent/task/types';
 
 import type { AgentRunAttemptHandle } from './agentRunBatch';
 import type { SessionSwarmRunResult, SessionSwarmTask } from './sessionSwarm';
 
+type MemberProjection = {
+  info: SubagentTaskInfo;
+  announced: boolean;
+  settled: boolean;
+};
+
 export class SwarmMemberTasks {
-  private readonly members = new Map<SessionSwarmTask, { readonly task: SwarmMemberTask; readonly taskId: string }>();
+  private readonly members = new Map<SessionSwarmTask, MemberProjection>();
 
   constructor(
-    private readonly tasks: IAgentTaskService | undefined,
+    private readonly dispatcher: IEventDispatcher | undefined,
+    private readonly agentId: string,
     members: readonly SessionSwarmTask[],
-    stopMember: (member: SessionSwarmTask, reason: unknown) => void,
   ) {
-    if (tasks === undefined) return;
+    if (dispatcher === undefined) return;
     for (const member of members) {
-      const task = new SwarmMemberTask(member, (reason) => stopMember(member, reason));
-      try {
-        const taskId = tasks.registerTask(task, { detached: member.runInBackground, detachable: false });
-        this.members.set(member, { task, taskId });
-      } catch {
-      }
+      this.members.set(member, {
+        announced: false,
+        settled: false,
+        info: {
+          taskId: '',
+          description: member.description,
+          kind: 'agent',
+          status: 'running',
+          detached: member.runInBackground,
+          startedAt: 0,
+          endedAt: null,
+          agentId: member.kind === 'resume' ? member.resumeAgentId : undefined,
+          subagentType: member.profileName,
+          parentToolCallId: member.parentToolCallId,
+          model: member.kind === 'spawn' ? member.plan.model : undefined,
+          thinkingEffort: member.kind === 'spawn' ? member.plan.thinking : undefined,
+          swarmIndex: member.swarmIndex,
+        },
+      });
     }
   }
 
   started(member: SessionSwarmTask, handle: AgentRunAttemptHandle): void {
     const entry = this.members.get(member);
-    if (entry === undefined) return;
-    entry.task.started(handle);
-    this.tasks?.refresh(entry.taskId);
+    if (entry === undefined || entry.settled) return;
+    const firstStart = !entry.announced;
+    entry.info = {
+      ...entry.info,
+      taskId: firstStart ? handle.agentId : entry.info.taskId,
+      agentId: handle.agentId,
+      subagentType: handle.profileName,
+      model: handle.model ?? entry.info.model,
+      thinkingEffort: handle.thinkingEffort ?? entry.info.thinkingEffort,
+      stateReason: undefined,
+      startedAt: firstStart ? Date.now() : entry.info.startedAt,
+    };
+    if (!firstStart) return;
+    entry.announced = true;
+    void this.dispatcher?.dispatch(new TaskStarted({ agentId: this.agentId, info: entry.info }));
   }
 
   suspended(member: SessionSwarmTask, reason: string): void {
     const entry = this.members.get(member);
-    if (entry === undefined) return;
-    entry.task.suspended(reason);
-    this.tasks?.refresh(entry.taskId);
+    if (entry === undefined || entry.settled) return;
+    entry.info = { ...entry.info, stateReason: reason };
   }
 
   settled(result: SessionSwarmRunResult): void {
-    this.members.get(result.task)?.task.settled(result);
+    const entry = this.members.get(result.task);
+    if (entry === undefined || !entry.announced || entry.settled) return;
+    entry.settled = true;
+    entry.info = {
+      ...entry.info,
+      agentId: result.agentId ?? entry.info.agentId,
+      status: statusOf(result),
+      endedAt: Date.now(),
+      stopReason: result.error,
+      stateReason: undefined,
+      resultSummary: result.result,
+    };
+    void this.dispatcher?.dispatch(new TaskTerminated({ agentId: this.agentId, info: entry.info }));
   }
 
   failAll(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
-    for (const [member, { task }] of this.members) {
-      task.settled({ task: member, status: 'failed', error: message });
+    for (const member of this.members.keys()) {
+      this.settled({ task: member, status: 'failed', error: message });
     }
   }
 }
 
-export class SwarmMemberTask implements AgentTask {
-  readonly kind = 'agent' as const;
-  readonly idPrefix = 'agent';
-  readonly description: string;
-  private agentId: string | undefined;
-  private model: string | undefined;
-  private thinkingEffort: string | undefined;
-  private stateReason: string | undefined;
-  private resultSummary: string | undefined;
-  private sink: AgentTaskSink | undefined;
-  private result: SessionSwarmRunResult | undefined;
-  private finish: (() => void) | undefined;
-  private readonly stopOnAbort = (): void => {
-    this.stop(this.sink?.signal.reason);
-  };
-
-  constructor(
-    private readonly member: SessionSwarmTask,
-    private readonly stop: (reason: unknown) => void,
-  ) {
-    this.description = member.description;
-    if (member.kind === 'resume') {
-      this.agentId = member.resumeAgentId;
-    } else {
-      this.model = member.plan.model;
-      this.thinkingEffort = member.plan.thinking;
-    }
-  }
-
-  start(sink: AgentTaskSink): Promise<void> {
-    this.sink = sink;
-    if (sink.signal.aborted) this.stopOnAbort();
-    else sink.signal.addEventListener('abort', this.stopOnAbort, { once: true });
-    return new Promise((resolve) => {
-      this.finish = resolve;
-      if (this.result !== undefined) void this.settleWith(this.result);
-    });
-  }
-
-  started(handle: AgentRunAttemptHandle): void {
-    this.agentId = handle.agentId;
-    this.model = handle.model ?? this.model;
-    this.thinkingEffort = handle.thinkingEffort ?? this.thinkingEffort;
-    this.stateReason = undefined;
-  }
-
-  suspended(reason: string): void {
-    this.stateReason = reason;
-  }
-
-  settled(result: SessionSwarmRunResult): void {
-    if (this.result !== undefined) return;
-    this.result = result;
-    if (this.sink !== undefined) void this.settleWith(result);
-  }
-
-  toInfo(base: AgentTaskInfoBase): SubagentTaskInfo {
-    return {
-      ...base,
-      kind: 'agent',
-      agentId: this.agentId,
-      subagentType: this.member.profileName,
-      parentToolCallId: this.member.parentToolCallId,
-      model: this.model,
-      thinkingEffort: this.thinkingEffort,
-      swarmIndex: this.member.swarmIndex,
-      stateReason: this.stateReason,
-      resultSummary: this.resultSummary,
-    };
-  }
-
-  private async settleWith(result: SessionSwarmRunResult): Promise<void> {
-    const sink = this.sink!;
-    sink.signal.removeEventListener('abort', this.stopOnAbort);
-    this.agentId = result.agentId ?? this.agentId;
-    this.stateReason = undefined;
-    this.resultSummary = result.result;
-    await sink.settle(settlementOf(result));
-    this.finish?.();
-  }
-}
-
-function settlementOf(result: SessionSwarmRunResult): AgentTaskSettlement {
+function statusOf(result: SessionSwarmRunResult): SubagentTaskInfo['status'] {
   switch (result.status) {
     case 'completed':
-      return { status: 'completed' };
+      return 'completed';
     case 'failed':
-      return { status: 'failed', stopReason: result.error };
+      return 'failed';
     case 'aborted':
-      return { status: 'killed', stopReason: result.error };
+      return 'killed';
   }
 }

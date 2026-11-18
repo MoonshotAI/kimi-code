@@ -5,7 +5,7 @@ Kimi Code CLI 通过环境变量控制少数运行时行为：迁移数据目录
 ::: warning 重要：API 密钥不在这里配置
 `KIMI_API_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 等密钥变量**不会**从 shell 环境变量自动读取。在终端里 `export KIMI_API_KEY=xxx` 不会让任何供应商获得密钥。密钥必须写在 `config.toml` 的 `[providers.<name>]` 段或 `[providers.<name>.env]` 子表里。
 
-例外有两处：`KIMI_MODEL_*` 系列和供应商的 `api_key_env` 字段，这两个显式通道*确实*会从 shell 读取凭证。详见[用环境变量定义模型](#用环境变量定义模型kimi_model_)和[供应商凭证键](#供应商凭证键写在-configtoml-里)。
+例外包括：`KIMI_MODEL_*` 系列、供应商的 `api_key_env` 字段，以及少数由厂商 SDK 直接从 shell 读取的凭证（`GOOGLE_APPLICATION_CREDENTIALS`，以及 Amazon Bedrock 的 AWS 凭证链）。详见[用环境变量定义模型](#用环境变量定义模型kimi_model_)和[供应商凭证键](#供应商凭证键写在-configtoml-里)。
 
 背景说明见[配置覆盖：供应商凭证](./overrides.md#供应商凭证)。
 :::
@@ -54,7 +54,7 @@ export KIMI_CODE_CUSTOM_HEADERS=$'X-Gateway-Cluster: my-cluster\nX-Custom-Tag: d
 
 ## 供应商凭证键（写在 config.toml 里）
 
-下面这些键名不是直接从 shell 读取的。它们是写在 `config.toml` 的 `[providers.<name>.env]` 子表里、作为 `api_key` / `base_url` 备用来源的键名。CLI 只从配置文件读取，不从 `process.env` 读取。
+下面这些键名写在 `config.toml` 的 `[providers.<name>.env]` 子表里，作为 `api_key` / `base_url` 的备用来源。除非某一行另有说明，CLI 只从配置文件读取这些键名，不从 `process.env` 读取。
 
 上面的惯用键名是按供应商类型固定的。如果更希望把密钥放在 shell 环境里并使用自定义变量名，可以在供应商上设置 [`api_key_env`](./config-files.md#providers)：CLI 会在每次请求时从该变量读取密钥。
 
@@ -76,13 +76,23 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `ANTHROPIC_BASE_URL` | Anthropic | Anthropic SDK 默认值 |
 | `OPENAI_API_KEY` | OpenAI（`openai` 和 `openai_responses`） | 无 |
 | `OPENAI_BASE_URL` | OpenAI（`openai` 和 `openai_responses`） | `https://api.openai.com/v1` |
+| `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock | 无 |
+| `AWS_DEFAULT_REGION` | Amazon Bedrock | shell 中的值（如有） |
+| `AWS_REGION` | Amazon Bedrock | 已配置的 `AWS_DEFAULT_REGION` 或 shell 中的值 |
+| `AWS_BEDROCK_BASE_URL` | Amazon Bedrock | 按区域推导为 `bedrock-runtime.<region>.amazonaws.com` |
+| `AWS_PROFILE` | Amazon Bedrock | 回退到 shell 中的值 |
 | `GOOGLE_API_KEY` | Google GenAI、Vertex AI | 无 |
 | `VERTEXAI_API_KEY` | Vertex AI | 无 |
 | `GOOGLE_CLOUD_PROJECT` | Vertex AI | 无 |
 | `GOOGLE_CLOUD_LOCATION` | Vertex AI | 无 |
 
 ::: warning
-`GOOGLE_APPLICATION_CREDENTIALS`（服务账号 JSON 路径）是唯一走系统环境变量的例外。它由 Google SDK 自身通过 ADC 流程读取，CLI 不参与。其他所有键名都必须写在 `[providers.<name>.env]` 子表里。
+有两类凭证机制绕过配置表，直接从系统环境读取：
+
+- `GOOGLE_APPLICATION_CREDENTIALS`（服务账号 JSON 路径）由 Google SDK 通过 ADC 流程读取，CLI 不参与。
+- 对于 Amazon Bedrock，AWS 秘密凭证（`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_SESSION_TOKEN`、SSO 或 `~/.aws/credentials`）由 AWS SDK 的标准凭证链从 shell 读取。把它们写进 `[providers.<name>.env]` 不受支持、也不生效——CLI 只把区域和 profile 传给令牌生成器，由令牌生成器自行解析凭证。
+
+其他所有键名都必须写在 `[providers.<name>.env]` 子表里。
 :::
 
 供应商类型与字段的完整说明见[平台与模型](./providers.md)。
@@ -143,7 +153,6 @@ kimi
 | `KIMI_CODE_PASSWORD` | 为 `kimi web` 本地服务设置并列鉴权密码；绑到非本机地址时建议设置，见 [安全注意](../guides/web.md#安全注意) | 任意非空字符串；未设置时仅 token 有效 |
 | `KIMI_CODE_SESSION_IDLE_RECLAIM_MS` | `kimi web` 会话空闲多久（毫秒）后从内存卸载；之后访问会自动恢复（默认 `1800000`；`0` 表示不卸载） | 非负整数；非法值会立即失败 |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | 会话关闭时是否保留后台任务，优先级高于 `config.toml`。默认会在退出时停止后台任务 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
-| `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | 同时运行的后台任务及 Tower worker/reviewer 数量上限；覆盖 `[task]` 与 legacy `[background]` 的 `max_running_tasks`；均未配置时 Tower 默认上限为 256 | 正整数；非法值被忽略 |
 | `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` | 后台 `Bash` 任务的默认超时（秒），也用于前台命令转入后台后的重新计时，优先级高于 `[task] bash_task_timeout_s`；`0` 表示无超时 | 非负整数；非法值被忽略 |
 | `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE` | `kimi -p` 主轮次结束后仍有后台任务待处理时的行为，优先级高于 `[task] print_background_mode` | `exit`、`drain` 或 `steer`；非法值被忽略 |
 | `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S` | print 模式 drain/steer 等待的时长上限（秒），优先级高于 `[task] print_wait_ceiling_s` | 正整数；非法值被忽略 |
@@ -163,6 +172,7 @@ kimi
 | `KIMI_CODE_SESSION_LOCK` | 本进程是否使用跨进程会话锁，防止两个 Kimi Code 进程同时写同一会话。未设置时保持开启；关闭后回到加锁前的行为，多个进程同时写入时会话历史可能交错 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off`；其他值忽略 |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | 在 `Agent`/`AgentSwarm` 上启用实验性 `fork` 参数：以调用方对话历史快照而非空上下文启动 subagent | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT` | 启用实验性按需加载工具：标记 `deferred: true` 的 MCP server 工具不进入顶层工具列表，由模型经 `select_tools` 按需加载；还需模型声明 `dynamically_loaded_tools` 能力，详见 [MCP](../customization/mcp.md#按需加载工具) | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION` | 在交互式 TUI 中启用实验性的下一条提示词预测，在轮次正常完成后显示建议，详见[提示词预测](../guides/interaction.md#提示词预测（实验）) | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_TOWER` | 启用实验性 [Tower 多 Agent 协作](../guides/tower.md) 和 `/tower` 命令，需在启动前设置。持久配置等价于在 `config.toml` 中设置 `[experimental] tower = true`；在运行中的 CLI 里修改该配置后，需要重启 Kimi Code。`KIMI_CODE_EXPERIMENTAL_FLAG=1` 仅在未显式配置 `[experimental] tower` 时启用 Tower；`tower = false` 会优先于总开关，而本变量可覆盖该配置 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_WATCH` | 是否挂文件系统 watch 以热更新配置和工作区文件，优先级高于 `[watch] enabled`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_GLOBAL_SEARCH` | 是否构建全局全文搜索索引并提供 `POST /api/v1/search`，优先级高于 `[database] global_search`（默认 `false`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
@@ -190,6 +200,8 @@ kimi
 | `KIMI_MODEL_THINKING_KEEP` | 保留思考透传；`kimi` 以 `thinking.keep` 发送，`anthropic` 以 `clear_thinking_20251015` 编辑发送；覆盖 `[thinking] keep` | API 接受的值，如 `all`；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用 |
 | `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` | `openai` / `openai-responses` / `anthropic` 协议的 LLM 请求等待响应头（首字节）的最长时间（毫秒），替代 HTTP 客户端默认的 300 秒响应头超时——长时间非流式 thinking 可调大；未设置保持默认；SDK 自身的总请求超时（默认 10 分钟）仍对单次尝试生效；`google-genai` 不支持（其 SDK 没有 dispatcher 配置项）；SOCKS 代理下不生效（请求仍走代理） | 正整数，不超过 2147483647；非法值会使请求失败 |
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检：不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
+| `KIMI_CODE_CLIPBOARD_OSC52` | 复制时同时交给终端（OSC 52），远程连接下复制不生效时可以试试。tmux 中还需设置 `set -g set-clipboard on` | `1` 表示启用 |
+| `KIMI_CODE_TUI_ANIMATION_FPS` | 终端界面中进行中标题扫光的帧率 | `1` 到 `60` 的整数；非法值被忽略，并在启动时提示 |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 
 `KIMI_CODE_INFINITE_RETRY`、`KIMI_CODE_IDENTITY_*` 和 `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` 这几个变量由 `agent-core-v2` 引擎读取。

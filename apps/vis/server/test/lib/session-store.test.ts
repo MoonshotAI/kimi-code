@@ -1,4 +1,3 @@
-// apps/vis/server/test/lib/session-store.test.ts
 import { describe, it, expect, afterEach } from 'vitest';
 import { buildSessionFixture } from '../fixtures/build';
 import { isSafeAgentId, listSessions, readSessionDetail } from '../../src/lib/session-store';
@@ -18,7 +17,7 @@ describe('session-store', () => {
     expect(s.lastPrompt).toBe('say hi');
     expect(s.agentCount).toBe(2);
     expect(s.mainAgentExists).toBe(true);
-    expect(s.mainWireRecordCount).toBe(10);  // 10 lines in main wire incl. metadata
+    expect(s.mainWireRecordCount).toBe(10);
     expect(s.wireProtocolVersion).toBe('1.1');
     expect(s.health).toBe('ok');
     expect(s.workDir).toBe('/tmp/work');
@@ -68,7 +67,6 @@ describe('session-store', () => {
   it('skips imported_from_kimi_cli sessions', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
-    // mark as imported
     const { readFile, writeFile } = await import('node:fs/promises');
     const { join } = await import('node:path');
     const state = JSON.parse(await readFile(join(sessionDir, 'state.json'), 'utf8'));
@@ -83,8 +81,6 @@ describe('session-store', () => {
     cleanup = c;
     const { rm, mkdir } = await import('node:fs/promises');
     const { join } = await import('node:path');
-    // Replace the wire FILE with a directory of the same name, so the
-    // createReadStream below will reject with EISDIR.
     const wirePath = join(sessionDir, 'agents', 'main', 'wire.jsonl');
     await rm(wirePath);
     await mkdir(wirePath);
@@ -180,8 +176,6 @@ describe('session-store', () => {
       parentAgentId: 'main',
     };
     await writeFile(statePath, JSON.stringify(state));
-    // Plant a wire file under the "../escape" path that would be
-    // reachable if isSafeAgentId failed to gate path joins.
     await mkdir(join(sessionDir, '..', 'escape'), { recursive: true });
     await writeFile(
       join(sessionDir, '..', 'escape', 'wire.jsonl'),
@@ -196,7 +190,6 @@ describe('session-store', () => {
     cleanup = c;
     const { writeFile, mkdir } = await import('node:fs/promises');
     const { join } = await import('node:path');
-    // Poison the index: claim session_fixture lives at /tmp/elsewhere.
     const elsewhere = '/tmp/vis-poison-test-' + Date.now();
     await mkdir(elsewhere, { recursive: true });
     await writeFile(
@@ -207,8 +200,6 @@ describe('session-store', () => {
         workDir: '/somewhere',
       }) + '\n',
     );
-    // Detail must fall back to bucket scanning (legit path under home)
-    // rather than honour the poisoned index entry.
     const d = await readSessionDetail(home, 'session_fixture');
     expect(d).not.toBeNull();
     expect(d!.sessionDir.startsWith(home)).toBe(true);
@@ -221,8 +212,6 @@ describe('session-store', () => {
     cleanup = c;
     const { writeFile } = await import('node:fs/promises');
     const { join } = await import('node:path');
-    // Break the SUBAGENT's wire metadata; main wire stays intact so the
-    // session itself remains healthy.
     await writeFile(
       join(sessionDir, 'agents', 'agent-0', 'wire.jsonl'),
       'not even json\n',
@@ -254,8 +243,6 @@ describe('session-store', () => {
     expect(d).not.toBeNull();
     expect(d!.state).toBeNull();
     expect(d!.workDir).toBe('/tmp/work');
-    // Even with state.json broken, the on-disk agent directories should
-    // still be inventoried so users can open wire/context.
     expect(d!.agents.map((a) => a.agentId).sort()).toEqual(['agent-0', 'main']);
     const main = d!.agents.find((a) => a.agentId === 'main')!;
     expect(main.wireExists).toBe(true);
@@ -356,7 +343,6 @@ describe('session-store', () => {
     expect(d).not.toBeNull();
     const sub = d!.agents.find((a) => a.agentId === 'agent-0')!;
     expect(sub.swarmItem).toBe('task A');
-    // main has no swarmItem in state.json → null, not undefined.
     const main = d!.agents.find((a) => a.agentId === 'main')!;
     expect(main.swarmItem).toBeNull();
   });
@@ -368,8 +354,6 @@ describe('session-store', () => {
     const { join } = await import('node:path');
     const statePath = join(sessionDir, 'state.json');
     const state = JSON.parse(await readFile(statePath, 'utf8'));
-    // v2 writes a fixed top-level `parentAgentId: 'main'` for every sub agent
-    // and puts the real parent / swarm label under `labels`.
     state.agents['agent-1'] = {
       type: 'sub',
       parentAgentId: 'main',
@@ -387,7 +371,6 @@ describe('session-store', () => {
     expect(nested.parentAgentId).toBe('agent-0');
     expect(nested.swarmItem).toBe('batch item');
     expect(nested.profileName).toBe('explore');
-    // agent-0 has no labels — the top-level v1 fields still apply.
     const flat = d!.agents.find((a) => a.agentId === 'agent-0')!;
     expect(flat.parentAgentId).toBe('main');
   });

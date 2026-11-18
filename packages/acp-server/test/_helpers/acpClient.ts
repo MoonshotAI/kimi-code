@@ -12,35 +12,19 @@ interface RpcMessage {
   readonly params?: unknown;
 }
 
-/** Handler for an agent-initiated JSON-RPC request (reverse-RPC). */
 export type RequestHandler = (params: unknown) => unknown | Promise<unknown>;
 
 export interface TestClient {
-  /** Send a JSON-RPC request and resolve with the `result` (rejects on `error`). */
   send(method: string, params?: unknown): Promise<unknown>;
-  /** Send a JSON-RPC notification (no id — no response is expected). */
   notify(method: string, params?: unknown): void;
-  /** All messages received from the agent so far (responses + notifications + requests). */
   readonly received: readonly RpcMessage[];
-  /** `session/update` notifications received so far. */
   sessionUpdates(): readonly RpcMessage[];
-  /** Resolve once a `session/update` whose `update.sessionUpdate` matches arrives. */
   waitForSessionUpdate(sessionUpdate: string, timeoutMs?: number): Promise<RpcMessage>;
-  /**
-   * Register a handler for an agent-initiated request method (e.g.
-   * `session/request_permission`). The handler's return value is sent back as
-   * the JSON-RPC `result`; a thrown error is sent as a JSON-RPC `error`.
-   */
   onRequest(method: string, handler: RequestHandler): void;
   readonly server: RunningAcpServer;
   close(): Promise<void>;
 }
 
-/**
- * Build an in-memory ACP client/server pair for tests. The server boots a real
- * `agent-core-v2` rooted at `homeDir`; the client speaks raw ND-JSON JSON-RPC
- * over a `PassThrough` stream pair.
- */
 export async function createTestClient(opts: {
   homeDir: string;
   disableAuth?: boolean;
@@ -93,12 +77,10 @@ export async function createTestClient(opts: {
 
   function dispatch(msg: RpcMessage): void {
     received.push(msg);
-    // Incoming request from the agent (reverse-RPC): has both id and method.
     if (msg.id !== undefined && msg.method !== undefined) {
       void handleIncomingRequest(msg.id, msg.method, msg.params);
       return;
     }
-    // Notification (no id): check session/update waiters first.
     if (msg.id === undefined && msg.method === 'session/update') {
       const update = (msg.params as { update?: { sessionUpdate?: string } } | undefined)?.update;
       const kind = update?.sessionUpdate;
@@ -110,7 +92,6 @@ export async function createTestClient(opts: {
       }
       return;
     }
-    // Response: resolve the pending request by id.
     if (msg.id !== undefined && pending.has(msg.id)) {
       const entry = pending.get(msg.id)!;
       pending.delete(msg.id);

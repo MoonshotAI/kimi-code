@@ -4,7 +4,11 @@ import { visibleWidth, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import { ChoicePickerComponent, type ChoiceOption } from '#/tui/components/dialogs/choice-picker';
+import {
+  ChoicePickerComponent,
+  PreviewChoicePickerComponent,
+  type ChoiceOption,
+} from '#/tui/components/dialogs/choice-picker';
 import { EditorSelectorComponent } from '#/tui/components/dialogs/editor-selector';
 import { PermissionSelectorComponent } from '#/tui/components/dialogs/permission-selector';
 import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
@@ -99,18 +103,142 @@ describe('ChoicePickerComponent', () => {
 
     const titleIdx = lines.findIndex((l) => l.includes('Add provider'));
     expect(titleIdx).toBeGreaterThanOrEqual(0);
-    // Title carries the same "(type to search)" suffix as /model and /provider.
     expect(lines[titleIdx]).toContain('(type to search)');
     expect(lines[titleIdx]).not.toContain('type to filter');
-    // Hint sits directly under the title and uses lowercase key vocabulary.
     const hint = lines[titleIdx + 1];
     expect(hint).toContain('↑↓ navigate');
     expect(hint).toContain('Enter select');
     expect(hint).toContain('Esc cancel');
     expect(hint).not.toContain('enter select');
     expect(hint).not.toContain('esc cancel');
-    // Blank line separates the hint from the body, like the model dialog.
     expect(lines[titleIdx + 2]).toBe('');
+  });
+
+  it('draws the highlighted preview between the list and the border at the tallest preview height', () => {
+    const previews: Record<string, readonly string[]> = {
+      a: ['alpha one'],
+      b: ['beta one', 'beta two', 'beta three'],
+      c: ['gamma one', 'gamma two'],
+    };
+    const picker = new PreviewChoicePickerComponent({
+      title: 'Pick one',
+      options: [
+        { value: 'a', label: 'Alpha' },
+        { value: 'b', label: 'Beta' },
+        { value: 'c', label: 'Gamma' },
+      ],
+      preview: { render: (value) => previews[value] ?? [], invalidate: vi.fn(), dispose: vi.fn() },
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const border = '─'.repeat(60);
+    const frames = ['a', 'b', 'c'].map(() => {
+      const lines = picker.render(60).map(strip);
+      picker.handleInput('\u001B[B');
+      return lines;
+    });
+
+    expect(frames[1]!.slice(4, 7)).toEqual(['    Alpha', '  ❯ Beta', '    Gamma']);
+    expect(frames.map((lines) => lines.slice(7))).toEqual([
+      ['', ' Preview', '', 'alpha one', '', '', '', border],
+      ['', ' Preview', '', 'beta one', 'beta two', 'beta three', '', border],
+      ['', ' Preview', '', 'gamma one', 'gamma two', '', '', border],
+    ]);
+  });
+
+  it('keeps the plain picker keys, pointer, and focus fade around the preview, and releases it', () => {
+    useMouseClock();
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    onTestFinished(() => {
+      chalk.level = previousLevel;
+    });
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const preview = { render: (value: string) => [`${value} sample`], invalidate: vi.fn(), dispose: vi.fn() };
+    const picker = new PreviewChoicePickerComponent({
+      title: 'Pick one',
+      options: [
+        { value: 'a', label: 'Alpha' },
+        { value: 'b', label: 'Beta' },
+      ],
+      preview,
+      onSelect,
+      onCancel,
+    });
+    picker.focused = true;
+    const focused = picker.render(60);
+    picker.focused = false;
+    expect(picker.render(60)).toEqual(focused.map((line) => currentTheme.fade(line)));
+    vi.advanceTimersByTime(300);
+    const betaRow = focused.map(strip).indexOf('    Beta');
+    const previewRow = focused.map(strip).indexOf('a sample');
+
+    expect(picker.handleMouse(mouse('click', previewRow))).toMatchObject({ handled: true, focus: true });
+    expect(picker.handleMouse(mouse('click', betaRow))).toMatchObject({ handled: true, focus: true });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    picker.focused = true;
+    expect(picker.handleMouse(mouse('move', betaRow))).toMatchObject({ handled: true, render: true });
+    expect(picker.render(60).map(strip)).toContain('b sample');
+    for (const type of ['press', 'release', 'click'] as const) picker.handleMouse(mouse(type, betaRow));
+    expect(onSelect).toHaveBeenLastCalledWith('b');
+    picker.handleInput('\u001B[A');
+    picker.handleInput(' ');
+    expect(onSelect).toHaveBeenLastCalledWith('a');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledTimes(3);
+    picker.handleInput('\u001B');
+    expect(onCancel).toHaveBeenCalledOnce();
+
+    picker.invalidate();
+    expect(preview.invalidate).toHaveBeenCalledOnce();
+    picker.dispose();
+    expect(preview.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('keeps left and right paging the options when the preview has no file scroller', () => {
+    const options = Array.from({ length: 12 }, (_, index) => ({
+      value: String(index),
+      label: `Option ${String(index)}`,
+    }));
+    const picker = new PreviewChoicePickerComponent({
+      title: 'Pick one',
+      options,
+      preview: { render: () => ['sample'], invalidate: vi.fn(), dispose: vi.fn() },
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    picker.handleInput('\u001B[C');
+    expect(picker.render(40).map(strip).some((line) => line.includes('❯ Option 8'))).toBe(true);
+    picker.handleInput('\u001B[D');
+    expect(picker.render(40).map(strip).some((line) => line.includes('❯ Option 0'))).toBe(true);
+  });
+
+  it('renders a plain picker as its list between two borders', () => {
+    const picker = new ChoicePickerComponent({
+      title: 'Pick one',
+      options: [
+        { value: 'a', label: 'Alpha', description: 'First choice' },
+        { value: 'b', label: 'Beta' },
+      ],
+      currentValue: 'b',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    expect(picker.render(40).map(strip)).toEqual([
+      '─'.repeat(40),
+      ' Pick one',
+      ' ↑↓ navigate · Enter select · Esc cancel',
+      '',
+      '    Alpha',
+      '    First choice',
+      '  ❯ Beta ← current',
+      '',
+      '─'.repeat(40),
+    ]);
   });
 
   it('renders optional descriptions below choice labels', () => {
@@ -327,9 +455,7 @@ describe('ChoicePickerComponent', () => {
     const warningLine = currentTheme.fg('warning', '    Include your codebase for deeper diagnosis.');
     const mutedLine = currentTheme.fg('textMuted', '    Include your codebase for deeper diagnosis.');
 
-    // Selected option: description uses the configured tone.
     expect(renderDescLine('logs+codebase')).toBe(warningLine);
-    // Unselected option: description falls back to textMuted.
     expect(renderDescLine('none')).toBe(mutedLine);
   });
 });

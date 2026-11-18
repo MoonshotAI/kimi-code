@@ -15,14 +15,26 @@ export interface WorkspaceInstanceSnapshot {
 export class WorkspaceInstance {
   readonly program: Program;
   private lifecycle: WorkspaceInstanceLifecycle = 'materializing';
+  private metadataValue: Workspace;
 
   constructor(
-    readonly metadata: Workspace,
+    metadata: Workspace,
     environments: IEnvironmentService,
     context: IWorkspaceContext,
     dependencies: ProgramDependencies,
   ) {
-    this.program = new Program(metadata.id, environments, context, dependencies);
+    this.metadataValue = metadata;
+    const liveContext = { ...context };
+    Object.defineProperty(liveContext, 'meta', { get: () => this.metadata });
+    this.program = new Program(metadata.id, environments, liveContext, dependencies);
+  }
+
+  get metadata(): Workspace {
+    return this.metadataValue;
+  }
+
+  update(metadata: Workspace): void {
+    this.metadataValue = metadata;
   }
 
   get id(): string {

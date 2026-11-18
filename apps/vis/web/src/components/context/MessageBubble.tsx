@@ -28,9 +28,6 @@ function baseClass(): string {
 function UserBubble({ m }: { m: ProjectedMessage }) {
   const origin = m.message.origin;
   const originKind = origin?.kind;
-  // Badge every origin that is not a plain user prompt. This covers
-  // skill_activation, task (v2; v1: background_task), cron_job, cron_missed,
-  // retry, system_trigger, injection, hook_result, compaction_summary, etc.
   const showsOriginBadge = originKind !== undefined && originKind !== 'user';
   return (
     <article className={baseClass()} style={{ borderLeftColor: 'var(--color-user)' }}>
@@ -81,9 +78,6 @@ function AssistantBubble({ m }: { m: ProjectedMessage }) {
 
 function ToolBubble({ m }: { m: ProjectedMessage }) {
   if (m.message.role !== 'tool') return null;
-  // Tool outputs are often huge (file contents, command stdout). Collapse
-  // by default so the conversation flow stays readable. Errors open by
-  // default — that's the case where the user actually needs to read.
   const [open, setOpen] = useState(m.message.isError === true);
   const totalChars = m.message.content.reduce((acc, p) => {
     if (p.type === 'text') return acc + p.text.length;
@@ -221,7 +215,6 @@ function MessageContent({ parts }: { parts: readonly ContentPart[] }): ReactNode
             </div>
           );
         }
-        // Exhaustive — anything else is unexpected for ContentPart.
         return (
           <div key={i} className="font-mono text-[11px] text-fg-3">
             [{(p as { type: string }).type}]

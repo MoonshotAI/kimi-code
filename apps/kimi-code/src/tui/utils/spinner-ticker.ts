@@ -3,13 +3,6 @@ import {
   BRAILLE_SPINNER_INTERVAL_MS,
 } from '#/tui/constant/rendering';
 
-/**
- * Drives the shared braille frames for a component-local busy indicator.
- * The interval exists only between `start()` and `stop()`; each tick repaints
- * through `onTick` (the host's requestRender). Owners must call `dispose()`
- * when they are dropped — a busy dialog closed mid-flight must not keep
- * ticking against a removed component.
- */
 export class SpinnerTicker {
   private timer: ReturnType<typeof setInterval> | null = null;
   private frame = 0;

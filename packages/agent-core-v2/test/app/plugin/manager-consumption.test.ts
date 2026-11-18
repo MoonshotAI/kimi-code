@@ -244,6 +244,7 @@ describe('PluginManager consumption plane', () => {
       kimiHomeDir: home,
       discoverSkills: async () => ({
         skills: [stubSkill('provided')],
+        variants: [stubSkill('provided')],
         skipped: [],
         scannedRoots: [],
         scannedDirectories: [],

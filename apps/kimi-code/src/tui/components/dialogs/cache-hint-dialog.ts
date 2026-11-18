@@ -1,12 +1,3 @@
-/**
- * CacheHintDialog — shown when a resumed (or long-idle) session's context
- * cache has almost certainly expired, so the next turn re-sends the whole
- * history uncached. Offers compact / new session / continue / never.
- *
- * Layout mirrors the list-dialog spec (DESIGN.md): top border, title, hint,
- * body line, then options with right-column descriptions.
- */
-
 import {
   Container,
   matchesKey,

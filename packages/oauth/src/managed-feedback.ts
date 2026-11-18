@@ -1,11 +1,3 @@
-/**
- * Submit user feedback to the managed Kimi Code platform.
- *
- * POSTs a JSON body to `{kimiCodeBaseUrl}/feedback` with a Bearer access
- * token. The client tags `version` with a `kimi-code-` prefix so the
- * backend can identify this client.
- */
-
 import { readApiErrorMessage } from './api-error';
 import { kimiCodeBaseUrl } from './managed-usage';
 
@@ -40,7 +32,7 @@ export async function fetchSubmitFeedback(
   url: string,
   accessToken: string,
   body: SubmitFeedbackBody,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; headers?: Readonly<Record<string, string>> } = {},
 ): Promise<FetchSubmitFeedbackResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => {
@@ -50,6 +42,7 @@ export async function fetchSubmitFeedback(
     const res = await fetch(url, {
       method: 'POST',
       headers: {
+        ...opts.headers,
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json',
         'Content-Type': 'application/json',

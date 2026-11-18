@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
 
@@ -42,7 +42,6 @@ it('resolves a PATH executable from the filesystem root', () => {
 });
 
 describe('resolveCommandPath (posix)', () => {
-  // Executable-bit checks only work on a posix host.
   it.skipIf(process.platform === 'win32')('resolves an executable from PATH to an absolute path', () => {
     const bin = makeTempDir('kimi-resolve-bin-');
     const cwd = makeTempDir('kimi-resolve-cwd-');
@@ -69,8 +68,6 @@ describe('resolveCommandPath (posix)', () => {
     const tool = join(cwd, 'mytool');
     writeFileSync(tool, '#!/bin/sh\nexit 0\n');
     chmodSync(tool, 0o755);
-    // The cwd itself sits on PATH (e.g. a `.` entry) — the planted binary
-    // must be rejected, not executed.
     process.env['PATH'] = cwd;
 
     expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
@@ -98,6 +95,20 @@ describe('resolveCommandPath (posix)', () => {
     expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
   });
 
+  it.skipIf(process.platform === 'win32')('refuses a hit reached through a symlink to the cwd', () => {
+    const cwd = realpathSync(makeTempDir('kimi-resolve-cwd-'));
+    mkdirSync(join(cwd, 'bin'));
+    const tool = join(cwd, 'bin', 'mytool');
+    writeFileSync(tool, '#!/bin/sh\nexit 0\n');
+    chmodSync(tool, 0o755);
+    const link = join(makeTempDir('kimi-resolve-link-'), 'workspace');
+    symlinkSync(cwd, link);
+    process.env['PATH'] = join(link, 'bin');
+
+    expect(resolveCommandPath('mytool', cwd)).toBeUndefined();
+    expect(resolveCommandPath('mytool', link)).toBeUndefined();
+  });
+
   it.skipIf(process.platform === 'win32')('continues to a safe PATH hit after a workspace executable', () => {
     const cwd = makeTempDir('kimi-resolve-cwd-');
     const bin = makeTempDir('kimi-resolve-bin-');
@@ -123,9 +134,6 @@ describe('resolveCommandPath (win32)', () => {
     mockPlatform('win32');
     const bin = makeTempDir('kimi-resolve-bin-');
     const cwd = makeTempDir('kimi-resolve-cwd-');
-    // Windows is case-insensitive, so the resolved name carries the PATHEXT
-    // casing; match it here so the test also passes on case-insensitive
-    // posix filesystems.
     const shim = join(bin, 'npm.CMD');
     writeFileSync(shim, '@echo off\r\n');
     process.env['PATH'] = bin;

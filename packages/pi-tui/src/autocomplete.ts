@@ -157,6 +157,7 @@ async function walkDirectoryWithFd(
 	maxResults: number,
 	signal: AbortSignal,
 	maxDepth?: number,
+	includeGitignoredFiles = false,
 ): Promise<Array<{ path: string; isDirectory: boolean }>> {
 	const args = [
 		"--base-directory",
@@ -176,6 +177,10 @@ async function walkDirectoryWithFd(
 		"--exclude",
 		".git/**",
 	];
+
+	if (includeGitignoredFiles) {
+		args.push("--no-ignore-vcs");
+	}
 
 	if (maxDepth !== undefined) {
 		args.push("--max-depth", String(maxDepth));
@@ -274,9 +279,21 @@ export interface AutocompleteSuggestions {
 	prefix: string; // What we're matching against (e.g., "/" or "src/")
 }
 
+export interface AutocompleteContext {
+	lines: string[];
+	cursorLine: number;
+	cursorCol: number;
+}
+
+export interface AutocompletePreviewContext extends AutocompleteContext {
+	previous: AutocompleteContext & { suggestions: AutocompleteSuggestions };
+}
+
 export interface AutocompleteProvider {
 	/** Characters that should naturally trigger this provider at token boundaries. */
 	triggerCharacters?: string[];
+	autocompleteDebounceMs?: number;
+	getAutocompletePreview?(context: AutocompletePreviewContext): AutocompleteSuggestions | null;
 
 	// Get autocomplete suggestions for current text/cursor position
 	// Returns null if no suggestions available
@@ -311,17 +328,20 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private basePath: string;
 	private additionalBasePaths: string[];
 	private fdPath: string | null;
+	private includeGitignoredFiles: boolean;
 
 	constructor(
 		commands: (SlashCommand | AutocompleteItem)[] = [],
 		basePath: string,
 		fdPath: string | null = null,
 		additionalBasePaths: readonly string[] = [],
+		options: { includeGitignoredFiles?: boolean } = {},
 	) {
 		this.commands = commands;
 		this.basePath = basePath;
 		this.additionalBasePaths = additionalBasePaths.map((p) => toDisplayPath(p));
 		this.fdPath = fdPath;
+		this.includeGitignoredFiles = options.includeGitignoredFiles ?? false;
 	}
 
 	async getSuggestions(
@@ -881,36 +901,64 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			type Scored = {
 				path: string;
 				isDirectory: boolean;
+				ignored: boolean;
 				score: number;
 				target: RootTarget;
 				absPath: string;
 			};
 			const bestByAbs = new Map<string, Scored>();
-			for (const group of perRoot) {
-				for (const { entry, target } of group) {
-					const score = target.fdQuery ? this.scoreEntry(entry.path, target.fdQuery, entry.isDirectory) : 1;
-					if (score <= 0) continue;
-					const pathWithoutSlash = entry.isDirectory ? entry.path.slice(0, -1) : entry.path;
-					const absPath = target.absolute
-						? toDisplayPath(join(target.displayBase, pathWithoutSlash))
-						: toDisplayPath(join(target.pathRoot, target.displayBase, pathWithoutSlash));
-					const existing = bestByAbs.get(absPath);
-					if (!existing || score > existing.score) {
-						bestByAbs.set(absPath, {
-							path: entry.path,
-							isDirectory: entry.isDirectory,
-							score,
-							target,
-							absPath,
-						});
+			const collect = (groups: typeof perRoot, ignored: boolean) => {
+				for (const group of groups) {
+					for (const { entry, target } of group) {
+						const score = target.fdQuery ? this.scoreEntry(entry.path, target.fdQuery, entry.isDirectory) : 1;
+						if (score <= 0) continue;
+						const pathWithoutSlash = entry.isDirectory ? entry.path.slice(0, -1) : entry.path;
+						const absPath = target.absolute
+							? toDisplayPath(join(target.displayBase, pathWithoutSlash))
+							: toDisplayPath(join(target.pathRoot, target.displayBase, pathWithoutSlash));
+						const existing = bestByAbs.get(absPath);
+						if (!existing || (existing.ignored === ignored && score > existing.score) || (existing.ignored && !ignored)) {
+							bestByAbs.set(absPath, {
+								path: entry.path,
+								isDirectory: entry.isDirectory,
+								ignored,
+								score,
+								target,
+								absPath,
+							});
+						}
 					}
 				}
+			};
+			collect(perRoot, false);
+			const highestScoreMatches = [...bestByAbs.values()].filter((item) => item.score >= 110).length;
+			const canSkipIgnored = bestByAbs.size >= 20 && highestScoreMatches >= 20;
+			if (this.includeGitignoredFiles && !canSkipIgnored && !options.signal.aborted) {
+				const ignoredPerRoot = await Promise.all(
+					targets.map(async (target) => {
+						const entries = await walkDirectoryWithFd(
+							target.baseDir,
+							fdPath,
+							target.fdQuery,
+							100,
+							options.signal,
+							undefined,
+							true,
+						);
+						return entries.map((entry) => ({ entry, target }));
+					}),
+				);
+				collect(ignoredPerRoot, true);
+			}
+			if (options.signal.aborted) {
+				return [];
 			}
 
 			const scored = [...bestByAbs.values()];
 			scored.sort((a, b) => {
 				const scoreDiff = b.score - a.score;
 				if (scoreDiff !== 0) return scoreDiff;
+				if (a.ignored !== b.ignored) return Number(a.ignored) - Number(b.ignored);
 
 				const aDepth = toDisplayPath(a.path).split("/").filter(Boolean).length;
 				const bDepth = toDisplayPath(b.path).split("/").filter(Boolean).length;

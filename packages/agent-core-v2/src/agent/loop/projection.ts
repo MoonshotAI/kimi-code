@@ -1,8 +1,8 @@
 import { ErrorCodes, Error2 } from '#/errors';
-import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { renderToolResultForModel, shouldRenderWallTime } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
-import type { ContentPart, Message } from '#human/llm/message';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
 
 export type ProjectionAnomaly =
   | { readonly kind: 'tool_result_reordered'; readonly toolCallId: string }
@@ -82,7 +82,7 @@ function sliceLayout(history: readonly ContextMessage[]): SliceLayout {
   let sizing = true;
   let lastNonToolIndex = -1;
   for (const [index, message] of history.entries()) {
-    if (message.partial === true || message.role === 'tool') continue;
+    if (message.partial === true || message.attributes?.partial === true || message.role === 'tool') continue;
     lastNonToolIndex = index;
     if (message.role === 'assistant') sizing = false;
   }
@@ -124,13 +124,17 @@ function pairBlocks(
 ): Block[] {
   const blocks: Block[] = [];
   const openCalls = new Map<string, { exchange: Exchange; pending: PendingCall }>();
+  const toolNames = new Map<string, string>();
 
   const markForeignBetween = (): void => {
     for (const { pending } of openCalls.values()) pending.foreignBetween = true;
   };
 
   for (const [index, message] of history.entries()) {
-    if (message.partial === true) continue;
+    if (message.partial === true || message.attributes?.partial === true) continue;
+    if (message.role === 'assistant') {
+      for (const call of message.toolCalls) toolNames.set(call.id, call.name);
+    }
     if (message.role === 'tool' && !layout.sizing) {
       if (message.toolCallId === undefined) continue;
       const open = openCalls.get(message.toolCallId);
@@ -140,14 +144,14 @@ function pairBlocks(
         continue;
       }
       openCalls.delete(message.toolCallId);
-      open.pending.result = { source: message, content: projectedContent(message, onAnomaly) };
+      open.pending.result = { source: message, content: projectedContent(message, toolNames, onAnomaly) };
       if (open.pending.foreignBetween) {
         onAnomaly?.({ kind: 'tool_result_reordered', toolCallId: message.toolCallId });
       }
       continue;
     }
 
-    const content = projectedContent(message, onAnomaly);
+    const content = projectedContent(message, toolNames, onAnomaly);
     const toolCalls = message.role === 'assistant' ? message.toolCalls : [];
     if (toolCalls.length === 0 && !hasDeclaredTools(message)) {
       if (content.length === 0) continue;
@@ -182,53 +186,17 @@ function pairBlocks(
   return blocks;
 }
 
-interface MergeState {
-  single: { readonly source: ContextMessage; readonly content: ContentPart[] } | undefined;
-  readonly texts: string[];
-  readonly parts: ContentPart[];
-}
-
 function flattenBlocks(
   blocks: readonly Block[],
   layout: SliceLayout,
   onAnomaly?: OnAnomaly,
 ): Message[] {
   const out: Message[] = [];
-  let merge: MergeState | undefined;
-
-  const flushMerge = (): void => {
-    if (merge === undefined) return;
-    if (merge.single !== undefined) {
-      out.push(toWireMessage(merge.single.source, merge.single.content));
-    } else {
-      const text = merge.texts.join('\n\n');
-      const content: ContentPart[] = text === '' ? [] : [{ type: 'text', text }];
-      content.push(...merge.parts);
-      out.push({ role: 'user', content });
-    }
-    merge = undefined;
-  };
-
   for (const block of blocks) {
     if (block.kind === 'message') {
-      if (canMergeUserMessage(block.source)) {
-        if (merge === undefined) {
-          merge = { single: block, texts: [], parts: [] };
-        } else {
-          if (merge.single !== undefined) {
-            appendMergeContent(merge, merge.single.content);
-            merge.single = undefined;
-          }
-          appendMergeContent(merge, block.content);
-        }
-        continue;
-      }
-      flushMerge();
       out.push(toWireMessage(block.source, block.content));
       continue;
     }
-
-    flushMerge();
     const { exchange } = block;
     out.push(toWireMessage(exchange.source, exchange.content));
     for (const pending of exchange.pending) {
@@ -246,7 +214,6 @@ function flattenBlocks(
       }
     }
   }
-  flushMerge();
   return out;
 }
 
@@ -320,23 +287,30 @@ function dropLeadingNonUserMessages(messages: readonly Message[], onAnomaly?: On
   return start === 0 ? [...messages] : messages.slice(start);
 }
 
-function appendMergeContent(group: MergeState, content: readonly ContentPart[]): void {
-  let text = '';
-  for (const part of content) {
-    if (part.type === 'text') text += part.text;
-    else group.parts.push(part);
-  }
-  if (text.length > 0) group.texts.push(text);
-}
-
-function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): ContentPart[] {
+function projectedContent(
+  source: ContextMessage,
+  toolNames: ReadonlyMap<string, string>,
+  onAnomaly?: OnAnomaly,
+): ContentPart[] {
+  const toolName = source.role === 'tool' && source.toolCallId !== undefined
+    ? toolNames.get(source.toolCallId)
+    : undefined;
+  const toolAttributes = source.role === 'tool' ? source.attributes : undefined;
+  const durationMs = source.durationMs ?? toolAttributes?.durationMs;
+  const rawNote = source.note ?? toolAttributes?.note;
+  const lastPart = source.content.at(-1);
+  const noteRendered =
+    rawNote !== undefined &&
+    rawNote.length > 0 &&
+    lastPart?.type === 'text' &&
+    (lastPart.text === rawNote || lastPart.text.endsWith(`\n${rawNote}`));
   const content =
     source.role === 'tool'
       ? renderToolResultForModel({
           output: outputFromToolContent(source.content),
-          isError: source.isError,
-          note: source.note,
-          durationMs: source.durationMs,
+          isError: source.isError ?? toolAttributes?.isError,
+          note: noteRendered ? undefined : rawNote,
+          durationMs: toolName !== undefined && shouldRenderWallTime(toolName) ? durationMs : undefined,
         })
       : source.content;
   return cleanContent(source, content, onAnomaly);
@@ -395,11 +369,9 @@ function isInterruptedToolResult(message: Message | undefined): boolean {
 }
 
 function isBlankText(part: ContentPart): boolean {
-  return part.type === 'text' && part.text.trim().length === 0;
-}
-
-function canMergeUserMessage(message: ContextMessage): boolean {
-  return message.role === 'user' && message.origin?.kind === 'user';
+  return part.type === 'text' &&
+    part.meta?.['thought_signature_b64'] === undefined &&
+    part.text.trim().length === 0;
 }
 
 function hasDeclaredTools(message: ContextMessage): boolean {
@@ -409,12 +381,37 @@ function hasDeclaredTools(message: ContextMessage): boolean {
 function toWireMessage(message: ContextMessage, content: ContentPart[]): Message {
   switch (message.role) {
     case 'system':
-      return { role: 'system', content, tools: message.tools };
+      return {
+        role: 'system',
+        content,
+        tools: message.tools,
+        ...(message.attributes === undefined ? {} : { attributes: message.attributes }),
+      };
     case 'user':
-      return { role: 'user', content };
+      return {
+        role: 'user',
+        content,
+        ...(message.attributes === undefined ? {} : { attributes: message.attributes }),
+      };
     case 'assistant':
-      return { role: 'assistant', content, toolCalls: message.toolCalls };
-    case 'tool':
-      return { role: 'tool', content, toolCallId: message.toolCallId };
+      return {
+        role: 'assistant',
+        content,
+        toolCalls: message.toolCalls,
+        ...(message.attributes === undefined ? {} : { attributes: message.attributes }),
+      };
+    case 'tool': {
+      if (message.attributes === undefined) {
+        return { role: 'tool', content, toolCallId: message.toolCallId };
+      }
+      const { isError: _isError, note: _note, durationMs: _durationMs, ...rest } = message.attributes;
+      const attributes = Object.values(rest).some((value) => value !== undefined) ? rest : undefined;
+      return {
+        role: 'tool',
+        content,
+        toolCallId: message.toolCallId,
+        ...(attributes === undefined ? {} : { attributes }),
+      };
+    }
   }
 }

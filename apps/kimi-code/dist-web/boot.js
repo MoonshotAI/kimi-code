@@ -53,6 +53,7 @@
         for (var fi = 0; fi < fams.length; fi++) {
           if (typeof fams[fi] !== 'string') continue;
           var fam = fams[fi].replace(/["\\]/g, '').trim();
+          if (fam.toLowerCase() === '-apple-system') fam = 'system-ui';
           if (fpGeneric[fam.toLowerCase()]) break;
           if (fam !== '') out.push(fam);
         }
@@ -80,7 +81,8 @@
         var vars = fpVars[target];
         var famList = [];
         for (var fj = 0; fj < fams.length; fj++) {
-          famList.push(fpKeyword[fams[fj].toLowerCase()] ? fams[fj] : '"' + fams[fj] + '"');
+          var fpName = fams[fj].toLowerCase();
+          famList.push(fpName === 'ui-monospace' ? 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas' : fpKeyword[fpName] ? fams[fj] : '"' + fams[fj] + '"');
         }
         if (famList.length > 0) st.setProperty(vars[0], famList.join(', '));
         if (target === 'terminal' && typeof p.size === 'number' && isFinite(p.size)) st.setProperty(vars[1], p.size + 'px');

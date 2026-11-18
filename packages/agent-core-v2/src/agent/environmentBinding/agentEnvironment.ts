@@ -11,10 +11,8 @@ import { environmentIsReady, type EnvironmentGenerationSnapshot, type Environmen
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionStateService } from '#/session/state/sessionState';
-import {
-  workspaceContextAdditionalDirsKey,
-} from '#/session/workspaceContext/workspaceContextService';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
+import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
 import { IEnvironmentService } from '#/app/environment/environment';
 
 import { IAgentEnvironmentBindingService } from './environmentBinding';
@@ -35,6 +33,14 @@ export interface IAgentEnvironmentService {
   acquireWhenReady(required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease>;
   workspaceRoots(): EnvironmentWorkspaceRoots;
 }
+
+export interface IAgentEnvironmentOverlay {
+  readonly _serviceBrand: undefined;
+  decorate(lease: EnvironmentLease): EnvironmentLease;
+}
+
+export const IAgentEnvironmentOverlay: ServiceIdentifier<IAgentEnvironmentOverlay> =
+  createDecorator<IAgentEnvironmentOverlay>('agentEnvironmentOverlay');
 
 export const IAgentEnvironmentService: ServiceIdentifier<IAgentEnvironmentService> =
   createDecorator<IAgentEnvironmentService>('agentEnvironmentService');
@@ -118,7 +124,8 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     @IEnvironmentService private readonly resolver: IEnvironmentService,
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ISessionContext private readonly session: ISessionContext,
-    @ISessionStateService private readonly sessionState: ISessionStateService,
+    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @IAgentEnvironmentOverlay private readonly overlay: IAgentEnvironmentOverlay,
   ) {
     this.bindingSubscription = this.binding.onDidChange(() => this.changeEmitter.fire());
     this.registrySubscription = this.resolver.onDidChange((change) => {
@@ -135,19 +142,15 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
 
   workspaceRoots(): EnvironmentWorkspaceRoots {
     const binding = this.binding.current;
-    let workDir = binding.cwd;
-    if (workDir === undefined && binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
+    let host;
+    if (binding.cwd === undefined && binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
       try {
-        const environment = this.resolver.inspect(binding);
-        workDir = environment.host?.cwd ?? environment.host?.homeDir;
+        host = this.resolver.inspect(binding).host;
       } catch {
-        workDir = undefined;
+        host = undefined;
       }
     }
-    return {
-      workDir: workDir ?? this.session.cwd,
-      additionalDirs: this.sessionState.get(workspaceContextAdditionalDirsKey),
-    };
+    return resolveEffectiveWorkspaceRoots(this.session, binding, this.workspaceInfo, host);
   }
 
   isAvailable(required: readonly EnvironmentCapability[] = []): boolean {
@@ -160,11 +163,11 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   }
 
   acquire(required: readonly EnvironmentCapability[] = []): EnvironmentLease {
-    return this.resolver.acquire(this.binding.current, required);
+    return this.overlay.decorate(this.resolver.acquire(this.binding.current, required));
   }
 
   async acquireWhenReady(required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
-    return this.resolver.acquireWhenReady(this.binding.current, required);
+    return this.overlay.decorate(await this.resolver.acquireWhenReady(this.binding.current, required));
   }
 
   dispose(): void {
@@ -187,6 +190,21 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentEnvironmentService,
   AgentEnvironmentService,
+  ScopeActivation.OnDemand,
+  'agentEnvironmentBinding',
+);
+
+class DefaultAgentEnvironmentOverlay implements IAgentEnvironmentOverlay {
+  declare readonly _serviceBrand: undefined;
+  decorate(lease: EnvironmentLease): EnvironmentLease {
+    return lease;
+  }
+}
+
+registerScopedService(
+  LifecycleScope.Session,
+  IAgentEnvironmentOverlay,
+  DefaultAgentEnvironmentOverlay,
   ScopeActivation.OnDemand,
   'agentEnvironmentBinding',
 );

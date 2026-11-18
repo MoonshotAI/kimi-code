@@ -119,13 +119,6 @@ export const mcpHandlers: Record<string, Handler<any, any>> = {
   },
 };
 
-/**
- * The workspace-aware server list shown in the modal. The mutation RPCs
- * (add/update/remove) return a list resolved without a cwd, so the webview
- * refresh after every mutation must re-list with the workspace cwd —
- * otherwise project-layer entries drop out of the modal until the next full
- * load.
- */
 async function listWorkspaceServers(ctx: Parameters<Handler>[1]): Promise<MCPServerConfig[]> {
   return toWebviewServers(await ctx.harness.listMcpServers({ cwd: ctx.workDir ?? undefined }));
 }
@@ -134,9 +127,6 @@ function toWebviewServers(servers: readonly McpManagedServerInfo[]): MCPServerCo
   return servers
     .filter((server) => server.transport === "stdio" || server.transport === "http")
     .map((server) => {
-      // The management view's source/origin/mutable tags stay in the webview
-      // payload so the panel can hide mutating controls on read-only entries;
-      // only the nested plugin origin detail is dropped.
       const { plugin: _plugin, ...config } = server;
       if (config.transport === "stdio") {
         return { ...config, env: maskSecretValues(config.env) } as MCPServerConfig;

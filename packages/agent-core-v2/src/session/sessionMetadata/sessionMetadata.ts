@@ -43,6 +43,7 @@ export interface ISessionMetadata {
   readonly _serviceBrand: undefined;
 
   readonly ready: Promise<void>;
+  readonly effectiveCwd: string;
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
   read(): Promise<SessionMeta>;
   update(patch: SessionMetaPatch, opts?: { readonly touchUpdatedAt?: boolean }): Promise<void>;

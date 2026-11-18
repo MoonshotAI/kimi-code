@@ -69,7 +69,6 @@ export async function detectMigration(opts: { sourcePath: string; skillsSourcePa
   const detectedPlugins = await listDirSafe(sourcePluginsDir(src), () => true);
   const detectedMcpOauthServers = await detectMcpOauthServers(src);
 
-  // Reverse-lookup workdir from kimi.json
   const workdirMap = new Map<string, WorkdirMeta>();
   try {
     const text = await readFile(sourceKimiJson(src), 'utf-8');
@@ -77,9 +76,7 @@ export async function detectMigration(opts: { sourcePath: string; skillsSourcePa
     for (const wd of parsed.work_dirs) {
       workdirMap.set(oldMd5BucketName(wd.path), { path: wd.path, kaos: wd.kaos });
     }
-  } catch {
-    // no kimi.json or unparseable — sessions list will be empty
-  }
+  } catch {}
 
   const workdirs: WorkDirEntry[] = [];
   let totalSessions = 0;
@@ -90,9 +87,6 @@ export async function detectMigration(opts: { sourcePath: string; skillsSourcePa
     const bucketNames = await readdir(sessionsRoot);
     for (const bucketName of bucketNames) {
       const bucketPath = join(sessionsRoot, bucketName);
-      // Skip non-local-kaos buckets (`<kaos>_<md5>`), which cannot be
-      // represented by the local Kimi Code runtime. Every other unknown
-      // bucket is user data we failed to map and must remain visible.
       if (!MD5_HEX_RE.test(bucketName)) {
         const separator = bucketName.lastIndexOf('_');
         if (separator > 0 && MD5_HEX_RE.test(bucketName.slice(separator + 1))) continue;
@@ -248,16 +242,12 @@ async function readWireMtime(ref: LegacySessionRef): Promise<number> {
   if (ref.sessionDir !== undefined) {
     try {
       return (await stat(join(ref.sessionDir, 'wire.jsonl'))).mtimeMs;
-    } catch {
-      // fall through to the context payload's mtime
-    }
+    } catch {}
   }
   if (ref.contextPath !== undefined) {
     try {
       return (await stat(ref.contextPath)).mtimeMs;
-    } catch {
-      // fall through
-    }
+    } catch {}
   }
   return 0;
 }

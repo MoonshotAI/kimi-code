@@ -16,11 +16,6 @@ interface PendingUpdate {
   readonly text: string;
 }
 
-/**
- * A harness-generated entry marking that work was delegated — shown
- * immediately (not result-gated like `NotifyUser` calls), because its whole
- * point is to explain the silence while the subagent runs.
- */
 function delegationText(name: string, args: Record<string, unknown>): string | undefined {
   if (name === 'Agent') {
     const description = args['description'];
@@ -62,7 +57,6 @@ export class NotifyController {
     if (this.enabled === enabled) return;
     this.reset();
     this.enabled = enabled;
-    // Keyboard or mouse may focus the panel from now on; either way it hands focus back here.
     if (enabled) {
       this.state.notifyPanel.onReturnFocus = (key) => {
         this.returnFocus(key);
@@ -93,7 +87,6 @@ export class NotifyController {
     this.state.ui.requestRender();
   }
 
-  /** Ctrl+N from the input area: give the panel keyboard focus; false when there is nothing to read. */
   focusPanel(): boolean {
     const { notifyPanel, ui } = this.state;
     if (!this.enabled || !notifyPanel.canFocus()) return false;
@@ -102,11 +95,6 @@ export class NotifyController {
     return true;
   }
 
-  /**
-   * Back to whatever stands in the input area now, which may have changed
-   * while the panel had focus. A key the panel does not own goes on to the
-   * editor; an approval or question never takes it as an answer.
-   */
   private returnFocus(key: string | undefined): void {
     const { editor, ui } = this.state;
     const inputArea = editorSlotComponent(this.state) ?? editor;
@@ -116,7 +104,6 @@ export class NotifyController {
     ui.requestRender();
   }
 
-  /** An approval or question replaces the editor; a short screen folds the panel meanwhile. */
   setPrompt(pending: boolean): void {
     this.state.notifyPanel.setPrompt(pending);
     this.state.ui.requestRender();

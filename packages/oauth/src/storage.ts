@@ -1,17 +1,3 @@
-/**
- * File-based OAuth token storage.
- *
- * Tokens are persisted under a directory (default
- * `~/.kimi-code/credentials/`) as `<name>.json` with mode 0600 (parent
- * dir 0700). Wire format uses snake_case to match the server contract.
- *
- * Write semantics: write to `<name>.tmp.<pid>.<rand>` → fsync → rename.
- * Atomic on POSIX; Windows best-effort.
- *
- * Load semantics: missing file → undefined. Corrupt JSON / wrong shape →
- * undefined (never throws). Callers treat undefined as "no token stored".
- */
-
 import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
@@ -47,21 +33,12 @@ export class FileTokenStorage implements TokenStorage {
 
   private ensureDir(): void {
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-    // recursive=true with mode only applies on initial create; tighten after
-    // the fact in case an existing dir had looser permissions.
     try {
       chmodSync(this.dir, 0o700);
-    } catch {
-      // best-effort; Windows / read-only FS may refuse
-    }
+    } catch {}
   }
 
   private pathFor(name: string): string {
-    // Guard against path traversal: caller-provided names (from config.toml
-    // or slash commands) must not escape the credentials dir. `basename`
-    // strips any `..` or `/` segments; if the sanitized value differs from
-    // the input we refuse the request entirely rather than silently
-    // writing to a different file than the caller asked for.
     const safe = basename(name);
     if (safe.length === 0 || safe !== name || safe.startsWith('.')) {
       throw new Error(`Invalid token name: "${name}"`);
@@ -103,15 +80,12 @@ export class FileTokenStorage implements TokenStorage {
       closeSync(fd);
     }
     try {
-      // chmod again in case umask stripped bits during open
       chmodSync(tmp, 0o600);
       renameSync(tmp, target);
     } catch (error) {
       try {
         unlinkSync(tmp);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
       throw error;
     }
   }

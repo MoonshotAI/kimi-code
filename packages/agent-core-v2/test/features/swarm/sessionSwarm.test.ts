@@ -12,8 +12,8 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { Error2, ErrorCodes } from '#/errors';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
@@ -41,9 +41,7 @@ import {
 } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import { IAgentTaskService, type RegisterAgentTaskOptions } from '#/agent/task/task';
-import type { AgentTask, AgentTaskSettlement } from '#/agent/task/types';
-import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
+import type { SubagentTaskInfo } from '#/agent/task/types';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
@@ -1253,7 +1251,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-existing' }]);
 
-    expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('stale-model');
+    expect(child.accessor.get(IAgentLoopService).data().modelAlias).toBe('stale-model');
     expect(eventBus.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'subagent.spawned',
@@ -1403,7 +1401,7 @@ describe('SessionSwarmService metadata compatibility', () => {
         callerAgentId: 'main',
         tasks: [resumeSessionTask('agent-abort')],
       }),
-    ).resolves.toMatchObject([{ status: 'failed', agentId: 'agent-abort' }]);
+    ).resolves.toMatchObject([{ status: 'aborted', agentId: 'agent-abort' }]);
 
     expect(
       published
@@ -1469,50 +1467,17 @@ describe('SessionSwarmService metadata compatibility', () => {
     }
   });
 
-  it('registers each member as a foreground task of the caller that follows suspension and completion', async () => {
+  it('projects each foreground member through suspension and completion', async () => {
     vi.useFakeTimers();
     try {
       agents['agent-rl'] = { labels: { parentAgentId: 'main' } };
       agents['agent-peer'] = { labels: { parentAgentId: 'main' } };
       handles.set('agent-rl', agentHandle('agent-rl', lifecycle, eventBus));
       handles.set('agent-peer', agentHandle('agent-peer', lifecycle, eventBus));
-      const registered: Array<{
-        readonly task: AgentTask;
-        readonly detached: boolean | undefined;
-        readonly detachable: boolean | undefined;
-        settlement?: AgentTaskSettlement;
-        readonly refreshed: Array<SubagentTaskInfo>;
-      }> = [];
-      const infoOf = (task: AgentTask): SubagentTaskInfo =>
-        task.toInfo({ taskId: 't', description: task.description, status: 'running', startedAt: 0, endedAt: null }) as SubagentTaskInfo;
-      const callerTasks = {
-        registerTask: (task: AgentTask, options?: RegisterAgentTaskOptions) => {
-          const entry: (typeof registered)[number] = {
-            task,
-            detached: options?.detached,
-            detachable: options?.detachable,
-            refreshed: [],
-          };
-          registered.push(entry);
-          void task.start({
-            signal: new AbortController().signal,
-            appendOutput: () => {},
-            settle: async (settlement) => {
-              entry.settlement = settlement;
-              return true;
-            },
-          });
-          return `task-${registered.length - 1}`;
-        },
-        refresh: (taskId: string) => {
-          const entry = registered[Number(taskId.slice('task-'.length))]!;
-          entry.refreshed.push(infoOf(entry.task));
-        },
-      } as unknown as IAgentTaskService;
-      handles.set(
-        'main',
-        agentHandle('main', lifecycle, eventBus, {}, new Map<unknown, unknown>([[IAgentTaskService, callerTasks]])),
-      );
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
       const rateLimited = createControlledPromise<{ summary: string }>();
       const peer = createControlledPromise<{ summary: string }>();
       let rlRuns = 0;
@@ -1543,27 +1508,30 @@ describe('SessionSwarmService metadata compatibility', () => {
       await running;
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(registered.map((entry) => [entry.detached, entry.detachable])).toEqual([
-        [false, false],
-        [false, false],
-      ]);
-      const [rl, peerTask] = registered;
-      expect(rl!.refreshed.map((info) => info.stateReason)).toContain(
-        'Provider rate limit; subagent requeued for retry.',
-      );
-      expect(rl!.refreshed.at(-1)?.stateReason).toBeUndefined();
-      expect(rl!.settlement).toEqual({ status: 'completed' });
-      expect(infoOf(rl!.task)).toMatchObject({
+      const infos = (type: string): SubagentTaskInfo[] =>
+        published.filter((event) => event.type === type)
+          .map((event) => (event as unknown as { readonly info: SubagentTaskInfo }).info);
+      expect(infos('task.started').map((info) => info.detached)).toEqual([false, false]);
+      expect(published).toContainEqual(expect.objectContaining({
+        type: 'subagent.suspended',
+        reason: 'Provider rate limit; subagent requeued for retry.',
+      }));
+      const terminated = infos('task.terminated');
+      expect(terminated).toHaveLength(2);
+      expect(terminated.find((info) => info.agentId === 'agent-rl')).toMatchObject({
         kind: 'agent',
-        agentId: 'agent-rl',
+        status: 'completed',
         parentToolCallId: 'call_swarm',
         swarmIndex: 1,
         model: 'kimi-test',
         thinkingEffort: 'medium',
         resultSummary: 'recovered summary',
+        stateReason: undefined,
       });
-      expect(peerTask!.settlement).toEqual({ status: 'completed' });
-      expect(infoOf(peerTask!.task)).toMatchObject({ agentId: 'agent-peer', resultSummary: 'peer summary' });
+      expect(terminated.find((info) => info.agentId === 'agent-peer')).toMatchObject({
+        status: 'completed',
+        resultSummary: 'peer summary',
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -1574,27 +1542,11 @@ describe('SessionSwarmService metadata compatibility', () => {
     agents['agent-keep'] = { labels: { parentAgentId: 'main' } };
     handles.set('agent-stop', agentHandle('agent-stop', lifecycle, eventBus));
     handles.set('agent-keep', agentHandle('agent-keep', lifecycle, eventBus));
-    const members: Array<{ readonly stop: AbortController; settlement?: AgentTaskSettlement }> = [];
-    const callerTasks = {
-      registerTask: (task: AgentTask) => {
-        const member: (typeof members)[number] = { stop: new AbortController() };
-        members.push(member);
-        void task.start({
-          signal: member.stop.signal,
-          appendOutput: () => {},
-          settle: async (settlement) => {
-            member.settlement = settlement;
-            return true;
-          },
-        });
-        return `task-${members.length - 1}`;
-      },
-      refresh: () => {},
-    } as unknown as IAgentTaskService;
-    handles.set(
-      'main',
-      agentHandle('main', lifecycle, eventBus, {}, new Map<unknown, unknown>([[IAgentTaskService, callerTasks]])),
-    );
+    const published: Event2[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+      published.push(event);
+    });
+    const stop = new AbortController();
     const kept = createControlledPromise<{ summary: string }>();
     runAgent.mockImplementation((agent, _request, options) => {
       options?.onReady?.();
@@ -1613,12 +1565,15 @@ describe('SessionSwarmService metadata compatibility', () => {
 
     const running = ix.get(ISessionSwarmService).run({
       callerAgentId: 'main',
-      tasks: [resumeSessionTask('agent-stop'), resumeSessionTask('agent-keep')],
+      tasks: [
+        { ...resumeSessionTask('agent-stop'), signal: stop.signal },
+        resumeSessionTask('agent-keep'),
+      ],
     });
     await vi.waitFor(() => {
       expect(runAgent).toHaveBeenCalledTimes(2);
     });
-    members[0]!.stop.abort(userCancellationReason());
+    stop.abort(userCancellationReason());
     kept.resolve({ summary: 'kept summary' });
     const results = await running;
 
@@ -1626,7 +1581,9 @@ describe('SessionSwarmService metadata compatibility', () => {
       ['agent-stop', 'aborted'],
       ['agent-keep', 'completed'],
     ]);
-    expect(members.map((member) => member.settlement?.status)).toEqual(['killed', 'completed']);
+    const terminated = published.filter((event) => event.type === 'task.terminated')
+      .map((event) => (event as unknown as { readonly info: SubagentTaskInfo }).info);
+    expect(terminated.map((info) => info.status)).toEqual(['killed', 'completed']);
   });
 
   it('settles a stopped member that is still queued without waiting for a free slot', async () => {
@@ -1636,45 +1593,31 @@ describe('SessionSwarmService metadata compatibility', () => {
       agents['agent-queued'] = { labels: { parentAgentId: 'main' } };
       handles.set('agent-run', agentHandle('agent-run', lifecycle, eventBus));
       handles.set('agent-queued', agentHandle('agent-queued', lifecycle, eventBus));
-      const members: Array<{ readonly stop: AbortController; settlement?: AgentTaskSettlement }> = [];
-      const callerTasks = {
-        registerTask: (task: AgentTask) => {
-          const member: (typeof members)[number] = { stop: new AbortController() };
-          members.push(member);
-          void task.start({
-            signal: member.stop.signal,
-            appendOutput: () => {},
-            settle: async (settlement) => {
-              member.settlement = settlement;
-              return true;
-            },
-          });
-          return `task-${members.length - 1}`;
-        },
-        refresh: () => {},
-      } as unknown as IAgentTaskService;
-      handles.set(
-        'main',
-        agentHandle('main', lifecycle, eventBus, {}, new Map<unknown, unknown>([[IAgentTaskService, callerTasks]])),
-      );
+      const queued = new AbortController();
       const running = createControlledPromise<{ summary: string }>();
       runAgent.mockImplementation((agent, _request, options) => {
         options?.onReady?.();
         return { agentId: (agent as AgentContext).agentId, turn: {} as never, completion: running };
       });
 
+      let settled = false;
       const swarm = ix.get(ISessionSwarmService).run({
         callerAgentId: 'main',
-        tasks: [resumeSessionTask('agent-run'), resumeSessionTask('agent-queued')],
+        tasks: [
+          resumeSessionTask('agent-run'),
+          { ...resumeSessionTask('agent-queued'), signal: queued.signal },
+        ],
+      });
+      void swarm.then(() => {
+        settled = true;
       });
       await vi.waitFor(() => {
         expect(runAgent).toHaveBeenCalledTimes(1);
       });
-      members[1]!.stop.abort(userCancellationReason());
-      await vi.waitFor(() => {
-        expect(members[1]!.settlement?.status).toBe('killed');
-      });
+      queued.abort(userCancellationReason());
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(runAgent).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
 
       running.resolve({ summary: 'done' });
       const results = await swarm;
@@ -1687,28 +1630,16 @@ describe('SessionSwarmService metadata compatibility', () => {
     }
   });
 
-  it('rejects an invalid concurrency setting before registering any member task', async () => {
+  it('rejects an invalid concurrency setting before starting any member', async () => {
     vi.stubEnv('KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY', 'many');
     try {
-      const registerTask = vi.fn(() => 'task-0');
-      handles.set(
-        'main',
-        agentHandle(
-          'main',
-          lifecycle,
-          eventBus,
-          {},
-          new Map<unknown, unknown>([[IAgentTaskService, { registerTask, refresh: () => {} }]]),
-        ),
-      );
-
       expect(() =>
         ix.get(ISessionSwarmService).run({
           callerAgentId: 'main',
           tasks: [resumeSessionTask('agent-one')],
         }),
       ).toThrow(/KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY/);
-      expect(registerTask).not.toHaveBeenCalled();
+      expect(runAgent).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
     }
@@ -2070,16 +2001,14 @@ describe('SessionSwarmService metadata compatibility', () => {
         published.push(event);
       });
       const service = ix.get(ISessionSwarmService);
-      const controller = new AbortController();
-
       const running = service.run({
         callerAgentId: 'main',
-        tasks: [{ ...spawnSessionTask('src/a.ts'), signal: controller.signal }],
+        tasks: [spawnSessionTask('src/a.ts')],
       });
       await vi.advanceTimersByTimeAsync(0);
       expect(spawnAgent).toHaveBeenCalledTimes(1);
 
-      controller.abort(userCancellationReason());
+      service.cancel({ callerAgentId: 'main' });
       await expect(running).resolves.toMatchObject([{ status: 'aborted', state: 'not_started' }]);
       expect(published.some((event) => event.type === 'subagent.spawned')).toBe(false);
 
@@ -2328,11 +2257,12 @@ describe('SessionSwarmService metadata compatibility', () => {
     process.on('unhandledRejection', listener);
     try {
       const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
       const running = service.run({
         callerAgentId: 'main',
-        tasks: [resumeSessionTask('agent-a')],
+        tasks: [{ ...resumeSessionTask('agent-a'), signal: controller.signal }],
       });
-      service.cancel({ callerAgentId: 'main' });
+      controller.abort(new Error('batch aborted'));
       await expect(running).rejects.toThrow();
       await new Promise((resolve) => setImmediate(resolve));
       expect(rejections).toEqual([]);
@@ -2460,6 +2390,7 @@ function agentHandle(
     systemPrompt: '',
     ...data,
   });
+  Object.assign(profile, { snapshot: () => ({ state: 'idle' }) });
   const permissionMode = {
     _serviceBrand: undefined,
     mode: 'auto',
@@ -2480,7 +2411,7 @@ function agentHandle(
       get: ((serviceId: unknown) => {
         const service = services.get(serviceId);
         if (service !== undefined) return service;
-        if (serviceId === IAgentProfileService) return profile;
+        if (serviceId === IAgentLoopService) return profile;
         if (serviceId === IAgentEnvironmentBindingService) {
           return {
             _serviceBrand: undefined,
@@ -2516,7 +2447,7 @@ function agentHandle(
   };
 }
 
-function profileService(data: ProfileData): IAgentProfileService {
+function profileService(data: ProfileData): IAgentLoopService {
   let current = data;
   return {
     _serviceBrand: undefined,
@@ -2526,7 +2457,7 @@ function profileService(data: ProfileData): IAgentProfileService {
     },
     republishStatus: () => {},
     getEffectiveThinkingLevel: () => current.thinkingLevel,
-  } as IAgentProfileService;
+  } as IAgentLoopService;
 }
 
 function userToolServiceStub(): IAgentUserToolService {

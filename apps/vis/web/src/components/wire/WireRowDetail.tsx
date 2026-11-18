@@ -8,7 +8,6 @@ import { rendererFor } from './renderers';
 
 interface WireRowDetailProps {
   entry: WireEntry;
-  /** Scroll to + expand a given line. */
   onJumpTo?: (lineNo: number) => void;
 }
 
@@ -16,9 +15,6 @@ type JsonView = 'none' | 'raw' | 'projected';
 
 export function WireRowDetail({ entry }: WireRowDetailProps) {
   const [view, setView] = useState<JsonView>('none');
-  // Only offer the dual view when migration actually changed something.
-  // For records on the current protocol, `raw` and `data` are identical
-  // and the toggle would just be visual noise.
   const migrated = !sameJson(entry.raw, entry.data);
 
   return (
@@ -88,8 +84,6 @@ function sameJson(a: unknown, b: unknown): boolean {
   }
 }
 
-/** Render the expanded detail for a wire record. Thin dispatch to the per-kind
- *  registry's `detail`; kinds without one fall back to a structured JSON dump. */
 function renderFriendly(record: AgentRecord) {
   const renderer = rendererFor(record.type);
   if (renderer?.detail !== undefined) return renderer.detail(record);

@@ -1,7 +1,3 @@
-/**
- * HTTP layer for `DaemonClient` — typed wrappers around fetch + envelope
- * unwrap. All paths concatenate `baseUrl + apiPrefix + route`.
- */
 import type {
   FsBrowseResponse,
   FsHomeResponse,
@@ -15,7 +11,6 @@ import type {
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { Envelope } from '@moonshot-ai/kap-server/protocol/envelope';
 import type { ConversationTurnsPage } from '@moonshot-ai/kap-server/protocol/conversation';
-import type { Message } from '@moonshot-ai/kap-server/protocol/message';
 import type {
   InteractionRespondRequest,
   InteractionRespondResult,
@@ -32,16 +27,17 @@ import type {
   PromptSubmitResult,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
 import type {
+  CancelSessionRequest,
   CompactSessionRequest,
   CompactSessionResponse,
   ForkSessionRequest,
-  SessionAbortResponse,
+  SessionCancelResponse,
   UndoSessionRequest,
   UndoSessionResponse,
+  UpdateSessionProfileResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-session';
 import type {
   Session,
-  SessionChildCreate,
   SessionCreate,
 } from '@moonshot-ai/kap-server/protocol/session';
 import type {
@@ -58,7 +54,6 @@ export interface HttpClientOptions {
   apiPrefix: string;
   fetchImpl: typeof fetch;
   reportDir?: string;
-  /** Optional bearer token — sent as `Authorization: Bearer <token>` when set. */
   token?: string;
 }
 
@@ -180,7 +175,6 @@ export class HttpClient {
     return unwrap(envelope);
   }
 
-  // ── Probes + model catalog ─────────────────────────────────────────────
   getAuth(): Promise<AuthSummary> {
     return this.request<AuthSummary>('GET', '/auth', undefined);
   }
@@ -205,7 +199,6 @@ export class HttpClient {
     );
   }
 
-  // ── Sessions ────────────────────────────────────────────────────────────
   createSession(body: SessionCreate): Promise<Session> {
     return this.request<Session>('POST', '/sessions', body);
   }
@@ -220,12 +213,8 @@ export class HttpClient {
   }): Promise<{ items: Session[]; has_more: boolean }> {
     return this.request('GET', `/sessions${qs(query)}`, undefined);
   }
-  updateSession(sid: string, body: SessionUpdate): Promise<Session> {
-    // Daemon canonical route: `POST /v1/sessions/{sid}/profile` (REST.md §3.3).
-    // Earlier scaffolding spoke `PATCH /v1/sessions/{sid}`, which the server
-    // never wired — keep the helper name (used by existing fixtures) and just
-    // dispatch to the right URL.
-    return this.request<Session>(
+  updateSession(sid: string, body: SessionUpdate): Promise<UpdateSessionProfileResponse> {
+    return this.request<UpdateSessionProfileResponse>(
       'POST',
       `/sessions/${encodeURIComponent(sid)}/profile`,
       body,
@@ -257,25 +246,7 @@ export class HttpClient {
   archiveSession(sid: string): Promise<{ archived: true }> {
     return this.request('POST', `/sessions/${encodeURIComponent(sid)}:archive`, {});
   }
-  listChildren(
-    sid: string,
-    query?: { page_size?: number; before_id?: string; after_id?: string; busy?: boolean },
-  ): Promise<{ items: Session[]; has_more: boolean }> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/children${qs(query)}`,
-      undefined,
-    );
-  }
-  createChild(sid: string, body: SessionChildCreate = {}): Promise<Session> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/children`,
-      body,
-    );
-  }
 
-  // ── Workspaces ──────────────────────────────────────────────────────────
   listWorkspaces(): Promise<{ items: Workspace[] }> {
     return this.request('GET', '/workspaces', undefined);
   }
@@ -297,7 +268,6 @@ export class HttpClient {
     );
   }
 
-  // ── Folder picker (fs:browse + fs:home) ─────────────────────────────────
   fsBrowse(path?: string): Promise<FsBrowseResponse> {
     return this.request('GET', `/fs:browse${qs({ path })}`, undefined);
   }
@@ -305,7 +275,6 @@ export class HttpClient {
     return this.request('GET', '/fs:home', undefined);
   }
 
-  // ── Uploads ─────────────────────────────────────────────────────────────
   uploadFile(input: {
     name: string;
     data: UploadFileData;
@@ -324,30 +293,15 @@ export class HttpClient {
     return this.request('DELETE', `/files/${encodeURIComponent(fileId)}`, undefined);
   }
 
-  // ── Messages ────────────────────────────────────────────────────────────
-  listMessages(
-    sid: string,
-    query?: { page_size?: number; before_id?: string; after_id?: string; role?: string },
-  ): Promise<{ items: Message[]; has_more: boolean }> {
-    return this.request('GET', `/sessions/${encodeURIComponent(sid)}/messages${qs(query)}`, undefined);
-  }
   listTurns(sid: string): Promise<ConversationTurnsPage> {
     return this.request('GET', `/sessions/${encodeURIComponent(sid)}/agents/main/turns`, undefined);
   }
 
-  // ── Prompts ─────────────────────────────────────────────────────────────
   listPrompts(sid: string): Promise<PromptListResponse> {
     return this.request('GET', `/sessions/${encodeURIComponent(sid)}/prompts`, undefined);
   }
   submitPrompt(sid: string, body: PromptSubmission): Promise<PromptSubmitResult> {
     return this.request('POST', `/sessions/${encodeURIComponent(sid)}/prompts`, body);
-  }
-  steerPrompt(sid: string, pid: string): Promise<PromptSteerResult> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/prompts/${encodeURIComponent(pid)}:steer`,
-      {},
-    );
   }
   steerPrompts(sid: string, promptIds: readonly string[]): Promise<PromptSteerResult> {
     return this.request(
@@ -363,11 +317,10 @@ export class HttpClient {
       {},
     );
   }
-  abortSession(sid: string): Promise<SessionAbortResponse> {
-    return this.request('POST', `/sessions/${encodeURIComponent(sid)}:abort`, {});
+  cancelSession(sid: string, body: CancelSessionRequest = {}): Promise<SessionCancelResponse> {
+    return this.request('POST', `/sessions/${encodeURIComponent(sid)}:cancel`, body);
   }
 
-  // ── Approvals / Questions (reverse-RPC resolves) ────────────────────────
   respondInteraction(
     sid: string,
     interactionId: string,

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IEventBus } from '#/app/event/eventBus';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { PromptCompleted, PromptStarted, PromptSubmitted } from '#/agent/prompt/promptEvents';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 
 import { stubSkill } from './catalog/stubs';
@@ -50,7 +53,7 @@ describe('activateSkill', () => {
     await ctx.rpc.activateSkill({ name: 'commit', promptId: 'msg_activation' });
     await ctx.untilTurnEnd();
 
-    const activation = ctx.context.get().find((message) => message.origin?.kind === 'skill_activation');
+    const activation = ctx.context.history().find((message) => message.origin?.kind === 'skill_activation');
     expect(activation?.id).toBe('msg_activation');
   });
 });
@@ -116,7 +119,7 @@ describe('promptWithSkills', () => {
     expect(llmInput).toContain('# Security body');
     expect(llmInput).toContain('Review this change.');
 
-    const messages = ctx.context.get();
+    const messages = ctx.context.history();
     const promptMessage = messages.find((message) => message.origin?.kind === 'user');
     expect(messages.filter((message) => message.origin?.kind === 'skill_activation')).toHaveLength(
       0,
@@ -163,47 +166,61 @@ describe('promptWithSkills', () => {
     await ctx.untilTurnEnd();
 
     expect(launched.prompt_id).toBe('msg_bundled');
-    expect(ctx.context.get().find((message) => message.origin?.kind === 'user')?.id).toBe('msg_bundled');
+    expect(ctx.context.history().find((message) => message.origin?.kind === 'user')?.id).toBe('msg_bundled');
   });
 
-  it('steers the bundled submission into the running turn without starting a new one', async () => {
+  it('hands off a goal-originated active step to a bundled submission in a new turn', async () => {
     ctx = agentWithSkills();
-    ctx.mockNextResponse({ type: 'text', text: 'first reply' });
+    await ctx.restorePersisted();
     ctx.mockNextResponse({ type: 'text', text: 'second reply' });
+    const loop = ctx.get(IAgentLoopService);
+    const promptLifecycle: string[] = [];
+    const eventBus = ctx.get(IEventBus);
+    eventBus.subscribe(PromptSubmitted, (event) => promptLifecycle.push(`submitted:${event.promptId}`));
+    eventBus.subscribe(PromptStarted, (event) => promptLifecycle.push(`started:${event.promptId}`));
+    eventBus.subscribe(PromptCompleted, (event) => promptLifecycle.push(`completed:${event.promptId}`));
     const hold = holdFirstStep();
-
-    const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+    const active = loop.submit({
+      role: 'user',
+      content: [{ type: 'text', text: 'goal continuation' }],
+      attributes: {
+        promptId: 'goal-continuation',
+        origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin,
+      },
+    });
+    const activeHandle = loop.promptHandle(active.id)!;
     await hold.started;
+    expect(loop.snapshot()).toMatchObject({ activeTurnId: 0, activePromptId: active.id });
 
-    const steered = await ctx.rpc.promptWithSkills({
+    const steeredPromise = ctx.rpc.promptWithSkills({
       input: [{ type: 'text', text: '/review src/app.ts' }],
       skills: [{ name: 'review', args: 'src/app.ts' }],
       steerIfActive: true,
     });
-    expect(steered.turn_id).toBe(0);
+    hold.release();
+    const steered = await steeredPromise;
+    expect(steered.turn_id).toBe(1);
     expect(steered.state).toBe('running');
     expect(steered.steered).toBe(true);
     expect(steered.prompt_id).toBeTruthy();
 
-    hold.release();
-    await promptPromise;
-    await ctx.untilTurnEnd();
+    await expect(activeHandle.completion).resolves.toMatchObject({ state: 'completed' });
+    await loop.settled();
 
-    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.llmCalls).toHaveLength(1);
     const llmInput = JSON.stringify(ctx.llmInputs());
     expect(llmInput).toContain('# Review body');
     expect(llmInput).toContain('ARGUMENTS: src/app.ts');
     expect(llmInput).toContain('/review src/app.ts');
 
     const bundled = ctx.context
-      .get()
+      .history()
       .find(
         (message) =>
           message.origin?.kind === 'user' && message.origin.skillActivations !== undefined,
       );
     expect(bundled?.origin).toMatchObject({
       kind: 'user',
-      inTurn: true,
       skillActivations: [{ skillName: 'review', skillArgs: 'src/app.ts' }],
     });
     const texts = bundled?.content
@@ -211,13 +228,66 @@ describe('promptWithSkills', () => {
       .map((part) => part.text);
     expect(texts?.[0]).toContain('# Review body');
     expect(texts?.[1]).toBe('/review src/app.ts');
+    expect(promptLifecycle.filter((entry) => entry.endsWith(`:${active.id}`))).toEqual([
+      `submitted:${active.id}`,
+      `started:${active.id}`,
+      `completed:${active.id}`,
+    ]);
 
     const events = ctx.allEvents.filter(
       (event) =>
         event.type === '[rpc]' &&
         (event.event === 'skill.activated' || event.event === 'turn.started'),
     );
-    expect(events.map((event) => event.event)).toEqual(['turn.started', 'skill.activated']);
+    expect(events.map((event) => event.event)).toEqual(['turn.started', 'skill.activated', 'turn.started']);
+  });
+
+  it('clears a previous parent workspace when a multi-skill bundle steers into the turn', async () => {
+    const parentA = stubSkill('parent', { path: '/work/A/parent/SKILL.md', dir: '/work/A/parent', content: 'parent from A', workspaceDir: '/work/A' });
+    const parentB = stubSkill('parent', { path: '/work/B/parent/SKILL.md', dir: '/work/B/parent', content: 'parent from B', workspaceDir: '/work/B' });
+    const childA = stubSkill('child', { path: '/work/A/child/SKILL.md', dir: '/work/A/child', content: 'child from A', workspaceDir: '/work/A' });
+    const childB = stubSkill('child', { path: '/work/B/child/SKILL.md', dir: '/work/B/child', content: 'child from B', workspaceDir: '/work/B' });
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(parentA);
+    catalog.register(childA);
+    catalog.register(stubSkill('other'));
+    catalog.registerVariants([parentA, parentB, childA, childB, stubSkill('other')], { replace: true });
+    ctx = createTestAgent(skillServices(catalog));
+    ctx.mockNextResponse({ type: 'text', text: 'Load child.' }, {
+      type: 'function',
+      id: 'call_child',
+      name: 'Skill',
+      arguments: '{"skill":"child"}',
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    const hold = holdFirstStep();
+    const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+    await hold.started;
+    const parentSteer = ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: 'Use parent B' }],
+      skills: [{ name: 'parent', path: parentB.path }],
+      steerIfActive: true,
+    });
+    const multipleSteer = ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: 'Use multiple skills' }],
+      skills: [{ name: 'parent', path: parentB.path }, { name: 'other' }],
+      steerIfActive: true,
+    });
+    hold.release();
+    await parentSteer;
+    const steered = await multipleSteer;
+    expect(steered.steered).toBe(true);
+    await promptPromise;
+    await ctx.get(IAgentLoopService).settled();
+
+    const nested = ctx.context.history().filter((message) =>
+      message.origin?.kind === 'skill_activation' && message.origin.skillName === 'child'
+    );
+    expect(nested).toHaveLength(1);
+    expect(JSON.stringify(nested[0])).toContain('child from A');
+    expect(JSON.stringify(nested[0])).toContain('/work/A/child/SKILL.md');
+    expect(JSON.stringify(nested[0])).toContain('model-tool');
+    expect(JSON.stringify(nested[0])).not.toContain('nested-skill');
   });
 
   it.each([{ steerIfActive: undefined }, { steerIfActive: false }])(
@@ -260,6 +330,48 @@ describe('promptWithSkills', () => {
     },
   );
 
+  it('keeps the bundled parent workspace when a queued submission launches', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.registerVariants([
+      { ...stubSkill('parent'), path: '/work/A/parent/SKILL.md', dir: '/work/A/parent', content: 'parent from A', workspaceDir: '/work/A' },
+      { ...stubSkill('parent'), path: '/work/B/parent/SKILL.md', dir: '/work/B/parent', content: 'parent from B', workspaceDir: '/work/B' },
+      { ...stubSkill('child'), path: '/work/A/child/SKILL.md', dir: '/work/A/child', content: 'child from A', workspaceDir: '/work/A' },
+      { ...stubSkill('child'), path: '/work/B/child/SKILL.md', dir: '/work/B/child', content: 'child from B', workspaceDir: '/work/B' },
+    ], { replace: true });
+    ctx = createTestAgent(skillServices(catalog));
+    ctx.mockNextResponse({ type: 'text', text: 'first done' });
+    ctx.mockNextResponse({ type: 'text', text: 'Load child.' }, {
+      type: 'function',
+      id: 'call_child',
+      name: 'Skill',
+      arguments: '{"skill":"child"}',
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    const hold = holdFirstStep();
+    const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+    await hold.started;
+
+    const queued = await ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: 'Use the parent skill' }],
+      skills: [{ name: 'parent', path: '/work/B/parent/SKILL.md' }],
+    });
+    expect(queued.state).toBe('queued');
+
+    hold.release();
+    await promptPromise;
+    await ctx.untilTurnEnd();
+    await ctx.untilTurnEnd();
+
+    const nested = ctx.context.history().filter((message) =>
+      message.origin?.kind === 'skill_activation' && message.origin.skillName === 'child'
+    );
+    expect(nested).toHaveLength(1);
+    expect(JSON.stringify(nested[0])).toContain('child from B');
+    expect(JSON.stringify(nested[0])).toContain('/work/B/child/SKILL.md');
+    expect(JSON.stringify(nested[0])).toContain('nested-skill');
+    expect(JSON.stringify(nested[0])).not.toContain('child from A');
+  });
+
   it('launches a new turn when idle even with the steer option', async () => {
     ctx = agentWithSkills();
     ctx.mockNextResponse({ type: 'text', text: 'done' });
@@ -291,7 +403,7 @@ describe('promptWithSkills', () => {
     ).rejects.toThrow(/not found/i);
 
     expect(ctx.llmCalls).toHaveLength(0);
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
     expect(
       ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
     ).toBe(false);
@@ -308,7 +420,7 @@ describe('promptWithSkills', () => {
     ).rejects.toThrow(/non-empty prompt/i);
 
     expect(ctx.llmCalls).toHaveLength(0);
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
     expect(
       ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
     ).toBe(false);
@@ -325,7 +437,7 @@ describe('promptWithSkills', () => {
     ).rejects.toThrow(/at least one skill/i);
 
     expect(ctx.llmCalls).toHaveLength(0);
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
     expect(
       ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
     ).toBe(false);
@@ -340,11 +452,11 @@ describe('promptWithSkills', () => {
       skills: [{ name: 'review' }, { name: 'security' }],
     });
     await ctx.untilTurnEnd();
-    expect(ctx.context.get().length).toBeGreaterThan(0);
+    expect(ctx.context.history().length).toBeGreaterThan(0);
 
     const undone = await ctx.rpc.undoHistory({ count: 1 });
     expect(undone).toBe(1);
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
   });
 
   it('accepts later prompt_id reuse of a bundled prompt id as a pure correlation id', async () => {

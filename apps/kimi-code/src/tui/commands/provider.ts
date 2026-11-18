@@ -36,10 +36,6 @@ import {
 } from './prompts';
 import type { SlashCommandHost } from './dispatch';
 
-// ---------------------------------------------------------------------------
-// /provider command
-// ---------------------------------------------------------------------------
-
 export async function handleProviderCommand(host: SlashCommandHost, rawArgs = ''): Promise<void> {
   const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
   if (args[0] === 'refresh') {
@@ -91,15 +87,12 @@ function reportProviderRefresh(
 ): void {
   for (const change of result.changed) {
     if (change.added === 0 && change.removed === 0) {
-      // Metadata-only refresh: display name, capabilities, or upgrade info changed.
       host.showStatus(`${change.provider_name}: model metadata updated.`);
       continue;
     }
     const parts: string[] = [];
     if (change.added > 0) parts.push(`+${change.added}`);
     if (change.removed > 0) parts.push(`-${change.removed}`);
-    // A removed alias can break agents bound to it on their next turn, so
-    // removals surface as a warning rather than a plain status.
     const total = change.added + change.removed;
     host.showStatus(
       `${change.provider_name}: ${parts.join(' / ')} model${total === 1 ? '' : 's'}.`,
@@ -157,9 +150,6 @@ async function handleProviderManagerDeleteSource(
 async function handleProviderDelete(host: SlashCommandHost, providerId: string): Promise<void> {
   if (providerId === DEFAULT_OAUTH_PROVIDER_NAME) {
     await host.harness.auth.logout(DEFAULT_OAUTH_PROVIDER_NAME);
-    // Drop the process-wide region cache with the credential: derived
-    // endpoints (updates, marketplace, site links, telemetry) must fall back
-    // to the marker/default profile, not the logged-out region.
     refreshKimiRegion();
     await host.authFlow.refreshConfigAfterLogout();
     return;
@@ -299,9 +289,6 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   const apiKey = await promptApiKey(host, entry.name ?? providerId);
   if (apiKey === undefined) return;
 
-  // Persist the provider and all its models immediately after the api key is
-  // entered. The model selector that follows is just a convenience to pick the
-  // default model; ESC leaves the provider in place without a default selection.
   const existingConfig = await host.harness.getConfig();
   if (existingConfig.providers[providerId] !== undefined) {
     await host.harness.removeProvider(providerId);
@@ -314,8 +301,8 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     baseUrl,
     apiKey,
     models,
-    selectedModelId: '', // no default yet; user picks in the model selector
-    thinking: false,    // will be resolved by the model selector
+    selectedModelId: '',
+    thinking: false,
   });
 
   await host.harness.setConfig({
@@ -332,9 +319,6 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     );
   }
 
-  // The config's model table already holds the newly-persisted provider's
-  // models next to the existing ones, so the tabbed selector shows every
-  // provider's tab (the new provider's tab starts active via initialTabId).
   const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
   const selector = new TabbedModelSelectorComponent({
     models: stateModels,
@@ -360,45 +344,25 @@ export async function setDefaultModel(
   alias: string,
   effort: ThinkingEffort,
 ): Promise<void> {
-  // Resolve efforts the same way the /model path does (effectiveModelForHost
-  // applies overrides and the protocol-profile inference): catalog entries for
-  // e.g. Anthropic models declare no support_efforts on the alias, and without
-  // the inference an above-default pick would slip through as a persisted effort.
   const model = host.state.appState.availableModels[alias];
   const thinking = thinkingEffortToConfig(
     effort,
     model === undefined ? undefined : effectiveModelForHost(host, model),
   );
   if (host.session === undefined) {
-    // A first prompt may still be inside lazy creation: wait it out so the
-    // pick lands on the new session instead of racing its assembly (same
-    // coordination as the /model path).
     await host.waitForSessionAssembly();
   }
   await host.harness.setConfig({
     defaultModel: alias,
     thinking,
   });
-  // Whether activation made the engine emit model_switch (it reached a live
-  // session AND changed the bound alias — both engines track only an actual
-  // change). Recorded at activation time rather than snapshotted at entry: a
-  // lazy session can come live while the config writes above are pending; a
-  // session created BY activation (v1) or a same-alias rebind does not count
-  // — both bind the model without an engine event.
   const refreshed = await host.authFlow.refreshConfigAfterLogin(effort);
-  // A mounted confirmation gate owns the whole switch — including the picked
-  // effort — so the follow-up activation must not fire under the open dialog.
   const gateOwnsSwitch = refreshed === 'gated';
   let engineTrackedSwitch = refreshed === 'gated' ? true : refreshed;
-  // refreshConfigAfterLogin reactivates from the persisted config, so a pick
-  // the gate keeps session-only never reaches the runtime — apply it after
-  // the refresh, or the persisted value would clobber it.
   if (!gateOwnsSwitch && thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
     engineTrackedSwitch =
       (await host.authFlow.activateModelAfterLogin(alias, effort)) || engineTrackedSwitch;
   }
-  // When the engine never emitted (no live session, or the alias was already
-  // bound), the TUI stays the sole producer for the pick.
   if (!engineTrackedSwitch) {
     host.track('model_switch', { model: alias });
   }
@@ -453,8 +417,6 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     );
   }
 
-  // Offer the model selector so the user can pick a default, just like the
-  // catalog (known-provider) flow.
   const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
   const firstNewAlias = Object.keys(stateModels).find((a) =>
     addedProviderIds.some((pid) => a.startsWith(`${pid}/`)),

@@ -26,7 +26,6 @@ function loadSeaModule(): NodeSeaModule | null {
   return cachedSea;
 }
 
-/** Runtime SEA detection — true when running as a packaged native binary. */
 export function detectNativeInstall(): boolean {
   const sea = loadSeaModule();
   if (sea === null) return false;
@@ -37,24 +36,15 @@ export function detectNativeInstall(): boolean {
   }
 }
 
-// Path heuristic markers (compared in lowercase; both forward and backward slashes accepted).
 const PNPM_PATH_SEGMENT = 'pnpm/global/';
 const YARN_PATH_SEGMENTS = ['.config/yarn/global/', '/.yarn/global/'];
 const BUN_PATH_SEGMENT = '.bun/install/global/';
-// Homebrew installs formulae under its Cellar directory. Avoid matching the
-// broader /homebrew/ prefix — on Apple Silicon, npm itself lives under
-// /opt/homebrew/, so `npm install -g` paths also contain /homebrew/.
 const HOMEBREW_PATH_SEGMENT = '/cellar/';
 
 function normalizeForHeuristic(filePath: string): string {
   return filePath.replaceAll('\\', '/').toLowerCase();
 }
 
-/**
- * Heuristic classification by package root path segments. Returns the
- * matching `InstallSource` or `null` if no heuristic matches (caller should
- * fall through to npm-prefix comparison).
- */
 export function classifyByPathHeuristic(packageRoot: string): InstallSource | null {
   const normalized = normalizeForHeuristic(packageRoot);
   if (normalized.includes(PNPM_PATH_SEGMENT)) return 'pnpm-global';
@@ -78,9 +68,6 @@ function npmCommand(platform: NodeJS.Platform): string {
   return platform === 'win32' ? 'npm.cmd' : 'npm';
 }
 
-// The install-source detection runs before the workspace trust gate, so the
-// npm binary must be resolved through PATH to an absolute path — a bare name
-// would let cmd.exe pick up an `npm.cmd` planted in the current directory.
 function npmGlobalPrefix(platform: NodeJS.Platform): Promise<string> {
   const resolved = resolveCommandPath(npmCommand(platform));
   if (resolved === undefined) {

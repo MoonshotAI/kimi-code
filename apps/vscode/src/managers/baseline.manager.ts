@@ -76,11 +76,6 @@ export class BaselineManager {
     this.baselinesRoot = path.join(globalStorageRoot, 'baselines', hash(homeNamespace));
   }
 
-  /**
-   * Capture the file synchronously before returning control to the caller.
-   * Persistence is serialized per session and completes through the returned
-   * promise, but no `await` occurs before the original file has been read.
-   */
   async capture(session: BaselineSession, filePath: string): Promise<void> {
     const resolved = resolveSessionFile(session, filePath);
     const captured = captureOriginal(resolved.absolutePath);

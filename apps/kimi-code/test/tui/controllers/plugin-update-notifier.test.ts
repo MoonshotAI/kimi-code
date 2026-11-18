@@ -116,8 +116,6 @@ describe('PluginUpdateNotifier', () => {
     expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
 
     harness.notify.mockClear();
-    // Follow-up checks run but hit the persisted "already notified" record
-    // instead of notifying again.
     await notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
     expect(harness.notify).not.toHaveBeenCalled();
     await notifier.handlePluginCommandCompleted('kimi-datasource');
@@ -149,7 +147,6 @@ describe('PluginUpdateNotifier', () => {
     const notifier = makeNotifier(harness);
 
     await notifier.handlePluginCommandCompleted('local-only');
-    // No marketplace entry — the check bails before even listing plugins.
     expect(harness.session.listPlugins).not.toHaveBeenCalled();
     expect(harness.notify).not.toHaveBeenCalled();
   });
@@ -164,8 +161,6 @@ describe('PluginUpdateNotifier', () => {
     const notifier = makeNotifier(harness);
 
     await notifier.handlePluginCommandCompleted('kimi-datasource');
-    // A custom catalog may advertise anything under any id — the check bails
-    // before comparing versions.
     expect(harness.session.listPlugins).not.toHaveBeenCalled();
     expect(harness.notify).not.toHaveBeenCalled();
   });
@@ -248,8 +243,6 @@ describe('PluginUpdateNotifier', () => {
   });
 
   it('resolves plugin tools whose qualified name core truncated before the separator', async () => {
-    // Server part exactly 50 chars: the 64-char truncation cuts the whole
-    // `__` separator and tool name, leaving `mcp__<server>_<hash>`.
     const serverName = `plugin-kimi-datasource:${'s'.repeat(27)}`;
     const sanitized = `plugin-kimi-datasource_${'s'.repeat(27)}`;
     expect(`mcp__${sanitized}`.length).toBe(55);
@@ -268,7 +261,6 @@ describe('PluginUpdateNotifier', () => {
 
     await notifier.handlePluginCommandCompleted('kimi-datasource');
     expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
-    // Plugin commands resolve the plugin id directly — no MCP server lookup.
     expect(harness.session.listMcpServers).not.toHaveBeenCalled();
   });
 
@@ -279,14 +271,11 @@ describe('PluginUpdateNotifier', () => {
     await notifier.handlePluginCommandCompleted('kimi-datasource');
     expect(first.notify).toHaveBeenCalledTimes(1);
 
-    // A new notifier (fresh app run) against the same state file stays silent
-    // for the already-notified version…
     const second = makeHarness({ marketplace: makeMarketplace('3.4.0') });
     const secondNotifier = makeNotifier(second);
     await secondNotifier.handlePluginCommandCompleted('kimi-datasource');
     expect(second.notify).not.toHaveBeenCalled();
 
-    // …but reminds once the marketplace moves to a newer version.
     const third = makeHarness({ marketplace: makeMarketplace('3.5.0') });
     const thirdNotifier = makeNotifier(third);
     await thirdNotifier.handlePluginCommandCompleted('kimi-datasource');
@@ -348,14 +337,10 @@ describe('PluginUpdateNotifier', () => {
     harness.session.listMcpServers = vi.fn(async () => servers.map((name) => ({ name })));
     const notifier = makeNotifier(harness);
 
-    // The plugin's MCP server is not registered yet (the plugin gets
-    // installed later in the same app run, applied on /reload or /new).
     await notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
     expect(harness.session.listMcpServers).toHaveBeenCalled();
     expect(harness.notify).not.toHaveBeenCalled();
 
-    // After the reload the new server shows up; the next completion must
-    // refresh the memoized map instead of silently staying unresolved.
     servers = ['plugin-kimi-datasource:data'];
     await notifier.handleMcpToolCompleted(DATASOURCE_TOOL);
     expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
@@ -388,7 +373,6 @@ describe('PluginUpdateNotifier', () => {
     ]);
 
     expect(harness.notify).toHaveBeenCalledTimes(2);
-    // Both entries must survive in the persisted state — no lost update.
     const state = await readPluginUpdateNoticeState(stateFile);
     expect(state.notified).toEqual({
       'kimi-datasource': '3.4.0',

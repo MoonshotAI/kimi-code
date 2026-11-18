@@ -12,19 +12,10 @@ export type AppViewResolution =
   | {
       readonly view: "status";
       readonly status: ConfigErrorStatus;
-      /** True when the status screen must offer a path to the sign-in screen. */
       readonly canGoToLogin: boolean;
     }
   | { readonly view: "main" };
 
-/**
- * Pure view router for App. The `no-models` status (a managed OAuth token
- * exists but config.toml has no models — e.g. a first login whose model
- * provisioning failed after the device flow already persisted the token)
- * must always keep a path back to the sign-in screen: Reload alone cannot
- * change the on-disk state, so without it the user is stranded and the
- * login UI becomes unreachable.
- */
 export function resolveAppView(input: {
   readonly status: AppStatus;
   readonly modelsCount: number;

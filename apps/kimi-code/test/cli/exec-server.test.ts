@@ -1,15 +1,3 @@
-/**
- * Scenario: the `kimi exec-server` light entry (bare or with the explicit
- * `--listen stdio` spelling) — argv
- * pre-dispatch shape, transport validation, hidden Commander subcommand, and
- * the import-graph rule that keeps the SDK mega-module out of the executor
- * path — plus a real stdio handshake against the source entry (tsx).
- * Responsibilities: light-entry contract, exit codes/stderr discipline,
- * executorVersion surface.
- * Wiring: child processes spawn the real `src/main.ts` through tsx; no mocks.
- * Run: pnpm -C apps/kimi-code exec vitest run test/cli/exec-server.test.ts
- */
-
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';

@@ -716,7 +716,7 @@ export class ConfigService extends Disposable implements IConfigService {
     domains?: readonly string[],
   ): void {
     const previous = this.effective;
-    this.validated = this.buildValidated(this.raw);
+    this.validated = this.buildValidated(this.raw, this.validated);
     const next = { ...this.validated };
     this.applySectionEnvBindings(next, true);
     this.applyEnvOverlay(next);
@@ -755,12 +755,15 @@ export class ConfigService extends Disposable implements IConfigService {
     }
   }
 
-  private buildValidated(raw: ResolvedConfig): ResolvedConfig {
+  private buildValidated(raw: ResolvedConfig, previous: ResolvedConfig = {}): ResolvedConfig {
     const validated: ResolvedConfig = {};
     for (const [domain, value] of Object.entries(raw)) {
       try {
         validated[domain] = this.registry.validate(domain, value);
       } catch (error) {
+        if (Object.prototype.hasOwnProperty.call(previous, domain)) {
+          validated[domain] = previous[domain];
+        }
         this.pushDiagnostic({
           domain,
           severity: 'warning',

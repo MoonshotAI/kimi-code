@@ -19,15 +19,9 @@ export function logsRoute(home: string = KIMI_CODE_HOME): Hono {
       return c.json({ error: 'session not found', code: 'NOT_FOUND' }, 404);
     }
     const sessionLog = join(detail.sessionDir, ...SESSION_LOG_REL);
-    // The global diagnostic log is a single shared file. In an exported bundle
-    // it is captured under the session dir (logs/global/kimi-code.log); for a
-    // live local session it lives at <KIMI_CODE_HOME>/logs/kimi-code.log
-    // (the engine's global log path), NOT under the session dir.
     const globalLog = detail.imported
       ? join(detail.sessionDir, ...GLOBAL_LOG_REL)
       : join(home, ...HOME_GLOBAL_LOG_REL);
-    // Either log may have rotated (kimi-code.log.1, .2, …); discover the active
-    // file plus its archives so a bundle with only rotated logs still surfaces.
     const sessionFiles = await discoverLogFiles(sessionLog);
     const globalFiles = await discoverLogFiles(globalLog);
     const available = {

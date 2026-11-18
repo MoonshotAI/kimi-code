@@ -10,8 +10,6 @@ import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
 
-// Strip CSI styling and OSC 8 hyperlink sequences from rendered output so
-// visible text can be matched directly.
 function strip(text: string): string {
   return text
     .replaceAll(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '')
@@ -73,7 +71,6 @@ describe('PlanBoxComponent', () => {
     const box = new PlanBoxComponent('# Hello', theme, darkColors.success, '/tmp/plan.md');
     const top = box.render(60)[0]!;
     expect(top).toContain(`${ESC}]8;;${pathToFileURL('/tmp/plan.md').href}${BEL}plan.md${ESC}]8;;${BEL}`);
-    // After stripping OSC + CSI, visible width must respect the requested render width.
     expect(strip(top).length).toBeLessThanOrEqual(60);
   });
 

@@ -3,14 +3,17 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { IFlagService } from '#/app/flag/flag';
-import type { ToolDescription as Tool } from '#human/llm/message';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
+import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
+import { toLegacyToolReturn } from '#/tool/executor';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { legacyRejectedResult, runLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -18,7 +21,9 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 
 import {
+  collectCurrentDynamicTools,
   collectLoadedDynamicTools,
+  collectPendingSchemaUpdateNames,
   foldAnnouncedToolNames,
   isDynamicToolSchemaMessage,
   isLoadableToolsAnnouncement,
@@ -39,7 +44,6 @@ import {
   ToolSelectInitialized,
   ToolSelectToolsChanged,
   toolSelectKey,
-  toolSelectSchemaSignature,
   toolSelectVersionSignature,
   type ToolSelectModelState,
   type ToolSelectTool,
@@ -56,12 +60,12 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private reconcileTail: Promise<void> = Promise.resolve();
   private readonly notifiedUpdates = new Set<string>();
+  private pendingInitialization: readonly ToolSelectTool[] | undefined;
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLoopService private readonly profile: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -72,35 +76,99 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   ) {
     super();
     this.states.contributeState(toolSelectKey);
-    this._register(
-      toolExecutor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),
-    );
-    this._register(
-      toolExecutor.registerMissingToolDescriber((name) => this.describeMissingTool(name)),
-    );
+    this._register(toolExecutor.registerHook({
+      validating: (context) => {
+        if (!this.enabled()) return undefined;
+        if (!collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(context.call.name)) {
+          return undefined;
+        }
+        const text = schemaUpdateUnsupportedToolOutput(context.call.name);
+        return {
+          reject: text,
+          result: toLegacyToolReturn({ output: text, isError: true }, context.call.name),
+        };
+      },
+      starting: (context) => {
+        const text = this.describeUnavailableTool(context.call.name);
+        return text === undefined
+          ? undefined
+          : runLegacyStarting(context, (event) => event.veto({ output: text, isError: true }));
+      },
+      afterExecute: (context) => {
+        const text = this.describeMissingTool(context.call.name);
+        return text === undefined ? undefined : legacyRejectedResult(context, text);
+      },
+    }));
+  }
+
+  private history(): readonly ContextMessage[] {
+    const space = this.scopeContext.agentContext.space;
+    return space instanceof AgentSpaceImpl ? space.readHistory() as readonly ContextMessage[] : [];
   }
 
   featureEnabled(): boolean {
     return this.flags.enabled(TOOL_SELECT_FLAG_ID);
   }
 
-  enabled(capabilities: ToolSelectCapabilities = this.profile.getModelCapabilities()): boolean {
+  enabled(capabilities: ToolSelectCapabilities | undefined = this.profile.getModelCapabilities()): boolean {
     return (
-      capabilities.dynamically_loaded_tools === true &&
+      capabilities?.dynamically_loaded_tools === true &&
       capabilities.tool_use === true &&
       this.featureEnabled()
     );
   }
 
   async prepareForRequest(signal?: AbortSignal): Promise<void> {
+    await this.reconcileForRequest(signal, true);
+  }
+
+  async prepareCatalog(signal?: AbortSignal): Promise<void> {
+    await this.reconcileForRequest(signal, false);
+  }
+
+  private async reconcileForRequest(signal: AbortSignal | undefined, publishInitialization: boolean): Promise<void> {
     await (signal === undefined ? this.mcpHandle.ready : abortable(this.mcpHandle.ready, signal));
-    const work = this.reconcileTail.then(() => this.reconcile(signal));
+    const work = this.reconcileTail.then(async () => {
+      if (publishInitialization) await this.publishDeferredInitialization();
+      await this.reconcile(signal, publishInitialization);
+    });
     this.reconcileTail = work.catch(() => {});
     await (signal === undefined ? work : abortable(work, signal));
   }
 
   defaultTools(disclosure = this.enabled()): readonly Tool[] {
     return this.defaultToolsForDisclosure(disclosure);
+  }
+
+  initialTools(): readonly Tool[] {
+    const tools = this.initialToolInfos();
+    return this.activeEntries(tools, this.featureEnabled()).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
+      deferred: tool.disclosure === 'deferred' ? true : undefined,
+    }));
+  }
+
+  requestTools(
+    base: readonly Tool[] | undefined,
+    disclosure = this.enabled(),
+    dynamic = false,
+    messages: readonly ContextMessage[] = this.history(),
+  ): readonly Tool[] {
+    if (!dynamic) return base ?? this.defaultToolsForDisclosure(disclosure);
+    if (disclosure) return base ?? [];
+    const loaded = collectLoadedDynamicTools(messages);
+    const tools = (base ?? [])
+      .filter((tool) => tool.name !== SELECT_TOOLS_TOOL_NAME)
+      .map((tool) => tool.deferred === true ? { ...tool, deferred: undefined } : tool);
+    const names = new Set(tools.map((tool) => tool.name));
+    for (const tool of loaded.values()) {
+      if (names.has(tool.name)) continue;
+      tools.push({ ...tool, deferred: undefined });
+      names.add(tool.name);
+    }
+    return tools.toSorted((left, right) => left.name.localeCompare(right.name));
   }
 
   shapeTools(
@@ -121,7 +189,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   load(names: readonly string[]): LoadToolsResult {
     const current = this.currentTools();
     const loadable = new Set(this.loadableToolNames());
-    const loaded = collectLoadedDynamicTools(this.context.get(), current);
+    const loaded = collectCurrentDynamicTools(this.history(), current);
     const historicallyLoaded = this.historicallyLoadedToolNames();
     this.resetFailuresIfToolsChanged(current);
     const toLoad: string[] = [];
@@ -194,13 +262,17 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   loadableToolsAnnouncement(
     lastDisclosure?: ToolSelectAnnouncementDisclosure,
   ): ToolSelectAnnouncement | undefined {
-    if (!this.featureEnabled()) return undefined;
+    const enabled = this.featureEnabled();
     const state = this.modelState();
     if (state.initial === undefined) return undefined;
     this.resetFailuresIfToolsChanged(state.current);
     const revision = state.changes.length;
-    const lastRevision = lastDisclosure?.revision;
+    const runtimeRevision = enabled
+      ? -1
+      : state.changes.findIndex((change) => change.added.some((tool) => tool.origin === 'runtime'));
+    const lastRevision = lastDisclosure?.revision ?? (runtimeRevision < 0 ? undefined : runtimeRevision);
     if (lastRevision === undefined || lastRevision > revision) {
+      if (!enabled) return undefined;
       const legacy = this.legacyAnnouncement(revision);
       if (legacy !== undefined) return legacy;
       const tools = state.current.filter(
@@ -214,11 +286,13 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     for (let index = lastRevision; index < revision; index += 1) {
       const change = state.changes[index];
       if (change === undefined) return undefined;
-      const added = change.added.filter((tool) => this.isDynamicallyLoadable(tool));
+      const added = change.added.filter((tool) => enabled ? this.isDynamicallyLoadable(tool) : tool.origin === 'runtime');
       const removed = change.removed.filter((tool) =>
-        this.isDynamicallyLoadable(tool) || !change.added.some(
-          (next) => next.name === tool.name && !this.isDynamicallyLoadable(next),
-        ));
+        enabled
+          ? this.isDynamicallyLoadable(tool) || !change.added.some(
+              (next) => next.name === tool.name && !this.isDynamicallyLoadable(next),
+            )
+          : tool.origin === 'runtime');
       if (added.length === 0 && removed.length === 0) continue;
       return {
         content: renderDeltaAnnouncement(
@@ -234,12 +308,12 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         },
       };
     }
-    return this.legacyAnnouncement(revision);
+    return enabled ? this.legacyAnnouncement(revision) : undefined;
   }
 
   private legacyAnnouncement(revision: number): ToolSelectAnnouncement | undefined {
     const state = this.modelState();
-    const history = this.context.get();
+    const history = this.history();
     const announced = foldAnnouncedToolNames(history);
     const loadable = state.current.filter(
       (info) => this.isDynamicallyLoadable(info) && this.toolPolicy.isToolActive(info.name, info.source),
@@ -286,7 +360,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.activeTools('initial');
   }
 
-  private initialTools(): readonly ToolSelectTool[] {
+  private initialToolInfos(): readonly ToolSelectTool[] {
     return this.modelState().initial ?? this.activeTools('initial');
   }
 
@@ -297,20 +371,39 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private liveTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
-    const live = this.toolRegistry.listLive?.() ?? this.toolRegistry.list();
+    const live = this.toolRegistry.list();
     return live
       .map((info) => normalizeTool(info, origin))
       .toSorted((left, right) => left.name.localeCompare(right.name));
   }
 
-  private async reconcile(signal?: AbortSignal): Promise<void> {
+  private async publishDeferredInitialization(): Promise<void> {
+    const tools = this.pendingInitialization;
+    if (tools === undefined) return;
+    this.pendingInitialization = undefined;
+    await this.dispatcher.dispatch(
+      new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools }),
+    );
+  }
+
+  private async reconcile(signal: AbortSignal | undefined, publishInitialization: boolean): Promise<void> {
     signal?.throwIfAborted();
     const state = this.modelState();
     const live = this.liveTools('initial');
     if (state.initial === undefined) {
-      await this.dispatcher.dispatch(
-        new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools: this.activeTools('initial') }),
-      );
+      const tools = this.activeTools('initial');
+      if (publishInitialization) {
+        await this.dispatcher.dispatch(
+          new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools }),
+        );
+      } else {
+        this.pendingInitialization = tools;
+        this.states.set(toolSelectKey, {
+          initial: tools.map((tool) => ({ ...tool })),
+          current: tools.map((tool) => ({ ...tool })),
+          changes: [],
+        });
+      }
       this.notifyUpdatedTools(live, signal);
       return;
     }
@@ -364,7 +457,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private capableTools(includeRuntime: boolean): readonly ToolSelectTool[] {
-    const initial = this.initialTools();
+    const initial = this.initialToolInfos();
     const initialNames = new Set(initial.map((tool) => tool.name));
     const current = this.currentTools();
     const currentByName = new Map(current.map((tool) => [tool.name, tool]));
@@ -380,7 +473,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   ): readonly ShapedToolEntry[] {
     const activeEntries = this.activeEntries(entries, disclosure);
     if (!disclosure) return activeEntries;
-    const loaded = collectLoadedDynamicTools(this.context.get(), this.currentTools());
+    const loaded = collectCurrentDynamicTools(this.history(), this.currentTools());
     const shaped: ShapedToolEntry[] = [];
     for (const entry of activeEntries) {
       if (entry.name === SELECT_TOOLS_TOOL_NAME) {
@@ -433,7 +526,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private historicallyLoadedToolNames(): Set<string> {
     const names = new Set<string>();
-    for (const message of this.context.get()) {
+    for (const message of this.history()) {
       if (!isDynamicToolSchemaMessage(message)) continue;
       for (const tool of message.tools ?? []) names.add(tool.name);
     }
@@ -460,17 +553,19 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     if (info === undefined) {
       return isMcpToolName(name) && this.toolPolicy.isToolActive(name, 'mcp');
     }
+    if (!this.enabled()) return this.toolPolicy.isToolActive(name, info.source);
     return (
       this.toolPolicy.isToolActive(name, info.source) &&
+      !collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(name) &&
       (!this.isDynamicallyLoadable(info) ||
-        collectLoadedDynamicTools(this.context.get(), this.currentTools()).has(name))
+        collectCurrentDynamicTools(this.history(), this.currentTools()).has(name))
     );
   }
 
   private isDynamicallyLoadable(info: ToolInfo | ToolSelectTool): boolean {
     return info.disclosure === 'deferred' ||
       ('origin' in info && info.origin === 'runtime' &&
-        !this.initialTools().some(
+        !this.initialToolInfos().some(
           (tool) => tool.name === info.name && tool.disclosure !== 'deferred',
         ));
   }
@@ -492,10 +587,29 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     tools: readonly Tool[],
   ): readonly ContextMessage[] {
     const inlineNames = new Set(tools.filter((tool) => tool.deferred !== true).map((tool) => tool.name));
+    const firstToolDeclarations = new Map<string, { message: ContextMessage; toolIndex: number }>();
+    const latestToolDeclarations = new Map<string, { message: ContextMessage; toolIndex: number }>();
+    for (const message of messages) {
+      if (message.role !== 'system' || message.tools === undefined) continue;
+      for (let toolIndex = 0; toolIndex < message.tools.length; toolIndex += 1) {
+        const tool = message.tools[toolIndex]!;
+        if (!firstToolDeclarations.has(tool.name)) {
+          firstToolDeclarations.set(tool.name, { message, toolIndex });
+        }
+        latestToolDeclarations.set(tool.name, { message, toolIndex });
+      }
+    }
+    const pendingSchemaUpdates = collectPendingSchemaUpdateNames(messages, this.toolRegistry.list());
     let shaped: ContextMessage[] | undefined;
     for (let i = 0; i < messages.length; i += 1) {
       const message = messages[i]!;
-      const next = this.shapeActiveMessage(message, inlineNames);
+      const next = this.shapeActiveMessage(
+        message,
+        inlineNames,
+        firstToolDeclarations,
+        latestToolDeclarations,
+        pendingSchemaUpdates,
+      );
       if (next === message) {
         if (shaped !== undefined) shaped.push(message);
         continue;
@@ -509,41 +623,56 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   private shapeActiveMessage(
     message: ContextMessage,
     inlineNames: ReadonlySet<string>,
+    firstToolDeclarations: ReadonlyMap<string, { readonly message: ContextMessage; readonly toolIndex: number }>,
+    latestToolDeclarations: ReadonlyMap<string, { readonly message: ContextMessage; readonly toolIndex: number }>,
+    pendingSchemaUpdates: ReadonlySet<string>,
   ): ContextMessage | undefined {
     if (message.role !== 'system') return message;
     const tools = message.tools;
     if (tools === undefined || tools.length === 0) return message;
 
-    const current = this.currentTools();
-    const loaded = collectLoadedDynamicTools(this.context.get(), current);
     let kept: Tool[] | undefined;
+    const schemaUpdates: string[] = [];
     for (let i = 0; i < tools.length; i += 1) {
       const tool = tools[i]!;
-      const info = current.find((entry) => entry.name === tool.name);
-      const active = info === undefined
-        ? isMcpToolName(tool.name) && this.toolPolicy.isToolActive(tool.name, 'mcp')
-        : this.toolPolicy.isToolActive(info.name, info.source);
-      const loadedSchema = loaded.get(tool.name);
-      const keep = !inlineNames.has(tool.name) && (isMcpToolName(tool.name)
-        ? this.toolPolicy.isToolActive(tool.name, 'mcp') &&
-          (loadedSchema === undefined ||
-            toolSelectSchemaSignature(loadedSchema) === toolSelectSchemaSignature(tool))
-        : active &&
-          loadedSchema !== undefined &&
-          toolSelectSchemaSignature(loadedSchema) === toolSelectSchemaSignature(tool));
-      if (keep) {
+      const firstDeclaration = firstToolDeclarations.get(tool.name);
+      const isFirstDeclaration =
+        firstDeclaration !== undefined &&
+        firstDeclaration.message === message &&
+        firstDeclaration.toolIndex === i;
+      if (!inlineNames.has(tool.name) && isFirstDeclaration) {
         if (kept !== undefined) kept.push(tool);
         continue;
+      }
+      const latestDeclaration = latestToolDeclarations.get(tool.name);
+      const isLatestDeclaration =
+        latestDeclaration !== undefined &&
+        latestDeclaration.message === message &&
+        latestDeclaration.toolIndex === i;
+      if (
+        !inlineNames.has(tool.name) &&
+        !isFirstDeclaration &&
+        isLatestDeclaration &&
+        pendingSchemaUpdates.has(tool.name)
+      ) {
+        schemaUpdates.push(tool.name);
       }
       if (kept === undefined) kept = tools.slice(0, i);
     }
     if (kept === undefined) return message;
-    if (kept.length > 0) return { ...message, tools: kept };
+    const content: ContextMessage['content'] = [
+      ...message.content,
+      ...schemaUpdates.map((name) => ({
+        type: 'text' as const,
+        text: wrapSystemReminder(schemaUpdateUnsupportedToolOutput(name)),
+      })),
+    ];
+    if (kept.length > 0) return { ...message, tools: kept, content };
 
     const { tools: _tools, ...rest } = message;
     void _tools;
-    if (rest.content.length === 0) return undefined;
-    return rest;
+    if (content.length === 0) return undefined;
+    return { ...rest, content };
   }
 
   private schemaOf(name: string): Tool | undefined {
@@ -579,6 +708,9 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private describeUnavailableTool(name: string): string | undefined {
+    if (this.enabled() && collectPendingSchemaUpdateNames(this.history(), this.toolRegistry.list()).has(name)) {
+      return schemaUpdateUnsupportedToolOutput(name);
+    }
     if (!this.isInactiveLoadedTool(name)) return undefined;
     return inactiveLoadedToolOutput(name);
   }
@@ -646,6 +778,13 @@ function suggestToolNames(name: string, pool: readonly string[]): readonly strin
     }
   }
   return [...matches].toSorted((a, b) => a.localeCompare(b)).slice(0, 3);
+}
+
+function schemaUpdateUnsupportedToolOutput(name: string): string {
+  return (
+    `Tool "${name}" has a schema update, but applying schema updates is not supported in this session. ` +
+    'Start a new session to use the updated schema.'
+  );
 }
 
 function inactiveLoadedToolOutput(name: string): string {

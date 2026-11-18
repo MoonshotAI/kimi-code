@@ -22,6 +22,7 @@ export interface ClientConfigFetchOptions {
   readonly accessToken?: string;
   readonly fetchImpl?: typeof fetch;
   readonly now?: number;
+  readonly timeoutMs?: number;
   readonly cacheFile?: string | null;
 }
 
@@ -103,7 +104,7 @@ export class ClientConfigClient {
           method: 'POST',
           headers,
           body: JSON.stringify({ name }),
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          signal: AbortSignal.timeout(options.timeoutMs ?? FETCH_TIMEOUT_MS),
         },
       );
       if (!response.ok) return undefined;

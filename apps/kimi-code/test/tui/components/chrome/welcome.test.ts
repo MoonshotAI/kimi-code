@@ -34,7 +34,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
-  transcript: { groupTools: 'auto', groupThinking: true },
+  transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
@@ -48,7 +48,6 @@ function truecolorCodes(text: string): Set<string> {
   return codes;
 }
 
-/** The two header rows (logo + title) of the rendered welcome box. */
 function headerOf(lines: string[]): string {
   return [lines[3], lines[4]].join('\n');
 }
@@ -79,7 +78,6 @@ describe('WelcomeComponent', () => {
   it('renders the banner in a single brand color by default', () => {
     const codes = truecolorCodes(headerOf(new WelcomeComponent(appState).render(80)));
 
-    // No rainbow by default — just the brand primary (plus the dim tagline).
     expect(codes.size).toBeLessThanOrEqual(2);
   });
 

@@ -1,10 +1,3 @@
-/**
- * UI-facing compatibility types for the released Webview.
- *
- * The extension host adapts v1 Node SDK events into this shape while the UI is
- * migrated without a visual rewrite. This file contains no legacy SDK runtime.
- */
-
 export type ApprovalResponse = 'approve' | 'approve_for_session' | 'reject';
 
 export type ContentPart =
@@ -179,7 +172,6 @@ export interface KimiConfig {
   models: ModelConfig[];
 }
 
-/** Placeholder returned to the Webview instead of a stored MCP credential. */
 export const MCP_SECRET_MASK = '••••••••';
 
 export interface MCPServerConfig {
@@ -192,11 +184,8 @@ export interface MCPServerConfig {
   headers?: Record<string, string>;
   auth?: 'oauth';
   bearerTokenEnvVar?: string;
-  /** Unified management view tags; absent on cores predating the management plane. */
   source?: 'global' | 'plugin' | 'caller';
-  /** global: defining file path; plugin: plugin id. */
   origin?: string;
-  /** false for plugin / project-layer entries — the panel hides mutating actions for them. */
   mutable?: boolean;
 }
 

@@ -22,6 +22,7 @@ import type {
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { argsRecord, serializeToolResultOutput } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
+import { markTranscriptComponentTurnId } from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SessionEventHost } from './session-event-handler';
 import { SubagentActivityStore } from './subagent-activity-store';
@@ -59,8 +60,8 @@ function renderedRowsAfterChild(
 export class SubAgentEventHandler {
   readonly subagentInfo: Map<string, SubagentInfo> = new Map();
   private readonly agentSwarmProgress: Map<string, AgentSwarmProgressComponent> = new Map();
+  private readonly toolStatuses = new Map<string, string>();
   backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
-  /** Bounded per-agent activity fold feeding the background-agent detail view. */
   readonly activityStore = new SubagentActivityStore();
 
   constructor(
@@ -70,6 +71,7 @@ export class SubAgentEventHandler {
 
   resetRuntimeState(): void {
     this.subagentInfo.clear();
+    this.toolStatuses.clear();
     this.backgroundAgentMetadata.clear();
     this.activityStore.clear();
     this.clearAgentSwarmProgress();
@@ -89,9 +91,6 @@ export class SubAgentEventHandler {
       this.host.programStatus?.touchSubagent(childAgentId);
     }
 
-    // Tee every child-agent event into the activity store before the routing
-    // below swallows events whose parent card is gone (Ctrl+B) or never
-    // existed (run_in_background) — that data is the background detail view.
     this.activityStore.applyEvent(event);
 
     const info = this.subagentInfo.get(childAgentId);
@@ -100,9 +99,6 @@ export class SubAgentEventHandler {
     const { parentToolCallId } = info;
     const swarmProgress = this.agentSwarmProgress.get(parentToolCallId);
     if (swarmProgress !== undefined) {
-      // No per-event requestRender: the swarm component's own frame timer
-      // (kept alive while members run) batches these deltas into ~12.5fps
-      // re-renders instead of rendering the whole tree per delta.
       this.applySubagentEventToSwarmProgress(swarmProgress, event, childAgentId);
       return true;
     }
@@ -129,19 +125,25 @@ export class SubAgentEventHandler {
         name: event.name,
         argumentsPart: event.argumentsPart ?? null,
       });
-    } else if (
-      event.type === 'tool.progress' &&
-      (event.update.kind === 'stdout' ||
-        event.update.kind === 'stderr' ||
-        event.update.kind === 'status') &&
-      event.update.text !== undefined
-    ) {
-      toolCall.appendSubToolLiveOutput(
-        `${childAgentId}:${event.toolCallId}`,
-        event.update.text,
-        { replace: event.update.replace === true },
-      );
+    } else if (event.type === 'tool.updated') {
+      const key = `${childAgentId}\0${event.toolCallId}`;
+      if (event.output !== undefined) {
+        if (event.output.text.length > 0) {
+          toolCall.appendSubToolLiveOutput(`${childAgentId}:${event.toolCallId}`, event.output.text);
+        }
+      } else {
+        const status = event.fields['status'];
+        if (typeof status === 'string' && status.length > 0 && this.toolStatuses.get(key) !== status) {
+          this.toolStatuses.set(key, status);
+          toolCall.appendSubToolLiveOutput(
+            `${childAgentId}:${event.toolCallId}`,
+            status,
+            { replace: event.fields['statusReplace'] === true },
+          );
+        }
+      }
     } else if (event.type === 'tool.result') {
+      this.toolStatuses.delete(`${childAgentId}\0${event.toolCallId}`);
       toolCall.finishSubToolCall({
         tool_call_id: `${childAgentId}:${event.toolCallId}`,
         output: serializeToolResultOutput(event.output),
@@ -153,9 +155,6 @@ export class SubAgentEventHandler {
       toolCall.updateSubagentMetrics({
         contextTokens: event.contextTokens,
         usage: totalUsage,
-        // The bound model alias rides every child status update (emitted right
-        // after spawn); surface it on the subagent card. `modelDisplayName`
-        // falls back to the alias itself when the entry is unknown.
         modelDisplay:
           event.model === undefined
             ? undefined
@@ -449,12 +448,7 @@ export class SubAgentEventHandler {
     return match;
   }
 
-  /** A subagent that never became a background task (foreground-only) can
-   *  never appear in /tasks, so its activity record is dropped at terminal
-   *  state — otherwise records would pile up for the rest of the session. */
   private pruneForegroundOnlyRecord(subagentId: string): void {
-    // A spawn-time background agent keeps its record even when the
-    // background.task.started sync has not landed yet (short-lived agents).
     if (this.backgroundAgentMetadata.has(subagentId)) return;
     for (const info of this.deps.backgroundTasks.values()) {
       if (info.kind === 'agent' && info.agentId === subagentId) return;
@@ -462,9 +456,6 @@ export class SubAgentEventHandler {
     this.activityStore.drop(subagentId);
   }
 
-  /** Drop every foreground-only record. Called when the main turn ends: any
-   *  foreground subagent of the turn is over at that point, and an aborted
-   *  one emits no `subagent.completed`/`subagent.failed` to prune it. */
   dropForegroundOnlyActivityRecords(): void {
     for (const agentId of this.activityStore.agentIds()) {
       this.pruneForegroundOnlyRecord(agentId);
@@ -528,10 +519,6 @@ export class SubAgentEventHandler {
   private handleForegroundSubagentSpawned(
     event: SubagentLifecycleEventOf<'subagent.spawned'>,
   ): void {
-    // The spawned event carries the display-normalized bound alias (newer
-    // cores) — show it at spawn instead of waiting for the child's first
-    // status frame. The `agent.status.updated` channel below stays as the
-    // in-run update/fallback path.
     const modelDisplay = this.spawnedModelDisplay(event);
     const effortDisplay = this.subagentEffortDisplay(event.thinkingEffort);
     this.ensureStartedAgentSwarmProgress(event.parentToolCallId);
@@ -559,8 +546,6 @@ export class SubAgentEventHandler {
     }
   }
 
-  /** Map the spawned event's bound alias to a display name via the loaded
-   *  model catalog; falls back to the alias itself for unknown entries. */
   private spawnedModelDisplay(
     event: SubagentLifecycleEventOf<'subagent.spawned'>,
   ): string | undefined {
@@ -568,9 +553,6 @@ export class SubAgentEventHandler {
     return modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]);
   }
 
-  /** Concrete effort levels are always shown; the boolean states carry no
-   *  level information — 'off' (no thinking) and 'on' (generic thinking) are
-   *  both hidden. */
   private subagentEffortDisplay(effort: string | undefined): string | undefined {
     if (effort === undefined || effort === 'off' || effort === 'on') return undefined;
     return effort;
@@ -676,10 +658,6 @@ export class SubAgentEventHandler {
     } else if (event.type === 'tool.call.started') {
       progress.recordToolCall({ agentId: subagentId, toolCallId: event.toolCallId });
     } else if (event.type === 'agent.status.updated' && event.model !== undefined) {
-      // The bound model alias rides every child status update (emitted right
-      // after spawn). Swarm members share one binding, so the panel shows it
-      // once in the header instead of per cell. `modelDisplayName` falls back
-      // to the alias itself when the entry is unknown.
       progress.setModelDisplay(
         modelDisplayName(event.model, this.host.state.appState.availableModels[event.model]),
       );
@@ -699,17 +677,10 @@ export class SubAgentEventHandler {
     return true;
   }
 
-  /**
-   * While swarm mode is off the core rejects AgentSwarm before any subagent
-   * starts, so a new call gets no panel; a panel already on screen keeps
-   * following its call.
-   */
   private showsAgentSwarmProgress(toolCallId: string): boolean {
     return this.host.state.appState.swarmMode || this.agentSwarmProgress.has(toolCallId);
   }
 
-  /** A swarm that spawns subagents always gets a panel, even when its call
-   *  streamed while swarm mode still showed as off. */
   private ensureStartedAgentSwarmProgress(parentToolCallId: string): void {
     if (this.agentSwarmProgress.has(parentToolCallId)) return;
     const toolCall = this.host.streamingUI.getActiveToolCall(parentToolCallId);
@@ -738,6 +709,7 @@ export class SubAgentEventHandler {
     progress.updateArgs(args, options);
     this.agentSwarmProgress.set(toolCallId, progress);
     this.host.streamingUI.finalizeLiveTextBuffers('tool');
+    markTranscriptComponentTurnId(progress, this.host.streamingUI.getTurnContext().turnId);
     this.host.state.transcriptContainer.addChild(progress);
     this.host.updateActivityPane();
     this.requestRender();
@@ -753,8 +725,6 @@ export class SubAgentEventHandler {
     const children = this.host.state.transcriptContainer.children;
     const index = children.indexOf(progress);
     if (index >= 0) {
-      // Structural removal only: GutterContainer's ref-checked render cache
-      // detects the child-list change; no tree-wide invalidate needed.
       this.host.state.transcriptContainer.removeChild(progress);
     }
     this.host.updateActivityPane();
@@ -764,12 +734,6 @@ export class SubAgentEventHandler {
     | { readonly columns: number; readonly rows: number; readonly value: number | undefined }
     | undefined;
 
-  /**
-   * The measurement re-renders every dock child, so it is shared by every
-   * swarm component for the rest of the current synchronous render pass
-   * (frames are macrotask-separated, hence the microtask reset) instead of
-   * being recomputed per component per frame.
-   */
   private agentSwarmGridHeight(): number | undefined {
     const { state } = this.host;
     const terminalRows = state.ui.terminal.rows;
@@ -804,8 +768,6 @@ export class SubAgentEventHandler {
 
     const width = Math.floor(terminalColumns);
     const dock = state.dockContainer;
-    // Fullscreen: the root children are empty (layout root holds a ScrollView +
-    // dock); the chrome below the transcript is the dock's children instead.
     const rowsAfterSwarm = renderedRowsAfterChild(
       dock !== undefined ? [state.transcriptContainer, ...dock.children] : state.ui.children,
       state.transcriptContainer,
@@ -872,7 +834,6 @@ function isSubagentLifecycleEvent(event: Event): event is SubagentLifecycleEvent
 }
 
 function isUserCancelledSubagentError(error: string): boolean {
-  // Structured AgentSwarm results use outcome="aborted" and are parsed separately.
   switch (error.trim()) {
     case 'Aborted by the user':
     case 'The user manually interrupted this subagent batch.':

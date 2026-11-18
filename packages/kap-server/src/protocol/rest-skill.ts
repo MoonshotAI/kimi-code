@@ -17,6 +17,7 @@ export const activateSkillAttachmentSchema = z.discriminatedUnion('type', [
 export type ActivateSkillAttachment = z.infer<typeof activateSkillAttachmentSchema>;
 
 export const activateSkillRequestSchema = z.object({
+  path: z.string().optional(),
   args: z.string().optional(),
   prompt_id: z.string().min(1).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),

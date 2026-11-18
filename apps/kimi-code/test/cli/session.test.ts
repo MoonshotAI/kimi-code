@@ -1,10 +1,3 @@
-/**
- * `kimi session list`
- *
- * Verifies the CLI layer: scope option handling (--cwd/--all), archived
- * pass-through, --limit, --json, and the empty state.
- */
-
 import { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
 

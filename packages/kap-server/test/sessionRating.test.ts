@@ -11,7 +11,7 @@ import {
   CompactionCompleted,
   getLiveSessionById,
   IEventBus,
-  IAgentProfileService,
+  IAgentLoopService,
   IEventDispatcher,
   ISessionManager,
   ISessionMetadata,
@@ -359,7 +359,7 @@ describe('session rating lifecycle', () => {
 
   it('identifies the managed model and its trace for the kfc check', async () => {
     const id = await client.createSession(home);
-    await (await client.mainAgent(id)).accessor.get(IAgentProfileService).setModel('kimi-code/k3');
+    await (await client.mainAgent(id)).accessor.get(IAgentLoopService).setModel('kimi-code/k3');
     await client.openRating(id);
 
     const appeared = records.find(
@@ -460,7 +460,7 @@ describe('session rating lifecycle', () => {
     const id = await client.createSession(home);
     await client.openRating(id, (bus) => {
       const turn = { agentId: MAIN_AGENT_ID, turnId: 1 };
-      bus.publish(new ToolCallStarted({ ...turn, toolCallId: 'call-agent', name: 'Agent', args: {} }));
+      bus.publish(new ToolCallStarted({ origin: 'loop', ...turn, toolCallId: 'call-agent', name: 'Agent', args: {} }));
       bus.publish(
         new SubagentSpawned({
           subagentId: 'sub-1',
@@ -470,8 +470,8 @@ describe('session rating lifecycle', () => {
           model: 'model-a',
         }),
       );
-      bus.publish(new ToolResultEvent({ ...turn, toolCallId: 'call-agent', output: 'done' }));
-      bus.publish(new ToolCallStarted({ ...turn, toolCallId: 'call-read', name: 'Read', args: {} }));
+      bus.publish(new ToolResultEvent({ origin: 'loop', ...turn, toolCallId: 'call-agent', output: 'done' }));
+      bus.publish(new ToolCallStarted({ origin: 'loop', ...turn, toolCallId: 'call-read', name: 'Read', args: {} }));
       bus.publish(
         new CompactionCompleted({
           agentId: MAIN_AGENT_ID,
@@ -511,7 +511,7 @@ describe('session rating lifecycle', () => {
 
   it('resumes and evaluates a completed turn for a cold session', async () => {
     const id = await client.createSession(home);
-    await (await client.mainAgent(id)).accessor.get(IAgentProfileService).setModel('kimi-code/k3');
+    await (await client.mainAgent(id)).accessor.get(IAgentLoopService).setModel('kimi-code/k3');
     await client.finishUserTurn(id, undefined, 0);
     const turnId = await client.latestTurnId(id);
     expect(await server.core.accessor.get(ISessionManager).closeIfIdle(id, 0)).toBe(true);

@@ -18,11 +18,8 @@ describe('logs route (local sessions)', () => {
   it('reads the session log from the session dir and the global log from KIMI_CODE_HOME', async () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
-    // Per-session log lives under the session dir…
     await mkdir(join(sessionDir, 'logs'), { recursive: true });
     await writeFile(join(sessionDir, 'logs', 'kimi-code.log'), '2026-06-01T00:00:00.000Z INFO  session boot  k=v\n');
-    // …but the shared global log lives at <home>/logs/kimi-code.log, NOT under
-    // the session dir. Before the fix this was reported as unavailable.
     await mkdir(join(home, 'logs'), { recursive: true });
     await writeFile(join(home, 'logs', 'kimi-code.log'), '2026-06-01T00:00:01.000Z WARN  global thing  g=1\n');
 
@@ -54,7 +51,6 @@ describe('logs route (local sessions)', () => {
     const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
     await mkdir(join(sessionDir, 'logs'), { recursive: true });
-    // Only an archive exists — no active kimi-code.log.
     await writeFile(join(sessionDir, 'logs', 'kimi-code.log.1'), '2026-06-01T00:00:00.000Z INFO  rotated only  r=1\n');
 
     const res = await logsRoute(home).request('/session_fixture/logs');

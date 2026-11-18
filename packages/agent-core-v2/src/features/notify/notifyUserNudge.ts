@@ -13,7 +13,6 @@ function startsNewTurn(message: ContextMessage): boolean {
     case 'cron_job':
     case 'cron_missed':
     case 'task':
-    case 'retry':
       return true;
     case 'system_trigger':
       return origin.name !== 'stop_hook';

@@ -33,6 +33,7 @@
     "@fastify/multipart": "^10.0.0",
     "@fastify/swagger": "^9.7.0",
     "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/core": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-product": "workspace:^",
     "@moonshot-ai/minidb": "workspace:*",

@@ -104,9 +104,6 @@ describe('TruncatedOutputComponent', () => {
   });
 
   it('renders output verbatim, including literal <system> text in file content', () => {
-    // Tool metadata no longer travels inside `output` (it rides the result's
-    // `note` side channel), so the renderer must not eat user data that
-    // merely contains the literal tag.
     const component = new TruncatedOutputComponent(
       '<system>literal text from a user file</system>\n<image path="/tmp/x.png">',
       { expanded: true, isError: false },

@@ -32,6 +32,7 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceMcpService,
@@ -75,10 +76,19 @@ describe('WorkspaceMcpService', () => {
   let oauthScheduler: ManualMcpOAuthScheduler;
   let manager: InstanceType<typeof McpConnectionManager> | undefined;
   let trackedSessions: Array<string | undefined>;
+  let primaryDirs: IWorkspaceDirs;
+  let dirsChanges: Emitter<void>;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-cwd-'));
     disposables = new DisposableStore();
+    dirsChanges = disposables.add(new Emitter<void>());
+    primaryDirs = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      primary: cwd,
+      onDidChange: dirsChanges.event,
+    } as unknown as IWorkspaceDirs;
     current = {};
     trackedSessions = [];
     tunablesValue = {};
@@ -118,6 +128,7 @@ describe('WorkspaceMcpService', () => {
       strict: true,
       additionalServices: (reg) => {
         reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
+        reg.defineInstance(IWorkspaceDirs, primaryDirs);
         reg.defineInstance(IWorkspaceMcpConfigService, mcpConfigStub());
         reg.definePartialInstance(IMcpOAuthService, oauthService);
         reg.defineInstance(ILogService, stubLog());
@@ -203,6 +214,25 @@ describe('WorkspaceMcpService', () => {
     expect(manager.get('alpha')?.status).toBe('removed');
     expect(manager.get('beta')?.status).toBe('connected');
   }, 20000);
+
+  it('reconnects only default-cwd baseline stdio servers when primary changes', async () => {
+    current = {
+      defaulted: stdioServer(),
+      explicit: { ...stdioServer(), cwd: '/explicit-cwd' } as McpServerConfig,
+    };
+    const service = createService();
+    manager = service.connectionManager();
+    await service.ready;
+    const reconnect = vi.spyOn(manager, 'reconnect').mockResolvedValue(undefined);
+
+    Object.defineProperty(primaryDirs, 'primary', { get: () => '/next-primary' });
+    dirsChanges.fire();
+
+    await vi.waitFor(() => {
+      expect(reconnect).toHaveBeenCalledWith('defaulted');
+    });
+    expect(reconnect).not.toHaveBeenCalledWith('explicit');
+  });
 
   it('queues change events until the initial connect settles', async () => {
     current = { alpha: stdioServer() };

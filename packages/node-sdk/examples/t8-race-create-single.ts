@@ -1,4 +1,3 @@
-// One creator: meant to run twice as separate processes simultaneously.
 import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 const workDir = process.argv[2]!;

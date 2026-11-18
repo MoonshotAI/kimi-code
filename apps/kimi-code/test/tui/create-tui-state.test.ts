@@ -32,7 +32,7 @@ function fakeInitialAppState(): AppState {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
-    transcript: { groupTools: 'auto', groupThinking: true },
+    transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -53,7 +53,6 @@ describe('createTUIState', () => {
     };
     const state = createTUIState(opts);
 
-    // UI objects are created.
     expect(state.ui).toBeDefined();
     expect(state.terminal).toBeDefined();
     expect(state.transcriptContainer).toBeDefined();
@@ -67,23 +66,19 @@ describe('createTUIState', () => {
     expect(state.notifyPanel).toBeDefined();
     expect(state.theme.palette).toBeDefined();
 
-    // App state is cloned from initialAppState, not reused by reference.
     expect(state.appState).not.toBe(opts.initialAppState);
     expect(state.appState.model).toBe('test-model');
     expect(state.appState.additionalDirs).toEqual([]);
     expect(state.appState.sessionId).toBe('sess-1');
     expect(state.startupState).toBe('pending');
 
-    // LivePane defaults.
     expect(state.livePane.mode).toBe('idle');
     expect(state.livePane.pendingApproval).toBeNull();
     expect(state.livePane.pendingQuestion).toBeNull();
 
-    // Empty collections.
     expect(state.transcriptEntries).toHaveLength(0);
     expect(state.queuedMessages).toHaveLength(0);
 
-    // Boolean, counter, and optional-field defaults.
     expect(state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(state.activeDialog).toBeNull();
     expect(state.externalEditorRunning).toBe(false);
@@ -108,6 +103,36 @@ describe('createTUIState', () => {
     expect(state.dockContainer).toBeUndefined();
   });
 
+  it('uses resolvedTuiMode without mutating appState.tuiMode when tui.toml left tui_mode unset', () => {
+    const state = createTUIState({
+      initialAppState: fakeInitialAppState(),
+      resolvedTuiMode: 'fullscreen',
+      startup: {
+        continueLast: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+      },
+    });
+
+    expect(state.ui).toBeInstanceOf(TuiAltScreen);
+    expect(state.ui.mode).toBe('fullscreen');
+    expect(state.appState.tuiMode).toBeUndefined();
+  });
+
+  it('starts the fullscreen renderer with the saved copy-on-select choice', () => {
+    const startWith = (copyOnSelect: boolean | undefined): boolean => {
+      const state = createTUIState({
+        initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen', copyOnSelect },
+        startup: { continueLast: false, yolo: false, auto: false, plan: false },
+      });
+      return (state.ui as TuiAltScreen).getCopyOnSelect();
+    };
+
+    expect(startWith(undefined)).toBe(true);
+    expect(startWith(false)).toBe(false);
+  });
+
   it('builds an alternate-screen renderer with a docked layout in fullscreen mode', () => {
     const state = createTUIState({
       initialAppState: { ...fakeInitialAppState(), tuiMode: 'fullscreen' },
@@ -122,7 +147,6 @@ describe('createTUIState', () => {
     expect(state.ui).toBeInstanceOf(TuiAltScreen);
     expect(state.ui.mode).toBe('fullscreen');
 
-    // The chrome docks below the transcript ScrollView, in z-order.
     const dock = state.dockContainer;
     expect(dock).toBeDefined();
     expect(dock?.children).toEqual([
@@ -135,12 +159,9 @@ describe('createTUIState', () => {
     ]);
     expect(state.editorSlot?.children).toEqual([state.editorContainer]);
 
-    // The layout root is mounted and the root children list stays empty.
     expect((state.ui as TuiAltScreen).getLayoutRoot()).toBeDefined();
     expect(state.ui.children).toHaveLength(0);
 
-    // The sticky user message sits above the transcript ScrollView, outside
-    // the scrolling region, so it is never carried away by scrolling.
     const rootChildren = ((state.ui as TuiAltScreen).getLayoutRoot() as VStack).children;
     expect(rootChildren[0]).toBeInstanceOf(TranscriptView);
     const transcriptChildren = (rootChildren[0] as TranscriptView).children;
@@ -150,8 +171,6 @@ describe('createTUIState', () => {
     expect(transcriptChildren[1]).toBeInstanceOf(ScrollView);
     expect(rootChildren[1]).toBe(state.dockContainer);
 
-    // Mouse capture replaces native terminal link activation / right-click
-    // paste, so both must be routed through renderer callbacks.
     const internals = state.ui as unknown as {
       openUrl?: (url: string) => void;
       onRightClickPaste?: () => void;

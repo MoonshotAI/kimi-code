@@ -32,7 +32,6 @@ export function useInputHistory({ text, setText, onHeightChange }: UseInputHisto
 
   const handleKey = useCallback(
     (e: React.KeyboardEvent): boolean => {
-      // Ignore if any modifier key is pressed
       if (e.ctrlKey || e.metaKey || e.altKey) {
         return false;
       }

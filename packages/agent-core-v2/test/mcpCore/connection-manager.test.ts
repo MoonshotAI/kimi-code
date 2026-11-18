@@ -364,21 +364,30 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
-  it('starts stdio servers in stdioCwd when config.cwd is omitted', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-manager-cwd-'));
-    const cm = createManager({ stdioCwd: cwd });
-    try {
-      await cm.connectAll({
-        cwd: stdioConfig([cwdStdioFixture]),
-      });
+  it('resolves stdioCwd for every stdio connection', async () => {
+    const first = mkdtempSync(join(tmpdir(), 'kimi-mcp-manager-cwd-first-'));
+    const next = mkdtempSync(join(tmpdir(), 'kimi-mcp-manager-cwd-next-'));
+    let cwd = first;
+    const cm = createManager({ stdioCwd: () => cwd });
+    const readCwd = async (): Promise<string> => {
       const resolved = cm.resolved('cwd');
       if (resolved === undefined) throw new Error('Expected cwd MCP server to connect');
       const result = await resolved.client.callTool('get_cwd', {});
-      const text = (result.content[0] as { type: 'text'; text: string }).text;
-      expect(realpathSync(text)).toBe(realpathSync(cwd));
+      return (result.content[0] as { type: 'text'; text: string }).text;
+    };
+    try {
+      await cm.connectAll({ cwd: stdioConfig([cwdStdioFixture]) });
+      expect(realpathSync(await readCwd())).toBe(realpathSync(first));
+
+      cwd = next;
+      await cm.reconnect('cwd');
+      expect(realpathSync(await readCwd())).toBe(realpathSync(next));
     } finally {
       await cm.shutdown();
-      await rm(cwd, { recursive: true, force: true });
+      await Promise.all([
+        rm(first, { recursive: true, force: true }),
+        rm(next, { recursive: true, force: true }),
+      ]);
     }
   }, 15000);
 

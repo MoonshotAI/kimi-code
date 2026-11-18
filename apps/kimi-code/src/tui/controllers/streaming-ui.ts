@@ -6,11 +6,17 @@ import { CompactionComponent } from '../components/dialogs/compaction';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { ThinkingComponent } from '../components/messages/thinking';
 import { ToolCallComponent } from '../components/messages/tool-call';
-import { STREAMING_UI_FLUSH_MS } from '../constant/streaming';
+import { STREAMING_UI_FLUSH_MS, UNNAMED_TOOL_CALL_NAME } from '../constant/streaming';
 import { hasDispose } from '../utils/component-capabilities';
 import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
 import { notifyTerminalOnce } from '../utils/terminal-notification';
+import {
+  getTranscriptComponentTurnId,
+  markTranscriptComponent,
+  markTranscriptComponentTurnId,
+} from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
+import { TurnTimeline } from '../utils/turn-timeline';
 import type {
   AppState,
   Elapsed,
@@ -46,10 +52,6 @@ export class StreamingUIController {
   private pendingThinkingFlush = false;
   readonly pendingToolCallFlushIds = new Set<string>();
 
-  // ---------------------------------------------------------------------------
-  // Streaming runtime state (private — accessed via semantic methods below)
-  // ---------------------------------------------------------------------------
-
   private _currentTurnId: string | undefined = undefined;
   private _currentStep = 0;
   private _assistantDraft = '';
@@ -77,11 +79,9 @@ export class StreamingUIController {
     group?: ReadGroupComponent;
   } | null = null;
 
-  constructor(private readonly host: StreamingUIHost) {}
+  readonly timeline = new TurnTimeline();
 
-  // ---------------------------------------------------------------------------
-  // Turn context — read/write accessors
-  // ---------------------------------------------------------------------------
+  constructor(private readonly host: StreamingUIHost) {}
 
   getTurnContext(): { turnId: string | undefined; step: number } {
     return { turnId: this._currentTurnId, step: this._currentStep };
@@ -98,10 +98,6 @@ export class StreamingUIController {
   hasActiveTurn(): boolean {
     return this._currentTurnId !== undefined;
   }
-
-  // ---------------------------------------------------------------------------
-  // Text streaming — semantic write accessors
-  // ---------------------------------------------------------------------------
 
   appendThinkingDelta(delta: string): void {
     this._thinkingDraft += delta;
@@ -136,10 +132,6 @@ export class StreamingUIController {
     this._assistantDraft = '';
   }
 
-  // ---------------------------------------------------------------------------
-  // Tool call state — semantic accessors
-  // ---------------------------------------------------------------------------
-
   getActiveToolCall(id: string): ToolCallBlockData | undefined {
     return this._activeToolCalls.get(id);
   }
@@ -148,10 +140,6 @@ export class StreamingUIController {
     return this._activeToolCalls.has(id);
   }
 
-  /** Marks a main-agent WaitFor call as actually waiting — its first
-   *  progress update arrives only once the wait began, never for calls that
-   *  were rejected, skipped, or had nothing to wait for. Returns whether the
-   *  call was newly marked. */
   markWaitForRunning(toolCallId: string): boolean {
     if (this._activeToolCalls.get(toolCallId)?.name !== 'WaitFor') return false;
     if (this._runningWaitForCalls.has(toolCallId)) return false;
@@ -193,7 +181,6 @@ export class StreamingUIController {
     }
   }
 
-  /** Drops a tool call together with its card, as if it had never rendered. */
   discardToolCall(toolCallId: string): void {
     const component = this._pendingToolComponents.get(toolCallId);
     this._pendingToolComponents.delete(toolCallId);
@@ -203,50 +190,10 @@ export class StreamingUIController {
     this.host.state.ui.requestRender();
   }
 
-  /**
-   * Push the actual terminal status of a background agent task into the
-   * matching `Agent` tool call component so its snapshot phase no longer
-   * trusts the spawn-success ToolResult (which would otherwise label every
-   * terminated bg agent — including `lost` ones — as `✓ Completed`).
-   *
-   * Resolution policy: an `args.agentId` is treated as authoritative — we
-   * either find a card whose `getSubagentAgentId()` returns the same id
-   * (in-memory metadata for live foreground, parsed from the spawn-success
-   * `agent_id: ...` line for live backgrounded and replayed cards) or we
-   * skip. We deliberately do NOT fall back to description match when
-   * `agentId` is provided, because:
-   *   - On resume, `applyTerminalBackgroundAgentStatuses` iterates every
-   *     persisted terminal task, including ones whose tool calls fell
-   *     outside the `REPLAY_TURN_LIMIT` window. A description fallback
-   *     would let an old `lost` task stamp its status onto an unrelated
-   *     recent Agent card that happens to share `args.description`.
-   *   - During a live spawn / terminate race, the same card can briefly
-   *     appear in both `_pendingToolComponents` and `transcriptContainer`,
-   *     so a description match could double-visit the same component and
-   *     mark itself ambiguous. agentId match short-circuits on the first
-   *     hit and is immune.
-   *
-   * Description fallback is kept as a best-effort path only when
-   * `agentId` is unknown — that is, on resume of pre-PR sessions whose
-   * disk records pre-date `agent_id` persistence.
-   *
-   * Search scope includes both in-flight components and already-mounted
-   * cards (some live in `transcriptContainer` standalone, others are
-   * borrowed by an `AgentGroupComponent` and reachable only via
-   * `getToolComponents()`).
-   *
-   * Returns true iff a component was found and updated.
-   */
   applyBackgroundTaskTerminalStatus(args: {
     agentId?: string | undefined;
     description: string;
     status: 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
-    /**
-     * Real failure message to surface on the card. Pass the `subagent.failed`
-     * event's `error` for live crashes — it is far more useful than the
-     * friendly generic the card falls back to. Omit on the resume / terminate
-     * path where no real error is available.
-     */
     errorText?: string | undefined;
   }): boolean {
     const useAgentIdOnly = args.agentId !== undefined;
@@ -294,17 +241,6 @@ export class StreamingUIController {
     return true;
   }
 
-  /**
-   * Mark a foreground subagent card as detached-to-background (`◐ backgrounded`).
-   * Routed from a `background.task.started` event whose `info.kind === 'agent'`,
-   * keyed by `agentId`. Returns true iff a matching component was found.
-   *
-   * Gated to cards that are currently foreground-running: `background.task.started`
-   * also fires for `Agent(run_in_background=true)` launches and for background
-   * resumes, and those must not mutate older completed rows that happen to share
-   * the same `agentId` (a resume's new card has no parsed `agent_id` yet, so the
-   * search can otherwise hit the previous completed card).
-   */
   markSubagentBackgrounded(agentId: string | undefined): boolean {
     if (agentId === undefined) return false;
     const visit = (tc: ToolCallComponent): boolean => {
@@ -329,9 +265,6 @@ export class StreamingUIController {
     return false;
   }
 
-  /** Registers a tool call that arrived via tool.call.started.
-   *  Clears any pending streaming state for this id, updates or creates the
-   *  component, and returns whether the call was new (no previous entry). */
   registerToolCall(toolCall: ToolCallBlockData): boolean {
     const existing = this._activeToolCalls.get(toolCall.id);
     this._activeToolCalls.set(toolCall.id, toolCall);
@@ -350,7 +283,6 @@ export class StreamingUIController {
     return existing === undefined;
   }
 
-  /** Accumulates a streaming tool-call argument delta. */
   accumulateToolCallDelta(
     id: string,
     eventName: string | undefined,
@@ -358,7 +290,7 @@ export class StreamingUIController {
   ): void {
     const existing = this._streamingToolCallArguments.get(id);
     const argumentsText = appendStreamingArgsPreview(existing?.argumentsText, argumentsPart);
-    const name = eventName ?? existing?.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool';
+    const name = eventName ?? existing?.name ?? this._activeToolCalls.get(id)?.name ?? UNNAMED_TOOL_CALL_NAME;
     const startedAtMs = existing?.startedAtMs ?? Date.now();
     this._streamingToolCallArguments.set(id, { name, argumentsText, startedAtMs });
     this.pendingToolCallFlushIds.add(id);
@@ -370,15 +302,13 @@ export class StreamingUIController {
     const streaming = this._streamingToolCallArguments.get(id);
     if (streaming === undefined) return undefined;
     return {
-      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool',
+      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? UNNAMED_TOOL_CALL_NAME,
       args: parseStreamingArgs(streaming.argumentsText),
       argumentsText: streaming.argumentsText,
       startedAtMs: streaming.startedAtMs,
     };
   }
 
-  /** Completes a tool call: delivers the result and removes tracking state.
-   *  Returns the matched ToolCallBlockData, or undefined if no call was tracked. */
   completeToolResult(toolCallId: string, result: ToolResultBlockData): ToolCallBlockData | undefined {
     const matchedCall = this._activeToolCalls.get(toolCallId);
     if (matchedCall !== undefined) {
@@ -390,8 +320,6 @@ export class StreamingUIController {
     return matchedCall;
   }
 
-  /** Marks in-flight tool calls as truncated when a step hits max_tokens.
-   *  Returns the count of tool calls that were truncated. */
   markStepTruncated(turnId: string, step: number): number {
     let count = 0;
     for (const toolCall of this._activeToolCalls.values()) {
@@ -410,7 +338,6 @@ export class StreamingUIController {
     return count;
   }
 
-  /** Tears down replay-specific state after session history has been rendered. */
   cleanupAfterReplay(completedToolCallIds: Set<string>): void {
     this._activeToolCalls.clear();
     for (const toolCallId of completedToolCallIds) {
@@ -424,10 +351,6 @@ export class StreamingUIController {
     this.pendingToolCallFlushIds.clear();
     this.host.state.ui.requestRender();
   }
-
-  // ---------------------------------------------------------------------------
-  // Dispose helpers (moved from KimiTUI)
-  // ---------------------------------------------------------------------------
 
   disposeActiveThinkingComponent(): void {
     if (this._activeThinkingComponent !== undefined) {
@@ -446,10 +369,6 @@ export class StreamingUIController {
   clearActiveCompaction(): void {
     this._activeCompaction = undefined;
   }
-
-  // ---------------------------------------------------------------------------
-  // Flush control
-  // ---------------------------------------------------------------------------
 
   hasPending(): boolean {
     return (
@@ -524,10 +443,6 @@ export class StreamingUIController {
     this.pendingThinkingFlush = true;
   }
 
-  // ---------------------------------------------------------------------------
-  // Text streaming
-  // ---------------------------------------------------------------------------
-
   flushThinkingToTranscript(nextMode: LivePaneState['mode'] = 'idle'): void {
     this.flushNow();
     this._thinkingDraft = '';
@@ -576,24 +491,19 @@ export class StreamingUIController {
   }
 
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
+    this.timeline.turnEnded();
     const { state } = this.host;
     if (state.appState.streamingPhase === 'idle') return;
     this.host.deferUserMessages = false;
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
     this.finalizeLiveTextBuffers('idle');
-    // The finished turn keeps only its conclusion-bearing tail; intermediate
-    // chatter folds into the step summary.
     this.host.mergeCompletedTurnAssistants();
     this.resetToolCallState();
     this._currentTurnId = undefined;
 
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {
-      // The message is out of the queue but not yet sent. Mark the dispatch
-      // pending *before* setAppState — that call synchronously retries
-      // queued-goal promotion, which would otherwise see an empty queue and an
-      // idle phase and start a goal ahead of this message.
       state.queuedMessageDispatchPending = true;
       this.host.setAppState({ streamingPhase: 'idle' });
       this.host.resetLivePane();
@@ -612,10 +522,6 @@ export class StreamingUIController {
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Live Render Hooks
-  // ---------------------------------------------------------------------------
-
   onStreamingTextStart(): void {
     const { state } = this.host;
     this._pendingAgentGroup = null;
@@ -630,8 +536,9 @@ export class StreamingUIController {
     };
     const component = new AssistantMessageComponent();
     this._streamingBlock = { component, entry };
-    this.host.pushTranscriptEntry(entry);
+    markTranscriptComponent(component, entry);
     state.transcriptContainer.addChild(component);
+    this.host.pushTranscriptEntry(entry);
     state.ui.requestRender();
   }
 
@@ -653,10 +560,6 @@ export class StreamingUIController {
   }
 
   onThinkingUpdate(fullText: string): void {
-    // Skip thinking that carries nothing visible — empty (e.g. encrypted
-    // reasoning) or whitespace-only (a model occasionally streams a single
-    // space as thinking). Session replay funnels through here as well, so a
-    // stored whitespace-only think part never becomes a bare bullet line.
     if (fullText.trim().length === 0 && this._activeThinkingComponent === undefined) return;
     const { state } = this.host;
     if (this._activeThinkingComponent === undefined) {
@@ -669,6 +572,7 @@ export class StreamingUIController {
         state.ui,
       );
       if (state.transcriptContainer.toolOutputExpanded) this._activeThinkingComponent.setExpanded(true);
+      markTranscriptComponentTurnId(this._activeThinkingComponent, this._currentTurnId);
       state.transcriptContainer.addChild(this._activeThinkingComponent);
     } else {
       this._activeThinkingComponent.setText(fullText);
@@ -696,6 +600,7 @@ export class StreamingUIController {
       state.appState.workDir,
     );
     if (state.transcriptContainer.toolOutputExpanded) tc.setExpanded(true);
+    markTranscriptComponentTurnId(tc, toolCall.turnId ?? this._currentTurnId);
     this._pendingToolComponents.set(toolCall.id, tc);
 
     if (toolCall.name !== 'Agent') this._pendingAgentGroup = null;
@@ -743,6 +648,7 @@ export class StreamingUIController {
         state.appState.workDir,
       );
       if (state.transcriptContainer.toolOutputExpanded) completed.setExpanded(true);
+      markTranscriptComponentTurnId(completed, matchedCall.turnId ?? this._currentTurnId);
       state.transcriptContainer.addChild(completed);
       state.ui.requestRender();
     }
@@ -779,20 +685,17 @@ export class StreamingUIController {
 
   private mountCompactionBlock(block: CompactionComponent): void {
     const { state } = this.host;
+    markTranscriptComponentTurnId(block, this._currentTurnId);
     state.transcriptContainer.addChild(block);
     if (state.transcriptContainer.toolOutputExpanded) block.setExpanded(true);
   }
-
-  // ---------------------------------------------------------------------------
-  // Tool call grouping
-  // ---------------------------------------------------------------------------
 
   private flushToolCallPreview(id: string): void {
     const streaming = this._streamingToolCallArguments.get(id);
     if (streaming === undefined) return;
     const toolCall: ToolCallBlockData = {
       id,
-      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool',
+      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? UNNAMED_TOOL_CALL_NAME,
       args: parseStreamingArgs(streaming.argumentsText),
       streamingArguments: streaming.argumentsText,
       streamingStartedAtMs: streaming.startedAtMs,
@@ -858,6 +761,7 @@ export class StreamingUIController {
   private upgradeSoloAgentToGroup(solo: ToolCallComponent): AgentGroupComponent {
     const { state } = this.host;
     const group = new AgentGroupComponent(state.ui);
+    markTranscriptComponentTurnId(group, getTranscriptComponentTurnId(solo) ?? this._currentTurnId);
     if (state.transcriptContainer.children.includes(solo)) {
       state.transcriptContainer.replaceChild(solo, group);
     } else {
@@ -912,6 +816,7 @@ export class StreamingUIController {
   private upgradeSoloReadToGroup(solo: ToolCallComponent): ReadGroupComponent {
     const { state } = this.host;
     const group = new ReadGroupComponent(state.ui);
+    markTranscriptComponentTurnId(group, getTranscriptComponentTurnId(solo) ?? this._currentTurnId);
     if (state.transcriptContainer.toolOutputExpanded) group.setExpanded(true);
     if (state.transcriptContainer.children.includes(solo)) {
       state.transcriptContainer.replaceChild(solo, group);

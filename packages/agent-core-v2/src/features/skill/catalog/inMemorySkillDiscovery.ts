@@ -40,7 +40,7 @@ export class InMemorySkillDiscovery implements ISkillDiscovery {
       if (roots.some((root) => root.source === 'user')) skills.push(...this.userSkills);
       if (roots.some((root) => root.source === 'project')) skills.push(...this.projectSkills);
     }
-    return { skills, skipped: [], scannedRoots: [], scannedDirectories: [] };
+    return { skills, variants: skills, skipped: [], scannedRoots: [], scannedDirectories: [] };
   }
 }
 

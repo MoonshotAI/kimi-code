@@ -6,8 +6,6 @@ import { readJsonFile, writeJsonFile } from '#/utils/persistence';
 import { UpdateManifestSchema } from './cdn';
 import { emptyUpdateCache, UPDATE_CHANNELS, type UpdateCache } from './types';
 
-// Stays `.strict()` (we own this file), but a malformed manifest is treated
-// as no manifest so one bad optional field does not discard the whole cache.
 const UpdateCacheSchema = z
   .object({
     source: z.literal('cdn'),

@@ -21,33 +21,11 @@ export interface OAuthTokenTransactionOptions<T extends object> {
   readonly remove: () => Promise<void>;
   readonly parse: (value: unknown) => T | undefined;
   readonly adopt?: (tokens: T | undefined) => void;
-  /**
-   * Strips caller-local fields before a remembered effect is compared with an
-   * incoming SDK save, so a durable-only stamp (e.g. `obtained_at`) does not
-   * defeat effect coalescing. The remembered effect keeps its original tokens.
-   */
   readonly normalize?: (tokens: T) => T;
-  /**
-   * Runs inside the exclusive lock right after a durable write or remove
-   * commits, so side effects (sidecar files, notifications) serialize with the
-   * token write instead of racing a concurrent clear.
-   */
   readonly afterCommit?: (tokens: T | undefined) => Promise<void>;
-  /**
-   * Receives the in-flight promise of every token-grant request and of every
-   * exclusive save/invalidate commit, so callers can await transport-driven
-   * grants and their trailing durable commits during shutdown.
-   */
   readonly track?: (operation: Promise<unknown>) => void;
 }
 
-/**
- * Serializes OAuth token grants for one credential identity in this process.
- *
- * The SDK performs its token-endpoint fetch before calling `saveTokens` or
- * `invalidateCredentials`. This transaction joins those two phases so a late
- * SDK callback cannot overwrite or delete a newer durable winner.
- */
 export class OAuthTokenTransaction<T extends object> {
   private readonly effects: Effect<T>[] = [];
 
@@ -66,10 +44,6 @@ export class OAuthTokenTransaction<T extends object> {
       const request = transactionLock.runExclusive(this.options.key, () =>
         this.runTokenRequest(fetchFn, input, init, params, grantType),
       );
-      // Track past the response headers until the body has fully arrived: the
-      // SDK's trailing parse + saveTokens continuation can only run after it
-      // reads the body, so a shutdown drain that outlives this promise also
-      // covers the durable commit (which is itself tracked from save()).
       const operation = request.then((response) =>
         response.clone().arrayBuffer().catch(() => undefined),
       );

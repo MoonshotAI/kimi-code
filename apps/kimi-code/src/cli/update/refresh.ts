@@ -3,11 +3,6 @@ import { fetchChannelFeed, type ChannelFeed } from './cdn';
 import { type UpdateCache, type UpdateChannel } from './types';
 
 export interface RefreshUpdateCacheDeps {
-  /** Resolves with the channel's latest version + manifest. **Throws** on any
-   * failure — callers (including the default background invocation in
-   * preflight) must catch. Errors intentionally skip `writeCache` so a
-   * transient CDN blip does not overwrite a previously known `latest` with
-   * `null`. */
   readonly fetchLatest: () => Promise<Omit<ChannelFeed, 'channel'>>;
   readonly writeCache: (cache: UpdateCache) => Promise<void>;
   readonly now: () => Date;

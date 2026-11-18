@@ -18,6 +18,7 @@ import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
   IWorkspaceMcpConfigService,
@@ -35,8 +36,8 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   private readonly manager: McpConnectionManager;
   private readonly oauthService: McpOAuthService;
-  private readonly stdioCwd: string;
   private readonly workspaceId: string;
+  private appliedPrimary?: string;
   readonly ready: Promise<void>;
   private mutationTail: Promise<void> = Promise.resolve();
   private readonly resolveClientName = (): string | undefined => this.identity.current().slug;
@@ -46,6 +47,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
+    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
     @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
     @IMcpOAuthService oauthService: McpOAuthService,
@@ -56,13 +58,12 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
   ) {
     super();
     this.sessionLifecycle = sessionLifecycle;
-    this.stdioCwd = workspace.cwd;
     this.workspaceId = workspace.workspaceId;
     this.oauthService = oauthService;
     this.manager = new McpConnectionManager({
       log: this.log,
       oauthService: this.oauthService,
-      stdioCwd: this.stdioCwd,
+      stdioCwd: () => this.dirs.primary,
       environmentResolver: this.environmentResolver,
       environmentId: 'local',
       reconnectRetryEnabled: true,
@@ -77,6 +78,11 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this._register(
       this.mcpConfig.onDidChangeTunables(() => {
         this.manager.rescheduleRetries();
+      }),
+    );
+    this._register(
+      this.dirs.onDidChange(() => {
+        this.schedulePrimaryRebind();
       }),
     );
     this._register({ dispose: this.oauthEventSubscription(this.manager) });
@@ -123,7 +129,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
         const servers = event.readSeed(ISessionEphemeralMcpServers);
         if (Object.keys(servers).length === 0) return;
         const overlay = this.sessionOverlay(servers, {
-          stdioCwd: this.stdioCwd,
+          stdioCwd: this.dirs.primary,
           sessionId: context.sessionId,
         });
         event.contributeSeed(ISessionMcpHandle, overlay.handle);
@@ -154,7 +160,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     const sessionManager = new McpConnectionManager({
       log: this.log,
       oauthService: this.oauthService,
-      stdioCwd: opts?.stdioCwd ?? this.stdioCwd,
+      stdioCwd: opts?.stdioCwd ?? (() => this.dirs.primary),
       environmentResolver: this.environmentResolver,
       environmentId: 'local',
       requireStdioEnvironmentId: true,
@@ -289,9 +295,35 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     return tail;
   }
 
+  private schedulePrimaryRebind(): void {
+    void this.ready
+      .then(() =>
+        this.mutate(async () => {
+          const primary = this.dirs.primary;
+          if (primary === this.appliedPrimary) return;
+          for (const [name, config] of Object.entries(this.mcpConfig.servers())) {
+            if (config.transport !== 'stdio' || config.cwd !== undefined || config.enabled === false) {
+              continue;
+            }
+            if (this.manager.get(name) === undefined) continue;
+            try {
+              await this.manager.reconnect(name);
+            } catch (error) {
+              this.log.warn(`mcp primary reconnect failed for ${name}: ${String(error)}`);
+            }
+          }
+          this.appliedPrimary = primary;
+        }),
+      )
+      .catch((error) => {
+        this.log.warn(`mcp primary reconnect failed: ${String(error)}`);
+      });
+  }
+
   private async initialize(): Promise<void> {
     await this.mcpConfig.ready;
     await this.identity.resolved();
+    this.appliedPrimary = this.dirs.primary;
     const servers = this.mcpConfig.servers();
     if (Object.keys(servers).length === 0) return;
     await this.manager.connectAll(servers);

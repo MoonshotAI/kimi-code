@@ -1,7 +1,7 @@
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
-import type { ToolDescription as Tool } from '#human/llm/message';
+import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
@@ -112,7 +112,7 @@ export interface McpDefaults {
 
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
-  readonly stdioCwd?: string;
+  readonly stdioCwd?: string | (() => string);
   readonly environmentResolver?: import('#/app/environment/environment').EnvironmentResolver;
   readonly environmentId?: string;
   readonly requireStdioEnvironmentId?: boolean;
@@ -805,7 +805,7 @@ export class McpConnectionManager implements McpConnectionView {
       return new StdioMcpClient(config, {
         startupTimeoutMs,
         toolCallTimeoutMs,
-        defaultCwd: this.options.stdioCwd,
+        defaultCwd: typeof this.options.stdioCwd === 'function' ? this.options.stdioCwd() : this.options.stdioCwd,
         clientName,
         environmentResolver,
         environmentId,

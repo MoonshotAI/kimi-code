@@ -1,10 +1,3 @@
-/**
- * Import recent Claude Code and Codex sessions into the kimi-code home.
- *
- * Discovery and conversion live in `@moonshot-ai/session-import`; the session
- * directory format is written by `@moonshot-ai/migration-legacy`. A session id
- * derived from the source id makes reruns skip sessions imported before.
- */
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, rm, rmdir } from 'node:fs/promises';
@@ -33,7 +26,6 @@ export interface ImportCandidate extends SessionCandidate {
 export interface ImportScan {
   readonly candidates: readonly ImportCandidate[];
   readonly alreadyImported: number;
-  /** Sessions whose project folder no longer exists; they are not candidates. */
   readonly missingFolder: number;
 }
 
@@ -54,7 +46,6 @@ export interface ImportFailure {
 }
 
 export interface ImportReport {
-  /** Session ids written by this run. */
   readonly imported: string[];
   alreadyImported: number;
   missingFolder: number;
@@ -92,15 +83,6 @@ export function importedSessionId(session: SessionCandidate): string {
   return `ses_${createHash('sha256').update(`${session.source}:${session.sourceId}`).digest('hex').slice(0, 32)}`;
 }
 
-/**
- * Size imports for the default model, with its `overrides` applied the way
- * the engine applies them. The window is its input limit. The
- * budget keeps the imported message below the engine's automatic compaction
- * threshold (trigger ratio or reserved context, whichever comes first), with
- * room for the system prompt, tools and the first exchange, so continuing an
- * imported session does not start by compacting it away. The import
- * estimator undercounts code and JSON by about a quarter, hence the divisor.
- */
 export function importBudget(config: Pick<KimiConfig, 'defaultModel' | 'models' | 'loopControl'>): ImportBudget {
   const alias = config.defaultModel === undefined ? undefined : config.models?.[config.defaultModel];
   const model = alias === undefined ? undefined : effectiveModelAlias(alias);
@@ -203,7 +185,6 @@ async function importOne(candidate: ImportCandidate, options: ImportOptions): Pr
   }
 }
 
-/** Import the newest `IMPORT_BATCH_LIMIT` candidates one at a time; `shouldStop` is checked between sessions. */
 export async function importSessions(
   candidates: readonly ImportCandidate[],
   options: ImportOptions,

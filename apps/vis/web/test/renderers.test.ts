@@ -55,6 +55,9 @@ const HISTORICAL_OR_HEADER_TYPES = new Set([
   'staleGuard.recorded',
   'staleGuard.cleared',
   'prompt.accepted',
+  'task.waitDelivered',
+  'turn.step.interrupted',
+  'turn.step.retrying',
 ]);
 
 describe('wire renderers', () => {
@@ -96,6 +99,18 @@ describe('wire renderers', () => {
       },
     } as never);
     expect(renderToStaticMarkup(mediaDetail)).toContain('data:image/png;base64,AAA');
+    const predictionRequest = WIRE_RENDERERS['llm.request'].headline({
+      type: 'llm.request',
+      agentId: 'main',
+      kind: 'prediction',
+      provider: 'kimi',
+      model: 'kimi-k2',
+      toolSelect: false,
+      systemPromptHash: 'system',
+      toolsHash: 'tools',
+      messageCount: 2,
+    });
+    expect(renderToStaticMarkup(predictionRequest.main)).toContain('prediction');
   });
 
   it('renders a change-notifier snapshot written before the belief fields existed', () => {

@@ -4,18 +4,14 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
-  IAgentMcpService,
   IAgentToolRegistryService,
   getLiveSessionById,
   ISessionToolPolicy,
   IModelCatalog,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  listMcpServersResponseSchema,
-  listToolsResponseSchema,
-} from '../src/protocol/rest-tool';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { listToolsResponseSchema } from '../src/protocol/rest-tool';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -37,7 +33,7 @@ interface ToolWire {
   active?: boolean;
 }
 
-describe('server-v2 /api/v1 tools + mcp', () => {
+describe('server-v2 /api/v1 tools', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
@@ -199,73 +195,14 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       const { body } = await getJson<null>('/api/v1/tools?session_id=');
       expect(body.code).toBe(40001);
     });
-  });
 
-  describe('GET /api/v1/mcp/servers', () => {
-    it('returns an empty list before any session exists', async () => {
-      const { status, body } = await getJson<{ servers: unknown[] }>('/api/v1/mcp/servers');
-      expect(status).toBe(200);
-      expect(body.code).toBe(0);
-      expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([]);
-    });
-
-    it('returns an empty list when the session has no main agent yet', async () => {
-      await createSession();
-      const { body } = await getJson<{ servers: unknown[] }>('/api/v1/mcp/servers');
-      expect(body.code).toBe(0);
-      expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([]);
-    });
-
-    it('returns a parseable servers list with retry timing once the main agent exists', async () => {
-      const id = await createSession();
-      const agent = await ensureMainAgent(id);
-      const list = vi.spyOn(agent.accessor.get(IAgentMcpService), 'list').mockReturnValue([
-        { name: 'retry', transport: 'http', status: 'failed', toolCount: 0, nextRetryAt: 123456 },
-      ]);
-      try {
-        const { body } = await getJson<{ servers: unknown[] }>('/api/v1/mcp/servers');
-        expect(body.code).toBe(0);
-        expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([
-          {
-            id: 'retry',
-            name: 'retry',
-            transport: 'http',
-            status: 'error',
-            tool_count: 0,
-            next_retry_at: 123456,
-          },
-        ]);
-      } finally {
-        list.mockRestore();
-      }
-    });
-  });
-
-  describe('POST /api/v1/mcp/servers/{id}:restart', () => {
-    it('returns 40408 for an unknown server id', async () => {
-      const id = await createSession();
-      await ensureMainAgent(id);
-      const { body } = await postJson<null>('/api/v1/mcp/servers/does-not-exist:restart');
-      expect(body.code).toBe(40408);
-      expect(body.msg).toMatch(/does not exist/);
-    });
-
-    it('returns 40408 even before any session is created', async () => {
-      const { body } = await postJson<null>('/api/v1/mcp/servers/x:restart');
-      expect(body.code).toBe(40408);
-    });
-
-    it('rejects an unsupported action with 40001', async () => {
-      await createSession();
-      const { body } = await postJson<null>('/api/v1/mcp/servers/foo:bogus');
-      expect(body.code).toBe(40001);
-      expect(body.msg).toMatch(/unsupported action/);
-    });
-
-    it('rejects a bare {id} (no action) with 40001', async () => {
-      await createSession();
-      const { body } = await postJson<null>('/api/v1/mcp/servers/foo');
-      expect(body.code).toBe(40001);
+    it('no longer serves the legacy live-session POST /api/v1/mcp/servers/{id}:restart route', async () => {
+      const res = await fetch(`${base}/api/v1/mcp/servers/x:restart`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: '{}',
+      } as never);
+      expect(res.status).toBe(404);
     });
   });
 });

@@ -1,8 +1,3 @@
-/**
- * Tests for the CLI telemetry bootstrap helpers, focusing on the
- * `kimi web` / `kimi server run` host wiring added in `cli/telemetry.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetKimiRegionCache } from '#/utils/region';
 
@@ -31,8 +26,6 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
 }));
 
 vi.mock('@moonshot-ai/kimi-code-oauth', async (importOriginal) => {
-  // Spread the real module: the SDK's v2 client pulls agent-core-v2 into the
-  // import graph, which subclasses KimiOAuthToolkit from this package.
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-oauth')>();
   return {
     ...actual,
@@ -85,8 +78,6 @@ describe('initializeServerTelemetry', () => {
         homeDir: '/home/.kimi-code',
       }),
     );
-    // The returned client wraps the module functions so core + the host share
-    // the same underlying client.
     expect(client).toEqual(
       expect.objectContaining({
         track: expect.any(Function),
@@ -94,9 +85,6 @@ describe('initializeServerTelemetry', () => {
         setContext: expect.any(Function),
       }),
     );
-    // The first dynamic import pulls in the whole SDK/oauth chain (~3s idle,
-    // more under full-suite transform contention) — give it headroom past the
-    // 5s default timeout.
   }, 20000);
 
   it('disables telemetry when config.toml sets telemetry = false', async () => {

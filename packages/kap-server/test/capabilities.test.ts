@@ -69,9 +69,9 @@ describe('server-v2 /api/v1 capabilities', () => {
   });
 
   it('validates process termination consent as a boolean', async () => {
-    const invalid = await postJson<unknown>('/api/v1/capabilities/nope:install', { stopRunningProcesses: 'true' });
+    const invalid = await postJson<unknown>('/api/v1/capabilities/nope:install', { stop_running_processes: 'true' });
     expect(invalid.body.code).toBe(40001);
-    const valid = await postJson<unknown>('/api/v1/capabilities/nope:install', { stopRunningProcesses: true });
+    const valid = await postJson<unknown>('/api/v1/capabilities/nope:install', { stop_running_processes: true });
     expect(valid.body.code).toBe(40418);
   });
 

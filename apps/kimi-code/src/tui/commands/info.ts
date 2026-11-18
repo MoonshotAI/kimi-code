@@ -22,17 +22,14 @@ import {
   kimiCodeSignupUrl,
   withFeedbackVersionPrefix,
 } from '../constant/feedback';
-import { DEFAULT_OAUTH_PROVIDER_NAME, isManagedUsageProvider } from '../constant/kimi-tui';
-import { submitFeedbackWithAttachments } from '../../feedback/feedback-attachments';
+import { detectInstallSource } from '#/cli/update/source';
+import { isManagedUsageProvider } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { sessionWorkDir } from '../utils/session-work-dir';
 import { openUrl } from '#/utils/open-url';
+import { detectShellEnvironment } from '#/utils/process/shell-env';
 import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
-
-// ---------------------------------------------------------------------------
-// Feedback
-// ---------------------------------------------------------------------------
 
 export async function handleFeedbackCommand(host: SlashCommandHost): Promise<void> {
   const fallback = (reason: string): void => {
@@ -41,39 +38,35 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     openUrl(FEEDBACK_ISSUE_URL);
   };
 
-  // Gate on the OAuth token rather than the active model's provider: a
-  // signed-in user running an API-key model can still submit feedback
-  // through the authenticated channel.
-  let signedIn = false;
+  const modelAlias = host.state.appState.model.length > 0 ? host.state.appState.model : undefined;
+  let availability: Awaited<ReturnType<SlashCommandHost['harness']['feedbackAvailability']>>;
   try {
-    const status = await host.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
-    signedIn = status.providers.some(
-      (provider) => provider.providerName === DEFAULT_OAUTH_PROVIDER_NAME && provider.hasToken,
+    availability = await host.harness.feedbackAvailability(
+      modelAlias,
+      host.state.appState.sessionId,
     );
   } catch {
-    // The sign-in state is unreadable — keep the feedback entry usable by
-    // falling back to GitHub Issues instead of failing the command.
     fallback(FEEDBACK_STATUS_FALLBACK);
     return;
   }
-  if (!signedIn) {
+  if (availability.kind === 'needs-login') {
     host.showStatus(FEEDBACK_STATUS_NOT_SIGNED_IN);
     host.showStatus(kimiCodeSignupUrl());
     host.showStatus(FEEDBACK_ISSUE_URL);
     return;
   }
+  if (availability.kind === 'error') {
+    host.showStatus(availability.message);
+    fallback(FEEDBACK_STATUS_FALLBACK);
+    return;
+  }
 
-  // Stage 1: collect the free-form feedback text.
   const input = await promptFeedbackInput(host);
   if (input === undefined) {
     host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
   }
 
-  // Stage 2: ask whether to attach diagnostics (logs / codebase).
-  // The codebase scanner reads the local filesystem, so a remote-bound
-  // session cannot package its codebase — drop the option with a hint
-  // instead of scanning the wrong machine.
   const remoteSession =
     host.state.appState.environment !== undefined &&
     host.state.appState.environment.environmentId !== 'local';
@@ -82,7 +75,7 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
       'Codebase attachment is not supported for remote sessions — the scanner only reads the local filesystem.',
     );
   }
-  const level = await promptFeedbackAttachment(host, remoteSession);
+  const level = await promptFeedbackAttachment(host, remoteSession, availability.session);
   if (level === undefined) {
     host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
@@ -90,9 +83,6 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
 
   const version = withFeedbackVersionPrefix(host.state.appState.version);
   const spinner = host.showLoginProgressSpinner(FEEDBACK_STATUS_SUBMITTING);
-  // Guarantee the spinner's underlying setInterval is always cleared, even when
-  // submitFeedback throws — otherwise the interval (and its per-frame
-  // requestRender) leaks for the rest of the session.
   let stopped = false;
   const stopSpinner = (opts: { ok: boolean; label: string }): void => {
     if (stopped) return;
@@ -100,36 +90,36 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     spinner.stop(opts);
   };
   try {
-    const res = await host.harness.auth.submitFeedback({
+    const body = {
       content: input.value,
       sessionId: host.state.appState.sessionId,
       version,
       os: `${osType()} ${osRelease()}`,
       model: host.state.appState.model.length > 0 ? host.state.appState.model : null,
-    });
+      attachmentLevel: level,
+      workDir: host.state.appState.workDir,
+      installSource: await detectInstallSource(),
+      shellEnv: detectShellEnvironment(),
+    };
+    const res = await host.harness.submitFeedback(body, modelAlias);
 
+    if (res.kind === 'needs-login') {
+      stopSpinner({ ok: false, label: FEEDBACK_STATUS_NOT_SIGNED_IN });
+      host.showStatus(kimiCodeSignupUrl());
+      host.showStatus(FEEDBACK_ISSUE_URL);
+      return;
+    }
     if (res.kind !== 'ok') {
       stopSpinner({ ok: false, label: res.message });
       fallback(FEEDBACK_STATUS_FALLBACK);
       return;
     }
 
-    // Stage 3: prepare and upload each requested attachment independently.
-    // Attachment failures are non-fatal partial failures — the text feedback
-    // already exists server-side — so a throw here degrades to the
-    // partial-failure status, never to the GitHub fallback in the outer catch.
-    let attachmentFailed = false;
-    try {
-      attachmentFailed = await submitFeedbackWithAttachments(host, res.feedbackId, level);
-    } catch {
-      attachmentFailed = true;
-    }
-
     stopSpinner({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
     host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
     host.showStatus(feedbackIdLine(res.feedbackId));
     host.track(FEEDBACK_TELEMETRY_EVENT);
-    if (attachmentFailed) {
+    if (res.attachmentFailed === true) {
       host.showStatus(FEEDBACK_STATUS_UPLOAD_FAILED);
     }
   } catch (error) {
@@ -138,10 +128,6 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     throw error;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Info commands
-// ---------------------------------------------------------------------------
 
 interface SessionUsageResult {
   readonly usage?: SessionUsage;
@@ -212,8 +198,6 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
     if (host.session !== undefined) {
       servers = await host.session.listMcpServers();
     } else {
-      // v2 session-less: the MCP connection set is workspace-scoped, so it is
-      // inspectable before the first session exists.
       servers = await host.harness.listWorkspaceMcpServers(host.state.appState.workDir);
     }
   } catch (error) {

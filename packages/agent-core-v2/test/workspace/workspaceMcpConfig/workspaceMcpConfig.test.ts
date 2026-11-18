@@ -24,11 +24,13 @@ import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import {
   IWorkspaceMcpConfigService,
   type McpServersChange,
 } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 import { WorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfigService';
+import * as mcpConfigLoader from '#/app/mcpConfig/configLoader';
 import {
   IWorkspaceTrust,
   type WorkspaceTrustChange,
@@ -69,6 +71,8 @@ describe('WorkspaceMcpConfigService', () => {
   let trusted: boolean;
   let trustFlips: Emitter<WorkspaceTrustChange>;
   let sectionChanges: Emitter<ConfigSectionChangedEvent>;
+  let dirsChanges: Emitter<void>;
+  let primaryDirs: IWorkspaceDirs;
   let changes: McpServersChange[];
   let cancelAuthorization: Mock<(source: object | undefined, serverName: string, serverUrl: string | URL) => Promise<void>>;
   let invalidate: Mock<(source: object | undefined, serverName: string, serverUrl: string | URL) => Promise<void>>;
@@ -84,6 +88,7 @@ describe('WorkspaceMcpConfigService', () => {
     trusted = true;
     trustFlips = new Emitter<WorkspaceTrustChange>();
     sectionChanges = disposables.add(new Emitter<ConfigSectionChangedEvent>());
+    dirsChanges = disposables.add(new Emitter<void>());
     changes = [];
     cancelAuthorization = vi.fn(async () => undefined);
     invalidate = vi.fn(async () => undefined);
@@ -104,11 +109,18 @@ describe('WorkspaceMcpConfigService', () => {
     log: ILogService = stubLog(),
     oauth?: McpOAuthService,
   ): IWorkspaceMcpConfigService {
+    primaryDirs = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      primary: cwd,
+      onDidChange: dirsChanges.event,
+    } as unknown as IWorkspaceDirs;
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
         reg.definePartialInstance(IBootstrapService, { homeDir });
         reg.definePartialInstance(IWorkspaceContext, { cwd });
+        reg.defineInstance(IWorkspaceDirs, primaryDirs);
         reg.definePartialInstance(IPluginService, {
           enabledMcpServers: async () =>
             Object.fromEntries(
@@ -701,4 +713,84 @@ describe('WorkspaceMcpConfigService', () => {
     );
     expect(service.servers()).toEqual({ added: stdioConfig('added') });
   }, 20000);
+
+  it('reloads project servers and moves the watcher when the primary changes', async () => {
+    const first = cwd;
+    await writeProjectConfig({ first: stdioConfig('first') });
+    const service = createService();
+    await service.ready;
+    expect(service.servers()).toEqual({ first: stdioConfig('first') });
+    Object.defineProperty(primaryDirs, 'primary', { get: () => cwd });
+    const next = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-next-'));
+    try {
+      cwd = next;
+      await writeProjectConfig({ second: stdioConfig('second') });
+      dirsChanges.fire();
+      await vi.waitFor(() => {
+        expect(service.servers()).toEqual({ second: stdioConfig('second') });
+      });
+      const watcher = [...watchFires.entries()].find(([root]) => root === next || next.startsWith(`${root}/`))?.[1];
+      expect(watcher).toBeDefined();
+
+      changes = [];
+      await writeProjectConfig({ second: stdioConfig('updated') });
+      watcher!.fire({ path: join(next, '.kimi-code', 'mcp.json'), action: 'modified', kind: 'file' });
+      await vi.waitFor(() => {
+        expect(service.servers()).toEqual({ second: stdioConfig('updated') });
+      });
+    } finally {
+      await Promise.all([
+        rm(first, { recursive: true, force: true }),
+        rm(next, { recursive: true, force: true }),
+      ]);
+      cwd = first;
+    }
+  });
+
+  it('serializes initial watcher setup with a primary change', async () => {
+    const first = cwd;
+    let releaseInitial!: () => void;
+    let markInitialStarted!: () => void;
+    const initialGate = new Promise<void>((resolve) => {
+      releaseInitial = resolve;
+    });
+    const initialStarted = new Promise<void>((resolve) => {
+      markInitialStarted = resolve;
+    });
+    const resolvePaths = mcpConfigLoader.resolveMcpJsonPaths;
+    const resolver = vi.spyOn(mcpConfigLoader, 'resolveMcpJsonPaths').mockImplementation(
+      async (input) => {
+        if (input.cwd === first) {
+          markInitialStarted();
+          await initialGate;
+        }
+        return resolvePaths(input);
+      },
+    );
+    const service = createService();
+    const next = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-next-'));
+    try {
+      await initialStarted;
+      Object.defineProperty(primaryDirs, 'primary', { get: () => cwd });
+      cwd = next;
+      dirsChanges.fire();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(watchFires.has(next)).toBe(false);
+
+      releaseInitial();
+      await vi.waitFor(() => {
+        expect(watchFires.has(next)).toBe(true);
+      });
+      expect([...watchFires.keys()].at(-1)).toBe(next);
+      await service.ready;
+    } finally {
+      releaseInitial();
+      resolver.mockRestore();
+      await Promise.all([
+        rm(first, { recursive: true, force: true }),
+        rm(next, { recursive: true, force: true }),
+      ]);
+      cwd = first;
+    }
+  });
 });

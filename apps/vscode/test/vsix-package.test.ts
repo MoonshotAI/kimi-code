@@ -1,11 +1,3 @@
-/**
- * Scenario: maintainers package and inspect the VS Code extension on any host OS.
- * Responsibilities: six-target argument handling, actionable failures, isolated
- * dev state, manifest/resource hygiene, unresolved imports, and entry loading.
- * Wiring: real Node packaging/verifier CLIs and filesystem; VSIX directory
- * fixtures replace only the external Marketplace archive producer.
- * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/vsix-package.test.ts
- */
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

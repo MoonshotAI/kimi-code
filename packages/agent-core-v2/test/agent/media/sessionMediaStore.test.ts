@@ -11,13 +11,13 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
-import { detectFileType } from '#/agent/media/file-type';
+import { detectFileType, sniffImageDimensions } from '#/agent/media/file-type';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { lowerMessage as lowerOpenAI } from '#human/llm/builtin/protocol/openai/lower';
-import { lowerMessage as lowerAnthropic } from '#human/llm/builtin/protocol/anthropic/lower';
-import { providerImagePolicy } from '#human/llm/protocol/kit/media';
-import type { Message, ToolMessage } from '#human/llm/message';
-import { degradeLeadingMediaParts } from '#human/llm/builtin/policy/media-degrade';
+import { lowerMessage as lowerOpenAI } from '@moonshot-ai/core/llm/builtin/protocol/openai/lower';
+import { lowerMessage as lowerAnthropic } from '@moonshot-ai/core/llm/builtin/protocol/anthropic/lower';
+import { providerImagePolicy } from '@moonshot-ai/core/llm/protocol/kit/media';
+import type { Message, ToolMessage } from '@moonshot-ai/core/llm/message';
+import { degradeLeadingMediaParts } from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -221,11 +221,15 @@ describe('SessionMediaStoreService', () => {
 
   it('preserves an unchanged image before older media is degraded', async () => {
     const bytes = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
+    const materialize = vi.spyOn(store, 'materialize');
     const result = await mcpResultToExecutableOutput({
       isError: false,
       content: [{ type: 'image', mimeType: 'image/png', data: bytes.toString('base64') }],
     }, 'mcp__example__image', { attachmentStore: store });
     const content = renderToolResultForModel(result);
+    const reference = JSON.parse(/Attachment reference: ("[^\n]+")/.exec(modelText(result))![1]!) as string;
+    expect(content).toContainEqual({ type: 'image_url', imageUrl: { url: reference } });
+    expect(materialize).toHaveBeenCalledTimes(1);
     const messages: Message[] = [
       { role: 'tool', toolCallId: 'image', content },
       { role: 'user', content: [
@@ -249,11 +253,16 @@ describe('SessionMediaStoreService', () => {
       isError: false,
       content: [{ type: 'image', mimeType: 'image/png', data: bytes.toString('base64') }],
     }, 'mcp__example__image', { attachmentStore: store });
-    const text = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
+    const content = renderToolResultForModel(result);
+    const text = modelText(result);
     expect(text).toContain('Image compressed');
     const relative = /Session-relative attachment: ("[^\n]+")/.exec(text)?.[1];
     expect(relative).toBeDefined();
     expect((await readFile(join(sessionDir, JSON.parse(relative!) as string))).equals(bytes)).toBe(true);
+    const image = content.find((part) => part.type === 'image_url');
+    expect(image?.imageUrl.url).toMatch(/^kimi-file:\/\//);
+    const final = await store.get(image!.imageUrl.url);
+    expect(sniffImageDimensions(final!.bytes)).toMatchObject({ width: 2000, height: 1000 });
   });
 
   it.each([

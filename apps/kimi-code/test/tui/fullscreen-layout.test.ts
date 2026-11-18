@@ -9,15 +9,9 @@ import {
   type Terminal,
   TuiAltScreen,
 } from '@moonshot-ai/pi-tui';
-/**
- * Fullscreen layout contract tests: the docked chrome must keep the editor's
- * full height (top border / input / bottom border) even when the transcript
- * far exceeds the screen. Regression: the dock used to participate in VStack
- * shrink distribution with no minSize, so a tall transcript crushed it and
- * the editor's bottom border row was clipped off screen.
- */
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
+import { showSettingsSelector } from '#/tui/commands/config';
 import { handleGoalCommand } from '#/tui/commands/goal';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
@@ -30,7 +24,7 @@ import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import * as userMessages from '#/tui/components/messages/user-message';
 import { ActivityPaneComponent } from '#/tui/components/panes/activity-pane';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
-import { createTUIState, KimiTUI, type KimiTUIOptions } from '#/tui/kimi-tui';
+import { createTUIState, KimiTUI, type KimiTUIOptions, type KimiTUIStartupInput } from '#/tui/kimi-tui';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { GoalStartPermissionPromptComponent } from '#/tui/components/dialogs/goal-start-permission-prompt';
@@ -53,6 +47,11 @@ import {
 import { markTranscriptComponent } from '#/tui/utils/transcript-component-metadata';
 
 import { VirtualTerminal } from '../../../../packages/pi-tui/test/virtual-terminal';
+
+const clipboardText = vi.hoisted(() => ({
+  copyTextToClipboard: vi.fn<(text: string) => Promise<'native' | 'osc52'>>(async () => 'native'),
+}));
+vi.mock('#/utils/clipboard/clipboard-text', () => clipboardText);
 
 const WIDTH = 120;
 const HEIGHT = 30;
@@ -82,7 +81,7 @@ function fakeInitialAppState(): AppState {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
-    transcript: { groupTools: 'auto', groupThinking: true },
+    transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -124,11 +123,29 @@ function screenRows(vt: VirtualTerminal): string[] {
   return vt.getViewport().map((row) => stripAnsi(row).trimEnd());
 }
 
+function editorReplacementHost(state: ReturnType<typeof createTUIState>): SlashCommandHost {
+  const host = {
+    state,
+    surveyController: { notifyDisplaced: () => {} },
+    promptPredictionController: { notifyDisplaced() {} },
+    disposeEditorReplacement() {},
+    modelMigration: { retry: () => {} },
+    mountEditorReplacement(panel: Component & Focusable) {
+      KimiTUI.prototype.mountEditorReplacement.call(host, panel);
+    },
+    restoreEditor() {
+      KimiTUI.prototype.restoreEditor.call(host);
+    },
+  } as unknown as SlashCommandHost;
+  return host;
+}
+
 function updateQueueDisplay(state: ReturnType<typeof createTUIState>): void {
   const host = {
     state,
     deferUserMessages: false,
     isSteeringQueuedMessages: () => false,
+    promptPredictionController: { handleQueueChange() {}, notifyDisplaced() {} },
   } as unknown as KimiTUI;
   KimiTUI.prototype.updateQueueDisplay.call(host);
 }
@@ -156,7 +173,7 @@ function pillLines(state: ReturnType<typeof createTUIState>): string[] {
 function groupTranscript(state: ReturnType<typeof createTUIState>): void {
   const view = state.transcriptView;
   if (view === undefined) throw new Error('transcript view missing');
-  state.transcriptContainer.setPresentationOptions({ fullscreen: true, groupTools: 'auto', groupThinking: true });
+  state.transcriptContainer.setPresentationOptions({ fullscreen: true, toolCallDensity: 'compact', thinking: 'grouped' });
   state.transcriptContainer.setHost({
     withScrollAnchor: (toggle) => {
       view.withAnchoredScroll(toggle);
@@ -186,6 +203,58 @@ function addReadGroup(state: ReturnType<typeof createTUIState>): void {
   }
 }
 
+interface ActivityDockDriver {
+  readonly state: ReturnType<typeof createTUIState>;
+  readonly sessionEventHandler: {
+    handleEvent(event: Record<string, unknown>, sendQueued: () => void): void;
+  };
+  updateActivityPane(): void;
+  beginSessionRequest(): void;
+}
+
+function mountFullscreenKimiTui(): { driver: ActivityDockDriver; vt: VirtualTerminal } {
+  const input: KimiTUIStartupInput = {
+    cliOptions: {
+      session: undefined,
+      continue: false,
+      yolo: false,
+      auto: false,
+      plan: false,
+      model: undefined,
+      outputFormat: undefined,
+      prompt: undefined,
+      skillsDirs: [],
+      agent: undefined,
+      agentFiles: [],
+      environment: undefined,
+    },
+    tuiConfig: {
+      theme: 'dark',
+      disablePasteBurst: false,
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
+      tuiMode: 'fullscreen',
+    },
+    version: '0.0.0-test',
+    workDir: '/tmp/kimi-test',
+  };
+  const driver = new KimiTUI(
+    { onConfigSectionChanged: () => () => {} } as never,
+    input,
+  ) as unknown as ActivityDockDriver;
+  const { state } = driver;
+  vi.spyOn(state.terminal, 'setProgress').mockImplementation(() => {});
+  const vt = new VirtualTerminal(WIDTH, HEIGHT);
+  (state.ui as { terminal: Terminal }).terminal = vt;
+  mountFooter(state);
+  state.editorContainer.addChild(state.editor);
+  state.ui.setFocus(state.editor);
+  state.ui.start();
+  return { driver, vt };
+}
+
 async function clickRow(vt: VirtualTerminal, row: number): Promise<void> {
   vt.sendInput(`\u001B[<0;5;${row + 1}M`);
   vt.sendInput(`\u001B[<0;5;${row + 1}m`);
@@ -193,6 +262,34 @@ async function clickRow(vt: VirtualTerminal, row: number): Promise<void> {
 }
 
 describe('fullscreen layout', () => {
+  it.each([
+    ['a native copy', () => Promise.resolve('native' as const), 'Copied!'],
+    ['an unverified OSC 52 copy', () => Promise.resolve('osc52' as const), 'Copied via terminal'],
+    [
+      'a failed copy',
+      () => Promise.reject(new Error('Clipboard unavailable: install `xclip` or `xsel`, or check X11 access')),
+      'Clipboard unavailable: install `xclip` or `xsel`',
+    ],
+  ])('copies a dragged selection through the app clipboard and flashes %s', async (_name, copy, flash) => {
+    clipboardText.copyTextToClipboard.mockImplementationOnce(copy);
+    const { state, vt } = await mountFullscreen();
+    state.transcriptContainer.addChild(new Text('hello world', 0, 0));
+    (state.ui as TuiAltScreen).renderNow();
+    await vt.flush();
+    const row = screenRows(vt).findIndex((line) => line.includes('hello world'));
+    const col = screenRows(vt)[row]!.indexOf('hello world');
+
+    vt.sendInput(`\u001B[<0;${col + 1};${row + 1}M`);
+    vt.sendInput(`\u001B[<32;${col + 11};${row + 1}M`);
+    vt.sendInput(`\u001B[<0;${col + 11};${row + 1}m`);
+
+    expect(clipboardText.copyTextToClipboard).toHaveBeenLastCalledWith('hello world');
+    await vi.waitFor(() => {
+      expect(screenRows(vt).join('\n')).toContain(flash);
+    });
+    state.ui.stop();
+  });
+
   it('summarizes only the current message, jumps to its start, and searches the original text', async () => {
     const { state, vt } = await mountFullscreen();
     for (const [index, content] of ['one', 'two', 'three', 'four\nfive\nsix'].entries()) {
@@ -283,22 +380,22 @@ describe('fullscreen layout', () => {
     vt.sendInput(`\u001B[<32;${CHROME_GUTTER + 5};3M`);
     vt.sendInput(`\u001B[<0;${CHROME_GUTTER + 5};3m`);
     await vt.waitForRender();
-    const write = vi.spyOn(vt, 'write');
-    const copiedAlpha = `\u001B]52;c;${Buffer.from('alpha').toString('base64')}\u0007`;
+    const copy = clipboardText.copyTextToClipboard;
+    copy.mockClear();
     await alt.copyActiveSelectionToClipboard();
-    expect(write).toHaveBeenCalledWith(copiedAlpha);
-    write.mockClear();
+    expect(copy).toHaveBeenCalledWith('alpha');
+    copy.mockClear();
     alt.scrollBy(1);
     await vt.waitForRender();
     expect(pillLines(state)).toHaveLength(1);
     await alt.copyActiveSelectionToClipboard();
-    expect(write).toHaveBeenCalledWith(copiedAlpha);
-    write.mockClear();
+    expect(copy).toHaveBeenCalledWith('alpha');
+    copy.mockClear();
     alt.scrollBy(-1);
     await vt.waitForRender();
     expect(pillLines(state)).toEqual([]);
     await alt.copyActiveSelectionToClipboard();
-    expect(write).toHaveBeenCalledWith(copiedAlpha);
+    expect(copy).toHaveBeenCalledWith('alpha');
     alt.stop();
   });
 
@@ -584,7 +681,6 @@ describe('fullscreen layout', () => {
       return rows;
     };
 
-    // User message, then a streaming assistant message with the activity pane up.
     state.transcriptContainer.addChild(new UserMessageComponent('分析下这个项目'));
     const spinner = new MoonLoader(state.ui);
     state.activityContainer.addChild(
@@ -596,7 +692,6 @@ describe('fullscreen layout', () => {
     state.ui.requestRender(true);
     await vt.waitForRender();
 
-    // Streaming ends: final highlight, spinner -> one-row placeholder, debug line.
     assistant.updateContent(LONG_MARKDOWN, { transient: false });
     state.activityContainer.clear();
     state.activityContainer.addChild(new Spacer(1));
@@ -612,6 +707,42 @@ describe('fullscreen layout', () => {
     expect(rows[promptRow + 1]).toContain('╰');
 
     state.ui.stop();
+  });
+
+  it('keeps the editor on the same row from idle through a working turn to its summary', async () => {
+    const { driver, vt } = mountFullscreenKimiTui();
+    const emit = (event: Record<string, unknown>): void => {
+      driver.sessionEventHandler.handleEvent(
+        { agentId: 'main', sessionId: 'ses-1', turnId: 1, ...event },
+        () => {},
+      );
+    };
+    const dock = async (): Promise<{ editorTop: number; activity: string }> => {
+      driver.state.ui.requestRender();
+      await vt.waitForRender();
+      const rows = screenRows(vt);
+      const editorTop = rows.findIndex((row) => row.includes('╭'));
+      return { editorTop, activity: rows[editorTop - 1]?.trim() ?? '' };
+    };
+
+    driver.updateActivityPane();
+    const idle = await dock();
+    expect(idle).toEqual({ editorTop: expect.any(Number), activity: '' });
+
+    driver.beginSessionRequest();
+    expect(await dock()).toEqual({ editorTop: idle.editorTop, activity: expect.stringMatching(/^[🌑🌒🌓🌔🌕🌖🌗🌘]/u) });
+    emit({ type: 'thinking.delta', delta: 'Plan the change.' });
+    expect(await dock()).toEqual({ editorTop: idle.editorTop, activity: expect.stringMatching(/^\S Working for \d+s/u) });
+    emit({ type: 'tool.call.started', toolCallId: 'call_read', name: 'Read', args: { path: 'a.ts' } });
+    expect(await dock()).toEqual({ editorTop: idle.editorTop, activity: expect.stringMatching(/^[🌑🌒🌓🌔🌕🌖🌗🌘]/u) });
+    emit({ type: 'tool.result', toolCallId: 'call_read', output: 'content' });
+    emit({ type: 'turn.ended', reason: 'completed' });
+    expect(await dock()).toEqual({
+      editorTop: idle.editorTop,
+      activity: expect.stringMatching(/^Worked for \d+s · done \d{1,2}:\d{2} [AP]M$/u),
+    });
+
+    driver.state.ui.stop();
   });
 
   it('jumps between prompts with Ctrl-Shift-Up/Down (OSC 133 zones survive the chain)', async () => {
@@ -634,10 +765,7 @@ describe('fullscreen layout', () => {
     const topRows = (): string[] =>
       Array.from({ length: 6 }, (_, i) => stripAnsi(vt.getViewport()[i] ?? '').trimEnd());
 
-    // Zones anchor every user/assistant message, so the nearest previous zone
-    // below the fold is the current turn's assistant message, then the user
-    // message that started the turn.
-    vt.sendInput('\u001B[1;6A'); // ctrl+shift+up = previous prompt
+    vt.sendInput('\u001B[1;6A');
     await vt.waitForRender();
     expect(topRows()[1]).toContain('回答二');
 
@@ -645,7 +773,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     expect(topRows()[1]).toContain('第二轮提问');
 
-    vt.sendInput('\u001B[1;6B'); // ctrl+shift+down = next prompt
+    vt.sendInput('\u001B[1;6B');
     await vt.waitForRender();
     expect(topRows()[1]).toContain('回答二');
 
@@ -677,21 +805,16 @@ describe('fullscreen layout', () => {
         (line) => line.includes('第一轮问题'),
       ).length;
 
-    // Following at the bottom: the latest message's first line has scrolled
-    // out, so it is pinned.
     expect(alt.isFollowingOutput).toBe(true);
     expect(alt.viewportTop).toBeGreaterThan(1);
     expect(topRow()).toContain('❯ 第一轮问题');
     expect(messageRowCount()).toBe(1);
 
-    // The hidden pill gives its row back to padding inside the scroll content.
     alt.scrollToTop();
     await vt.waitForRender();
     expect(alt.viewportTop).toBe(0);
     expect(topRow()).not.toContain('❯ 第一轮问题');
 
-    // scrollTop lands on the message's first content line: the message itself
-    // sits at the top of the screen — no pill, no blank slot row above it.
     alt.scrollBy(2);
     await vt.waitForRender();
     expect(alt.viewportTop).toBe(2);
@@ -705,14 +828,13 @@ describe('fullscreen layout', () => {
     expect(topRow()).toContain('❯ 第一轮问题');
     expect(messageRowCount()).toBe(1);
 
-    vt.sendInput('\u001B[<65;5;1M'); // wheel down over the pill row
+    vt.sendInput('\u001B[<65;5;1M');
     await vt.waitForRender();
     expect(alt.viewportTop).toBeGreaterThan(scrolledTop);
 
-    vt.sendInput('\u001B[<0;5;1M'); // press + release = click on the pill row
+    vt.sendInput('\u001B[<0;5;1M');
     vt.sendInput('\u001B[<0;5;1m');
     await vt.waitForRender();
-    // The pill disappears and the original first line occupies the same row.
     expect(alt.viewportTop).toBe(2);
     expect(topRow()).toContain('❯ 第一轮问题');
     expect(messageRowCount()).toBe(1);
@@ -747,7 +869,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     expect(topRow()).not.toContain('❯');
 
-    alt.scrollBy(2); // the original first content line occupies the top row
+    alt.scrollBy(2);
     await vt.waitForRender();
     expect(topRow()).toContain('❯ 第一行');
 
@@ -759,7 +881,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     expect(topRow()).toBe('❯ 第一行 第二行 第三行');
 
-    vt.sendInput('\u001B[<0;5;1M'); // press + release = click on the pill row
+    vt.sendInput('\u001B[<0;5;1M');
     vt.sendInput('\u001B[<0;5;1m');
     await vt.waitForRender();
     expect(alt.viewportTop).toBe(2);
@@ -798,20 +920,20 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     expect(alt.viewportTop).toBe(0);
 
-    alt.scrollBy(3); // padding, spacer and one leading blank line are out
+    alt.scrollBy(3);
     await vt.waitForRender();
     expect(alt.viewportTop).toBe(3);
     expect(topRow()).not.toContain('第一行');
     expect(countRows('第一行')).toBe(1);
 
-    alt.scrollBy(1); // the message's own first text line sits at the top: still no pill
+    alt.scrollBy(1);
     await vt.waitForRender();
     expect(alt.viewportTop).toBe(4);
     expect(topRow()).toContain('第一行');
     expect(topRow()).not.toContain('❯');
     expect(countRows('第一行')).toBe(1);
 
-    alt.scrollBy(1); // the first text line is out: the pill takes over
+    alt.scrollBy(1);
     await vt.waitForRender();
     expect(alt.viewportTop).toBe(5);
     expect(countRows('第一行')).toBe(1);
@@ -850,26 +972,23 @@ describe('fullscreen layout', () => {
 
     expect(topRow()).toContain('❯ 第二轮问题');
 
-    vt.sendInput('\u001B[1;6A'); // lands on the second assistant's zone; 第二轮问题 first line out
+    vt.sendInput('\u001B[1;6A');
     await vt.waitForRender();
     expect(topRow()).toContain('❯ 第二轮问题');
     expect(countRows('第二轮问题')).toBe(1);
 
-    // Lands on 第二轮问题's own head (its spacer line): 第二轮's first content
-    // line is still visible below the top, so the pill switches to 第一轮问题 —
-    // CSS-sticky semantics, not a duplicate.
     vt.sendInput('\u001B[1;6A');
     await vt.waitForRender();
     expect(topRow()).toContain('❯ 第一轮问题');
     expect(countRows('第二轮问题')).toBe(1);
     expect(countRows('第一轮问题')).toBe(1);
 
-    vt.sendInput('\u001B[1;6A'); // lands on the first assistant's zone; 第一轮问题 stays pinned
+    vt.sendInput('\u001B[1;6A');
     await vt.waitForRender();
     expect(topRow()).toContain('❯ 第一轮问题');
     expect(countRows('第一轮问题')).toBe(1);
 
-    vt.sendInput('\u001B[1;6A'); // lands on 第一轮问题's head: no candidate above -> no pill
+    vt.sendInput('\u001B[1;6A');
     await vt.waitForRender();
     expect(topRow()).toContain('❯ 第一轮问题');
     expect(pillLines(state)).toEqual([]);
@@ -890,9 +1009,6 @@ describe('fullscreen layout', () => {
     const userComponent = new UserMessageComponent(userEntry.content);
     markTranscriptComponent(userComponent, userEntry);
     state.transcriptContainer.addChild(userComponent);
-    // The dock takes 5 rows (activity 1 + editor 3 + footer 1), leaving a
-    // 25-row scroll viewport. Padding + 2 message rows + 24 filler rows
-    // puts the follow position at scrollTop 2, exactly the first text line.
     state.transcriptContainer.addChild(
       new Text(Array.from({ length: 24 }, (_, i) => `填充行 ${i + 1}`).join('\n'), 0, 0),
     );
@@ -901,7 +1017,6 @@ describe('fullscreen layout', () => {
 
     const alt = state.ui as TuiAltScreen;
     expect(alt.isFollowingOutput).toBe(true);
-    // The original first line sits at the top, with no external header row.
     expect(alt.viewportTop).toBe(2);
     expect(pillLines(state)).toEqual([]);
     expect(stripAnsi(vt.getViewport()[0] ?? '')).toContain('边界消息');
@@ -1268,6 +1383,7 @@ describe('fullscreen layout', () => {
       state,
       session: {},
       surveyController: { notifyDisplaced: () => {} },
+      promptPredictionController: { handleQueueChange() {}, notifyDisplaced() {} },
       disposeEditorReplacement() {},
       modelMigration: { retry: () => {} },
       showError: vi.fn(),
@@ -1331,7 +1447,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     rows = screenRows(vt);
     expect(rows.join('\n')).toContain('Page 2/2');
-    expect(rows.join('\n')).toContain('❯ Experiments');
+    expect(rows.join('\n')).toContain('❯ Follow-up behavior');
 
     state.ui.setFocus(state.notifyPanel);
     state.ui.requestRender();
@@ -1339,6 +1455,95 @@ describe('fullscreen layout', () => {
     expect(picker.focused).toBe(false);
 
     state.ui.stop();
+  });
+
+  it('scrolls a transcript setting preview that the terminal is too short for', async () => {
+    const { state, vt } = await mountFullscreen(24);
+    onTestFinished(() => {
+      state.ui.stop();
+    });
+    state.transcriptContainer.addChild(
+      new Text(Array.from({ length: 40 }, (_, i) => `transcript ${String(i + 1)}`).join('\n'), 0, 0),
+    );
+    showSettingsSelector(editorReplacementHost(state));
+    for (let i = 0; i < 4; i++) vt.sendInput('\u001B[B');
+    vt.sendInput('\r');
+    await vt.waitForRender();
+    const panel = (): string[] => screenRows(vt).map((row) => row.replace(/[┃│]$/, '').trim());
+    const borders = (): number[] => panel().flatMap((row, index) => (/^─{20,}$/.test(row) ? [index] : []));
+    const summary = 'Thought for 3s, read 1 file, ran 1 command, edited 1 file +1 -1';
+
+    let rows = panel();
+    expect(rows).toContain('Tool call density');
+    expect(rows).toContain('↑↓ navigate · Enter select · Esc cancel · shift+↑/↓ scroll');
+    const frame = borders();
+    expect(frame).toHaveLength(2);
+    const bottom = frame[1] ?? rows.length;
+    const label = rows.indexOf('Preview');
+    expect(label).toBeGreaterThan(rows.indexOf('Detailed'));
+    const content = label + 2;
+    expect(rows.slice(label, content + 1)).toEqual(['Preview', '', summary]);
+    const top = rows.slice(content, bottom);
+
+    vt.sendInput('\u001B[1;2B');
+    await vt.waitForRender();
+    rows = panel();
+    expect(rows.slice(label, content)).toEqual(['Preview', '']);
+    expect(rows.slice(content, bottom - 1)).toEqual(top.slice(1));
+    expect(rows).not.toContain(summary);
+
+    vt.sendInput('\u001B[1;2A');
+    await vt.waitForRender();
+    expect(panel().slice(label, content + 1)).toEqual(['Preview', '', summary]);
+
+    vt.sendInput(`\u001B[<65;5;${String(label + 1)}M`);
+    await vt.waitForRender();
+    expect(panel().slice(label, content + 1)).toEqual(['Preview', '', summary]);
+
+    vt.sendInput(`\u001B[<65;5;${String(content + 1)}M`);
+    await vt.waitForRender();
+    rows = panel();
+    expect(rows.slice(label, content)).toEqual(['Preview', '']);
+    expect(rows).not.toContain(summary);
+
+    const transcriptTop = (state.ui as TuiAltScreen).viewportTop;
+    vt.sendInput(`\u001B[<64;5;${String(frame[1]! + 1)}M`);
+    await vt.waitForRender();
+    expect((state.ui as TuiAltScreen).viewportTop).toBe(transcriptTop);
+
+    vt.sendInput('\u001B[B');
+    await vt.waitForRender();
+    rows = panel();
+    expect(rows).toContain('❯ Balanced');
+    expect(rows.slice(label, content + 1)).toEqual(['Preview', '', 'Thought for 3s, read 1 file']);
+    expect(borders()).toEqual(frame);
+  });
+
+  it('shows a whole transcript setting preview without scrolling when the terminal is tall', async () => {
+    const { state, vt } = await mountFullscreen(40);
+    onTestFinished(() => {
+      state.ui.stop();
+    });
+    showSettingsSelector(editorReplacementHost(state));
+    for (let i = 0; i < 5; i++) vt.sendInput('\u001B[B');
+    vt.sendInput('\r');
+    await vt.waitForRender();
+    vt.sendInput('\u001B[B');
+    await vt.waitForRender();
+
+    const rows = screenRows(vt);
+    expect(rows.some((row) => /[┃│]$/.test(row))).toBe(false);
+    const panel = rows.map((row) => row.trim());
+    expect(panel).toContain('Thinking folding');
+    expect(panel).toContain('↑↓ navigate · Enter select · Esc cancel');
+    expect(panel).toContain("❯ Don't fold thinking");
+    const thinking = panel.indexOf('● Check how the app starts before changing it.');
+    expect(thinking).toBeGreaterThan(panel.indexOf('Preview'));
+    expect(panel.slice(thinking + 1, thinking + 3)).toEqual([
+      'start() in src/app.ts takes no arguments, so the port is fixed.',
+      '… (2 more lines, ctrl+o to expand)',
+    ]);
+    expect(panel.filter((row) => /^─{20,}$/.test(row))).toHaveLength(2);
   });
 
   it('does not let a terminal-refocus click change or submit a ChoicePicker', async () => {
@@ -1365,6 +1570,7 @@ describe('fullscreen layout', () => {
     const host = {
       state,
       surveyController: { notifyDisplaced: () => {} },
+      promptPredictionController: { handleQueueChange() {}, notifyDisplaced() {} },
       disposeEditorReplacement() {},
     } as unknown as KimiTUI;
     KimiTUI.prototype.mountEditorReplacement.call(host, picker);
@@ -1433,6 +1639,7 @@ describe('fullscreen layout', () => {
     const host = {
       state,
       surveyController: { notifyDisplaced: () => {} },
+      promptPredictionController: { handleQueueChange() {}, notifyDisplaced() {} },
       disposeEditorReplacement() {},
       modelMigration: { retry: () => {} },
     } as unknown as KimiTUI;
