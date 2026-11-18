@@ -8,10 +8,12 @@ import {
 } from '@moonshot-ai/remote-control';
 
 import {
+  DEFAULT_UPGRADE_TIMEOUT_MS,
   DeviceConnectError,
   DeviceUpgradeInProgressError,
   isUpgrading,
   readRemoteMeta,
+  upgradeTimeoutError,
   type DeviceBridge,
   type DeviceConnectFailure,
   type DeviceInstall,
@@ -28,6 +30,7 @@ import { RelayDeviceSession } from './relayDeviceSession';
 export type RemoteControlRelay = Pick<RemoteControlDeviceClient, 'listDevices' | 'relayAccess'>;
 
 export interface AccountDeviceBridgeOptions {
+  readonly upgradeTimeoutMs?: number;
   readonly onChange?: () => void;
 }
 
@@ -36,6 +39,7 @@ const MAX_RETRY_DELAY_MS = 30_000;
 const OUTDATED_POLL_MS = 60_000;
 const FIRST_UPGRADE_POLL_MS = 1000;
 const MAX_UPGRADE_POLL_MS = 15_000;
+const EXPIRED_UPGRADE_POLL_MS = 60_000;
 const RETRYABLE: ReadonlySet<DeviceConnectFailure> = new Set(['offline', 'relay_unavailable', 'unknown']);
 const DESKTOP_PRODUCT = 'kimi-code-desktop';
 
@@ -72,11 +76,15 @@ export class AccountDeviceBridge implements DeviceBridge {
   private upgradeValue: DeviceUpgradeState | undefined;
   private upgradeFrom: string | undefined;
   private upgradeRequested = false;
+  private upgradeAttempt = 0;
+  private upgradeTimer: ReturnType<typeof setTimeout> | undefined;
+  private upgradeTimedOut = false;
   private sessionValue: RelayDeviceSession | undefined;
   private connecting: Promise<DeviceSession> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private retryDelay = 0;
   private disposed = false;
+  private readonly upgradeTimeoutMs: number;
 
   constructor(
     private readonly deviceId: string,
@@ -84,6 +92,7 @@ export class AccountDeviceBridge implements DeviceBridge {
     private readonly options: AccountDeviceBridgeOptions = {},
   ) {
     this.identityValue = { deviceId };
+    this.upgradeTimeoutMs = options.upgradeTimeoutMs ?? DEFAULT_UPGRADE_TIMEOUT_MS;
   }
 
   get status(): DeviceStatus {
@@ -152,6 +161,7 @@ export class AccountDeviceBridge implements DeviceBridge {
   dispose(): void {
     this.disposed = true;
     clearTimeout(this.retryTimer);
+    clearTimeout(this.upgradeTimer);
     this.sessionValue?.close();
     this.sessionValue = undefined;
   }
@@ -179,30 +189,49 @@ export class AccountDeviceBridge implements DeviceBridge {
       throw error;
     }
     this.upgradeFrom = this.remoteVersionValue;
-    this.setUpgrade({ status: 'installing' });
-    void this.followUpgrade(upgradeSession).finally(() => {
+    const attempt = this.beginUpgrade();
+    void this.followUpgrade(upgradeSession, attempt).finally(() => {
       upgradeSession.close();
     });
     return { status: 'started' };
   }
 
-  private async followUpgrade(session: DeviceSession): Promise<void> {
+  private beginUpgrade(): number {
+    this.upgradeAttempt += 1;
+    this.upgradeTimedOut = false;
+    this.setUpgrade({ status: 'installing' });
+    clearTimeout(this.upgradeTimer);
+    this.upgradeTimer = setTimeout(() => {
+      if (!isUpgrading(this.upgradeValue)) return;
+      this.upgradeTimedOut = true;
+      this.setUpgrade({ status: 'failed', error: upgradeTimeoutError(this.upgradeTimeoutMs) });
+    }, this.upgradeTimeoutMs);
+    this.upgradeTimer.unref?.();
+    return this.upgradeAttempt;
+  }
+
+  private async followUpgrade(session: DeviceSession, attempt: number): Promise<void> {
     for (
       let delay = FIRST_UPGRADE_POLL_MS;
-      isUpgrading(this.upgradeValue) && !this.disposed;
-      delay = Math.min(delay * 2, MAX_UPGRADE_POLL_MS)
+      this.followsUpgrade(attempt);
+      delay = Math.min(delay * 2, this.upgradeTimedOut ? EXPIRED_UPGRADE_POLL_MS : MAX_UPGRADE_POLL_MS)
     ) {
       await sleep(delay, undefined, { ref: false });
-      if (isUpgrading(this.upgradeValue) && !this.disposed) await this.pollUpgrade(session).catch(() => undefined);
+      if (this.followsUpgrade(attempt)) await this.pollUpgrade(session).catch(() => undefined);
     }
+  }
+
+  private followsUpgrade(attempt: number): boolean {
+    return !this.disposed && attempt === this.upgradeAttempt && (isUpgrading(this.upgradeValue) || this.upgradeTimedOut);
   }
 
   private async pollUpgrade(session: DeviceSession): Promise<void> {
     await this.refresh(session);
-    if (!isUpgrading(this.upgradeValue)) {
+    if (this.upgradeValue === undefined) {
       if (this.sessionValue === undefined) this.start();
       return;
     }
+    if (!isUpgrading(this.upgradeValue)) return;
     const remote = await readSystemUpgrade(session);
     if (!isUpgrading(this.upgradeValue)) return;
     switch (remote.state) {
@@ -279,6 +308,7 @@ export class AccountDeviceBridge implements DeviceBridge {
     if (meta.serverVersion !== undefined) this.remoteVersionValue = meta.serverVersion;
     if (this.upgradeFrom !== undefined && meta.serverVersion !== undefined && meta.serverVersion !== this.upgradeFrom) {
       this.upgradeFrom = undefined;
+      this.upgradeTimedOut = false;
       this.setUpgrade(undefined);
     }
     return meta;
@@ -325,6 +355,7 @@ export class AccountDeviceBridge implements DeviceBridge {
 
   private setUpgrade(state: DeviceUpgradeState | undefined): void {
     this.upgradeValue = state;
+    if (!isUpgrading(state)) clearTimeout(this.upgradeTimer);
     this.options.onChange?.();
   }
 

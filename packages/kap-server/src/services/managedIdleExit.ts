@@ -12,7 +12,7 @@ export class ManagedIdleExit {
   private idleSince: number;
   private fired = false;
   private closed = false;
-  private draining = false;
+  private onDrained: (() => void) | undefined;
   private inFlight: Promise<void> | undefined;
 
   constructor(
@@ -31,9 +31,9 @@ export class ManagedIdleExit {
     this.schedule(this.sweepIntervalMs);
   }
 
-  exitWhenIdle(): void {
-    if (this.draining || this.closed) return;
-    this.draining = true;
+  exitWhenIdle(onExit: () => void): void {
+    if (this.onDrained !== undefined || this.closed) return;
+    this.onDrained = onExit;
     clearInterval(this.timer);
     this.schedule(DRAIN_SWEEP_INTERVAL_MS);
     void this.sweep();
@@ -67,17 +67,18 @@ export class ManagedIdleExit {
 
   private async sweepOnce(): Promise<void> {
     if (this.fired || this.closed) return;
-    if (!this.draining && this.connections.size() > 0) {
+    const draining = this.onDrained !== undefined;
+    if (!draining && this.connections.size() > 0) {
       this.idleSince = this.now();
       return;
     }
     await closeIdleSessions(this.sessions, 0);
-    if (this.sessions.list().length > 0 || (!this.draining && this.connections.size() > 0)) {
+    if (this.sessions.list().length > 0 || (!draining && this.connections.size() > 0)) {
       this.idleSince = this.now();
       return;
     }
-    if (!this.draining && this.now() - this.idleSince < this.idleExitMs) return;
+    if (!draining && this.now() - this.idleSince < this.idleExitMs) return;
     this.fired = true;
-    this.onIdle();
+    (this.onDrained ?? this.onIdle)();
   }
 }

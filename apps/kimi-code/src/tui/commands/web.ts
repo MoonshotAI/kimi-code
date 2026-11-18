@@ -5,6 +5,7 @@ import {
   DEFAULT_REMOTE_CONTROL_RUN_DEPS,
   formatRemoteControlAlreadyRunning,
   inspectRemoteControlLock,
+  relaunchKimi,
   runRemoteControl,
 } from '#/cli/sub/web/remote-control';
 import {
@@ -49,6 +50,7 @@ export async function handleRemoteControlCommand(host: SlashCommandHost): Promis
         {
           ...DEFAULT_REMOTE_CONTROL_RUN_DEPS,
           attachServer: () => attachRemoteControlServer(parseServerOptions({})),
+          relaunch: () => relaunchKimi(['rc']),
         },
       );
     } catch (error) {

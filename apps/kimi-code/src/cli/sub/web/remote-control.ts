@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import chalk from 'chalk';
 
-import { CLI_MSH_PLATFORM, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
+import { CLI_MSH_PLATFORM, CLI_USER_AGENT_PRODUCT, KIMI_CODE_RC_UPGRADED_FROM_ENV } from '#/constant/app';
 import { openUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 import { persistedKimiOAuthRef } from '#/utils/region';
@@ -23,7 +23,9 @@ import {
   attachDaemon,
   DaemonBusyError,
   defaultEnsureDaemonDeps,
+  kimiArgv,
   type AttachedDaemon,
+  type DaemonExit,
 } from './ensure-daemon';
 
 export {
@@ -53,12 +55,16 @@ export type {
 
 export const DAEMON_BUSY_RETRY_MS = 10_000;
 
+const RESTART_REMOTE_CONTROL_HINT = 'run `kimi rc` to bring Remote Control back online';
+
+type Execve = (file: string, args: readonly string[], env: NodeJS.ProcessEnv) => never;
+
 export interface RemoteControlServer {
   readonly localOrigin: string;
   readonly localServerToken?: () => string;
   readonly logPath?: string;
   readonly background: boolean;
-  readonly closed: Promise<void>;
+  readonly closed: Promise<DaemonExit>;
   close(): Promise<void>;
 }
 
@@ -73,8 +79,34 @@ export interface RemoteControlRunDeps {
   readonly onTerminate: (listener: () => void) => () => void;
   readonly wait: (ms: number, signal: AbortSignal) => Promise<void>;
   readonly openUrl: (url: string) => void;
+  readonly relaunch?: () => Promise<void>;
   readonly stdout: Pick<NodeJS.WriteStream, 'write'>;
   readonly stderr: Pick<NodeJS.WriteStream, 'write'>;
+}
+
+export async function relaunchKimi(
+  args: readonly string[],
+  execve: Execve | undefined = process.execve?.bind(process),
+): Promise<void> {
+  if (execve === undefined) throw new Error(`Kimi Code was upgraded on this machine; ${RESTART_REMOTE_CONTROL_HINT}.`);
+  await new Promise<void>((resolve) => {
+    process.stdout.write('', () => resolve());
+  });
+  const argv = [...kimiArgv(), ...args];
+  try {
+    execve(argv[0]!, argv, { ...process.env, [KIMI_CODE_RC_UPGRADED_FROM_ENV]: getVersion() });
+  } catch (error) {
+    throw new Error(
+      `Kimi Code was upgraded on this machine, but Remote Control could not restart itself (${error instanceof Error ? error.message : String(error)}); ${RESTART_REMOTE_CONTROL_HINT}.`,
+      { cause: error },
+    );
+  }
+}
+
+export function takeRemoteControlUpgradedFrom(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const from = env[KIMI_CODE_RC_UPGRADED_FROM_ENV];
+  delete env[KIMI_CODE_RC_UPGRADED_FROM_ENV];
+  return from === undefined || from.length === 0 ? undefined : from;
 }
 
 export async function attachBackgroundServer(
@@ -120,17 +152,22 @@ export async function runRemoteControl(
 ): Promise<void> {
   const terminated = new AbortController();
   const stopListening = deps.onTerminate(() => terminated.abort());
+  let serverUpgraded = false;
   try {
     const server = await attachServerWhenFree(deps, terminated.signal);
     if (server === undefined) return;
     try {
-      await serveRemoteControl(server, options, deps, terminated.signal);
+      serverUpgraded = (await serveRemoteControl(server, options, deps, terminated.signal)) === 'upgraded';
     } finally {
       await server.close();
     }
   } finally {
     stopListening();
   }
+  if (!serverUpgraded) return;
+  if (deps.relaunch === undefined) throw new Error(`Kimi Code was upgraded on this machine; ${RESTART_REMOTE_CONTROL_HINT}.`);
+  deps.stdout.write(formatStatusLine('↻', 'Kimi Code was upgraded on this machine; restarting Remote Control…'));
+  await deps.relaunch();
 }
 
 async function attachServerWhenFree(
@@ -156,7 +193,7 @@ async function serveRemoteControl(
   options: RemoteControlRunOptions,
   deps: RemoteControlRunDeps,
   terminated: AbortSignal,
-): Promise<void> {
+): Promise<'upgraded' | undefined> {
   const dataDir = getDataDir();
   const persisted = persistedKimiOAuthRef();
   let outputReady = false;
@@ -186,7 +223,7 @@ async function serveRemoteControl(
     if (terminated.aborted) return;
     throw error;
   }
-  let ended: 'terminated' | 'tunnel_closed' | 'server_stopped';
+  let ended: 'terminated' | 'tunnel_closed' | DaemonExit;
   try {
     const url =
       options.sessionId === undefined
@@ -216,7 +253,7 @@ async function serveRemoteControl(
         () => 'tunnel_closed' as const,
         () => 'tunnel_closed' as const,
       ),
-      server.closed.then(() => 'server_stopped' as const),
+      server.closed,
     ]);
   } finally {
     stopping = true;
@@ -226,10 +263,12 @@ async function serveRemoteControl(
       );
     });
   }
-  if (ended === 'server_stopped') {
+  if (ended === 'upgraded') return 'upgraded';
+  if (ended === 'stopped') {
     throw new Error('The background Kimi server stopped, so Remote Control went offline.');
   }
   if (server.background) deps.stdout.write(formatRemoteControlStopped());
+  return undefined;
 }
 
 function whenAborted(signal: AbortSignal): Promise<void> {
@@ -292,6 +331,10 @@ export function formatRemoteControlStatus(status: RemoteControlStatus): string {
     case 'device_disconnected':
       return formatStatusLine('→', 'Remote device disconnected');
   }
+}
+
+export function formatRemoteControlUpgraded(from: string): string {
+  return formatStatusLine('✓', `Kimi Code upgraded from ${from} to ${getVersion()}; bringing Remote Control back online…`);
 }
 
 export function formatIgnoredServerOptions(flags: readonly string[]): string {

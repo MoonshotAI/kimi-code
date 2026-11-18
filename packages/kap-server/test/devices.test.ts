@@ -39,7 +39,7 @@ import { matchDeviceProxyPath, proxyDeviceWebSocket, registerDeviceProxyRoutes, 
 import { DeviceManager, deviceSources, toDeviceSnapshot } from '../src/services/devices/deviceManager';
 import { deviceWireSchema, sshDeviceWireSchema } from '../src/services/devices/devicesConfig';
 import { DeviceRequestError, type DeviceHttpRequest, type DeviceHttpResponse, type DeviceSession } from '../src/services/devices/deviceSession';
-import type { HostCommandResult } from '../src/services/devices/deviceUpgrade';
+import { SERVER_UPGRADED_CLOSE_CODE, type HostCommandResult } from '../src/services/devices/deviceUpgrade';
 import { RelayDeviceSession, relayRequestHeaders } from '../src/services/devices/relayDeviceSession';
 import { StdioDeviceSession } from '../src/services/devices/stdioDeviceSession';
 import { JsonlRpcStream, RPC_BACKPRESSURE_TIMEOUT_MS } from '../src/transport/jsonlRpcStream';
@@ -649,6 +649,63 @@ exit 1
     ),
   15_000);
 
+  it.skipIf(process.platform === 'win32')('gives up after the upgrade timeout while the old server stays busy, and clears the failure once the device comes back upgraded', () =>
+    withFakeSsh(
+      (dir) => `#!/bin/sh
+for last; do :; done
+case "$last" in
+  *'upgrade --yes'*)
+    touch '${join(dir, 'upgraded')}'
+    echo '2.0.0'
+    exit 0
+    ;;
+esac
+if [ ! -e '${join(dir, 'upgraded')}' ]; then
+  echo '1.2.3'
+  echo "error: unknown command 'ensure-daemon'" >&2
+  exit 1
+fi
+if [ ! -e '${join(dir, 'free')}' ]; then
+  echo '${bootstrapLine('2.0.0', { error: 'version_mismatch_busy', message: 'a kimi server of version 1.2.3 is still running work on this device' })}'
+  exit 1
+fi
+echo '${bootstrapLine('2.0.0')}'
+read line
+echo '${metaFrame('1', { ...SSH_REMOTE_META, server_version: '2.0.0' })}'
+while IFS= read -r line; do :; done
+`,
+      async (ssh, dir) => {
+        const bridge = new SshDeviceBridge({ host: 'dev' }, { sshProgram: ssh, upgradeTimeoutMs: 500 });
+        try {
+          await expect(bridge.connect()).rejects.toMatchObject({ failure: 'outdated', remoteVersion: '1.2.3' });
+          await expect(bridge.upgrade()).resolves.toEqual({ status: 'started' });
+          await vi.waitFor(
+            () => {
+              expect(bridge.upgradeState).toEqual({
+                status: 'failed',
+                error: 'the device did not come back on a new Kimi Code version within 1 second; check Kimi Code on that device',
+              });
+            },
+            { timeout: 5_000, interval: 50 },
+          );
+          expect(bridge.failure).toBe('remote_busy');
+
+          writeFileSync(join(dir, 'free'), '');
+          await vi.waitFor(
+            () => {
+              expect(bridge.status).toBe('ready');
+              expect(bridge.remoteVersion).toBe('2.0.0');
+              expect(bridge.upgradeState).toBeUndefined();
+            },
+            { timeout: 10_000, interval: 50 },
+          );
+        } finally {
+          bridge.dispose();
+        }
+      },
+    ),
+  15_000);
+
   it.skipIf(process.platform === 'win32')('starts an upgrade through POST /api/v1/devices:upgrade, rejects a concurrent one, and reports progress in the device list', () =>
     withFakeSsh(
       (dir) => `#!/bin/sh
@@ -691,7 +748,7 @@ while IFS= read -r line; do :; done
           });
           expect(await call(server, 'POST', '/api/v1/devices:upgrade', { id: 'dev' })).toMatchObject({ code: 0, data: { status: 'started' } });
           expect(await call(server, 'POST', '/api/v1/devices:upgrade', { id: 'dev' })).toMatchObject({
-            code: 40936,
+            code: 40960,
             msg: 'device "dev" is already being upgraded',
           });
           expect(await call(server, 'POST', '/api/v1/devices:upgrade', { id: 'missing' })).toMatchObject({ code: 40420 });
@@ -1718,10 +1775,15 @@ interface AccountDevicePair {
 
 async function withAccountDevicePair(
   run: (pair: AccountDevicePair) => Promise<void>,
-  options: { readonly localIdentity?: ServerHostIdentity; readonly remoteOptions?: Partial<ServerStartOptions> } = {},
+  options: {
+    readonly localIdentity?: ServerHostIdentity;
+    readonly remoteOptions?: Partial<ServerStartOptions>;
+    readonly localOptions?: Partial<ServerStartOptions>;
+  } = {},
 ): Promise<void> {
   const localIdentity = options.localIdentity ?? TEST_HOST_IDENTITY;
   const remoteOptions = options.remoteOptions ?? {};
+  const localOptions = options.localOptions ?? {};
   const localHome = await mkdtemp(join(tmpdir(), 'kimi-account-local-'));
   const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-account-remote-'));
   const remoteProject = join(remoteHome, 'project');
@@ -1744,7 +1806,9 @@ async function withAccountDevicePair(
   const relay = await startFakeRelay(remote);
   relay.devices.push(registration(REMOTE_DEVICE_ID, 'online'));
   vi.stubEnv('KIMI_CODE_REMOTE_CONTROL_RELAY_URL', relay.origin);
-  const local = await startServer({ hostIdentity: localIdentity, host: '127.0.0.1', port: 0, homeDir: localHome, logLevel: 'silent', env });
+  const local = await startServer({
+    hostIdentity: localIdentity, host: '127.0.0.1', port: 0, homeDir: localHome, logLevel: 'silent', env, ...localOptions,
+  });
   const restartRemote = async (serverVersion: string): Promise<RunningServer> => {
     await relay.target.close();
     relay.target = await startRemote(serverVersion);
@@ -1924,7 +1988,7 @@ describe('account devices', () => {
       expect(connected.data['remote_version']).not.toBe('9.9.9');
 
       expect(await call(local, 'POST', '/api/v1/devices:upgrade', { id: REMOTE_DEVICE_ID })).toMatchObject({ code: 0, data: { status: 'started' } });
-      expect(await call(local, 'POST', '/api/v1/devices:upgrade', { id: REMOTE_DEVICE_ID })).toMatchObject({ code: 40936 });
+      expect(await call(local, 'POST', '/api/v1/devices:upgrade', { id: REMOTE_DEVICE_ID })).toMatchObject({ code: 40960 });
       await vi.waitFor(() => expect(remote.app.server.listening).toBe(false), { timeout: 10_000 });
       expect(commands).toEqual([['upgrade', '--yes'], ['--version']]);
       const [upgrading] = (await call(local, 'GET', '/api/v1/devices')).data['devices'] as Array<Record<string, unknown>>;
@@ -1960,6 +2024,40 @@ describe('account devices', () => {
       expect(await call(local, 'POST', '/api/v1/devices:upgrade', { id: REMOTE_DEVICE_ID })).toMatchObject({ data: { status: 'started' } });
     }, { remoteOptions: { managedBy: 'ensure-daemon', runHostCommand } });
   }, 30_000);
+
+  it('stops waiting for a device that does not come back within the upgrade timeout, and clears the failure when it later returns upgraded', async () => {
+    const runHostCommand = (): Promise<HostCommandResult> => new Promise(() => {});
+    await withAccountDevicePair(
+      async ({ local, restartRemote }) => {
+        const devices = async () => (await call(local, 'GET', '/api/v1/devices')).data['devices'] as Array<Record<string, unknown>>;
+        expect(await call(local, 'PUT', `/api/v1/devices/${REMOTE_DEVICE_ID}`, { connection: 'account' })).toMatchObject({ code: 0 });
+        expect(await call(local, 'POST', '/api/v1/devices:connect', { id: REMOTE_DEVICE_ID })).toMatchObject({ data: { status: 'ready' } });
+        expect(await call(local, 'POST', '/api/v1/devices:upgrade', { id: REMOTE_DEVICE_ID })).toMatchObject({ data: { status: 'started' } });
+        await vi.waitFor(
+          async () => {
+            expect(await devices()).toMatchObject([
+              {
+                upgrade_status: 'failed',
+                upgrade_error: 'the device did not come back on a new Kimi Code version within 2 seconds; check Kimi Code on that device',
+              },
+            ]);
+          },
+          { timeout: 10_000, interval: 100 },
+        );
+
+        await restartRemote('9.9.9');
+        await vi.waitFor(
+          async () => {
+            const [device] = await devices();
+            expect(device).toMatchObject({ status: 'ready', remote_version: '9.9.9' });
+            expect(device).not.toHaveProperty('upgrade_status');
+          },
+          { timeout: 20_000, interval: 200 },
+        );
+      },
+      { remoteOptions: { managedBy: 'ensure-daemon', runHostCommand }, localOptions: { deviceUpgradeTimeoutMs: 1_500 } },
+    );
+  }, 40_000);
 
   it('tells the user to update the desktop app on that computer, even while it is offline', async () => {
     await withAccountDevicePair(async ({ local, relay }) => {
@@ -2392,6 +2490,12 @@ describe('managed daemon socket', () => {
       await startUpgrade();
       upgrades[2]!({ code: 0, output: 'Updated @moonshot-ai/kimi-code to 2.0.0. Restart the CLI to use the new version.\n' });
       await leaseClosed;
+      expect(lease.frames).toContainEqual({
+        type: 'ws.close',
+        id: 'lease',
+        code: SERVER_UPGRADED_CLOSE_CODE,
+        reason: 'Kimi Code 2.0.0 is installed; this server is restarting',
+      });
       await daemon.close();
       expect(existsSync(socketPath)).toBe(false);
       expect(runHostCommand.mock.calls.map(([args]) => args)).toEqual([

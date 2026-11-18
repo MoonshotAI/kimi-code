@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
-import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION, SERVER_UPGRADED_CLOSE_CODE } from '@moonshot-ai/kap-server';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
@@ -23,12 +23,16 @@ import {
   daemonUpgradeLogPath,
   defaultEnsureDaemonDeps,
   ensureDaemon,
+  kimiArgv,
   runKimiCommand,
   runLoggedCommand,
   type DaemonConnection,
+  type DaemonExit,
   type DaemonLease,
   type EnsureDaemonDeps,
 } from '#/cli/sub/web/ensure-daemon';
+import { getVersion } from '#/cli/version';
+import { KIMI_CODE_RC_UPGRADED_FROM_ENV } from '#/constant/app';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type {
   RemoteControlCloseReason,
@@ -517,15 +521,16 @@ describe('Remote Control on the background server', () => {
     startRemoteControl: ReturnType<typeof vi.fn>;
     tunnelClose: ReturnType<typeof vi.fn>;
     terminate(): void;
+    serverExits(exit: DaemonExit): void;
     readStdout(): string;
   } {
     const { stdout, stderr, readStdout } = makeIo();
-    let markClosed!: () => void;
+    let markClosed!: (exit: DaemonExit) => void;
     const lease = {
-      closed: new Promise<void>((resolve) => {
+      closed: new Promise<DaemonExit>((resolve) => {
         markClosed = resolve;
       }),
-      close: vi.fn(() => markClosed()),
+      close: vi.fn(() => markClosed('stopped')),
     };
     let endTunnel!: (reason: RemoteControlCloseReason) => void;
     const tunnelClose = vi.fn(async () => endTunnel('local_close'));
@@ -565,6 +570,7 @@ describe('Remote Control on the background server', () => {
       startRemoteControl,
       tunnelClose,
       terminate: () => terminate?.(),
+      serverExits: (exit) => markClosed(exit),
       readStdout: () => stripAnsi(readStdout()),
     };
   }
@@ -653,6 +659,60 @@ describe('Remote Control on the background server', () => {
     expect(rc.readStdout()).not.toContain('Ignoring');
     expect(attachDaemon).not.toHaveBeenCalled();
     expect(rc.startRemoteControl).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('replaces itself with the upgraded kimi and the same flags when the background server restarts for an upgrade', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+    const execve = vi.spyOn(process, 'execve').mockImplementation(() => undefined as never);
+    try {
+      const running = handleWebCommand({ remoteControl: true, open: false }, rc.deps);
+      await vi.waitFor(() => expect(rc.startRemoteControl).toHaveBeenCalledOnce());
+      rc.serverExits('upgraded');
+      await expect(running).resolves.toBeUndefined();
+
+      const argv = [...kimiArgv(), ...process.argv.slice(2)];
+      expect(execve).toHaveBeenCalledOnce();
+      expect(execve).toHaveBeenCalledWith(
+        argv[0],
+        argv,
+        expect.objectContaining({ [KIMI_CODE_RC_UPGRADED_FROM_ENV]: getVersion() }),
+      );
+      expect(rc.tunnelClose.mock.invocationCallOrder[0]).toBeLessThan(execve.mock.invocationCallOrder[0]!);
+      expect(rc.lease.close.mock.invocationCallOrder[0]).toBeLessThan(execve.mock.invocationCallOrder[0]!);
+      expect(rc.readStdout()).toContain('restarting Remote Control');
+    } finally {
+      execve.mockRestore();
+    }
+  });
+
+  it('refuses to attach when a relaunch after an upgrade still runs the old kimi', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+    const attachDaemon = vi.fn(rc.deps.attachDaemon!);
+    vi.stubEnv(KIMI_CODE_RC_UPGRADED_FROM_ENV, getVersion());
+
+    await expect(
+      handleWebCommand({ remoteControl: true, open: false }, { ...rc.deps, attachDaemon }),
+    ).rejects.toThrow(`Remote Control restarted after an upgrade but still runs Kimi Code ${getVersion()}`);
+    expect(attachDaemon).not.toHaveBeenCalled();
+    expect(rc.startRemoteControl).not.toHaveBeenCalled();
+    expect(process.env[KIMI_CODE_RC_UPGRADED_FROM_ENV]).toBeUndefined();
+  });
+
+  it('comes back online on the upgraded kimi without opening the browser again', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+    vi.stubEnv(KIMI_CODE_RC_UPGRADED_FROM_ENV, '0.0.1');
+
+    const running = handleWebCommand({ remoteControl: true, open: true }, rc.deps);
+    await vi.waitFor(() => expect(rc.startRemoteControl).toHaveBeenCalledOnce());
+    expect(process.env[KIMI_CODE_RC_UPGRADED_FROM_ENV]).toBeUndefined();
+    expect(rc.readStdout()).toContain(`Kimi Code upgraded from 0.0.1 to ${getVersion()}`);
+
+    rc.terminate();
+    await running;
+    expect(rc.deps.openUrl).not.toHaveBeenCalled();
   });
 
   it('rejects Remote Control combined with --socket or --dangerous-bypass-auth', async () => {
@@ -1331,12 +1391,22 @@ describe('`kimi server ensure-daemon`', () => {
     });
     expect(received.filter((frame) => frame['type'] === 'ws.msg')).toHaveLength(1);
 
-    let closed = false;
-    void held!.closed.then(() => {
-      closed = true;
-    });
     rpc.client()!.write(`${JSON.stringify({ type: 'ws.close', id: 'lease', code: 1001 })}\n`);
-    await vi.waitFor(() => expect(closed).toBe(true));
+    await expect(held!.closed).resolves.toBe('stopped');
+  });
+
+  it.skipIf(process.platform === 'win32')('reports that the daemon left to run an upgraded version when it closes the lease with the upgrade code', async () => {
+    const rpc = await listenRpcSocket((frame, socket) => {
+      if (frame['type'] !== 'http.req') return;
+      socket.write(`${JSON.stringify({ type: 'http.res', id: frame['id'], status: 200, headers: {} })}\n`);
+    });
+
+    const held = await defaultEnsureDaemonDeps().leaseSocket(rpc.socketPath);
+    expect(held).toBeDefined();
+    rpc.client()!.write(
+      `${JSON.stringify({ type: 'ws.close', id: 'lease', code: SERVER_UPGRADED_CLOSE_CODE, reason: 'Kimi Code 9.9.9 is installed; this server is restarting' })}\n`,
+    );
+    await expect(held!.closed).resolves.toBe('upgraded');
   });
 
   it.skipIf(process.platform === 'win32')('does not hand out a lease when the daemon closes the stream before confirming it', async () => {

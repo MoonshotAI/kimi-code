@@ -10,6 +10,7 @@ export {
   serverTokenPath,
 } from './services/auth/persistentToken';
 export { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from './services/devices/deviceProtocol';
+export { SERVER_UPGRADED_CLOSE_CODE } from './services/devices/deviceUpgrade';
 export type { HostCommandResult, HostCommandRunner } from './services/devices/deviceUpgrade';
 export { KIMI_AGENT_PROTOCOL_VERSION } from './routes/meta';
 export type { IAuthTokenService } from './services/auth/authTokenService';

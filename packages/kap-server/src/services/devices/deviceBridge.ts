@@ -59,6 +59,17 @@ export function isUpgrading(state: DeviceUpgradeState | undefined): boolean {
   return state?.status === 'installing' || state?.status === 'restarting';
 }
 
+export const DEFAULT_UPGRADE_TIMEOUT_MS = 15 * 60_000;
+
+function formatDuration(ms: number): string {
+  const [count, unit] = ms >= 60_000 ? [Math.round(ms / 60_000), 'minute'] : [Math.max(1, Math.round(ms / 1000)), 'second'];
+  return `${String(count)} ${unit}${count === 1 ? '' : 's'}`;
+}
+
+export function upgradeTimeoutError(timeoutMs: number): string {
+  return `the device did not come back on a new Kimi Code version within ${formatDuration(timeoutMs)}; check Kimi Code on that device`;
+}
+
 export interface RemoteDeviceIdentity {
   readonly deviceId: string;
   readonly productName?: string;

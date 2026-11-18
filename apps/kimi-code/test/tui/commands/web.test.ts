@@ -196,7 +196,7 @@ describe('handleRemoteControlCommand', () => {
 
       expect(mocks.runRemoteControl).toHaveBeenCalledWith(
         { open: true, sessionId: 'ses-1' },
-        expect.objectContaining({ attachServer: expect.any(Function) }),
+        expect.objectContaining({ attachServer: expect.any(Function), relaunch: expect.any(Function) }),
       );
       expect(mocks.startServerForeground).not.toHaveBeenCalled();
       expect(exit).toHaveBeenCalledWith(0);

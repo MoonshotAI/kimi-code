@@ -6,18 +6,22 @@ import { setCapabilities } from '@moonshot-ai/pi-tui';
 import * as QRCode from 'qrcode';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-import { DaemonBusyError, type DaemonLease } from '#/cli/sub/web/ensure-daemon';
+import { KIMI_CODE_RC_UPGRADED_FROM_ENV } from '#/constant/app';
+import { DaemonBusyError, kimiArgv, type DaemonExit, type DaemonLease } from '#/cli/sub/web/ensure-daemon';
 import {
   attachBackgroundServer,
   DAEMON_BUSY_RETRY_MS,
   formatRemoteControlOutput,
   formatRemoteControlStatus,
+  relaunchKimi,
   runRemoteControl,
+  takeRemoteControlUpgradedFrom,
   type RemoteControlCloseReason,
   type RemoteControlHandle,
   type RemoteControlOptions,
   type RemoteControlRunDeps,
 } from '#/cli/sub/web/remote-control';
+import { getVersion } from '#/cli/version';
 import { renderTerminalQr } from '#/utils/remote-control-qr';
 
 afterEach(() => {
@@ -93,12 +97,12 @@ function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 
-function makeLease(): DaemonLease & { close: Mock<() => void>; lose(): void } {
-  let markClosed!: () => void;
-  const closed = new Promise<void>((resolve) => {
+function makeLease(): DaemonLease & { close: Mock<() => void>; lose(exit?: DaemonExit): void } {
+  let markClosed!: (exit: DaemonExit) => void;
+  const closed = new Promise<DaemonExit>((resolve) => {
     markClosed = resolve;
   });
-  return { closed, close: vi.fn(() => markClosed()), lose: () => markClosed() };
+  return { closed, close: vi.fn(() => markClosed('stopped')), lose: (exit = 'stopped') => markClosed(exit) };
 }
 
 function makeTunnel(): {
@@ -215,7 +219,8 @@ describe('runRemoteControl', () => {
   });
 
   it('closes the tunnel and fails when the background server goes away', async () => {
-    const run = makeDeps();
+    const relaunch = vi.fn(async () => {});
+    const run = makeDeps({ relaunch });
 
     const running = runRemoteControl({ open: false }, run.deps);
     await vi.waitFor(() => expect(run.tunnel.startRemoteControl).toHaveBeenCalledOnce());
@@ -225,6 +230,37 @@ describe('runRemoteControl', () => {
     expect(run.tunnel.handle.close).toHaveBeenCalledOnce();
     expect(run.deps.openUrl).not.toHaveBeenCalled();
     expect(run.stdout()).not.toContain('sessions keep running');
+    expect(relaunch).not.toHaveBeenCalled();
+  });
+
+  it('relaunches after releasing the tunnel and the server when the background server restarts for an upgrade', async () => {
+    const relaunch = vi.fn(async () => {});
+    const run = makeDeps({ relaunch });
+
+    const running = runRemoteControl({ open: false }, run.deps);
+    await vi.waitFor(() => expect(run.tunnel.startRemoteControl).toHaveBeenCalledOnce());
+    run.lease.lose('upgraded');
+
+    await expect(running).resolves.toBeUndefined();
+    expect(relaunch).toHaveBeenCalledOnce();
+    const relaunchedAt = relaunch.mock.invocationCallOrder[0]!;
+    expect(run.tunnel.handle.close.mock.invocationCallOrder[0]).toBeLessThan(relaunchedAt);
+    expect(run.lease.close.mock.invocationCallOrder[0]).toBeLessThan(relaunchedAt);
+    expect(run.stopListening.mock.invocationCallOrder[0]).toBeLessThan(relaunchedAt);
+    expect(run.stdout()).toContain('Kimi Code was upgraded on this machine; restarting Remote Control');
+    expect(run.stdout()).not.toContain('sessions keep running');
+  });
+
+  it('asks to start Remote Control again when it cannot relaunch itself after an upgrade', async () => {
+    const run = makeDeps();
+
+    const running = runRemoteControl({ open: false }, run.deps);
+    await vi.waitFor(() => expect(run.tunnel.startRemoteControl).toHaveBeenCalledOnce());
+    run.lease.lose('upgraded');
+
+    await expect(running).rejects.toThrow('Kimi Code was upgraded on this machine; run `kimi rc` to bring Remote Control back online.');
+    expect(run.tunnel.handle.close).toHaveBeenCalledOnce();
+    expect(run.lease.close).toHaveBeenCalledOnce();
   });
 
   it('exits cleanly when the relay takes the device offline', async () => {
@@ -290,7 +326,7 @@ describe('runRemoteControl', () => {
         localOrigin: 'http://127.0.0.1:58627',
         localServerToken: () => 'local-server-token',
         background: false,
-        closed: new Promise<void>(() => {}),
+        closed: new Promise<never>(() => {}),
         close,
       }),
     };
@@ -337,5 +373,42 @@ describe('runRemoteControl', () => {
 
     run.terminate();
     await running;
+  });
+});
+
+describe('relaunching Remote Control after an upgrade', () => {
+  type Execve = NonNullable<Parameters<typeof relaunchKimi>[1]>;
+
+  it('replaces this process with the same kimi and arguments, marking the version it is leaving', async () => {
+    vi.stubEnv('KIMI_TEST_INHERITED', 'kept');
+    const execve = vi.fn<Execve>();
+
+    await relaunchKimi(['rc', '--no-open'], execve);
+
+    const argv = [...kimiArgv(), 'rc', '--no-open'];
+    expect(execve).toHaveBeenCalledOnce();
+    expect(execve).toHaveBeenCalledWith(
+      argv[0],
+      argv,
+      expect.objectContaining({ KIMI_TEST_INHERITED: 'kept', [KIMI_CODE_RC_UPGRADED_FROM_ENV]: getVersion() }),
+    );
+  });
+
+  it('explains how to come back online when the process cannot be replaced', async () => {
+    const execve = vi.fn<Execve>(() => {
+      throw new Error('ENOENT');
+    });
+
+    await expect(relaunchKimi(['rc'], execve)).rejects.toThrow(
+      'Kimi Code was upgraded on this machine, but Remote Control could not restart itself (ENOENT); run `kimi rc` to bring Remote Control back online.',
+    );
+  });
+
+  it('reads the version a relaunch left once and keeps it out of later child processes', () => {
+    const env: NodeJS.ProcessEnv = { [KIMI_CODE_RC_UPGRADED_FROM_ENV]: '1.0.0', OTHER: 'kept' };
+
+    expect(takeRemoteControlUpgradedFrom(env)).toBe('1.0.0');
+    expect(env).toEqual({ OTHER: 'kept' });
+    expect(takeRemoteControlUpgradedFrom(env)).toBeUndefined();
   });
 });

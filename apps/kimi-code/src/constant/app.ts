@@ -37,6 +37,7 @@ export const KIMI_CODE_PLUGIN_UPDATE_NOTICE_STATE_FILE_NAME = 'plugin-notices.js
 export const KIMI_CODE_NATIVE_STAGING_DIR_NAME = '.staging';
 export const KIMI_CODE_NATIVE_STAGED_STATE_FILE_NAME = 'staged.json';
 export const KIMI_CODE_UPDATE_REEXEC_ENV = 'KIMI_CODE_UPDATE_REEXEC';
+export const KIMI_CODE_RC_UPGRADED_FROM_ENV = 'KIMI_CODE_RC_UPGRADED_FROM';
 export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
 export const KIMI_CODE_BANNER_DIR_NAME = 'banner';
 export const KIMI_CODE_BANNER_STATE_FILE_NAME = 'state.json';

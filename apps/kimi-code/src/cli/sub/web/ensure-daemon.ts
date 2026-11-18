@@ -9,7 +9,12 @@ import { createInterface } from 'node:readline';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION, type HostCommandResult } from '@moonshot-ai/kap-server';
+import {
+  DEVICE_API_LEVEL,
+  DEVICE_PROTOCOL_VERSION,
+  SERVER_UPGRADED_CLOSE_CODE,
+  type HostCommandResult,
+} from '@moonshot-ai/kap-server';
 import type { Command } from 'commander';
 
 import { getDataDir } from '#/utils/paths';
@@ -66,8 +71,10 @@ export interface DaemonConnection {
   close(): void;
 }
 
+export type DaemonExit = 'stopped' | 'upgraded';
+
 export interface DaemonLease {
-  readonly closed: Promise<void>;
+  readonly closed: Promise<DaemonExit>;
   close(): void;
 }
 
@@ -237,7 +244,7 @@ export function attachDaemon(deps: EnsureDaemonDeps): Promise<AttachedDaemon> {
   });
 }
 
-function kimiArgv(): string[] {
+export function kimiArgv(): string[] {
   return detectNativeInstall()
     ? [process.execPath]
     : [process.execPath, ...process.execArgv, process.argv[1]!];
@@ -320,6 +327,7 @@ interface RpcFrameEnvelope {
   readonly type?: string;
   readonly id?: string;
   readonly status?: number;
+  readonly code?: number;
   readonly body?: string;
   readonly data?: string;
 }
@@ -443,8 +451,9 @@ async function connectUnixSocket(socketPath: string): Promise<DaemonConnection |
 async function leaseUnixSocket(socketPath: string): Promise<DaemonLease | undefined> {
   const socket = await openUnixSocket(socketPath);
   if (socket === undefined) return undefined;
-  const closed = new Promise<void>((resolve) => {
-    socket.once('close', () => resolve());
+  let exit: DaemonExit = 'stopped';
+  const closed = new Promise<DaemonExit>((resolve) => {
+    socket.once('close', () => resolve(exit));
   });
   const ready = new Promise<boolean>((resolve) => {
     const settle = (attached: boolean): void => {
@@ -460,6 +469,7 @@ async function leaseUnixSocket(socketPath: string): Promise<DaemonLease | undefi
       } else if (frame?.type === 'ws.msg' && frame.id === LEASE_STREAM_ID && isPingMessage(frame.data)) {
         writeRpcFrame(socket, { type: 'ws.msg', id: LEASE_STREAM_ID, data: LEASE_PONG });
       } else if (frame?.type === 'ws.close' && frame.id === LEASE_STREAM_ID) {
+        if (frame.code === SERVER_UPGRADED_CLOSE_CODE) exit = 'upgraded';
         socket.destroy();
       }
     });

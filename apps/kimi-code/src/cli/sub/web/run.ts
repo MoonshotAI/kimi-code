@@ -35,7 +35,10 @@ import {
   attachBackgroundServer,
   DEFAULT_REMOTE_CONTROL_RUN_DEPS,
   formatIgnoredServerOptions,
+  formatRemoteControlUpgraded,
+  relaunchKimi,
   runRemoteControl,
+  takeRemoteControlUpgradedFrom,
   type RemoteControlRunDeps,
   type RemoteControlServer,
 } from './remote-control';
@@ -79,6 +82,7 @@ export interface WebCommandDeps {
   startRemoteControl?: RemoteControlRunDeps['startRemoteControl'];
   onTerminate?: RemoteControlRunDeps['onTerminate'];
   wait?: RemoteControlRunDeps['wait'];
+  relaunch?: RemoteControlRunDeps['relaunch'];
   openUrl(url: string): void;
   resolveToken?: () => string | undefined;
   networkAddresses?: NetworkAddress[];
@@ -238,20 +242,28 @@ export async function handleWebCommand(
     if (parsed.socketPath !== undefined) {
       throw new Error('--remote-control cannot be combined with --socket.');
     }
+    const upgradedFrom = takeRemoteControlUpgradedFrom();
+    if (upgradedFrom === getVersion()) {
+      throw new Error(
+        `Remote Control restarted after an upgrade but still runs Kimi Code ${upgradedFrom}; start it again with the upgraded kimi.`,
+      );
+    }
     const background = supportsBackgroundServer(deps.platform);
     if (!background && !isLoopbackHost(parsed.host)) {
       throw new Error('--remote-control requires a loopback host.');
     }
     const ignored = background ? foregroundOnlyOptions(opts) : [];
     if (ignored.length > 0) deps.stdout.write(formatIgnoredServerOptions(ignored));
+    if (upgradedFrom !== undefined) deps.stdout.write(formatRemoteControlUpgraded(upgradedFrom));
     await runRemoteControl(
-      { open: opts.open === true },
+      { open: opts.open === true && upgradedFrom === undefined },
       {
         attachServer: () => attachRemoteControlServer(parsed, deps),
         startRemoteControl:
           deps.startRemoteControl ?? DEFAULT_REMOTE_CONTROL_RUN_DEPS.startRemoteControl,
         onTerminate: deps.onTerminate ?? DEFAULT_REMOTE_CONTROL_RUN_DEPS.onTerminate,
         wait: deps.wait ?? DEFAULT_REMOTE_CONTROL_RUN_DEPS.wait,
+        relaunch: deps.relaunch ?? (() => relaunchKimi(process.argv.slice(2))),
         openUrl: (url) => deps.openUrl(url),
         stdout: deps.stdout,
         stderr: deps.stderr,
@@ -444,7 +456,7 @@ async function startRemoteControlServerInProcess(
     localOrigin: running.address,
     localServerToken: () => tryResolveServerToken(getDataDir()) ?? '',
     background: false,
-    closed: new Promise<void>(() => {}),
+    closed: new Promise<never>(() => {}),
     close: async () => {
       await running.close();
       await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});

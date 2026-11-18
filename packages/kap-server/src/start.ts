@@ -92,7 +92,7 @@ import { ConversationService } from './services/conversation/conversationService
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { DeviceManager, deviceSnapshots } from './services/devices/deviceManager';
 import { matchDeviceProxyPath, proxyDeviceWebSocket, registerDeviceProxyRoutes } from './services/devices/deviceProxy';
-import { SystemUpgrade, type HostCommandRunner } from './services/devices/deviceUpgrade';
+import { SERVER_UPGRADED_CLOSE_CODE, SystemUpgrade, type HostCommandRunner } from './services/devices/deviceUpgrade';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
@@ -146,6 +146,7 @@ export interface ServerStartOptions {
   readonly managedBy?: string;
   readonly managedIdleExitMs?: number;
   readonly runHostCommand?: HostCommandRunner;
+  readonly deviceUpgradeTimeoutMs?: number;
 }
 
 export interface RunningServer {
@@ -440,10 +441,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const deviceManager = new DeviceManager(core, {
     relay: remoteControlDevices,
     localDeviceId,
+    upgradeTimeoutMs: opts.deviceUpgradeTimeoutMs,
     onChange: () => notifyDevices(),
   });
   const requestClose = (): void => {
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
+  };
+  const exitAfterUpgrade = (version: string): void => {
+    connectionRegistry.closeAll(`Kimi Code ${version} is installed; this server is restarting`, SERVER_UPGRADED_CLOSE_CODE);
+    setImmediate(requestClose);
   };
   const sessionManager = core.accessor.get(ISessionManager);
   const drainIdleSessions = async (): Promise<boolean> => {
@@ -462,7 +468,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         );
   const systemUpgrade =
     opts.managedBy === 'ensure-daemon' && opts.runHostCommand !== undefined && managedIdleExit !== undefined
-      ? new SystemUpgrade(opts.runHostCommand, serverVersion, () => managedIdleExit.exitWhenIdle(), logger)
+      ? new SystemUpgrade(
+          opts.runHostCommand,
+          serverVersion,
+          (version) => managedIdleExit.exitWhenIdle(() => exitAfterUpgrade(version)),
+          logger,
+        )
       : undefined;
   const conversations = new ConversationService(core);
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });

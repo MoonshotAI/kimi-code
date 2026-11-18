@@ -5,10 +5,12 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { SshDeviceEntry } from '@moonshot-ai/agent-core-v2';
 
 import {
+  DEFAULT_UPGRADE_TIMEOUT_MS,
   DeviceConnectError,
   DeviceUpgradeInProgressError,
   isUpgrading,
   readRemoteMeta,
+  upgradeTimeoutError,
   type DeviceBridge,
   type DeviceConnectFailure,
   type DeviceStatus,
@@ -208,6 +210,7 @@ function createProcessStream(child: ChildProcess, initial: Buffer): Duplex {
 export interface SshDeviceBridgeOptions {
   readonly sshProgram?: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly upgradeTimeoutMs?: number;
   readonly onChange?: () => void;
 }
 
@@ -219,6 +222,7 @@ export class SshDeviceBridge implements DeviceBridge {
   private identityValue: RemoteDeviceIdentity | undefined;
   private upgradeValue: DeviceUpgradeState | undefined;
   private upgradeFrom: string | undefined;
+  private upgradeTimer: ReturnType<typeof setTimeout> | undefined;
   private sessionValue: ActiveDeviceSession | undefined;
   private connecting: Promise<DeviceSession> | undefined;
   private readonly children = new Set<ChildProcess>();
@@ -227,6 +231,7 @@ export class SshDeviceBridge implements DeviceBridge {
   private reconnectGeneration = 0;
   private readonly sshProgram: string;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly upgradeTimeoutMs: number;
 
   constructor(
     private readonly entry: SshDeviceEntry,
@@ -234,6 +239,7 @@ export class SshDeviceBridge implements DeviceBridge {
   ) {
     this.sshProgram = options.sshProgram ?? 'ssh';
     this.env = options.env ?? process.env;
+    this.upgradeTimeoutMs = options.upgradeTimeoutMs ?? DEFAULT_UPGRADE_TIMEOUT_MS;
   }
 
   get status(): DeviceStatus {
@@ -275,6 +281,11 @@ export class SshDeviceBridge implements DeviceBridge {
     if (isUpgrading(this.upgradeValue)) return Promise.reject(new DeviceUpgradeInProgressError());
     this.upgradeFrom = this.remoteVersionValue;
     this.setUpgrade({ status: 'installing' });
+    clearTimeout(this.upgradeTimer);
+    this.upgradeTimer = setTimeout(() => {
+      if (isUpgrading(this.upgradeValue)) this.setUpgrade({ status: 'failed', error: upgradeTimeoutError(this.upgradeTimeoutMs) });
+    }, this.upgradeTimeoutMs);
+    this.upgradeTimer.unref?.();
     void this.install();
     return Promise.resolve({ status: 'started' });
   }
@@ -293,6 +304,7 @@ export class SshDeviceBridge implements DeviceBridge {
   dispose(): void {
     this.disposed = true;
     this.reconnectGeneration += 1;
+    clearTimeout(this.upgradeTimer);
     const active = this.sessionValue;
     this.sessionValue = undefined;
     active?.session.close(new Error('device bridge disposed'));
@@ -323,12 +335,13 @@ export class SshDeviceBridge implements DeviceBridge {
 
   private setUpgrade(state: DeviceUpgradeState): void {
     this.upgradeValue = state;
+    if (!isUpgrading(state)) clearTimeout(this.upgradeTimer);
     this.options.onChange?.();
   }
 
   private async install(): Promise<void> {
     const result = await this.collect(this.sshArgs(remoteUpgradeCommand(this.entry.remoteBin)), UPGRADE_TIMEOUT_MS);
-    if (this.disposed) return;
+    if (this.disposed || this.upgradeValue?.status !== 'installing') return;
     if (result.code !== 0) {
       this.setUpgrade({
         status: 'failed',

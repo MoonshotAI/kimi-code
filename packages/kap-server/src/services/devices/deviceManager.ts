@@ -38,6 +38,7 @@ export interface DeviceInfo {
 export interface DeviceManagerOptions {
   readonly relay: RemoteControlRelay;
   readonly localDeviceId: string;
+  readonly upgradeTimeoutMs?: number;
   readonly onChange?: () => void;
 }
 
@@ -218,10 +219,10 @@ export class DeviceManager {
   }
 
   private createBridge(id: string, entry: DeviceEntry): DeviceBridge {
-    const onChange = (): void => this.options.onChange?.();
+    const options = { upgradeTimeoutMs: this.options.upgradeTimeoutMs, onChange: (): void => this.options.onChange?.() };
     return entry.connection === 'account'
-      ? new AccountDeviceBridge(id, this.options.relay, { onChange })
-      : new SshDeviceBridge(entry, { onChange });
+      ? new AccountDeviceBridge(id, this.options.relay, options)
+      : new SshDeviceBridge(entry, options);
   }
 
   private reconcile(): void {

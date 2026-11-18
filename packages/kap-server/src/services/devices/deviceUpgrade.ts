@@ -11,6 +11,8 @@ const OUTPUT_TAIL_LINES = 3;
 const OUTPUT_TAIL_CHARS = 500;
 const SYSTEM_UPGRADE_PATH = '/api/v1/system:upgrade';
 
+export const SERVER_UPGRADED_CLOSE_CODE = 4001;
+
 export function readVersionLine(output: string): string | undefined {
   return output
     .split('\n')
@@ -50,7 +52,7 @@ export class SystemUpgrade {
   constructor(
     private readonly runHostCommand: HostCommandRunner,
     private readonly serverVersion: string,
-    private readonly onInstalled: () => void,
+    private readonly onInstalled: (version: string) => void,
     private readonly logger?: Pick<ServerLogger, 'info' | 'warn'>,
   ) {}
 
@@ -96,12 +98,12 @@ export class SystemUpgrade {
 
   private finish(status: SystemUpgradeStatus): void {
     this.status = status;
-    if (status.state !== 'restarting') {
+    if (status.state !== 'restarting' || status.version === undefined) {
       this.logger?.warn({ reason: status.message }, 'Kimi Code upgrade did not install a newer version');
       return;
     }
     this.logger?.info({ version: status.version }, 'Kimi Code upgraded; exiting once no work is running');
-    this.onInstalled();
+    this.onInstalled(status.version);
   }
 }
 
