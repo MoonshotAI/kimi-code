@@ -1170,7 +1170,7 @@ describe('stdio rpc transport', () => {
     const requestStarted = new Promise<void>((resolve) => { started = resolve; });
     const handlerFinished = new Promise<void>((resolve) => { finished = resolve; });
     let cancelledSignal = false;
-    let normalSignal = true;
+    let normalSignal: AbortSignal | undefined;
     app.post('/api/v1/feedback/held/attachments', async (request) => {
       const signal = requestCancellation(request.raw);
       for await (const chunk of request.body as AsyncIterable<Uint8Array>) {
@@ -1190,8 +1190,8 @@ describe('stdio rpc transport', () => {
       return { cancelled: signal.aborted };
     });
     app.post('/api/v1/feedback/next/attachments', async (request) => {
-      normalSignal = requestCancellation(request.raw).aborted;
-      return { cancelled: normalSignal };
+      normalSignal = requestCancellation(request.raw);
+      return { cancelled: normalSignal.aborted };
     });
     await app.ready();
     const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), {
@@ -1222,7 +1222,8 @@ describe('stdio rpc transport', () => {
       });
       expect(response.status).toBe(200);
       for await (const chunk of response.body) expect(chunk.byteLength).toBeGreaterThan(0);
-      expect(normalSignal).toBe(false);
+      await sleep(0);
+      expect(normalSignal?.aborted).toBe(false);
     } finally {
       session.close();
       await rpcServer.close();

@@ -511,10 +511,12 @@ describe('feedback routes', () => {
   });
   it('cancels an upstream attachment upload without completing it', async () => {
     let uploadSignal: AbortSignal | undefined;
+    let finished: ReturnType<ManagedFeedbackGateway['upload']> | undefined;
     const upload = ManagedFeedbackGateway.prototype.upload;
     vi.spyOn(ManagedFeedbackGateway.prototype, 'upload').mockImplementation(async function (this: ManagedFeedbackGateway, feedbackId, input, options) {
       uploadSignal = options?.signal;
-      return upload.call(this, feedbackId, input, options);
+      finished = upload.call(this, feedbackId, input, options);
+      return finished;
     });
     let partStarted!: () => void;
     let releasePart!: () => void;
@@ -556,9 +558,9 @@ describe('feedback routes', () => {
       releasePart();
     }
 
-    await vi.waitFor(() => {
-      expect(storageAborted || kfcRequests.some((request) => request.url === '/feedback/upload_complete')).toBe(true);
-    });
+    if (finished === undefined) throw new Error('expected an upload');
+    await expect(finished).rejects.toThrow();
+    await vi.waitFor(() => expect(storageAborted).toBe(true));
     expect(kfcRequests.filter((request) => request.url === '/feedback/upload_complete')).toEqual([]);
   });
 
