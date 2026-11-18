@@ -1246,4 +1246,32 @@ describe('stdio rpc transport', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')('allows server-side stream work to exceed the idle deadline', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-stream-server-work-'));
+    const app = Fastify();
+    app.get('/api/v1/sessions/slow/feedback_package', async () => {
+      await sleep(40);
+      return { done: true };
+    });
+    await app.ready();
+    const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), { app, wssV1: new WebSocketServer({ noServer: true }) });
+    const session = new StdioHostSession(createConnection(join(dir, 'daemon.sock')));
+    try {
+      const response = await session.requestStream({
+        method: 'GET',
+        path: '/api/v1/sessions/slow/feedback_package',
+        headers: {},
+        idleTimeoutMs: 20,
+        timeoutMs: 1_000,
+      });
+      expect(response.status).toBe(200);
+      for await (const chunk of response.body) expect(chunk.byteLength).toBeGreaterThan(0);
+    } finally {
+      session.close();
+      await rpcServer.close();
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

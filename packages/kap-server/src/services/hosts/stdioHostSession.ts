@@ -180,7 +180,7 @@ export class StdioHostSession implements HostSession {
       rejectHead,
       abort: new AbortController(),
       uploadAbort: new AbortController(),
-      idleTimeoutMs: req.timeoutMs ?? policy.idleTimeoutMs,
+      idleTimeoutMs: req.idleTimeoutMs ?? req.timeoutMs ?? policy.idleTimeoutMs,
       signal: req.signal,
       onCancel,
       nextRequestSeq: 0,
@@ -275,6 +275,8 @@ export class StdioHostSession implements HostSession {
       }
       if (pending.uploadAbort.signal.aborted) throw new HostStreamStopped();
       await this.writeStreamFrame(pending, { type: 'stream.req.end', id: pending.id });
+      if (pending.idleTimer !== undefined) clearTimeout(pending.idleTimer);
+      pending.idleTimer = undefined;
       pending.requestFinished = true;
       pending.requestIterator = undefined;
     })().catch((error: unknown) => {

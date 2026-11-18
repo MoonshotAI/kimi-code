@@ -11,6 +11,7 @@ export interface HostHttpRequest {
 
 export interface HostStreamHttpRequest extends Omit<HostHttpRequest, 'body'> {
   readonly body?: AsyncIterable<Uint8Array>;
+  readonly idleTimeoutMs?: number;
 }
 
 export const HOST_HTTP_TIMEOUT_MS = 30_000;

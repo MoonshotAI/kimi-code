@@ -303,7 +303,6 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
       finishStream(state, new Error('host stream timed out'));
     }, policy.totalTimeoutMs);
     state.totalTimer.unref?.();
-    touchStream(state);
     void (async () => {
       const res = await opts.app.inject({
         method: frame.method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
@@ -379,7 +378,8 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
         if (state !== undefined && !state.requestEnded) {
           state.requestEnded = true;
           state.request.end();
-          touchStream(state);
+          clearTimeout(state.idleTimer);
+          state.idleTimer = undefined;
         }
         return;
       }
