@@ -201,21 +201,7 @@
 
     // Off for now: too many existing findings, or fixing them changes code paths.
     // Revisit one rule at a time.
-    "typescript/no-unsafe-argument": "off",
-    "typescript/no-unsafe-assignment": "off",
-    "typescript/no-unsafe-call": "off",
-    "typescript/no-unsafe-member-access": "off",
-    "typescript/no-unsafe-return": "off",
-    "typescript/no-unsafe-type-assertion": "off",
     "typescript/no-non-null-assertion": "off",
-    "typescript/no-unnecessary-condition": "off",
-    "typescript/require-await": "off",
-    "typescript/no-invalid-void-type": "off",
-    "typescript/no-dynamic-delete": "off",
-    "typescript/use-unknown-in-catch-callback-variable": "off",
-    "typescript/no-confusing-void-expression": "off",
-    "typescript/no-unnecessary-type-parameters": "off",
-    "import/no-named-as-default-member": "off",
 
     // Off on purpose.
     // TypeScript reports real redeclarations itself (ts(2451)); this rule flags the DI
@@ -246,6 +232,23 @@
     // Its fix turns `||` into `??`, which changes the result for '' and 0, and many `||`
     // here fall back on an empty string on purpose.
     "typescript/prefer-nullish-coalescing": "off",
+    // It flags most downcasts, including idioms such as `(error as NodeJS.ErrnoException).code`,
+    // and pushes code toward hand-written type guards or disable directives.
+    "typescript/no-unsafe-type-assertion": "off",
+    // Many of its findings guard runtime states the types do not model, such as abort flags
+    // and external JSON; deleting those checks would be a bug.
+    "typescript/no-unnecessary-condition": "off",
+    // no-floating-promises, no-misused-promises, and tsc already report a forgotten await,
+    // and dropping `async` turns a rejection into a synchronous throw.
+    "typescript/require-await": "off",
+    // Callback contracts here return `X | void`, as the ACP and fastify types do.
+    "typescript/no-invalid-void-type": "off",
+    // Its findings delete keys from dictionary-style records; the alternatives change what
+    // serializers and `in` see.
+    "typescript/no-dynamic-delete": "off",
+    // Its findings are arrow shorthands such as `() => voidCall()`; adding braces can drop
+    // a promise that a void-typed call returns.
+    "typescript/no-confusing-void-expression": "off",
     // Team decisions.
     "promise/always-return": "off",
     "unicorn/prefer-add-event-listener": "off"
@@ -300,7 +303,25 @@
       "files": ["apps/vis/web/**", "apps/vscode/webview-ui/**"],
       "plugins": ["react"],
       "rules": {
-        "react/rules-of-hooks": "error"
+        "react/forward-ref-uses-ref": "error",
+        "react/jsx-key": "error",
+        "react/jsx-no-duplicate-props": "error",
+        "react/jsx-no-undef": "error",
+        "react/jsx-props-no-spread-multi": "error",
+        "react/no-children-prop": "error",
+        "react/no-danger-with-children": "error",
+        "react/no-did-mount-set-state": "error",
+        "react/no-did-update-set-state": "error",
+        "react/no-direct-mutation-state": "error",
+        "react/no-find-dom-node": "error",
+        "react/no-is-mounted": "error",
+        "react/no-render-return-value": "error",
+        "react/no-string-refs": "error",
+        "react/no-this-in-sfc": "error",
+        "react/no-unsafe": "error",
+        "react/no-will-update-set-state": "error",
+        "react/rules-of-hooks": "error",
+        "react/void-dom-elements-no-children": "error"
       }
     },
     {
