@@ -26,7 +26,7 @@ import { createToolSelectResolver } from './toolSelectPolicy';
 import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import { IAgentToolSelectService, modelTools, type BaselineTool } from '#/agent/toolSelect/toolSelect';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
@@ -188,7 +188,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private historySnapshotDepth = 0;
   private loop: Loop | undefined;
   private initialized = false;
-  private initialToolsPreparationPending = false;
+  private initialTools?: readonly BaselineTool[];
+  private settledTools?: readonly BaselineTool[];
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private readonly batchStartingHooks = new Map<string, HookRegistration>();
@@ -238,11 +239,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       prepareOperation: async (options, signal) => {
         if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
         const config = this.requestConfigSnapshot();
-        const baseline = options.tools ?? this.loop.state.profile.tools;
-        const visible = options.tools === undefined && baseline !== undefined
-          ? this.operationTools(baseline, config.resolved.model.capability)
-          : baseline;
-        const tools = await this.prepareTools(signal, config.resolved.model.capability, visible);
+        const capabilities = config.resolved.model.capability;
+        await this.toolSelect.prepareForRequest(signal);
+        signal.throwIfAborted();
+        const visible = options.tools ?? this.toolSelect.operationTools(
+          this.settleInitialTools(),
+          this.toolSelect.enabled(capabilities),
+        );
+        const tools = this.toolsForCapabilities(capabilities, visible);
         return this.loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
           return requester.snapshot?.() ?? requester;
@@ -304,7 +308,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.states.set(loopDisposingKey, value);
   }
 
-  async start(tools?: readonly Tool[]): Promise<void> {
+  async start(tools?: readonly BaselineTool[]): Promise<void> {
     if (this.loop !== undefined) return;
     this.startPromise ??= this.initializeLoop(undefined, tools).finally(() => {
       this.startPromise = undefined;
@@ -312,21 +316,24 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.startPromise;
   }
 
-  baselineTools(): readonly Tool[] {
-    return this.loop?.state.profile.tools ?? this.toolSelect.initialTools();
+  baselineTools(): readonly BaselineTool[] {
+    return this.settledTools ?? this.initialTools ?? this.toolSelect.initialTools();
   }
 
-  async prepareBaselineTools(signal?: AbortSignal): Promise<readonly Tool[]> {
-    const baseline = this.baselineTools();
-    if (!this.initialToolsPreparationPending) return baseline;
-    return this.completeInitialTools(baseline, signal);
-  }
-
-  private async completeInitialTools(baseline: readonly Tool[], signal?: AbortSignal): Promise<readonly Tool[]> {
+  async prepareBaselineTools(signal?: AbortSignal): Promise<readonly BaselineTool[]> {
+    if (this.settledTools !== undefined) return this.settledTools;
     await this.toolSelect.prepareCatalog(signal);
+    signal?.throwIfAborted();
+    return this.settleInitialTools();
+  }
+
+  private settleInitialTools(): readonly BaselineTool[] {
+    if (this.settledTools !== undefined) return this.settledTools;
+    const baseline = this.baselineTools();
     const names = new Set(baseline.map((tool) => tool.name));
-    return [...baseline, ...this.toolSelect.initialTools('mcp').filter((tool) => !names.has(tool.name))]
-      .toSorted((left, right) => left.name.localeCompare(right.name));
+    const tools = [...baseline, ...this.toolSelect.initialTools('mcp').filter((tool) => !names.has(tool.name))];
+    this.settledTools = tools.toSorted((left, right) => left.name.localeCompare(right.name));
+    return this.settledTools;
   }
 
   private get toolSelect(): IAgentToolSelectService {
@@ -462,7 +469,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private async initializeLoop(
     seededMessages?: readonly Message[],
-    initialTools?: readonly Tool[],
+    initialTools?: readonly BaselineTool[],
   ): Promise<void> {
     if (this.initialized) return;
     let lease = this.runGate.tryAcquire();
@@ -470,7 +477,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
-      const tools = initialTools === undefined ? this.toolSelect.initialTools() : [...initialTools];
+      this.settledTools = initialTools;
+      this.initialTools = initialTools ?? this.toolSelect.initialTools();
       const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
       await taskHistory.reconcile();
       const completions = await restoreTaskCompletions({
@@ -483,7 +491,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       });
       const pendingWork = (snapshot.input.inbox?.normal?.length ?? 0) + (snapshot.input.inbox?.notify?.length ?? 0);
       if (lease === undefined && (completions.length > 0 || pendingWork > 0)) lease = this.runGate.acquire();
-      this.createLoopFromSnapshot(snapshot, tools, initialTools === undefined, completions, seededMessages);
+      this.createLoopFromSnapshot(
+        snapshot, modelTools(this.initialTools), initialTools === undefined, completions, seededMessages,
+      );
     } finally {
       lease?.release();
     }
@@ -499,9 +509,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     historyRevision?: number,
   ): void {
     this.initialized = true;
-    this.initialToolsPreparationPending = prepareInitialTools;
     const loop = createLoop({
-      prepareInitialTools: prepareInitialTools ? (baseline, signal) => this.completeInitialTools(baseline, signal) : undefined,
+      prepareInitialTools: prepareInitialTools
+        ? async (_baseline, signal) => modelTools(await this.prepareBaselineTools(signal))
+        : undefined,
       completionMessage: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
         if (handler?.snapshot().fields.task === undefined) {
@@ -549,7 +560,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.setRequester(this.createLoopRequester(loop));
     this.loop = loop;
     loop.subscribe((event) => {
-      if (event.type === 'tools.settled') this.initialToolsPreparationPending = false;
       const enriched = this.turns.enrich(event, this.toolExecutor);
       this.notifications.project(event);
       if (event.type === 'llm.retrying') this.journal.append(enriched);
@@ -593,35 +603,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
-  private operationTools(
-    baseline: readonly Tool[],
-    capabilities: LlmModelCapability | undefined,
-  ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
-    return this.toolSelect.requestTools(
-      baseline.filter((tool) => active.has(tool.name)),
-      disclosure,
-      true,
-      this.history(),
-    );
-  }
-
-  private async prepareTools(
-    signal: AbortSignal,
-    capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
-  ): Promise<readonly Tool[]> {
-    await this.toolSelect.prepareForRequest(signal);
-    return this.toolsForCapabilities(capabilities, base);
-  }
-
   private toolsForCapabilities(
     capabilities: LlmModelCapability | undefined,
-    base?: readonly Tool[],
+    tools: readonly Tool[],
   ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const tools = base ?? this.toolSelect.defaultTools(disclosure);
     if (capabilities?.image_in === true || capabilities?.video_in === true) return tools;
     return tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
   }

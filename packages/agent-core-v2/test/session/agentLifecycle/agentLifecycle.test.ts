@@ -121,6 +121,7 @@ import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolic
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import '#/agent/toolActivation/toolActivationService';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -354,6 +355,9 @@ describe('AgentLifecycleService', () => {
       acquire: () => ({ dispose: () => {} }),
     };
     ix.stub(IAtomicDocumentStore, atomicDocsStore);
+    ix.stub(IAgentToolSelectService, {
+      restoreInheritedTools: (tools) => tools,
+    } as IAgentToolSelectService);
     ix.stub(ILogService, noopLog);
     ix.stub(IAgentPluginService, {
       _serviceBrand: undefined,
@@ -1749,6 +1753,16 @@ describe('AgentLifecycleService', () => {
       profileName: 'after-preparation',
       activeToolNames: ['Read'],
     });
+  });
+
+  it('keeps a fork in memory when another client holds the session lock', async () => {
+    const lifecycle = ix.get(IAgentLifecycleService);
+    const parent = await lifecycle.create({ agentId: 'main' });
+    vi.spyOn(ix.get(ISessionLockService), 'tryHold').mockReturnValue(false);
+    const child = await lifecycle.fork(parent, { agentId: 'forked' });
+
+    expect(lifecycle.get(child.agentId)).toBe(child);
+    expect(atomicDocs.has('sessions/ws_test/sess_test/agents/forked/inherited-tools.json')).toBe(false);
   });
 
   it('fork snapshots the source environment and remains independent', async () => {

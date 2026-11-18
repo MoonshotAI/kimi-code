@@ -5,6 +5,14 @@ import type { ToolInfo } from '#/tool/toolContract';
 
 import type { ToolSelectTool } from './toolSelectOps';
 
+export interface BaselineTool extends Tool {
+  readonly source?: ToolInfo['source'];
+}
+
+export function modelTools(tools: readonly BaselineTool[]): Tool[] {
+  return tools.map(({ name, description, parameters, deferred }) => ({ name, description, parameters, deferred }));
+}
+
 export const SELECT_TOOLS_TOOL_NAME = 'select_tools';
 
 export interface ToolSelectCapabilities {
@@ -60,7 +68,11 @@ export interface IAgentToolSelectService {
 
   prepareCatalog(signal?: AbortSignal): Promise<void>;
 
-  initialTools(source?: ToolInfo['source']): readonly Tool[];
+  initialTools(source?: ToolInfo['source']): readonly BaselineTool[];
+
+  restoreInheritedTools(tools: readonly BaselineTool[]): readonly BaselineTool[];
+
+  operationTools(baseline: readonly BaselineTool[], disclosure: boolean): readonly Tool[];
 
   defaultTools(disclosure?: boolean): readonly Tool[];
 

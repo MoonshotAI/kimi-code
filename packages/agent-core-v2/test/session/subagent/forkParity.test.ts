@@ -32,7 +32,13 @@ import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import { IAgentUserToolService } from '#/agent/userTool/userTool';
+import { LifecycleScope } from '#/app/scopes';
+import { getOrRestoreAgent } from '#/session/agentLifecycle/getOrRestoreAgent';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { startInProcessHttpMcpServer } from '../../mcpCore/stubs';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
@@ -620,44 +626,167 @@ describe('subagent task reminders and fork request parity', () => {
     expect(taskReminders(child.accessor.get(IAgentLoopService).history())).toHaveLength(1);
   });
 
-  it.each(['startup', 'runtime'] as const)('keeps btw tools identical after %s MCP discovery', async (timing) => {
-    const server = await startInProcessHttpMcpServer();
-    const manager = new McpConnectionManager();
+  function createMcpForkContext(manager: McpConnectionManager, flags: IFlagService = stubFlag(false)): void {
     ctx = createTestAgent(
       mcpServices({ manager }),
       appService(IAppendLogStore, new ScopedAppendLogStore()),
-      appService(IFlagService, stubFlag(false)),
+      appService(IFlagService, flags),
     );
+    ctx.configure({ tools: ['Read', 'mcp__*'] });
+  }
+
+  it.each([
+    { timing: 'startup', deferred: false },
+    { timing: 'runtime', deferred: false },
+    { timing: 'disconnected', deferred: true },
+    { timing: 'runtime', deferred: true },
+  ])('keeps btw tools identical across restore after $timing MCP discovery (deferred: $deferred)', async ({ timing, deferred }) => {
+    const server = await startInProcessHttpMcpServer();
+    const manager = new McpConnectionManager();
     try {
-      ctx.configure({ tools: ['Read', 'mcp__*'] });
+      createMcpForkContext(manager);
       await ctx.restorePersisted();
-      const config = { srv: { transport: 'http' as const, url: server.url, deferred: false } };
-      if (timing === 'startup') await manager.connectAll(config);
+      const config = { srv: { transport: 'http' as const, url: server.url, deferred } };
+      if (timing !== 'runtime') await manager.connectAll(config);
       ctx.mockNextResponse({ type: 'text', text: 'first' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
       await ctx.untilTurnEnd();
       if (timing === 'runtime') await manager.connectAll(config);
+      if (timing === 'disconnected') await manager.connect('srv', { ...config.srv, enabled: false });
       ctx.mockNextResponse({ type: 'text', text: 'second' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
       await ctx.untilTurnEnd();
       const parentTools = ctx.llmCalls[1]!.tools;
-      expect(parentTools.map((tool) => tool.name)).toEqual(timing === 'startup' ? ['mcp__srv__echo', 'Read'] : ['Read']);
+      expect(parentTools.map((tool) => tool.name)).toEqual(timing === 'runtime' ? ['Read'] : ['mcp__srv__echo', 'Read']);
       expect(ctx.llmCalls[0]!.tools).toEqual(parentTools);
 
       const childId = await ctx.get(ISessionBtwService).start();
-      const child = ctx.get(IAgentLifecycleService).handleOf(childId)!;
+      const lifecycle = ctx.get(IAgentLifecycleService);
+      const child = lifecycle.handleOf(childId)!;
       const childLoop = child.accessor.get(IAgentLoopService);
       expect(childLoop.baselineTools()).toEqual(ctx.get(IAgentLoopService).baselineTools());
-      expect(child.accessor.get(IAgentToolRegistryService).resolve('mcp__srv__echo')).toBeDefined();
-      ctx.mockNextResponse({ type: 'text', text: 'child' });
-      const prompt = childLoop.submit({ role: 'user', content: [{ type: 'text', text: 'side question' }] });
-      expect((await childLoop.promptHandle(prompt.id)!.completion).state).toBe('completed');
+      expect(child.accessor.get(IAgentToolRegistryService).resolve('mcp__srv__echo') !== undefined).toBe(timing !== 'disconnected');
+      await runPrompt(child);
       expect(ctx.llmCalls[2]!.tools).toEqual(parentTools);
+
+      await lifecycle.remove(lifecycle.get(childId)!);
+      const restored = await getOrRestoreAgent({
+        kind: LifecycleScope.Session, id: ctx.get(ISessionContext).sessionId, accessor: ctx, dispose: () => {},
+      }, childId);
+      await runPrompt(restored!);
+      expect(ctx.llmCalls[3]!.tools).toEqual(parentTools);
     } finally {
       await ctx.dispose();
       await manager.shutdown();
       await server.close();
     }
+  });
+
+  it.each([
+    { disabled: [], expected: ['Read', SELECT_TOOLS_TOOL_NAME] },
+    { disabled: ['Read', SELECT_TOOLS_TOOL_NAME], expected: [] },
+  ])('restores an unprompted fork by ID with current tool policy ($disabled)', async ({ disabled, expected }) => {
+    const server = await startInProcessHttpMcpServer();
+    const manager = new McpConnectionManager();
+    let toolSelectEnabled = false;
+    try {
+      createMcpForkContext(manager, stubFlag((id) => id === TOOL_SELECT_FLAG_ID && toolSelectEnabled));
+      ctx.configure({
+        modelCapabilities: {
+          image_in: false, video_in: false, audio_in: false, thinking: false,
+          tool_use: true, dynamically_loaded_tools: true, maxContextSize: 128_000,
+        },
+      });
+      await ctx.restorePersisted();
+      const lifecycle = ctx.get(IAgentLifecycleService);
+      await runPrompt(lifecycle.handleOf('main')!);
+      expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).toEqual(['Read']);
+      await manager.connectAll({ srv: { transport: 'http', url: server.url, deferred: true } });
+      const childId = await ctx.get(ISessionBtwService).start();
+      await lifecycle.remove(lifecycle.get(childId)!);
+
+      toolSelectEnabled = true;
+      await ctx.get(ISessionToolPolicy).setDisabledTools(disabled);
+      await lifecycle.create({ agentId: childId });
+      const child = lifecycle.handleOf(childId)!;
+      expect(child.accessor.get(IAgentLoopService).baselineTools().map((tool) => tool.name)).toEqual(expected);
+      await runPrompt(child);
+      expect(ctx.llmCalls[1]!.tools.map((tool) => tool.name)).toEqual(expected);
+    } finally {
+      await ctx.dispose();
+      await manager.shutdown();
+      await server.close();
+    }
+  });
+
+  it('shares the baseline settled by a fork before the first parent turn', async () => {
+    const server = await startInProcessHttpMcpServer();
+    const manager = new McpConnectionManager();
+    try {
+      createMcpForkContext(manager);
+      await ctx.restorePersisted();
+      await manager.connectAll({ srv: { transport: 'http', url: server.url, deferred: true } });
+      const policy = ctx.get(ISessionToolPolicy);
+      await policy.setDisabledTools(['mcp__srv__echo']);
+      const childId = await ctx.get(ISessionBtwService).start();
+      await policy.setDisabledTools([]);
+      const lifecycle = ctx.get(IAgentLifecycleService);
+      await runPrompt(lifecycle.handleOf('main')!);
+      await runPrompt(lifecycle.handleOf(childId)!);
+      expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).toEqual(['Read']);
+      expect(ctx.llmCalls[1]!.tools).toEqual(ctx.llmCalls[0]!.tools);
+    } finally {
+      await manager.shutdown();
+      await server.close();
+    }
+  });
+
+  it.each([false, true])('keeps the first parent request stable after a server disconnects (early btw: %s)', async (earlyFork) => {
+    const server = await startInProcessHttpMcpServer();
+    const manager = new McpConnectionManager();
+    const config = { transport: 'http' as const, url: server.url, deferred: true };
+    try {
+      await manager.connectAll({ srv: config });
+      createMcpForkContext(manager);
+      await ctx.restorePersisted();
+      if (earlyFork) await ctx.get(ISessionBtwService).start();
+      await manager.connect('srv', { ...config, enabled: false });
+      expect(ctx.get(IAgentToolRegistryService).resolve('mcp__srv__echo')).toBeUndefined();
+      await runPrompt(ctx.get(IAgentLifecycleService).handleOf('main')!);
+      expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).toEqual(['mcp__srv__echo', 'Read']);
+    } finally {
+      await manager.shutdown();
+      await server.close();
+    }
+  });
+
+  it('checks a deferred user tool against its inherited source when it has an MCP-like name', async () => {
+    createMainForkCtx(stubFlag(false));
+    const name = 'mcp__example__user_tool';
+    ctx.configure({ tools: ['Read', name] });
+    ctx.get(IAgentUserToolService).register({
+      name, description: 'Read an example.', parameters: { type: 'object', properties: {} }, disclosure: 'deferred',
+    });
+    await ctx.restorePersisted();
+    const lifecycle = ctx.get(IAgentLifecycleService);
+    await runPrompt(lifecycle.handleOf('main')!);
+    await ctx.get(ISessionToolPolicy).setDisabledTools(['mcp__example__*']);
+    const child = lifecycle.handleOf(await ctx.get(ISessionBtwService).start())!;
+    expect(child.accessor.get(IAgentToolRegistryService).resolve(name)).toBeUndefined();
+    await runPrompt(child);
+    expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).toContain(name);
+    expect(ctx.llmCalls[1]!.tools).toEqual(ctx.llmCalls[0]!.tools);
+    await ctx.get(ISessionToolPolicy).setDisabledTools([name]);
+    await runPrompt(child);
+    expect(ctx.llmCalls[2]!.tools.map((tool) => tool.name)).not.toContain(name);
+    await lifecycle.remove(lifecycle.get(child.id)!);
+    await lifecycle.create({ agentId: child.id });
+    const restored = lifecycle.handleOf(child.id)!;
+    await runPrompt(restored);
+    expect(ctx.llmCalls[3]!.tools.map((tool) => tool.name)).not.toContain(name);
+    await ctx.get(ISessionToolPolicy).setDisabledTools([]);
+    await runPrompt(restored);
+    expect(ctx.llmCalls[4]!.tools).toEqual(ctx.llmCalls[0]!.tools);
   });
 
   it('keeps btw tools identical when forked during initial MCP discovery', async () => {

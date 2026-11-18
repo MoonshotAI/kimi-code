@@ -7,6 +7,7 @@ import { type Message } from '@moonshot-ai/core/llm/message';
 import { type StreamedMessagePart, type ToolCall } from '@moonshot-ai/core/llm/message';
 import { resolveEndpoint } from '@moonshot-ai/core/llm/endpoint';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createControlledPromise } from '@antfu/utils';
 
 import {
   DefaultCompactionStrategy,
@@ -21,10 +22,13 @@ import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
-import { agentService, appService, appServices, createCommandRunner, execEnvServices, findGenerateCallPrefixBreak, hostEnvironmentServices, createMockProvider, providerHttpError, sessionServices, testAgent as createTestAgent, type MockProviderResponse } from '../../harness';
+import { agentService, appService, appServices, createCommandRunner, execEnvServices, findGenerateCallPrefixBreak, hostEnvironmentServices, createMockProvider, providerHttpError, sessionService, sessionServices, testAgent as createTestAgent, type MockProviderResponse } from '../../harness';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { renderCompactionInstruction } from '#/agent/fullCompaction/compactionInstruction';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -4862,6 +4866,60 @@ describe('FullCompaction prompt-cache prefix', () => {
     await completed;
 
     expect(ctx.llmCalls.at(-1)?.tools.map((tool) => tool.name)).toEqual(['Read']);
+  });
+
+  it('completes the startup baseline when automatic compaction is the first model request', async () => {
+    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '0');
+    const ctx = testAgent();
+    ctx.configure({ provider: CATALOGUED_PROVIDER, modelCapabilities: CATALOGUED_MODEL_CAPABILITIES, tools: ['Read', 'mcp__*'] });
+    await ctx.restorePersisted();
+    ctx.get(IAgentToolRegistryService).register(mcpTool(DEFERRED_TOOL, {}), { source: 'mcp', disclosure: 'deferred' });
+    ctx.kimiConfig = {
+      ...ctx.kimiConfig,
+      loopControl: { reservedContextSize: CATALOGUED_MODEL_CAPABILITIES.maxContextSize - AUTO_COMPACTION_HEADROOM },
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'Summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'x'.repeat(AUTO_COMPACTION_HEADROOM * 6) }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(messageText(ctx.llmCalls[0]!.history.at(-1))).toBe(renderCompactionInstruction({}));
+    expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).toEqual([DEFERRED_TOOL, 'Read']);
+    expect(ctx.llmCalls[1]!.tools).toEqual(ctx.llmCalls[0]!.tools);
+  });
+
+  it('applies a policy change made while manual compaction waits for MCP', async () => {
+    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '0');
+    const ready = createControlledPromise<void>();
+    const waiting = createControlledPromise<void>();
+    let onWait = () => {};
+    const ctx = testAgent(sessionService(ISessionMcpHandle, {
+      _serviceBrand: undefined,
+      get ready() {
+        onWait();
+        return ready;
+      },
+      connectionManager: new McpConnectionManager(),
+      isBaselineServer: () => true,
+    }));
+    try {
+      ctx.configure({ provider: CATALOGUED_PROVIDER, modelCapabilities: CATALOGUED_MODEL_CAPABILITIES, tools: ['Read', 'mcp__*'] });
+      ctx.get(IAgentToolRegistryService).register(mcpTool(DEFERRED_TOOL, {}), { source: 'mcp', disclosure: 'deferred' });
+      await ctx.restorePersisted();
+      ctx.appendExchange(1, 'First question', 'First answer', 20);
+      onWait = waiting.resolve;
+      const completed = ctx.once('compaction.completed');
+      ctx.mockNextResponse({ type: 'text', text: 'Summary.' });
+      await ctx.rpc.beginCompaction({});
+      await waiting;
+      await ctx.get(ISessionToolPolicy).setDisabledTools([DEFERRED_TOOL]);
+      ready.resolve();
+      await completed;
+      expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).toEqual(['Read']);
+    } finally {
+      ready.resolve();
+    }
   });
 
   it.each(CASES)(

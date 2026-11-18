@@ -55,11 +55,13 @@ import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBin
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
+import { IAgentToolSelectService, type BaselineTool } from '#/agent/toolSelect/toolSelect';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -76,12 +78,14 @@ import {
   type CreateAgentOptions,
   type ForkAgentOptions,
   IAgentLifecycleService,
+  MAIN_AGENT_ID,
 } from './agentLifecycle';
 
 let nextAgentId = 0;
 
 const REMOVE_PROMPT_QUIESCE_TIMEOUT_MS = 3_000;
 const REMOVE_PROMPT_QUIESCE_POLL_MS = 10;
+const INHERITED_TOOLS_FILE = 'inherited-tools.json';
 
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
@@ -117,6 +121,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionEventBus bus: ISessionEventBus,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
+    @IAtomicDocumentStore private readonly documents: IAtomicDocumentStore,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IBlobStore private readonly blobStore: IBlobStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
@@ -286,6 +291,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       };
       this.rosterAdopt(scopeHandle);
       managed = this.roster.get(agentId);
+      if (
+        opts.forkedFrom !== undefined &&
+        opts.initialTools !== undefined &&
+        this.sessionLocks.tryHold(this.ctx.sessionId)
+      ) {
+        stage = 'inheritedTools';
+        await this.documents.set(agentScope, INHERITED_TOOLS_FILE, opts.initialTools);
+      }
       stage = 'register';
       await this.sessionMetadata.registerAgent(agentId, meta);
       this.onDidCreateEmitter.fire(agent);
@@ -315,7 +328,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       stage = 'toolActivation';
       await handle.accessor.get(IAgentToolActivationService).activate();
       stage = 'start';
-      await loop.start(opts.initialTools);
+      let initialTools = opts.initialTools;
+      if (agentId !== MAIN_AGENT_ID && opts.binding === undefined && initialTools === undefined) {
+        const saved = await this.documents.get<readonly BaselineTool[]>(agentScope, INHERITED_TOOLS_FILE);
+        if (saved !== undefined) {
+          initialTools = handle.accessor.get(IAgentToolSelectService).restoreInheritedTools(saved);
+        }
+      }
+      await loop.start(initialTools);
       return agent;
     } catch (error) {
       this.telemetry.track2('agent_create_failed', {
