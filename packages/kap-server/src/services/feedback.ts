@@ -77,7 +77,6 @@ export class ManagedFeedbackGateway {
       readonly bytes: AsyncIterable<Uint8Array>;
     },
   ): Promise<void> {
-    const accessToken = await this.accessToken();
     const tempDir = await mkdtemp(join(tmpdir(), 'kimi-feedback-attachment-'));
     try {
       const path = join(tempDir, 'attachment');
@@ -85,7 +84,7 @@ export class ManagedFeedbackGateway {
       if (staged.size !== input.declaredSize) {
         throw new FeedbackRouteError('attachment size does not match x-feedback-file-size', 400);
       }
-      await uploadArchive(this.uploadApi(accessToken, this.baseUrl()), staged, feedbackId, {
+      await uploadArchive(this.uploadApi(() => this.accessToken(), this.baseUrl()), staged, feedbackId, {
         filename: input.filename,
         maxRetries: 0,
       });
@@ -94,9 +93,10 @@ export class ManagedFeedbackGateway {
     }
   }
 
-  private uploadApi(accessToken: string, baseUrl: string): FeedbackUploadUrlApi {
+  private uploadApi(getAccessToken: () => Promise<string>, baseUrl: string): FeedbackUploadUrlApi {
     return {
       createUploadUrl: async (input) => {
+        const accessToken = await getAccessToken();
         const result = await fetchCreateFeedbackUploadUrl(accessToken, {
           file_hash: input.sha256,
           file_name: input.filename,
@@ -115,6 +115,7 @@ export class ManagedFeedbackGateway {
         };
       },
       completeUpload: async (input) => {
+        const accessToken = await getAccessToken();
         const result = await fetchCompleteFeedbackUpload(accessToken, {
           upload_id: input.uploadId,
           parts: input.parts.map((part) => ({ part_number: part.partNumber, etag: part.etag })),

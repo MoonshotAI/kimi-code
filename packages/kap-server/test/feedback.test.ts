@@ -45,6 +45,7 @@ describe('feedback routes', () => {
   let updateMessage: string;
   let createStatus: number;
   let partStatus: number;
+  let getAccessToken: ReturnType<typeof vi.fn<(options?: { readonly force?: boolean }) => Promise<string>>>;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-feedback-'));
@@ -117,8 +118,9 @@ describe('feedback routes', () => {
       env: { ...process.env, KIMI_CODE_BASE_URL: `http://127.0.0.1:${(kfc.address() as AddressInfo).port}` },
     });
     baseUrl = `http://127.0.0.1:${server.port}`;
+    getAccessToken = vi.fn(async () => 'managed-kimi-token');
     vi.spyOn(server.core.accessor.get(IOAuthService), 'resolveTokenProvider').mockReturnValue({
-      getAccessToken: vi.fn(async () => 'managed-kimi-token'),
+      getAccessToken,
     });
   });
 
@@ -470,8 +472,12 @@ describe('feedback routes', () => {
       body: 'hello',
     });
 
+    getAccessToken.mockResolvedValueOnce('grant-token').mockResolvedValueOnce('complete-token');
     const uploaded = await upload();
     expect(uploaded.status).toBe(200);
+    expect(getAccessToken).toHaveBeenCalledTimes(2);
+    expect(kfcRequests.find((request) => request.url === '/feedback/upload_url')?.authorization).toBe('Bearer grant-token');
+    expect(kfcRequests.at(-1)?.authorization).toBe('Bearer complete-token');
     expect(storageRequests).toHaveLength(1);
     expect(storageRequests[0]).toMatchObject({ method: 'PUT', body: 'hello', authorization: undefined });
     expect(kfcRequests.at(-1)?.body).toEqual({
