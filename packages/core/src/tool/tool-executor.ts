@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { ContentPart } from '#/llm/message';
 import { abortedToolOutput, isUserCancellation } from '#/utils/abort';
 import { clock } from '#/utils/clock';
+import { log, type LogContext } from '#/utils/log';
 import { now } from '#/utils/now';
 import { parseToolCallArguments } from '#/tool/args';
 
@@ -40,6 +41,19 @@ import { toolArgsError } from './validate';
 
 type AnyTool<TContext> = ExecutableTool<any, TContext, any, any>;
 type AnyHandler = ToolExecutionHandler<any, any>;
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((yes) => {
+    resolve = yes;
+  });
+  return { promise, resolve };
+}
 
 interface CallControlHost<TContext> {
   readonly outputStore: ToolOutputStore;
@@ -182,7 +196,7 @@ class CallControl<TContext> {
   private abandoned = false;
   private detachedAck: ToolDetachAck | undefined;
   private detachAck: ((reason: unknown) => ToolAcknowledgement) | undefined;
-  private acknowledge: ((result: ToolExecutionResponse) => void) | undefined;
+  private readonly detachment = deferred<ToolDetachAck>();
   private release: (result: ToolResult) => void = () => {};
   private readonly listeners = new Set<(event: ToolHandlerEvent<any, any>) => void>();
   private closeError: string | undefined;
@@ -208,13 +222,34 @@ class CallControl<TContext> {
 
   start(): AnyHandler {
     const hook = this.host.hook;
+    log.info(this.logContext('tool.started'), 'tool event');
     const completion = this.complete();
-    const handler = this.handle(completion);
+    const response: Promise<ToolExecutionResponse> = Promise.race([completion, this.detachment.promise]);
+    const methods: Omit<AnyHandler, 'then'> = {
+      taskId: this.taskId,
+      wait: (timeoutMs, signal) => this.wait(completion, timeoutMs, signal),
+      stop: (reason) => {
+        if (this.outcome === undefined) this.requestStop(reason);
+        return completion;
+      },
+      detach: (reason, acknowledgement) => this.detach(reason, acknowledgement),
+      snapshot: () => this.snapshot(),
+      output: (maxPreviewBytes?: number) => this.output(maxPreviewBytes),
+      fields: () => this.fields(),
+      observe: (listener) => this.observe(listener),
+    };
+    const handler = Object.assign(response, methods);
     if (hook?.observe !== undefined) {
       const emit = (event: ToolExecutionEvent<any, any, any>): void => {
         try {
           hook.observe?.(event);
-        } catch {
+        } catch (error) {
+          log.warn({
+            ...this.logContext('tool.observer_failed'),
+            source: 'policy',
+            eventType: event.type,
+            reason: errorMessage(error),
+          }, 'tool event');
           return;
         }
       };
@@ -225,8 +260,9 @@ class CallControl<TContext> {
   }
 
   private async complete(): Promise<ToolResult> {
+    let result: ToolResult;
     try {
-      let result = await Promise.race([this.run(), this.abandonment]);
+      result = await Promise.race([this.run(), this.abandonment]);
       this.seal();
       const outputError = await this.closeOutput();
       if (outputError !== undefined && result.outcome.type !== 'aborted') {
@@ -258,12 +294,25 @@ class CallControl<TContext> {
           ? { ...failed, outcome: result.outcome }
           : failed;
       }
-      return result;
     } catch (thrown) {
       const error = toToolError(this, thrown);
-      if (isPreExecutionHookError(error)) throw preExecutionHookFailure(error);
-      return this.errorResult(error, [{ type: 'text', text: error.reason }]);
+      if (isPreExecutionHookError(error)) {
+        const failure = preExecutionHookFailure(error);
+        log.error({
+          ...this.logContext('tool.failed'),
+          reason: errorMessage(failure),
+        }, 'tool execution failed');
+        throw failure;
+      }
+      result = this.errorResult(error, [{ type: 'text', text: error.reason }]);
     }
+    this.change(() => {
+      this.remember(result.outcome);
+      this.total.end();
+      this.execution?.end();
+    });
+    this.logResult(result);
+    return result;
   }
 
   private async run(): Promise<ToolResult> {
@@ -297,6 +346,9 @@ class CallControl<TContext> {
       if (starting !== undefined && 'args' in starting) {
         const rewritten = await this.prepare(tool);
         if (rewritten !== undefined) return this.returned(rewritten);
+      }
+      if (starting !== undefined && 'skipPermitting' in starting) {
+        log.debug(this.logContext('tool.permitting_skipped'), 'tool event');
       }
       if (starting === undefined || !('skipPermitting' in starting)) {
         const permitting = await this.decide('permitting', (ctx) => this.host.hook?.permitting?.(ctx));
@@ -351,9 +403,17 @@ class CallControl<TContext> {
     this.signal.throwIfAborted();
     if (decision === undefined) return;
     if ('reject' in decision) {
+      log.info({
+        ...this.logContext('tool.rejected'),
+        reason: decision.reject,
+        synthetic: decision.result !== undefined,
+      }, 'tool event');
       throw new ToolStop(rejected(phase, decision.reject, decision.data), decision.result);
     }
-    if ('args' in decision) this.setArgs(decision.args);
+    if ('args' in decision) {
+      log.debug(this.logContext('tool.args_rewritten'), 'tool event');
+      this.setArgs(decision.args);
+    }
     return decision;
   }
 
@@ -367,9 +427,17 @@ class CallControl<TContext> {
     const decision = decider(this.decisionContext());
     if (decision === undefined) return;
     if ('reject' in decision) {
+      log.info({
+        ...this.logContext('tool.rejected'),
+        reason: decision.reject,
+        synthetic: decision.result !== undefined,
+      }, 'tool event');
       throw new ToolStop(rejected(phase, decision.reject, decision.data), decision.result);
     }
-    if ('args' in decision) this.setArgs(decision.args);
+    if ('args' in decision) {
+      log.debug(this.logContext('tool.args_rewritten'), 'tool event');
+      this.setArgs(decision.args);
+    }
     return decision;
   }
 
@@ -389,7 +457,40 @@ class CallControl<TContext> {
     });
     this.setPrepared(preparation?.prepared);
     this.signal.throwIfAborted();
-    return preparation?.type === 'synthetic' ? preparation.result : undefined;
+    if (preparation?.type !== 'synthetic') return undefined;
+    log.info(this.logContext('tool.synthetic'), 'tool event');
+    return preparation.result;
+  }
+
+  private logContext(type: string): LogContext {
+    return {
+      type,
+      taskId: this.taskId,
+      toolCallId: this.call.id,
+      name: this.call.name,
+      phase: this.currentPhase,
+    };
+  }
+
+  private logResult(result: ToolResult): void {
+    const details = {
+      ...this.logContext('tool.ended'),
+      outcome: result.outcome.type,
+      elapsedMs: this.total.snapshot().elapsedMs,
+      executeElapsedMs: this.execution?.snapshot().elapsedMs,
+    };
+    if (result.outcome.type === 'failed') {
+      log.error({
+        ...details,
+        error: {
+          type: result.outcome.error.type,
+          phase: result.outcome.error.phase,
+          reason: result.outcome.error.reason,
+        },
+      }, 'tool execution failed');
+      return;
+    }
+    log.info(details, 'tool event');
   }
 
   private decisionContext(): ToolDecisionContext<unknown, TContext, any> {
@@ -425,9 +526,11 @@ class CallControl<TContext> {
 
   enter(phase: ToolPhase): void {
     if (this.currentPhase === phase) return;
+    const previousPhase = this.currentPhase;
     this.change(() => {
       this.currentPhase = phase;
     });
+    log.debug({ ...this.logContext('tool.phase'), previousPhase }, 'tool event');
   }
 
   setArgs(args: unknown): void {
@@ -448,6 +551,7 @@ class CallControl<TContext> {
       this.currentPhase = 'execute';
       this.execution = new TimeSpan();
     });
+    log.info(this.logContext('tool.execute'), 'tool event');
   }
 
   write(text: string): number | undefined {
@@ -497,6 +601,10 @@ class CallControl<TContext> {
       await this.log.close();
     } catch (error) {
       this.closeError = errorMessage(error);
+      log.warn({
+        ...this.logContext('tool.output_close_failed'),
+        reason: this.closeError,
+      }, 'tool event');
     }
     return this.closeError ?? this.log.error();
   }
@@ -540,7 +648,11 @@ class CallControl<TContext> {
     if (!hadStopping && this.stopped !== undefined && this.stopping !== undefined) {
       try {
         this.stopping(this.stopped.reason);
-      } catch {
+      } catch (error) {
+        log.warn({
+          ...this.logContext('tool.stopping_failed'),
+          reason: errorMessage(error),
+        }, 'tool event');
       }
     }
   }
@@ -608,12 +720,20 @@ class CallControl<TContext> {
     this.change(() => {
       this.stopped = { reason };
     });
+    log.info({
+      ...this.logContext('tool.stopping'),
+      reason: stopReasonText(reason),
+    }, 'tool event');
     this.abortController.abort(reason);
     const stopping = this.stopping;
     if (stopping === undefined) return;
     try {
       stopping(reason);
-    } catch {
+    } catch (error) {
+      log.warn({
+        ...this.logContext('tool.stopping_failed'),
+        reason: errorMessage(error),
+      }, 'tool event');
       return;
     }
   }
@@ -630,6 +750,10 @@ class CallControl<TContext> {
       this.responseSettled
     ) return;
     this.abandoned = true;
+    log.warn({
+      ...this.logContext('tool.abandoned'),
+      reason: stopReasonText(this.stopped.reason),
+    }, 'tool event');
     const error = abortedError(this.call, this.currentPhase, 'abandoned', this.stopped.reason);
     const result = value === undefined
       ? this.errorResult(error, [{ type: 'text', text: error.reason }])
@@ -649,7 +773,11 @@ class CallControl<TContext> {
     let acknowledgement: ToolAcknowledgement;
     try {
       acknowledgement = provided ?? this.detachAck?.(reason) ?? this.host.detachAck(this.snapshot(), reason);
-    } catch {
+    } catch (error) {
+      log.warn({
+        ...this.logContext('tool.detach_ack_failed'),
+        reason: errorMessage(error),
+      }, 'tool event');
       acknowledgement = this.host.detachAck(this.snapshot(), reason);
     }
     const detached: ToolDetachAck = {
@@ -662,72 +790,47 @@ class CallControl<TContext> {
     this.change(() => {
       this.detachedAck = detached;
     });
-    this.acknowledge?.(detached);
+    log.info(this.logContext('tool.detached'), 'tool event');
+    this.detachment.resolve(detached);
     return detached;
   }
 
-  handle(completion: Promise<ToolResult>): AnyHandler {
-    const settled = (async (): Promise<ToolResult> => {
-      const result = await completion;
-      this.change(() => {
-        this.remember(result.outcome);
-        this.total.end();
-        this.execution?.end();
-      });
-      return result;
-    })();
-    const returned = new Promise<ToolExecutionResponse>((resolve, reject) => {
-      this.acknowledge = resolve;
-      if (this.detachedAck !== undefined) resolve(this.detachedAck);
-      settled.then(resolve, reject);
+  private wait(
+    completion: Promise<ToolResult>,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
+    if (timeoutMs === undefined && signal === undefined) return completion;
+    if (this.outcome !== undefined) return completion;
+    if (signal?.aborted === true) return Promise.reject(signal.reason);
+    const delay = timeoutMs !== undefined && Number.isFinite(timeoutMs)
+      ? Math.min(Math.max(0, timeoutMs), 2_147_483_647)
+      : undefined;
+    return new Promise<ToolResult>((resolve, reject) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const abortSignal = signal;
+      const cleanup = (): void => {
+        if (timer !== undefined) clearTimeout(timer);
+        abortSignal?.removeEventListener('abort', onAbort);
+      };
+      const finish = (complete: () => void): void => {
+        if (done) return;
+        done = true;
+        cleanup();
+        complete();
+      };
+      const onAbort = (): void => finish(() => reject(abortSignal?.reason));
+      if (delay !== undefined) {
+        timer = setTimeout(() => finish(() => reject(new ToolTimeoutError(delay))), delay);
+        timer.unref?.();
+      }
+      abortSignal?.addEventListener('abort', onAbort, { once: true });
+      completion.then(
+        (result) => finish(() => resolve(result)),
+        (error: unknown) => finish(() => reject(error)),
+      );
     });
-    const wait = (timeoutMs?: number, signal?: AbortSignal): Promise<ToolResult> => {
-      if (timeoutMs === undefined && signal === undefined) return settled;
-      if (this.outcome !== undefined) return settled;
-      if (signal?.aborted === true) return Promise.reject(signal.reason);
-      const delay = timeoutMs !== undefined && Number.isFinite(timeoutMs)
-        ? Math.min(Math.max(0, timeoutMs), 2_147_483_647)
-        : undefined;
-      return new Promise<ToolResult>((resolve, reject) => {
-        let done = false;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const abortSignal = signal;
-        const cleanup = (): void => {
-          if (timer !== undefined) clearTimeout(timer);
-          abortSignal?.removeEventListener('abort', onAbort);
-        };
-        const finish = (complete: () => void): void => {
-          if (done) return;
-          done = true;
-          cleanup();
-          complete();
-        };
-        const onAbort = (): void => finish(() => reject(abortSignal?.reason));
-        if (delay !== undefined) {
-          timer = setTimeout(() => finish(() => reject(new ToolTimeoutError(delay))), delay);
-          timer.unref?.();
-        }
-        abortSignal?.addEventListener('abort', onAbort, { once: true });
-        settled.then(
-          (result) => finish(() => resolve(result)),
-          (error: unknown) => finish(() => reject(error)),
-        );
-      });
-    };
-    const handler: Omit<AnyHandler, 'then'> = {
-      taskId: this.taskId,
-      wait,
-      stop: (reason) => {
-        if (this.outcome === undefined) this.requestStop(reason);
-        return settled;
-      },
-      detach: (reason, acknowledgement) => this.detach(reason, acknowledgement),
-      snapshot: () => this.snapshot(),
-      output: (maxPreviewBytes?: number) => this.output(maxPreviewBytes),
-      fields: () => this.fields(),
-      observe: (listener) => this.observe(listener),
-    };
-    return Object.assign(returned, handler);
   }
 
   private change(apply: () => void): void {
@@ -741,10 +844,23 @@ class CallControl<TContext> {
   }
 
   private emit(event: ToolHandlerEvent<any, any>): void {
+    if (event.type === 'output') {
+      log.debug({
+        ...this.logContext('tool.output'),
+        offset: event.offset,
+        characters: event.text.length,
+      }, 'tool event');
+    }
     for (const listener of Array.from(this.listeners)) {
       try {
         listener(event);
-      } catch {
+      } catch (error) {
+        log.warn({
+          ...this.logContext('tool.observer_failed'),
+          source: 'handler',
+          eventType: event.type,
+          reason: errorMessage(error),
+        }, 'tool event');
         continue;
       }
     }
