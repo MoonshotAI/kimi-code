@@ -46,5 +46,8 @@
     "openai": "^6.34.0",
     "radashi": "^12.9.1",
     "undici": "^7.27.1"
+  },
+  "devDependencies": {
+    "pino": "^9.5.0"
   }
 }

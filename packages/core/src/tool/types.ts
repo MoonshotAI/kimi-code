@@ -241,8 +241,6 @@ export interface ToolExecutorPolicy<TContext = unknown, TPrepared = unknown> {
     snapshot: ToolExecutionSnapshot<any, TPrepared>,
     reason: unknown,
   ) => ToolAcknowledgement;
-  readonly now?: () => number;
-  readonly tick?: () => number;
 }
 
 export type ToolExecute<TArgs = unknown, TContext = unknown, TFields extends object = object, TPrepared = unknown> = (
