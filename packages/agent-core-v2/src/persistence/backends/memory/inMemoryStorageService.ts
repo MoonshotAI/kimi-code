@@ -5,14 +5,33 @@ import {
   type StorageWriteOptions,
 } from '#/persistence/interface/storage';
 
+interface MemoryEntry {
+  chunks: Uint8Array[];
+  byteLength: number;
+}
+
+function materialize(entry: MemoryEntry): Uint8Array {
+  if (entry.chunks.length === 0) return new Uint8Array(0);
+  if (entry.chunks.length === 1) return entry.chunks[0]!;
+  const merged = new Uint8Array(entry.byteLength);
+  let offset = 0;
+  for (const chunk of entry.chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  entry.chunks = [merged];
+  return merged;
+}
+
 export class InMemoryStorageService implements IFileSystemStorageService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly scopes = new Map<string, Map<string, Uint8Array>>();
+  private readonly scopes = new Map<string, Map<string, MemoryEntry>>();
   private readonly mtimes = new Map<string, number>();
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
-    return this.scopes.get(scope)?.get(key);
+    const entry = this.scopes.get(scope)?.get(key);
+    return entry === undefined ? undefined : materialize(entry);
   }
 
   async *readStream(
@@ -20,15 +39,28 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     key: string,
     range?: StorageReadRange,
   ): AsyncIterable<Uint8Array> {
-    const data = this.scopes.get(scope)?.get(key);
-    if (data === undefined) return;
+    const entry = this.scopes.get(scope)?.get(key);
+    if (entry === undefined) return;
     if (range === undefined) {
-      yield data;
+      for (const chunk of entry.chunks) {
+        if (chunk.byteLength > 0) yield chunk;
+      }
       return;
     }
     const start = Math.max(0, range.start);
-    const end = Math.min(data.byteLength, range.end + 1);
-    if (start < end) yield data.subarray(start, end);
+    const end = Math.min(entry.byteLength, range.end + 1);
+    if (start >= end) return;
+    let offset = 0;
+    for (const chunk of entry.chunks) {
+      const chunkStart = offset;
+      const chunkEnd = offset + chunk.byteLength;
+      offset = chunkEnd;
+      if (chunkEnd <= start) continue;
+      if (chunkStart >= end) break;
+      const sliceStart = Math.max(0, start - chunkStart);
+      const sliceEnd = Math.min(chunk.byteLength, end - chunkStart);
+      if (sliceStart < sliceEnd) yield chunk.subarray(sliceStart, sliceEnd);
+    }
   }
 
   async write(
@@ -38,7 +70,10 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     options: StorageWriteOptions = {},
   ): Promise<void> {
     options.signal?.throwIfAborted();
-    this.bucket(scope).set(key, data);
+    this.bucket(scope).set(key, {
+      chunks: data.byteLength === 0 ? [] : [data.slice()],
+      byteLength: data.byteLength,
+    });
     this.mtimes.set(this.keyFor(scope, key), Date.now());
   }
 
@@ -52,17 +87,13 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     let total = 0;
     for await (const chunk of source) {
       options.signal?.throwIfAborted();
-      chunks.push(chunk);
-      total += chunk.byteLength;
+      if (chunk.byteLength > 0) {
+        chunks.push(chunk.slice());
+        total += chunk.byteLength;
+      }
     }
     options.signal?.throwIfAborted();
-    const merged = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    this.bucket(scope).set(key, merged);
+    this.bucket(scope).set(key, { chunks, byteLength: total });
     this.mtimes.set(this.keyFor(scope, key), Date.now());
   }
 
@@ -75,14 +106,17 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     const bucket = this.bucket(scope);
     const existing = bucket.get(key);
     if (existing === undefined) {
-      bucket.set(key, data);
+      bucket.set(key, {
+        chunks: data.byteLength === 0 ? [] : [data.slice()],
+        byteLength: data.byteLength,
+      });
       this.mtimes.set(this.keyFor(scope, key), Date.now());
       return;
     }
-    const merged = new Uint8Array(existing.byteLength + data.byteLength);
-    merged.set(existing, 0);
-    merged.set(data, existing.byteLength);
-    bucket.set(key, merged);
+    if (data.byteLength > 0) {
+      existing.chunks.push(data.slice());
+      existing.byteLength += data.byteLength;
+    }
     this.mtimes.set(this.keyFor(scope, key), Date.now());
   }
 
@@ -122,7 +156,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     return `${scope}\0${key}`;
   }
 
-  private bucket(scope: string): Map<string, Uint8Array> {
+  private bucket(scope: string): Map<string, MemoryEntry> {
     let bucket = this.scopes.get(scope);
     if (bucket === undefined) {
       bucket = new Map();

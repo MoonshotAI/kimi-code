@@ -3,7 +3,7 @@ import { WebSocketServer } from 'ws';
 
 import { type IConnectionRegistry } from '../connectionRegistry';
 import type { SessionEventBroadcaster } from './sessionEventBroadcaster';
-import { createTaskSource } from './taskRequests';
+import { createTaskSource, type TaskSessionRetainer } from './taskRequests';
 import { WsConnectionV1 } from './wsConnectionV1';
 import { selectWsBearerProtocol } from '../bearerProtocol';
 
@@ -12,6 +12,7 @@ export const WS_PATH = '/api/v1/ws';
 export interface RegisterWsV1Options {
   readonly registry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
+  readonly taskRetainer?: TaskSessionRetainer;
   readonly flushIntervalMs?: number;
   readonly maxBatchSize?: number;
   readonly highWaterMarkBytes?: number;
@@ -28,6 +29,7 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
       socket,
       broadcaster,
       taskSource,
+      taskRetainer: opts.taskRetainer,
       connectionRegistry: registry,
       remoteAddress: req.socket.remoteAddress ?? null,
       userAgent: req.headers['user-agent'] ?? null,

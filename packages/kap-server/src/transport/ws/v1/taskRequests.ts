@@ -76,6 +76,10 @@ export interface TaskRequestSink {
 
 type TaskAddress = Pick<TaskWatchMessage, 'session_id' | 'agent_id' | 'task_id'>;
 
+export interface TaskSessionRetainer {
+  retain(sessionId: string): () => void;
+}
+
 export class TaskRequests {
   private readonly watches = new Map<string, IDisposable>();
   private readonly queues = new Map<string, Promise<void>>();
@@ -84,18 +88,19 @@ export class TaskRequests {
   constructor(
     private readonly source: TaskSource,
     private readonly sink: TaskRequestSink,
+    private readonly sessionRetainer?: TaskSessionRetainer,
   ) {}
 
   handle(requestId: string, frame: unknown): void {
     const watch = taskWatchMessageSchema.safeParse(frame);
     if (watch.success) {
-      this.enqueue(watchKey(watch.data), () => this.watch(watch.data));
+      this.enqueue(watch.data.session_id, watchKey(watch.data), () => this.watch(watch.data));
       return;
     }
     const unwatch = taskUnwatchMessageSchema.safeParse(frame);
     if (unwatch.success) {
       const key = watchKey(unwatch.data);
-      this.enqueue(key, async () => {
+      this.enqueue(unwatch.data.session_id, key, async () => {
         this.unwatch(key);
         this.sink.respond(requestId, ErrorCode.SUCCESS);
       });
@@ -103,7 +108,7 @@ export class TaskRequests {
     }
     const stop = taskStopMessageSchema.safeParse(frame);
     if (stop.success) {
-      this.enqueue(watchKey(stop.data), () =>
+      this.enqueue(stop.data.session_id, watchKey(stop.data), () =>
         this.command(requestId, stop.data, async ({ executor }, taskId) => {
           const handler = executor.handler(taskId);
           if (handler === undefined) return undefined;
@@ -115,7 +120,7 @@ export class TaskRequests {
     }
     const background = taskBackgroundMessageSchema.safeParse(frame);
     if (background.success) {
-      this.enqueue(watchKey(background.data), () =>
+      this.enqueue(background.data.session_id, watchKey(background.data), () =>
         this.command(
           requestId,
           background.data,
@@ -141,8 +146,12 @@ export class TaskRequests {
     this.watches.clear();
   }
 
-  private enqueue(key: string, run: () => Promise<void>): void {
-    const next = (this.queues.get(key) ?? Promise.resolve()).then(run).catch(() => undefined);
+  private enqueue(sessionId: string, key: string, run: () => Promise<void>): void {
+    const release = this.sessionRetainer?.retain(sessionId);
+    const next = (this.queues.get(key) ?? Promise.resolve())
+      .then(run)
+      .catch(() => undefined)
+      .finally(() => release?.());
     this.queues.set(key, next);
     void next.then(() => {
       if (this.queues.get(key) === next) this.queues.delete(key);
@@ -196,7 +205,22 @@ export class TaskRequests {
         if (live) forward(chunk);
         else pending.push(chunk);
       });
-      this.watches.set(key, { dispose: unobserve ?? (() => {}) });
+      const watchRelease = this.sessionRetainer?.retain(sessionId);
+      let watchReleased = false;
+      const watchDisposable = {
+        dispose: () => {
+          unobserve?.();
+          if (!watchReleased) {
+            watchReleased = true;
+            watchRelease?.();
+          }
+        },
+      };
+      if (this.disposed) {
+        watchDisposable.dispose();
+        return;
+      }
+      this.watches.set(key, watchDisposable);
 
       let tail: AgentTaskOutputTail;
       try {
@@ -215,7 +239,10 @@ export class TaskRequests {
         fail(ErrorCode.PERSISTENCE_FAILURE, 'task output unavailable');
         return;
       }
-      if (this.disposed) return;
+      if (this.disposed) {
+        this.unwatch(key);
+        return;
+      }
 
       const first = firstChunk(tail.offset, tail.data, request.since_offset);
       const info = taskInfo(resolved.channel, taskId);

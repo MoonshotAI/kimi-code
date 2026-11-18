@@ -170,6 +170,71 @@ describe('server-v2 boot', () => {
     expect(await listLiveServerInstances(home)).toEqual([]);
   });
 
+  it('retains a newly created ephemeral session until POST /api/v1/sessions completes', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-create-retain-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-create-work-'));
+    try {
+      server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+        env: { KIMI_CODE_SESSION_IDLE_RECLAIM_MS: '1' },
+        idleSweepIntervalMs: 5,
+      });
+
+      const { ISessionManager, ISessionMetadata } = await import('@moonshot-ai/agent-core-v2');
+      const manager = server.core.accessor.get(ISessionManager);
+      const originalCreate = manager.create.bind(manager);
+      let createdId: string | undefined;
+      let releaseSetTitle!: () => void;
+      const setTitleEntered = new Promise<void>((resolve) => {
+        vi.spyOn(manager, 'create').mockImplementation(async (options) => {
+          const handle = await originalCreate(options);
+          createdId = handle.id;
+          const metadata = handle.accessor.get(ISessionMetadata);
+          const originalSetTitle = metadata.setTitle.bind(metadata);
+          vi.spyOn(metadata, 'setTitle').mockImplementation(async (title) => {
+            resolve();
+            await new Promise<void>((resume) => {
+              releaseSetTitle = resume;
+            });
+            await originalSetTitle(title);
+          });
+          return handle;
+        });
+      });
+
+      const base = `http://127.0.0.1:${server.port}`;
+      const createPromise = authedFetch(server, base, '/api/v1/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd: workDir, ephemeral: true, title: 'Retained Ephemeral' }),
+      });
+
+      await setTitleEntered;
+      expect(createdId).toBeDefined();
+      await new Promise((resolve) => setTimeout(resolve, 35));
+      expect(manager.list().map((h) => h.id)).toContain(createdId);
+
+      releaseSetTitle();
+      const res = await createPromise;
+      const body = (await res.json()) as { code: number; data: { id: string } };
+      expect(body.code).toBe(0);
+      expect(body.data.id).toBe(createdId);
+
+      await vi.waitFor(
+        () => {
+          expect(manager.list().map((h) => h.id)).not.toContain(createdId);
+        },
+        { timeout: 1000, interval: 10 },
+      );
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
   it('seeds explicit skill dirs into the core scope when skillDirs is provided', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
     server = await startServer({

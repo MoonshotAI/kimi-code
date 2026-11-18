@@ -13,7 +13,7 @@ import type {
   BroadcastTarget,
   SessionEventBroadcaster,
 } from './sessionEventBroadcaster';
-import { TaskRequests, type TaskSource } from './taskRequests';
+import { TaskRequests, type TaskSessionRetainer, type TaskSource } from './taskRequests';
 
 const COMMAND_TYPES: ReadonlySet<string> = new Set([
   'subscribe',
@@ -42,6 +42,7 @@ export interface WsConnectionV1Options {
   readonly socket: WebSocket;
   readonly broadcaster: SessionEventBroadcaster;
   readonly taskSource: TaskSource;
+  readonly taskRetainer?: TaskSessionRetainer;
   readonly connectionRegistry: IConnectionRegistry;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
@@ -67,6 +68,7 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private closed = false;
   private controlQueue: Promise<void> = Promise.resolve();
+  private readonly queuedSubscribeReleases = new Set<() => void>();
 
   private outbound: unknown[] = [];
   private flushTimer?: ReturnType<typeof setTimeout>;
@@ -88,14 +90,18 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.maxBatchSize = opts.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
-    this.taskRequests = new TaskRequests(opts.taskSource, {
-      respond: (requestId, code, msg, task) => {
-        this.sendImmediateFrame(buildResponse(requestId, code, msg, task));
+    this.taskRequests = new TaskRequests(
+      opts.taskSource,
+      {
+        respond: (requestId, code, msg, task) => {
+          this.sendImmediateFrame(buildResponse(requestId, code, msg, task));
+        },
+        output: (frame) => {
+          this.sendSubscribedFrame(frame);
+        },
       },
-      output: (frame) => {
-        this.sendSubscribedFrame(frame);
-      },
-    });
+      opts.taskRetainer,
+    );
 
     this.socket.on('message', (data: RawData) => this.onMessage(data));
     this.socket.on('close', () => this.onClose());
@@ -111,6 +117,10 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   get subscriptionSessionIds(): readonly string[] {
     return this.broadcaster.sessionsOf(this);
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   send(frame: BroadcastFrame, delivery: BroadcastDelivery = 'subscription'): void {
@@ -136,7 +146,23 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     if (frame.type === 'subscribe') {
-      this.enqueueControl(() => this.onSubscribe(requestId, frame));
+      const maybeSid = (frame as { session_id?: unknown }).session_id;
+      const releaseQueued =
+        typeof maybeSid === 'string' && maybeSid.trim().length > 0
+          ? this.broadcaster.retainPendingSubscribe?.(maybeSid)
+          : undefined;
+      if (releaseQueued !== undefined) this.queuedSubscribeReleases.add(releaseQueued);
+      this.enqueueControl(async () => {
+        try {
+          if (this.closed) return;
+          await this.onSubscribe(requestId, frame);
+        } finally {
+          if (releaseQueued !== undefined) {
+            this.queuedSubscribeReleases.delete(releaseQueued);
+            releaseQueued();
+          }
+        }
+      });
     } else if (frame.type === 'unsubscribe') {
       this.enqueueControl(() => this.onUnsubscribe(requestId, frame));
     } else {
@@ -294,6 +320,8 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     this.outbound = [];
+    for (const release of this.queuedSubscribeReleases) release();
+    this.queuedSubscribeReleases.clear();
     this.taskRequests.dispose();
     this.broadcaster.removeTarget(this);
   }

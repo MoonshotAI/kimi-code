@@ -11,6 +11,7 @@ export type SessionCloseReason = 'exit' | 'reclaim' | 'archive';
 
 export interface CreateSessionOptions {
   readonly sessionId?: string;
+  readonly ephemeral?: boolean;
   readonly workDir: string;
   readonly additionalDirs?: readonly string[];
   readonly mainAgentBinding?: BindAgentInput;

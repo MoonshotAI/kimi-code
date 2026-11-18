@@ -12,6 +12,7 @@ export interface SessionWireFields {
   readonly updatedAt: number;
   readonly archived: boolean;
   readonly archivedAt?: number;
+  readonly ephemeral?: boolean;
   readonly custom?: Record<string, unknown>;
 }
 

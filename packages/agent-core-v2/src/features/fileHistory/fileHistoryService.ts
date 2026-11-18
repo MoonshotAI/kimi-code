@@ -345,13 +345,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     );
     if (start === undefined) return;
     await this.sweepOrphanBlobs();
-    void touchFileHistorySession({
-      docs: this.docs,
-      hostFs: this.hostFs,
-      workspaceId: this.sessionCtx.workspaceId,
-      sessionDir: this.sessionCtx.sessionDir,
-      sessionId: this.sessionCtx.sessionId,
-    });
+    if (this.sessionCtx.ephemeral !== true) {
+      void touchFileHistorySession({
+        docs: this.docs,
+        hostFs: this.hostFs,
+        workspaceId: this.sessionCtx.workspaceId,
+        sessionDir: this.sessionCtx.sessionDir,
+        sessionId: this.sessionCtx.sessionId,
+      });
+    }
 
     const entries: Record<string, FileBackupEntry> = Object.create(null) as Record<
       string,

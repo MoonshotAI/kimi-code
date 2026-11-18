@@ -293,7 +293,9 @@ async function runBatchArchive(
           error:
             outcome.reason === 'not_found'
               ? { code: ErrorCode.SESSION_NOT_FOUND, message: outcome.message }
-              : { code: ErrorCode.INTERNAL_ERROR, message: outcome.message },
+              : outcome.reason === 'ephemeral'
+                ? { code: ErrorCode.SESSION_EPHEMERAL_UNSUPPORTED, message: outcome.message }
+                : { code: ErrorCode.INTERNAL_ERROR, message: outcome.message },
         },
   );
   await core.accessor.get(ISessionIndexMirror).drain();
@@ -578,6 +580,7 @@ export function registerSessionListAndBatchRoutes(
   app: SessionListRouteHost,
   core: Scope,
   hosts?: HostSources,
+  retainSessionForRequest?: (req: object, sessionId: string) => void,
 ): void {
   const gitResolver = new GitDomainResolver(core);
   const listRoute = defineRoute(
@@ -628,6 +631,9 @@ export function registerSessionListAndBatchRoutes(
         tags: ['sessions'],
       },
       async (req, reply) => {
+        for (const id of new Set(req.body.ids)) {
+          retainSessionForRequest?.(req, id);
+        }
         await runBatchArchive(core, action, req.body.ids, req.id, reply);
       },
     );

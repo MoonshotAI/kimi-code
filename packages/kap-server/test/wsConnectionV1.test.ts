@@ -1391,4 +1391,64 @@ describe('WsConnectionV1 task output', () => {
 
     expect(socket.closeCalls[0]).toEqual({ code: 1008, reason: 'invalid message' });
   });
+
+  it('releases task session retention if the socket closes during source resolution or handler observation', async () => {
+    const output = await makeTaskOutput('', startLines);
+    let retainedCount = 0;
+    const taskRetainer = {
+      retain: () => {
+        retainedCount += 1;
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          retainedCount -= 1;
+        };
+      },
+    };
+    const socket = new FakeSocket();
+    makeConn(socket, { taskSource: output.source, taskRetainer });
+    const releaseSource = output.holdSource();
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: output.taskId });
+    await vi.waitFor(() => expect(output.sourceCalls()).toBe(1));
+
+    socket.emit('close');
+    releaseSource();
+
+    await vi.waitFor(() => {
+      expect(output.listenerCount()).toBe(0);
+      expect(retainedCount).toBe(0);
+    });
+
+    const socket2 = new FakeSocket();
+    makeConn(socket2, {
+      taskSource: async (sid, aid, tid) => {
+        const res = await output.source(sid, aid, tid);
+        if (res.kind === 'found') {
+          const origHandler = res.channel.executor.handler.bind(res.channel.executor);
+          return {
+            kind: 'found',
+            channel: {
+              ...res.channel,
+              executor: {
+                ...res.channel.executor,
+                handler: (id: string) => {
+                  socket2.emit('close');
+                  return origHandler(id);
+                },
+              },
+            },
+          };
+        }
+        return res;
+      },
+      taskRetainer,
+    });
+    send(socket2, { type: 'task.watch', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: output.taskId });
+    await vi.waitFor(() => {
+      expect(output.listenerCount()).toBe(0);
+      expect(retainedCount).toBe(0);
+    });
+  });
 });

@@ -28,7 +28,7 @@ All `/api/v1/*`, `/openapi.json`, and `/asyncapi.json` endpoints require `Author
 
 ## 2. Request conventions
 
-- **JSON envelope**: JSON endpoints return `{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`. Check `code === 0` first (`40001` validation error with `details`, `40401` session/agent not found, `40404` interaction not found, `40901` session busy, `40902` interaction already ended, `40927` `prompt_id` conflict, `40931` session locked by another process, `40939` agent not closable, `40940` turn not continuable, `41001`/`41002` interaction expired; HTTP `401`/`403`/`429` indicate auth or rate-limit rejection).
+- **JSON envelope**: JSON endpoints return `{ "code": 0, "msg": "success", "data": ..., "request_id": "..." }`. Check `code === 0` first (`40001` validation error with `details`, `40401` session/agent not found, `40404` interaction not found, `40901` session busy, `40902` interaction already ended, `40927` `prompt_id` conflict, `40931` session locked by another process, `40939` agent not closable, `40940` turn not continuable, `40941` unsupported on ephemeral session, `41001`/`41002` interaction expired; HTTP `401`/`403`/`429` indicate auth or rate-limit rejection).
 - **Workspace placement when creating sessions (`workspace_id` vs `cwd`)**:
   - Keep new or follow-up sessions in the **current project/workspace** unless the user explicitly asks for a different directory -- do **not** switch `cwd` to `$HOME` just because a task inspects machine-wide paths.
   - On `POST /api/v1/sessions`, passing only `cwd` always routes to an `implicit` (`wd_*`) bucket and will **not** attach to a Desktop `managed` (`wm_*`) workspace. Resolve `workspace_id` first:
@@ -126,7 +126,7 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 | `GET /api/v1/kap.md` / `GET /openapi.json` / `GET /asyncapi.json` | `baseline` | Built-in runtime guide (`text/markdown`), REST OpenAPI 3.0 schema, and WS AsyncAPI 3.1 schema |
 | `GET /api/v1/workspaces` | `baseline` | List workspaces (`{ items: [{ id, root, name, kind: "managed" \| "implicit" }] }`) |
 | `GET /api/v1/models` | `baseline` | List available models (`{ items: [{ provider, model, display_name?, support_efforts? }] }`) |
-| `POST /api/v1/sessions` | `baseline` | Create a session (`workspace_id` or `cwd`, `title?`, `metadata?`, `agent_config?`, `environment_id?`) |
+| `POST /api/v1/sessions` | `baseline` | Create a session (`workspace_id` or `cwd`, `title?`, `metadata?`, `agent_config?`, `environment_id?`, or `ephemeral: true` when `ephemeral_sessions` is enabled -- `:fork`/`:archive`/`:restore`/`:reload` return `40941`) |
 | `GET /api/v1/sessions` / `GET /api/v1/sessions/{session_id}` | `baseline` | List sessions across workspaces (`flat` or `by_workspace`, filters, pagination) or get one session |
 | `POST /api/v1/sessions/{session_id}:wait` | `session_wait` | Wait until `activity !== "turn"`, a pending interaction appears, or `timeout_ms` (`0..60000`, default `15000`) |
 | `POST /api/v1/sessions/{session_id}:cancel` | `baseline` | Cancel active turn (`agent_id?`, `include_background?`) |

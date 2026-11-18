@@ -7,6 +7,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AgentTaskPersistence } from '#/agent/task/task';
 import type { AgentTaskSpillTarget } from '#/agent/task/persist';
+import { AgentTaskOutputService } from '#/agent/task/taskOutput';
+import { environmentTempTarget, type IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { Environment, EnvironmentLease, EnvironmentPath } from '#/environment/environment';
+import type { ILogService } from '#/_base/log/log';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { recordingAppendFs } from './stubs';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -339,6 +345,130 @@ describe('AgentTaskPersistence', () => {
     for (const bad of rejected) {
       expect(() => persistence.taskOutputFile(bad)).toThrow(/Invalid task id/);
     }
+  });
+
+  it('mirrors ephemeral remote task output under a session-owned remote directory and cleans it up on session drain', async () => {
+    const files = new Map<string, string>();
+    const removed: string[] = [];
+    const fs = createMapFs(files);
+    fs.remove = async (path) => {
+      removed.push(path);
+      for (const key of [...files.keys()]) {
+        if (key === path || key.startsWith(`${path}/`)) files.delete(key);
+      }
+    };
+    const pathApi: EnvironmentPath = {
+      separator: '/',
+      delimiter: ':',
+      isAbsolute: (p) => p.startsWith('/'),
+      join: (...parts) => parts.join('/'),
+      relative: (_from, to) => to,
+      resolve: (...parts) => parts.join('/'),
+      basename: (p) => p.slice(p.lastIndexOf('/') + 1),
+      dirname: (p) => p.slice(0, Math.max(p.lastIndexOf('/'), 0)),
+    };
+    const tracked: Array<{ sessionId?: string; dispose: () => Promise<void> | void }> = [];
+    const env = {
+      identity: { environmentId: 'ssh-1', generation: 'g1' },
+      host: { tempDir: '/remote/tmp' },
+      fs,
+      path: pathApi,
+    } as unknown as Environment;
+    const lease: EnvironmentLease = {
+      environment: env,
+      track: (resource, sid) => {
+        tracked.push({ sessionId: sid, dispose: () => resource.dispose() });
+        return resource;
+      },
+      dispose: () => {},
+    };
+    const envService = {
+      inspect: () => env,
+      acquire: () => lease,
+    } as unknown as IAgentEnvironmentService;
+    const sessionCtx = {
+      _serviceBrand: undefined,
+      sessionId: 's_ephem',
+      workspaceId: 'ws_1',
+      sessionDir,
+      metaScope: SESSION_SCOPE,
+      cwd: sessionDir,
+      ephemeral: true,
+      scope: (sub?: string) => (sub ? `${SESSION_SCOPE}/${sub}` : SESSION_SCOPE),
+    } satisfies ISessionContext;
+    const agentScope = {
+      _serviceBrand: undefined,
+      agentId: 'main',
+      scope: (sub?: string) => (sub ? `${AGENT_SCOPE}/${sub}` : AGENT_SCOPE),
+    } as unknown as IAgentScopeContext;
+    const service = new AgentTaskOutputService(
+      bytes,
+      sessionCtx,
+      agentScope,
+      envService,
+      { error: () => {} } as unknown as ILogService,
+    );
+
+    await service.appendTaskOutput('bash-ephem001', 'remote-full-output');
+    const snapshot = await service.readTaskOutputSnapshot('bash-ephem001', 64);
+    expect(snapshot?.outputPath).toBe('/remote/tmp/kimi-code/ephemeral-s_ephem/task-output/bash-ephem001.log');
+    expect(files.get('/remote/tmp/kimi-code/ephemeral-s_ephem/task-output/bash-ephem001.log')).toBe('remote-full-output');
+    expect(tracked).toHaveLength(1);
+    expect(tracked[0]?.sessionId).toBe('s_ephem');
+
+    const second = environmentTempTarget(envService, 'original-images', undefined, {
+      sessionId: 's_ephem',
+      ephemeral: true,
+    });
+    expect(second?.dir).toBe('/remote/tmp/kimi-code/ephemeral-s_ephem/original-images');
+    expect(tracked).toHaveLength(1);
+
+    await tracked[0]!.dispose();
+    expect(removed).toEqual(['/remote/tmp/kimi-code/ephemeral-s_ephem']);
+
+    const recreated = environmentTempTarget(envService, 'task-output', undefined, {
+      sessionId: 's_ephem',
+      ephemeral: true,
+    });
+    expect(recreated?.dir).toBe('/remote/tmp/kimi-code/ephemeral-s_ephem/task-output');
+    expect(tracked).toHaveLength(2);
+  });
+
+  it('returns the physical output.log path inside sessionDir for local ephemeral sessions', async () => {
+    const localEnv = {
+      identity: { environmentId: 'local', generation: 0 },
+    } as unknown as Environment;
+    const localEnvService = {
+      inspect: () => localEnv,
+      acquire: () => ({ environment: localEnv, track: (r: unknown) => r, dispose: () => {} }),
+    } as unknown as IAgentEnvironmentService;
+    const sessionCtx = {
+      _serviceBrand: undefined,
+      sessionId: 's_local_ephem',
+      workspaceId: 'ws_1',
+      sessionDir,
+      metaScope: SESSION_SCOPE,
+      cwd: sessionDir,
+      ephemeral: true,
+      scope: (sub?: string) => (sub ? `${SESSION_SCOPE}/${sub}` : SESSION_SCOPE),
+    } satisfies ISessionContext;
+    const agentScope = {
+      _serviceBrand: undefined,
+      agentId: 'main',
+      scope: (sub?: string) => (sub ? `${AGENT_SCOPE}/${sub}` : AGENT_SCOPE),
+    } as unknown as IAgentScopeContext;
+    const service = new AgentTaskOutputService(
+      bytes,
+      sessionCtx,
+      agentScope,
+      localEnvService,
+      { error: () => {} } as unknown as ILogService,
+    );
+
+    await service.appendTaskOutput('bash-loc00001', 'local-ephemeral-output');
+    const snapshot = await service.readTaskOutputSnapshot('bash-loc00001', 64);
+    expect(snapshot?.outputPath).toBe(join(sessionDir, AGENT_SCOPE, 'tasks', 'bash-loc00001', 'output.log'));
+    expect((await stat(snapshot!.outputPath)).size).toBe(22);
   });
   });
 });
