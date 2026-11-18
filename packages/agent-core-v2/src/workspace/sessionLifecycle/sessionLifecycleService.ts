@@ -5,7 +5,6 @@ import { join } from 'pathe';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import type { InstantiationService } from '#/_base/di/instantiationService';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ProgramWorkdir } from '#/program/program';
 import {
   createScopedChildHandle,
@@ -95,9 +94,6 @@ import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
-import { WorkspaceGitService } from '#/workspace/workspaceGit/workspaceGitService';
-import { IGitService } from '#/app/git/git';
-import { GitService } from '#/app/git/gitService';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
@@ -330,8 +326,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             }],
             [IWorkspaceContext, { ...this.workspaceContext, cwd: workdir.dirs.primary }],
             [IWorkspaceDirs, dirs],
-            [IGitService, new SyncDescriptor(GitService)],
-            [IWorkspaceGitService, new SyncDescriptor(WorkspaceGitService)],
+            [IWorkspaceGitService, workdir.git],
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
           ],
           configureContainer: (childContainer) => {

@@ -50,6 +50,7 @@ export interface ProgramWorkdir {
   readonly hostFs: IHostFileSystem;
   readonly localConfig: FileProjectLocalConfigService;
   readonly dirs: IWorkspaceDirs;
+  readonly git: IWorkspaceGitService;
   readonly fs: IWorkspaceFsService;
   readonly instructions: IWorkspaceInstructionsService;
   readonly skills: IWorkspaceSkillCatalog;
@@ -116,6 +117,7 @@ export class ProgramWorkdirs {
       hostFs: acquired.view.hostFs,
       localConfig: acquired.view.localConfig,
       dirs: acquired.view.dirs,
+      git: acquired.view.git,
       fs: acquired.view.fs,
       instructions: acquired.view.instructions,
       skills: acquired.view.skills,

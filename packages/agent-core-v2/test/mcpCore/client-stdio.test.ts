@@ -113,7 +113,7 @@ describe('StdioMcpClient', () => {
     }
   }, 15000);
 
-  it('sends only the configured env overlay to the child process', async () => {
+  it('sends the merged local env to the child process', async () => {
     const harness = createEnvironmentClient(
       {
         transport: 'stdio',
@@ -125,7 +125,7 @@ describe('StdioMcpClient', () => {
     );
     try {
       await harness.client.connect();
-      expect(harness.spawnEnvs).toEqual([{ KIMI_TEST_LITERAL: 'literal' }]);
+      expect(harness.spawnEnvs).toEqual([expect.objectContaining({ KIMI_TEST_LITERAL: 'literal' })]);
       const result = await harness.client.callTool('read_env', { name: 'KIMI_TEST_LITERAL' });
       expect(result.content).toEqual([{ type: 'text', text: 'literal' }]);
     } finally {
@@ -227,26 +227,27 @@ describe('StdioMcpClient', () => {
     }
   }, 15000);
 
-  it('roots a server at the host cwd instead of defaultCwd', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-remote-cwd-'));
-    const remoteCwd = join(base, 'target');
+  it('uses defaultCwd and falls back to the host home directory', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'kimi-mcp-local-cwd-'));
     const remoteHome = join(base, 'remote-home');
     const explicitCwd = join(base, 'explicit');
     const carrierCwd = join(base, 'carrier');
-    mkdirSync(remoteCwd);
     mkdirSync(remoteHome);
     mkdirSync(explicitCwd);
     mkdirSync(carrierCwd);
     const cases = [
-      { config: {}, host: { homeDir: remoteHome, cwd: remoteCwd }, expected: remoteCwd },
-      { config: {}, host: { homeDir: remoteHome }, expected: remoteHome },
-      { config: { cwd: explicitCwd }, host: { homeDir: remoteHome, cwd: remoteCwd }, expected: explicitCwd },
+      { config: {}, host: { homeDir: remoteHome }, expected: carrierCwd },
+      { config: { cwd: explicitCwd }, host: { homeDir: remoteHome }, expected: explicitCwd },
     ];
     const harnesses = cases.map(({ config, host }) =>
       createEnvironmentClient(
         { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture], ...config },
         { host, defaultCwd: carrierCwd },
       ),
+    );
+    const homeClient = new StdioMcpClient(
+      { transport: 'stdio', command: process.execPath, args: [cwdStdioFixture] },
+      { processService: new HostProcessService(), environment: localEnvironment({ homeDir: remoteHome }) },
     );
     try {
       for (const [index, harness] of harnesses.entries()) {
@@ -256,9 +257,33 @@ describe('StdioMcpClient', () => {
         expect(realpathSync(text)).toBe(realpathSync(cases[index]!.expected));
         expect(harness.spawnCwds).toEqual([cases[index]!.expected]);
       }
+      await homeClient.connect();
+      const result = await homeClient.callTool('get_cwd', {});
+      expect(realpathSync((result.content[0] as { type: 'text'; text: string }).text)).toBe(realpathSync(remoteHome));
     } finally {
       for (const harness of harnesses) await harness.client.close();
+      await homeClient.close();
       await rm(base, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('tracks child process and transport resources with the session id', async () => {
+    const tracked: Array<string | undefined> = [];
+    const client = createClient(
+      { transport: 'stdio', command: process.execPath, args: [stdioFixture] },
+      {
+        sessionId: 'session-1',
+        track: (_resource, sessionId) => {
+          tracked.push(sessionId);
+          return _resource;
+        },
+      },
+    );
+    try {
+      await client.connect();
+      expect(tracked).toEqual(['session-1', 'session-1']);
+    } finally {
+      await client.close();
     }
   }, 15000);
 

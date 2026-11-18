@@ -164,7 +164,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     while (!this.disposing) {
       const existing = this.instances.get(workspace.id);
       if (existing !== undefined) {
-        existing.update(workspace);
         return this.retain(existing);
       }
       const closing = this.closing.get(workspace.id);

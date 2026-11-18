@@ -133,6 +133,7 @@ describe('WorkspaceMcpService', () => {
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         reg.defineInstance(IHostProcessService, new HostProcessService());
+        reg.definePartialInstance(IWorkspaceMcpService, {});
         reg.defineInstance(IHostEnvironment, {
           _serviceBrand: undefined,
           osKind: 'Linux',
@@ -403,6 +404,13 @@ describe('WorkspaceMcpService', () => {
     current = { base: stdioServer() };
     const service = createService();
     manager = service.connectionManager();
+    const serviceWithTracking = service as WorkspaceMcpService;
+    Object.defineProperty(serviceWithTracking, 'track', {
+      value: <T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string): T => {
+        trackedSessions.push(sessionId);
+        return resource;
+      },
+    });
     await service.ready;
 
     const overlay = service.sessionOverlay({ eph: stdioServer() }, { sessionId: 'session-1' });

@@ -35,6 +35,7 @@ export interface StdioMcpClientOptions {
   readonly processService: IHostProcessService;
   readonly environment: IHostEnvironment;
   readonly sessionId?: string;
+  readonly track?: <T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string) => T;
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
@@ -197,7 +198,9 @@ class EnvironmentStdioTransport implements Transport {
       const base = path.resolve(this.options.defaultCwd ?? host.homeDir);
       const cwd = this.config.cwd === undefined ? base : path.resolve(base, this.config.cwd);
       const env = mergeStdioEnv(this.config.env);
-      const process = await this.options.processService.spawn(this.config.command, this.config.args, { cwd, env });
+      const spawned = await this.options.processService.spawn(this.config.command, this.config.args, { cwd, env });
+      const process = this.options.track?.(spawned, this.options.sessionId) ?? spawned;
+      this.options.track?.(this, this.options.sessionId);
       this.process = process;
       process.stdin.on('error', (error: Error) => this.onerror?.(error));
       process.stdout.on('data', (chunk: Buffer | string) => this.onData(chunk));

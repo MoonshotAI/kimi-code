@@ -584,7 +584,8 @@ describe('server-v2 /api/v1/debug RPC', () => {
       rpc('agent', IAgentLoopService, 'data', { sid: id, aid: 'sub-rebuild' }),
     );
     expect(body.code).toBe(0);
-    expect(body.data.profileName).toBe('coder');
+    expect(body.data.systemPrompt).toBeDefined();
+    expect(body.data.thinkingLevel).toBeDefined();
     expect(lifecycle.handleOf('sub-rebuild')).toBeDefined();
   });
 

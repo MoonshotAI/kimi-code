@@ -98,10 +98,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/debug/session/{session_id}/agent/{agent_id}/environment-binding",
-    ],
-    [
-      "GET",
       "/api/v1/debug/session/{session_id}/association",
     ],
     [

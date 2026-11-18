@@ -44,6 +44,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
   private readonly resolveClientName = (): string | undefined => this.identity.current().slug;
   private readonly sessionLifecycle: LiveRef<ISessionManager>;
   private sessionLifecycleAttached = false;
+  private readonly trackedSessions: Array<string | undefined> = [];
   private shutdown?: Promise<void>;
 
   constructor(
@@ -67,6 +68,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       oauthService: this.oauthService,
       stdioCwd: () => this.dirs.primary,
       processService: this.processService,
+      track: (resource, sessionId) => this.track(resource, sessionId),
       environment: this.environment,
       reconnectRetryEnabled: true,
       resolveDefaults: () => this.mcpConfig.tunables(),
@@ -164,6 +166,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       oauthService: this.oauthService,
       stdioCwd: opts?.stdioCwd ?? (() => this.dirs.primary),
       processService: this.processService,
+      track: (resource, sessionId) => this.track(resource, sessionId),
       environment: this.environment,
       reconnectRetryEnabled: true,
       sessionId: opts?.sessionId,
@@ -189,11 +192,16 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
         connectionManager: view,
         isBaselineServer: this.sessionBaseline(this.manager, this.ready, Object.keys(servers)),
       },
-      shutdown: () => {
+      shutdown: async () => {
         unsubscribeOAuth();
-        return sessionManager.shutdown();
+        await sessionManager.shutdown();
       },
     };
+  }
+
+  private track<T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string): T {
+    this.trackedSessions.push(sessionId);
+    return resource;
   }
 
   private oauthEventSubscription(manager: McpConnectionManager): () => void {

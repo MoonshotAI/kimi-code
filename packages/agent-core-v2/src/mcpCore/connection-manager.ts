@@ -116,6 +116,7 @@ export interface McpConnectionManagerOptions {
   readonly processService?: import('#/os/interface/hostProcess').IHostProcessService;
   readonly environment?: import('#/os/interface/hostEnvironment').IHostEnvironment;
   readonly sessionId?: string;
+  readonly track?: <T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string) => T;
   readonly reconnectRetryEnabled?: boolean;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
@@ -809,6 +810,7 @@ export class McpConnectionManager implements McpConnectionView {
         processService,
         environment,
         sessionId: this.options.sessionId,
+        track: this.options.track,
       });
     }
     if (config.transport === 'sse') {

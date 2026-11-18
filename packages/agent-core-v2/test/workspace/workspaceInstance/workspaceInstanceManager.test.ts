@@ -46,9 +46,9 @@ function manager(
     { ready },
     ...Array.from({ length: 26 }, () => undefined),
   ];
-  args[19] = { entries: () => [] };
-  args[29] = { onDidChange: () => ({ dispose: () => {} }) };
-  args[30] = { assertAllowed: () => {} };
+  args[20] = { entries: () => [] };
+  args[30] = { onDidChange: () => ({ dispose: () => {} }) };
+  args[31] = { assertAllowed: () => {} };
   customize?.(args);
   return Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
 }
