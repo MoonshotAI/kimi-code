@@ -18,7 +18,7 @@ Source-only package: `exports` points at `./src/*`, so the **consumer's** bundle
 
 The host app must:
 
-1. **Install the locked renderer deps.** `markstream-vue@1.1.5` and its code-block runtimes are declared by this package; desktop and web do not need duplicate renderer declarations. Runtime and direct parser tests resolve the same `stream-markdown-parser@1.2.7`. The renderer calls `enableKatex()` / `enableMermaid()` at module scope and imports `markstream-vue/index.px.css` and `katex/dist/katex.min.css` itself.
+1. **Install the locked renderer deps.** `markstream-vue@2.0.19` and its code-block runtimes are declared by this package; desktop and web do not need duplicate renderer declarations. Runtime and direct parser tests resolve the same `stream-markdown-parser@1.2.20`. The renderer calls `enableKatex()` / `enableMermaid()` at module scope and imports `markstream-vue/index.px.css` and `katex/dist/katex.min.css` itself.
 
 2. **Use ES-format workers.** The renderer instantiates markstream's off-thread KaTeX/Mermaid workers via `import … from 'markstream-vue/workers/*?worker&type=module'`. Mermaid's per-diagram dynamic imports need code-splitting, so the consumer's Vite config must set:
    ```ts
