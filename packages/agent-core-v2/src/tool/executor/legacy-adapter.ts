@@ -6,6 +6,7 @@ import type {
   ExecutableToolResult,
   RunnableToolExecution,
   ToolAccesses,
+  ToolExecutionOrigin,
   ToolUpdate,
 } from '#/tool/toolContract';
 
@@ -35,8 +36,9 @@ export interface LegacyToolFields {
 
 export type LegacyToolAgentContext = Omit<
   ExecutableToolContext,
-  'toolCallId' | 'signal' | 'detach' | 'onUpdate'
+  'origin' | 'toolCallId' | 'signal' | 'detach' | 'onUpdate'
 > & {
+  readonly origin: ToolExecutionOrigin;
   readonly step?: number;
 };
 

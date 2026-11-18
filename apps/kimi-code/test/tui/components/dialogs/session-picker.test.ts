@@ -94,7 +94,6 @@ describe('SessionPickerComponent', () => {
     const output = renderPlain(component);
 
     expect(output).toContain('Refactor sessions list');
-    // Session id is rendered in full, never abbreviated with an ellipsis.
     expect(output).toContain('ses_01HXYABCDEFGHIJK');
     expect(output).not.toMatch(/ses_01\S*…/);
     expect(output).toContain('/tmp/project');
@@ -208,9 +207,7 @@ describe('SessionPickerComponent', () => {
     const lines = component.render(120).map((line) => stripAnsi(line));
     const headerLine = lines.find((line) => line.includes('Short title'));
     expect(headerLine).toBeDefined();
-    // Title and time sit side-by-side with only the small inline separator.
     expect(headerLine).toMatch(/Short title\s{1,4}5m ago/);
-    // No long run of trailing spaces, i.e. not right-aligned.
     expect(headerLine).not.toMatch(/Short title\s{8,}/);
   });
 
@@ -276,10 +273,6 @@ describe('SessionPickerComponent', () => {
     }
   });
 
-  // Regression for #240: a long session id, the inline time + "(current)"
-  // badge, and a long prompt all used to be appended past the terminal edge,
-  // which crashed the renderer with "Rendered line exceeds terminal width" on
-  // very narrow terminals.
   it('never renders a line wider than the terminal, even on tiny widths (#240)', () => {
     const now = new Date('2026-05-11T12:00:00.000Z').getTime();
     vi.spyOn(Date, 'now').mockReturnValue(now);

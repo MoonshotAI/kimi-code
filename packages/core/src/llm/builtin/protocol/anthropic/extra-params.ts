@@ -1,7 +1,3 @@
-/**
- * Extra Anthropic request parameters that callers can pass through the protocol options.
- */
-
 export interface AnthropicExtraParams {
   readonly temperature?: number;
   readonly top_p?: number;

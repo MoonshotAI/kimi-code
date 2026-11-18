@@ -1,9 +1,3 @@
-/**
- * `kimi provider` CLI unit tests. The handlers receive an injected `getHarness`
- * + capturing stdout/stderr. Registry imports use a real harness and temporary
- * config storage; upstream HTTP responses are stubbed.
- */
-
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { Command } from 'commander';
 import type { KimiConfig, KimiHarness } from '@moonshot-ai/kimi-code-sdk';
@@ -25,9 +19,6 @@ import {
   type ProviderDeps,
 } from '#/cli/sub/provider';
 
-// Spy on the SDK harness factory so the default-deps construction can be
-// asserted without booting a real engine. The real implementations stay in
-// place for everything else the handlers use.
 const harnessRouting = vi.hoisted(() => ({
   kimiHarnessConstructor: vi.fn(),
   harness: undefined as unknown,
@@ -64,11 +55,6 @@ function makeHarness(initial: KimiConfig): {
   setConfigCalls: Array<Partial<KimiConfig>>;
   removeCalls: string[];
 } {
-  // `persisted` simulates the on-disk config; the real RPC's `removeProvider`
-  // reads from / writes to disk on every call. Tests must
-  // model this: anything the handler builds up in its in-memory `config`
-  // object disappears unless it is flushed via `setConfig` BEFORE the next
-  // `removeProvider`.
   let persisted: KimiConfig = structuredClone(initial);
   const setConfigCalls: Array<Partial<KimiConfig>> = [];
   const removeCalls: string[] = [];
@@ -77,11 +63,6 @@ function makeHarness(initial: KimiConfig): {
     getConfig: async () => structuredClone(persisted),
     setConfig: async (patch) => {
       setConfigCalls.push(structuredClone(patch));
-      // Mirror the real `setKimiConfig`: deep-merge with undefined keys
-      // skipped. This is
-      // load-bearing for tests that assert `setConfig({defaultModel:
-      // undefined})` does NOT wipe a key from disk — only `removeProvider`
-      // can.
       const next: Record<string, unknown> = { ...persisted };
       for (const [key, value] of Object.entries(patch)) {
         if (value === undefined) continue;
@@ -590,7 +571,6 @@ describe('registerProviderCommand', () => {
     const { harness } = makeHarness({
       providers: { kimi: { type: 'kimi' } },
     } as unknown as KimiConfig);
-    // Simulate the strict write path rejecting because config.toml is invalid.
     harness.removeProvider = async () => {
       throw new Error(
         'Cannot change settings while config.toml is invalid — fix it first (run `kimi doctor` for details).',
@@ -607,7 +587,7 @@ describe('registerProviderCommand', () => {
 
     expect(exitCodes).toEqual([1]);
     expect(stderr.join('')).toContain('Cannot change settings');
-    expect(stderr.join('')).not.toContain('    at '); // no stack trace dump
+    expect(stderr.join('')).not.toContain('    at ');
   });
 });
 
@@ -623,7 +603,6 @@ describe('kimi provider catalog list', () => {
     const out = stdout.join('');
     expect(out).toMatch(/^anthropic\s+wire=anthropic\s+models=2\s+Anthropic\n/);
     expect(out).toMatch(/openai\s+wire=openai\s+models=1\s+OpenAI/);
-    // anthropic before openai (alphabetical).
     expect(out.indexOf('anthropic')).toBeLessThan(out.indexOf('openai'));
   });
 
@@ -722,17 +701,14 @@ describe('kimi provider catalog add', () => {
       type: 'anthropic',
       apiKey: 'sk-ant-token',
     });
-    // Catalog import populates the model aliases.
     expect(finalConfig.models?.['anthropic/claude-opus-4-7']).toMatchObject({
       provider: 'anthropic',
       model: 'claude-opus-4-7',
     });
     expect(finalConfig.models?.['anthropic/claude-haiku-4-5']).toBeDefined();
-    // The unrelated provider's model survives, and remains the default.
     expect(finalConfig.models?.['other/main']).toBeDefined();
     expect(finalConfig.defaultModel).toBe('other/main');
     expect(finalConfig.thinking?.enabled).toBe(true);
-    // The patch sent over `setConfig` must explicitly carry the preserved default.
     expect(setConfigCalls[0]?.defaultModel).toBe('other/main');
     expect(stdout.join('')).toContain('Imported Anthropic (anthropic)');
   });
@@ -776,11 +752,6 @@ describe('kimi provider catalog add', () => {
   });
 
   it('preserves an existing default_model when re-importing the same provider without --default-model', async () => {
-    // Regression test for the codex P2: `removeProvider` clears
-    // `defaultModel` if it pointed at one of the provider's aliases. The
-    // handler must capture the previous default BEFORE calling
-    // `removeProvider`, otherwise rotating the api key on an already-
-    // configured provider would silently wipe the user's chosen default.
     mockRegistryFetch(CATALOG_BODY);
     const initial: KimiConfig = {
       providers: {
@@ -810,17 +781,11 @@ describe('kimi provider catalog add', () => {
 
     expect(exitCodes).toEqual([]);
     expect(current().providers['anthropic']?.apiKey).toBe('sk-rotated');
-    // Previous default and thinking flag must survive the re-import.
     expect(current().defaultModel).toBe('anthropic/claude-opus-4-7');
     expect(current().thinking?.enabled).toBe(true);
   });
 
   it('preserves thinking.enabled when --default-model is supplied to a thinking-capable model', async () => {
-    // Regression test for the codex P2: `applyCatalogProvider` always
-    // assigns `thinking.enabled` from `options.thinking`. Hardcoding `false`
-    // silently disabled thinking even when the user previously had it on
-    // and is just importing a known provider. The handler now threads the
-    // previous value through.
     mockRegistryFetch(CATALOG_BODY);
     const initial: KimiConfig = {
       providers: {},
@@ -843,15 +808,7 @@ describe('kimi provider catalog add', () => {
   });
 
   it('does not persist thinking.enabled=false for first-time setup with --default-model', async () => {
-    // Regression test for codex P2 follow-up: previously the handler fell
-    // back to `false` when `thinking.enabled` was unset, but
-    // `resolveThinkingEffort` treats `thinking.enabled === false` as an
-    // explicit "off" request. A fresh `kimi provider catalog add
-    // anthropic --default-model claude-opus-4-7` must NOT silently disable
-    // thinking — it should leave `thinking.enabled` unset so the runtime
-    // uses the per-model default.
     mockRegistryFetch(CATALOG_BODY);
-    // Note: `thinking.enabled` is omitted on purpose to model a fresh user.
     const { harness, current, setConfigCalls } = makeHarness({
       providers: {},
     } as KimiConfig);
@@ -866,19 +823,11 @@ describe('kimi provider catalog add', () => {
 
     expect(exitCodes).toEqual([]);
     expect(current().defaultModel).toBe('anthropic/claude-opus-4-7');
-    // Must NOT be `false`. `undefined` lets the runtime resolver pick the
-    // per-model default; `false` would force `'off'`.
     expect(current().thinking?.enabled).toBeUndefined();
     expect(setConfigCalls[0]?.thinking?.enabled).toBeUndefined();
   });
 
   it('drops a stale default_model when the catalog refresh no longer contains it', async () => {
-    // Regression test for codex P2: when the user previously chose
-    // `anthropic/legacy` as default and a refresh of the same provider no
-    // longer ships that model, restoring the previous default would point
-    // `default_model` at a non-existent alias and break the next session.
-    // The handler now checks whether the alias still resolves and clears
-    // it otherwise.
     mockRegistryFetch(CATALOG_BODY);
     const initial: KimiConfig = {
       providers: {
@@ -906,11 +855,8 @@ describe('kimi provider catalog add', () => {
     );
 
     expect(exitCodes).toEqual([]);
-    // The legacy alias must have been replaced by the catalog's models.
     expect(current().models?.['anthropic/legacy-claude']).toBeUndefined();
     expect(current().models?.['anthropic/claude-opus-4-7']).toBeDefined();
-    // The dangling default must NOT have been restored — it would point at
-    // a non-existent alias. The handler clears it instead.
     expect(current().defaultModel).toBeUndefined();
   });
 
@@ -968,8 +914,6 @@ describe('kimi provider catalog add', () => {
     expect(exitCodes).toEqual([]);
     expect(current().providers['claude-gateway']).toMatchObject({
       type: 'anthropic',
-      // The Anthropic SDK appends /v1/messages itself — persisting the /v1
-      // would double it (/v1/v1/messages).
       baseUrl: 'https://claude-gateway.example.test',
     });
   });

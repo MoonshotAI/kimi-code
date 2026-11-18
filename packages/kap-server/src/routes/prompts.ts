@@ -457,14 +457,14 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/prompts/{tail}',
-      success: { data: z.union([promptAbortResponseSchema, promptSteerResultSchema]) },
+      success: { data: promptAbortResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.PROMPT_NOT_FOUND]: {},
         [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
-      description: 'Abort a running prompt or steer a queued prompt',
+      description: 'Abort a prompt by prompt_id',
       tags: ['prompts'],
       operationId: 'promptAction',
     },
@@ -504,9 +504,8 @@ type PromptActionExtra = {
 
 type PromptActionCtx = PromptActionExtra & { readonly id: string; readonly body: unknown };
 
-const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
+const promptActions: ActionTable<'abort', PromptActionExtra> = {
   abort: { handle: abortPromptAction },
-  steer: { handle: steerPromptAction },
 };
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
@@ -514,12 +513,6 @@ async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   resolved.prompt.cancel({ promptId: id });
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
-}
-
-async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
-  const { resolved, req, reply, id } = ctx;
-  await resolved.prompt.steer([id]);
-  reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
 }
 
 function projectPromptList(loop: IAgentLoopService) {

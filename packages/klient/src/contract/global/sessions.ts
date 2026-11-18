@@ -1,8 +1,3 @@
-/**
- * `sessionIndex` — the persisted session read model. Mirrors
- * `agent-core-v2/app/sessionIndex/sessionIndex.ts`.
- */
-
 import { z } from 'zod';
 
 import { maybe, pageOf } from '../helpers.js';

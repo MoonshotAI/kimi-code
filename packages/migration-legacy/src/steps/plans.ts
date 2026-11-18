@@ -6,11 +6,6 @@ import { join } from 'node:path';
 
 export interface PlansStepInput {
   readonly targetHome: string;
-  /**
-   * kimi-cli hardcodes plan files at `~/.kimi/plans` regardless of
-   * KIMI_SHARE_DIR (`tools/plan/heroes.py`), so the source is resolved from the
-   * user's home, never from the migration source home. Injectable for tests.
-   */
   readonly plansSourceDir?: string;
 }
 
@@ -55,8 +50,6 @@ export async function migratePlansStep(input: PlansStepInput): Promise<PlansStep
       await mkdir(tgtDir, { recursive: true, mode: 0o700 });
       targetDirReady = true;
     }
-    // Copy atomically: a crash mid-copy leaves only the temp file, never a
-    // truncated final file that the next run would skip as complete.
     const tmpPath = `${tgtPath}.${process.pid}.tmp`;
     await copyFile(srcPath, tmpPath);
     await rename(tmpPath, tgtPath);

@@ -50,8 +50,6 @@ const identity =
 const keychainPath = profile === 'release' ? (process.env.APPLE_KEYCHAIN_PATH ?? null) : null;
 await runSignStep({ identity, keychainPath });
 
-// Verify always runs (codesign -dv); spctl gatekeeper gate only after notarization
-// (CI macos-notarize composite action) — orchestrator just self-checks signing here.
 await runVerifyStep({ requireGatekeeper: false });
 
 console.log('==> Native build complete');

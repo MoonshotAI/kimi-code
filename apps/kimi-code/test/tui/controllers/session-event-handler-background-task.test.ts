@@ -175,7 +175,6 @@ describe('SubAgentEventHandler — activity record pruning', () => {
       step: 0,
     } as Event);
 
-    // No background.task.started has populated the task map yet.
     handler.handleLifecycleEvent(completedEvent('a2'));
 
     const record = handler.activityStore.get('a2');
@@ -224,8 +223,6 @@ function makeSessionEventHost() {
     restoreEditor: vi.fn(),
     restoreInputText: vi.fn(),
     appendTranscriptEntry: vi.fn((entry: unknown) => {
-      // Mirror the real host: appended entries are retrievable from the
-      // transcript window (the anchor scans it for orphaned agent cards).
       transcriptEntries.push(entry);
     }),
     moveTranscriptEntryToEnd: vi.fn(() => true),
@@ -335,7 +332,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
   }
 
   function makeHost() {
-    // makeSessionEventHost returns `never`; recover the mock surface for assertions.
     return makeSessionEventHost() as SessionHostMocks &
       ConstructorParameters<typeof SessionEventHandler>[0];
   }
@@ -379,8 +375,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
 
     handler.handleEvent(taskTerminatedEvent('task-a1', 'agent', 'completed'), vi.fn());
 
-    // Agent terminal cards are owned by the subagent lifecycle path — the
-    // task event itself only records the terminal state.
     expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
     expect(handler.backgroundTaskTranscriptedTerminal.has('task-a1')).toBe(true);
   });
@@ -402,8 +396,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);
 
-    // A timed-out agent that emitted no subagent lifecycle event has no
-    // terminal card to anchor — agent-kind terminations mount none.
     handler.handleEvent(taskTerminatedEvent('task-a2', 'agent', 'timed_out'), vi.fn());
     expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
 
@@ -419,7 +411,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);
 
-    // Spawn-time background agent: the spawn event carries the task id.
     handler.handleEvent(
       {
         sessionId: 's1',
@@ -434,7 +425,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
       } as unknown as Event,
       vi.fn(),
     );
-    // Completion lands before background.task.started syncs the task table.
     handler.handleEvent(
       {
         sessionId: 's1',
@@ -474,8 +464,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
 
     handler.handleEvent(taskNotificationTurnEvent('task-agent-1', 'completed'), vi.fn());
 
-    // The notification turn moves the mounted card to the turn start instead
-    // of mounting a second one.
     expect(host.moveTranscriptEntryToEnd).toHaveBeenCalledWith(terminalCards()[0]);
     expect(terminalCards()).toHaveLength(1);
   });
@@ -484,9 +472,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);
 
-    // Tower-style spawn: the spawn event carries no task id — the task is
-    // registered only after launch() returns, and the worker can finish
-    // before that.
     handler.handleEvent(
       {
         sessionId: 's1',
@@ -500,8 +485,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
       } as unknown as Event,
       vi.fn(),
     );
-    // The worker terminates before background.task.started syncs the task:
-    // its terminal card mounts with no task id to register under.
     handler.handleEvent(
       {
         sessionId: 's1',
@@ -558,7 +541,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
 
     handler.handleEvent(taskNotificationTurnEvent('task-agent-t1', 'completed'), vi.fn());
 
-    // The notification turn reuses the orphaned card — no duplicate mounts.
     expect(host.moveTranscriptEntryToEnd).toHaveBeenCalledWith(terminalCards()[0]);
     expect(terminalCards()).toHaveLength(1);
     expect(host.appendTranscriptEntry).toHaveBeenCalledTimes(2);
@@ -568,8 +550,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
     const host = makeHost();
     const handler = new SessionEventHandler(host);
 
-    // First run: the background agent completes and its terminal card is
-    // registered under its own task id.
     handler.handleEvent(
       {
         sessionId: 's1',
@@ -623,8 +603,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
     expect(firstRunCard).toBeDefined();
     expect(terminalEntries().get('task-r1')).toBe(firstRunCard);
 
-    // The agent is resumed in the background: the new task shares the
-    // agentId, then times out without mounting a card of its own.
     handler.handleEvent(
       {
         sessionId: 's1',
@@ -661,8 +639,6 @@ describe('SessionEventHandler — task-notification turn anchoring', () => {
 
     handler.handleEvent(taskNotificationTurnEvent('task-r2', 'timed_out'), vi.fn());
 
-    // The anchor must leave the first run's card registered and in place,
-    // and mount the resumed task's own terminal card instead.
     expect(host.moveTranscriptEntryToEnd).not.toHaveBeenCalledWith(firstRunCard);
     expect(terminalEntries().get('task-r1')).toBe(firstRunCard);
     const appended = appendedEntries(host);

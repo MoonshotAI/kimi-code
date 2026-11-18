@@ -6,10 +6,13 @@ import {
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentSkillService,
+  MAIN_AGENT_ID,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
+import { toProtocolMessage } from '../src/services/messages/messageProjection';
 import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
@@ -91,6 +94,25 @@ describe('server-v2 /api/v1 skills', () => {
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agents = session.accessor.get(IAgentLifecycleService);
     if (agents.handleOf('main') === undefined) await agents.create({ agentId: 'main' });
+  }
+
+  function readMainMessages(id: string): Array<{
+    role: string;
+    content: Array<{ type: string; text?: string }>;
+    metadata?: { origin?: { clientMetadata?: unknown } };
+  }> {
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error(`expected live session ${id}`);
+    const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    if (main === undefined) throw new Error(`expected main agent on session ${id}`);
+    return main.accessor
+      .get(IAgentLoopService)
+      .history()
+      .map((message, index) => toProtocolMessage(id, index, message, 0)) as Array<{
+      role: string;
+      content: Array<{ type: string; text?: string }>;
+      metadata?: { origin?: { clientMetadata?: unknown } };
+    }>;
   }
 
   async function registerWorkspace(
@@ -218,8 +240,8 @@ describe('server-v2 /api/v1 skills', () => {
       const metadata = { display_text: 'Example skill · Save button', kimi_code_composer: { version: 1, doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'client-only literal' }] }] }, attachments: [], attachmentOrder: [] } };
       const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`, { args: 'Example argument', attachments: [{ type: 'text', text: 'Captured page evidence' }, { type: 'text', text: 'Image association' }], metadata });
       expect(result.body.code).toBe(0);
-      const messages = await getJson<{ items: { role: string; content: { type: string; text?: string }[]; metadata?: { origin?: { clientMetadata?: unknown } } }[] }>(`/api/v1/sessions/${id}/messages`);
-      const input = messages.body.data.items.find((message) => message.role === 'user' && message.content.some((part) => part.text?.includes('User activated the skill')));
+      const items = readMainMessages(id);
+      const input = items.find((message) => message.role === 'user' && message.content.some((part) => part.text?.includes('User activated the skill')));
       const modelText = input?.content.map((part) => part.text ?? '').join('\n') ?? '';
       expect(modelText).toContain('Captured page evidence');
       expect(modelText.indexOf('Image association')).toBeGreaterThan(modelText.indexOf('Captured page evidence'));
@@ -265,8 +287,8 @@ describe('server-v2 /api/v1 skills', () => {
         ],
       });
       expect(result.body.code).toBe(0);
-      const messages = await getJson<{ items: { role: string; content: { type: string; text?: string }[] }[] }>(`/api/v1/sessions/${id}/messages`);
-      const input = messages.body.data.items.find((message) => message.role === 'user' && message.content.some((part) => part.text?.includes('User activated the skill')));
+      const items = readMainMessages(id);
+      const input = items.find((message) => message.role === 'user' && message.content.some((part) => part.text?.includes('User activated the skill')));
       const text = input?.content.map((part) => part.text ?? '').join('\n') ?? '';
       expect(text).toContain('args="Example argument"');
       expect(text).toContain('First context block');
@@ -387,10 +409,7 @@ describe('server-v2 /api/v1 skills', () => {
       expect(body.code).toBe(0);
       expect(body.data).toEqual({ activated: true, skill_name: 'update-config' });
 
-      const messages = await getJson<{
-        items: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
-      }>(`/api/v1/sessions/${id}/messages`);
-      const userMsg = messages.body.data.items.find(
+      const userMsg = readMainMessages(id).find(
         (m) =>
           m.role === 'user' &&
           m.content.some((part) => part.text?.includes('User activated the skill')),
@@ -437,10 +456,7 @@ describe('server-v2 /api/v1 skills', () => {
       expect(body.code).toBe(0);
       expect(body.data).toEqual({ activated: true, skill_name: 'update-config' });
 
-      const messages = await getJson<{
-        items: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
-      }>(`/api/v1/sessions/${id}/messages`);
-      const userMsg = messages.body.data.items.find(
+      const userMsg = readMainMessages(id).find(
         (m) =>
           m.role === 'user' &&
           m.content.some((part) => part.text?.includes('User activated the skill')),
@@ -597,13 +613,10 @@ describe('server-v2 /api/v1 skills', () => {
         { path: secondaryShared.path, args: 'shared-secondary' },
       );
       expect(sharedActivation.body.code).toBe(0);
-      const messages = await getJson<{
-        items: { role: string; content: { type: string; text?: string }[] }[];
-      }>(`/api/v1/sessions/${sid}/messages`);
-      const sharedText = messages.body.data.items
+      const sharedText = readMainMessages(sid)
         .filter((message) => message.role === 'user')
         .flatMap((message) => message.content)
-        .map((part) => part.text ?? '')
+        .map((part) => (part.type === 'text' ? part.text : ''))
         .join('\n');
       expect(sharedText).toContain('Say hello to additional args.');
       expect(sharedText).toContain('Say hello to shared-secondary.');

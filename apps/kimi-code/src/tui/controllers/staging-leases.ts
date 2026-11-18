@@ -1,47 +1,3 @@
-/**
- * `StagingLeaseTracker` — owns the lifecycle of staged prompt media (daemon
- * uploads + local cache copies) between submission and the session that
- * consumes it.
- *
- * A paste/upload edge stages media before the prompt exists. The two staged
- * forms age differently once the consuming turn ends:
- *
- * - Daemon uploads become garbage — the engine materialized its own session
- *   copy at intake — so the turn-end release deletes them.
- * - Local cache copies may still be referenced by persisted history: slash /
- *   plugin command args carry the path as plain text (the model reads it
- *   with `ReadMediaFile`), and that form is never rewritten to the session
- *   media dir. Turn-end release therefore retires cache copies to a
- *   session-lifetime bucket, deleted at session close / shutdown.
- *
- * Media that never gets consumed (validation/render failure, queue discard,
- * a dispatch RPC that failed before any turn claimed the lease) is deleted
- * immediately, whatever form it takes.
- *
- * A submission diverted before dispatch hands its lease back via `defer`:
- * the media stays staged under raw (ids, paths) ownership — a queued message
- * re-leases at dequeue dispatch, and the cache-hint stash's restore/resend
- * exits release it through `releaseRecalled` / a fresh lease.
- *
- * The tracker holds one lease per submission, binds it to the consuming turn
- * (explicitly at dispatch, by exact submission id when the turn echoes the
- * client-chosen prompt id, or heuristically when a matching-origin turn
- * starts), and releases it when that turn ends.
- *
- * Exact binding: a lease created with a `submissionId` is registered in
- * `leasesBySubmissionId`, and the submission sends that id as the prompt id;
- * the consuming turn's `turn.started` echoes it as `promptId`, so
- * `handleTurnStarted` binds the exact lease instead of guessing. The
- * heuristic below remains the fallback for submissions without an id echo.
- *
- * Unclaimed leases are released at session close / shutdown, and every
- * in-flight cleanup is drainable via {@link drain}.
- *
- * Self-contained state machine extracted from `KimiTUI`: the two side effects
- * (resolving attachment ids to daemon file ids, deleting the staged files)
- * are injected, so the tracker is unit-testable without a TUI.
- */
-
 import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/kimi-code-sdk';
 
 import { MAIN_AGENT_ID } from '../constant/kimi-tui';
@@ -61,31 +17,19 @@ export interface StagingLease {
 }
 
 export interface StagingLeaseEffects {
-  /** Resolve attachment ids to the staged daemon file ids, consuming the mapping. */
   readonly takeFileIds: (mediaAttachmentIds: readonly number[]) => readonly string[];
-  /** Consume retains without taking the staged files (queue recall keeps them). */
   readonly releaseRetains: (mediaAttachmentIds: readonly number[]) => void;
-  /** Delete staged files (daemon uploads + local cache copies); never rejects. */
   readonly deleteFiles: (fileIds: readonly string[], paths: readonly string[]) => Promise<void>;
   readonly warn?: (message: string) => void;
 }
 
 export class StagingLeaseTracker {
   private readonly cleanups = new Set<Promise<void>>();
-  /** Staged media is owned by the turn that consumes it, not by the RPC call. */
   private readonly leases = new Set<StagingLease>();
   private readonly leasesByTurn = new Map<string, Set<StagingLease>>();
-  /** Leases carrying a client-chosen submission id, for exact `promptId` binding. */
   private readonly leasesBySubmissionId = new Map<string, StagingLease>();
-  /** Leases whose dispatch RPC has not settled yet (see {@link trackDispatch}). */
   private readonly inFlight = new Set<StagingLease>();
-  /** In-flight leases whose turn already ended; released once the RPC settles. */
   private readonly endedInFlight = new Set<StagingLease>();
-  /**
-   * Cache copies whose consuming turn already ended. Persisted history may
-   * still reference their paths (skill/plugin args carry them as plain
-   * text), so they survive until the session closes.
-   */
   private readonly retiredPaths = new Set<string>();
 
   constructor(private readonly effects: StagingLeaseEffects) {}
@@ -97,11 +41,6 @@ export class StagingLeaseTracker {
     submissionId?: string,
     agentId = MAIN_AGENT_ID,
   ): StagingLease | undefined {
-    // `mediaAttachmentIds` multiplicity is the retain count this lease must
-    // release: each extraction/rewrite retains once per unique id, so callers
-    // dedupe repeated placeholder occurrences per contribution before handing
-    // the ids over (one message referencing an image twice contributes it
-    // once; two batched messages sharing an image contribute it twice).
     if (mediaAttachmentIds.length === 0 && paths.length === 0) return undefined;
     const lease: StagingLease = {
       mediaAttachmentIds: [...mediaAttachmentIds],
@@ -133,9 +72,6 @@ export class StagingLeaseTracker {
     const kind = event.origin?.kind;
     if (kind !== 'user' && kind !== 'skill_activation' && kind !== 'plugin_command') return;
     if (event.promptId !== undefined) {
-      // Exact binding: the turn echoes the submission's client-chosen prompt
-      // id — bind that lease directly and skip the origin heuristic (and its
-      // ambiguity warning) entirely.
       const exact = this.leasesBySubmissionId.get(event.promptId);
       if (exact !== undefined && exact.turnId === undefined && exact.agentId === agentId) {
         this.bindToTurn(exact, String(event.turnId));
@@ -148,9 +84,6 @@ export class StagingLeaseTracker {
         candidate.origin === kind && candidate.agentId === agentId,
     );
     if (candidates.length > 1) {
-      // INVARIANT violation: the earliest-unclaimed pick cannot tell
-      // same-origin leases apart — same-origin dispatch serialization or the
-      // turn.started ordering assumption may be broken.
       this.effects.warn?.(
         `staging lease: ${candidates.length} unclaimed '${kind}' leases when turn ` +
           `${String(event.turnId)} started; claiming the earliest`,
@@ -173,15 +106,6 @@ export class StagingLeaseTracker {
     if (this.leasesByTurn.get(key)?.size === 0) this.leasesByTurn.delete(key);
   }
 
-  /**
-   * Track a dispatch RPC carrying staged media. When it rejects, run
-   * `onError` and release the lease — but only while no turn has claimed it:
-   * a bound lease is owned by the turn and released at turn end. A turn that
-   * ends while the RPC is still in flight leaves the lease alone until the RPC
-   * settles: success releases it as consumed, failure as never consumed —
-   * unless `onError` handed it back to raw ownership via {@link defer}, as a
-   * caller that requeues the failed input does.
-   */
   trackDispatch(
     lease: StagingLease | undefined,
     request: Promise<unknown>,
@@ -210,17 +134,12 @@ export class StagingLeaseTracker {
     else this.release(lease);
   }
 
-  /**
-   * Release staged media that will never be consumed (dispatch failed before
-   * a turn claimed the lease): delete daemon uploads and cache copies now.
-   */
   release(lease: StagingLease | undefined): void {
     if (lease === undefined || lease.released) return;
     this.unbind(lease);
     this.deleteStaged(this.takeFileIds(lease), lease.paths);
   }
 
-  /** Release every unclaimed lease and the retired cache copies (session close / shutdown). */
   releaseAll(): void {
     for (const lease of this.leases) this.release(lease);
     const retired = [...this.retiredPaths];
@@ -228,7 +147,6 @@ export class StagingLeaseTracker {
     this.deleteStaged([], retired);
   }
 
-  /** Release staged media that never got a lease (validation/render failures). */
   releaseMedia(mediaAttachmentIds: readonly number[], paths: readonly string[]): void {
     const fileIds = this.effects.takeFileIds(mediaAttachmentIds);
     this.deleteStaged(fileIds, paths);
@@ -244,15 +162,6 @@ export class StagingLeaseTracker {
     this.deleteStaged(fileIds, []);
   }
 
-  /**
-   * Release a queued item (or a cache-hint stash's extraction) recalled into
-   * the editor: the restored draft still references its attachments, so this
-   * is not a discard — daemon uploads stay staged (only the retain is
-   * consumed; the next submit re-retains them). `retirePaths` carries the
-   * slash/plugin-args channel's cache copies: the queued rewrite's args
-   * reference them by path, so they retire to session lifetime instead of
-   * being deleted.
-   */
   releaseRecalled(
     mediaAttachmentIds: readonly number[],
     retirePaths: readonly string[] = [],
@@ -261,18 +170,11 @@ export class StagingLeaseTracker {
     for (const path of retirePaths) this.retiredPaths.add(path);
   }
 
-  /**
-   * Hand a lease's staged media back to raw (ids, paths) ownership without
-   * consuming retains or deleting files: the lease is simply unbound. Used
-   * when a submission is diverted before dispatch — queued behind a running
-   * turn or swallowed by the cache-hint stash; see the header note.
-   */
   defer(lease: StagingLease | undefined): void {
     if (lease === undefined || lease.released) return;
     this.unbind(lease);
   }
 
-  /** Track an in-flight staging-related promise so {@link drain} can await it. */
   track(cleanup: Promise<void>): void {
     let tracked!: Promise<void>;
     tracked = cleanup.catch(() => undefined).finally(() => {
@@ -287,17 +189,11 @@ export class StagingLeaseTracker {
     }
   }
 
-  /** Schedule deletion of already-resolved staged files (e.g. a store clear). */
   deleteStaged(fileIds: readonly string[], paths: readonly string[] = []): void {
     if (fileIds.length === 0 && paths.length === 0) return;
     this.track(this.effects.deleteFiles(fileIds, paths));
   }
 
-  /**
-   * Turn-end release: the daemon uploads are safe to delete — the engine
-   * materialized its own session copies at intake — while the cache copies
-   * retire to session lifetime (see {@link retiredPaths}).
-   */
   private releaseConsumed(lease: StagingLease): void {
     if (lease.released) return;
     this.unbind(lease);
@@ -318,9 +214,6 @@ export class StagingLeaseTracker {
   }
 
   private takeFileIds(lease: StagingLease): readonly string[] {
-    // Multiplicity in the lease's id list is the retain count (creation sites
-    // dedupe per extraction before contributing ids): consume one retain per
-    // occurrence.
     return lease.mediaAttachmentIds.flatMap((id) => this.effects.takeFileIds([id]));
   }
 }

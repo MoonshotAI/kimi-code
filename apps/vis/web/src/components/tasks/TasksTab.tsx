@@ -29,10 +29,6 @@ function kindTone(kind: BackgroundTaskInfo['kind']): PillTone {
   return 'tools';
 }
 
-/** Tasks tab — background tasks (bash processes, subagents, pending
- *  questions) persisted under the session's `tasks/` directory, plus their
- *  `output.log`. None of this is reconstructable from the wire, so it is the
- *  only place to inspect what a session spawned in the background. */
 export function TasksTab({ sessionId }: TasksTabProps) {
   const { data, isLoading, error } = useTasks(sessionId);
 
@@ -79,7 +75,6 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
 
   return (
     <div className="border border-border bg-surface-0">
-      {/* Header line */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <Pill tone={kindTone(task.kind)} variant="outline">{task.kind}</Pill>
         <Pill tone={STATUS_TONE[task.status]}>{task.status}</Pill>
@@ -98,7 +93,6 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
         </span>
       </div>
 
-      {/* Body fields */}
       <div className="grid grid-cols-1 gap-x-6 gap-y-1 px-3 py-2 md:grid-cols-2">
         <Field label="description">{task.description || <Dim>(none)</Dim>}</Field>
         {task.kind === 'process' ? (
@@ -153,7 +147,6 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
         </Field>
       </div>
 
-      {/* Toggles */}
       <div className="flex items-center gap-3 border-t border-border px-3 py-1.5">
         <button
           type="button"
@@ -189,9 +182,6 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
 }
 
 function TaskOutput({ sessionId, taskId }: { sessionId: string; taskId: string }) {
-  // Progressive byte-window paging: fetch the first window on mount, then
-  // append subsequent windows on demand via the server-provided exact
-  // `nextOffset` cursor. Keeps arbitrarily large logs readable in full.
   const [content, setContent] = useState('');
   const [cursor, setCursor] = useState(0);
   const [size, setSize] = useState(0);

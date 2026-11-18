@@ -201,6 +201,11 @@ export class AgentTurnProjection {
     this.options.states.set(loopLastRequestIdKey, value);
   }
 
+  private turnRequestId(promptOnly: boolean, cancelled: boolean, completed: boolean): string | undefined {
+    if (promptOnly || cancelled) return undefined;
+    return completed ? this.lastRequestId : (this.activeRequestTrace?.requestId ?? this.lastRequestId);
+  }
+
   history(source: readonly Message[]): readonly ContextMessage[] {
     const previous = this.historyView;
     if (previous?.source === source) return previous.messages;
@@ -440,9 +445,7 @@ export class AgentTurnProjection {
           ...event,
           durationMs: promptOnly ? 0 : active === undefined ? undefined : Date.now() - active.startedAt,
           stopReason: promptOnly ? 'prompt_only' : active?.forcedStopReason ?? active?.lastStopReason ?? undefined,
-          requestId: promptOnly || event.outcome.type === 'aborted'
-            ? undefined
-            : event.outcome.type === 'done' ? this.lastRequestId : this.activeRequestTrace?.requestId,
+          requestId: this.turnRequestId(promptOnly, event.outcome.type === 'aborted', event.outcome.type === 'done'),
         };
       }
       default:
@@ -521,14 +524,17 @@ export class AgentTurnProjection {
       }
       case 'llm.sent': {
         const turn = this.active;
-        if (turn === undefined || turn.retry === undefined) return;
-        const step = turn.current?.number ?? turn.gatedSteps;
+        if (turn === undefined || (turn.retry === undefined && turn.current !== undefined)) return;
+        const stepNumber = turn.current?.number ?? turn.gatedSteps;
+        const step = createStepState(stepNumber, turn.controller.signal, turn.stepIds.get(stepNumber));
+        turn.current = step;
+        turn.stepIds.set(step.number, step.uuid);
         turn.retry = undefined;
         void this.options.dispatcher.dispatch(new TurnStepStarted({
           agentId: this.options.scopeContext.agentId,
           turnId: turn.id,
-          step,
-          stepId: turn.current?.uuid ?? turn.stepIds.get(step),
+          step: step.number,
+          stepId: step.uuid,
         }));
         return;
       }
@@ -908,8 +914,8 @@ export class AgentTurnProjection {
       else turn.ready.reject(new Error2(ErrorCodes.INTERNAL, 'Turn ended before first step'));
     }
     const durationMs = promptOnly ? 0 : Date.now() - turn.startedAt;
-    const requestId = promptOnly || result.type === 'cancelled' ? undefined : result.type === 'completed' ? this.lastRequestId : this.activeRequestTrace?.requestId;
     const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
+    const requestId = this.turnRequestId(promptOnly, result.type === 'cancelled', result.type === 'completed');
     const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
     const turnEnded = this.options.dispatcher.dispatch(new TurnEnded({
       agentId: this.options.scopeContext.agentId,
@@ -1021,8 +1027,8 @@ export class AgentTurnProjection {
   }
 }
 
-function createStepState(number: number, signal: AbortSignal): CoreStepState {
-  return { number, uuid: randomUUID(), signal, pendingToolIds: new Set(), tools: [] };
+function createStepState(number: number, signal: AbortSignal, uuid: string = randomUUID()): CoreStepState {
+  return { number, uuid, signal, pendingToolIds: new Set(), tools: [] };
 }
 
 function mergeUsage(base: TokenUsage | undefined, patch: Partial<TokenUsage>): TokenUsage {

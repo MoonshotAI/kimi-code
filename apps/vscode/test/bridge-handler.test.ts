@@ -1,9 +1,3 @@
-/**
- * Scenario: untrusted Webview RPC messages cross into the VS Code extension host.
- * Responsibilities: validate requests, preserve public model metadata, omit private paths, and recover visibly from persisted state errors.
- * Wiring: the real BridgeHandler and handlers; VS Code and the public Node SDK harness boundary are replaced.
- * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/bridge-handler.test.ts
- */
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -308,8 +302,6 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
   });
 
   it("resolves the fallback-profile default effort with the provider type", async () => {
-    // claude-latest declares efforts but no default; the Anthropic fallback
-    // profile only matches when the provider type joins the resolution.
     host.harness.getConfig.mockResolvedValueOnce({
       defaultModel: "custom/claude",
       providers: {
@@ -613,8 +605,6 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
   });
 
   it("keeps an xhigh pick session-only when the default comes from the Anthropic profile inference", async () => {
-    // claude-opus-4-7 declares no efforts; the profile inference supplies
-    // [low, medium, high, xhigh, max] and resolves the default to "high".
     host.harness.getConfig.mockResolvedValue({
       defaultModel: "custom/claude",
       models: { "custom/claude": { provider: "custom", model: "claude-opus-4-7" } },

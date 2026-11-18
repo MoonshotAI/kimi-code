@@ -1,16 +1,17 @@
-/**
- * Events emitted by the loop: prompt acknowledgements, turn and step lifecycle, appended messages, LLM
- * run events, tool events, hook events, and context and profile settlements.
- */
 import type { ContentPart, Message, ToolCall, ToolDescription, UserMessage } from '#/llm/message';
 import type { LlmRunEvent, LlmTiming } from '#/llm/response';
-import type { ToolHookPoint, ToolUpdate } from '#/tool/executor';
-import type { HookLifecycleEvent, HookPoint } from './hook';
+import type { HookLifecycleEvent, HookPoint, ToolHookPoint } from './hook';
 import type { MessageSource, RemindMessage, TurnTrigger } from './inbox';
 import type { AsyncToolOutcome, Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from './outcome';
 
 export interface ToolStartDisplay {
   readonly kind: string;
+}
+
+export interface ToolUpdate {
+  key: string;
+  text: string;
+  percent?: number;
 }
 
 export interface LlmMessageTiming {

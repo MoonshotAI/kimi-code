@@ -1,8 +1,3 @@
-/**
- * Actor implementation of `Loop`. A single message queue serializes inbox handling, turn and step
- * progression, LLM requests, tool execution and detachment, abort, reset, and close, and every state
- * change is emitted as a `LoopEmitted` event.
- */
 import type { Message, ToolDescription, UserMessage } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import { createPolicyRegistry, type PolicyRegistry } from '#/llm/policy/registry';
@@ -225,7 +220,9 @@ class LoopMailbox {
     if (head === undefined) return undefined;
     const kind = normalHead === undefined ? 'notify' as const : 'normal' as const;
     const remainingNotify = normalHead === undefined ? this.notifyEntries.slice(1) : this.notifyEntries;
-    const promptOnly = remainingNotify.length > 0;
+    const promptOnly =
+      head.attributes?.promptOnly === true ||
+      remainingNotify.some((entry) => entry.attributes?.promptOnly !== true);
     this.normal = normalHead === undefined ? this.normal : this.normal.slice(1);
     this.notifyEntries = remainingNotify;
     const reminders = promptOnly ? [] : this.drainReminders();
@@ -308,6 +305,7 @@ class LoopActor implements Loop {
   private readonly completedTurns: LiveTurn[] = [];
   private readonly toolContext?: CreateLoopOptions['toolContext'];
   private readonly completionFactory?: CreateLoopOptions['completionMessage'];
+  private readonly shouldQueueTaskNotification?: CreateLoopOptions['shouldQueueTaskNotification'];
   private readonly abortGraceMs: number;
   private readonly onListenerError?: CreateLoopOptions['onListenerError'];
   private phase: 'idle' | 'running' | 'closed' = 'idle';
@@ -355,6 +353,7 @@ class LoopActor implements Loop {
     this.executor = options.executor;
     this.toolContext = options.toolContext;
     this.completionFactory = options.completionMessage;
+    this.shouldQueueTaskNotification = options.shouldQueueTaskNotification;
     this.abortGraceMs = options.abortGraceMs ?? 2_500;
     this.onListenerError = options.onListenerError;
     this.registry = createHookRegistry();
@@ -740,6 +739,16 @@ class LoopActor implements Loop {
     this.releaseIntake();
     this.kick();
     return ack;
+  }
+
+  recordNotification(message: UserMessage): LoopAck<'prompt.notified'> | undefined {
+    const normalized = normalizeUserMessage({
+      ...message,
+      attributes: { ...message.attributes, promptOnly: true },
+    });
+    this.check({ type: 'input.notify', message: normalized });
+    if (!this.open()) return undefined;
+    return this.mailbox.notify(normalized);
   }
 
   remind(...messages: readonly RemindMessage[]): LoopAck<'prompt.reminded'> | undefined {
@@ -1278,7 +1287,13 @@ class LoopActor implements Loop {
     turn.step += 1;
     turn.phase = 'stepStarting';
     this.step = step;
-    if (turn.promptOnly !== true) this.record({ type: 'step.started', turnId: turn.id, step: turn.step });
+    if (turn.promptOnly === true) {
+      step.outcome = { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } };
+      turn.outcome = step.outcome;
+      this.post({ type: 'step.finish', turn, step });
+      return;
+    }
+    this.record({ type: 'step.started', turnId: turn.id, step: turn.step });
     this.post({ type: 'step.hooks', turn, step });
   }
 
@@ -1504,6 +1519,7 @@ class LoopActor implements Loop {
       for (const call of step.calls) {
         if (step.settled[call.key] !== undefined) continue;
         const context: LoopToolContext = {
+          origin: 'loop',
           turnId: turn.id,
           step: turn.step,
           ...this.toolContext?.(turn.id),
@@ -1702,10 +1718,13 @@ class LoopActor implements Loop {
       this.tools.delete(slot.key);
       slot.completionPending = false;
       this.notifyTool(slot);
+      const shouldQueue = this.shouldQueueTaskNotification?.(slot.handler.taskId) ?? true;
       this.record({ type: 'tool.async_ended', taskId: slot.handler.taskId, toolCallId: slot.toolCall.id, outcome, message });
-      this.record({ type: 'prompt.notified', message });
-      if (this.turn !== undefined) this.completionHandoff = true;
-      this.mailbox.queue([message]);
+      if (shouldQueue) {
+        this.record({ type: 'prompt.notified', message });
+        if (this.turn !== undefined) this.completionHandoff = true;
+        this.mailbox.queue([message]);
+      }
       drained = true;
     }
     if (!drained) return;

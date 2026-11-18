@@ -494,7 +494,6 @@ describe('KimiTUI startup', () => {
     await expect(driver.init()).resolves.toBe(false);
     mountFooter(driver.state);
 
-    // Dock = 6 chrome containers + footer wrap, below the transcript viewport.
     expect(driver.state.dockContainer?.children).toHaveLength(7);
     expect(driver.state.activityContainer.render(80).map((line) => line.trim())).toEqual(['']);
   });
@@ -1814,7 +1813,6 @@ describe('KimiTUI startup', () => {
     await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
     expect(driver.state.appState.sessionId).toBe('ses-current');
     driver.state.appState.additionalDirs = ['/tmp/live-extra'];
-    // Contentless current sessions are filtered out of picker rows; fake content so the row exists.
     vi.spyOn(driver as unknown as { hasSessionContent(): boolean }, 'hasSessionContent')
       .mockReturnValue(true);
 
@@ -1823,8 +1821,6 @@ describe('KimiTUI startup', () => {
     picker.handleInput('\u0018');
     picker.handleInput('y');
 
-    // The picker (and its input lock) stays mounted until the replacement
-    // session is ready; the editor must not accept input mid-flight.
     await vi.waitFor(() => {
       expect(deleteSession).toHaveBeenCalledWith('ses-current');
     });
@@ -2152,7 +2148,6 @@ describe('KimiTUI startup', () => {
 
     await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
     expect(driver.state.appState.sessionId).toBe('ses-current');
-    // Contentless current sessions are filtered out of picker rows; fake content so the row exists.
     vi.spyOn(driver as unknown as { hasSessionContent(): boolean }, 'hasSessionContent')
       .mockReturnValue(true);
     harness.createSession.mockRejectedValueOnce(new Error('create boom'));
@@ -2196,7 +2191,6 @@ describe('KimiTUI startup', () => {
 
     await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
     expect(driver.state.appState.sessionId).toBe('ses-current');
-    // Contentless current sessions are filtered out of picker rows; fake content so the row exists.
     vi.spyOn(driver as unknown as { hasSessionContent(): boolean }, 'hasSessionContent')
       .mockReturnValue(true);
     harness.createSession.mockRejectedValueOnce(new Error('create boom'));

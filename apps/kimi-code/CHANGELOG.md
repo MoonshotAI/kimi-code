@@ -1,5 +1,37 @@
 # @moonshot-ai/kimi-code
 
+## 2.6.3
+
+### Patch Changes
+
+- [#4994](https://github.com/MoonshotAI/kimi-code/pull/4994) [`2016917`](https://github.com/MoonshotAI/kimi-code/commit/20169174c815ada19093bc687b1433ef8b52f8f9) Thanks [@sailist](https://github.com/sailist)! - 修复前台 Shell 命令输出重复且加载状态不消失的问题。
+
+- [#4982](https://github.com/MoonshotAI/kimi-code/pull/4982) [`9d7f9af`](https://github.com/MoonshotAI/kimi-code/commit/9d7f9af9fba7d1282873a31ec8486f9ea956c591) Thanks [@sailist](https://github.com/sailist)! - 修复了若干已知的问题。
+
+- [#4999](https://github.com/MoonshotAI/kimi-code/pull/4999) [`9bf2891`](https://github.com/MoonshotAI/kimi-code/commit/9bf2891bc629bd0fa6b826b7c10762e4a45765be) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - 修复 Windows 上 WebBridge 守护进程运行时无法更新的问题。
+
+- [#4995](https://github.com/MoonshotAI/kimi-code/pull/4995) [`f6996a9`](https://github.com/MoonshotAI/kimi-code/commit/f6996a9292cd970491247d00783f18e92991f417) Thanks [@sailist](https://github.com/sailist)! - 修复每轮回复完成后外部 Stop 钩子未执行的问题。
+
+- [#4989](https://github.com/MoonshotAI/kimi-code/pull/4989) [`9c75e5a`](https://github.com/MoonshotAI/kimi-code/commit/9c75e5aa97e6720add1f7e5833d5b31d99bb25c4) Thanks [@sailist](https://github.com/sailist)! - 修复恢复或创建会话分支时后台任务通知意外触发新回复的问题。
+
+- [#4992](https://github.com/MoonshotAI/kimi-code/pull/4992) [`0617b20`](https://github.com/MoonshotAI/kimi-code/commit/0617b20ce76cd4aaf6be8c8b6093b424833e2746) Thanks [@sailist](https://github.com/sailist)! - 修复后台通知导致 Tower 任务意外停止的问题。
+
+## 2.6.2
+
+### Patch Changes
+
+- [#4875](https://github.com/MoonshotAI/kimi-code/pull/4875) [`4c72e1d`](https://github.com/MoonshotAI/kimi-code/commit/4c72e1d53b33c69c5f3e2bd293cb117577becbd7) Thanks [@7Sageer](https://github.com/7Sageer)! - Support optional `search_url` and `feedback_url` fields on custom registry (`api.json`) providers for `WebSearch` and `/feedback`.
+
+- [#4876](https://github.com/MoonshotAI/kimi-code/pull/4876) [`d532f4f`](https://github.com/MoonshotAI/kimi-code/commit/d532f4f9adf8633a515d0628bc97247dd91dcfbc) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the text-only "No attachment" option from `/feedback` (text-only `/feedback` submissions are no longer available), show the current session's files before confirmation, and include session `request_id` metadata.
+
+- [#4885](https://github.com/MoonshotAI/kimi-code/pull/4885) [`ec35f9a`](https://github.com/MoonshotAI/kimi-code/commit/ec35f9ac158c195d17b4736054e4ffc16dac3c3c) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Fix multi-second loading delays when reopening long sessions with many tool calls.
+
+- [#4905](https://github.com/MoonshotAI/kimi-code/pull/4905) [`90d8e31`](https://github.com/MoonshotAI/kimi-code/commit/90d8e31ba34eef50d25b9e8020501c4e46a59d9d) Thanks [@sailist](https://github.com/sailist)! - Reject failed or unfinished Kimi media uploads instead of caching unusable file references.
+
+- [#4922](https://github.com/MoonshotAI/kimi-code/pull/4922) [`a27bd82`](https://github.com/MoonshotAI/kimi-code/commit/a27bd82d32061d68a012ececa8d6f6dbe6ce9df8) Thanks [@sailist](https://github.com/sailist)! - Fix missing live subagent updates in the Swarm panel during execution.
+
+- [#4927](https://github.com/MoonshotAI/kimi-code/pull/4927) [`102bc1f`](https://github.com/MoonshotAI/kimi-code/commit/102bc1f96b7bbf3845f25c043c3cad30b6f539a9) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Improved interactions and fixed known bugs.
+
 ## 2.6.1
 
 ### Patch Changes

@@ -53,6 +53,15 @@ describe('server-v2 OpenAPI', () => {
     const deleteParams = deleteOp['parameters'] as Array<Record<string, unknown>>;
     expect(deleteParams.some((p) => p['in'] === 'path' && p['name'] === 'session_id')).toBe(true);
     expect(deleteParams.some((p) => p['name'] === 'tail')).toBe(false);
+
+    const cancelOp = operation(doc, '/api/v1/sessions/{session_id}:cancel', 'post');
+    expect(cancelOp['operationId']).toBe('runSessionCancelAction');
+    const cancelBodySchema = asRecord(
+      asRecord(asRecord(cancelOp['requestBody'])['content'])['application/json'],
+    )['schema'] as Record<string, unknown>;
+    const cancelProps = asRecord(cancelBodySchema['properties']);
+    expect(cancelProps['agent_id']).toMatchObject({ type: 'string' });
+    expect(cancelProps['include_background']).toMatchObject({ type: 'boolean' });
   });
 
   it('describes the file upload as multipart/form-data', async () => {
@@ -110,9 +119,11 @@ describe('server-v2 OpenAPI', () => {
     expect(Array.isArray(schema['oneOf'])).toBe(true);
   });
 
-  it('documents MCP OAuth failures for auth completion', async () => {
+  it('documents MCP OAuth failures for auth completion under /api/v1/mcp', async () => {
     const doc = await fetchOpenApi();
-    const authCompleteOp = operation(doc, '/api/v2/mcp/auth:complete', 'post');
+    const paths = Object.keys(asRecord(doc['paths']));
+    expect(paths.some((path) => path.startsWith('/api/v2/'))).toBe(false);
+    const authCompleteOp = operation(doc, '/api/v1/mcp/auth:complete', 'post');
     const responses = asRecord(authCompleteOp['responses']);
     const response = asRecord(responses['200']);
     const content = asRecord(response['content']);
@@ -144,10 +155,13 @@ describe('server-v2 OpenAPI', () => {
 
   it('documents session conflicts for session mutation routes', async () => {
     const doc = await fetchOpenApi();
+    const docPaths = asRecord(doc['paths']);
+    expect(docPaths['/api/v1/client-configs/{name}']).toBeUndefined();
+    expect(docPaths['/api/v1/client_configs']).toBeUndefined();
     const paths = [
       '/api/v1/sessions/{session_id}/profile',
       '/api/v1/sessions/{session_id}/title/generate',
-      '/api/v1/sessions/{session_id}/children',
+      '/api/v1/sessions/{session_id}:cancel',
       '/api/v1/sessions/{session_id}/skills/{tail}',
     ];
     for (const path of paths) {

@@ -1,6 +1,6 @@
 # 会话接口
 
-本页列出 `/api/v1/sessions` 下的 REST 接口（会话文件系统接口见 [文件接口](./server-api-files.md)），以及 `/api/v2/sessions` 的会话列表与批量归档接口。WebSocket 一侧（对话帧、[订阅会话](./server-api-conversation.md#订阅会话)、客户端如何驱动一轮对话）见 [会话与对话](./server-api-conversation.md)；响应信封、鉴权、错误码和分页等通用约定见 [服务 API](./server-api.md)。
+本页列出 `/api/v1/sessions` 下的 REST 接口（会话文件系统接口见 [文件接口](./server-api-files.md)）。WebSocket 一侧（对话帧、[订阅会话](./server-api-conversation.md#订阅会话)、客户端如何驱动一轮对话）见 [会话与对话](./server-api-conversation.md)；响应信封、鉴权、错误码和分页等通用约定见 [服务 API](./server-api.md)。
 
 ## 会话
 
@@ -30,15 +30,18 @@
 | `usage` | object | token 汇总：`input_tokens`、`output_tokens`、`cache_read_tokens`、`cache_creation_tokens`、`context_tokens`，以及可选的 `context_limit`、`total_cost_usd`、`turn_count`。目前始终为零。实时的上下文大小由每个 Agent 的 [`usage` 帧](./server-api-conversation.md#agent-状态) 通过 WebSocket 下发 |
 | `permission_rules` | array | 会话权限规则，目前始终为 `[]` |
 | `message_count` | integer | 消息数，目前始终为 `0` |
+| `git` | object | 仅在 `GET /api/v1/sessions` 传入 `include=git` 时携带。含可选的 `branch`（当前分支；分离 HEAD 或非 Git 仓库时省略）和可选的 `pull_request`（`{ number, state: "open" \| "closed" \| "merged", url }`，无关联 PR 时省略） |
 
 ### 创建、查询与修改会话
 
-创建会话、列出和读取会话，以及修改会话的标题、元数据和 main agent 配置。
+创建会话、列出和读取会话、批量归档与恢复，以及修改会话的标题、元数据和 main agent 配置。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `POST /api/v1/sessions` | 创建会话（需要 `workspace_id` 或 `metadata.cwd`） |
-| `GET /api/v1/sessions` | 列出会话，游标分页，支持 `busy`、`archived_only` 等过滤 |
+| `GET /api/v1/sessions` | 列出会话，支持筛选、排序、按工作区分组、`include=git` 与多种分页模式 |
+| `POST /api/v1/sessions:archive` | 批量归档会话 |
+| `POST /api/v1/sessions:restore` | 批量恢复已归档会话 |
 | `GET /api/v1/sessions/{session_id}` | 读取单个会话 |
 | `GET /api/v1/sessions/{session_id}/profile` | 读取会话档案 |
 | `POST /api/v1/sessions/{session_id}/profile` | 更新标题、元数据和 main agent 配置 |
@@ -81,23 +84,65 @@
 
 #### `GET /api/v1/sessions`
 
-跨工作区列出会话，`updated_at` 最新的在前。游标分页遵循 [分页](./server-api.md#分页) 约定，但有一个例外：既不传 `page_size` 也不传 `archived_only` 时，响应是一个不分页的窗口，`has_more` 恒为 `false`。要真正翻页，必须传 `page_size`。
+跨工作区查询会话，支持筛选、排序、按工作区分组、可选的 Git 信息与轻量 id 投影。分页支持不透明 `page_token`、从 1 开始的 `page` 页码，以及扁平视图下的 `before_id` / `after_id` 游标（四者互斥，见 [分页](./server-api.md#分页)）。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `before_id` | query | string | 只保留早于该 id 的会话。与 `after_id` 互斥 |
-| `after_id` | query | string | 只保留晚于该 id 的会话。与 `before_id` 互斥 |
-| `page_size` | query | integer | 1–100。分页生效时默认 `20`；不传时的行为见上文 |
+| `workspace_id` | query | string | 按工作区过滤，可重复，接受工作区别名；未知工作区返回空结果 |
+| `archived` | query | string | `false`（默认，只列未归档会话）/ `true`（只列已归档会话）/ `all` |
+| `has_prompt` | query | boolean | `true` 只保留有用户提示词的会话，`false` 只保留空会话 |
 | `busy` | query | boolean | 只保留忙碌（或只保留空闲）的会话 |
-| `include_archive` | query | boolean | 在活跃会话之外同时列出已归档会话。默认 `false` |
-| `archived_only` | query | boolean | 只列出已归档会话。与 `include_archive` 互斥。不传 `page_size` 时也启用游标分页 |
-| `exclude_empty` | query | boolean | 去掉没有任何用户提示词的会话 |
-| `workspace_id` | query | string | 只列出该工作区的会话，接受工作区别名 |
+| `activity` | query | string | 按活动状态过滤：`idle` / `turn`（main agent 有进行中的轮次）/ `background`（仅有后台工作或压缩），可重复 |
+| `updated_after` | query | string | 只看该时间（ISO 8601，含边界）之后更新过的会话 |
+| `updated_before` | query | string | 只看该时间（ISO 8601，含边界）之前更新过的会话 |
+| `sort` | query | string | `updated_at_desc`（默认）/ `updated_at_asc` / `created_at_desc` |
+| `view` | query | string | `flat`（默认）/ `by_workspace` |
+| `group_page_size` | query | integer | `view=by_workspace` 时每个工作区返回的会话数：1–100，默认 `5`（使用 `id,archived` 投影时上限 `10000`） |
+| `include` | query | string | 逗号分隔的附加字段组。目前支持 `git`（分支与 PR 信息，按环境与工作目录去重并缓存 60 秒） |
+| `fields` | query | string | 逗号分隔的字段投影。目前只支持 `id,archived`，每项裁剪为 `{ id, archived }`（用于全选匹配场景） |
+| `page_size` | query | integer | 1–100，默认 `50`；使用 `id,archived` 投影时上限放宽至 `10000`。`view=by_workspace` 时按组计数 |
+| `page_token` | query | string | 上一页返回的翻页令牌 |
+| `page` | query | integer | 无状态的页码，从 1 开始 |
+| `before_id` | query | string | 扁平视图下只返回排序位置在该会话之后的项 |
+| `after_id` | query | string | 扁平视图下只返回排序位置在该会话之前的项 |
 
-成功时 `data` 为 `{ items, has_more }`，`items` 的每项是 [会话对象](#会话对象)。
+扁平视图下，`data` 为 `{ items, total, has_more, next_page_token? }`：默认每项是 [会话对象](#会话对象)，传入 `include=git` 时附带 `git`，传入 `fields=id,archived` 时每项为 `{ id, archived }`。`total` 为过滤后的集合大小。`next_page_token` 只在使用 `page_token`（或缺省分页参数）且 `has_more` 为 `true` 时出现，中途改变任何查询条件返回 `40922`；`page`、`before_id`、`after_id` 模式不签发令牌。
 
-- `40001`：校验失败，例如 `before_id` 与 `after_id` 同时传入，或 `archived_only` 与 `include_archive` 同时传入
-- `40410`：`workspace_id` 未知
+`view=by_workspace` 时，同一份过滤、排序后的集合按规范化后的工作区 id 分组返回，`data` 为 `{ groups, total, has_more, next_page_token? }`：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `groups[].workspace_id` | string | 分组所属的工作区 id |
+| `groups[].sessions` | array | 该工作区按请求的 `sort` 排序的前 `group_page_size` 条会话 |
+| `groups[].total` | integer | 该工作区匹配过滤条件的会话总数 |
+| `total` | integer | 分组视图下为组数 |
+
+只有至少有一条匹配会话的工作区才会出现。组之间按组内第一条会话的排序键排序，相同时按 `workspace_id` 排序。`page` 与 `page_token` 按组翻页。
+
+- `40001`：校验失败，例如传入多个分页游标参数、在分组视图下传入 `before_id` / `after_id`、未开启分组视图时传入 `group_page_size`、`fields=id,archived` 与 `include=git` 同时传入
+- `40922`：翻页途中查询条件（含投影、`view` 与分组参数）与 `page_token` 不符
+
+#### `POST /api/v1/sessions:archive`
+
+批量归档会话，面向会话管理页。仍在线的会话走完整的生命周期；未加载的冷会话直接改写磁盘上的元数据，不会被加载。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `ids` | body | array | 必填。会话 id 数组，不能为空，去重后不超过 5000 条 |
+
+只有请求体校验失败才会让整个请求失败，其他错误按条返回：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `results` | array | 每个 id 的结果，保持输入顺序。成功项为 `{ id, ok }`，失败项为 `{ id, ok: false, error }`。不存在的 id 在自己的条目里报 `40401` |
+| `succeeded` | integer | 成功条数 |
+| `failed` | integer | 失败条数 |
+
+- `40001`：请求体校验失败
+
+#### `POST /api/v1/sessions:restore`
+
+批量恢复已归档的会话。请求体、在线与冷会话的处理方式、按条返回的结果和错误码都与 [`POST /api/v1/sessions:archive`](#post-api-v1-sessions-archive) 相同。
 
 #### `GET /api/v1/sessions/{session_id}`
 
@@ -271,7 +316,7 @@
 
 #### `POST /api/v1/sessions/{session_id}:archive`
 
-将会话标记为已归档，并广播全局事件 `event.session.archived`。归档后会话不出现在默认会话列表中，使用 `include_archive` 或 `archived_only` 时仍会列出。
+将会话标记为已归档，并广播全局事件 `event.session.archived`。归档后会话不出现在默认会话列表中，传入 `archived=true` 或 `archived=all` 时仍会列出。
 
 成功时 `data` 为 `{ archived: true }`。
 
@@ -643,113 +688,6 @@ main agent 正在运行时，激活不会开启新轮次，而是作为插话插
 - `40415`：没有该名称的 Skill
 - `40912`：Skill 存在，但其类型不允许用户激活
 - `40927`：`prompt_id` 已被另一个请求使用，包括提交提示词和 `/steer` 的请求
-
-### 会话列表（v2）
-
-`/api/v2/sessions` 是面向会话列表页和管理页的新一代接口：列表查询的筛选、排序、字段组都放在查询参数里，并提供批量归档与恢复。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v2/sessions` | 按筛选、排序和字段组查询会话，可按工作区分组 |
-| `POST /api/v2/sessions:archive` | 批量归档会话 |
-| `POST /api/v2/sessions:restore` | 批量恢复会话 |
-
-#### `GET /api/v2/sessions`
-
-面向列表页的会话查询，筛选、排序、字段组都在查询参数里。使用 `page_token` 或 `page` 分页（见 [分页](./server-api.md#分页)）。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `workspace.id` | query | string | 按工作区过滤，可重复 |
-| `activity.status` | query | string | 按活动状态过滤：`running` / `approval` / `question` / `failed` / `idle`，可重复 |
-| `meta.updated_after` | query | integer | 只看该时间（epoch 毫秒）之后更新过的会话 |
-| `meta.updated_before` | query | integer | 只看该时间（epoch 毫秒）之前更新过的会话 |
-| `meta.archived` | query | string | `true` / `false`（默认）/ `all` |
-| `meta.has_prompt` | query | boolean | `true` 只保留有用户提示词的会话，`false` 只保留空会话（等价于 `GET /api/v1/sessions` 的 `exclude_empty`） |
-| `view` | query | string | `flat`（默认）/ `by_workspace`，见下文 |
-| `group.page_size` | query | integer | `view=by_workspace` 时每个工作区返回的会话数：1–100，默认 5（使用 `id,archived` 投影时上限 10000） |
-| `sort` | query | string | `meta.updated_at_desc`（默认）/ `meta.updated_at_asc` / `meta.created_at_desc` |
-| `include` | query | string | 逗号分隔的附加字段组。目前支持 `git`（分支与 PR 信息，按环境与工作目录去重并缓存 60 秒） |
-| `fields` | query | string | 逗号分隔的字段投影。目前只支持 `id,archived`，每项裁剪为 `{ id, archived }`（用于全选匹配场景） |
-| `page_size` | query | integer | 1–100，默认 50；使用 `id,archived` 投影时上限放宽至 10000。`view=by_workspace` 时按组计数 |
-| `page_token` | query | string | 上一页返回的翻页令牌 |
-| `page` | query | integer | 无状态的页码，从 1 开始。与 `page_token` 互斥 |
-
-列表中的每一项固定包含 `workspace`、`meta`、`activity` 三组字段，`include=git` 时再附加 `git` 组；`fields=id,archived` 时每项只有 `{ id, archived }`。`activity` 组还带 `model`：会话仍加载在当前进程时为其绑定的模型别名，冷会话（未加载）为 `null`。各组的字段可参考下文分组视图示例中的会话项。
-
-每页额外带 `total`，即过滤后的集合大小。翻页令牌绑定首页的查询条件（含投影），中途改变条件返回 `40922`。`page` 模式是用于跳页的无状态替代：每次请求都是独立快照，不签发令牌，`next_page_token` 恒为 `null`。
-
-`view=by_workspace` 时，同一份过滤、排序后的集合会重新投影为按工作区分组的形态。概览页因此可以用一次请求代替逐个工作区轮询：
-
-```json
-{
-  "code": 0,
-  "msg": "success",
-  "data": {
-    "groups": [
-      {
-        "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" },
-        "sessions": [ { "id": "session_...", "workspace": { "id": "wd_my-app_a1b2c3d4e5f6", "cwd": "/Users/dev/my-app" }, "meta": { "title": "Fix the login page", "last_prompt": "adjust the button spacing", "created_at": 1787000000000, "updated_at": 1787000100000, "archived": false, "archived_at": null }, "activity": { "status": "idle", "model": "kimi-for-coding" } } ],
-        "total": 42
-      }
-    ],
-    "total": 7,
-    "has_more": true,
-    "next_page_token": "eyJ2IjoxLCJmIjoi..."
-  },
-  "request_id": "req_..."
-}
-```
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `groups[].workspace` | object | 分组所属的工作区 |
-| `groups[].sessions` | array | 该工作区按请求的 `sort` 排序的前 `group.page_size` 条会话 |
-| `groups[].total` | integer | 该工作区匹配过滤条件的会话总数，可用作「查看全部」入口 |
-| `total` | integer | 分组视图下为组数 |
-
-只有至少有一条匹配会话的工作区才会出现。组之间按组内第一条会话的排序键排序，相同时按工作区 id 排序。`page` 与 `page_token` 按组翻页，令牌的指纹绑定规则相同，并且同时覆盖 `view` 与分组参数，翻页途中改变它们同样返回 `40922`。
-
-- `40001`：未开启分组视图时传入 `group.page_size`；`fields=id,archived` 与 `include=git` 同时传入；`page` 与 `page_token` 同时传入
-- `40922`：翻页途中查询条件（含投影、`view` 与分组参数）与 `page_token` 不符
-
-#### `POST /api/v2/sessions:archive`
-
-批量归档会话，面向会话管理页。仍在线的会话走完整的生命周期；未加载的冷会话直接改写磁盘上的元数据，不会被加载。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `ids` | body | array | 必填。会话 id 数组，不能为空，去重后不超过 5000 条 |
-
-只有请求体校验失败才会让整个请求失败，其他错误按条返回：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `results` | array | 每个 id 的结果，保持输入顺序。成功项为 `{ id, ok }`，失败项为 `{ id, ok: false, error }`。不存在的 id 在自己的条目里报 `40401` |
-| `succeeded` | integer | 成功条数 |
-| `failed` | integer | 失败条数 |
-
-```json
-{
-  "code": 0,
-  "msg": "success",
-  "data": {
-    "results": [
-      { "id": "session_a", "ok": true },
-      { "id": "session_b", "ok": false, "error": { "code": 40401, "message": "session session_b does not exist" } }
-    ],
-    "succeeded": 1,
-    "failed": 1
-  },
-  "request_id": "req_..."
-}
-```
-
-- `40001`：请求体校验失败
-
-#### `POST /api/v2/sessions:restore`
-
-批量恢复已归档的会话。请求体、在线与冷会话的处理方式、按条返回的结果和错误码都与 [`POST /api/v2/sessions:archive`](#post-api-v2-sessions-archive) 相同。
 
 ## 对话
 

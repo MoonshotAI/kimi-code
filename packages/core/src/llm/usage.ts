@@ -1,8 +1,3 @@
-/**
- * `TokenUsage` and its arithmetic: input and grand totals, addition, and merging the partial usage
- * reported during a stream.
- */
-
 export interface TokenUsage {
   inputOther: number;
   output: number;

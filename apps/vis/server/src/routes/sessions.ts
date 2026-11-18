@@ -18,8 +18,6 @@ export function sessionsRoute(home: string = KIMI_CODE_HOME): Hono {
     await rm(target.sessionDir, { recursive: true, force: true });
     return c.json({ sessionId: id, deleted: true });
   });
-  // Open the session directory in the OS file manager. The folder is
-  // opened on the SERVER host — only meaningful when vis runs locally.
   r.post('/:id/reveal', async (c) => {
     const id = c.req.param('id');
     const detail = await readSessionDetail(home, id);

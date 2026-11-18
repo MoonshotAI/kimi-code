@@ -25,17 +25,7 @@ export interface TelemetryBootstrapOptions {
   readonly regionSource?: string;
   readonly resolveRegion?: () => TelemetryRegionResolution;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
-  /**
-   * Invoked when a tracked property is dropped for not being a primitive.
-   * Telemetry stays silent by default; hosts wire this to their logger.
-   */
   readonly onUnexpectedError?: (error: Error) => void;
-  /**
-   * Region-aware endpoint derived by the composition root (this package stays
-   * dependency-free). A resolver is invoked per flush so an in-process region
-   * switch takes effect without re-initialization; an absent endpoint skips
-   * the send instead of falling back to another region's host.
-   */
   readonly endpoint?: string | (() => string | undefined);
 }
 

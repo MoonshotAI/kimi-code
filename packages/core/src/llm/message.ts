@@ -1,8 +1,3 @@
-/**
- * Core message model: content parts (text, think, media), tool calls and their streamed fragments, the
- * four message roles with optional runtime `MessageAttributes`, tool-result model rendering, and the
- * accumulator that merges streamed parts into an assistant message.
- */
 import type { TokenUsage } from '#/llm/usage';
 
 export type FinishReason =
@@ -180,6 +175,7 @@ export interface UserMessageAttributes extends MessageAttributes {
   userMessageId?: string;
   toolCallId?: string;
   bypassMaxSteps?: boolean;
+  promptOnly?: true;
 }
 
 export interface ToolMessageAttributes extends MessageAttributes {
@@ -411,29 +407,6 @@ export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessag
   return false;
 }
 
-/**
- * Removes vacuous content and all tool calls from an interrupted assistant message, returning `null`
- * when no meaningful content remains.
- *
- * @example
- * // Input:
- * {
- *   role: 'assistant',
- *   content: [
- *     { type: 'text', text: ' ' }, // ←
- *     { type: 'text', text: 'Partial answer' },
- *   ],
- *   toolCalls: [
- *     { type: 'function', id: 'call-1', name: 'read', arguments: '{}' }, // ←
- *   ],
- * }
- * // Output:
- * {
- *   role: 'assistant',
- *   content: [{ type: 'text', text: 'Partial answer' }], // ←
- *   toolCalls: [], // ←
- * }
- */
 export function salvageInterruptedMessage(message: AssistantMessage): AssistantMessage | null {
   const content = message.content.filter((part) => !isVacuousContentPart(part));
   if (content.length === 0) return null;

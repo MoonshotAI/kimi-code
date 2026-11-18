@@ -1,6 +1,3 @@
-/**
- * Entry for the built-in provider requester presets.
- */
 export { anthropicRequester } from './anthropic';
 export { bedrockAnthropicRequester } from './bedrock/anthropic';
 export { googleGenAIRequester, googleVertexRequester } from './google';

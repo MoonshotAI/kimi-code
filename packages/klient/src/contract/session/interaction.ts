@@ -1,8 +1,3 @@
-/**
- * `sessionInteractionService` — blocking human-in-the-loop request kernel.
- * Mirrors `agent-core-v2/human/interaction/interaction.ts`.
- */
-
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';

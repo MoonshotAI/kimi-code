@@ -1,11 +1,3 @@
-/**
- * CacheHintController — drives the "cache expired" dialog for the two trigger
- * scenarios: resuming a long-idle session (fires right after the resume
- * finishes loading) and submitting after an in-process idle stretch
- * (intercepts the submit). Owns the frequency guards and the in-process
- * activity baseline; the pure trigger rule lives in `../utils/cache-hint`.
- */
-
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
@@ -27,12 +19,9 @@ import {
   type ExtractionResult,
 } from '../utils/image-placeholder';
 
-/** A swallowed submit: the raw text plus its media extraction (done before
- *  the dialog so pasted attachments survive a later store clear). */
 interface StashedSubmit {
   readonly text: string;
   readonly extraction?: ExtractionResult;
-  /** Session that owned any daemon refs inside {@link extraction}. */
   readonly sessionId: string;
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
@@ -46,11 +35,6 @@ export interface CacheHintHost {
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
-  /**
-   * A stashed submission going back to the editor releases its extraction's
-   * staged media with queue-recall semantics (consume retains, retire staged
-   * copies, rebase videos) — without this the retains/copies would leak.
-   */
   recallStashedMedia(extraction: ExtractionResult | undefined): void;
   showError(message: string): void;
   createNewSession(): Promise<void>;
@@ -65,26 +49,15 @@ export interface CacheHintHost {
 type HintDecision = { readonly idleSeconds: number; readonly totalTokens: number };
 
 export class CacheHintController {
-  /** Latest in-process LLM round-trip time (turn begin / turn end). */
   private lastActivityAt: number | undefined;
-  /** One prompt per idle cycle; reset when a real send starts a turn. */
   private idlePrompted = false;
-  /** Cold-cache trigger fetches at most once per idle cycle (loop guard for
-   *  the release-and-resend path). */
   private triggerFetchAttempted = false;
-  /** Swallowed submits waiting on the cold-cache interception chain. */
   private pendingInterceptions = 0;
-  /** FIFO chain serializing swallowed submits so they keep submit order. */
   private interceptionTail: Promise<void> = Promise.resolve();
-  /** Set while a stashed message is being released back into the send path. */
   private releasingStashed = false;
-  /** Whether the idle dialog's triggering message was restored, not sent. */
   private lastDialogRestored = false;
-  /** Inputs restored this cycle — chained restores append (newline-joined)
-   *  instead of overwriting the editor. */
   private restoredTexts: string[] = [];
   private restoredActivations: InlineSkillActivation[] = [];
-  /** Resume scenario fires at most once per session per TUI instance. */
   private readonly resumedSessions = new Set<string>();
 
   constructor(private readonly host: CacheHintHost) {}
@@ -93,12 +66,6 @@ export class CacheHintController {
     this.lastActivityAt = Date.now();
   }
 
-  /**
-   * A real send starts a turn — open a fresh idle cycle. Cache activity is
-   * deliberately NOT recorded here: the prompt may still fail before any
-   * model request (rejected call, hook-blocked turn), and only a completed
-   * provider round trip refreshes the server-side cache.
-   */
   onTurnBegin(): void {
     this.idlePrompted = false;
     this.triggerFetchAttempted = false;
@@ -107,7 +74,6 @@ export class CacheHintController {
     this.restoredActivations = [];
   }
 
-  /** Session switch / create: the new session has no in-process baseline. */
   resetRuntime(): void {
     this.lastActivityAt = undefined;
     this.idlePrompted = false;
@@ -117,12 +83,10 @@ export class CacheHintController {
     this.restoredActivations = [];
   }
 
-  /** Background warm-up on session creation; never blocks, never throws. */
   refreshConfigInBackground(): void {
     void this.resolveConfig();
   }
 
-  /** Scenario 1: call right after a resume finishes loading. */
   async maybeShowOnResume(): Promise<void> {
     const { host } = this;
     const session = host.session;
@@ -131,30 +95,16 @@ export class CacheHintController {
     const main = session.getResumeState()?.agents[MAIN_AGENT_ID];
     let lastActiveAt = 0;
     for (const record of main?.replay ?? []) {
-      // Only message/compaction records correspond to LLM round-trips; state
-      // records (permission/plan/config updates, approval results) can be
-      // appended by slash commands without touching the cache.
       if (record.type !== 'message' && record.type !== 'compaction') continue;
       if (record.time > lastActiveAt) lastActiveAt = record.time;
     }
-    // `summary.updatedAt` ≈ last user prompt — a coarser but valid fallback.
     if (lastActiveAt === 0) lastActiveAt = session.summary?.updatedAt ?? 0;
     if (lastActiveAt === 0) return;
     const config = await this.resolveConfig();
-    // The config fetch above can outlive the user's patience: if they switched
-    // sessions meanwhile, this dialog (and its actions) would target the wrong
-    // session — drop it. Likewise, if they already sent the first prompt and
-    // a turn is now running, don't mount over the active turn.
     if (host.session !== session) return;
     if (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting) {
       return;
     }
-    // Fold in-process activity into the replay-derived baseline before
-    // judging: a turn may have completed during the fetch, and a completed
-    // turn refreshes the server-side cache — the stale replay timestamp would
-    // warn about an expiration the user just paid to fix. Seeding the
-    // baseline either way also lets a resume inside the cache window expire
-    // via the idle-submit path while the user idles in the TUI.
     lastActiveAt = Math.max(lastActiveAt, this.lastActivityAt ?? 0);
     this.lastActivityAt = lastActiveAt;
     const decision = evaluateCacheHint({
@@ -166,25 +116,12 @@ export class CacheHintController {
       dismissed: host.state.appState.cacheExpiryHint === false,
     });
     if (decision.kind === 'skip') return;
-    // Another dialog (e.g. the model migration prompt) already owns the editor
-    // area: never replace it under the user's keystrokes. The seeded baseline
-    // leaves this cycle to the idle-submit path, which hints on the first prompt.
     if (host.state.editorReplacementMounted) return;
     this.resumedSessions.add(session.id);
-    // The resume dialog also covers this idle cycle: the first submit right
-    // after it must not be intercepted again.
     this.idlePrompted = true;
     await this.showDialog('resume', decision, undefined);
   }
 
-  /**
-   * Scenario 2: intercept an idle submit. Returns true when swallowed.
-   * Synchronous in every non-hint path — the send pipeline must stay
-   * await-free up to `sendMessage` (tests assert `prompt()` synchronously
-   * right after `handleUserInput`). When the config cache is cold the submit
-   * is swallowed while the config is fetched (spec: the trigger must reach
-   * the interface); the message is then either shown the dialog or released.
-   */
   maybeInterceptOnSubmit(
     text: string,
     extraction?: ExtractionResult,
@@ -192,19 +129,13 @@ export class CacheHintController {
   ): boolean {
     const { host } = this;
     if (host.session === undefined) return false;
-    // A stashed message being released re-enters the send path here — never
-    // re-intercept it (that would start a second fetch loop).
     if (this.releasingStashed) return false;
     if (this.idlePrompted || this.lastActivityAt === undefined) return false;
     if (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting) {
       return false;
     }
     if (host.state.appState.cacheExpiryHint === false) return false;
-    // Providers that can never match a cache rule (apiKey / self-hosted) must
-    // not pay the cold-fetch stall below — no hint can ever come of it.
     if (this.upstreamModelId() === undefined) return false;
-    // Coarse floor: configured cache durations are 10min+, so anything
-    // fresher than a minute can never hint.
     if (Date.now() - this.lastActivityAt < 60_000) return false;
     const stash: StashedSubmit = { text, extraction, sessionId: host.session.id, inlineSkillActivations };
     const cached = peekCacheHintConfig();
@@ -219,14 +150,9 @@ export class CacheHintController {
       });
       if (decision.kind === 'skip') return false;
       this.idlePrompted = true;
-      // Mounts synchronously inside; the action resolution runs async.
       void this.showDialog('idle', decision, stash);
       return true;
     }
-    // Config cache cold: fetch at trigger time. Submits arriving while the
-    // interception is in flight are swallowed too and replayed through a FIFO
-    // chain, so a later prompt can never overtake the stashed one. A fetch
-    // that already failed this cycle falls through to the normal send path.
     if (this.triggerFetchAttempted && this.pendingInterceptions === 0) return false;
     this.triggerFetchAttempted = true;
     const sessionId = host.session.id;
@@ -239,13 +165,8 @@ export class CacheHintController {
     return true;
   }
 
-  /** Cold-cache path: fetch the config, then show the dialog or release. */
   private async interceptAfterFetch(stash: StashedSubmit, sessionId: string): Promise<void> {
     const { host } = this;
-    // A dialog already ran for this idle cycle: chained submits follow the
-    // fate of the message that opened it. If that message was restored
-    // (dismissed or its action failed), restore these too — sending them now
-    // would reorder the conversation.
     if (this.idlePrompted) {
       if (this.lastDialogRestored) {
         this.restoreStashedInput(stash);
@@ -255,16 +176,10 @@ export class CacheHintController {
       return;
     }
     const config = await this.resolveConfig();
-    // The fetch window is unbounded for the user: if they switched sessions
-    // meanwhile, never send the stashed text into the wrong session — hand it
-    // back to the editor instead.
     if (host.session?.id !== sessionId) {
       this.restoreStashedInput(stash);
       return;
     }
-    // If a foreground operation (turn, /compact, …) started meanwhile, don't
-    // mount over it — release through the normal path, which queues behind
-    // the running operation.
     if (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting) {
       await this.releaseStashed(stash);
       return;
@@ -284,14 +199,9 @@ export class CacheHintController {
         return;
       }
     }
-    // No hint (fetch failed or rules don't match): release the message. The
-    // re-entry skips the fetch (fresh cache or triggerFetchAttempted) and
-    // flows straight to send.
     await this.releaseStashed(stash);
   }
 
-  /** Release a stashed message through the normal send path, bypassing the
-   *  interception gate so the re-entry cannot start a second fetch. */
   private async releaseStashed(stash: StashedSubmit): Promise<void> {
     this.releasingStashed = true;
     try {
@@ -302,8 +212,6 @@ export class CacheHintController {
   }
 
   private async releaseToSendPath(stash: StashedSubmit): Promise<void> {
-    // A reset cleared the store, so register snapshot originals in the new
-    // session and rebuild image parts before returning to the send path.
     let extraction = stash.extraction;
     if (extraction !== undefined && this.host.state.appState.sessionId !== stash.sessionId) {
       const session = this.host.session;
@@ -330,11 +238,6 @@ export class CacheHintController {
     await this.host.sendNormalUserInput(stash.text, extraction);
   }
 
-  /** Restore a stashed input to the editor, appending to anything already
-   *  restored this cycle so earlier text is not overwritten, and release the
-   *  stash's staged media with recall semantics — the restored draft still
-   *  references its attachments, so retains are consumed (the next submit
-   *  re-retains) and staged copies retire instead of leaking. */
   private restoreStashedInput(stash: StashedSubmit | undefined): void {
     if (stash === undefined) return;
     const offset = this.restoredTexts.length === 0 ? 0 : this.restoredTexts.join('\n').length + 1;
@@ -353,9 +256,6 @@ export class CacheHintController {
     const { model, availableModels, availableProviders } = this.host.state.appState;
     const alias = availableModels[model];
     if (alias === undefined) return undefined;
-    // The cache rules describe the managed service's server-side cache, so
-    // they only apply to OAuth-managed providers — apiKey or self-hosted
-    // providers never hint.
     if (availableProviders[alias.provider]?.oauth === undefined) return undefined;
     return alias.model;
   }
@@ -365,10 +265,8 @@ export class CacheHintController {
     try {
       accessToken = await this.host.harness.auth.getCachedAccessToken();
     } catch {
-      // Facade unavailable (test doubles) — never fetch.
       return undefined;
     }
-    // The endpoint is public: apiKey-only users fetch anonymously.
     return getCacheHintConfig({ accessToken });
   }
 
@@ -437,9 +335,6 @@ export class CacheHintController {
             return;
           }
           if (stashed !== undefined) {
-            // compact() is trigger-only — the engine engages asynchronously.
-            // Wait for the engagement barrier so the resend lands in the
-            // queue and drains automatically when compaction finishes.
             if (!(await this.waitForCompactionStart())) {
               host.showError('Compact did not start; message not sent.');
               restoreInput();
@@ -453,7 +348,6 @@ export class CacheHintController {
         const previousId = host.state.appState.sessionId;
         await host.createNewSession();
         if (host.state.appState.sessionId === previousId) {
-          // Creation failed (error already surfaced); keep the input for retry.
           restoreInput();
           return;
         }
@@ -466,7 +360,6 @@ export class CacheHintController {
     if (stashed !== undefined) await this.releaseStashed(stashed);
   }
 
-  /** Bounded wait for the engine to flip `isCompacting` after a compact RPC. */
   private async waitForCompactionStart(timeoutMs = 3000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {

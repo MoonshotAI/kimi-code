@@ -1,7 +1,3 @@
-/**
- * Request results: finish reasons, the `LlmErrorMessage` union, timing, notices, stream and retry
- * events, the `LlmRunEvent` vocabulary, and the final `LlmOutcome`.
- */
 import type {
   AssistantMessage,
   FinishInfo,

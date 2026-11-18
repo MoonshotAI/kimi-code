@@ -66,14 +66,9 @@ export function planClipboardWrite(platform: NodeJS.Platform, env: NodeJS.Proces
     };
   }
   const backends = UNIX_CLIPBOARD_BACKENDS.filter((backend) => backend.present(env));
-  // Linux desktop terminals such as GNOME Terminal ignore OSC 52, so it only
-  // backs up a missing tool where no display exists or the terminal (Windows
-  // Terminal under WSL, Termux) is known to honor it.
   const osc52Fallback =
     backends.length === 0 || Boolean(env['TERMUX_VERSION']) || (platform === 'linux' && isWSL(env));
   return {
-    // The native module reports success on Linux without holding the X11
-    // selection, which leaves the clipboard empty; the CLI tools keep it.
     nativeModule: platform !== 'linux',
     commands: backends.flatMap((backend) => backend.commands),
     osc52: forceOSC52 ? 'always' : osc52Fallback ? 'fallback' : 'never',
@@ -82,14 +77,9 @@ export function planClipboardWrite(platform: NodeJS.Platform, env: NodeJS.Proces
 }
 
 function runClipboardCommand(command: string, args: readonly string[], input: string): Promise<boolean> {
-  // A fullscreen selection can be copied before the workspace trust prompt is
-  // answered, so a writer planted in the workspace must never run.
   const executable = resolveCommandPath(command);
   if (executable === undefined) return Promise.resolve(false);
   return new Promise((resolve) => {
-    // Writers such as xclip fork a child that keeps owning the selection. Give
-    // it no output pipes to hold open, and on POSIX a session of its own so
-    // closing the terminal does not SIGHUP it and empty the clipboard.
     const child = spawn(executable, args, {
       stdio: ['pipe', 'ignore', 'ignore'],
       cwd: '/',
@@ -114,7 +104,6 @@ function runClipboardCommand(command: string, args: readonly string[], input: st
     child.on('close', (code) => {
       if (claim()) resolve(code === 0);
     });
-    // A writer may exit before consuming all of its input.
     child.stdin?.on('error', () => {});
     child.stdin?.end(input);
   });
@@ -122,7 +111,6 @@ function runClipboardCommand(command: string, args: readonly string[], input: st
 
 export async function copyTextToClipboard(text: string): Promise<ClipboardCopyMethod> {
   const plan = planClipboardWrite(process.platform, process.env);
-  // Sent before the system clipboard is tried, so a stuck writer cannot hold it up.
   const osc52Sent = plan.osc52 === 'always' && writeClipboardOSC52(text);
 
   let copied = false;

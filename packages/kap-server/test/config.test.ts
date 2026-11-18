@@ -4,6 +4,9 @@ import { join } from 'node:path';
 
 import {
   ConfigChanged,
+  ConfigRegistry,
+  ConfigWarning,
+  IConfigRegistry,
   IConfigService,
   IEventService,
   type ConfigSectionChangedEvent,
@@ -286,11 +289,9 @@ describe('server-v2 config changed WS notifications', () => {
   }
 
   interface ConfigChangedFrame {
-    type: 'event.config.changed';
-    payload: {
-      changedFields: string[];
-      config: Record<string, unknown>;
-    };
+    type: 'config';
+    config: Record<string, unknown>;
+    warnings?: { domain?: string; message: string }[];
   }
 
   async function openWs(): Promise<ConfigChangedFrame[]> {
@@ -302,7 +303,7 @@ describe('server-v2 config changed WS notifications', () => {
     const frames: ConfigChangedFrame[] = [];
     ws.on('message', (data) => {
       const frame = JSON.parse((data as Buffer).toString()) as { type?: string };
-      if (frame.type === 'event.config.changed') frames.push(frame as ConfigChangedFrame);
+      if (frame.type === 'config') frames.push(frame as ConfigChangedFrame);
     });
     await new Promise((resolve) => ws.on('open', resolve));
     return frames;
@@ -319,7 +320,7 @@ describe('server-v2 config changed WS notifications', () => {
     expect(body.code).toBe(0);
   }
 
-  it('publishes a trailing event with camelCase changedFields and the full snapshot after POST /config', async () => {
+  it('publishes a trailing flat config frame with the full snapshot after POST /config', async () => {
     await boot('default_permission_mode = "auto"\n');
     const frames = await openWs();
 
@@ -327,13 +328,12 @@ describe('server-v2 config changed WS notifications', () => {
 
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1));
     const last = frames.at(-1) as ConfigChangedFrame;
-    expect(last.payload.changedFields).toEqual(['defaultPermissionMode']);
-    expect(last.payload.config['default_permission_mode']).toBe('yolo');
-    expect(last.payload.config['yolo']).toBe(true);
-    expect(last.payload.config).toHaveProperty('providers');
+    expect(last.config['default_permission_mode']).toBe('yolo');
+    expect(last.config['yolo']).toBe(true);
+    expect(last.config).toHaveProperty('providers');
   });
 
-  it('publishes camelCase changedFields on the engine write path used by OAuth refreshes', async () => {
+  it('publishes a flat config frame on the engine write path used by OAuth refreshes', async () => {
     await boot();
     const frames = await openWs();
 
@@ -343,13 +343,19 @@ describe('server-v2 config changed WS notifications', () => {
 
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1));
     const last = frames.at(-1) as ConfigChangedFrame;
-    expect(last.payload.changedFields).toEqual(['defaultModel']);
-    expect(last.payload.config['default_model']).toBe('k2');
+    expect(last.config['default_model']).toBe('k2');
   });
 
-  it('publishes an event when config.toml is edited outside the process and reloaded', async () => {
+  it('publishes change and error diagnostic events when config.toml is edited outside the process and reloaded', async () => {
     await boot('default_permission_mode = "auto"\n');
     const frames = await openWs();
+    const warnings: string[] = [];
+    const events = (server as RunningServer).core.accessor.get(IEventService);
+    const subscription = events.subscribe((event) => {
+      if (event instanceof ConfigWarning) {
+        warnings.push(...event.payload.warnings.map((warning) => warning.message));
+      }
+    });
 
     await writeFile(
       join(home as string, 'config.toml'),
@@ -362,8 +368,14 @@ describe('server-v2 config changed WS notifications', () => {
 
     await vi.waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(1), { timeout: 10000 });
     const last = frames.at(-1) as ConfigChangedFrame;
-    expect(last.payload.changedFields).toContain('defaultPermissionMode');
-    expect(last.payload.config['default_permission_mode']).toBe('yolo');
+    expect(last.config['default_permission_mode']).toBe('yolo');
+
+    await writeFile(join(home as string, 'config.toml'), '= broken =', 'utf-8');
+    await config.reload();
+    await vi.waitFor(() => {
+      expect(warnings).toContainEqual(expect.stringMatching(/failed to (parse|decode)/i));
+    });
+    subscription.dispose();
   });
 
   it('closes the config publisher before the app, so a pending change is never delivered during shutdown', async () => {
@@ -415,6 +427,7 @@ describe('configChangedPublisher', () => {
               getAll: () => backing,
             };
           }
+          if (token === IConfigRegistry) return new ConfigRegistry();
           return {
             publish: (event: Event2<unknown>) => published.push(event as ConfigChanged),
           };

@@ -878,8 +878,6 @@ describe('refreshProviderModels', () => {
     const providerId = 'example_chat-completions';
     const modelId = 'reasoner-pro';
     const modelAlias = `${providerId}/${modelId}`;
-    // A config written before max_output_size existed gains the field at the
-    // end of the entry, after fields the registry places later.
     const host = makeRefreshHost({
       providers: {
         [providerId]: {
@@ -1070,13 +1068,11 @@ describe('refreshProviderModels', () => {
     expect(result.changed).toEqual([
       { providerId: 'my-kimi', providerName: 'my-kimi', added: 1, removed: 1 },
     ]);
-    // The provider record is user-owned and must survive untouched.
     expect(host.current().providers['my-kimi']).toEqual({
       type: 'kimi',
       baseUrl,
       apiKey: 'sk-distributed-key',
     });
-    // Upstream-owned fields merge; the dropped model disappears; the new one appears.
     expect(host.current().models?.['my-kimi/kimi-for-coding']?.displayName).toBe('Fresh Kimi');
     expect(host.current().models?.['my-kimi/kimi-for-coding']?.capabilities).toEqual([
       'thinking',
@@ -1084,7 +1080,6 @@ describe('refreshProviderModels', () => {
     ]);
     expect(host.current().models?.['my-kimi/kimi-k2']).toBeDefined();
     expect(host.current().models?.['my-kimi/kimi-old']).toBeUndefined();
-    // Non-prefix user aliases and the default selection are preserved.
     expect(host.current().models?.['my-fav']).toEqual(userAliasModel);
     expect(host.current().defaultModel).toBe('my-kimi/kimi-for-coding');
   });
@@ -1268,8 +1263,6 @@ describe('refreshProviderModels', () => {
         removed: 0,
       },
     ]);
-    // The OAuth branch must not run: no token resolution, and the provider
-    // record keeps the user's API-key shape (no oauth ref, no apiKey reset).
     expect(resolveOAuthToken).not.toHaveBeenCalled();
     expect(host.current().providers[KIMI_CODE_PROVIDER_NAME]).toEqual({
       type: 'kimi',
@@ -1421,9 +1414,6 @@ describe('refreshProviderModels', () => {
 
     expect(result.failed).toEqual([]);
     expect(result.changed).toHaveLength(1);
-    // The v1 removeProvider RPC clears defaultProvider when it points at the
-    // refreshed provider; the setConfig patch must carry the original value
-    // back.
     expect(host.setConfig).toHaveBeenCalledWith(
       expect.objectContaining({ defaultProvider: 'my-kimi' }),
     );

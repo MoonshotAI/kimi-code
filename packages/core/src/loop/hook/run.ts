@@ -1,9 +1,4 @@
-/**
- * Runs the active hooks at each loop hook point in registration order, validates their decisions, and
- * applies each hook's failure policy (pause the hook, or block) when it throws or returns an invalid value.
- */
 import type { Message } from '#/llm/message';
-import type { ToolResult } from '#/tool/executor';
 import type {
   HookPoint,
   MessageAppendingDecision,
@@ -14,28 +9,15 @@ import type {
   StepStoppingVerdict,
   ToolBatchStartingDecision,
   ToolBatchStartingEvent,
+  ToolResult,
   TurnStartingEvent,
   TurnStartingVerdict,
 } from '../contract/hook';
 import type { QueuedItem } from '../contract/inbox';
 import type { Cause, StepEndingPoint, StepOutcome } from '../contract/outcome';
-import { isMessage, isObject, isToolResult } from '../guards';
+import { isCause, isMessage, isObject, isToolResult } from '../guards';
 import { hookFailureCause, type HookFailure } from './failure';
 import type { HookItem, HookSource } from './registry';
-
-function isOptionalString(value: unknown): boolean {
-  return value === undefined || typeof value === 'string';
-}
-
-function isCause(value: unknown): value is Cause {
-  return (
-    isObject(value) &&
-    typeof value['reason'] === 'string' &&
-    isOptionalString(value['by']) &&
-    isOptionalString(value['message']) &&
-    (value['details'] === undefined || isObject(value['details']))
-  );
-}
 
 function isTurnStartingVerdict(value: unknown): value is TurnStartingVerdict {
   return isObject(value) && value['type'] === 'blocked' && isCause(value['cause']);

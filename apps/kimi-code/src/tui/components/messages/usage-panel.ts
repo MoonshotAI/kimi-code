@@ -1,9 +1,3 @@
-/**
- * UsagePanelComponent — wraps pre-coloured `/usage` lines in a blue box
- * border with a left indent, mirroring the PlanBoxComponent layout so
- * the pattern stays consistent across command-triggered panels.
- */
-
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import { formatDuration } from '@moonshot-ai/kimi-code-oauth';
@@ -216,13 +210,7 @@ export function buildExtraUsageSection(
     rows.push({ label: 'Balance', ...balance });
   }
 
-  // `Used this month` is the longest label; size the column to the widest label
-  // so the currency symbol starts in the same column on every row.
   const labelWidth = Math.max(...rows.map((r) => r.label.length));
-  // Right-align the numeric part of currency rows against each other so the
-  // decimal points line up (e.g. `¥ 50.00` / `¥200.00`). Text-only rows such as
-  // `Unlimited` carry no currency symbol, so they must not widen the numeric
-  // column — otherwise money values get padded with stray spaces.
   const numberWidth = Math.max(
     0,
     ...rows.filter((r) => r.symbol.length > 0).map((r) => visibleWidth(r.number)),
@@ -306,7 +294,6 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
 }
 
 export class UsagePanelComponent implements Component {
-  /** Cached coloured lines; rebuilt from `buildLines` on every invalidate. */
   private lines: readonly string[];
 
   constructor(
@@ -318,8 +305,6 @@ export class UsagePanelComponent implements Component {
   }
 
   invalidate(): void {
-    // Report bodies embed palette colours, so a theme switch must re-run the
-    // builder to repaint the cached lines (the data itself is captured).
     this.lines = this.buildLines();
   }
 

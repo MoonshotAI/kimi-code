@@ -78,9 +78,7 @@ const pickMedia: Handler<PickMediaParams, string[]> = async (params) => {
       if (stat.size > (isVideo ? 20 : 10) * 1024 * 1024) continue;
       const bytes = await vscode.workspace.fs.readFile(uri);
       results.push(`data:${mediaMime(extension)};base64,${Buffer.from(bytes).toString("base64")}`);
-    } catch {
-      // Skip a file that disappears or cannot be read without failing the whole picker.
-    }
+    } catch {}
   }
   return results;
 };
@@ -182,8 +180,6 @@ const getImageDataUri: Handler<FilePathParams, string | null> = async ({ filePat
   const mime = IMAGE_MIME_TYPES[path.extname(resolved.relativePath).toLowerCase()];
   if (!mime) return null;
   try {
-    // Same cap as the media picker: an oversized image inlined as a data URI
-    // would live in the webview DOM (and its decoded bitmap) forever.
     const stat = await vscode.workspace.fs.stat(resolved.uri);
     if (stat.size > 10 * 1024 * 1024) return null;
     const bytes = await vscode.workspace.fs.readFile(resolved.uri);

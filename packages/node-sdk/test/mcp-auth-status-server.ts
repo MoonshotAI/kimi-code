@@ -15,7 +15,6 @@ export interface McpAuthStatusServer {
   close(): Promise<void>;
 }
 
-/** The one refresh token the `/token` endpoint honors. */
 const REFRESH_TOKEN = 'valid-test-refresh-token';
 
 export async function startMcpAuthStatusServer(): Promise<McpAuthStatusServer> {
@@ -65,9 +64,6 @@ async function handleRequest(
     return;
   }
   if (url.pathname === '/token' && request.method === 'POST') {
-    // Token endpoint: a valid refresh grant rotates into a fresh access
-    // token; anything else is rejected, so probes of stale credentials still
-    // land on needs-auth.
     const rawBody = await readBody(request);
     const params = new URLSearchParams(rawBody);
     if (

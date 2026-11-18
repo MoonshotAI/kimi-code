@@ -1,13 +1,3 @@
-/**
- * `kimi acp`
- *
- * Verifies that the ACP sub-command is registered on the program and that
- * the action wires `@moonshot-ai/acp-server`'s `runAcpServer` (the real server
- * is stubbed so the test doesn't actually take over stdio). The module is
- * loaded via a lazy dynamic import in the action, so the mock intercepts that
- * import.
- */
-
 import { Command, Option } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -124,8 +114,6 @@ describe('kimi acp', () => {
     const optsArg = vi.mocked(runAcpServer).mock.calls[0]?.[0] as {
       terminalAuthLegacyCommand?: string;
     };
-    // process.argv[1] points at the test runner entry — non-empty
-    // absolute-ish path, exactly what we want forwarded.
     expect(typeof optsArg.terminalAuthLegacyCommand).toBe('string');
     expect((optsArg.terminalAuthLegacyCommand ?? '').length).toBeGreaterThan(0);
     expect(optsArg.terminalAuthLegacyCommand).toBe(process.argv[1]);
@@ -148,8 +136,6 @@ describe('kimi acp', () => {
   });
 
   it('exits without starting the ACP server when --login is passed', async () => {
-    // Stub the SDK harness so runLoginFlow doesn't hit a real OAuth endpoint:
-    // harness.auth.login resolves immediately and triggers exit 0.
     const loginStub = vi.fn(async () => ({ providerName: 'kimi-code' }));
     vi.doMock(import('@moonshot-ai/kimi-code-sdk'), async (importOriginal) => {
       const actual = await importOriginal();

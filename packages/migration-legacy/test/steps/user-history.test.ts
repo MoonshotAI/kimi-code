@@ -43,9 +43,7 @@ describe('migrateUserHistoryStep', () => {
   });
 
   it('does not create the target dir when there is nothing to copy', async () => {
-    // Source user-history/ exists but is empty.
     await mkdir(join(src, 'user-history'), { recursive: true });
-    // A file blocks the target path — mkdir there would throw.
     await writeFile(join(tgt, 'user-history'), 'blocking file');
     const r = await migrateUserHistoryStep({ sourceHome: src, targetHome: tgt });
     expect(r).toEqual({ copied: 0, skippedExisting: 0 });

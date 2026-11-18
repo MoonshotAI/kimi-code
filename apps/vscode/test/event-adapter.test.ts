@@ -1,10 +1,3 @@
-/**
- * Scenario: public Node SDK events are projected into the released VS Code Webview protocol.
- * Responsibilities: verify legacy shapes, routing state, and terminal metadata one event at a time.
- * Wiring: the pure adapter and real protocol types are used directly; there are no stubs.
- * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts apps/vscode/test/event-adapter.test.ts
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { isPreflightError, getUserMessage } from '../shared/errors';
@@ -94,6 +87,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     const result = adaptSdkEvent(createEventAdapterState(), {
       type: 'tool.call.started',
       sessionId: 'session-1',
+      origin: 'loop',
       agentId: 'main',
       turnId: 7,
       toolCallId: 'tool-1',
@@ -154,6 +148,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     const result = adaptSdkEvent(createEventAdapterState(), {
       type: 'tool.result',
       sessionId: 'session-1',
+      origin: 'loop',
       agentId: 'main',
       turnId: 7,
       toolCallId: 'tool-1',
@@ -180,6 +175,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     const started = adaptSdkEvent(createEventAdapterState(), {
       type: 'tool.call.started',
       sessionId: 'session-1',
+      origin: 'loop',
       agentId: 'main',
       turnId: 7,
       toolCallId: 'tool-1',
@@ -195,6 +191,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     const finished = adaptSdkEvent(started.state, {
       type: 'tool.result',
       sessionId: 'session-1',
+      origin: 'loop',
       agentId: 'main',
       turnId: 7,
       toolCallId: 'tool-1',
@@ -220,6 +217,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     const started = adaptSdkEvent(createEventAdapterState(), {
       type: 'tool.call.started',
       sessionId: 'session-1',
+      origin: 'loop',
       agentId: 'main',
       turnId: 7,
       toolCallId: 'todo-1',
@@ -233,6 +231,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     const unrelated = adaptSdkEvent(started.state, {
       type: 'tool.result',
       sessionId: 'session-1',
+      origin: 'loop',
       agentId: 'main',
       turnId: 7,
       toolCallId: 'other',
@@ -248,6 +247,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     const matching = adaptSdkEvent(unrelated.state, {
       type: 'tool.result',
       sessionId: 'session-1',
+      origin: 'loop',
       agentId: 'main',
       turnId: 7,
       toolCallId: 'todo-1',
@@ -427,6 +427,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
     const childEvent = adaptSdkEvent(spawned.state, {
       type: 'tool.call.started',
       sessionId: 'session-1',
+      origin: 'loop',
       agentId: 'child-1',
       turnId: 1,
       toolCallId: 'tool-1',

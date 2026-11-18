@@ -25,9 +25,6 @@ async function ensureExecutableExists() {
   }
 }
 
-// `kimi exec-server --listen stdio` is the remote-executor light entry: the
-// SEA binary must answer the NDJSON handshake with the package version and a
-// target-native environment, keep stdout protocol-only, and exit 0 on stdin EOF.
 async function runExecServerSmoke() {
   const { spawn } = await import('node:child_process');
   const startedAt = performance.now();
@@ -116,10 +113,6 @@ async function runExecServerSmoke() {
   }
 }
 
-// The SSH password retry points SSH_ASKPASS at this binary itself; the process
-// entry must recognise the askpass environment ahead of argv (ssh passes the
-// prompt as the only argument), fetch the secret over the loopback token
-// channel and print it verbatim on stdout.
 async function runSshAskpassSmoke() {
   const { createServer } = await import('node:net');
   const token = 'native-smoke-token';
@@ -224,10 +217,6 @@ try {
   await rm(smokeHome, { recursive: true, force: true });
 }
 
-// Plugin MCP servers declared with `command: "node"` are re-executed through
-// this binary as `__plugin_run_node`, which loads the plugin script with a
-// dynamic import(). Keep that path covered so bundler or SEA settings that
-// break dynamic import() fail here instead of inside users' plugins.
 const pluginRoot = resolve(smokeHome, 'plugin');
 await rm(smokeHome, { recursive: true, force: true });
 await mkdir(pluginRoot, { recursive: true });

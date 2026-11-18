@@ -1,11 +1,3 @@
-// The single wire-renderer registry. Co-locates tone + label + headline +
-// detail for every record kind. Because `WIRE_RENDERERS` is typed as a mapped
-// type over the FULL `RecordType` union, TypeScript REQUIRES an entry for each
-// kind: adding a kind upstream in agent-core-v2 fails
-// `pnpm --filter @moonshot-ai/vis-web typecheck` here until a renderer is
-// added. This is the anti-rot guarantee that keeps vis from silently falling
-// behind the wire protocol.
-
 import type { ReactNode } from 'react';
 
 import type { AgentRecord, AgentRecordOf } from '../../types';
@@ -30,16 +22,11 @@ export type RecordType = AgentRecord['type'];
 
 export interface WireRenderer<K extends RecordType> {
   tone: PillTone;
-  /** Compact badge label. */
   label: string;
-  /** One-line collapsed summary. */
   headline: (r: AgentRecordOf<K>) => HeadlineRender;
-  /** Expanded detail. Omit to fall back to a full structured JSON dump. */
   detail?: (r: AgentRecordOf<K>) => ReactNode;
 }
 
-/** A registry entry for every record kind. The value type is a mapped type
- *  over the full `RecordType` union, so TypeScript forces an entry per kind. */
 type RendererMap = { [K in RecordType]: WireRenderer<K> };
 
 interface CompactionSummaryView {
@@ -49,8 +36,6 @@ interface CompactionSummaryView {
   message?: UnknownObject;
 }
 
-/** Normalize all three `context.apply_compaction` summary variants without
- *  trusting imported wire payloads. */
 function compactionSummaryView(
   r: AgentRecordOf<'context.apply_compaction'>,
 ): CompactionSummaryView {
@@ -567,9 +552,6 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'compaction',
     label: 'compacted',
     headline: (r) => {
-      // v2 payload variants: `summary` is a string on current records, a
-      // ContextMessage on the legacy variant (which uses `count` instead of
-      // `compactedCount`); `tokensBefore`/`tokensAfter` are optional.
       const record = r as unknown as UnknownObject;
       const summary = compactionSummaryView(r);
       const compactedCount = compactionCount(record);
@@ -901,11 +883,6 @@ export const WIRE_RENDERERS: RendererMap = {
     headline: () => ({ main: <Dim>cancelled</Dim> }),
   },
 
-  // `full_compaction.complete` has an EMPTY payload (`{}`). The previous code
-  // read `r.summary` / `r.compactedCount` / `r.tokensBefore` / `r.tokensAfter`,
-  // none of which exist on this record — a runtime crash. Those fields belong
-  // to `context.apply_compaction` (its own entry above). This is a static,
-  // payload-free renderer; the generic JSON dump shows type + time only.
   'full_compaction.complete': {
     tone: 'success',
     label: 'compact✓',
@@ -1044,8 +1021,6 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'goal×',
     headline: () => ({ main: <Dim>goal cleared</Dim> }),
   },
-
-  // Observability records — the request trace (see the v2 wire manifest).
 
   'llm.tools_snapshot': {
     tone: 'tools',
@@ -1589,23 +1564,6 @@ export const WIRE_RENDERERS: RendererMap = {
   },
 };
 
-/** Look up a renderer by a runtime `type` string. Returns `undefined` for kinds
- *  outside the known union (best-effort parse of a future/legacy/foreign
- *  protocol), which the callers render via the generic fallback.
- *
- *  Legacy/foreign runtime-only kinds (e.g. `goal.account_usage`,
- *  `goal.continuation`, `background.stop`) are intentionally NOT given registry
- *  entries: they sit outside the typed `AgentRecord` union, so this returns
- *  `undefined` and they fall back to a readable generic render — `TypeBadge`
- *  shows the raw `type` string (neutral tone, `title` tooltip), the headline
- *  shows `(unknown record type: …)`, and the detail shows the full JSON. That is
- *  legible enough; no friendly-label map is warranted.
- *
- *  The `as unknown as` widening is the one place we sidestep TypeScript's
- *  correlated-union limitation: each entry's `headline`/`detail` is narrowed to
- *  its own kind, but at dispatch time we only have the union, so we widen the
- *  value to `WireRenderer<RecordType>` (callable with any `AgentRecord`). Safe
- *  because we only ever call it with the matching record. */
 export function rendererFor(type: string): WireRenderer<RecordType> | undefined {
   return (WIRE_RENDERERS as unknown as Record<string, WireRenderer<RecordType>>)[type];
 }

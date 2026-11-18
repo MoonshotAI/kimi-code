@@ -1,10 +1,3 @@
-/**
- * IPC host — serves one engine scope over a unix domain socket. Incoming
- * frames are bridged to the shared in-process dispatcher (the same code the
- * memory transport uses), so ipc and in-memory behavior are identical by
- * construction; only serialization separates them.
- */
-
 import { createServer, type Server, type Socket } from 'node:net';
 import { unlink } from 'node:fs/promises';
 
@@ -17,11 +10,8 @@ const REQUEST_INVALID = 40001;
 const UNAUTHORIZED = 40100;
 
 export interface ServeKlientIpcOptions {
-  /** A bootstrapped engine app scope (same value `createKlient({ scope })` takes). */
   readonly scope: ScopeLike;
-  /** Unix socket path to listen on. A stale file at the path is removed first. */
   readonly socketPath: string;
-  /** Optional token; when set, the client's `hello` must carry the same token. */
   readonly token?: string;
 }
 
@@ -51,8 +41,6 @@ function eventSourceFromFrame(frame: IpcFrame): EventSourceRef {
 export async function serveKlientIpc(options: ServeKlientIpcOptions): Promise<KlientIpcHost> {
   const dispatcher = createMemoryDispatcher(options.scope);
 
-  // Best-effort cleanup of a stale socket file; ignore everything but a real
-  // leftover (ENOENT = nothing to remove).
   try {
     await unlink(options.socketPath);
   } catch (error) {

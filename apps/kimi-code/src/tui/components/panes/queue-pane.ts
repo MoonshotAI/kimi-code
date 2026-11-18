@@ -17,7 +17,6 @@ export interface QueuePaneOptions {
 
 const ELLIPSIS = '…';
 
-/** Queued messages: a rule, one row per message, and the key hint. */
 export class QueuePaneComponent extends DockSection {
   private messages: readonly QueuedMessage[] = [];
   private availableModels: Record<string, ModelAlias> = {};
@@ -35,7 +34,6 @@ export class QueuePaneComponent extends DockSection {
       firstBarrier === -1 ? options.messages : options.messages.slice(0, firstBarrier);
     const hasSteerable = steerableWindow.some((m) => m.mode !== 'bash');
     const canSteer = options.canSteerImmediately && hasSteerable;
-    // A docked list shows only a few rows, so name the total once it scrolls.
     const count =
       this.layout !== undefined && options.messages.length > this.layout.maxBodyRows
         ? `${String(options.messages.length)} queued · `
@@ -80,8 +78,6 @@ function renderItem(
     );
   }
   if (item.mode === 'bash') {
-    // Shell commands get a `$ ` prompt and the shell-mode hue so they read
-    // as commands, not as plain text that would be sent to the model.
     const prompt = '$ ';
     const availableWidth = Math.max(1, width - visibleWidth(prefix) - visibleWidth(prompt));
     const truncated = truncateToWidth(singleLine, availableWidth, ELLIPSIS);

@@ -38,17 +38,12 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
 
   if (existsSync(targetDir)) {
     const cls = await classifyExistingTarget(targetDir);
-    // A dir we wrote ourselves on a previous run — idempotent re-run.
     if (cls === 'imported') {
       return { outcome: 'already-migrated', targetDir };
     }
-    // A real, unrelated kimi-code session occupies the path — a true conflict.
     if (cls === 'foreign') {
       return { outcome: 'conflict', targetDir };
     }
-    // 'debris': `state.json` is absent or corrupt — a prior migration was
-    // killed mid-write. Treat it as stale and re-migrate, rather than
-    // stranding this session under a permanent conflict on every future run.
     await rm(targetDir, { recursive: true, force: true });
   }
 
@@ -67,10 +62,7 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
     if (input.source.sessionDir !== undefined) {
       try {
         oldWireText = await readFile(join(input.source.sessionDir, 'wire.jsonl'), 'utf-8');
-      } catch {
-        // A missing/corrupt wire must not prevent the model-facing context from
-        // migrating; it only means UI display enrichment is unavailable.
-      }
+      } catch {}
     }
     const toolCallDisplays =
       oldWireText === undefined ? undefined : extractToolCallDisplays(oldWireText);
@@ -86,12 +78,6 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
   const hasCustomTitle = typeof customTitle === 'string' && customTitle.length > 0;
 
   if (messages.length === 0 && !hasCustomTitle) {
-    // No `user`/`assistant`/`tool` rows survived translation. Re-analyze the
-    // raw lines to tell a genuinely empty/cleared session apart from one
-    // whose every line failed to parse — the latter is a real data problem
-    // and must show up in `migration-errors.log`, not get silently lumped in
-    // with skipped-empty. `classifyLegacySession` normally catches both ahead
-    // of time; this stays as a defense-in-depth safety net.
     if (analyzeContextContent(contextLines) === 'corrupt') {
       return {
         outcome: 'failed',
@@ -106,11 +92,6 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
   if (wireMtimeS !== null && wireMtimeS !== undefined) {
     createdAtMs = Math.floor(wireMtimeS * 1000);
   } else {
-    // No recorded `wire_mtime`: fall back to the source files' mtime — the
-    // SAME signal detection ranks recency by — so post-migration
-    // `SessionStore.list()` ordering matches the detected "most recent" order.
-    // `Date.now()` would stamp every such session with the migration time and
-    // break resume ordering.
     createdAtMs = await readSourceMtime(input.source) ?? Date.now();
   }
 
@@ -128,10 +109,7 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
           wireProtocolFromOld = (parsed as { protocol_version: string }).protocol_version;
         }
       }
-    } catch {
-      // ignore a corrupt metadata line; display extraction already skips
-      // malformed records independently.
-    }
+    } catch {}
   }
 
   try {
@@ -160,21 +138,11 @@ export async function migrateOneSession(input: MigrateOneInput): Promise<Migrate
       subagentIds: subagents.map((s) => s.agentId),
     });
   } catch (error) {
-    // A partially-written targetDir would trip the conflict guard on re-run
-    // and strand this session forever. Clean it up and report a soft failure
-    // so the migration loop continues.
     await rm(targetDir, { recursive: true, force: true }).catch(() => {});
     const reason = error instanceof Error ? error.message : String(error);
     return { outcome: 'failed', reason };
   }
 
-  // kimi-core's `SessionStore.list()` ranks sessions by the *filesystem*
-  // mtimes of `state.json` / `wire.jsonl` / the session dir — not by the
-  // `updatedAt` field. Writing newest-first would otherwise make the newest
-  // original session the oldest by mtime, inverting `--continue` ordering.
-  // Stamp the artifacts with the session's original timestamp so `list()`
-  // reflects true recency. A utimes failure must never abort the session;
-  // it only leaves ordering slightly off.
   await applyOriginalMtime(targetDir, createdAtMs);
 
   return { outcome: 'migrated', targetDir };
@@ -184,57 +152,39 @@ async function readSourceMtime(source: LegacySessionRef): Promise<number | undef
   if (source.sessionDir !== undefined) {
     try {
       return Math.floor((await stat(join(source.sessionDir, 'wire.jsonl'))).mtimeMs);
-    } catch {
-      // fall through to the context payload's mtime
-    }
+    } catch {}
   }
   if (source.contextPath !== undefined) {
     try {
       return Math.floor((await stat(source.contextPath)).mtimeMs);
-    } catch {
-      // fall through
-    }
+    } catch {}
   }
   return undefined;
 }
 
-/**
- * Set the filesystem mtime of the migrated session artifacts to the session's
- * original timestamp. The session directory is stamped LAST, since writing
- * files into it bumps the directory mtime.
- */
 async function applyOriginalMtime(targetDir: string, createdAtMs: number): Promise<void> {
   const stamp = new Date(createdAtMs);
   try {
     await utimes(join(targetDir, 'agents', 'main', 'wire.jsonl'), stamp, stamp);
     await utimes(join(targetDir, 'state.json'), stamp, stamp);
     await utimes(targetDir, stamp, stamp);
-  } catch {
-    // Non-fatal: ordering may be slightly off, but the migration succeeded.
-  }
+  } catch {}
 }
 
 type ExistingTarget = 'imported' | 'foreign' | 'debris';
 
-/**
- * Classify an existing `targetDir`:
- *  - `imported`: a complete dir written by a previous run of this migrator.
- *  - `foreign`:  a real, unrelated kimi-code session occupying the path.
- *  - `debris`:   no `state.json`, or a corrupt/unparseable one — a prior
- *                migration was killed mid-write; safe to delete and re-migrate.
- */
 async function classifyExistingTarget(targetDir: string): Promise<ExistingTarget> {
   let text: string;
   try {
     text = await readFile(join(targetDir, 'state.json'), 'utf-8');
   } catch {
-    return 'debris'; // no state.json at all
+    return 'debris';
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return 'debris'; // corrupt / half-written state.json
+    return 'debris';
   }
   if (typeof parsed !== 'object' || parsed === null) return 'debris';
   const custom = (parsed as { custom?: unknown }).custom;

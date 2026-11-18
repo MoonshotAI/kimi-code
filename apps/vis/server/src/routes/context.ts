@@ -29,8 +29,6 @@ export function contextRoute(home: string = KIMI_CODE_HOME): Hono {
       );
       const baseUrl = new URL(c.req.url).origin;
       rehydrateWireEntries(wire.records, id, agentId, baseUrl);
-      // `?history=full` reconstructs the FULL pre-compaction/undo/clear history
-      // for debugging; the default mirrors the model's-eye post-compaction view.
       const mode = c.req.query('history') === 'full' ? 'full' : 'model';
       const proj = projectContext(wire.records, mode);
       return c.json({

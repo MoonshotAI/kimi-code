@@ -10,11 +10,8 @@ import type {
 } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
-import type {
-  ToolExecuteInput,
-  ToolHookRegistration,
-  ToolResult,
-} from '@moonshot-ai/core/tool/executor';
+import type { LoopToolContext } from '@moonshot-ai/core/loop/create-loop';
+import type { ToolExecuteContext, ToolExecutorHook, ToolReturn } from '#/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
 
 function requester(responses: MockProviderResponse[], onGenerate?: () => void): LoopLlmRequester {
@@ -177,10 +174,10 @@ describe('step.starting', () => {
 });
 
 function createExecutor(
-  registrations: readonly ToolHookRegistration[],
-  execute: (input: ToolExecuteInput) => Promise<ToolResult> = async () => ({ content: [] }),
+  hook: ToolExecutorHook<LoopToolContext>,
+  execute: (context: ToolExecuteContext<unknown, LoopToolContext>) => Promise<ToolReturn> = async () => ({ content: [] }),
 ) {
-  return executorFrom(['alpha', 'beta'], execute, registrations);
+  return executorFrom(['alpha', 'beta'], execute, hook);
 }
 
 describe('tool.batch-starting', () => {
@@ -191,16 +188,13 @@ describe('tool.batch-starting', () => {
     const stopping: number[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.starting',
-          hook: (event) => {
-            perCall.push(event.toolCall.id);
-          },
+      {
+        starting: (context) => {
+          perCall.push(context.call.id);
         },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       },
     );
@@ -270,16 +264,13 @@ describe('tool.batch-starting', () => {
     const batches: ToolBatchStartingEvent[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.starting',
-          hook: (event) => {
-            perCall.push(event.toolCall.id);
-          },
+      {
+        starting: (context) => {
+          perCall.push(context.call.id);
         },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [{ type: 'text' as const, text: 'ok' }] };
       },
     );
@@ -317,26 +308,18 @@ describe('tool.permitting', () => {
     const events: LoopEmitted[] = [];
     const rewritten: ToolCall = { type: 'function', id: 'c1', name: 'alpha', arguments: '{"safe":true}' };
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.permitting',
-          id: 'permission',
-          hook: (event) => {
-            order.push('permitting');
-            seen.push(event.toolCall);
-          },
+      {
+        starting: () => {
+          order.push('starting');
+          return { args: { safe: true } };
         },
-        {
-          point: 'tool.starting',
-          id: 'rewrite',
-          hook: () => {
-            order.push('starting');
-            return { toolCall: rewritten };
-          },
+        permitting: (context) => {
+          order.push('permitting');
+          seen.push({ ...context.call, arguments: JSON.stringify(context.args) });
         },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall);
+      },
+      async (context) => {
+        executed.push({ ...context.call, arguments: JSON.stringify(context.args) });
         return { content: [{ type: 'text' as const, text: 'ok' }] };
       },
     );
@@ -363,24 +346,17 @@ describe('tool.permitting', () => {
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.starting',
-          id: 'guard',
-          hook: () => ({
-            blocked: { reason: 'dirty' },
-            result: { content: [{ type: 'text' as const, text: 'nope' }] },
-          }),
+      {
+        starting: () => ({
+          reject: 'dirty',
+          result: { content: [{ type: 'text' as const, text: 'nope' }], outcome: 'failed', reason: 'dirty' },
+        }),
+        permitting: (context) => {
+          permitting.push(context.call.id);
         },
-        {
-          point: 'tool.permitting',
-          hook: (event) => {
-            permitting.push(event.toolCall.id);
-          },
-        },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       },
     );
@@ -405,21 +381,14 @@ describe('tool.permitting', () => {
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.starting',
-          id: 'guard',
-          hook: () => ({ skipPermitting: true }),
+      {
+        starting: () => ({ skipPermitting: true }),
+        permitting: (context) => {
+          permitting.push(context.call.id);
         },
-        {
-          point: 'tool.permitting',
-          hook: (event) => {
-            permitting.push(event.toolCall.id);
-          },
-        },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       },
     );
@@ -439,18 +408,14 @@ describe('tool.permitting', () => {
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.permitting',
-          id: 'permission',
-          hook: () => ({
-            blocked: { reason: 'denied' },
-            result: { content: [{ type: 'text' as const, text: 'nope' }] },
-          }),
-        },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      {
+        permitting: () => ({
+          reject: 'denied',
+          result: { content: [{ type: 'text' as const, text: 'nope' }], outcome: 'failed', reason: 'denied' },
+        }),
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       },
     );
@@ -472,15 +437,11 @@ describe('tool.permitting', () => {
   it('returns hook failures as failed results without native stopTurn', async () => {
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.permitting',
-          id: 'flaky-permission',
-          hook: () => {
-            throw new Error('oops');
-          },
+      {
+        permitting: () => {
+          throw new Error('oops');
         },
-      ],
+      },
       async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }),
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
@@ -492,7 +453,7 @@ describe('tool.permitting', () => {
     expect(entry?.attributes?.stopTurn).toBeUndefined();
     await loop.close();
 
-    const failedTools = createExecutor([], async () => {
+    const failedTools = createExecutor({}, async () => {
       throw new Error('boom');
     });
     const failedScript = requester([done('', [call('c1', 'alpha')]), done('final')]);
@@ -581,8 +542,8 @@ describe('hook failure policies', () => {
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
       requester: scripted,
-      executor: executorFrom(['alpha', 'beta'], async ({ toolCall }: ToolExecuteInput) => {
-        executed.push(toolCall.name);
+      executor: executorFrom(['alpha', 'beta'], async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       }),
       hooks: [
@@ -624,7 +585,7 @@ describe('notify turn handoff', () => {
     const scripted = requester([done('', [call('c1', 'alpha')]), done('notified'), done('after reset')]);
     const loop = createLoop({
       requester: scripted,
-      executor: createExecutor([]),
+      executor: createExecutor({}),
       hooks: [
         {
           point: 'step.stopping',
@@ -685,7 +646,7 @@ describe('notify turn handoff', () => {
     const second = createUserMessage('second', { promptId: 'second' });
     const loop = createLoop({
       requester: scripted,
-      executor: createExecutor([]),
+      executor: createExecutor({}),
       hooks: [
         {
           point: 'step.starting',
@@ -709,7 +670,7 @@ describe('notify turn handoff', () => {
     const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 2);
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     await followup;
-    expect(starting).toEqual([0, 1, 2]);
+    expect(starting).toEqual([0, 2]);
     expect(events.find((event) => event.type === 'prompt.steered')).toMatchObject({
       promptIds: ['first', 'second'],
       messages: [first, second],
@@ -733,7 +694,7 @@ describe('notify turn handoff', () => {
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
     const loop = createLoop({
       requester: scripted,
-      executor: createExecutor([]),
+      executor: createExecutor({}),
       hooks: [
         {
           point: 'step.stopping',
@@ -754,30 +715,79 @@ describe('notify turn handoff', () => {
     await loop.close();
   });
 
-  it('does not run another step of an interrupted turn when notify is pending', async () => {
+  it('resumes interrupted and queued turns before a prompt-only notification', async () => {
     const events: LoopEmitted[] = [];
-    const scripted = requester([done('new turn')]);
+    const starting: number[] = [];
+    const scripted = requester([done('queued')]);
     const loop = createLoop({
       requester: scripted,
-      executor: createExecutor([]),
+      executor: createExecutor({}),
+      hooks: [{ point: 'step.starting', hook: (event) => { starting.push(event.turnId) } }],
       input: {
         messages: [prompt('old')],
-        inbox: { notify: [prompt('wake')] },
+        inbox: { normal: [prompt('queued')] },
         nextTurnId: 1,
         unfinished: { turnId: 0, trigger: 'normal', step: 1, stepUnfinished: true, appended: true },
       },
     });
     loop.subscribe((event) => events.push(event));
-    const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 1);
-    loop.continue();
+    loop.recordNotification(prompt('wake'));
+    const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 2);
+    loop.resume();
     await followup;
     expect(events.find((event) => event.type === 'turn.resumed')).toMatchObject({ turnId: 0, step: 1 });
     expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 0)).toMatchObject({
       outcome: { type: 'done', cause: { by: 'loop', reason: 'notify' } },
     });
+    expect(events.filter((event) => event.type === 'turn.started').map((event) => [event.turnId, event.trigger])).toEqual([
+      [1, 'normal'],
+      [2, 'notify'],
+    ]);
     expect(events.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
       [1, 1],
     ]);
+    expect(starting).toEqual([1]);
+    expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 2)).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+    });
     await loop.close();
+
+    const ordinaryEvents: LoopEmitted[] = [];
+    const ordinary = createLoop({
+      requester: requester([done('ordinary')]),
+      executor: createExecutor({}),
+      input: { inbox: { normal: [prompt('queued')] } },
+    });
+    ordinary.subscribe((event) => ordinaryEvents.push(event));
+    ordinary.notify(prompt('ordinary'));
+    const ordinaryEnded = once(ordinary, (event) => event.type === 'turn.ended' && event.turnId === 1);
+    ordinary.start();
+    await ordinaryEnded;
+    expect(ordinaryEvents.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
+      [1, 1],
+    ]);
+    expect(ordinaryEvents.find((event) => event.type === 'turn.ended' && event.turnId === 0)).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+    });
+    await ordinary.close();
+
+    const executableEvents: LoopEmitted[] = [];
+    const executable = createLoop({
+      requester: requester([done('ordinary')]),
+      executor: createExecutor({}),
+      input: { inbox: { notify: [prompt('ordinary')] } },
+    });
+    executable.subscribe((event) => executableEvents.push(event));
+    executable.recordNotification(prompt('restored'));
+    const executableEnded = once(executable, (event) => event.type === 'turn.ended' && event.turnId === 1);
+    executable.start();
+    await executableEnded;
+    expect(executableEvents.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+    ]);
+    expect(executableEvents.find((event) => event.type === 'turn.ended' && event.turnId === 1)).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+    });
+    await executable.close();
   });
 });

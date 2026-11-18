@@ -1,9 +1,3 @@
-/**
- * Scenario: legacy migration marker persistence and prompt suppression.
- * Responsibilities: preserve run history and decide whether one target still needs migration.
- * Wiring: real temporary filesystem; no stubbed collaborators.
- * Run: pnpm --filter @moonshot-ai/migration-legacy test -- marker.test.ts
- */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -64,8 +58,6 @@ describe('marker', () => {
     expect(data?.first_migrated_at).toBe('2026-05-16T10:00:00Z');
     expect(data?.last_migrated_at).toBe('2026-05-17T10:00:30Z');
     expect(data?.runs).toHaveLength(2);
-    // A rerun to a different target updates target_path so the marker
-    // reflects the home it most recently migrated to.
     expect(data?.target_path).toBe('/bar');
   });
 
@@ -123,8 +115,6 @@ describe('marker', () => {
   });
 
   it('readMarker returns undefined when version is kept but runs is missing', async () => {
-    // A partially-written/hand-edited marker: treating it as absent avoids
-    // appendMarkerRun throwing on `[...existing.runs, run]`.
     await writeFile(
       join(dir, '.migrated-to-kimi-code'),
       JSON.stringify({ version: 1, target_path: '/foo' }),

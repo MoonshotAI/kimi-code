@@ -4,7 +4,6 @@ import type { KimiSlashCommand } from './types';
 
 export interface PluginSlashCommands {
   readonly commands: readonly KimiSlashCommand[];
-  /** Maps a namespaced command name (`plugin:command`) to its markdown body. */
   readonly commandMap: ReadonlyMap<string, string>;
 }
 

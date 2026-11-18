@@ -103,17 +103,14 @@ describe('ChoicePickerComponent', () => {
 
     const titleIdx = lines.findIndex((l) => l.includes('Add provider'));
     expect(titleIdx).toBeGreaterThanOrEqual(0);
-    // Title carries the same "(type to search)" suffix as /model and /provider.
     expect(lines[titleIdx]).toContain('(type to search)');
     expect(lines[titleIdx]).not.toContain('type to filter');
-    // Hint sits directly under the title and uses lowercase key vocabulary.
     const hint = lines[titleIdx + 1];
     expect(hint).toContain('↑↓ navigate');
     expect(hint).toContain('Enter select');
     expect(hint).toContain('Esc cancel');
     expect(hint).not.toContain('enter select');
     expect(hint).not.toContain('esc cancel');
-    // Blank line separates the hint from the body, like the model dialog.
     expect(lines[titleIdx + 2]).toBe('');
   });
 
@@ -198,6 +195,25 @@ describe('ChoicePickerComponent', () => {
     expect(preview.invalidate).toHaveBeenCalledOnce();
     picker.dispose();
     expect(preview.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('keeps left and right paging the options when the preview has no file scroller', () => {
+    const options = Array.from({ length: 12 }, (_, index) => ({
+      value: String(index),
+      label: `Option ${String(index)}`,
+    }));
+    const picker = new PreviewChoicePickerComponent({
+      title: 'Pick one',
+      options,
+      preview: { render: () => ['sample'], invalidate: vi.fn(), dispose: vi.fn() },
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    picker.handleInput('\u001B[C');
+    expect(picker.render(40).map(strip).some((line) => line.includes('❯ Option 8'))).toBe(true);
+    picker.handleInput('\u001B[D');
+    expect(picker.render(40).map(strip).some((line) => line.includes('❯ Option 0'))).toBe(true);
   });
 
   it('renders a plain picker as its list between two borders', () => {
@@ -439,9 +455,7 @@ describe('ChoicePickerComponent', () => {
     const warningLine = currentTheme.fg('warning', '    Include your codebase for deeper diagnosis.');
     const mutedLine = currentTheme.fg('textMuted', '    Include your codebase for deeper diagnosis.');
 
-    // Selected option: description uses the configured tone.
     expect(renderDescLine('logs+codebase')).toBe(warningLine);
-    // Unselected option: description falls back to textMuted.
     expect(renderDescLine('none')).toBe(mutedLine);
   });
 });

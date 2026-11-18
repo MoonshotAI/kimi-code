@@ -14,13 +14,22 @@ import {
 
 import type {
   AgentState,
+  ContextState,
   GoalState,
   TodoItemState,
-  UsageState,
 } from '../../../protocol/ws-agent';
 import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
 
-export function readAgentState(handle: IAgentScopeHandle, running: boolean): AgentState {
+export function readAgentState(handle: IAgentScopeHandle | undefined, running: boolean): AgentState {
+  if (handle === undefined) {
+    return {
+      status: running ? 'running' : 'idle',
+      compacting: false,
+      plan_mode: false,
+      swarm_mode: false,
+      tower_mode: false,
+    };
+  }
   const profile = optionalService(handle, IAgentLoopService);
   const model = profile?.getModel() ?? '';
   return {
@@ -35,7 +44,7 @@ export function readAgentState(handle: IAgentScopeHandle, running: boolean): Age
   };
 }
 
-export function readUsageState(handle: IAgentScopeHandle): UsageState | undefined {
+export function readContextState(handle: IAgentScopeHandle): ContextState | undefined {
   const status = readLegacyStatus(handle);
   if (status === undefined) return undefined;
   return {

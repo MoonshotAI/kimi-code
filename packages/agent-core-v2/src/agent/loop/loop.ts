@@ -300,6 +300,7 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   detachTool(task: LoopDetachedTask, text?: string): void;
 
+  suppressTaskNotifications(taskIds: readonly string[]): void;
 
   abortTool(toolCallId: string, reason?: unknown): void;
 
@@ -307,7 +308,7 @@ export interface IAgentLoopService extends EffectiveProfileReader {
 
   snapshot(): LoopSnapshot;
 
-  settled(): Promise<void>;
+  settled(): Promise<TurnResult | undefined>;
 
   retry(): Promise<TurnResult | undefined>;
 

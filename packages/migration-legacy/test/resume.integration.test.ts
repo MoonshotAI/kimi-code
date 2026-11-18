@@ -113,9 +113,6 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       .filter((l) => l.length > 0)
       .map((l) => JSON.parse(l) as { type: string; [key: string]: unknown });
 
-    // Content round trip: the v2 context transcript preserves the imported
-    // messages. Compare their native role/content shape while dropping UI-only
-    // displays and optional usage/timing metadata.
     const transcript = reduceContextTranscript(records);
     const imported = records
       .filter((r) => r.type === 'context.append_message')
@@ -134,11 +131,6 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       });
     expect(stripDisplays([...transcript.entries])).toEqual(stripDisplays(imported));
 
-    // The invariant that keeps a live turn from hijacking an imported one:
-    // every turn.prompt advances the restored turn clock by one, so the number
-    // of synthesized turn.prompt records must equal the number of turns the
-    // imported user messages open. The first live turn
-    // after resume then gets an id past every imported turn.
     const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
     expect(promptCount).toBe(openedTurns(transcript.entries));
     expect(promptCount).toBeGreaterThan(0);
@@ -147,8 +139,6 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       .filter((r) => r.type === 'turn.ended')
       .map((r) => r['turnId'])
       .filter((id): id is number => typeof id === 'number');
-    // Turns without assistant content (e.g. an unanswered user message) get no
-    // turn.ended; the rest carry sequential ids within the imported range.
     expect(endedTurnIds).toEqual([...endedTurnIds].toSorted((a, b) => a - b));
     expect(new Set(endedTurnIds).size).toBe(endedTurnIds.length);
     expect(Math.max(...endedTurnIds)).toBeLessThan(promptCount);

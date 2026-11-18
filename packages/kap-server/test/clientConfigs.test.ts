@@ -190,7 +190,7 @@ describe('fetchClientConfig', () => {
   });
 });
 
-describe('server-v2 POST /api/v1/client_configs', () => {
+describe('server-v2 GET /api/v1/client-configs/{name}', () => {
   let server: RunningServer | undefined;
   let cloud: Server | undefined;
   let home: string | undefined;
@@ -253,10 +253,9 @@ describe('server-v2 POST /api/v1/client_configs', () => {
   async function postClientConfigs(
     name: string,
   ): Promise<Envelope<{ name: string; config: unknown }>> {
-    const res = await fetch(`${base}/api/v1/client_configs`, {
-      method: 'POST',
-      headers: { ...authHeaders(server as RunningServer), 'content-type': 'application/json' },
-      body: JSON.stringify({ name }),
+    const res = await fetch(`${base}/api/v1/client-configs/${encodeURIComponent(name)}`, {
+      method: 'GET',
+      headers: authHeaders(server as RunningServer),
     } as never);
     expect(res.status).toBe(200);
     return (await res.json()) as Envelope<{ name: string; config: unknown }>;

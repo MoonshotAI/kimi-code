@@ -61,9 +61,7 @@ function detectSystemFdPath(): string | null {
     try {
       const result = spawnSync(commandPath, ['--version'], { stdio: 'ignore' });
       if (result.status === 0) return commandPath;
-    } catch {
-      // ENOENT, EACCES, etc. — try next candidate.
-    }
+    } catch {}
   }
   return null;
 }

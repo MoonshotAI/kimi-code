@@ -66,7 +66,6 @@ describe('chip registry', () => {
     expect(chipFor('Grep', content, result('src/a.ts:1:foo\nsrc/a.ts:9:foo'))).toBe(
       '2 matches in 1 file',
     );
-    // Context lines and group separators are not matches.
     expect(
       chipFor('Grep', content, result('src/a.ts-1-import x\nsrc/a.ts:2:foo\n--\nsrc/b.ts:5:foo')),
     ).toBe('2 matches across 2 files');
@@ -83,14 +82,10 @@ describe('chip registry', () => {
   });
 
   it('Grep chip counts files only when unnumbered content rows can be context', () => {
-    // `-n: false` with context flags: match and context rows are both
-    // `path:text` (the backend separates fields with ':' unconditionally),
-    // so an exact match count is unknowable and the chip falls back to files.
     const unnumberedContext = { pattern: 'foo', output_mode: 'content', '-n': false, '-C': 1 };
     expect(
       chipFor('Grep', unnumberedContext, result('src/a.ts:import x\nsrc/a.ts:foo\nsrc/b.ts:foo')),
     ).toBe('2 files');
-    // Without context flags every row is a match, so the count stays exact.
     const unnumbered = { pattern: 'foo', output_mode: 'content', '-n': false };
     expect(chipFor('Grep', unnumbered, result('src/a.ts:foo\nsrc/a.ts:bar\nsrc/b.ts:foo'))).toBe(
       '3 matches across 2 files',
@@ -131,7 +126,6 @@ describe('chip registry', () => {
           ].join('\n'),
         ),
       ),
-      // The timeout and cap notices mark the set incomplete: the count is a lower bound.
     ).toBe('2+ files');
   });
 
@@ -251,10 +245,8 @@ describe('Bash chip', () => {
   it('counts the hidden output lines once they outgrow the collapsed card', () => {
     const chip = pickChip('Bash')!;
     const call = { id: 'tc', name: 'Bash', args: { command: 'ls' } };
-    // One outcome line stands in for the rest, so the chip counts what is hidden.
     expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\nd\n', is_error: false })).toBe('3 more lines');
     expect(chip(call, { tool_call_id: 'tc', output: 'a\nb\nc\nd\ne', is_error: false })).toBe('4 more lines');
-    // Up to three lines are shown whole on the collapsed card, so no chip.
     expect(chip(call, { tool_call_id: 'tc', output: 'a\n\nb\nc\n', is_error: false })).toBe('');
     expect(chip(call, { tool_call_id: 'tc', output: 'only', is_error: false })).toBe('');
     expect(chip(call, { tool_call_id: 'tc', output: '', is_error: false })).toBe('');
@@ -313,7 +305,7 @@ describe('Grep chip on paginated and unusual output', () => {
           'Glob completed with warnings; some directories could not be read: rg: /x: Permission denied (os error 13)\nrg: /y: Permission denied (os error 13)\na.ts\nb.ts',
         ),
       ),
-    ).toBe('2+ files'); // unreadable directories make the count a lower bound
+    ).toBe('2+ files');
   });
 });
 

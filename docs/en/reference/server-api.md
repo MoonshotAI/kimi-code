@@ -7,7 +7,7 @@ onMounted(() => redirectLegacyServerApiAnchor('en'))
 
 # Server API (Beta)
 
-The local server started by `kimi web` exposes two interfaces: a REST API (`/api/v1`, plus `/api/v2/sessions` and `/api/v2/mcp`) and a WebSocket event stream (`/api/v1/ws`). Scripts and third-party clients can use them to create sessions, submit prompts, receive the conversation in real time, and manage configuration, models, and workspaces. For how to start the server and its command-line options, see [kimi command](./kimi-command.md#kimi-web).
+The local server started by `kimi web` exposes two interfaces: a REST API (`/api/v1`) and a WebSocket event stream (`/api/v1/ws`). Scripts and third-party clients can use them to create sessions, submit prompts, receive the conversation in real time, and manage configuration, models, and workspaces. For how to start the server and its command-line options, see [kimi command](./kimi-command.md#kimi-web).
 
 ::: warning Note
 These APIs are experimental, and their stability is not guaranteed: endpoints, fields, and event types may change in any release. When integrating, rely on the `/openapi.json` and `/asyncapi.json` documents served by your version.
@@ -101,8 +101,8 @@ The error codes each endpoint may return are listed at the end of its descriptio
 
 List endpoints page in one of two ways:
 
-- **Cursor pagination**: `before_id` or `after_id` (mutually exclusive) plus `page_size` (1–100), responding with `{ items, has_more }`. The session list, the message list, and other endpoints use it. Agent turns are the exception: they page by the turn's `ordinal` (`before_ordinal` plus `page_size`).
-- **`page_token` pagination**: the token is opaque and bound to the query conditions. `POST /api/v1/search` and `GET /api/v2/sessions` use it. Changing any query condition while paging invalidates the token: `/api/v2/sessions` returns `40922`, and search returns `40001`. `GET /api/v2/sessions` also offers a stateless `page` page-number mode.
+- **Cursor pagination**: `before_id` or `after_id` (mutually exclusive) plus `page_size` (1–100), responding with `items` and `has_more`. The message list, child-session list, and flat session list support it. Agent turns are the exception: they page by the turn's `ordinal` (`before_ordinal` plus `page_size`).
+- **`page_token` pagination**: the token is opaque and bound to the query conditions. `GET /api/v1/sessions` and `POST /api/v1/search` use it. Changing any query condition while paging invalidates the token: `/api/v1/sessions` returns `40922`, and search returns `40001`. `GET /api/v1/sessions` also offers a stateless `page` page-number mode.
 
 ## Action paths
 

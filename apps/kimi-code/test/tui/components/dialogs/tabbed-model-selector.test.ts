@@ -11,7 +11,6 @@ const SGR = new RegExp(`${ESC}\\[[0-9;]*m`, 'g');
 const strip = (s: string): string => s.replaceAll(SGR, '');
 const TAB = '\t';
 const RIGHT = `${ESC}[C`;
-// chalk.bgHex(colors.primary) → background truecolor for #4FA8FF.
 const PRIMARY_BG = '48;2;79;168;255';
 
 function model(displayName: string, provider: string): ModelAlias {
@@ -64,8 +63,6 @@ describe('TabbedModelSelectorComponent', () => {
   });
 
   it('highlights the active tab with a filled background (AskUserQuestion style)', () => {
-    // currentValue k2 → the active tab is "Kimi Code"; its cell carries the
-    // primary background SGR.
     const raw = make().component.render(120).join('\n');
     expect(raw).toContain(PRIMARY_BG);
   });
@@ -80,9 +77,6 @@ describe('TabbedModelSelectorComponent', () => {
       const darkStrip = stripLine(component.render(120));
       currentTheme.setPalette(lightColors);
       const lightStrip = stripLine(component.render(120));
-      // The strip is drawn from currentTheme.palette at render time; a
-      // construction-time palette snapshot would render the same strip after
-      // the switch.
       expect(darkStrip).not.toBe(lightStrip);
     } finally {
       currentTheme.setPalette(previous);
@@ -97,8 +91,6 @@ describe('TabbedModelSelectorComponent', () => {
 
   it('cycles provider tabs with Tab', () => {
     const { component } = make();
-    // tabs = [All, Kimi Code, openai]; active starts on All.
-    // Two Tabs → openai, whose list shows GPT-5 and not Kimi K2.
     component.handleInput(TAB);
     component.handleInput(TAB);
     const out = strip(component.render(120).join('\n'));
@@ -108,7 +100,7 @@ describe('TabbedModelSelectorComponent', () => {
 
   it('forwards thinking toggle (←/→) and selection (Enter) to the active tab', () => {
     const { component, onSelect } = make();
-    component.handleInput(RIGHT); // toggle thinking on for k2
+    component.handleInput(RIGHT);
     component.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({ alias: 'k2', thinking: 'on' });
   });
@@ -118,9 +110,9 @@ describe('TabbedModelSelectorComponent', () => {
     const hintIdx = lines.findIndex((l) => l.includes('navigate') && l.includes('Esc cancel'));
     const stripIdx = lines.findIndex((l) => l.includes('All') && l.includes('openai'));
     expect(hintIdx).toBeGreaterThanOrEqual(0);
-    expect(lines[hintIdx + 1]).toBe(''); // blank between hint and tabs
+    expect(lines[hintIdx + 1]).toBe('');
     expect(stripIdx).toBe(hintIdx + 2);
-    expect(lines[stripIdx + 1]).toBe(''); // blank between tabs and list
+    expect(lines[stripIdx + 1]).toBe('');
   });
 
   it('mentions the Tab provider switch first in the hint line', () => {
@@ -128,7 +120,6 @@ describe('TabbedModelSelectorComponent', () => {
     const hint = lines.find((l) => l.includes('navigate') && l.includes('Esc cancel'));
     expect(hint).toBeDefined();
     expect(hint).toContain('Tab toggle provider');
-    // It comes first, before the navigation hint.
     expect(hint!.indexOf('Tab toggle provider')).toBeLessThan(hint!.indexOf('↑↓ navigate'));
   });
 
@@ -163,10 +154,10 @@ describe('TabbedModelSelectorComponent', () => {
     const lines = component.render(120).map(strip);
     const hintIdx = lines.findIndex((l) => l.includes('navigate') && l.includes('Esc cancel'));
     expect(lines[hintIdx + 1]).toContain('Switching may increase token usage.');
-    expect(lines[hintIdx + 2]).toBe(''); // blank between warning and tabs
+    expect(lines[hintIdx + 2]).toBe('');
     const stripIdx = lines.findIndex((l) => l.includes('All') && l.includes('openai'));
     expect(stripIdx).toBe(hintIdx + 3);
-    expect(lines[stripIdx + 1]).toBe(''); // blank between tabs and list
+    expect(lines[stripIdx + 1]).toBe('');
     expect(lines.findIndex((l) => l.includes('Kimi K2'))).toBeGreaterThan(stripIdx);
   });
 });

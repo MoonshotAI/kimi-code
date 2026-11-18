@@ -1,48 +1,9 @@
-/**
- * Managed-platform profile fetch / parse.
- *
- * Only `managed:kimi-code` is supported today. The platform exposes a
- * `/me` endpoint that returns a payload of the shape:
- *
- *   {
- *     "user_id": "u_123",
- *     "nickname": "moonwalker",
- *     "status": "USER_STATUS_NORMAL",
- *     "region": "REGION_CN",
- *     "user_level": 30,
- *     "user_level_name": "Vivace",
- *     "domain": 1,
- *     "domain_name": "DOMAIN_EXAMPLE",
- *     "goods_version": 1,
- *     "global_id": "u_123",
- *     "avatar": "https://example.com/avatar.png",
- *     "email": "user@example.com",
- *     "phone": { "country_code": "86", "number": "176****0000" },
- *     "created_time": "2026-06-11T13:26:47.561184Z",
- *     "last_login_time": "2026-07-16T03:12:03.033412Z"
- *   }
- *
- * `user_id` / `nickname` / `status` / `region` / `user_level` /
- * `user_level_name` / `domain` / `domain_name` are always serialized
- * (possibly as zero values); the rest are optional (`phone` a nested
- * record, the timestamps RFC3339 strings passed through verbatim). The
- * parser normalizes the payload into a structured, camelCase domain
- * model; presentation is left to the consumer.
- *
- * The camelCase zod schemas below are the single source of truth for the
- * domain model and double as the daemon REST wire contract: new daemon
- * endpoints speak the camelCase domain shape directly, while legacy
- * snake_case endpoints are unaffected.
- */
-
 import { z } from 'zod';
 
 import { readApiErrorMessage } from './api-error';
 import { kimiCodeBaseUrl } from './managed-usage';
 import { isRecord } from './utils';
 
-// The cloud path stays `/me` (owned by the backend); only the local
-// naming moved to "userinfo".
 export function kimiCodeUserInfoUrl(): string {
   return `${kimiCodeBaseUrl()}/me`;
 }
@@ -69,9 +30,7 @@ export const managedUserInfoSchema = z.object({
   username: z.string().optional(),
   email: z.string().optional(),
   phone: managedUserInfoPhoneSchema.optional(),
-  /** Backend RFC3339 timestamp, passed through verbatim. */
   createdTime: z.string().optional(),
-  /** Backend RFC3339 timestamp, passed through verbatim. */
   lastLoginTime: z.string().optional(),
 });
 export type ManagedUserInfo = z.infer<typeof managedUserInfoSchema>;
@@ -93,10 +52,6 @@ export const managedUserInfoResultSchema = z.discriminatedUnion('kind', [
 ]);
 export type ManagedUserInfoResult = z.infer<typeof managedUserInfoResultSchema>;
 
-/**
- * Lenient parse: anything that is not a record, or lacks a `user_id`
- * string, is malformed; every other field degrades independently.
- */
 export function parseManagedUserInfoPayload(payload: unknown): ManagedUserInfo | null {
   if (!isRecord(payload)) return null;
   const userId = stringField(payload, 'user_id');
@@ -146,8 +101,6 @@ function intField(record: Record<string, unknown>, key: string): number | undefi
   }
   return undefined;
 }
-
-// ── HTTP fetch ────────────────────────────────────────────────────────
 
 export interface FetchManagedUserInfoResult {
   readonly kind: 'ok';

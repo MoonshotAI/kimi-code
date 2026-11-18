@@ -16,8 +16,6 @@ export class StatusMessageComponent extends Container {
     this.addChild(this.textComponent);
   }
 
-  // Update the body in place (used for live-streamed `!` shell output) without
-  // remounting the component.
   updateContent(content: string): void {
     this.content = content;
     this.textComponent.setText(this.renderText());
@@ -28,12 +26,6 @@ export class StatusMessageComponent extends Container {
     super.invalidate();
   }
 
-  // Indent every line, not just the first. The `content` may be multi-line
-  // (e.g. `!` shell output); prefixing the whole string once would only indent
-  // the first line and leave the rest at column 0. Strip carriage returns
-  // first: a trailing `\r` (e.g. from CRLF server error pages) is zero-width
-  // for the line wrapper, so the padding spaces appended after it overwrite
-  // the visible content and the line renders blank.
   private renderText(): string {
     const colored =
       this.color === undefined
@@ -70,9 +62,6 @@ export class NoticeMessageComponent extends Container {
     super.invalidate();
   }
 
-  // Indent every line, not just the first. The `detail` may be multi-line;
-  // prefixing the whole string once would only indent the first line and leave
-  // the rest at column 0 (same handling as StatusMessageComponent).
   private renderDetail(detail: string): string {
     return currentTheme.fg('textDim', detail).split('\n').map((line) => `  ${line}`).join('\n');
   }

@@ -199,9 +199,6 @@ describe('detectInstallSource', () => {
   });
 
   it('returns unsupported when npm cannot be resolved outside the cwd', async () => {
-    // The default prefix lookup spawns npm; when it can only be found inside
-    // the current directory (or not at all), detection must degrade to
-    // 'unsupported' rather than run a planted binary.
     vi.mocked(resolveCommandPath).mockReturnValue(undefined);
     await expect(
       detectInstallSource({

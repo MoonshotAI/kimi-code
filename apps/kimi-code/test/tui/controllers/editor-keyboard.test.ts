@@ -324,9 +324,6 @@ describe('EditorKeyboardController shell history recall', () => {
     const [filter] = setHistoryFilter.mock.calls[0] as [(entry: string) => boolean];
     const save = editor['onHistoryDraftSave'] as unknown as () => unknown;
 
-    // Enter browse from prompt mode, then simulate landing on a shell entry
-    // (which flips inputMode to bash). The filter should stay locked to prompt
-    // and keep allowing plain entries.
     (editor as unknown as { inputMode: string }).inputMode = 'prompt';
     save();
     (editor as unknown as { inputMode: string }).inputMode = 'bash';
@@ -403,7 +400,6 @@ describe('EditorKeyboardController input changes', () => {
     installExpandedText(editor, expanded);
     const onChange = editor['onChange'] as unknown as (text: string) => void;
 
-    // The visible text only holds the collapsed paste marker.
     onChange('/goal [paste #1 +4000 chars]');
 
     expect(host.updateGoalLengthWarning).toHaveBeenCalledWith(expanded);
@@ -427,7 +423,6 @@ describe('EditorKeyboardController input changes', () => {
     const getExpandedText = installExpandedText(editor, expanded);
     const onChange = editor['onChange'] as unknown as (text: string) => void;
 
-    // Visible text is `/go[paste #1 …]`; the paste completes the command.
     onChange('/go[paste #1 +3999 chars]');
 
     expect(getExpandedText).toHaveBeenCalled();

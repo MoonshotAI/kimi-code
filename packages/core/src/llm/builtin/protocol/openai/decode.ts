@@ -1,8 +1,3 @@
-/**
- * OpenAI Chat Completions decoding: the stream decoder that turns chunks into streamed parts (including
- * reasoning content and reasoning details), usage, and finish info; replay of a non-streaming response;
- * and OpenAI SDK error classification, which the Responses protocol reuses.
- */
 import {
   APIConnectionError as RawOpenAISDKConnectionError,
   APIConnectionTimeoutError as RawOpenAISDKConnectionTimeoutError,
@@ -48,6 +43,7 @@ export type RawChunk = {
       tool_calls?: RawStreamToolCallDelta[];
     };
     finish_reason?: string | null;
+    usage?: RawUsage | null;
   }[];
   usage?: RawUsage | null;
 };
@@ -68,6 +64,7 @@ export type RawResponse = {
       tool_calls?: RawToolCall[];
     } | null;
     finish_reason?: string | null;
+    usage?: RawUsage | null;
   }[];
   usage?: RawUsage | null;
 };
@@ -313,7 +310,7 @@ export function createDecoder(
       if (typeof chunk.id === 'string' && chunk.id.length > 0) {
         sink.onMessageId(chunk.id);
       }
-      const usage = parseUsage(chunk.usage);
+      const usage = parseUsage(chunk.usage ?? chunk.choices?.[0]?.usage);
       if (usage !== undefined) {
         sink.onUsage(usage);
       }

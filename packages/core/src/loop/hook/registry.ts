@@ -1,7 +1,3 @@
-/**
- * Loop hook registry: adds, pauses, resumes, and removes hooks, lists the active hooks per point, and
- * reports lifecycle changes to the loop.
- */
 import type {
   LoopHooks,
   HookFailurePolicy,

@@ -118,8 +118,6 @@ auto_install = false
     };
 
     let themeWhenTracked: string | undefined;
-    // Theme application resolves on a later microtask, mirroring the real
-    // async palette load; tracking must observe the *new* theme.
     mutable.applyTheme = vi.fn(async (theme: string) => {
       await Promise.resolve();
       mutable.state.appState.theme = theme;
@@ -137,9 +135,6 @@ auto_install = false
     await writeTuiConfig('render_latex = false\n');
     const host = makeHost();
 
-    // applyTheme invalidates transcript components, which rebuild their
-    // Markdown children by copying the shared options — the reloaded value
-    // must already be live at that point.
     let latexWhenThemeApplied: boolean | undefined;
     const mutable = host as unknown as { applyTheme: unknown };
     mutable.applyTheme = vi.fn(() => {
@@ -192,7 +187,6 @@ auto_install = false
     expect(refreshSkillCommands).toHaveBeenCalledOnce();
     expect(refreshPluginCommands).toHaveBeenCalledOnce();
     expect(hydrateLazyConfigDefaults).toHaveBeenCalledOnce();
-    // Autocomplete must rebuild after the command maps are refreshed.
     expect(refreshSkillCommands.mock.invocationCallOrder[0]).toBeLessThan(
       host.refreshSlashCommandAutocomplete.mock.invocationCallOrder[0]!,
     );

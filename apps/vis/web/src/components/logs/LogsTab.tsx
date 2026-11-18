@@ -39,9 +39,6 @@ function matchesLevel(line: LogLine, filter: LevelFilter): boolean {
   return line.level === filter;
 }
 
-/** Logs tab — structured view of a session's diagnostic log. Works for both
- *  local sessions (whose dir holds `logs/kimi-code.log`) and imported bundles
- *  (which additionally may carry the global log). */
 export function LogsTab({ sessionId }: LogsTabProps) {
   const [which, setWhich] = useState<'session' | 'global'>('session');
   const [level, setLevel] = useState<LevelFilter>('ALL');

@@ -118,8 +118,6 @@ function buildExtension() {
 
 function loadVscePack() {
   try {
-    // VSCE's public API always runs vscode:prepublish. We build once above and pin VSCE,
-    // so use its package phase directly instead of rebuilding for every target.
     const module = require('@vscode/vsce/out/package.js');
     if (typeof module.pack !== 'function') {
       throw new TypeError('the installed package does not expose pack()');

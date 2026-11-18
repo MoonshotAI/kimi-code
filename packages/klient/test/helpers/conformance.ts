@@ -1,10 +1,3 @@
-/**
- * Shared conformance suite — the guarantee that the ipc and memory
- * transports are interchangeable. Every transport test file runs the exact
- * same assertions against a real in-process engine; only the `before` setup
- * differs per file.
- */
-
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -38,11 +31,6 @@ import type { TestEngine } from './engine.js';
 
 export interface KlientConformanceTarget {
   readonly klient: Klient;
-  /**
-   * The in-process engine's App scope. Both transports boot the engine
-   * in-process, so the suite can assemble dynamic units (e.g. contributed
-   * commands) through the production `IFeatureManager` path.
-   */
   readonly app: TestEngine['app'];
   cleanup(): Promise<void>;
 }
@@ -275,8 +263,6 @@ export function defineKlientConformance(
       const sub = target.klient.events.on('kosong.providers.changed', (event) => {
         events.push(event);
       });
-      // Give the subscription a wire round-trip (memory is synchronous; ipc
-      // and http's lazy WS need a frame exchange).
       await new Promise((resolve) => {
         setTimeout(resolve, 300);
       });
@@ -327,8 +313,6 @@ export function defineKlientConformance(
         });
         expect((await config.inspect<string>('defaultModel')).userValue).toBe('conf-provider/m1');
 
-        // A domain mapped to `undefined` is cleared; domains absent from the
-        // sections record are left untouched.
         await config.replaceSections({ sections: { defaultModel: undefined } });
         expect((await config.inspect<string>('defaultModel')).userValue).toBeUndefined();
         const providers = await config.inspect<Record<string, unknown>>('providers');
@@ -418,8 +402,6 @@ export function defineKlientConformance(
       expect([...downloaded.data]).toEqual([...bytes]);
 
       await files.delete(meta.id);
-      // Both transports surface a deleted/expired upload as the same public
-      // RPCError code, never the engine's raw error type.
       await expect(files.get(meta.id)).rejects.toMatchObject({ name: 'RPCError', code: 40404 });
     });
 
@@ -436,7 +418,6 @@ export function defineKlientConformance(
       const sub = target.klient.events.on('kosong.models.changed', (event) => {
         events.push(event);
       });
-      // See kosong.providers.changed above — give the subscription a wire round-trip.
       await new Promise((resolve) => {
         setTimeout(resolve, 300);
       });
@@ -643,7 +624,6 @@ export function defineKlientConformance(
           },
         });
         const entry = added.find((server) => server.name === 'conf-mcp');
-        // Mutable (user-level) entries carry the full config for edit prefill.
         expect(entry).toMatchObject({
           name: 'conf-mcp',
           source: 'global',
@@ -672,8 +652,6 @@ export function defineKlientConformance(
 
     it('global mcp probes an inline server config without persisting it', async () => {
       const mcp = target.klient.global.mcp;
-      // Inline probe against a scratch cwd: the binary runs but never
-      // speaks MCP, so the connection test reports a clean failure.
       const probeCwd = await mkdtemp(join(tmpdir(), 'klient-conf-mcp-probe-'));
       try {
         const probe = await mcp.test({
@@ -700,21 +678,16 @@ export function defineKlientConformance(
         server: { name: 'conf-mcp', transport: 'stdio', command: 'conf-command' },
       });
       try {
-        // The locator surface: resolve a legacy name, inspect nothing/all.
         expect(await mcp.resolveByName({ name: 'conf-mcp' })).toEqual({
           source: 'global',
           name: 'conf-mcp',
         });
         expect(await mcp.inspect({ targets: [] })).toEqual([]);
-        // An omitted `targets` ahead of a present options arg must mean "the
-        // whole catalog" on every transport (ipc encodes it as `null`).
         expect((await mcp.inspect({})).map((i) => i.runtimeName)).toContain('conf-mcp');
         await expect(
           mcp.inspect({ targets: [{ source: 'global', name: 'conf-missing' }] }),
         ).rejects.toMatchObject({ name: 'RPCError', code: 40408 });
 
-        // Offline auth classification of a stdio server needs no probe, and
-        // an OAuth flow against a stdio target is request.invalid → 40001.
         expect(await mcp.authStatuses()).toEqual([
           { name: 'conf-mcp', authStatus: 'not-applicable' },
         ]);
@@ -769,7 +742,6 @@ export function defineKlientConformance(
         },
       });
       try {
-        // Invalidate is offline: no stored grant and no network needed.
         await expect(
           mcp.resetAuth({ locator: { source: 'global', name: 'conf-oauth' } }),
         ).resolves.toBeUndefined();
@@ -817,6 +789,7 @@ export function defineKlientConformance(
           main.accessor.get(IEventBus).publish(
             new ToolResultEvent({
               agentId: 'main',
+              origin: 'loop',
               turnId: 1,
               toolCallId: 'call-media',
               output: [
@@ -850,8 +823,6 @@ export function defineKlientConformance(
       });
       const calls: string[] = [];
 
-      // A dynamic App-scope unit contributing one command into the
-      // `CommandContribution` collection — the same path a Feature takes.
       class ConformanceCommands extends Service {
         static override readonly name = 'klient-conformance-commands';
         constructor() {
@@ -871,7 +842,6 @@ export function defineKlientConformance(
       try {
         const agent = target.klient.session(created.id).agent('main');
 
-        // Dynamic assembly goes through the cascade — poll until visible.
         let infos = await agent.listCommands();
         const deadline = Date.now() + 5_000;
         while (!infos.some((command) => command.name === 'conformance-echo')) {
@@ -889,7 +859,6 @@ export function defineKlientConformance(
         await agent.runCommand({ name: 'conformance-echo', args: 'hello commands' });
         expect(calls).toEqual(['hello commands']);
 
-        // Unknown names fail with a coded engine error.
         await expect(agent.runCommand({ name: 'conformance-missing' })).rejects.toThrow(
           /Unknown command/,
         );

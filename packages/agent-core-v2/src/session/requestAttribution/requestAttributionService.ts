@@ -23,8 +23,15 @@ export class SessionRequestAttributionService
     this.agents.set(agentId, { ...this.of(agentId), userInputId });
   }
 
-  noteActiveRequest(agentId: string, requestId: string | undefined): void {
-    this.agents.set(agentId, { ...this.of(agentId), activeRequestId: requestId });
+  noteActiveRequest(agentId: string, requestId: string | undefined, active = true): void {
+    const current = this.of(agentId);
+    const trimmed = requestId?.trim();
+    const valid = trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined;
+    this.agents.set(agentId, {
+      ...current,
+      activeRequestId: active ? valid : undefined,
+      lastRequestId: valid ?? current.lastRequestId,
+    });
   }
 
   noteSubagentDispatch(agentId: string, parentAgentId: string): AgentRequestAttribution {

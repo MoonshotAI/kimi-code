@@ -1,11 +1,3 @@
-/**
- * Hidden `kimi __update_download <version>` sub-command: the self-spawned
- * worker behind native staged updates. Preflight spawns it detached in the
- * background (and the `upgrade` command in the foreground); it downloads,
- * verifies and stages the binary next to the running exe. The swap into
- * place happens on the next startup (see `cli/update/native-swap.ts`).
- */
-
 import { log } from '@moonshot-ai/kimi-code-sdk';
 
 import {
@@ -30,30 +22,6 @@ type StagedUpdateWait =
   | { readonly status: 'staged' }
   | { readonly status: 'takeover'; readonly lock: UpdateInstallLockHandle | null };
 
-/**
- * Another worker holds the install lock for the SAME version. Returning right
- * away would report a success that has not happened yet — the in-flight
- * download may still fail — so wait for it: 'staged' once its staged update is
- * verified on disk; 'takeover' once the lock becomes acquirable, with the lock
- * already held for the caller. The lock goes stale the moment its holder dies
- * (see install-lock), so a killed downloader cannot strand a foreground
- * `kimi upgrade` in this loop.
- *
- * Adoption applies the same integrity bar as stageNativeUpdate's
- * already-staged path: the recorded size proves nothing, and the holder may
- * still be RE-STAGING a same-size-corrupted payload (its metadata is only
- * replaced when the new generation publishes). A recorded stage whose payload
- * fails the checksum is treated as not-yet-staged — the lock poll below takes
- * over once the holder finishes without repairing it.
- *
- * A manual (explicit-upgrade) waiter adopts only after CONFIRMING the manual
- * marker landed on the stage — a concurrent startup swap may be claiming and
- * restoring the metadata right now, and reporting adoption for a promotion
- * that never persisted would strand the update under the env opt-out.
- *
- * A channel switch adopts only a stage with the same version, channel, and
- * confirmed switch intent as the request.
- */
 async function waitForStagedUpdate(
   version: string,
   exePath: string,
@@ -76,14 +44,7 @@ async function waitForStagedUpdate(
       if (!manual || (await promoteStagedUpdateToManual(exePath, staged))) {
         return { status: 'staged' };
       }
-      // The stage is being claimed/restored by a concurrent swap — the next
-      // poll either promotes the restored stage or takes over once it is
-      // gone.
     } else {
-      // Poll the acquisition itself: while the holder lives its lock stays
-      // fresh and this returns null without side effects; when the holder
-      // finishes (or dies) without staging a VERIFIED payload, the takeover
-      // happens right here.
       const lock = await tryAcquireUpdateInstallLock({ version });
       if (lock !== null) return { status: 'takeover', lock };
     }
@@ -112,8 +73,6 @@ export async function runUpdateDownloadCommand(
   if (lock === null) {
     const holderVersion = await readUpdateInstallLockVersion();
     if (holderVersion === version) {
-      // Another worker is already downloading this exact version: wait for it
-      // and adopt its verified result instead of exiting on a maybe.
       out.write(
         `A download of Kimi Code ${version} is already in progress; waiting for it to finish…\n`,
       );
@@ -122,12 +81,8 @@ export async function runUpdateDownloadCommand(
         out.write(`Kimi Code ${version} is downloaded; it applies on the next start.\n`);
         return 0;
       }
-      // The holder finished without staging (failed or died): take over. The
-      // lock may already be held by another winner of the takeover race —
-      // the null check below reports that as held.
       lock = wait.lock;
     } else if (holderVersion === undefined) {
-      // The lock was released between the two reads — retry the acquire once.
       lock = await tryAcquireUpdateInstallLock({ version });
     }
     if (lock === null) {
@@ -175,12 +130,6 @@ function formatDownloadProgress(label: string, downloaded: number, total: number
   return `${label} ${percent}% (${mb}/${totalMb} MB)`;
 }
 
-/**
- * Download progress renderer for the (foreground) downloader: a single
- * in-place line on a TTY (`\r` + clear-line, throttled to 10 fps, final frame
- * always rendered), or one line per 32 MB when piped to a file. The caller
- * owns the trailing newline.
- */
 export function createDownloadProgress(
   out: NodeJS.WriteStream,
   label: string,

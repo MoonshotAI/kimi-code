@@ -1,12 +1,3 @@
-// apps/vis/server/src/lib/zip-import.ts
-//
-// Safe extraction of a user-supplied debug zip into a destination directory.
-//
-// The zip comes from someone else's machine via `/export-debug-zip`, so it is
-// untrusted input: every entry path is validated against path traversal
-// ("zip slip"), and total entry-count / uncompressed-size caps guard against
-// zip bombs. Only regular files are written; directories are created lazily.
-
 import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
@@ -15,23 +6,15 @@ import { pipeline } from 'node:stream/promises';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 
 export interface ExtractOptions {
-  /** Reject once this many entries have been seen. */
   readonly maxEntries?: number;
-  /** Reject once the summed uncompressed size exceeds this many bytes. */
   readonly maxTotalBytes?: number;
 }
 
 const DEFAULT_MAX_ENTRIES = 50_000;
-const DEFAULT_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB
+const DEFAULT_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
 
 export class ZipImportError extends Error {}
 
-/**
- * Resolve a zip entry name to an absolute path under `root`, or return null
- * when the entry would escape it (zip slip). Exposed for direct testing of
- * the path-traversal guard, which is otherwise hard to exercise because zip
- * writers refuse to emit `..` entries.
- */
 export function resolveSafeTarget(root: string, entryName: string): string | null {
   const absRoot = resolve(root);
   const rootPrefix = absRoot + sep;
@@ -41,11 +24,6 @@ export function resolveSafeTarget(root: string, entryName: string): string | nul
   return target;
 }
 
-/**
- * Extract every file entry of `zipBuffer` under `destDir`, returning the list
- * of written zip-relative paths (forward-slashed). `destDir` must already be a
- * safe, caller-owned directory; this function never writes outside it.
- */
 export async function extractZip(
   zipBuffer: Buffer,
   destDir: string,
@@ -79,7 +57,6 @@ export async function extractZip(
         return;
       }
 
-      // Directory entries end with '/'. Files inside still create their dirs.
       if (entry.fileName.endsWith('/')) {
         zip.readEntry();
         return;

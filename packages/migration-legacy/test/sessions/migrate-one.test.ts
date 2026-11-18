@@ -33,8 +33,6 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     const lines = wire.split('\n').filter((l) => l.length > 0);
     expect(lines[0]).toContain('"protocol_version":"1.0"');
     const records = lines.map((l) => JSON.parse(l) as { type: string });
-    // metadata + turn.prompt + 2 messages + turn.ended + token_counting.measured
-    // (the fixture carries a `_usage` row with token_count 9133)
     expect(records.map((r) => r.type)).toEqual([
       'metadata',
       'turn.prompt',
@@ -56,8 +54,6 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
       workdirPath: '/Users/me/proj',
       targetHome,
     });
-    // The dir we wrote carries `imported_from_kimi_cli`, so a re-run is an
-    // idempotent skip, not a real collision.
     expect(second.outcome).toBe('already-migrated');
   });
 
@@ -69,7 +65,6 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     });
     expect(first.outcome).toBe('migrated');
     const targetDir = (first as Extract<MigrateOneResult, { outcome: 'migrated' }>).targetDir;
-    // Overwrite state.json with a non-migrated (real) kimi-code session.
     await writeFile(join(targetDir, 'state.json'), JSON.stringify({ title: 'real' }), 'utf-8');
     const second = await migrateOneSession({
       source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
@@ -86,11 +81,6 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
       computeWorkdirBucket(workdirPath),
       'ses_tiny-uuid',
     );
-    // Simulate a prior run killed after the dir + wire.jsonl were written but
-    // before state.json — exactly the debris a hard crash leaves, since a
-    // crash bypasses the in-process cleanup. Without state.json this is not a
-    // real kimi-code session, so it must be re-migrated, not reported as a
-    // permanent conflict that strands the session forever.
     await mkdir(join(targetDir, 'agents', 'main'), { recursive: true });
     await writeFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), '{"type":"metadata"}\n');
 
@@ -111,10 +101,6 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
       computeWorkdirBucket(workdirPath),
       'ses_tiny-uuid',
     );
-    // Simulate a crash mid-write of state.json: the dir + wire.jsonl exist and
-    // state.json is present but unparseable. It is migration debris (the path
-    // is `ses_<uuid>`), not a real kimi-code session, so it must be
-    // re-migrated, not reported as a permanent conflict.
     await mkdir(join(targetDir, 'agents', 'main'), { recursive: true });
     await writeFile(join(targetDir, 'agents', 'main', 'wire.jsonl'), '{"type":"metadata"}\n');
     await writeFile(join(targetDir, 'state.json'), '{ "createdAt": "broke');
@@ -130,9 +116,6 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
   });
 
   it('stamps written artifacts with the original wire_mtime', async () => {
-    // tiny-hello-world/state.json has `wire_mtime: 1772616338.93`.
-    // `SessionStore.list()` ranks sessions by filesystem mtime, so the
-    // migrated artifacts must carry the original timestamp — not write-time.
     const expectedMs = Math.floor(1772616338.93 * 1000);
     const result = await migrateOneSession({
       source: { uuid: 'tiny-uuid', sessionDir: join(FIXTURES, 'tiny-hello-world'), contextPath: join(join(FIXTURES, 'tiny-hello-world'), 'context.jsonl') },
@@ -146,16 +129,12 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
     const wireStat = await stat(join(targetDir, 'agents', 'main', 'wire.jsonl'));
     const dirStat = await stat(targetDir);
 
-    // Within one second of the fixture's wire_mtime.
     expect(Math.abs(stateStat.mtimeMs - expectedMs)).toBeLessThan(1000);
     expect(Math.abs(wireStat.mtimeMs - expectedMs)).toBeLessThan(1000);
     expect(Math.abs(dirStat.mtimeMs - expectedMs)).toBeLessThan(1000);
   });
 
   it('falls back to the wire.jsonl mtime when wire_mtime is absent', async () => {
-    // A state.json without `wire_mtime` must stamp the migrated artifacts from
-    // the SAME signal detection ranks recency by — the source wire.jsonl mtime
-    // — so post-migration list ordering matches the detected order.
     const srcDir = join(targetHome, 'src-no-wiremtime');
     await mkdir(srcDir, { recursive: true });
     const fixtureContext = await readFile(
@@ -182,9 +161,6 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
   });
 
   it('reports outcome "empty" — not "failed" — when the context has no messages', async () => {
-    // A context.jsonl with only markers (e.g. a session the user cleared in
-    // kimi-cli) carries no migratable conversation. That is an empty session,
-    // not a migration failure.
     const srcDir = join(targetHome, 'src-empty-context');
     await mkdir(srcDir, { recursive: true });
     await writeFile(
@@ -203,9 +179,6 @@ describe('migrateOneSession (tiny-hello-world fixture)', () => {
   });
 
   it('reports outcome "failed" when context.jsonl is corrupt (no parseable JSON lines)', async () => {
-    // A disk-corrupted / truncated context.jsonl must be surfaced as a real
-    // failure (so it ends up in `migration-errors.log`), not silently
-    // counted as "skipped empty".
     const srcDir = join(targetHome, 'src-corrupt-context');
     await mkdir(srcDir, { recursive: true });
     await writeFile(join(srcDir, 'context.jsonl'), 'not-json\n{broken\n}}}\n', 'utf-8');

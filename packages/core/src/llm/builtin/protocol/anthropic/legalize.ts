@@ -1,8 +1,3 @@
-/**
- * Anthropic legality rules: the audio placeholder pattern, per-model thinking profiles (budget or
- * adaptive, supported efforts), default max output tokens, unsigned-thinking history cleanup, and
- * sampling and response-format checks.
- */
 import type { ContentPart, Message } from '#/llm/message';
 import { SyntaxRequestFormatError } from '#/llm/protocol/errors';
 import type { ModelLegality } from '#/llm/protocol/rules/model';
@@ -11,28 +6,6 @@ import type { LlmModelSpec } from '#/llm/request';
 
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
 
-/**
- * Converts audio parts in non-system messages to omission-placeholder text, one per adjacent audio
- * run, and removes empty text parts from tool messages.
- *
- * @example
- * // Input:
- * {
- *   role: 'user',
- *   content: [
- *     { type: 'text', text: 'Listen' },
- *     { type: 'audio_url', audioUrl: { url: 'https://example.com/speech.mp3' } }, // ←
- *   ],
- * }
- * // Output:
- * {
- *   role: 'user',
- *   content: [
- *     { type: 'text', text: 'Listen' },
- *     { type: 'text', text: '(audio omitted: not supported by this provider)' }, // ←
- *   ],
- * }
- */
 export const audioToPlaceholder: Pattern<Message> = {
   name: 'audioToPlaceholder',
   rewrite(items, index) {
@@ -303,28 +276,6 @@ export function resolveThinkingProfile(model: LlmModelSpec): AnthropicModelProfi
   };
 }
 
-/**
- * With `preserve: false`, converts a message into a copy without thinking parts that lack an
- * `encrypted` signature; with `preserve: true`, leaves the message unchanged.
- *
- * @example
- * // With `preserve: false`:
- * // Input:
- * {
- *   role: 'assistant',
- *   toolCalls: [],
- *   content: [
- *     { type: 'think', think: 'Draft' }, // ←
- *     { type: 'text', text: 'Answer' },
- *   ],
- * }
- * // Output:
- * {
- *   role: 'assistant',
- *   toolCalls: [],
- *   content: [{ type: 'text', text: 'Answer' }], // ←
- * }
- */
 function stripUnsignedThinking(options: { readonly preserve: boolean }): Pattern<Message> {
   return {
     name: 'stripUnsignedThinking',

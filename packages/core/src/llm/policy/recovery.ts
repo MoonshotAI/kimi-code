@@ -1,7 +1,3 @@
-/**
- * Recovery contract, attempt ledger, and requester-scoped memory: a recovery proposes a request rewrite
- * or side effect for a failed attempt; reusable rewrites can be restored by later requests on the same route.
- */
 import type { LlmEndpoint, LlmRequest } from '#/llm/request';
 import type { LlmErrorMessage } from '#/llm/response';
 
