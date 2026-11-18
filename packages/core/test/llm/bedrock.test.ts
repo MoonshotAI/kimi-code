@@ -4,6 +4,7 @@ import { getAnthropicModelCapability } from '#/llm/builtin/protocol/anthropic/ca
 import { anthropicProtocol } from '#/llm/builtin/protocol/anthropic/index';
 import { bedrockAnthropicProtocol } from '#/llm/builtin/provider/bedrock/anthropic';
 import { createBedrockTokenProvider } from '#/llm/builtin/provider/bedrock/credentials';
+import { setNow } from '#/utils/now';
 import {
   bedrockModelCapability,
   inferBedrockProtocol,
@@ -12,6 +13,7 @@ import {
 } from '#/llm/builtin/provider/bedrock/routing';
 
 describe('Bedrock provider', () => {
+
   it('keeps token lifecycle, routing, and Anthropic authentication provider-local', async () => {
     expect(
       [
@@ -38,10 +40,10 @@ describe('Bedrock provider', () => {
     let now = 1_000_000;
     let calls = 0;
     let tokenConfig: unknown;
+    setNow(() => now);
     const provider = createBedrockTokenProvider({
       region: 'us-west-2',
       profile: 'bedrock-test',
-      now: () => now,
       createProvideToken: (config) => {
         tokenConfig = config;
         return async () => {

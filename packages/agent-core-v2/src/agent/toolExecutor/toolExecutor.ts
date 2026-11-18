@@ -6,8 +6,6 @@ import type {
   LegacyToolAgentContext,
   LegacyToolFields,
   LegacyToolPreparation,
-} from '#/tool/executor';
-import type {
   ToolExecutionHandler,
   ToolExecutor,
   ToolExecutorHook,

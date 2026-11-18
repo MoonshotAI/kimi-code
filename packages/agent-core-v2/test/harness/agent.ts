@@ -27,7 +27,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/features/reminder/reminderFeature';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, AgentContextData } from '#/agent/contextMemory/types';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -44,7 +44,11 @@ import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogD
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
-import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
+import {
+  IAgentProfileService,
+  type AgentConfigData,
+  type ProfileSetModelResult,
+} from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type {
   LoopNotifyMessage,
@@ -54,16 +58,18 @@ import type {
 } from '#/agent/loop/loop';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
-import type { AgentContextData } from '#/agent/contextMemory/types';
 import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
-import type { ProfileSetModelResult } from '#/agent/profile/profile';
 import type { SwarmModeTrigger } from '#/features/swarm/agent/swarm';
 import type { UserToolRegistration } from '#/agent/userTool/userTool';
 import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginCommand';
 import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
-import type { ToolInfo } from '#/tool/toolContract';
+import type {
+  ToolInfo,
+  ExecutableToolOutput as ToolOutput,
+  ExecutableToolResult,
+} from '#/tool/toolContract';
 
 type EmptyPayload = {};
 type CreateGoalPayload = CreateGoalInput;
@@ -95,10 +101,6 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { LocalEnvironment } from '#/environment/localEnvironment';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
-import type {
-  ExecutableToolOutput as ToolOutput,
-  ExecutableToolResult,
-} from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -111,7 +113,7 @@ import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
-import { type ModelCapability } from '@moonshot-ai/core/llm/request';
+import { type ModelCapability, type ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import {
   isToolCall,
   isToolCallPart,
@@ -120,7 +122,6 @@ import {
   type StreamedMessagePart,
   type ToolDescription as KosongTool,
 } from '@moonshot-ai/core/llm/message';
-import { type ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import { type AgentModelDefinition } from '#/state/agentModel';
@@ -1832,7 +1833,7 @@ export class AgentTestContext {
 
   configureRuntimeModel(
     provider: TestProviderConfig,
-    modelCapabilities?: TestModelCapabilities | undefined,
+    modelCapabilities?: TestModelCapabilities,
     preserveProfile = false,
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);

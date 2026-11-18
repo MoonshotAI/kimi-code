@@ -173,6 +173,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           port,
           startedAt: Date.now(),
           serverVersion,
+          product: opts.hostIdentity.productName,
         });
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {

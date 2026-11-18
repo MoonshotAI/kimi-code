@@ -91,9 +91,7 @@ function stripTrailingLf(line: string): string {
 }
 
 function splitsSurrogatePair(text: string, offset: number): boolean {
-  // oxlint-disable-next-line unicorn/prefer-code-point -- raw UTF-16 halves are the point here
   const previous = text.charCodeAt(offset - 1);
-  // oxlint-disable-next-line unicorn/prefer-code-point -- raw UTF-16 halves are the point here
   const next = text.charCodeAt(offset);
   return previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
 }

@@ -188,8 +188,6 @@ import {
   type SteerOutcome,
   type StepRetryState,
   type TranscriptEntry,
-  type TUIStartupOptions,
-  type TUIStartupState,
 } from './types';
 import { workingLabel } from './utils/activity-label';
 import { hasDispose } from './utils/component-capabilities';
@@ -2941,7 +2939,6 @@ export class KimiTUI {
       return entry !== undefined && doomed.has(entry);
     });
     for (const child of componentsToRemove) {
-      // oxlint-disable-next-line unicorn/prefer-dom-node-remove
       this.state.transcriptContainer.removeChild(child);
       if (hasDispose(child)) child.dispose();
     }
@@ -3955,7 +3952,6 @@ export class KimiTUI {
       return index < unmarkedCutoff;
     });
     for (const child of componentsToRemove) {
-      // oxlint-disable-next-line unicorn/prefer-dom-node-remove
       this.state.transcriptContainer.removeChild(child);
       if (hasDispose(child)) child.dispose();
     }

@@ -5,7 +5,6 @@ import { highlight, supportsLanguage } from 'cli-highlight';
 import { currentTheme } from './theme';
 import { codeHighlightTheme } from './highlight-theme';
 
-// eslint-disable-next-line no-control-regex -- intentionally matches the ESC byte that opens ANSI SGR sequences.
 const HEADING_HASH_PREFIX = /^((?:\u001B\[[0-9;]*m)*)#{1,6}[ \t]+/;
 
 export interface KimiMarkdownTheme extends MarkdownTheme {

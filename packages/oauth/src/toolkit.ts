@@ -124,8 +124,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async status(
-    providerName?: string | undefined,
-    oauthRef?: KimiOAuthTokenRef | undefined,
+    providerName?: string,
+    oauthRef?: KimiOAuthTokenRef,
   ): Promise<AuthStatus> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
@@ -141,7 +141,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async login(
-    providerName?: string | undefined,
+    providerName?: string,
     options: KimiOAuthLoginOptions = {},
   ): Promise<KimiOAuthLoginResult> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
@@ -214,8 +214,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async logout(
-    providerName?: string | undefined,
-    oauthRef?: KimiOAuthTokenRef | undefined,
+    providerName?: string,
+    oauthRef?: KimiOAuthTokenRef,
   ): Promise<KimiOAuthLogoutResult> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
@@ -230,7 +230,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async ensureFresh(
-    providerName?: string | undefined,
+    providerName?: string,
     options: {
       readonly force?: boolean | undefined;
       readonly oauthRef?: KimiOAuthTokenRef | undefined;
@@ -253,8 +253,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   tokenProvider(
-    providerName?: string | undefined,
-    oauthRef?: KimiOAuthTokenRef | undefined,
+    providerName?: string,
+    oauthRef?: KimiOAuthTokenRef,
   ): BearerTokenProvider {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
@@ -265,7 +265,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async getManagedUsage(
-    providerName?: string | undefined,
+    providerName?: string,
     options: {
       readonly oauthRef?: KimiOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
@@ -288,7 +288,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async getManagedUserInfo(
-    providerName?: string | undefined,
+    providerName?: string,
     options: {
       readonly oauthRef?: KimiOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
@@ -313,7 +313,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   managerFor(
     providerName: string,
     oauthKey = KIMI_CODE_OAUTH_KEY,
-    oauthHost?: string | undefined,
+    oauthHost?: string,
   ): OAuthManager {
     const storageName = resolveKimiTokenStorageName({ providerName, oauthKey });
     const effectiveOAuthHost = oauthHost ?? this.flowConfig.oauthHost;
@@ -345,8 +345,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   private defaultOAuthKey(
-    baseUrl?: string | undefined,
-    oauthHost?: string | undefined,
+    baseUrl?: string,
+    oauthHost?: string,
   ): string {
     return resolveKimiCodeOAuthKey({
       oauthHost: oauthHost ?? this.flowConfig.oauthHost,
@@ -354,7 +354,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     });
   }
 
-  private defaultOAuthRef(baseUrl?: string | undefined): KimiOAuthTokenRef {
+  private defaultOAuthRef(baseUrl?: string): KimiOAuthTokenRef {
     return {
       key: this.defaultOAuthKey(baseUrl, this.flowConfig.oauthHost),
       oauthHost: this.flowConfig.oauthHost,
@@ -362,8 +362,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   private oauthHostFor(
-    oauthRef?: KimiOAuthTokenRef | undefined,
-    oauthHost?: string | undefined,
+    oauthRef?: KimiOAuthTokenRef,
+    oauthHost?: string,
   ): string {
     return oauthRef?.oauthHost ?? oauthHost ?? this.flowConfig.oauthHost;
   }

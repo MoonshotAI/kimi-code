@@ -21,14 +21,12 @@ import { extractAtPrefix } from './file-mention-provider';
 import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
 import { WrappingSelectList } from './wrapping-select-list';
 
-// oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 
 const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
 const BRACKET_PASTE_START = '\u001B[200~';
 const BRACKET_PASTE_END = '\u001B[201~';
 
-// oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match CSI
 const KITTY_CSI_U = /^\u001B\[(\d+);(\d+)((?::\d+)*)u$/;
 const CAPS_LOCK_BIT = 64;
 const CTRL_BIT = 4;

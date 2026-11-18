@@ -53,9 +53,8 @@ export function submitPromptTurn(
 }
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent, ToolDidExecuteContext, WillExecuteToolEvent } from '#/agent/toolExecutor/toolHooks';
-import { OrderedHookSlot } from '#/hooks';
+import { OrderedHookSlot, createHooks } from '#/hooks';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { createHooks } from '#/hooks';
 import type { IWireService } from '#/wire/wire';
 
 import { stubAgentWire } from '../../wire/stubs';
