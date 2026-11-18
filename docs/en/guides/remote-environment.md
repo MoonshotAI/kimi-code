@@ -146,4 +146,4 @@ defaultCwd = 'C:\work\project'
 ## Next steps
 
 - [`environments` configuration reference](../configuration/config-files.md#environments): view all fields.
-- [Remote Control](./remote-control.md): steer this machine's sessions from another device.
+- [Using in the Browser (Remote Control)](./web.md#remote-control): steer this machine's sessions from another device.

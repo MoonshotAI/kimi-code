@@ -1368,3 +1368,70 @@ describe('filterDisplayAddresses', () => {
     ]);
   });
 });
+
+describe('kimi web --json', () => {
+  it('mints an ephemeral in-memory bearer token, skips openUrl and server.token, and prints a single-line JSON ready payload', async () => {
+    const { handleWebCommand, formatJsonBootLine } = await import('#/cli/sub/web/run');
+    const { runner, calls } = makeRunner('http://127.0.0.1:49123/');
+    const io = makeIo();
+    const openUrl = vi.fn();
+    const resolveToken = vi.fn(() => 'persistent-server-token');
+
+    await handleWebCommand(
+      { port: '0', json: true, open: true },
+      {
+        startServerForeground: runner,
+        openUrl,
+        resolveToken,
+        stdout: io.stdout,
+        stderr: io.stderr,
+      },
+    );
+
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(resolveToken).not.toHaveBeenCalled();
+    expect(calls.options?.skipInstanceRegistry).toBe(true);
+    expect(calls.options?.logToStderr).toBe(true);
+    expect(calls.options?.authTokenService).toBeDefined();
+
+    const issuedToken = calls.options!.authTokenService!.getToken();
+    expect(issuedToken.length).toBeGreaterThan(20);
+    expect(await calls.options!.authTokenService!.isValid(issuedToken)).toBe(true);
+    expect(await calls.options!.authTokenService!.isValid('persistent-server-token')).toBe(false);
+
+    const lines = io.readStdout().trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      origin: 'http://127.0.0.1:49123',
+      ws_url: 'ws://127.0.0.1:49123/api/v1/ws',
+      token: issuedToken,
+      kimi_agent_protocol_version: '1.0.0',
+    });
+
+    expect(JSON.parse(formatJsonBootLine('http://::1:58627', 'tok_1'))).toMatchObject({
+      origin: 'http://[::1]:58627',
+      ws_url: 'ws://[::1]:58627/api/v1/ws',
+    });
+    expect(JSON.parse(formatJsonBootLine('http://0.0.0.0:58627', 'tok_1'))).toMatchObject({
+      origin: 'http://127.0.0.1:58627',
+      ws_url: 'ws://127.0.0.1:58627/api/v1/ws',
+    });
+  });
+
+  it('rejects combining --json with incompatible flags', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const io = makeIo();
+
+    for (const [opts, pattern] of [
+      [{ json: true, remoteControl: true }, /--json cannot be combined with --remote-control/],
+      [{ json: true, dangerousBypassAuth: true }, /--json cannot be combined with --dangerous-bypass-auth/],
+      [{ json: true, debugEndpoints: true }, /--json cannot be combined with --debug-endpoints/],
+      [{ json: true, allowRemoteShutdown: true }, /--json cannot be combined with --allow-remote-shutdown/],
+    ] as const) {
+      await expect(
+        handleWebCommand(opts, { openUrl: vi.fn(), stdout: io.stdout, stderr: io.stderr }),
+      ).rejects.toThrow(pattern);
+    }
+  });
+});
