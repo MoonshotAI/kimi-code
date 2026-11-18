@@ -63,7 +63,7 @@ The terminal prints the access link (`https://code-rc.kimi.com/devices/<device I
 2. Log in with the **same** Kimi account as on your machine and select the device to view and control its sessions.
 
 ::: warning
-The Remote Control link grants access to your machine upon signing into the same Kimi account — do not share it publicly. Press `Ctrl+C` in the local terminal to go offline (or run `kill <pid>` using the `pid` in `~/.kimi-code/server/rc.json` if you lost the terminal). Closing the remote browser tab leaves local tasks running uninterrupted.
+The Remote Control link grants access to your machine upon signing into the same Kimi account — do not share it publicly. Press `Ctrl+C` in the local terminal to go offline; tasks already running on your machine keep running (or run `kill <pid>` using the `pid` in `~/.kimi-code/server/rc.json` if you lost the terminal). Closing the remote browser tab leaves local tasks running uninterrupted.
 :::
 
 ## Relationship with the CLI
