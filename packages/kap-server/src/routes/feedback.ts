@@ -1,3 +1,5 @@
+import type { ServerResponse } from 'node:http';
+
 import { z } from 'zod';
 
 import {
@@ -23,6 +25,7 @@ import { clientConfigsBaseUrl } from '../services/clientConfigs';
 import { FeedbackRouteError, ManagedFeedbackGateway } from '../services/feedback';
 import type { ConversationService } from '../services/conversation/conversationService';
 import type { CreateFeedbackRequest } from '../protocol/rest-feedback';
+import { requestCancellation } from './requestCancellation';
 
 interface FeedbackRouteHost {
   addContentTypeParser(
@@ -41,6 +44,7 @@ interface FeedbackRouteHost {
 }
 
 interface FeedbackReply {
+  readonly raw: ServerResponse;
   code(status: number): FeedbackReply;
   send(payload: unknown): unknown;
 }
@@ -121,7 +125,11 @@ export function registerFeedbackRoutes(
         const filename = decodeFilename(req.headers['x-feedback-file-name']);
         const declaredSize = readDeclaredSize(req.headers['x-feedback-file-size']);
         if (!isByteIterable(req.body)) throw new FeedbackRouteError('attachment body must be a byte stream', 400);
-        await gateway.upload(req.params.feedback_id, { filename, declaredSize, bytes: req.body });
+        await gateway.upload(
+          req.params.feedback_id,
+          { filename, declaredSize, bytes: req.body },
+          { signal: requestCancellation(req.raw, (reply as unknown as FeedbackReply).raw) },
+        );
         reply.send(okEnvelope(null, req.id));
       } catch (error) {
         sendFeedbackError(reply as unknown as FeedbackReply, req.id, error);

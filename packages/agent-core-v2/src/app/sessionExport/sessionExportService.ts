@@ -3,6 +3,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
+import { abortable } from '#/_base/utils/abort';
 import { resolveGlobalLogPath } from '#/_base/log/logConfig';
 import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -67,7 +68,7 @@ export class SessionExportService implements ISessionExportService {
       );
     }
 
-    const summary = await this.index.get(input.sessionId);
+    const summary = await this.waitFor(this.index.get(input.sessionId), options.signal);
     const globalLogOnly = input.includeGlobalLog === true && input.sessionId.trim().length === 0;
     if (summary === undefined && !globalLogOnly) {
       throw new Error2(
@@ -83,11 +84,12 @@ export class SessionExportService implements ISessionExportService {
             id: input.sessionId,
             sessionDir: join(this.bootstrap.homeDir, '.empty-session'),
           }
-        : await this.flushLiveSession(summary);
+        : await this.flushLiveSession(summary, options.signal);
     options.signal?.throwIfAborted();
     if (input.includeGlobalLog === true) {
       await this.warnIfFails('export global log flush failed', () => this.log.flush(), {
         retry: true,
+        signal: options.signal,
       });
     }
 
@@ -131,7 +133,7 @@ export class SessionExportService implements ISessionExportService {
         { details: { sessionId: input.sessionId } },
       );
     }
-    const summary = await this.index.get(input.sessionId);
+    const summary = await this.waitFor(this.index.get(input.sessionId), options.signal);
     if (summary === undefined) {
       throw new Error2(
         ErrorCodes.SESSION_NOT_FOUND,
@@ -139,7 +141,7 @@ export class SessionExportService implements ISessionExportService {
         { details: { sessionId: input.sessionId } },
       );
     }
-    const liveSummary = await this.flushLiveSession(summary);
+    const liveSummary = await this.flushLiveSession(summary, options.signal);
     options.signal?.throwIfAborted();
     return exportFeedbackSessionDirectory({
       request: input,
@@ -148,8 +150,11 @@ export class SessionExportService implements ISessionExportService {
     });
   }
 
-  private async flushLiveSession(summary: SessionSummary): Promise<ExportSessionDirectorySummary> {
-    const workspace = await this.workspaces.get(summary.workspaceId);
+  private async flushLiveSession(
+    summary: SessionSummary,
+    signal?: AbortSignal,
+  ): Promise<ExportSessionDirectorySummary> {
+    const workspace = await this.waitFor(this.workspaces.get(summary.workspaceId), signal);
     const sessionDir = sessionDirOf(
       this.bootstrap.homeDir,
       workspacePersistenceScope(this.bootstrap.scope('sessions'), summary.workspaceId),
@@ -168,8 +173,8 @@ export class SessionExportService implements ISessionExportService {
 
     try {
       const metadata = handle.accessor.get(ISessionMetadata);
-      await metadata.ready;
-      const meta = await metadata.read();
+      await this.waitFor(metadata.ready, signal);
+      const meta = await this.waitFor(metadata.read(), signal);
       exportSummary = {
         id: meta.id,
         title: meta.title,
@@ -177,22 +182,20 @@ export class SessionExportService implements ISessionExportService {
         sessionDir,
       };
     } catch (error) {
+      signal?.throwIfAborted();
       this.log.warn('flushMetadata failed before export', { error });
     }
 
     await this.warnIfFails('export session log flush failed', () =>
-      handle.accessor.get(ILogService).flush(),
-    );
+      handle.accessor.get(ILogService).flush(), { signal });
     const agents = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agents.list()) {
       const agentHandle = agents.handleOf(agent.agentId);
       if (agentHandle === undefined) continue;
       await this.warnIfFails('export agent file history settle failed', () =>
-        agentHandle.accessor.get(IAgentFileHistoryService).settled(),
-      );
+        agentHandle.accessor.get(IAgentFileHistoryService).settled(), { signal });
       await this.warnIfFails('export agent wire flush failed', () =>
-        agentHandle.accessor.get(IWireService).flush(),
-      );
+        agentHandle.accessor.get(IWireService).flush(), { signal });
     }
     try {
       const lastRequestId = handle.accessor
@@ -210,21 +213,28 @@ export class SessionExportService implements ISessionExportService {
     return this.sessions.get(sessionId);
   }
 
+  private waitFor<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    return signal === undefined ? promise : abortable(promise, signal);
+  }
+
   private async warnIfFails(
     message: string,
     operation: () => Promise<void>,
-    options: { readonly retry?: boolean } = {},
+    options: { readonly retry?: boolean; readonly signal?: AbortSignal } = {},
   ): Promise<void> {
     try {
-      await operation();
+      await this.waitFor(operation(), options.signal);
       return;
     } catch (error) {
+      options.signal?.throwIfAborted();
       this.log.warn(message, { error });
     }
     if (options.retry !== true) return;
     try {
-      await operation();
-    } catch {}
+      await this.waitFor(operation(), options.signal);
+    } catch {
+      options.signal?.throwIfAborted();
+    }
   }
 }
 
@@ -259,7 +269,7 @@ export async function exportSessionDirectory(input: {
     if (input.desktopLogPath !== undefined) {
       desktopSource = await openOptionalZipSource(input.desktopLogPath, input.signal);
     }
-    const sessionFiles = await collectFilesRecursive(sessionDir, FILE_HISTORY_BLOB_PREFIX);
+    const sessionFiles = await collectFilesRecursive(sessionDir, FILE_HISTORY_BLOB_PREFIX, input.signal);
     if (
       !input.request.includeGlobalLog &&
       sessionFiles.length === 0 &&
@@ -356,7 +366,7 @@ export async function exportFeedbackSessionDirectory(input: {
 }): Promise<ExportSessionResult> {
   input.signal?.throwIfAborted();
   const sessionDir = input.summary.sessionDir;
-  const collected = await collectFilesRecursive(sessionDir);
+  const collected = await collectFilesRecursive(sessionDir, undefined, input.signal);
   const sessionFiles = collected.filter((file) => isFeedbackSessionFile(sessionDir, file));
   if (sessionFiles.length === 0) {
     throw new Error2(

@@ -15,17 +15,25 @@ import {
 } from './file-source';
 import type { ExportSessionManifest } from './sessionExport';
 
-export async function collectFilesRecursive(root: string, skipDir?: string): Promise<string[]> {
+export async function collectFilesRecursive(
+  root: string,
+  skipDir?: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
   const files: string[] = [];
   async function walk(dir: string): Promise<void> {
+    signal?.throwIfAborted();
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch (error) {
+      signal?.throwIfAborted();
       if (!isMissingPath(error)) throw error;
       return;
     }
+    signal?.throwIfAborted();
     for (const entry of entries) {
+      signal?.throwIfAborted();
       if (entry.isDirectory()) {
         if (skipDir !== undefined && entry.name === skipDir) continue;
         await walk(join(dir, entry.name));

@@ -7,6 +7,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import type { FeedbackTurnContext, IOAuthService } from '@moonshot-ai/agent-core-v2';
+import { abortable } from '@moonshot-ai/agent-core-v2/_base/utils/abort';
 import {
   fetchCompleteFeedbackUpload,
   fetchCreateFeedbackUploadUrl,
@@ -76,24 +77,27 @@ export class ManagedFeedbackGateway {
       readonly declaredSize: number;
       readonly bytes: AsyncIterable<Uint8Array>;
     },
+    options: { readonly signal?: AbortSignal } = {},
   ): Promise<void> {
     const tempDir = await mkdtemp(join(tmpdir(), 'kimi-feedback-attachment-'));
     try {
       const path = join(tempDir, 'attachment');
-      const staged = await stageBytes(input.bytes, path);
+      const staged = await stageBytes(input.bytes, path, options.signal);
       if (staged.size !== input.declaredSize) {
         throw new FeedbackRouteError('attachment size does not match x-feedback-file-size', 400);
       }
-      await uploadArchive(this.uploadApi(() => this.accessToken(), this.baseUrl()), staged, feedbackId, {
+      options.signal?.throwIfAborted();
+      await uploadArchive(this.uploadApi(() => this.accessToken(options.signal), this.baseUrl(), options.signal), staged, feedbackId, {
         filename: input.filename,
         maxRetries: 0,
+        signal: options.signal,
       });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   }
 
-  private uploadApi(getAccessToken: () => Promise<string>, baseUrl: string): FeedbackUploadUrlApi {
+  private uploadApi(getAccessToken: () => Promise<string>, baseUrl: string, signal?: AbortSignal): FeedbackUploadUrlApi {
     return {
       createUploadUrl: async (input) => {
         const accessToken = await getAccessToken();
@@ -102,7 +106,7 @@ export class ManagedFeedbackGateway {
           file_name: input.filename,
           file_size: input.size,
           feedback_id: input.feedbackId,
-        }, { baseUrl });
+        }, { baseUrl, signal });
         if (result.kind === 'error') throw upstreamError(result);
         return {
           uploadId: result.upload_id,
@@ -119,20 +123,23 @@ export class ManagedFeedbackGateway {
         const result = await fetchCompleteFeedbackUpload(accessToken, {
           upload_id: input.uploadId,
           parts: input.parts.map((part) => ({ part_number: part.partNumber, etag: part.etag })),
-        }, { baseUrl });
+        }, { baseUrl, signal });
         if (result.kind === 'error') throw upstreamError(result);
       },
     };
   }
 
-  private async accessToken(): Promise<string> {
+  private async accessToken(signal?: AbortSignal): Promise<string> {
     const provider = this.oauth.resolveTokenProvider(KIMI_CODE_PROVIDER_NAME);
     if (provider === undefined) {
       throw new FeedbackRouteError('managed Kimi OAuth is unavailable', 502);
     }
     try {
-      return await provider.getAccessToken();
+      return await (signal === undefined
+        ? provider.getAccessToken()
+        : abortable(provider.getAccessToken(), signal));
     } catch (error) {
+      signal?.throwIfAborted();
       throw new FeedbackRouteError(error instanceof Error ? error.message : String(error), 502);
     }
   }
@@ -141,6 +148,7 @@ export class ManagedFeedbackGateway {
 async function stageBytes(
   bytes: AsyncIterable<Uint8Array>,
   path: string,
+  signal?: AbortSignal,
 ): Promise<{ readonly path: string; readonly size: number; readonly sha256: string }> {
   const hash = createHash('sha256');
   let size = 0;
@@ -155,7 +163,7 @@ async function stageBytes(
       callback(undefined, chunk);
     },
   });
-  await pipeline(bytes, meter, createWriteStream(path, { flags: 'wx' }));
+  await pipeline(bytes, meter, createWriteStream(path, { flags: 'wx' }), { signal });
   return { path, size, sha256: hash.digest('hex') };
 }
 

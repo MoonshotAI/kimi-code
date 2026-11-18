@@ -1,3 +1,5 @@
+import type { IncomingMessage } from 'node:http';
+
 import { z } from 'zod';
 
 import { jsonSchema, openApiDocumentJsonSchema } from './schema';
@@ -117,6 +119,7 @@ export interface RouteDefinition<
   handler: (
     req: {
       id: string;
+      raw: IncomingMessage;
       body: InferZod<TBody>;
       params: InferZod<TParams>;
       headers: Record<string, unknown>;

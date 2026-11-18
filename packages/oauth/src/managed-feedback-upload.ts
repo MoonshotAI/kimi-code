@@ -1,5 +1,6 @@
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { readApiErrorMessage } from './api-error';
 import { kimiCodeBaseUrl } from './managed-usage';
@@ -67,6 +68,7 @@ export async function fetchCreateFeedbackUploadUrl(
     baseUrl?: string;
     feedbackUrl?: string;
     headers?: Readonly<Record<string, string>>;
+    signal?: AbortSignal;
   } = {},
 ): Promise<FetchCreateFeedbackUploadUrlResult> {
   const url =
@@ -90,6 +92,7 @@ export async function fetchCompleteFeedbackUpload(
     baseUrl?: string;
     feedbackUrl?: string;
     headers?: Readonly<Record<string, string>>;
+    signal?: AbortSignal;
   } = {},
 ): Promise<FetchCompleteFeedbackUploadResult> {
   const url =
@@ -105,9 +108,10 @@ async function postJson(
   url: string,
   accessToken: string,
   body: unknown,
-  opts: { timeoutMs?: number; headers?: Readonly<Record<string, string>> },
+  opts: { timeoutMs?: number; headers?: Readonly<Record<string, string>>; signal?: AbortSignal },
 ): Promise<{ readonly kind: 'ok'; readonly payload: unknown } | FetchFeedbackUploadError> {
   const controller = new AbortController();
+  const signal = opts.signal === undefined ? controller.signal : AbortSignal.any([controller.signal, opts.signal]);
   const timer = setTimeout(() => {
     controller.abort();
   }, opts.timeoutMs ?? 8000);
@@ -121,7 +125,7 @@ async function postJson(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal,
     });
     if (!res.ok) {
       return {
@@ -237,6 +241,7 @@ export interface UploadArchiveOptions {
   readonly timeoutMs?: number;
   readonly concurrency?: number;
   readonly maxRetries?: number;
+  readonly signal?: AbortSignal;
   readonly onProgress?: (uploadedBytes: number, totalBytes: number) => void;
 }
 
@@ -257,6 +262,7 @@ export async function uploadArchive<T extends FeedbackUploadArchive>(
       `Failed to upload archive: size ${archive.size} exceeds maximum allowed size ${MAX_ARCHIVE_SIZE}.`,
     );
   }
+  options.signal?.throwIfAborted();
   const created = await api.createUploadUrl({
     feedbackId,
     filename: options.filename,
@@ -264,6 +270,7 @@ export async function uploadArchive<T extends FeedbackUploadArchive>(
     sha256: archive.sha256,
   });
   const completed = await uploadParts(archive.path, created.parts, archive.size, options);
+  options.signal?.throwIfAborted();
   await api.completeUpload({ uploadId: created.uploadId, parts: completed });
 }
 
@@ -325,7 +332,7 @@ async function uploadOnePartWithRetry(
     } catch (error) {
       lastError = error;
       if (attempt === maxRetries || !isRetryable(error)) break;
-      await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+      await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt, undefined, { signal: options.signal });
     }
   }
   throw lastError;
@@ -339,6 +346,9 @@ async function uploadOnePart(
   const { part, start } = layout;
   const timeoutMs = options.timeoutMs ?? DEFAULT_PART_TIMEOUT_MS;
   const controller = new AbortController();
+  const signal = options.signal === undefined
+    ? controller.signal
+    : AbortSignal.any([controller.signal, options.signal]);
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
@@ -349,7 +359,7 @@ async function uploadOnePart(
       body: Readable.toWeb(stream),
       headers: { 'Content-Length': String(part.size) },
       duplex: 'half',
-      signal: controller.signal,
+      signal,
     } as RequestInit);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -388,10 +398,4 @@ function isRetryable(error: unknown): boolean {
     return error.status >= 500 || error.status === 408 || error.status === 429;
   }
   return true;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }

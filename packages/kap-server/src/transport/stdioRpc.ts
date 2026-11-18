@@ -17,6 +17,7 @@ import {
   type HostStreamPolicy,
   waitStreamDrain,
 } from '../services/hosts/hostStreamPolicy';
+import { withRequestCancellation } from '../routes/requestCancellation';
 import { HOST_RPC_MAX_BODY_BYTES, JsonlRpcStream } from './jsonlRpcStream';
 import { WS_DEBUG_PATH } from './ws/debug/registerWsDebug';
 import { WS_PATH as WS_PATH_V1 } from './ws/v1/registerWsV1';
@@ -135,6 +136,7 @@ interface RemoteStream {
   readonly policy: HostStreamPolicy;
   readonly request: PassThrough;
   readonly abort: AbortController;
+  readonly routeAbort: AbortController;
   response?: Readable;
   responseCredit?: { readonly seq: number; resolve(): void };
   idleTimer?: ReturnType<typeof setTimeout>;
@@ -216,7 +218,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
     }, state.policy.idleTimeoutMs);
     state.idleTimer.unref?.();
   };
-  const finishStream = (state: RemoteStream, error?: Error): void => {
+  const finishStream = (state: RemoteStream, error?: Error, cancelRoute = true): void => {
     if (state.finished) return;
     state.finished = true;
     streams.delete(state.id);
@@ -224,6 +226,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
     if (state.idleTimer !== undefined) clearTimeout(state.idleTimer);
     if (state.totalTimer !== undefined) clearTimeout(state.totalTimer);
     state.abort.abort();
+    if (cancelRoute) state.routeAbort.abort();
     state.responseCredit = undefined;
     if (!state.requestEnded) state.request.destroy();
     state.response?.destroy();
@@ -287,6 +290,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
       policy,
       request: new PassThrough({ highWaterMark: HOST_STREAM_BUFFER_BYTES }),
       abort: new AbortController(),
+      routeAbort: new AbortController(),
       nextRequestSeq: 0,
       nextResponseSeq: 0,
       requestBytes: 0,
@@ -304,13 +308,13 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
     }, policy.totalTimeoutMs);
     state.totalTimer.unref?.();
     void (async () => {
-      const res = await opts.app.inject({
+      const res = await withRequestCancellation(state.routeAbort.signal, () => opts.app.inject({
         method: frame.method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
         url: frame.path,
         headers: { ...frame.headers, host: '127.0.0.1' },
         payload: state.request,
         payloadAsStream: true,
-      });
+      }));
       const response = res.stream();
       if (state.finished) {
         response.destroy();
@@ -347,7 +351,7 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
       }
       await writeStreamFrame(state, { type: 'stream.res.end', id: frame.id });
       aborted.delete(frame.id);
-      finishStream(state);
+      finishStream(state, undefined, false);
     })().catch((error: unknown) => {
       if (!state.finished) finishStream(state, error instanceof Error ? error : new Error('host stream failed'));
     });
@@ -400,7 +404,10 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
       }
       if (frame.type === 'http.req') {
         if (aborted.has(frame.id)) return;
-        requests.set(frame.id, () => {});
+        const routeAbort = new AbortController();
+        requests.set(frame.id, () => {
+          routeAbort.abort();
+        });
         const finish = (): void => {
           requests.delete(frame.id);
           aborted.delete(frame.id);
@@ -410,15 +417,18 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
           if (contentLength > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
           const body = frame.body === undefined ? Buffer.alloc(0) : Buffer.from(frame.body, 'base64');
           if (body.length > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
-          const res = await opts.app.inject({
+          const res = await withRequestCancellation(routeAbort.signal, () => opts.app.inject({
             method: frame.method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
             url: frame.path,
             headers: { ...frame.headers, host: '127.0.0.1' },
             payload: body,
             payloadAsStream: true,
-          });
+          }));
           const responseStream = res.stream();
-          requests.set(frame.id, () => responseStream.destroy());
+          requests.set(frame.id, () => {
+            routeAbort.abort();
+            responseStream.destroy();
+          });
           responseStream.once('close', finish);
           if (aborted.has(frame.id)) {
             responseStream.destroy();

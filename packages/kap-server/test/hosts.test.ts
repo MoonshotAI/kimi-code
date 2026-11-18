@@ -22,6 +22,7 @@ import { HostRequestError, type HostHttpRequest, type HostHttpResponse, type Hos
 import { StdioHostSession } from '../src/services/hosts/stdioHostSession';
 import { JsonlRpcStream, RPC_BACKPRESSURE_TIMEOUT_MS } from '../src/transport/jsonlRpcStream';
 import { startServer } from '../src/start';
+import { requestCancellation } from '../src/routes/requestCancellation';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import {
   HostConnectError,
@@ -969,10 +970,19 @@ describe('stdio rpc transport', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-cancel-'));
     const app = Fastify();
     let started!: () => void;
+    let cancelled = false;
     const requestStarted = new Promise<void>((resolve) => { started = resolve; });
-    app.get('/held', async () => {
+    app.get('/held', async (request) => {
+      const signal = requestCancellation(request.raw);
       started();
-      await sleep(100);
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 100);
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve();
+        }, { once: true });
+      });
+      cancelled = signal.aborted;
       return { done: true };
     });
     app.get('/next', async () => ({ done: true }));
@@ -989,6 +999,7 @@ describe('stdio rpc transport', () => {
       await vi.waitFor(() => expect(client.frames.some((frame) => frame['id'] === 'next')).toBe(true));
       await sleep(150);
       expect(client.frames.some((frame) => frame['id'] === 'cancel')).toBe(false);
+      expect(cancelled).toBe(true);
     } finally {
       client.socket.destroy();
       await rpcServer.close();
@@ -1142,6 +1153,78 @@ describe('stdio rpc transport', () => {
       expect(client.frames).toHaveLength(0);
     } finally {
       client.socket.destroy();
+      await rpcServer.close();
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('cancels route work after the request body without cancelling normal completion', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-route-cancellation-'));
+    const app = Fastify();
+    app.addContentTypeParser('application/octet-stream', (_request, payload, done) => {
+      done(null, payload);
+    });
+    let started!: () => void;
+    let finished!: () => void;
+    const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+    const handlerFinished = new Promise<void>((resolve) => { finished = resolve; });
+    let cancelledSignal = false;
+    let normalSignal = true;
+    app.post('/api/v1/feedback/held/attachments', async (request) => {
+      const signal = requestCancellation(request.raw);
+      for await (const chunk of request.body as AsyncIterable<Uint8Array>) {
+        expect(chunk.byteLength).toBeGreaterThan(0);
+      }
+      expect(request.raw.readableEnded).toBe(true);
+      started();
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 200);
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          resolve();
+        }, { once: true });
+      });
+      cancelledSignal = signal.aborted;
+      finished();
+      return { cancelled: signal.aborted };
+    });
+    app.post('/api/v1/feedback/next/attachments', async (request) => {
+      normalSignal = requestCancellation(request.raw).aborted;
+      return { cancelled: normalSignal };
+    });
+    await app.ready();
+    const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), {
+      app,
+      wssV1: new WebSocketServer({ noServer: true }),
+    });
+    const session = new StdioHostSession(createConnection(join(dir, 'daemon.sock')));
+    try {
+      const cancellation = new AbortController();
+      const cancelled = session.requestStream({
+        method: 'POST',
+        path: '/api/v1/feedback/held/attachments',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: Readable.from([Buffer.from('hello')]),
+        signal: cancellation.signal,
+      });
+      await requestStarted;
+      cancellation.abort();
+      await expect(cancelled).rejects.toMatchObject({ failure: 'cancelled' });
+      await handlerFinished;
+      expect(cancelledSignal).toBe(true);
+
+      const response = await session.requestStream({
+        method: 'POST',
+        path: '/api/v1/feedback/next/attachments',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: Readable.from([Buffer.from('hello')]),
+      });
+      expect(response.status).toBe(200);
+      for await (const chunk of response.body) expect(chunk.byteLength).toBeGreaterThan(0);
+      expect(normalSignal).toBe(false);
+    } finally {
+      session.close();
       await rpcServer.close();
       await app.close();
       rmSync(dir, { recursive: true, force: true });

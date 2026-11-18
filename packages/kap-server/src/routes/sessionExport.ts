@@ -1,6 +1,6 @@
 import { createReadStream, type ReadStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
-import type { ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +14,7 @@ import {
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
 import { requestLog } from '../lib/requestLog';
+import { requestCancellation } from './requestCancellation';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { errEnvelope } from '../protocol/envelope';
@@ -127,7 +128,7 @@ export function registerSessionExportRoute(
 }
 
 async function streamSessionArchive(
-  req: { readonly id: string },
+  req: { readonly id: string; readonly raw: IncomingMessage },
   response: SessionExportReply,
   core: Scope,
   options: {
@@ -137,16 +138,15 @@ async function streamSessionArchive(
   },
 ): Promise<void> {
   const log = core.accessor.get(ILogService);
-  let aborted = false;
   let responseStream: ReadStream | undefined;
   let streaming = false;
   let tempDir: string | undefined;
   let cleanupPromise: Promise<void> | undefined;
   const exportAbort = new AbortController();
+  const cancellation = AbortSignal.any([exportAbort.signal, requestCancellation(req.raw, response.raw)]);
 
   const onResponseClose = (): void => {
     if (response.raw.writableFinished) return;
-    aborted = true;
     exportAbort.abort();
     responseStream?.destroy();
   };
@@ -170,24 +170,24 @@ async function streamSessionArchive(
   };
 
   try {
-    if (aborted) return;
+    if (cancellation.aborted) return;
 
     const safeSessionId = sanitizeSessionId(options.sessionId);
     tempDir = await mkdtemp(join(tmpdir(), `kimi-session-export-${safeSessionId}-`));
-    if (aborted) {
+    if (cancellation.aborted) {
       await cleanup();
       return;
     }
 
     const outputPath = join(tempDir, 'session.zip');
-    await options.produce(outputPath, exportAbort.signal);
-    if (aborted) {
+    await options.produce(outputPath, cancellation);
+    if (cancellation.aborted) {
       await cleanup();
       return;
     }
 
     const archive = await stat(outputPath);
-    if (aborted) {
+    if (cancellation.aborted) {
       await cleanup();
       return;
     }
@@ -218,7 +218,7 @@ async function streamSessionArchive(
       stream?.destroy();
     }
     await cleanup();
-    if (!aborted) sendMappedError(response, req, error);
+    if (!cancellation.aborted) sendMappedError(response, req, error);
   } finally {
     if (!streaming) response.raw.off('close', onResponseClose);
   }

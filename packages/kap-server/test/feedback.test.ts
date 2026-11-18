@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 
 import {
@@ -13,6 +13,7 @@ import {
   IEventDispatcher,
   IOAuthService,
   ISessionContext,
+  ISessionExportService,
   MAIN_AGENT_ID,
 } from '@moonshot-ai/agent-core-v2';
 import { ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
@@ -22,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { ensureMainAgent } from '../src/transport/mainAgent';
+import { ManagedFeedbackGateway } from '../src/services/feedback';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 
@@ -506,6 +508,141 @@ describe('feedback routes', () => {
     expect(mismatch.status).toBe(400);
     expect(kfcRequests).toHaveLength(requestCount);
     expect(storageRequests).toHaveLength(2);
+  });
+  it('cancels an upstream attachment upload without completing it', async () => {
+    let uploadSignal: AbortSignal | undefined;
+    const upload = ManagedFeedbackGateway.prototype.upload;
+    vi.spyOn(ManagedFeedbackGateway.prototype, 'upload').mockImplementation(async function (this: ManagedFeedbackGateway, feedbackId, input, options) {
+      uploadSignal = options?.signal;
+      return upload.call(this, feedbackId, input, options);
+    });
+    let partStarted!: () => void;
+    let releasePart!: () => void;
+    const started = new Promise<void>((resolve) => { partStarted = resolve; });
+    const released = new Promise<void>((resolve) => { releasePart = resolve; });
+    let storageAborted = false;
+    storage.removeAllListeners('request');
+    storage.on('request', (req, res) => {
+      req.on('aborted', () => { storageAborted = true; });
+      res.on('close', () => {
+        if (!res.writableFinished) storageAborted = true;
+      });
+      req.resume();
+      req.on('end', () => {
+        partStarted();
+        void released.then(() => {
+          res.writeHead(200, { etag: '"etag-1"' });
+          res.end();
+        });
+      });
+    });
+    const cancellation = new AbortController();
+    const request = fetch(`${baseUrl}/api/v1/feedback/42/attachments`, {
+      method: 'POST',
+      headers: authHeaders(server, {
+        'content-type': 'application/octet-stream',
+        'x-feedback-file-name': encodeURIComponent('session.zip'),
+        'x-feedback-file-size': '5',
+      }),
+      body: 'hello',
+      signal: cancellation.signal,
+    });
+    try {
+      await started;
+      cancellation.abort();
+      await expect(request).rejects.toThrow();
+      await vi.waitFor(() => expect(uploadSignal?.aborted).toBe(true));
+    } finally {
+      releasePart();
+    }
+
+    await vi.waitFor(() => {
+      expect(storageAborted || kfcRequests.some((request) => request.url === '/feedback/upload_complete')).toBe(true);
+    });
+    expect(kfcRequests.filter((request) => request.url === '/feedback/upload_complete')).toEqual([]);
+  });
+
+  it('stops waiting for an upload token after cancellation', async () => {
+    let uploadSignal: AbortSignal | undefined;
+    let finished: ReturnType<ManagedFeedbackGateway['upload']> | undefined;
+    const upload = ManagedFeedbackGateway.prototype.upload;
+    vi.spyOn(ManagedFeedbackGateway.prototype, 'upload').mockImplementation(async function (this: ManagedFeedbackGateway, feedbackId, input, options) {
+      uploadSignal = options?.signal;
+      finished = upload.call(this, feedbackId, input, options);
+      return finished;
+    });
+    let tokenStarted!: () => void;
+    let resolveToken!: (token: string) => void;
+    const started = new Promise<void>((resolve) => { tokenStarted = resolve; });
+    const token = new Promise<string>((resolve) => { resolveToken = resolve; });
+    getAccessToken.mockImplementation(async () => {
+      tokenStarted();
+      return token;
+    });
+    const cancellation = new AbortController();
+    const request = fetch(`${baseUrl}/api/v1/feedback/42/attachments`, {
+      method: 'POST',
+      headers: authHeaders(server, {
+        'content-type': 'application/octet-stream',
+        'x-feedback-file-name': encodeURIComponent('session.zip'),
+        'x-feedback-file-size': '5',
+      }),
+      body: 'hello',
+      signal: cancellation.signal,
+    });
+
+    try {
+      await started;
+      cancellation.abort();
+      await expect(request).rejects.toThrow();
+      await vi.waitFor(() => expect(uploadSignal?.aborted).toBe(true));
+      if (finished === undefined) throw new Error('expected an upload');
+      const outcome = await Promise.race([
+        finished.then(() => 'completed', (error: unknown) => error),
+        new Promise<'timeout'>((resolve) => setTimeout(() => { resolve('timeout'); }, 50)),
+      ]);
+      expect(outcome).toMatchObject({ name: 'AbortError' });
+      expect(kfcRequests).toEqual([]);
+    } finally {
+      resolveToken('managed-kimi-token');
+      await finished?.catch(() => {});
+    }
+  });
+
+  it('cancels feedback export and removes its temporary directory', async () => {
+    const createdResponse = await post('/api/v1/sessions', { metadata: { cwd: home } });
+    const created = (await createdResponse.json()) as { readonly data: { readonly id: string } };
+    const sessionId = created.data.id;
+    const service = server.core.accessor.get(ISessionExportService);
+    const exportFeedback = service.exportFeedback.bind(service);
+    let exportStarted!: () => void;
+    const started = new Promise<void>((resolve) => { exportStarted = resolve; });
+    let outputPath = '';
+    let exportSignal: AbortSignal | undefined;
+    let finished: ReturnType<typeof exportFeedback> | undefined;
+    vi.spyOn(service, 'exportFeedback').mockImplementation((input, options) => {
+      outputPath = input.outputPath ?? '';
+      exportSignal = options?.signal;
+      exportStarted();
+      finished = exportFeedback(input, options);
+      return finished;
+    });
+    const cancellation = new AbortController();
+    const download = fetch(`${baseUrl}/api/v1/sessions/${sessionId}/feedback_package`, {
+      method: 'POST',
+      headers: authHeaders(server),
+      signal: cancellation.signal,
+    });
+    await started;
+    cancellation.abort();
+    await expect(download).rejects.toThrow();
+    await finished?.catch(() => {});
+
+    expect(exportSignal?.aborted).toBe(true);
+    expect(outputPath).not.toBe('');
+    await vi.waitFor(async () => {
+      await expect(stat(dirname(outputPath))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
   });
 });
 

@@ -72,8 +72,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       await fsOpenHook.afterOpen?.(String(args[0]), handle);
       return handle;
     },
+    readdir: async (...args: Parameters<typeof actual.readdir>) => {
+      const entries = await actual.readdir(...args);
+      await fsReadDirHook.afterReadDir?.(String(args[0]));
+      return entries;
+    },
   };
 });
+
+const fsReadDirHook = vi.hoisted(() => ({
+  afterReadDir: undefined as ((path: string) => Promise<void>) | undefined,
+}));
 
 const noopDisposable: IDisposable = { dispose: () => {} };
 const noopEvent = () => noopDisposable;
@@ -952,6 +961,102 @@ describe('sessionExport', () => {
     await expect(readZipEntry(outputPath, 'agents/main/file-history/last-checkpoint@v1')).resolves.toEqual(
       Buffer.from('last edit\n', 'utf8'),
     );
+  });
+
+  it('stops waiting for file history when feedback export is cancelled', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_live', 'ses_live');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    const outputPath = join(tmp, 'cancelled.zip');
+    let started!: () => void;
+    const settleStarted = new Promise<void>((resolve) => { started = resolve; });
+    let wireFlushes = 0;
+    const liveHandle = liveSessionHandle({
+      meta: { id: 'ses_live', title: 'Live', createdAt: 1, updatedAt: 2, archived: false },
+      sessionLog: stubLog(),
+      agentWire: { flush: async () => { wireFlushes += 1; } },
+      agentFileHistory: {
+        settled: async () => {
+          started();
+          await new Promise<void>(() => {});
+        },
+      },
+    });
+    ix = createTestServices(tmp, {
+      summary: {
+        id: 'ses_live',
+        workspaceId: 'ws_live',
+        title: 'Live',
+        createdAt: 1,
+        updatedAt: 2,
+        archived: false,
+      },
+      lifecycleHandle: liveHandle,
+    });
+    const cancellation = new AbortController();
+    const exporting = ix.get(ISessionExportService).exportFeedback({
+      sessionId: 'ses_live',
+      outputPath,
+      version: '1.0.0-test',
+    }, { signal: cancellation.signal });
+    await settleStarted;
+    cancellation.abort();
+
+    const outcome = await Promise.race([
+      exporting.then(() => 'completed', (error: unknown) => error),
+      new Promise<'timeout'>((resolve) => setTimeout(() => { resolve('timeout'); }, 50)),
+    ]);
+    expect(outcome).toMatchObject({ name: 'AbortError' });
+    expect(wireFlushes).toBe(0);
+    await expect(stat(outputPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('stops collecting feedback files when export is cancelled', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_scan', 'ses_scan');
+    await mkdir(join(sessionDir, 'agents', 'main'), { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    await writeFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), '{}\n', 'utf-8');
+    const outputPath = join(tmp, 'cancelled.zip');
+    ix = createTestServices(tmp, {
+      summary: {
+        id: 'ses_scan',
+        workspaceId: 'ws_scan',
+        title: 'Scan',
+        createdAt: 1,
+        updatedAt: 2,
+        archived: false,
+      },
+      lifecycleHandle: undefined,
+    });
+    const cancellation = new AbortController();
+    let started!: () => void;
+    let release!: () => void;
+    const readStarted = new Promise<void>((resolve) => { started = resolve; });
+    let readAfterAbort = false;
+    fsReadDirHook.afterReadDir = async (path) => {
+      if (cancellation.signal.aborted && path !== sessionDir) readAfterAbort = true;
+      if (path !== sessionDir) return;
+      started();
+      await new Promise<void>((resolve) => { release = resolve; });
+    };
+
+    try {
+      const exporting = ix.get(ISessionExportService).exportFeedback({
+        sessionId: 'ses_scan',
+        outputPath,
+        version: '1.0.0-test',
+      }, { signal: cancellation.signal });
+      await readStarted;
+      cancellation.abort();
+      release();
+      await expect(exporting).rejects.toMatchObject({ name: 'AbortError' });
+      expect(readAfterAbort).toBe(false);
+      await expect(stat(outputPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      fsReadDirHook.afterReadDir = undefined;
+    }
   });
 
   it('continues exporting when live flushes fail', async () => {
