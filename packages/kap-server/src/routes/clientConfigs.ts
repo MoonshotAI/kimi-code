@@ -80,6 +80,7 @@ export function registerClientConfigsRoutes(app: RouteHost, core: Scope): void {
       success: { data: clientConfigResultSchema },
       description: 'Fetch a named cloud-controlled client configuration',
       tags: ['config'],
+      hide: true,
     },
     (req, reply) => sendConfig(req.body.name, req.id, reply),
   );
