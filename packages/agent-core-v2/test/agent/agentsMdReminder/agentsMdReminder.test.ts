@@ -25,12 +25,10 @@ import type { WatchChange } from '#human/utils/watch';
 import {
   ToolAccesses,
   type ToolAccesses as ToolAccessesType,
-} from '#/tool/toolContract';
-import type {
-  ExecutableTool,
-  ExecutableToolContext,
-  ExecutableToolResult,
-  ToolExecution,
+  type ExecutableTool,
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
 } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';

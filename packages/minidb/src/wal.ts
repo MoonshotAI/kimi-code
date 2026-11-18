@@ -248,7 +248,7 @@ export class WAL {
       // until the whole batch lands so a partial write never rejects frames
       // whose in-memory side effects were already applied. Only a real I/O
       // error (or zero progress) rejects the batch.
-      let bufs = batch.map((b) => b.buf);
+      const bufs = batch.map((b) => b.buf);
       let off = 0; // byte offset within bufs[0]
       let failure: unknown = null;
       try {

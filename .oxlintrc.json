@@ -1,87 +1,257 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // Every enabled rule is listed below as an error. All categories are off, so an
+  // oxlint upgrade cannot turn a rule on or off without this file changing. Rules come
+  // from the upstream recommended configs (eslint, typescript-eslint) or report a bug
+  // pattern; rules whose existing findings need a behavior-aware fix are not enabled.
   "categories": {
-    "correctness": "error",
-    "suspicious": "warn",
-    "pedantic": "warn",
-    "perf": "warn"
+    "correctness": "off",
+    "suspicious": "off",
+    "pedantic": "off",
+    "perf": "off",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off"
   },
-  "plugins": ["typescript", "import", "unicorn", "promise", "node"],
+  "plugins": ["typescript", "import", "unicorn", "promise", "node", "oxc"],
   "rules": {
-    "eslint/no-useless-return": "off",
-    "eslint/no-shadow": "off",
+    // ESLint core.
+    "eslint/accessor-pairs": "error",
+    "eslint/block-scoped-var": "error",
+    "eslint/constructor-super": "error",
     "eslint/eqeqeq": "error",
-    "eslint/no-throw-literal": "off",
-    "eslint/no-control-regex": "off",
+    "eslint/for-direction": "error",
+    "eslint/getter-return": "error",
+    "eslint/no-array-constructor": "error",
+    "eslint/no-async-promise-executor": "error",
+    "eslint/no-caller": "error",
+    "eslint/no-case-declarations": "error",
+    "eslint/no-class-assign": "error",
+    "eslint/no-compare-neg-zero": "error",
+    "eslint/no-cond-assign": "error",
+    "eslint/no-const-assign": "error",
+    "eslint/no-constant-binary-expression": "error",
+    "eslint/no-constant-condition": "error",
+    "eslint/no-constructor-return": "error",
+    "eslint/no-debugger": "error",
+    "eslint/no-delete-var": "error",
+    "eslint/no-dupe-class-members": "error",
+    "eslint/no-dupe-else-if": "error",
+    "eslint/no-dupe-keys": "error",
+    "eslint/no-duplicate-case": "error",
+    "eslint/no-empty-character-class": "error",
+    "eslint/no-empty-pattern": "error",
+    "eslint/no-empty-static-block": "error",
+    "eslint/no-eval": "error",
+    "eslint/no-ex-assign": "error",
+    "eslint/no-extend-native": "error",
+    "eslint/no-extra-bind": "error",
+    "eslint/no-extra-boolean-cast": "error",
+    "eslint/no-func-assign": "error",
+    "eslint/no-global-assign": "error",
+    "eslint/no-implied-eval": "error",
+    "eslint/no-import-assign": "error",
+    "eslint/no-invalid-regexp": "error",
+    "eslint/no-irregular-whitespace": "error",
+    "eslint/no-iterator": "error",
+    "eslint/no-loss-of-precision": "error",
+    "eslint/no-misleading-character-class": "error",
+    "eslint/no-new-native-nonconstructor": "error",
+    "eslint/no-new-wrappers": "error",
+    "eslint/no-nonoctal-decimal-escape": "error",
+    "eslint/no-obj-calls": "error",
+    "eslint/no-object-constructor": "error",
+    "eslint/no-prototype-builtins": "error",
+    "eslint/no-self-assign": "error",
+    "eslint/no-self-compare": "error",
+    "eslint/no-setter-return": "error",
+    "eslint/no-shadow-restricted-names": "error",
+    "eslint/no-sparse-arrays": "error",
+    "eslint/no-this-before-super": "error",
+    "eslint/no-unassigned-vars": "error",
+    "eslint/no-unexpected-multiline": "error",
+    "eslint/no-unneeded-ternary": "error",
+    "eslint/no-unreachable": "error",
+    "eslint/no-unsafe-finally": "error",
+    "eslint/no-unsafe-negation": "error",
+    "eslint/no-unsafe-optional-chaining": "error",
+    "eslint/no-unused-expressions": "error",
+    "eslint/no-unused-labels": "error",
+    "eslint/no-unused-private-class-members": "error",
+    "eslint/no-unused-vars": "error",
+    "eslint/no-useless-backreference": "error",
+    "eslint/no-useless-catch": "error",
+    "eslint/no-useless-escape": "error",
+    "eslint/no-useless-rename": "error",
+    "eslint/no-var": "error",
+    "eslint/no-with": "error",
+    "eslint/prefer-rest-params": "error",
+    "eslint/prefer-spread": "error",
+    "eslint/preserve-caught-error": "error",
+    "eslint/radix": "error",
+    "eslint/require-yield": "error",
+    "eslint/use-isnan": "error",
+    "eslint/valid-typeof": "error",
+
+    // typescript-eslint; the type-aware rules run through tsgolint.
+    "typescript/await-thenable": "error",
+    "typescript/ban-ts-comment": ["error", { "minimumDescriptionLength": 10 }],
+    "typescript/consistent-type-assertions": "error",
+    "typescript/no-array-delete": "error",
+    "typescript/no-base-to-string": "error",
+    "typescript/no-confusing-non-null-assertion": "error",
+    "typescript/no-duplicate-enum-values": "error",
+    "typescript/no-duplicate-type-constituents": "error",
+    "typescript/no-extra-non-null-assertion": "error",
+    "typescript/no-extraneous-class": "error",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-for-in-array": "error",
+    "typescript/no-implied-eval": "error",
+    "typescript/no-meaningless-void-operator": "error",
+    "typescript/no-misused-new": "error",
     "typescript/no-misused-promises": "error",
-    "typescript/return-await": "error",
+    "typescript/no-misused-spread": "error",
+    "typescript/no-mixed-enums": "error",
+    "typescript/no-non-null-asserted-nullish-coalescing": "error",
+    "typescript/no-non-null-asserted-optional-chain": "error",
+    "typescript/no-redundant-type-constituents": "error",
+    "typescript/no-this-alias": "error",
+    "typescript/no-unnecessary-parameter-property-assignment": "error",
+    "typescript/no-unnecessary-type-arguments": "error",
+    "typescript/no-unnecessary-type-constraint": "error",
+    "typescript/no-unsafe-declaration-merging": "error",
+    "typescript/no-unsafe-enum-assignment": "error",
+    "typescript/no-unsafe-unary-minus": "error",
+    "typescript/no-useless-empty-export": "error",
+    "typescript/no-wrapper-object-types": "error",
     "typescript/only-throw-error": "error",
+    "typescript/prefer-as-const": "error",
+    "typescript/prefer-literal-enum-member": "error",
+    "typescript/prefer-namespace-keyword": "error",
+    "typescript/prefer-ts-expect-error": "error",
+    "typescript/require-array-sort-compare": "error",
+    "typescript/restrict-plus-operands": "error",
+    "typescript/restrict-template-expressions": "error",
+    "typescript/return-await": "error",
+    "typescript/triple-slash-reference": "error",
+    "typescript/unbound-method": "error",
+
+    // import.
+    "import/default": "error",
+    "import/extensions": ["error", "ignorePackages", { "js": "never", "ts": "never", "tsx": "never" }],
+    "import/namespace": "error",
+    "import/no-absolute-path": "error",
     "import/no-cycle": "error",
+    "import/no-duplicates": "error",
+    "import/no-empty-named-blocks": "error",
     "import/no-self-import": "error",
-    "import/no-unassigned-import": "off",
+
+    // node.
+    "node/no-exports-assign": "error",
+
+    // promise.
+    "promise/no-multiple-resolved": "error",
+    "promise/no-new-statics": "error",
+    "promise/no-return-in-finally": "error",
+    "promise/valid-params": "error",
+
+    // unicorn: only rules that report likely bugs or blanket suppressions, not its style rules.
+    "unicorn/no-abusive-eslint-disable": "error",
+    "unicorn/no-accessor-recursion": "error",
+    "unicorn/no-array-fill-with-reference-type": "error",
+    "unicorn/no-await-in-promise-methods": "error",
+    "unicorn/no-confusing-array-with": "error",
+    "unicorn/no-empty-file": "error",
+    "unicorn/no-instanceof-array": "error",
+    "unicorn/no-instanceof-builtins": "error",
+    "unicorn/no-invalid-fetch-options": "error",
+    "unicorn/no-invalid-remove-event-listener": "error",
+    "unicorn/no-negation-in-equality-check": "error",
+    "unicorn/no-new-array": "error",
+    "unicorn/no-new-buffer": "error",
+    "unicorn/no-single-promise-in-promise-methods": "error",
+    "unicorn/no-thenable": "error",
+    "unicorn/no-this-assignment": "error",
+    "unicorn/no-unnecessary-await": "error",
+    "unicorn/no-useless-error-capture-stack-trace": "error",
+    "unicorn/no-useless-fallback-in-spread": "error",
+    "unicorn/no-useless-length-check": "error",
+    "unicorn/no-useless-spread": "error",
     "unicorn/prefer-node-protocol": "error",
-    "unicorn/no-useless-undefined": "off",
-    "unicorn/no-lonely-if": "off",
-    "unicorn/no-array-callback-reference": "off",
-    "typescript/prefer-promise-reject-errors": "off",
-    "typescript/no-unsafe-function-type": "off",
-    "typescript/no-unsafe-argument": "off",
-    "typescript/no-unsafe-assignment": "off",
-    "typescript/no-unsafe-call": "off",
-    "typescript/no-unsafe-member-access": "off",
-    "typescript/no-unsafe-return": "off",
+    "unicorn/prefer-set-size": "error",
+    "unicorn/prefer-string-starts-ends-with": "error",
+    "unicorn/require-module-specifiers": "error",
 
-    "eslint/no-console": "warn",
-    "typescript/no-explicit-any": "off",
+    // oxc: oxlint's own bug detectors.
+    "oxc/bad-array-method-on-arguments": "error",
+    "oxc/bad-char-at-comparison": "error",
+    "oxc/bad-match-all-arg": "error",
+    "oxc/bad-min-max-func": "error",
+    "oxc/bad-object-literal-comparison": "error",
+    "oxc/bad-replace-all-arg": "error",
+    "oxc/const-comparisons": "error",
+    "oxc/double-comparisons": "error",
+    "oxc/erasing-op": "error",
+    "oxc/misrefactored-assign-op": "error",
+    "oxc/missing-throw": "error",
+    "oxc/no-this-in-exported-function": "error",
+    "oxc/number-arg-out-of-range": "error",
+    "oxc/only-used-in-recursion": "error",
+    "oxc/uninvoked-array-callback": "error",
+
+    // Off for now: too many existing findings, or fixing them changes code paths.
+    // Revisit one rule at a time.
     "typescript/no-non-null-assertion": "off",
-    "typescript/use-unknown-in-catch-callback-variable": "off",
-    "typescript/consistent-type-imports": "off",
-    "typescript/ban-types": "off",
-    "import/first": "warn",
-    "import/extensions": [
-      "error",
-      "ignorePackages",
-      {
-        "js": "never",
-        "ts": "never",
-        "tsx": "never"
-      }
-    ],
-    "import/no-duplicates": "warn",
-    "import/no-mutable-exports": "warn",
-    "unicorn/error-message": "warn",
-    "unicorn/throw-new-error": "warn",
-    "unicorn/catch-error-name": "warn",
-    "unicorn/prefer-add-event-listener": "off",
-    "node/no-new-require": "warn",
-    "node/no-path-concat": "warn",
 
-    "promise/no-callback-in-promise": "warn",
-    "promise/valid-params": "warn",
-    "promise/no-return-in-finally": "warn",
-    "promise/always-return": "off",
-
-    "eslint/max-classes-per-file": "off",
-    "eslint/max-depth": "off",
-    "eslint/max-lines": "off",
-    "eslint/max-lines-per-function": "off",
-    "eslint/max-nested-callbacks": "off",
-    "eslint/no-warning-comments": "off",
-    "eslint/no-inline-comments": "off",
-    "eslint/no-negated-condition": "off",
-    "eslint/no-await-in-loop": "off",
-    "eslint/require-await": "off",
-    "typescript/require-await": "off",
-    "eslint/sort-vars": "off",
-    "eslint/radix": "off",
-    "eslint/symbol-description": "off",
-    "typescript/consistent-return": "off",
-    "unicorn/consistent-function-scoping": "off",
-    "typescript/no-deprecated": "off",
+    // Off on purpose.
+    // TypeScript reports real redeclarations itself (ts(2451)); this rule flags the DI
+    // pattern that declares a service interface and its identifier under one name.
+    "eslint/no-redeclare": "off",
+    // Interfaces that only extend a payload type are how event and service
+    // declarations merge with their classes here.
+    "typescript/no-empty-object-type": "off",
+    // Its findings disagree with tsc here: removing the assertions it flags breaks
+    // type-checking in 41 files.
+    "typescript/no-unnecessary-type-assertion": "off",
+    // The TUI matches terminal control characters on purpose.
+    "eslint/no-control-regex": "off",
+    // no-floating-promises already reports unhandled promise chains.
+    "promise/catch-or-return": "off",
+    // Meant for window.postMessage; every call here is a Worker, MessagePort, or VS Code
+    // webview postMessage, which takes no target origin.
+    "unicorn/require-post-message-target-origin": "off",
+    // Its findings here were one-line executors such as
+    // `new Promise((resolve) => setTimeout(resolve, ms))`, whose return value is harmless.
+    "eslint/no-promise-executor-return": "off",
+    // Its findings here were compound conditions whose other operand changes in the loop,
+    // or flags that a callback sets while the loop awaits.
+    "eslint/no-unmodified-loop-condition": "off",
+    // Its findings here were callbacks that run within the same iteration or share state
+    // with the loop on purpose.
+    "eslint/no-loop-func": "off",
+    // Its fix turns `||` into `??`, which changes the result for '' and 0, and many `||`
+    // here fall back on an empty string on purpose.
+    "typescript/prefer-nullish-coalescing": "off",
+    // It flags most downcasts, including idioms such as `(error as NodeJS.ErrnoException).code`,
+    // and pushes code toward hand-written type guards or disable directives.
     "typescript/no-unsafe-type-assertion": "off",
-    "typescript/strict-boolean-expressions": "off",
-    "typescript/no-duplicate-type-constituents": "off",
-    "import/max-dependencies": "off"
+    // Many of its findings guard runtime states the types do not model, such as abort flags
+    // and external JSON; deleting those checks would be a bug.
+    "typescript/no-unnecessary-condition": "off",
+    // no-floating-promises, no-misused-promises, and tsc already report a forgotten await,
+    // and dropping `async` turns a rejection into a synchronous throw.
+    "typescript/require-await": "off",
+    // Callback contracts here return `X | void`, as the ACP and fastify types do.
+    "typescript/no-invalid-void-type": "off",
+    // Its findings delete keys from dictionary-style records; the alternatives change what
+    // serializers and `in` see.
+    "typescript/no-dynamic-delete": "off",
+    // Its findings are arrow shorthands such as `() => voidCall()`; adding braces can drop
+    // a promise that a void-typed call returns.
+    "typescript/no-confusing-void-expression": "off",
+    // Team decisions.
+    "promise/always-return": "off",
+    "unicorn/prefer-add-event-listener": "off"
   },
   "overrides": [
     {
@@ -115,6 +285,46 @@
       }
     },
     {
+      // These files import with explicit `.js` specifiers, which oxlint 1.59 did
+      // not report. The packages build with tsdown, so the build does not need
+      // the specifiers; dropping them is left to a separate change.
+      "files": [
+        "packages/minidb/**",
+        "packages/klient/**",
+        "packages/migration-legacy/**",
+        "packages/acp-server/test/_helpers/scriptedProvider.ts"
+      ],
+      "rules": {
+        "import/extensions": "off"
+      }
+    },
+    {
+      // The React apps. Elsewhere a plain function named `use` would be reported as a hook.
+      "files": ["apps/vis/web/**", "apps/vscode/webview-ui/**"],
+      "plugins": ["react"],
+      "rules": {
+        "react/forward-ref-uses-ref": "error",
+        "react/jsx-key": "error",
+        "react/jsx-no-duplicate-props": "error",
+        "react/jsx-no-undef": "error",
+        "react/jsx-props-no-spread-multi": "error",
+        "react/no-children-prop": "error",
+        "react/no-danger-with-children": "error",
+        "react/no-did-mount-set-state": "error",
+        "react/no-did-update-set-state": "error",
+        "react/no-direct-mutation-state": "error",
+        "react/no-find-dom-node": "error",
+        "react/no-is-mounted": "error",
+        "react/no-render-return-value": "error",
+        "react/no-string-refs": "error",
+        "react/no-this-in-sfc": "error",
+        "react/no-unsafe": "error",
+        "react/no-will-update-set-state": "error",
+        "react/rules-of-hooks": "error",
+        "react/void-dom-elements-no-children": "error"
+      }
+    },
+    {
       "files": [
         "**/*.test.ts",
         "**/*.test.tsx",
@@ -125,6 +335,7 @@
       ],
       "plugins": ["vitest"],
       "rules": {
+        // Test files may use these patterns.
         "typescript/no-explicit-any": "off",
         "typescript/no-unsafe-assignment": "off",
         "typescript/no-unsafe-argument": "off",
@@ -132,28 +343,44 @@
         "typescript/unbound-method": "off",
         "typescript/no-redundant-type-constituents": "off",
         "eslint/no-console": "off",
-        "eslint/no-promise-executor-return": "off",
         "typescript/no-unsafe-member-access": "off",
-        "vitest/require-mock-type-parameters": "off",
         "eslint/no-shadow": "off",
         "unicorn/prefer-event-target": "off",
-        "jest/no-disabled-tests": "off",
-        "vitest/no-disabled-tests": "off",
         "eslint/no-control-regex": "off",
         "eslint/no-unused-vars": "off",
         "eslint/no-unsafe-optional-chaining": "off",
-        "jest/valid-expect": "off",
         "unicorn/no-useless-spread": "off",
         "import/no-cycle": "off",
         "typescript/no-meaningless-void-operator": "off",
         "typescript/require-array-sort-compare": "off",
-        "vitest/expect-expect": "error",
+
+        // Tests assert through helpers such as expectTree() and
+        // ctx.expectResumeMatches(); vitest's default names are kept.
+        "vitest/expect-expect": [
+          "error",
+          {
+            "assertFunctionNames": ["expect", "expectTypeOf", "assert", "assertType", "expect*", "assert*", "*.expect*"]
+          }
+        ],
+        "vitest/hoisted-apis-on-top": "error",
+        "vitest/no-commented-out-tests": "error",
         "vitest/no-conditional-tests": "error",
         "vitest/no-focused-tests": "error",
         "vitest/no-identical-title": "error",
-        "vitest/valid-expect": "off",
-        "vitest/valid-describe-callback": "error",
+        "vitest/no-import-node-test": "error",
+        "vitest/no-interpolation-in-snapshots": "error",
+        "vitest/no-mocks-import": "error",
         "vitest/no-standalone-expect": "error",
+        "vitest/no-unneeded-async-expect-function": "error",
+        "vitest/prefer-snapshot-hint": "error",
+        "vitest/require-awaited-expect-poll": "error",
+        "vitest/require-local-test-context-for-concurrent-snapshots": "error",
+        "vitest/valid-describe-callback": "error",
+        "vitest/valid-expect-in-promise": "error",
+
+        // Team decisions.
+        "vitest/require-mock-type-parameters": "off",
+        "vitest/valid-expect": "off",
         "vitest/warn-todo": "off"
       }
     }

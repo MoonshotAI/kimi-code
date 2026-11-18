@@ -2510,7 +2510,7 @@ function createMockAgentRunBatchRunner(
   readonly attempts: MockAgentRunAttemptRecord[];
 } {
   const attempts: MockAgentRunAttemptRecord[] = [];
-  let activeTasks: readonly QueuedAgentRunTask<unknown>[] = [];
+  let activeTasks: readonly QueuedAgentRunTask[] = [];
 
   const createHandle = <T,>(
     runOptions: AgentRunAttemptOptions,
@@ -2581,7 +2581,7 @@ function createMockAgentRunBatchRunner(
 }
 
 function findMockAgentRunTask<T>(
-  tasks: readonly QueuedAgentRunTask<unknown>[],
+  tasks: readonly QueuedAgentRunTask[],
   options: AgentRunAttemptOptions,
 ): QueuedAgentRunTask<T> {
   const task = tasks.find(
@@ -2595,7 +2595,7 @@ function findMockAgentRunTask<T>(
   return task as QueuedAgentRunTask<T>;
 }
 
-function mockAgentRunId(task: QueuedAgentRunTask<unknown>, attemptIndex: number): string {
+function mockAgentRunId(task: QueuedAgentRunTask, attemptIndex: number): string {
   if (typeof task.data === 'number') return `agent-${String(task.data)}`;
   return `agent-${String(attemptIndex + 1)}`;
 }

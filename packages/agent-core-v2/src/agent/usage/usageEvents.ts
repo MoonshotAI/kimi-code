@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AgentEvent2 } from '#/app/event/event2';

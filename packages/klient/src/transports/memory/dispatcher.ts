@@ -3,8 +3,10 @@ import type { IAgentScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scop
 import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
-import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import {
+  IAgentLifecycleService,
+  MAIN_AGENT_ID,
+} from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { getOrRestoreAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/getOrRestoreAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
@@ -139,9 +141,9 @@ function withSessionTags<TPayload>(
 
 function interactionServiceView(sessionId: string): Record<string, unknown> {
   return {
-    request: (req: InteractionRequest<unknown>) =>
+    request: (req: InteractionRequest) =>
       interactions.request(withSessionTags(sessionId, req)),
-    enqueue: (req: InteractionRequest<unknown>) =>
+    enqueue: (req: InteractionRequest) =>
       interactions.enqueue(withSessionTags(sessionId, req)),
     respond: (id: string, response: unknown) => {
       respondScoped(sessionId, id, response);

@@ -12,10 +12,14 @@ import {
   isUnreachableConnection,
   toLlmTransportErrorMessage,
 } from '#/llm/protocol/rules/status';
-import type { LlmRemoteErrorMessage } from '#/llm/response';
-import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
+import {
+  type LlmRemoteErrorMessage,
+  NO_FINISH,
+  type FinishInfo,
+  type FinishReason,
+  type TokenUsage,
+} from '#/llm/response';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
-import type { TokenUsage } from '#/llm/response';
 
 export type RawUsage = {
   input_tokens?: number | null;

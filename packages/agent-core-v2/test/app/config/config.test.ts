@@ -33,24 +33,19 @@ import {
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { ConfigSectionContribution } from '#/app/config/configSectionContributions';
 import { CRON_SECTION, DEFAULT_CRON_CONFIG, type CronConfig } from '#/features/cron/configSection';
-import '#/features/skill/catalog/configSection';
-import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/features/skill/catalog/configSection';
 import {
+  BUILTIN_PRODUCT_SKILLS_SECTION,
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/features/skill/catalog/configSection';
-import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
-import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
 import { READ_SECTION } from '#/agent/tools/os/read/configSection';
-import '#/agent/tokenCounting/configSection';
 import {
   TOKEN_COUNTING_SECTION,
   TOKEN_COUNTING_STRATEGY_ENV,
   type TokenCountingConfig,
 } from '#/agent/tokenCounting/configSection';
-import '#/agent/loop/configSection';
 import {
   LOOP_CONTROL_SECTION,
   LOOP_MAX_ATTEMPTS_PER_STEP_ENV,
@@ -80,7 +75,6 @@ import {
   type AgentTaskConfig,
 } from '#/agent/task/configSection';
 import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
-import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   resolveSubagentBinding,
@@ -110,7 +104,6 @@ import {
   WEB_SEARCH_BASE_URL_ENV,
   type ServicesConfig,
 } from '#/app/auth/configSection';
-import '#/app/mcpConfig/configSection';
 import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,

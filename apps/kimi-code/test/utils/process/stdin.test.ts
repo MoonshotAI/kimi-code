@@ -1,4 +1,3 @@
-/* eslint-disable import/first -- vi.mock setup must run before the imports it stubs out. */
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({

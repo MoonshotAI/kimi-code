@@ -6,12 +6,12 @@ import { join } from 'pathe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { createScopedChildHandle } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
 import {
+  createScopedChildHandle,
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
 import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';

@@ -4,12 +4,10 @@ import {
   modelsDevProviderModels,
   resolveModelsDevImport,
   type ModelCapability,
-} from '@moonshot-ai/agent-core-v2';
-import type {
-  ModelsDevCatalog as Catalog,
-  ModelsDevImportInvalidReason as CatalogImportInvalidReason,
-  ModelsDevModel as CatalogModel,
-  ModelsDevProviderEntry as CatalogProviderEntry,
+  type ModelsDevCatalog as Catalog,
+  type ModelsDevImportInvalidReason as CatalogImportInvalidReason,
+  type ModelsDevModel as CatalogModel,
+  type ModelsDevProviderEntry as CatalogProviderEntry,
 } from '@moonshot-ai/agent-core-v2';
 
 export { modelsDevProviderModels as catalogProviderModels };

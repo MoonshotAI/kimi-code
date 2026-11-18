@@ -599,7 +599,7 @@ class BasicFiberHandle<T> implements FiberHandle<T> {
     return this._parts.dispose();
   }
 
-  // eslint-disable-next-line eslint-plugin-unicorn(no-thenable)
+  // eslint-disable-next-line unicorn/no-thenable
   then<TResult1 = FiberHandle<T>, TResult2 = never>(
     onfulfilled?: ((value: FiberHandle<T>) => TResult1 | PromiseLike<TResult1>) | null,
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
@@ -688,7 +688,7 @@ export class PendingFiberHandle<T> implements FiberHandle<T> {
     await this._real?.dispose();
   }
 
-  // eslint-disable-next-line eslint-plugin-unicorn(no-thenable) — FiberHandle is a thenable by design
+  // eslint-disable-next-line unicorn/no-thenable -- FiberHandle is a thenable by design
   then<TResult1 = FiberHandle<T>, TResult2 = never>(
     onfulfilled?: ((value: FiberHandle<T>) => TResult1 | PromiseLike<TResult1>) | null,
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
