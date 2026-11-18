@@ -1,11 +1,3 @@
-/**
- * `kimi login`
- *
- * Verifies that the login sub-command is registered on the program and
- * that the action drives `harness.auth.login`, prints the device code to
- * stderr, and exits with the right code on success / failure.
- */
-
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

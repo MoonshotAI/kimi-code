@@ -118,8 +118,6 @@ describe('fetchNativeReleaseManifest', () => {
   });
 
   it('rejects a manifest served for a different release', async () => {
-    // A stale/mispublished endpoint answering with another version's manifest
-    // must not apply that release's checksums to this version's binary.
     const body = JSON.stringify({ version: '0.9.9', platforms: {} });
     await expect(
       fetchNativeReleaseManifest(VERSION, mockFetch({ ok: true, status: 200, body })),
@@ -155,7 +153,6 @@ describe('fetchNativeReleaseManifest', () => {
       const f = vi.fn(async (_input: string | URL, init?: RequestInit) => ({
         ok: true,
         status: 200,
-        // Headers arrive, then the body stalls; only the timeout can end this.
         text: async () =>
           new Promise<string>((_, reject) => {
             init?.signal?.addEventListener('abort', () => {

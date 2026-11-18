@@ -33,7 +33,7 @@ import {
   toCorePart,
   type ContentPart as LegacyContentPart,
 } from '@moonshot-ai/agent-core-v2/human/message';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import {
   IMAGE_MIME_BY_SUFFIX,
   VIDEO_MIME_BY_SUFFIX,

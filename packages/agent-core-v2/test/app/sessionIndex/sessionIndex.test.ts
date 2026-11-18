@@ -1488,7 +1488,7 @@ describe('FileSessionIndex (read model)', () => {
     expect(all.items.map((s) => s.id)).toEqual(['a', 'c', 'b']);
   });
 
-  it('never serves a settled shared scan to a fallback read', async () => {
+  it('reuses a settled shared scan for fallback reads inside the reuse window', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
@@ -1548,13 +1548,13 @@ describe('FileSessionIndex (read model)', () => {
 
     await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
     const second = await store.listRecent({ workspaceIds: [workspaceId] });
-    expect(second.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
-    expect(docs.gets).toBe(6);
+    expect(second.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(docs.gets).toBe(4);
 
     (queryStore as GatedQueryStore).release();
     const status = await preparing;
     expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
-    expect(docs.gets).toBe(6);
+    expect(docs.gets).toBe(4);
   });
 
   it('status() walks the read-model lifecycle and stays diagnosable through degradation', async () => {
@@ -1864,22 +1864,49 @@ describe('FileSessionIndex (read model)', () => {
     expect(fileStorage.listCalls).toBe(2);
   });
 
-  it('re-projects when the published checkpoint predates the current schema version', async () => {
+  it('serves files without re-projecting when the published schema version differs', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
-    const first = build();
-    await first.prepare();
-    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: 1 });
-    disposeHost?.();
-    disposeHost = undefined;
-    await drainSessionIndexMirror();
-    await drainQueryStoreDisposals();
+    const store = build();
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, {
+      seq: 4,
+      schemaVersion: 1,
+      sourceSessionCount: 2,
+    });
+    const projector = (
+      store as unknown as { projector: { scanAuthoritative: () => Promise<unknown> } }
+    ).projector;
+    let scans = 0;
+    const scan = projector.scanAuthoritative.bind(projector);
+    projector.scanAuthoritative = () => {
+      scans += 1;
+      return scan();
+    };
 
-    const second = build();
-    const status = await second.prepare();
-    expect(status).toEqual({ state: 'ready', generation: 2, degradedCount: 0 });
-    const page = await second.listRecent({ workspaceIds: [workspaceId] });
-    expect(page.items.map((s) => s.id)).toEqual(['a']);
+    const status = await store.prepare();
+    expect(status).toEqual({
+      state: 'degraded',
+      reason: 'schema mismatch',
+      degradedCount: 1,
+    });
+    expect(scans).toBe(0);
+    expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toMatchObject({
+      seq: 4,
+      schemaVersion: 1,
+    });
+
+    const first = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(first.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(scans).toBe(1);
+    const second = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(second.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(scans).toBe(1);
+    expect(store.status()).toEqual(status);
+    expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toMatchObject({
+      seq: 4,
+      schemaVersion: 1,
+    });
   });
 
   it('reconciliation reads only the journaled sessions and refreshes the checkpoint', async () => {

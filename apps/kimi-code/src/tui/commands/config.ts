@@ -7,7 +7,7 @@ import {
   type Session,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
-import { TuiAltScreen } from '@moonshot-ai/pi-tui';
+import { isKittyProtocolActive, TuiAltScreen } from '@moonshot-ai/pi-tui';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -17,6 +17,7 @@ import {
 } from '../components/dialogs/experiments-selector';
 import { MermaidPreferenceSelectorComponent } from '../components/dialogs/mermaid-preference-selector';
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
+import { FollowUpBehaviorSelectorComponent } from '../components/dialogs/follow-up-behavior-selector';
 import { ModelSwitchConfirmDialogComponent } from '../components/dialogs/model-switch-confirm-dialog';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
@@ -34,7 +35,10 @@ import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-
 import {
   DEFAULT_MARKDOWN_CONFIG,
   DEFAULT_TUI_CONFIG,
+  resolveFollowUpBehavior,
+  resolveTuiMode,
   saveTuiConfig,
+  type FollowUpBehavior,
   type MarkdownConfig,
   type TranscriptConfig,
   type TuiConfig,
@@ -77,10 +81,6 @@ import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
 import type { SlashCommandHost } from './dispatch';
 
-// ---------------------------------------------------------------------------
-// Plan / Config commands
-// ---------------------------------------------------------------------------
-
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
 
 const MODEL_SWITCH_COMPACT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -99,6 +99,7 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
     autoSessionTitle: host.state.appState.autoSessionTitle ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
+    followUpBehavior: host.state.appState.followUpBehavior,
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
@@ -137,8 +138,6 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
     return;
   }
 
-  // The session may already be in the requested mode (e.g. it was created
-  // with config.defaultPlanMode applied), and re-entering plan mode throws.
   if (host.state.appState.planMode === enabled) {
     host.showNotice(`Plan mode is already ${enabled ? 'on' : 'off'}`);
     return;
@@ -237,8 +236,6 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
     return;
   }
   const secondary = (await host.harness.getConfig()).secondaryModel;
-  // The v2 engine honors a lone legacy `model` key as the fallback pool
-  // default — reflect it as the picker's current value.
   const current = secondary?.defaultModel ?? secondary?.model ?? '';
   showSecondaryModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
 }
@@ -343,10 +340,6 @@ async function ensureEffortSwitchConfig(host: SlashCommandHost): Promise<void> {
   } catch {}
 }
 
-// ---------------------------------------------------------------------------
-// Pickers & config apply
-// ---------------------------------------------------------------------------
-
 function showEditorPicker(host: SlashCommandHost): void {
   const currentValue = host.state.appState.editorCommand ?? '';
   host.mountEditorReplacement(
@@ -423,10 +416,6 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   );
 }
 
-/**
- * The models a picker may offer: the user's configured aliases with
- * host-effective provider resolution applied.
- */
 function pickerModelsForHost(host: SlashCommandHost): Record<string, ModelAlias> {
   return Object.fromEntries(
     Object.entries(host.state.appState.availableModels).map(([alias, model]) => [
@@ -480,11 +469,6 @@ export async function showModelPicker(host: SlashCommandHost, selectedValue: str
   );
 }
 
-/**
- * Cloud-gated confirmation for a model or effort switch. Model changes ignore
- * effort rules; pure effort changes use the effort config and offer only
- * confirm/cancel in either session type.
- */
 export function confirmThenPerformModelSwitch(
   host: SlashCommandHost,
   alias: string,
@@ -504,9 +488,6 @@ export function confirmThenPerformModelSwitch(
   const toModel = effortOnly ? thinking : modelDisplayName(alias, availableModels[alias]);
   const sessionType = hasConversationHistory(host) ? 'old' : 'new';
   const dismiss = (): void => {
-    // Only close while this dialog still owns the editor replacement: an
-    // approval/question panel mounted over it must never be wiped out by the
-    // async finalizer of a settled action.
     if (host.state.activeDialog !== 'model-switch-confirm') return;
     host.state.activeDialog = null;
     host.restoreEditor();
@@ -551,7 +532,6 @@ function matchedEffortSwitchRule(host: SlashCommandHost, thinking: ThinkingEffor
 
 export function matchedModelSwitchRule(host: SlashCommandHost, alias: string): ModelSwitchRule | undefined {
   const prevAlias = host.state.appState.model;
-  // Same-alias effort changes use matchedEffortSwitchRule instead.
   if (alias === prevAlias) return undefined;
   const fromModelId = host.state.appState.availableModels[prevAlias]?.model;
   const toModelId = host.state.appState.availableModels[alias]?.model;
@@ -564,14 +544,6 @@ export function matchedModelSwitchRule(host: SlashCommandHost, alias: string): M
   );
 }
 
-/**
- * Fire a compaction and wait for it to settle before the model switch. The
- * compact RPC resolves as soon as the engine *starts* compacting — the
- * completed/cancelled/failed outcome arrives later as an event. The switch
- * must wait because compaction reads the current model. True only when the
- * compaction completed on the same session; any other outcome shows a
- * message and leaves the model unchanged.
- */
 export async function compactForModelSwitch(
   host: SlashCommandHost,
   session: Session,
@@ -698,10 +670,6 @@ async function runModelSwitchWithQueueHeld(
 }
 
 
-// ---------------------------------------------------------------------------
-// Secondary model (`/secondary-model`) — persists `[secondary_model] default_model`
-// ---------------------------------------------------------------------------
-
 function showSecondaryModelPicker(
   host: SlashCommandHost,
   models: Record<string, ModelAlias>,
@@ -714,8 +682,6 @@ function showSecondaryModelPicker(
       currentValue,
       selectedValue,
       currentThinkingEffort: 'off',
-      // Subagent pool bindings carry no explicit thinking level, so the picker
-      // hides the Thinking footer instead of offering a no-op choice.
       thinkingControl: false,
       title: ' Select a secondary model (subagents)',
       onSelect: ({ alias }) => {
@@ -729,15 +695,6 @@ function showSecondaryModelPicker(
   );
 }
 
-/**
- * Persists `[secondary_model] default_model`. When a
- * `[secondary_model.models]` pool exists and does not list the alias yet, the
- * alias is added with an empty description — the engine requires the default
- * to be a pool key. Without a pool the default alone forms an implicit
- * single-entry pool, so nothing else is written. No live-apply step: the
- * engine resolves the pool per spawn, so the next subagent dispatch picks the
- * new value up on its own.
- */
 async function performSecondaryModelSave(host: SlashCommandHost, alias: string): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
   try {
@@ -782,9 +739,6 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
     return;
   }
 
-  // Validate custom themes up front so a missing / malformed file reports an
-  // error instead of silently persisting a name that resolves to the dark
-  // fallback.
   if (!isBuiltInTheme(theme)) {
     const palette = await loadCustomThemeMerged(theme);
     if (palette === null) {
@@ -899,9 +853,6 @@ export async function applyExperimentalFeatureChanges(
       );
     }
     if (changes.some((change) => change.id === 'tower')) {
-      // TowerFeature assembles its tool/profile contributions once at App
-      // scope construction, so a live flag flip cannot install or retract
-      // them; only the mode machinery (enter/injection/guards) reacts live.
       host.showNotice('Tower mode takes effect after restarting Kimi Code.');
     }
     host.track('experimental_features_apply', {
@@ -984,8 +935,6 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
     if (host.session !== undefined) {
       await host.session.setPermission(mode);
     }
-    // v2 session-less: the chosen mode is recorded in appState and passed to
-    // the lazy-created session.
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(`Failed to set permission mode: ${msg}`);
@@ -1221,7 +1170,7 @@ export async function applyTranscriptConfigChoice(
 export function showTuiModePicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new TuiModeSelectorComponent({
-      currentValue: host.state.appState.tuiMode ?? 'regular',
+      currentValue: host.state.appState.tuiMode ?? host.state.ui.mode,
       onSelect: (value) => {
         host.restoreEditor();
         void applyTuiModeChoice(host, value);
@@ -1241,29 +1190,86 @@ type TuiModeHost = {
   setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>): void;
   showStatus(msg: string, color?: string): void;
   showNotice(msg: string): void;
+  track?: SlashCommandHost['track'];
 };
 
 export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): Promise<void> {
-  if (tuiMode === (host.state.appState.tuiMode ?? 'regular')) {
+  const resolved = resolveTuiMode(tuiMode);
+  if (tuiMode === host.state.appState.tuiMode) {
     host.showStatus(`TUI mode already ${tuiMode}.`);
+  } else {
+    try {
+      await saveTuiConfig({
+        ...currentTuiConfig(host as unknown as SlashCommandHost),
+        tuiMode,
+      });
+    } catch (error) {
+      host.showStatus(`Failed to save TUI mode: ${formatErrorMessage(error)}`, 'error');
+      return;
+    }
+
+    host.setAppState({ tuiMode });
+    host.track?.('tui_mode_switch', { tui_mode: tuiMode });
+    host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
+  }
+  if (resolved.mode !== tuiMode) {
+    host.showNotice(
+      resolved.overriddenByEnv
+        ? 'Saved to tui.toml; unset KIMI_CODE_TUI_FULL_SCREEN for it to take effect.'
+        : 'Saved to tui.toml; this terminal automatically falls back to regular mode unless KIMI_CODE_TUI_FULL_SCREEN=1 is set.',
+    );
+    return;
+  }
+  if (resolved.mode !== host.state.ui.mode) {
+    host.showNotice(TUI_MODE_RESTART_NOTICE);
+  }
+}
+
+function showFollowUpBehaviorPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new FollowUpBehaviorSelectorComponent({
+      currentValue: resolveFollowUpBehavior(host.state.appState.followUpBehavior),
+      ctrlEnterRecognized: isKittyProtocolActive(),
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyFollowUpBehaviorChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type FollowUpBehaviorHost = {
+  readonly state: {
+    readonly appState: Pick<SlashCommandHost['state']['appState'], 'followUpBehavior'>;
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'followUpBehavior'>): void;
+  showStatus(msg: string, color?: string): void;
+};
+
+export async function applyFollowUpBehaviorChoice(
+  host: FollowUpBehaviorHost,
+  followUpBehavior: FollowUpBehavior,
+): Promise<void> {
+  if (followUpBehavior === host.state.appState.followUpBehavior) {
+    host.showStatus(`Follow-up behavior already ${followUpBehavior}.`);
     return;
   }
 
   try {
     await saveTuiConfig({
       ...currentTuiConfig(host as unknown as SlashCommandHost),
-      tuiMode,
+      followUpBehavior,
     });
   } catch (error) {
-    host.showStatus(`Failed to save TUI mode: ${formatErrorMessage(error)}`, 'error');
+    host.showStatus(`Failed to save follow-up behavior: ${formatErrorMessage(error)}`, 'error');
     return;
   }
 
-  host.setAppState({ tuiMode });
-  host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
-  if (tuiMode !== host.state.ui.mode) {
-    host.showNotice(TUI_MODE_RESTART_NOTICE);
-  }
+  host.setAppState({ followUpBehavior });
+  host.showStatus(`Follow-up behavior set to ${followUpBehavior}.`, 'success');
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
@@ -1292,6 +1298,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'copyOnSelect': showCopyOnSelectPicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
+    case 'followUpBehavior': showFollowUpBehaviorPicker(host); return;
     case 'survey': showSurveyPreferencePicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appendContext } from '../../agent/contextMemory/stubs';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
@@ -11,8 +12,10 @@ import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
 import { ProfileBind } from '#/agent/profile/profileOps';
+import type { ProfileBindingSnapshot } from '#/agent/profile/profile';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
@@ -22,24 +25,25 @@ import '#/agent/permissionMode/permissionModeService';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import '#/agent/permissionRules/permissionRulesService';
 import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
+import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 
 import {
   permissionModeConfiguredKey,
   permissionModeKey,
 } from '#/agent/permissionMode/permissionModeOps';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
-import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentOverlay, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentReminderService, IAgentReminderService } from '#/features/reminder/reminderService';
-import '#/agent/contextMemory/contextMemoryService';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import type { ToolCall } from '#human/message';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
@@ -99,16 +103,14 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import type {
-  MachineEngine,
-  MachineEngineAttachBundle,
-} from '#/agent/loop/machine/engine';
-import type { AgentEventStore } from '#human/agent/slices';
+import { contextFromHistoryEntry } from '#/agent/loop/history';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -165,65 +167,9 @@ const pluginServiceStub = {
   enabledMcpServers: async () => ({}),
   mcpServerEntries: async () => [],
   enabledHooks: async () => [],
+  enabledSystemPrompts: async () => [],
+  hasLoadedSnapshot: () => true,
 } as unknown as IPluginService;
-
-function stubAttachStore(): AgentEventStore {
-  return {
-    ref: { tree: 'test', branch: 'main' },
-    getState: () => ({
-      history: [],
-      queue: [],
-      notifications: [],
-      reminders: [],
-      turnIndex: { nextTurnId: 0 },
-    }),
-    subscribe: () => () => {},
-    dispatch: () => Promise.resolve({ kind: 'entry', seq: 0, ts: 0, type: 'noop', payload: null }),
-    registerSlice: () => Promise.resolve(() => {}),
-    reset: () => Promise.resolve(),
-    flush: () => Promise.resolve(),
-    close: () => Promise.resolve(),
-  } as unknown as AgentEventStore;
-}
-
-function stubAttachEngine(): MachineEngine {
-  return {
-    submit: () => {},
-    steer: () => {},
-    notify: () => {},
-    remind: () => {},
-    cancelQueueItem: () => {},
-    abort: () => {},
-    pause: () => {},
-    resume: () => {},
-    resetHistory: () => Promise.resolve(),
-    resetJournal: () => Promise.resolve(),
-    stop: () => {},
-    snapshot: () => ({
-      running: false,
-      aborting: false,
-      waitingForBackground: false,
-      paused: false,
-      queue: [],
-      queueLength: 0,
-      queueIds: [],
-      notificationCount: 0,
-      reminderCount: 0,
-      backgroundCount: 0,
-    }),
-    currentStep: () => 0,
-    lastFinish: () => undefined,
-    toolExtras: new Map(),
-    handleToolProgress: () => {},
-  };
-}
-
-function stubAttachBundle(): MachineEngineAttachBundle {
-  return {
-    store: stubAttachStore(),
-    request: { model: { provider: 'test', model: 'test' } },
-  } as unknown as MachineEngineAttachBundle;
-}
 
 function recordingAppendLog(initial: readonly WireRecord[] = []): {
   readonly appended: WireRecord[];
@@ -281,6 +227,10 @@ describe('AgentLifecycleService', () => {
   let loopPendingPromptIds: string[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
   let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
+  let loopStart: ReturnType<typeof vi.fn<IAgentLoopService['start']>>;
+  let loopClose: ReturnType<typeof vi.fn<IAgentLoopService['close']>>;
+  let loopSetProfile: ReturnType<typeof vi.fn<IAgentLoopService['setProfile']>>;
+  let loopProfileSequence: ProfileBindingSnapshot[];
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
@@ -290,6 +240,10 @@ describe('AgentLifecycleService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.set(ISessionStateService, new SessionStateService());
     ix.set(IAgentStateService, new AgentStateService());
+    ix.stub(IAgentEnvironmentOverlay, {
+      _serviceBrand: undefined,
+      decorate: (lease) => lease,
+    });
     ix.set(ISessionEventBus, new SyncDescriptor(EventBusService));
     ix.get(IAgentStateService).contributeState(permissionModeKey);
     ix.get(IAgentStateService).contributeState(permissionModeConfiguredKey);
@@ -321,6 +275,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IEnvironmentService, {
       onDidChange: () => ({ dispose: () => {} }),
       _serviceBrand: undefined,
+      current: () => undefined,
       inspect: (binding) => new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
       acquire: (binding) => ({
         environment: new FakeEnvironment({ ...binding, generation: `${binding.environmentId}-one` }),
@@ -333,6 +288,15 @@ describe('AgentLifecycleService', () => {
       environmentId: 'local',
       fs: undefined,
     } as unknown as ISessionWorkdir);
+    ix.stub(IWorkspaceTrust, {
+      get: async () => false,
+    } as unknown as IWorkspaceTrust);
+    ix.stub(IProjectPermissionRulesService, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      rules: [],
+      appendRules: async () => {},
+    });
     ix.stub(IWorkspaceInstanceManager, {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
@@ -352,6 +316,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       homeDir: '/tmp/kimi-agentLifecycle-home',
       cwd: '/tmp/kimi-agentLifecycle-home',
+      args: {},
       getEnv: () => undefined,
     } as unknown as IBootstrapService);
     ix.stub(IFlagService, {
@@ -369,6 +334,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IProviderDiscoveryService, stubProviderDiscovery());
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: (() => undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
@@ -399,6 +365,7 @@ describe('AgentLifecycleService', () => {
       register: () => ({ dispose: () => {} }),
       resolve: () => undefined,
       list: () => [],
+      listReferences: () => [],
     } as unknown as IAgentToolRegistryService);
     ix.stub(IAgentMediaToolsRegistrar, {
       _serviceBrand: undefined,
@@ -412,6 +379,16 @@ describe('AgentLifecycleService', () => {
         return { dispose: () => {} };
       },
       onWillExecuteTool: () => ({ dispose: () => {} }),
+      registerLegacyStarting: () => {
+        beforeExecuteListeners += 1;
+        return { dispose: () => {} };
+      },
+      registerHook: (hook: { afterExecute?: unknown }) => {
+        beforeExecuteListeners += 1;
+        if (hook.afterExecute !== undefined) didExecuteHookIds.push('toolDedupe');
+        return { dispose: () => {} };
+      },
+      handlers: () => [{ snapshot: () => ({ status: 'success' }), stop: stopAllOnExit }],
       hooks: {
         onDidExecuteTool: {
           register: (id: string) => {
@@ -438,8 +415,52 @@ describe('AgentLifecycleService', () => {
         throw new Error('Agent loop did not settle');
       }
     });
-    ix.stub(IAgentLoopService, {
+    const loopHistory: ContextMessage[] = [];
+    let closePromise: Promise<void> | undefined;
+    let loopProfile: ProfileBindingSnapshot = { thinkingLevel: 'off', systemPrompt: '' };
+    loopProfileSequence = [];
+    const loopStub = {
       _serviceBrand: undefined,
+      start: vi.fn(async () => {}),
+      baselineTools: () => [],
+      data: () => ({
+        ...(loopProfileSequence.length > 0 ? loopProfileSequence.shift()! : loopProfile),
+        modelCapabilities: UNKNOWN_CAPABILITY,
+      }),
+      setProfile: vi.fn(async (profile: ProfileBindingSnapshot) => {
+        loopProfile = { ...profile };
+        const lifecycle = ix.get(IAgentLifecycleService);
+        const current = lifecycle.list().at(-1)!;
+        await lifecycle.handleOf(current.agentId)!.accessor.get(IEventDispatcher).dispatch(new ProfileBind({
+          agentId: current.agentId,
+          modelAlias: profile.modelAlias,
+          profileName: profile.profileName,
+          thinkingEffort: profile.thinkingLevel,
+          systemPrompt: profile.systemPrompt,
+          environmentDisclosure: profile.environmentDisclosure,
+          renderGeneration: profile.renderGeneration,
+          agentsMdPaths: profile.agentsMdPaths,
+          activeToolNames: profile.activeToolNames,
+          disallowedTools: profile.disallowedTools ?? [],
+          subagents: profile.subagents,
+        }));
+      }),
+      bindProfile: vi.fn(async () => {}),
+      applyBindingSnapshot: vi.fn(async () => {}),
+      setModel: vi.fn(async (model: string) => ({ model })),
+      history: () => loopHistory,
+      historyRevision: () => 0,
+      replaceHistory: (entries: readonly Message[]) => {
+        loopHistory.splice(0, loopHistory.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
+        return true;
+      },
+      initializeHistory: async (entries: readonly Message[]) => {
+        loopHistory.splice(0, loopHistory.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
+      },
+      remind: (...entries: readonly Message[]) => {
+        loopHistory.push(...entries.map((entry) => contextFromHistoryEntry(entry)));
+      },
+      flushReminders: () => {},
       hooks: {
         onWillBeginStep: { register: () => ({ dispose: () => {} }) },
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
@@ -450,8 +471,9 @@ describe('AgentLifecycleService', () => {
         activeTurnId: loopActiveTurnId,
         activePromptId: undefined,
         queue: loopPendingPromptIds.map((promptId) => ({
-          message: { role: 'user', content: [] },
-          meta: { promptId },
+          role: 'user' as const,
+          content: [],
+          attributes: { promptId },
         })),
         notificationCount: 0,
         paused: false,
@@ -462,21 +484,33 @@ describe('AgentLifecycleService', () => {
       cancel: loopCancel,
       settled: loopSettled,
       tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
-      buildAttachBundle: () => stubAttachBundle(),
-      attachEngine: () => stubAttachEngine(),
-    } as unknown as IAgentLoopService);
+      close: vi.fn(() => closePromise ??= (async () => {
+        for (const handler of ix.get(IAgentToolExecutorService).handlers()) {
+          await handler.stop('Session closed');
+        }
+      })()),
+    };
+    loopStart = loopStub.start;
+    loopClose = loopStub.close;
+    loopSetProfile = loopStub.setProfile;
+    ix.stub(IAgentLoopService, loopStub as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},
+      setContext: () => {},
       withContext: () => ({
         _serviceBrand: undefined,
         track2: () => {},
+        setContext: () => {},
       }) as unknown as ITelemetryService,
     } as unknown as ITelemetryService);
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);
     ix.stub(IHostClock, { _serviceBrand: undefined } as IHostClock);
-    ix.stub(IModelCatalog, { _serviceBrand: undefined } as IModelCatalog);
+    ix.stub(IModelCatalog, {
+      _serviceBrand: undefined,
+      get: () => ({ spec: { provider: 'stub', name: 'stub', capability: {} } }),
+    } as unknown as IModelCatalog);
     ix.stub(ISessionTokenCountingService, {
       estimateText: () => 0,
       estimateMessage: () => 0,
@@ -488,18 +522,29 @@ describe('AgentLifecycleService', () => {
     } as IProtocolAdapterRegistry);
     ix.stub(IBuiltinAgentProfileLoader, {
       _serviceBrand: undefined,
-    } as IBuiltinAgentProfileLoader);
-    ix.stub(IAgentIdentity, { _serviceBrand: undefined } as IAgentIdentity);
+      list: () => [],
+    } as unknown as IBuiltinAgentProfileLoader);
+    ix.stub(IAgentIdentity, {
+      _serviceBrand: undefined,
+      resolved: async () => ({ displayName: 'test' }),
+    } as unknown as IAgentIdentity);
     ix.stub(IAgentAgentsMdReminderService, {
       _serviceBrand: undefined,
     } as IAgentAgentsMdReminderService);
+    ix.stub(IAgentChangeNotifierService, {
+      _serviceBrand: undefined,
+      seedBeliefs: async () => {},
+    } as unknown as IAgentChangeNotifierService);
     ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
-      get: () => undefined,
-      getDefault: () => {
-        throw new Error('catalog resolution is not expected');
-      },
+      get: (name: string) => name === DEFAULT_AGENT_PROFILE_NAME
+        ? { name, renderSystemPrompt: () => ({ text: 'test system prompt' }) }
+        : undefined,
+      getDefault: () => ({
+        name: DEFAULT_AGENT_PROFILE_NAME,
+        renderSystemPrompt: () => ({ text: 'test system prompt' }),
+      }),
       list: () => [],
       load: () => Promise.resolve(),
       reload: () => Promise.resolve(),
@@ -728,8 +773,10 @@ describe('AgentLifecycleService', () => {
     }
   });
 
-  it('create failure after scope creation keeps the context active through async teardown', async () => {
-    registerAgent.mockRejectedValueOnce(new Error('boom'));
+  it('create and close failures after scope creation keep the context active through async teardown', async () => {
+    const failure = new Error('boom');
+    loopStart.mockRejectedValueOnce(failure);
+    loopClose.mockRejectedValueOnce(failure);
     const svc = ix.get(IAgentLifecycleService);
     const bus = ix.get(ISessionEventBus);
     const seen: string[] = [];
@@ -765,7 +812,7 @@ describe('AgentLifecycleService', () => {
     };
     process.on('unhandledRejection', onUnhandled);
     try {
-      await expect(svc.create({ agentId: 'main' })).rejects.toThrow('boom');
+      await expect(svc.create({ agentId: 'main' })).rejects.toBe(failure);
       expect(seen).toEqual(['delivered']);
       expect(unhandled).toEqual([]);
     } finally {
@@ -807,10 +854,6 @@ describe('AgentLifecycleService', () => {
 
     expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
     expect(loopSettled).toHaveBeenCalled();
-    expect(suppressAllTerminalNotifications).toHaveBeenCalledOnce();
-    expect(suppressAllTerminalNotifications.mock.invocationCallOrder[0]).toBeLessThan(
-      loopSettled.mock.invocationCallOrder[0]!,
-    );
     expect(stopAllOnExit.mock.invocationCallOrder[0]).toBeGreaterThan(
       loopSettled.mock.invocationCallOrder[0]!,
     );
@@ -841,8 +884,10 @@ describe('AgentLifecycleService', () => {
     });
     loopSettled.mockImplementationOnce(() => {
       markDrainStarted();
-      return new Promise<void>((resolve) => {
-        releaseDrain = resolve;
+      return new Promise<undefined>((resolve) => {
+        releaseDrain = () => {
+          resolve(undefined);
+        };
       });
     });
     const svc = ix.get(IAgentLifecycleService);
@@ -866,7 +911,7 @@ describe('AgentLifecycleService', () => {
     const main = await svc.create({ agentId: 'main' });
     const disposed: string[] = [];
     disposables.add(svc.onDidClose((agent) => disposed.push(agent.agentId)));
-    loopSettled.mockImplementation(() => new Promise<void>(() => {}));
+    loopSettled.mockImplementation(() => new Promise<undefined>(() => {}));
     vi.useFakeTimers();
     try {
       const removal = svc.remove(main);
@@ -1023,19 +1068,36 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAppendLogStore, log.store);
     const svc = ix.get(IAgentLifecycleService);
 
-    await svc.create({ agentId: 'main' });
+    await svc.create({
+      agentId: 'main',
+      initialProfile: {
+        profileName: 'agent',
+        modelAlias: 'mock-model',
+        thinkingLevel: 'off',
+        systemPrompt: 'initial',
+        disallowedTools: [],
+      },
+    });
 
     expect(log.appended[0]).toMatchObject({
       type: 'metadata',
       protocol_version: createWireMetadataRecord().protocol_version,
     });
+    expect(log.appended.filter((record) => record.type === 'profile.bind')).toHaveLength(1);
+    expect(loopSetProfile).toHaveBeenCalledOnce();
+    expect(loopStart).toHaveBeenCalledOnce();
+    expect(loopSetProfile.mock.invocationCallOrder[0]).toBeLessThan(
+      loopStart.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('does not re-seal a wire log that already has records', async () => {
     const existing: WireRecord = {
-      type: 'turn.prompt',
-      input: [{ type: 'text', text: 'existing' }],
-      origin: { kind: 'user' },
+      type: 'profile.bind',
+      agentId: 'main',
+      thinkingEffort: 'off',
+      systemPrompt: 'existing',
+      disallowedTools: [],
     };
     const log = recordingAppendLog([existing]);
     ix.stub(IAppendLogStore, log.store);
@@ -1044,6 +1106,9 @@ describe('AgentLifecycleService', () => {
     await svc.create({ agentId: 'main' });
 
     expect(log.appended.some((record) => record.type === 'metadata')).toBe(false);
+    expect(log.appended.some((record) => record.type === 'profile.bind')).toBe(false);
+    expect(loopSetProfile).not.toHaveBeenCalled();
+    expect(loopStart).toHaveBeenCalledOnce();
   });
 
   it('leaves permission mode at the default when permissionMode is omitted', async () => {
@@ -1056,6 +1121,7 @@ describe('AgentLifecycleService', () => {
   it('applies the configured permission mode when the Agent has no persisted mode', async () => {
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: (() => 'auto') as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
@@ -1070,6 +1136,7 @@ describe('AgentLifecycleService', () => {
     const rule = { decision: 'deny', scope: 'user', pattern: 'Read(/secret.txt)' };
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: ((section: unknown) =>
         section === PERMISSION_SECTION ? { rules: [rule] } : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
@@ -1085,6 +1152,7 @@ describe('AgentLifecycleService', () => {
     const rule = { decision: 'deny', scope: 'user', pattern: 'Bash(curl *)' };
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: ((section: unknown) =>
         section === PERMISSION_SECTION ? { rules: [rule] } : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
@@ -1104,6 +1172,7 @@ describe('AgentLifecycleService', () => {
     ]).store);
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: ((section: unknown) =>
         section === PERMISSION_SECTION ? { rules: [rule] } : 'manual') as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
@@ -1122,6 +1191,7 @@ describe('AgentLifecycleService', () => {
     ]).store);
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: (() => 'auto') as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
     } as unknown as IConfigService);
@@ -1283,6 +1353,7 @@ describe('AgentLifecycleService', () => {
     ]).store);
     ix.stub(IConfigService, {
       ready: Promise.resolve(),
+      assertValid: () => {},
       get: ((section: unknown) =>
         section === CRON_SECTION ? { disabled: true } : undefined) as IConfigService['get'],
       onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
@@ -1363,15 +1434,16 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
     await svc.create({ agentId: 'worker-1' });
-    void svc.handleOf('worker-1')!.accessor.get(IEventDispatcher).dispatch(
-      new ProfileBind({
-        agentId: 'worker-1',
-        profileName: TOWER_WORKER_PROFILE,
-        thinkingEffort: 'off',
-        systemPrompt: '',
-        disallowedTools: [],
-      }),
-    );
+    await svc.handleOf('worker-1')!.accessor.get(IAgentLoopService).setProfile({
+      profileName: TOWER_WORKER_PROFILE,
+      thinkingLevel: 'off',
+      systemPrompt: '',
+      disallowedTools: [],
+    });
+    loopProfileSequence = [
+      { thinkingLevel: 'off', systemPrompt: '' },
+      { profileName: TOWER_WORKER_PROFILE, thinkingLevel: 'off', systemPrompt: '' },
+    ];
 
     svc.broadcastPermissionMode('yolo');
 
@@ -1443,11 +1515,10 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const create = svc.create({ agentId: 'main' });
 
-    const early = svc.handleOf('main');
-    expect(early).toBeDefined();
-
     const joined = svc.create({ agentId: 'main' });
     await registerCalled;
+    const early = svc.handleOf('main');
+    expect(early).toBeDefined();
     releaseRegister();
     const handle = await joined;
     const created = await create;
@@ -1563,7 +1634,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
     const child = await svc.fork(agentContextOf(svc.handleOf('main')!), { agentId: 'agent-btw' });
-    svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).append({
+    appendContext(svc.handleOf(child.agentId)!.accessor.get(IAgentLoopService), {
       role: 'user',
       content: [{ type: 'text', text: 'persisted side question' }],
     });
@@ -1573,7 +1644,7 @@ describe('AgentLifecycleService', () => {
     const rebuilt = await getOrRestoreAgent(sessionHandle(), child.agentId);
 
     expect(rebuilt).toBeDefined();
-    const restored = rebuilt!.accessor.get(IAgentContextMemoryService).get();
+    const restored = rebuilt!.accessor.get(IAgentLoopService).history();
     expect(
       restored.some(
         (m) =>
@@ -1606,7 +1677,7 @@ describe('AgentLifecycleService', () => {
 
     expect(rebuilt).toBeDefined();
     expect(beforeExecuteListeners - beforeRebuild).toBe(baseline + 1);
-    const restored = rebuilt!.accessor.get(IAgentContextMemoryService).get();
+    const restored = rebuilt!.accessor.get(IAgentLoopService).history();
     expect(
       restored.some((m) =>
         m.content.some((p) => p.type === 'text' && p.text.includes(SIDE_QUESTION_SYSTEM_REMINDER)),
@@ -1636,7 +1707,7 @@ describe('AgentLifecycleService', () => {
   it('fork copies the bound profile snapshot without catalog resolution', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });
-    svc.handleOf('main')!.accessor.get(IAgentProfileService).applyBindingSnapshot({
+    await svc.handleOf('main')!.accessor.get(IAgentLoopService).setProfile({
       profileName: 'deleted-profile',
       thinkingLevel: 'high',
       systemPrompt: 'original prompt',
@@ -1687,14 +1758,15 @@ describe('AgentLifecycleService', () => {
       { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }] },
       { role: 'assistant', content: [], toolCalls: [agentCall], partial: true },
     ];
-    sourceHandle.accessor.get(IAgentContextMemoryService).append(...history);
+    appendContext(sourceHandle.accessor.get(IAgentLoopService), ...history);
 
     const child = await svc.fork(agentContextOf(sourceHandle), { agentId: 'forked' });
 
-    const seeded = svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).get();
+    const seeded = svc.handleOf(child.agentId)!.accessor.get(IAgentLoopService).history();
     expect(seeded).toHaveLength(3);
     expect(seeded[0]).toMatchObject({ role: 'user' });
-    expect(seeded[1]).toMatchObject({ role: 'assistant', partial: undefined });
+    expect(seeded[1]).toMatchObject({ role: 'assistant' });
+    expect(seeded[1]?.partial).toBeUndefined();
     expect(seeded[2]).toMatchObject({
       role: 'tool',
       toolCallId: 'call_agent',
@@ -1709,7 +1781,7 @@ describe('AgentLifecycleService', () => {
     const child = await svc.fork(agentContextOf(svc.handleOf(source.agentId)!), { agentId: 'forked' });
 
     expect(
-      svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).get(),
+      svc.handleOf(child.agentId)!.accessor.get(IAgentLoopService).history(),
     ).toEqual([]);
   });
 
@@ -1751,7 +1823,7 @@ describe('AgentLifecycleService', () => {
   it('fork records the inherited profile in the subagent metadata', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });
-    svc.handleOf('main')!.accessor.get(IAgentProfileService).applyBindingSnapshot({
+    await svc.handleOf('main')!.accessor.get(IAgentLoopService).setProfile({
       profileName: 'coder',
       thinkingLevel: 'off',
       systemPrompt: 'coder prompt',

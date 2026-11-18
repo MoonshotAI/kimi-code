@@ -6,10 +6,6 @@ export interface MentionMatchSpan {
   hit: boolean;
 }
 
-/**
- * Split `text` into hit/plain runs from match positions. `positions` index
- * into the full path; `start` shifts them into this text's frame.
- */
 export function mentionMatchSpans(
   text: string,
   positions: readonly number[] | undefined,

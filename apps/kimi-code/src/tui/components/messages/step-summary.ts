@@ -2,12 +2,6 @@ import type { Component } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 
-/**
- * A collapsed summary of older content within a turn. Accumulates counts of
- * merged steps (thinking blocks and tool calls) and folded assistant messages,
- * rendering them as a single muted line, e.g.
- * `… thinking 5 times, call 50 tools, 12 messages`.
- */
 export class StepSummaryComponent implements Component {
   private thinking = 0;
   private tool = 0;

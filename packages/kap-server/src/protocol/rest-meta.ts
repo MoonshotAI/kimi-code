@@ -31,6 +31,7 @@ export const metaFeatureSchema = z.object({
 export type MetaFeature = z.infer<typeof metaFeatureSchema>;
 
 export const metaResponseSchema = z.object({
+  kimi_agent_protocol_version: z.string().min(1),
   server_version: z.string().min(1),
   capabilities: metaCapabilitiesSchema,
   server_id: z.string().min(1),
@@ -38,7 +39,6 @@ export const metaResponseSchema = z.object({
   open_in_apps: z.array(fsOpenInAppIdSchema),
   dangerous_bypass_auth: z.boolean(),
   experimental_flags: z.record(z.string(), z.boolean()).optional(),
-  backend: z.enum(['v1', 'v2']).optional(),
   web_title: z.string().optional(),
   features: z.array(metaFeatureSchema).optional(),
 });

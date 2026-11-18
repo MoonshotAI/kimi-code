@@ -301,8 +301,6 @@ function selectHistory(entries: Entry[], stats: ReaderStats) {
     current = { ...later, order: current.order - laterParentOffset };
   }
 
-  // Some compact writers retain the segment's original parents and record its
-  // new logical placement only on the summary/boundary.
   if (!boundary) {
     const candidate = entries.findLast((entry) => isBoundary(entry.row) && entry.order <= leaf.order && eligible(entry.row));
     if (candidate) {

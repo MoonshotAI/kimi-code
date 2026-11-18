@@ -26,7 +26,6 @@ const tempDirs: string[] = [];
 const CONFIG_ENV_PATTERN =
   /^(KIMI_MODEL_|KIMI_LOOP_|KIMI_MCP_|KIMI_WEB_|KIMI_IMAGE_|KIMI_CODE_BACKGROUND_|KIMI_CODE_MODEL_CATALOG_)/;
 
-/** Keep ambient env from injecting providers/models into the v2 engine. */
 function scrubConfigEnv(): () => void {
   const saved: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {

@@ -1,10 +1,3 @@
-/**
- * Klient-level session-scope events — the public, typed, namespaced event
- * surface of one session. Mirrors the pattern of `../global/events.ts`;
- * stream names match the kap-server session event map (`interactions`,
- * `interactions:resolved`).
- */
-
 import { z } from 'zod';
 
 import type {
@@ -20,11 +13,6 @@ import {
 } from './interaction.js';
 import { sessionMetadataChangedEventSchema } from './metadata.js';
 
-/**
- * Scope-stream registration (`kind: 'stream'`). Declared structurally here
- * until `EventRegistration` in `../types.js` gains the `stream` variant;
- * compatible with `src/core/events/hub.ts`, which already switches on it.
- */
 interface StreamEventRegistration {
   readonly kind: 'stream';
   readonly name: string;
@@ -34,18 +22,15 @@ interface StreamEventRegistration {
 
 type SessionEventRegistration = EventRegistration | StreamEventRegistration;
 
-/** Public event name → payload type. Keys must stay in sync with `sessionEvents`. */
 export interface SessionEventPayloads {
   'metadata.changed': SessionMetadataChangedEvent;
   'interactions.changed': readonly Interaction[];
   'interactions.resolved': InteractionResolution;
-  /** The merged skill catalog changed; the payload is the changed source id. */
   'skills.changed': string;
 }
 
 export type SessionEventName = keyof SessionEventPayloads;
 
-/** Public event name → source binding + payload schema. */
 export const sessionEvents = {
   'metadata.changed': {
     kind: 'emitter',
@@ -59,8 +44,6 @@ export const sessionEvents = {
     event: 'onDidChange',
     schema: z.string(),
   },
-  // Passthrough stream (no `type` filter): the source pushes the full
-  // pending interaction set on every change.
   'interactions.changed': {
     kind: 'stream',
     name: 'interactions',

@@ -77,8 +77,6 @@ async function smokeMinidbWorker(): Promise<void> {
 }
 
 async function smokeSearchWorker(): Promise<void> {
-  // The SEA-extracted global-search worker entry must boot from disk and
-  // complete the versioned ready handshake.
   const runtime = getSearchWorkerRuntimeState();
   if (!runtime.configured) {
     throw new Error('search worker runtime was not configured');

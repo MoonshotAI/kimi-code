@@ -1,9 +1,12 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentProfileService, ProfileError, ProfileErrors } from '#/agent/profile/profile';
+import { ProfileError, ProfileErrors } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { TOOLS_SECTION, type ToolsConfig } from './configSection';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { runLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -18,10 +21,11 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
   private globalPolicy: ToolsConfig | undefined;
 
   constructor(
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLoopService private readonly profile: IAgentLoopService,
     @IConfigService private readonly config: IConfigService,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
@@ -32,17 +36,18 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
         this.globalPolicy = this.config.get<ToolsConfig | undefined>(TOOLS_SECTION);
       }),
     );
-    this._register(
-      toolExecutor.registerToolCallGuard(({ name, source }) => {
-        const active =
-          name === SELECT_TOOLS_TOOL_NAME
-            ? this.isToolActiveForDisclosure(name, source)
-            : this.isToolActive(name, source);
-        return active
-          ? undefined
-          : `Tool "${name}" is disabled by the active tool policy`;
-      }),
-    );
+    this._register(toolExecutor.registerHook({
+      starting: (context) => {
+        const name = context.call.name;
+        const source = this.toolRegistry.listReferences().find((entry) => entry.name === name)?.source ?? 'builtin';
+        const active = name === SELECT_TOOLS_TOOL_NAME
+          ? this.isToolActiveForDisclosure(name, source)
+          : this.isToolActive(name, source);
+        if (active) return undefined;
+        const text = `Tool "${name}" is disabled by the active tool policy`;
+        return runLegacyStarting(context, (event) => event.veto({ output: text, isError: true }));
+      },
+    }));
   }
 
   isToolActive(name: string, source: ToolSource = 'builtin'): boolean {

@@ -34,6 +34,14 @@ export interface IAgentEnvironmentService {
   workspaceRoots(): EnvironmentWorkspaceRoots;
 }
 
+export interface IAgentEnvironmentOverlay {
+  readonly _serviceBrand: undefined;
+  decorate(lease: EnvironmentLease): EnvironmentLease;
+}
+
+export const IAgentEnvironmentOverlay: ServiceIdentifier<IAgentEnvironmentOverlay> =
+  createDecorator<IAgentEnvironmentOverlay>('agentEnvironmentOverlay');
+
 export const IAgentEnvironmentService: ServiceIdentifier<IAgentEnvironmentService> =
   createDecorator<IAgentEnvironmentService>('agentEnvironmentService');
 
@@ -117,6 +125,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @IAgentEnvironmentOverlay private readonly overlay: IAgentEnvironmentOverlay,
   ) {
     this.bindingSubscription = this.binding.onDidChange(() => this.changeEmitter.fire());
     this.registrySubscription = this.resolver.onDidChange((change) => {
@@ -154,11 +163,11 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   }
 
   acquire(required: readonly EnvironmentCapability[] = []): EnvironmentLease {
-    return this.resolver.acquire(this.binding.current, required);
+    return this.overlay.decorate(this.resolver.acquire(this.binding.current, required));
   }
 
   async acquireWhenReady(required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
-    return this.resolver.acquireWhenReady(this.binding.current, required);
+    return this.overlay.decorate(await this.resolver.acquireWhenReady(this.binding.current, required));
   }
 
   dispose(): void {
@@ -181,6 +190,21 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentEnvironmentService,
   AgentEnvironmentService,
+  ScopeActivation.OnDemand,
+  'agentEnvironmentBinding',
+);
+
+class DefaultAgentEnvironmentOverlay implements IAgentEnvironmentOverlay {
+  declare readonly _serviceBrand: undefined;
+  decorate(lease: EnvironmentLease): EnvironmentLease {
+    return lease;
+  }
+}
+
+registerScopedService(
+  LifecycleScope.Session,
+  IAgentEnvironmentOverlay,
+  DefaultAgentEnvironmentOverlay,
   ScopeActivation.OnDemand,
   'agentEnvironmentBinding',
 );

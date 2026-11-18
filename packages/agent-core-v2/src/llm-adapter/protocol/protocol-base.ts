@@ -1,8 +1,8 @@
-import { anthropicProtocol } from '#human/llm/builtin/protocol/anthropic/index';
-import { googleGenAIProtocol } from '#human/llm/builtin/protocol/google-genai/index';
-import { openAIProtocol } from '#human/llm/builtin/protocol/openai/index';
-import { openAIResponsesProtocol } from '#human/llm/builtin/protocol/openai-responses/index';
-import type { Protocol as CoreProtocol } from '#human/llm/protocol/protocol';
+import { anthropicProtocol } from '@moonshot-ai/core/llm/builtin/protocol/anthropic/index';
+import { googleGenAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/google-genai/index';
+import { openAIProtocol } from '@moonshot-ai/core/llm/builtin/protocol/openai/index';
+import { openAIResponsesProtocol } from '@moonshot-ai/core/llm/builtin/protocol/openai-responses/index';
+import type { Protocol as CoreProtocol } from '@moonshot-ai/core/llm/protocol/protocol';
 
 import type { Protocol } from './protocol';
 

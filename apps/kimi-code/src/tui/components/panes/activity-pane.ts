@@ -12,7 +12,6 @@ export interface ActivityPaneOptions {
   readonly mode: ActivityPaneMode;
   readonly spinner?: MoonLoader;
   readonly tip?: string;
-  /** Extra dim line rendered under the spinner (e.g. step retry error detail). */
   readonly detail?: string;
 }
 

@@ -111,9 +111,6 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
 vi.mock('@moonshot-ai/kimi-telemetry', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-telemetry')>();
   return {
-    // Keep the real `shouldEnableTelemetry` so the tests exercise the actual
-    // KIMI_DISABLE_TELEMETRY semantics; only the side-effecting entry points
-    // are stubbed.
     ...actual,
     initializeTelemetry: mocks.initializeTelemetry,
     setCrashPhase: mocks.setCrashPhase,
@@ -176,9 +173,7 @@ function opts(overrides: Record<string, unknown> = {}) {
   } as const;
 }
 
-function makeFakeHarness() {
-  // Native event listeners registered on the main agent's IEventBus; the turn
-  // emits a streaming assistant delta before completing.
+function makeFakeHarness(toolUpdates = false) {
   const eventListeners = new Set<(event: Event2<any>) => void>();
   const profileState: { profileName: string | undefined } = { profileName: undefined };
   const trustState = { trusted: true };
@@ -190,9 +185,6 @@ function makeFakeHarness() {
       IAgentProfileService,
       {
         bind: vi.fn(async () => {}),
-        setModel: vi.fn(async () => ({ model: 'k2' })),
-        getModel: () => 'k2',
-        data: () => ({ profileName: profileState.profileName }),
       },
     ],
     [IAgentPermissionModeService, { mode: 'auto', setMode: vi.fn() }],
@@ -217,16 +209,31 @@ function makeFakeHarness() {
         }),
       },
     ],
-    [IAgentTaskService, { list: vi.fn(() => []), stopAllOnExit: vi.fn(async () => []) }],
+    [IAgentTaskService, { list: vi.fn(() => []), stop: vi.fn(async () => {}) }],
     [IAgentCronService, { getNextFireTime: vi.fn(() => null) }],
     [IAgentGoalService, goal],
     [IEventDispatcher, { flush: vi.fn(async () => {}) }],
     [
       IAgentLoopService,
       {
+        setModel: vi.fn(async () => ({ model: 'k2' })),
+        getModel: () => 'k2',
+        data: () => ({ profileName: profileState.profileName }),
         submit: vi.fn(() => {
-          // Emit a native assistant delta on the main agent bus, then complete.
           for (const listener of [...eventListeners]) {
+            if (toolUpdates) {
+              const base = {
+                type: 'tool.updated',
+                turnId: 1,
+                toolCallId: 'call-1',
+                taskId: 'task-1',
+                status: 'running',
+                detached: false,
+              };
+              listener({ ...base, fields: { status: 'working' } } as unknown as Event2<any>);
+              listener({ ...base, fields: { status: 'working' } } as unknown as Event2<any>);
+              listener({ ...base, fields: {}, output: { offset: 0, text: 'chunk' } } as unknown as Event2<any>);
+            }
             listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as unknown as Event2<any>);
           }
           return { id: 'p1' };
@@ -261,7 +268,6 @@ function makeFakeHarness() {
   const agent = fakeScope('main', agentServices);
 
   const sessionServices = new Map<unknown, unknown>([
-    // drain enumerates agents; empty → no background work to wait on.
     [
       IAgentLifecycleService,
       {
@@ -295,8 +301,6 @@ function makeFakeHarness() {
       {
         ready: Promise.resolve(),
         get: vi.fn((section: string) => (section === 'defaultModel' ? 'k2' : undefined)),
-        // `applyPrintModeConfigDefaults` inspects each section and fills unset
-        // keys via the memory layer; an empty section means everything is unset.
         inspect: vi.fn(() => ({ value: {} })),
         set: vi.fn(async () => {}),
         diagnostics: vi.fn(() => []),
@@ -407,12 +411,9 @@ describe('runV2Print', () => {
   beforeEach(() => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
     vi.stubEnv('KIMI_MODEL_OUTPUT_FORMAT', '');
-    // Pin the telemetry kill-switch to "unset" so the host environment cannot
-    // flip the default telemetry-on path these tests exercise.
     vi.stubEnv('KIMI_DISABLE_TELEMETRY', '');
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
     resetKimiRegionCache();
-    // `vi.clearAllMocks` keeps implementations, so re-pin the default here.
     mocks.loadMcpServersDetailed.mockImplementation(async () => ({
       servers: {},
       origins: {},
@@ -428,7 +429,12 @@ describe('runV2Print', () => {
   it('submits a prompt, renders native events, awaits completion, and drains', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, agentServices } = makeFakeHarness();
+    const { app, agent, agentServices, appServices } = makeFakeHarness(true);
+    const config = appServices.get(IConfigService) as { diagnostics: ReturnType<typeof vi.fn> };
+    config.diagnostics.mockReturnValue([
+      { severity: 'warning', message: 'deprecated setting' },
+      { severity: 'error', message: 'config could not be read' },
+    ]);
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
@@ -437,11 +443,15 @@ describe('runV2Print', () => {
 
     const promptService = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
     expect(promptService.submit).toHaveBeenCalledWith({
-      message: { role: 'user', content: [{ type: 'text', text: 'say hello' }] },
-      meta: { origin: { kind: 'user' }, tracked: true },
+      role: 'user',
+      content: [{ type: 'text', text: 'say hello' }],
+      attributes: { origin: { kind: 'user' } },
     });
-    // Version banner is first, then the rendered assistant output.
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
+    expect(stderr.text()).toContain('Warning: deprecated setting\n');
+    expect(stderr.text()).toContain('Error: config could not be read\n');
+    expect(stderr.text().match(/working/g)).toHaveLength(1);
+    expect(stderr.text()).toContain('chunk\n');
     expect(stdout.text()).toContain('hello world');
     expect(app.dispose).toHaveBeenCalled();
   });
@@ -722,10 +732,12 @@ describe('runV2Print', () => {
 
     const profile = agentServices.get(IAgentProfileService) as {
       bind: ReturnType<typeof vi.fn>;
+    };
+    const loop = agentServices.get(IAgentLoopService) as {
       setModel: ReturnType<typeof vi.fn>;
     };
     expect(profile.bind).not.toHaveBeenCalled();
-    expect(profile.setModel).not.toHaveBeenCalled();
+    expect(loop.setModel).not.toHaveBeenCalled();
   });
 
   it('switches the model when resuming with the already-bound profile and an explicit model', async () => {
@@ -748,10 +760,12 @@ describe('runV2Print', () => {
 
     const profile = agentServices.get(IAgentProfileService) as {
       bind: ReturnType<typeof vi.fn>;
+    };
+    const loop = agentServices.get(IAgentLoopService) as {
       setModel: ReturnType<typeof vi.fn>;
     };
     expect(profile.bind).not.toHaveBeenCalled();
-    expect(profile.setModel).toHaveBeenCalledWith('new-model');
+    expect(loop.setModel).toHaveBeenCalledWith('new-model');
   });
 
   it('skips default_plan_mode for a new print session and says so on stderr', async () => {
@@ -903,7 +917,6 @@ describe('runV2Print', () => {
     };
     expect(telemetry.addAppender).not.toHaveBeenCalled();
     expect(mocks.initializeTelemetry).not.toHaveBeenCalled();
-    // The run itself is unaffected: the prompt still renders and cleanup runs.
     expect(stdout.text()).toContain('hello world');
     expect(app.dispose).toHaveBeenCalled();
   });
@@ -937,9 +950,6 @@ describe('runV2Print', () => {
       getAccessToken: expect.any(Function),
       onUnexpectedError: expect.any(Function),
     });
-    // The resolved session id is synced onto the v1 client so crash events and
-    // system metrics carry it; the sink model is reconciled too (same value
-    // here, since the fresh session uses the configured default).
     expect(mocks.setTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses_v2' });
     expect(mocks.setTelemetryModel).toHaveBeenCalledWith('k2');
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
@@ -954,8 +964,7 @@ describe('runV2Print', () => {
     const stderr = writer();
     const { app, appServices, agentServices } = makeFakeHarness();
 
-    // The resumed session's stored model differs from the configured default.
-    const profile = agentServices.get(IAgentProfileService) as { getModel: () => string };
+    const profile = agentServices.get(IAgentLoopService) as { getModel: () => string };
     profile.getModel = () => 'resumed-model';
     const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
     index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
@@ -965,15 +974,13 @@ describe('runV2Print', () => {
 
     await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr });
 
-    // The v1 pipeline was initialized up front with the best-known model, so
-    // crash events during session resolution still reach a sink...
     expect(mocks.initializeTelemetry).toHaveBeenCalledTimes(1);
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'k2' }),
     );
-    // ...and the sink's model was reconciled to the resumed session's real
-    // model only after the session resolved.
     expect(mocks.setTelemetryModel).toHaveBeenCalledWith('resumed-model');
+    const auth = agentServices.get(IAuthSummaryService) as { ensureReady: ReturnType<typeof vi.fn> };
+    expect(auth.ensureReady).toHaveBeenCalledWith('resumed-model');
     const initOrder = mocks.initializeTelemetry.mock.invocationCallOrder[0];
     const reconcileOrder = mocks.setTelemetryModel.mock.invocationCallOrder[0];
     expect(initOrder).toBeDefined();
@@ -1101,11 +1108,12 @@ describe('runV2Print', () => {
     const guardDispose = vi.fn();
     loop.tryAcquireQuiescence = vi.fn(() => ({ dispose: guardDispose }));
     const taskService = agentServices.get(IAgentTaskService) as {
-      stopAllOnExit: ReturnType<typeof vi.fn>;
+      list: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
     };
-    taskService.stopAllOnExit = vi.fn(async () => {
+    taskService.list = vi.fn(() => [{ taskId: 'task-1' }]);
+    taskService.stop = vi.fn(async () => {
       if (!order.includes('stop')) order.push('stop');
-      return [];
     });
     const dispatcher = agentServices.get(IEventDispatcher) as {
       flush: ReturnType<typeof vi.fn>;
@@ -1114,8 +1122,6 @@ describe('runV2Print', () => {
       order.push('flush');
     });
 
-    // A turn still in flight when the signal arrives: the queue snapshot reports
-    // the pending item, then the running prompt, then goes empty.
     const promptService = agentServices.get(IAgentLoopService) as {
       promptHandle: ReturnType<typeof vi.fn>;
       snapshot: ReturnType<typeof vi.fn>;
@@ -1197,7 +1203,6 @@ describe('runV2Print', () => {
     const onTermination = handlers.get(signal)!;
     settleTurn({ type: 'cancelled', steps: 0, reason: new Error('aborted') });
     const terminationRun = onTermination();
-    // The flush must wait for the prompt queue to empty, even with idle loops.
     for (let i = 0; i < 100 && !order.includes('settled'); i++) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
@@ -1212,7 +1217,6 @@ describe('runV2Print', () => {
 
     expect(order).toEqual(['stop', 'cancel', 'settled', 'flush', `exit:${exitCode}`]);
     expect(app.dispose).toHaveBeenCalledOnce();
-    // The guard taken during quiesce is only released after app.dispose().
     expect(loop.tryAcquireQuiescence).toHaveBeenCalled();
     const lastGuardRelease = guardDispose.mock.invocationCallOrder.at(-1);
     const appDisposeOrder = app.dispose.mock.invocationCallOrder[0];
@@ -1246,7 +1250,6 @@ describe('runV2Print', () => {
         'api (http: https://example.com/mcp), fs (stdio: node server.js).',
     );
     expect(stderr.text()).toContain('"Trust this folder"');
-    // The warning is advisory only — the run itself is unaffected.
     expect(stdout.text()).toContain('hello world');
   });
 

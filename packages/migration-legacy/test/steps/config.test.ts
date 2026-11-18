@@ -50,7 +50,6 @@ key = "oauth/kimi-code"
 describe('migrateConfigStep', () => {
   it('writes config.toml + tui.toml on a clean target (stub fallback)', async () => {
     await writeFile(join(src, 'config.toml'), OLD_CONFIG_TOML);
-    // Pre-create target with default stubs to simulate post-startup state
     await writeFile(join(tgt, 'config.toml'), DEFAULT_CONFIG_FILE_TEXT);
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(true);
@@ -61,7 +60,7 @@ describe('migrateConfigStep', () => {
     expect(cfg).toContain('"internal-vibe"');
     expect(cfg).toContain('default_model = "internal-vibe"');
     expect(cfg).not.toContain('openai_legacy');
-    expect(cfg).not.toContain('theme'); // moved to tui
+    expect(cfg).not.toContain('theme');
     const tui = await readFile(join(tgt, 'tui.toml'), 'utf-8');
     expect(tui).toContain('theme = "dark"');
     expect(tui).toContain('command = "code --wait"');
@@ -99,14 +98,12 @@ describe('migrateConfigStep', () => {
     await writeFile(join(tgt, 'config.toml'), 'merge_all_available_skills = false\n');
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.wroteSiblingDueToConflict).toBe(false);
-    // merge_all_available_skills is set on both, differently → target's value is kept
-    // and the key is reported as a conflict.
     expect(r.configConflicts).toContain('merge_all_available_skills');
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
-    expect(cfg).toContain('merge_all_available_skills = false'); // target value kept
-    expect(cfg).not.toContain('telemetry'); // v2 has no telemetry section — dropped
+    expect(cfg).toContain('merge_all_available_skills = false');
+    expect(cfg).not.toContain('telemetry');
     expect(r.droppedKeys).toContain('telemetry');
-    expect(cfg).toContain('kimi-code/kimi-for-coding'); // migrated model added
+    expect(cfg).toContain('kimi-code/kimi-for-coding');
   });
 
   it('reports a provider conflict and keeps the target provider', async () => {
@@ -151,13 +148,11 @@ base_url = "https://target.example/v1"
     expect(
       await readFile(join(tgt, 'config.migrated-from-kimi-cli.toml'), 'utf-8'),
     ).toContain('merge_all_available_skills');
-    // the unparseable target is left untouched
     expect(await readFile(join(tgt, 'config.toml'), 'utf-8')).toContain('not valid toml');
   });
 
   it('a tui.toml-only conflict sets wroteTuiSibling, not wroteSiblingDueToConflict', async () => {
     await writeFile(join(src, 'config.toml'), OLD_CONFIG_TOML);
-    // config.toml target is a stub (overwritable) — only tui.toml conflicts.
     await writeFile(join(tgt, 'config.toml'), DEFAULT_CONFIG_FILE_TEXT);
     await writeFile(join(tgt, 'tui.toml'), 'theme = "light"\n# user added\n');
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
@@ -166,7 +161,6 @@ base_url = "https://target.example/v1"
     expect(
       await readFile(join(tgt, 'tui.migrated-from-kimi-cli.toml'), 'utf-8'),
     ).toContain('theme');
-    // original kept
     expect(await readFile(join(tgt, 'tui.toml'), 'utf-8')).toContain('# user added');
   });
 
@@ -215,8 +209,6 @@ base_url = "https://target.example/v1"
   });
 
   it('keeps a model missing optional schema fields under the v2 model schema', async () => {
-    // v2's ModelRecordSchema treats `max_context_size` as optional, so a model
-    // that v1's ModelAliasSchema rejected now validates and migrates.
     const cfg = `[providers."managed:kimi-code"]
 type = "kimi"
 base_url = "https://api.kimi.com/coding/v1"
@@ -242,7 +234,6 @@ model = "kimi-for-coding"
   });
 
   it('does not write an empty hooks array', async () => {
-    // An empty `hooks` array yields no kept hooks, so no `hooks` key is written.
     await writeFile(join(src, 'config.toml'), 'hooks = []\nmerge_all_available_skills = true\n');
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(true);
@@ -260,8 +251,6 @@ model = "kimi-for-coding"
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(true);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
-    // `ghost-model` has no [models."ghost-model"] entry — a dangling
-    // default_model would fail the next session-create.
     expect(cfg).not.toContain('default_model');
     expect(cfg).toContain('merge_all_available_skills');
   });
@@ -297,8 +286,6 @@ max_context_size = 1000
     await writeFile(join(tgt, 'config.toml'), DEFAULT_CONFIG_FILE_TEXT);
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(true);
-    // `telemetry` is a supported key, but the string "false" is not a boolean
-    // — writing it verbatim would make the next getConfig() reject the file.
     expect(r.droppedKeys).toContain('telemetry');
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
     expect(cfg).not.toContain('telemetry');
@@ -310,7 +297,6 @@ max_context_size = 1000
       join(src, 'config.toml'),
       'default_model = "target-only"\nmerge_all_available_skills = true\n',
     );
-    // A user-modified target (merge mode) that already defines the alias.
     await writeFile(
       join(tgt, 'config.toml'),
       `[models."target-only"]
@@ -322,8 +308,6 @@ max_context_size = 1000
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(true);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
-    // `target-only` survives the merge in [models]; the legacy default points
-    // at it, so it must be carried over rather than dropped as dangling.
     expect(cfg).toContain('default_model = "target-only"');
   });
 
@@ -340,9 +324,6 @@ model = "m"
 max_context_size = 1000
 `,
     );
-    // Target already defines a same-named provider with DIFFERENT settings;
-    // the merge keeps the target's, so the migrated alias would silently bind
-    // to the wrong backend.
     await writeFile(
       join(tgt, 'config.toml'),
       `[providers."managed:kimi-code"]
@@ -362,10 +343,8 @@ base_url = "https://target.example/v1"
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.tuiExtracted).toBe(true);
     const tui = await readFile(join(tgt, 'tui.toml'), 'utf-8');
-    // An unsupported theme would make loadTuiConfig() reject the whole file.
     expect(tui).not.toContain('solarized');
     expect(tui).not.toContain('theme =');
-    // The migrated editor command must still survive.
     expect(tui).toContain('command = "vim"');
   });
 
@@ -423,8 +402,8 @@ base_url = "https://target.example/v1"
     expect(r.migratedHooks).toBe(0);
     expect(r.configConflicts).toContain('hooks');
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
-    expect(cfg).toContain('echo target-own'); // target's hooks kept
-    expect(cfg).not.toContain('echo from-cli'); // migrated hooks not applied
+    expect(cfg).toContain('echo target-own');
+    expect(cfg).not.toContain('echo from-cli');
   });
 
   it('migrates hooks into a user-modified target that has no hooks key', async () => {
@@ -441,10 +420,6 @@ base_url = "https://target.example/v1"
   });
 
   it('reports migratedHooks=0 when target already has the identical hooks (idempotent re-run)', async () => {
-    // After a successful first run the target ends up with the same hooks as
-    // the source. A second `migrateConfigStep` call must not falsely claim
-    // "N hooks migrated" again — `mergeConfig` records no conflict when the
-    // values deep-equal, so checking the conflict list alone misses this case.
     const hooksToml =
       '[[hooks]]\nevent = "PreToolUse"\ncommand = "echo same"\ntimeout = 30\n';
     await writeFile(join(src, 'config.toml'), hooksToml);
@@ -455,11 +430,6 @@ base_url = "https://target.example/v1"
   });
 
   it('reports migratedHooks=0 and populates siblingContents when sibling mode kicks in', async () => {
-    // The live `config.toml` is unparseable → migration falls back to writing
-    // `config.migrated-from-kimi-cli.toml`. Hooks land in the sibling, NOT in
-    // the live config, so `migratedHooks` must be 0 (the runtime never sees
-    // them) and the sibling contents must be enumerated so the result-screen
-    // warning can tell the user what is in the sibling.
     await writeFile(
       join(src, 'config.toml'),
       [
@@ -518,9 +488,6 @@ base_url = "https://target.example/v1"
 
     expect(r.migrated).toBe(true);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
-    // No experimental flags are currently registered, so the whole
-    // `[experimental]` section (including the former `micro_compaction`) is
-    // dropped along with unknown flags during migration.
     expect(cfg).not.toContain('[experimental]');
     expect(cfg).not.toContain('micro_compaction');
     expect(cfg).not.toContain('unknown_flag');
@@ -581,8 +548,6 @@ describe('migrateConfigStep device_id', () => {
 
 describe('migrateConfigStep read-failure classification', () => {
   it('reports sourceUnreadable (not "missing") when config.toml exists but cannot be read', async () => {
-    // A directory named config.toml makes readFile fail with EISDIR — not
-    // ENOENT — and must surface as an incomplete run instead of a silent skip.
     await mkdir(join(src, 'config.toml'), { recursive: true });
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(false);

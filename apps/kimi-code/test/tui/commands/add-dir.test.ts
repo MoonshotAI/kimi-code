@@ -188,11 +188,9 @@ describe('handleAddDirCommand', () => {
 
   it('re-checks the busy gate after lazy session creation (v2)', async () => {
     const { host, session, getMountedPanel } = makeHost();
-    // Session-less v2: the path-adding form lazy-creates via ensureSession.
     Object.assign(host, {
       session: undefined,
       ensureSession: vi.fn(async () => {
-        // A first prompt starts a turn while the session is being created.
         host.state.appState.streamingPhase = 'waiting';
         return session;
       }),

@@ -78,9 +78,6 @@ export function isInTurnUserOrigin(origin: unknown): boolean {
   return 'kind' in origin && origin.kind === 'user' && 'inTurn' in origin && origin.inTurn === true;
 }
 
-// A shorter pending steer must not match inside a different message.
-// Skill activation text is prepended and ends at `</skill-loaded>`, so the
-// submitted user text is also a suffix immediately after `>`.
 function boundaryIndex(eventText: string, batchText: string): number {
   if (batchText.length === 0) return -1;
   if (eventText === batchText) return 0;

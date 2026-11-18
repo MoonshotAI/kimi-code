@@ -1,10 +1,3 @@
-/**
- * Scenario: the VS Code host and another Node SDK client share one in-process Kimi home.
- * Responsibilities: outbound host identity, config/session interoperability, MCP credential/edit compatibility, and terminal provider failures.
- * Wiring: KimiRuntime, KimiHarness, core, storage, and HTTP provider adapter are real; only the remote provider is local.
- * Run: pnpm --filter kimi-code exec vitest run test/kimi-harness.integration.test.ts
- */
-
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -168,20 +161,12 @@ async function getMcpServers(rig: McpHandlerRig): Promise<MCPServerConfig[]> {
   return mcpHandlers[Methods.GetMCPServers]!(undefined, mcpHandlerContext(rig)) as Promise<MCPServerConfig[]>;
 }
 
-/**
- * `harness.listMcpServers()` without the management-plane tags (`source` /
- * `origin` / `mutable`) — these tests assert the stored config payload only.
- */
 async function listStoredMcpServers(rig: McpHandlerRig): Promise<unknown[]> {
   return (await rig.harness.listMcpServers()).map(
     ({ source: _source, origin: _origin, mutable: _mutable, ...entry }) => entry,
   );
 }
 
-/**
- * The Webview payload minus the management-plane tags — most handler tests
- * assert the config payload only; the tags have their own passthrough test.
- */
 function stripMcpTags(servers: MCPServerConfig[]): unknown[] {
   return servers.map(
     ({ source: _source, origin: _origin, mutable: _mutable, ...entry }) => entry,
@@ -542,9 +527,6 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
     await rig.harness.trustWorkspace(project);
 
-    // The initial workspace-aware list shows the project entry as read-only,
-    // and every mutation's refreshed list keeps showing it (the mutation RPCs
-    // return a cwd-less list, so the handler must re-list with the workspace).
     const assertList = (servers: MCPServerConfig[]): void => {
       const projectEntry = servers.find((server) => server.name === "project-api");
       expect(projectEntry).toMatchObject({ mutable: false, url: "https://example.test/project" });
@@ -1235,7 +1217,6 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
 
     await expect(runtime.prompt("concurrent message")).resolves.toEqual({ status: "failed" });
 
-    // The rejection surfaces as a mid-turn warning; the active turn is untouched.
     expect(runtime.isBusy).toBe(true);
     expect(streamEvents(rig.broadcasts)).toContainEqual(
       expect.objectContaining({ type: "error", terminal: false }),

@@ -153,6 +153,7 @@ export class Program {
         userAgentProfiles: generation.userAgentProfiles,
         pluginAgentProfiles: generation.pluginAgentProfiles,
         mcp: generation.mcp,
+        trust: generation.trust,
         acquireWorkdir: (environmentId, cwd, followsPrimary) => generation.workdirs.acquire(environmentId, cwd, followsPrimary),
         onDispose: release,
       });
@@ -176,6 +177,10 @@ export class Program {
     const generation = this.requireGeneration();
     await generation.workdirs.reload();
     await generation.userAgentProfiles.reload().catch(() => undefined);
+  }
+
+  waitForPluginAgentProfiles(): Promise<void> {
+    return this.requireGeneration().pluginAgentProfiles.ready;
   }
 
   snapshot(): ProgramSnapshot {

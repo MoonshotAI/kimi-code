@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
     getVersion: vi.fn(() => '0.0.1-alpha.2'),
     validateOptions: vi.fn(),
     runUpdatePreflight: vi.fn(),
+    runForcedUpgradePreflight: vi.fn(async () => 'continue'),
     runShell: vi.fn(),
     runPrompt: vi.fn(),
     installCrashHandlers: vi.fn(),
@@ -124,6 +125,10 @@ vi.mock('../../src/cli/update/preflight', () => ({
   runUpdatePreflight: mocks.runUpdatePreflight,
 }));
 
+vi.mock('../../src/cli/update/forced', () => ({
+  runForcedUpgradePreflight: mocks.runForcedUpgradePreflight,
+}));
+
 vi.mock('../../src/cli/update/native-swap', () => ({
   maybeRelaunchWithStagedNativeUpdate: mocks.maybeRelaunch,
 }));
@@ -181,7 +186,6 @@ async function waitForAssertion(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
-/** main() now boots asynchronously (after the staged-swap check resolves). */
 async function waitForProgramArgs(): Promise<unknown[]> {
   await waitForAssertion(() => {
     expect(mocks.createProgram).toHaveBeenCalled();
@@ -286,9 +290,6 @@ describe('main entry command handling', () => {
 
     const outcome = await handleMainCommand(opts, '0.0.1-alpha.2');
 
-    // Process disposition belongs to the entrypoint, never to this reusable,
-    // unit-tested handler: arming a process.exit here would kill the test runner
-    // or any embedding host. The handler only reports what ran.
     expect(mocks.finalizeHeadlessRun).not.toHaveBeenCalled();
     expect(outcome).toEqual({ headlessCompleted: true });
   });
@@ -320,7 +321,6 @@ describe('main entry command handling', () => {
     await waitForAssertion(() => {
       expect(mocks.finalizeHeadlessRun).toHaveBeenCalledTimes(1);
     });
-    // The exit code is resolved lazily so a goal turn that sets process.exitCode wins.
     const forceExitArgs = mocks.finalizeHeadlessRun.mock.calls[0] as unknown as unknown[];
     expect(typeof forceExitArgs[2]).toBe('function');
   });
@@ -388,7 +388,6 @@ describe('main entry command handling', () => {
     await waitForAssertion(() => {
       expect(mocks.maybeRelaunch).toHaveBeenCalledTimes(1);
     });
-    // Relaunched → the parent must sit on the child, never bootstrap.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mocks.createProgram).not.toHaveBeenCalled();
   });
@@ -418,6 +417,18 @@ describe('main entry command handling', () => {
     } finally {
       process.title = originalTitle;
     }
+  });
+
+  it('exits with SIGINT status when the forced upgrade prompt is interrupted', async () => {
+    const opts = defaultOpts();
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
+    mocks.runForcedUpgradePreflight.mockResolvedValueOnce('interrupt');
+
+    const exitCode = await runHandleMainCommand(opts);
+
+    expect(exitCode).toBe(130);
+    expect(mocks.runUpdatePreflight).not.toHaveBeenCalled();
+    expect(mocks.runShell).not.toHaveBeenCalled();
   });
 
   it('exits early when update preflight requests process exit', async () => {

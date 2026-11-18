@@ -2,10 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { IAgentTitlePromptSource } from '#/session/sessionTitle/agentTitlePromptSource';
 import { AgentTitlePromptSourceService } from '#/session/sessionTitle/agentTitlePromptSourceService';
 
@@ -37,7 +36,6 @@ interface MockQueueState {
   pending: {
     id: string;
     message: ContextMessage;
-    tracked: true;
     createdAt: string;
     userMessageId: string;
   }[];
@@ -55,17 +53,18 @@ describe('AgentTitlePromptSource', () => {
     disposables = new DisposableStore();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.definePartialInstance(IAgentContextMemoryService, { get: () => liveMessages });
         reg.definePartialInstance(IAgentLoopService, {
+          history: () => liveMessages,
           snapshot: () => ({
             state: 'idle' as const,
             activeTurnId: undefined,
             activePromptId: queue.active?.id,
             queue: queue.pending.map((item) => ({
-              message: { role: 'user' as const, content: [...item.message.content] },
-              meta: {
+              role: 'user' as const,
+              content: [...item.message.content],
+              attributes: {
                 promptId: item.id,
-                tracked: item.tracked,
+                origin: item.message.origin,
                 createdAt: item.createdAt,
                 userMessageId: item.userMessageId,
               },
@@ -104,14 +103,18 @@ describe('AgentTitlePromptSource', () => {
           id: 'two',
           userMessageId: 'two',
           createdAt: '2026-01-01T00:00:00.000Z',
-          tracked: true,
           message: userMessage('two', '第二条'),
+        },
+        {
+          id: 'goal',
+          userMessageId: 'goal',
+          createdAt: '2026-01-01T00:00:00.500Z',
+          message: userMessage('goal', '不应进入标题', { kind: 'system_trigger', name: 'goal_continuation' }),
         },
         {
           id: 'three',
           userMessageId: 'three',
           createdAt: '2026-01-01T00:00:01.000Z',
-          tracked: true,
           message: userMessage('three', '第三条'),
         },
       ],

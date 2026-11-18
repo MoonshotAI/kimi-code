@@ -1066,8 +1066,9 @@ describe('McpOAuthService interactive flow serialization', () => {
       args: {},
       signal,
       onUpdate: (update) => {
-        if (update.customKind === MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE) {
-          resolveWaitId((update.customData as { waitId: string }).waitId);
+        const authorization = update.fields?.[MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE];
+        if (authorization !== undefined) {
+          resolveWaitId((authorization as { waitId: string }).waitId);
         }
       },
     });
@@ -1080,7 +1081,6 @@ describe('McpOAuthService interactive flow serialization', () => {
     const cancelled = await result;
     expect(cancelled.isError).toBe(true);
     expect(cancelled.output).toMatch(/cancelled/);
-    expect(cancelled.stopTurn).toBeUndefined();
     expect(signal.aborted).toBe(false);
     expect(reconnect).not.toHaveBeenCalled();
 

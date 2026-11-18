@@ -8,14 +8,15 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
-  IAgentTaskService,
+  IAgentPermissionModeService,
+  IAgentTaskOutputService,
+  IAgentToolExecutorService,
   IConfigService,
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
   interactions,
   resumeSessionById,
-  type AgentTask,
   type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -257,8 +258,14 @@ function replayFrames(frames: readonly any[]): any[] {
   return turns;
 }
 
-const getSessionFacts = (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> =>
-  rest(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}`);
+const getSessionFacts = async (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> => {
+  const session = await rest<{ activity: 'idle' | 'turn' | 'background'; pending_interaction?: string }>(
+    server,
+    base,
+    `/api/v1/sessions/${encodeURIComponent(sid)}`,
+  );
+  return { busy: session.activity !== 'idle', pending_interaction: session.pending_interaction };
+};
 
 async function createSession(server: RunningServer, base: string): Promise<string> {
   const data = await rest<{ id: string }>(server, base, '/api/v1/sessions', {
@@ -338,8 +345,8 @@ async function subscribeConversation(
     frames.push(frame);
     if (CONVERSATION_FRAME_TYPES.has(frame.type) && frame.agent_id === agentId) conversation.push(frame);
     if (frame.type === 'task') tasks.push(frame);
-    if (frame.type === 'agent' && frame.agent_id === MAIN_AGENT_ID) agents.push(frame);
-    if (frame.type === 'todo' && frame.agent_id === MAIN_AGENT_ID) todos.push(frame);
+    if (frame.type === 'agent' && frame.agent_id === agentId) agents.push(frame);
+    if (frame.type === 'todo' && frame.agent_id === agentId) todos.push(frame);
   });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', () => {
@@ -530,22 +537,23 @@ describe('conversation contract e2e', () => {
     const channel = await subscribeConversation(server!, sid);
     try {
       const steer = await submitPrompt(server!, base, sid, 'steered request');
-      await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${steer.prompt_id}:steer`, { method: 'POST', body: {} });
+      await rest(server!, base, `/api/v1/sessions/${sid}/prompts:steer`, { method: 'POST', body: { prompt_ids: [steer.prompt_id] } });
       await idle(server!, base, sid);
       const before = await getTurns(server!, base, sid);
-      expect(before.turns).toHaveLength(1);
-      expect(JSON.stringify(before.turns)).toContain('answer after steer');
-      const steerItem = before.turns[0].items.find((item: any) => item.type === 'user_message' && item.placement === 'steer');
+      expect(before.turns).toHaveLength(2);
+      expect(JSON.stringify(before.turns[1])).toContain('answer after steer');
+      const steerItem = before.turns[1].items.find((item: any) => item.type === 'user_message' && item.placement === 'opener');
       expect(steerItem?.prompt_ids).toContain(steer.prompt_id);
+      const turnIds = before.turns.map((turn) => turn.turn_id);
       await until('steer reaches subscriber', () => JSON.stringify(channel.turns()).includes('answer after steer'));
       expect(channel.turns()).toEqual(before.turns);
 
       const pages = channel.conversation.filter((frame) => frame.type === 'turns').length;
       const undone = await rest<{ removed_turn_ids: string[] }>(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { turn_id: before.turns[0].turn_id } });
-      expect(undone.removed_turn_ids).toEqual([before.turns[0].turn_id]);
+      expect(undone.removed_turn_ids).toEqual(turnIds);
       expect((await getTurns(server!, base, sid)).turns).toEqual([]);
       await until('removal reaches subscriber', () => channel.conversation.some((frame) => frame.type === 'turns.removed'));
-      expect(channel.conversation.find((frame) => frame.type === 'turns.removed').turn_ids).toEqual([before.turns[0].turn_id]);
+      expect(channel.conversation.find((frame) => frame.type === 'turns.removed').turn_ids).toEqual(turnIds);
       expect(channel.conversation.filter((frame) => frame.type === 'turns').length).toBe(pages);
       expect(channel.turns()).toEqual([]);
       const reconnected = await subscribeConversation(server!, sid);
@@ -737,17 +745,18 @@ describe('conversation contract e2e', () => {
     const sid = await createSession(server!, base);
     const agents = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
     if (agents.handleOf(MAIN_AGENT_ID) === undefined) await agents.create({ agentId: MAIN_AGENT_ID });
-    let sink: Parameters<AgentTask['start']>[0] | undefined;
-    const taskId = agents.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentTaskService).registerTask({
-      idPrefix: 'bash',
-      kind: 'process',
-      description: 'npm run dev',
-      start: (s) => {
-        sink = s;
-        s.appendOutput('  VITE ready\n');
-      },
-      toInfo: (base) => ({ ...base, kind: 'process', command: 'npm run dev', pid: 0, exitCode: null }),
-    });
+    const main = agents.handleOf(MAIN_AGENT_ID)!;
+    main.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    const handler = main.accessor.get(IAgentToolExecutorService).executor.execute({
+      type: 'function',
+      id: 'call_s9_watch',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: "printf '  VITE ready\\n'", description: 'npm run dev', run_in_background: true }),
+    }, { origin: 'loop', turnId: 0 });
+    await handler;
+    await until('background output', () => handler.output().preview.includes('VITE ready'));
+    const taskId = handler.taskId;
+    const sink = main.accessor.get(IAgentTaskOutputService).open(taskId);
     const isOutput = (frame: any): boolean => frame.type === 'task.output';
 
     const first = await openFrameSocket(server!);
@@ -759,11 +768,11 @@ describe('conversation contract e2e', () => {
       offset: 0,
       text: '  VITE ready\n',
     });
-    sink!.appendOutput('  ➜  Local: http://localhost:5173/\n');
+    sink.append('  ➜  Local: http://localhost:5173/\n');
     expect(await first.next(isOutput)).toMatchObject({ offset: 13, text: '  ➜  Local: http://localhost:5173/\n' });
     await first.close();
 
-    sink!.appendOutput('4:42:10 PM [vite] hmr update /src/App.vue\n');
+    sink.append('4:42:10 PM [vite] hmr update /src/App.vue\n');
     const since = 13 + Buffer.byteLength('  ➜  Local: http://localhost:5173/\n', 'utf-8');
     const second = await openFrameSocket(server!);
     second.send({
@@ -783,15 +792,17 @@ describe('conversation contract e2e', () => {
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r3', code: 40406 });
 
     const child = await agents.create({ agentId: 'agent-s9-child' });
-    const childTaskId = agents.handleOf(child.agentId)!.accessor.get(IAgentTaskService).registerTask({
-      idPrefix: 'bash',
-      kind: 'process',
-      description: 'pnpm test --watch',
-      start: (s) => {
-        s.appendOutput(' RUN  v3.2.4\n');
-      },
-      toInfo: (base) => ({ ...base, kind: 'process', command: 'pnpm test --watch', pid: 0, exitCode: null }),
-    });
+    const childHandle = agents.handleOf(child.agentId)!;
+    childHandle.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    const childHandler = childHandle.accessor.get(IAgentToolExecutorService).executor.execute({
+      type: 'function',
+      id: 'call_s9_child_watch',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: "printf ' RUN  v3.2.4\\n'", description: 'pnpm test --watch', run_in_background: true }),
+    }, { origin: 'loop', turnId: 0 });
+    await childHandler;
+    await until('child output', () => childHandler.output().preview.includes('RUN  v3.2.4'));
+    const childTaskId = childHandler.taskId;
     second.send({ type: 'task.watch', request_id: 'r4', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: childTaskId });
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r4', code: 40406 });
     second.send({ type: 'task.watch', request_id: 'r5', session_id: sid, agent_id: child.agentId, task_id: childTaskId });
@@ -884,4 +895,109 @@ describe('conversation contract e2e', () => {
       'recall the token',
     ]);
   }, 60000);
+
+  it('S11: sessions/{id}:cancel stops a running turn, is idempotent once idle, and stops background tasks when include_background is true', async () => {
+    await boot([
+      {
+        match: (body) => body.includes('slow turn'),
+        respond: () => sseTextChunks('part-1 ', 'part-2'),
+        pause: { afterEvents: 1, ms: 5000 },
+      },
+    ]);
+    const created = await rest<{ id: string; cwd: string; activity: string }>(server!, base, '/api/v1/sessions', {
+      method: 'POST',
+      body: { cwd: '/tmp' },
+    });
+    expect(created.cwd).toBe('/tmp');
+    expect(created.activity).toBe('idle');
+    const sid = created.id;
+
+    const channel = await subscribeConversation(server!, sid);
+    await submitPrompt(server!, base, sid, 'slow turn');
+    await until('running turn started', () => channel.turns().some((t) => t.status === 'running'));
+    const turnId = channel.turns().find((t) => t.status === 'running')!.turn_id as string;
+
+    const first = await rest<{ cancelled: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
+      { method: 'POST', body: {} },
+    );
+    expect(first).toEqual({ cancelled: true });
+    await until(
+      'turn ended as interrupted',
+      () => channel.turns().find((t) => t.turn_id === turnId)?.status === 'ended',
+    );
+    expect(channel.turns().find((t) => t.turn_id === turnId)).toMatchObject({
+      status: 'ended',
+      outcome: 'interrupted',
+      end_reason: 'user_cancelled',
+    });
+
+    const second = await rest<{ cancelled: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
+      { method: 'POST', body: {} },
+    );
+    expect(second).toEqual({ cancelled: false });
+
+    const sessionAfter = await rest<{ activity: string; last_turn_outcome?: string }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}`,
+    );
+    expect(sessionAfter.activity).toBe('idle');
+    expect(sessionAfter.last_turn_outcome).toBe('interrupted');
+
+    const main = getLiveSessionById(server!.core.accessor, sid)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf(MAIN_AGENT_ID)!;
+    main.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    const bgHandler = main.accessor.get(IAgentToolExecutorService).executor.execute(
+      {
+        type: 'function',
+        id: 'call_bg_1',
+        name: 'Bash',
+        arguments: JSON.stringify({
+          command: 'sleep 10',
+          description: 'long sleep',
+          run_in_background: true,
+        }),
+      },
+      { origin: 'loop', turnId: 1 },
+    );
+    await bgHandler;
+    const bgTaskId = bgHandler.taskId;
+    await until(
+      'background task running',
+      () => channel.tasks.some((t) => t.task_id === bgTaskId && t.status === 'running' && t.detached === true),
+    );
+
+    const keepBg = await rest<{ cancelled: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
+      { method: 'POST', body: {} },
+    );
+    expect(keepBg).toEqual({ cancelled: false });
+    expect(
+      channel.tasks.filter((t) => t.task_id === bgTaskId).at(-1)?.status,
+    ).toBe('running');
+
+    const stopBg = await rest<{ cancelled: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
+      { method: 'POST', body: { include_background: true } },
+    );
+    expect(stopBg).toEqual({ cancelled: true });
+    await until(
+      'background task stopped',
+      () => channel.tasks.filter((t) => t.task_id === bgTaskId).at(-1)?.status === 'ended',
+    );
+    expect(channel.tasks.filter((t) => t.task_id === bgTaskId).at(-1)?.outcome).toBe('killed');
+
+    channel.close();
+  });
 }, 90000);

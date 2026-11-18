@@ -99,7 +99,6 @@ function enrichChildren(children: React.ReactNode, fileMap: Record<string, boole
       return child;
     }
 
-    // 跳过链接和代码块（但不跳过行内 code，因为会在 code 组件中单独处理）
     if (typeof child.type === "string" && ["a", "pre"].includes(child.type)) {
       return child;
     }
@@ -163,13 +162,6 @@ const CodeBlock = memo(function CodeBlock({ code, language, enableHighlight, sty
   );
 });
 
-// FIX: Replaced unwrapSingleParagraph with unwrapParagraphs.
-// The old version only stripped <p> when it was the sole child of <li>.
-// In "loose lists" (items separated by blank lines) with nested sub-lists,
-// ReactMarkdown produces [<p>, <ul>] as children — two elements — so the
-// old single-child check failed and the inner <p mb-2> was kept, adding
-// unwanted vertical spacing inside list items.
-// This version strips <p> wrappers from ALL children, regardless of count.
 function unwrapParagraphs(children: React.ReactNode): React.ReactNode {
   return React.Children.map(children, (child) => {
     if (React.isValidElement(child) && child.type === "p") {
@@ -185,7 +177,6 @@ export const Markdown = memo(function Markdown({ content, className, enableEnric
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
 
   useEffect(() => {
-    // When enableEnrichment is false, skip enrichment process
     if (!enableEnrichment || !content) {
       setFileMap({});
       return;

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import type { KimiSlashCommand } from '#/tui/commands/index';
-import { HelpPanelComponent } from '#/tui/components/dialogs/help-panel';
+import { HelpPanelComponent, keyboardShortcuts } from '#/tui/components/dialogs/help-panel';
 
 function cmd(name: string, description: string, aliases: string[] = []): KimiSlashCommand {
   return {
@@ -16,6 +16,27 @@ function strip(text: string): string {
 }
 
 describe('HelpPanelComponent', () => {
+  const QUEUES = 'Submit; queues while Kimi is working';
+  const STEERS = 'Submit; steers into the running turn';
+
+  it.each([
+    ['queue', true, { Enter: QUEUES, 'Ctrl-Enter': STEERS, 'Ctrl-Q': QUEUES }],
+    ['queue', false, { Enter: QUEUES, 'Ctrl-Q': QUEUES }],
+    ['steer', true, { Enter: STEERS, 'Ctrl-Enter': QUEUES, 'Ctrl-Q': QUEUES }],
+    ['steer', false, { Enter: STEERS, 'Ctrl-Q': QUEUES }],
+  ] as const)(
+    'describes the submit keys for follow_up_behavior %s (Ctrl-Enter recognized: %s)',
+    (followUpBehavior, ctrlEnterRecognized, expected) => {
+      const submitKeys = Object.fromEntries(
+        keyboardShortcuts(followUpBehavior, ctrlEnterRecognized)
+          .filter((shortcut) => ['Enter', 'Ctrl-Enter', 'Ctrl-Q'].includes(shortcut.keys))
+          .map((shortcut) => [shortcut.keys, shortcut.description]),
+      );
+
+      expect(submitKeys).toEqual(expected);
+    },
+  );
+
   it('renders keyboard shortcuts + slash commands sections', () => {
     const panel = new HelpPanelComponent({
       commands: [cmd('exit', 'Exit', ['quit', 'q'])],
@@ -59,7 +80,7 @@ describe('HelpPanelComponent', () => {
       commands: [],
       onClose,
     });
-    panel.handleInput('\u001B'); // Esc
+    panel.handleInput('\u001B');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -92,11 +113,11 @@ describe('HelpPanelComponent', () => {
       onClose: () => {},
       maxVisible: 6,
     });
-    panel.handleInput('\u001B[B'); // ↓
-    panel.handleInput('\u001B[B'); // ↓
+    panel.handleInput('\u001B[B');
+    panel.handleInput('\u001B[B');
     const out = strip(panel.render(80).join('\n'));
     expect(out).toMatch(/showing 3-8 of/);
-    panel.handleInput('\u001B[A'); // ↑
+    panel.handleInput('\u001B[A');
     const out2 = strip(panel.render(80).join('\n'));
     expect(out2).toMatch(/showing 2-7 of/);
   });

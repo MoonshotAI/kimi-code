@@ -1,13 +1,3 @@
-// Shared presentational helpers for the wire renderer registry and its
-// consumers. Extracted into a standalone module so that `renderers.tsx`
-// (which holds the per-kind registry) and `WireHeadline.tsx` /
-// `WireRowDetail.tsx` (the thin dispatchers) can all import these without
-// forming an import cycle:
-//
-//   parts.tsx  ←  renderers.tsx  ←  WireHeadline.tsx / WireRowDetail.tsx
-//
-// Every symbol below is defined exactly once, here.
-
 import type { ReactNode } from 'react';
 
 import {
@@ -22,9 +12,7 @@ import { JsonViewer } from '../shared/JsonViewer';
 import { SizePreview } from '../shared/SizePreview';
 
 export interface HeadlineRender {
-  /** Main headline content — rendered in the flex-grow slot of the row */
   main: ReactNode;
-  /** Right-side badges / pair refs */
   right?: ReactNode;
 }
 
@@ -45,7 +33,6 @@ export function truncate(s: unknown, n: number): string {
   return str.slice(0, n) + '…';
 }
 
-/** Pull the first text segment from a ContentPart[] for one-line preview. */
 export function firstText(parts: readonly ContentPart[]): string {
   for (const p of parts) {
     if (p.type === 'text' && typeof p.text === 'string') return p.text;
@@ -53,7 +40,6 @@ export function firstText(parts: readonly ContentPart[]): string {
   return '(non-text)';
 }
 
-/** One-line description of the embedded LoopRecordedEvent. */
 export function loopEventSummary(ev: LoopRecordedEvent): string {
   switch (ev.type) {
     case 'step.begin':
@@ -79,8 +65,6 @@ export function loopEventSummary(ev: LoopRecordedEvent): string {
     }
   }
 }
-
-// ─── tiny presentational helpers ───
 
 export function Mono({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <span className={`font-mono text-[12px] text-fg-0 ${className}`}>{children}</span>;
@@ -249,8 +233,6 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
           parsed = event.args;
         }
       }
-      // v2 no longer persists `description` / `display` on `tool.call`;
-      // read them tolerantly so v1 wires still render both.
       const legacy = event as { description?: string; display?: unknown };
       return (
         <div className="space-y-2">
@@ -291,7 +273,6 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
     case 'tool.result': {
       const isError = event.result.isError === true;
       const output = event.result.output;
-      // v1 persisted `truncated` / `message`; v2 persists `note` instead.
       const result = event.result as { truncated?: boolean; message?: string; note?: string };
       return (
         <div className="space-y-2">
@@ -440,8 +421,6 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
   }
 }
 
-/** Fallback detail for any kind without a dedicated renderer: a full
- *  structured JSON dump of the record (type + time + payload). */
 export function GenericDetail({ value }: { value: unknown }) {
   return <JsonViewer value={value} defaultOpenDepth={2} />;
 }

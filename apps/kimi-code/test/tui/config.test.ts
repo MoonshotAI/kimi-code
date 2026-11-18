@@ -6,11 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_TUI_CONFIG,
+  detectTuiModeFallback,
   INVALID_TUI_CONFIG_MESSAGE,
   loadTuiConfig,
   parseTuiConfig,
   renderTuiConfig,
   removeLegacySurveySetting,
+  resolveAnimationFrameRate,
+  resolveTuiMode,
   saveTuiConfig,
   TuiConfigParseError,
 } from '#/tui/config';
@@ -20,6 +23,7 @@ let filePath: string;
 
 beforeEach(() => {
   vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '');
+  vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
   dir = join(tmpdir(), `kimi-tui-config-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(dir, { recursive: true });
   filePath = join(dir, 'tui.toml');
@@ -35,9 +39,12 @@ describe('TUI config', () => {
     const result = await loadTuiConfig(filePath);
 
     expect(result).toEqual(DEFAULT_TUI_CONFIG);
+    expect(result.tuiMode).toBeUndefined();
     const text = readFileSync(filePath, 'utf-8');
     expect(text).toContain('Client preferences for kimi-code.');
     expect(text).toContain('theme = "auto"');
+    expect(text).toContain('# tui_mode = "regular"');
+    expect(text).not.toContain('\ntui_mode =');
     expect(text).toContain('cache_expiry_hint = true');
     expect(text).not.toContain('disable_feedback_survey');
     expect(text).toContain('auto_session_title = true');
@@ -66,7 +73,6 @@ auto_install = false
 
     expect(config).toEqual({
       theme: 'light',
-      tuiMode: 'regular',
       copyOnSelect: true,
       renderLatex: true,
       disablePasteBurst: false,
@@ -149,7 +155,6 @@ command = "   "
 
     expect(config).toEqual({
       theme: 'auto',
-      tuiMode: 'regular',
       copyOnSelect: true,
       renderLatex: true,
       disablePasteBurst: false,
@@ -202,7 +207,6 @@ command = "   "
 
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
-      tuiMode: 'regular',
       copyOnSelect: true,
       renderLatex: true,
       disablePasteBurst: false,
@@ -557,20 +561,71 @@ mermaid = "${value}"
   });
 });
 
+describe('TUI config follow_up_behavior', () => {
+  it('leaves follow_up_behavior unset when the key is omitted', () => {
+    expect(parseTuiConfig(`theme = "dark"`).followUpBehavior).toBeUndefined();
+  });
+
+  it('parses "queue" and "steer"', () => {
+    expect(parseTuiConfig(`follow_up_behavior = "queue"`).followUpBehavior).toBe('queue');
+    expect(parseTuiConfig(`follow_up_behavior = "steer"`).followUpBehavior).toBe('steer');
+  });
+
+  it('warns and leaves unknown values unset without failing the file', () => {
+    const warnings: string[] = [];
+    for (const [value, shown] of [['"fast"', 'fast'], ['1', '1']] as const) {
+      warnings.length = 0;
+      const config = parseTuiConfig(
+        `
+theme = "dark"
+follow_up_behavior = ${value}
+`,
+        (message) => warnings.push(message),
+      );
+
+      expect(config.followUpBehavior).toBeUndefined();
+      expect(config.theme).toBe('dark');
+      expect(warnings).toEqual([`[tui.toml] ignoring unknown follow_up_behavior value: ${shown}`]);
+    }
+  });
+
+  it('writes the commented default line into a freshly created config', async () => {
+    await loadTuiConfig(filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('\n# follow_up_behavior = "queue" # "queue" | "steer"\n');
+    expect(text).not.toMatch(/^follow_up_behavior/m);
+    expect((await loadTuiConfig(filePath)).followUpBehavior).toBeUndefined();
+  });
+
+  it.each(['queue', 'steer'] as const)('writes a live %s line once chosen and round-trips it', async (value) => {
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, followUpBehavior: value }, filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain(`\nfollow_up_behavior = "${value}" # "queue" | "steer"\n`);
+    expect(text).not.toContain('# follow_up_behavior');
+    expect((await loadTuiConfig(filePath)).followUpBehavior).toBe(value);
+  });
+});
+
 describe('TUI config tui_mode', () => {
-  it('defaults tui_mode to regular when omitted', () => {
-    expect(parseTuiConfig(`theme = "dark"`).tuiMode).toBe('regular');
+  it('leaves tuiMode undefined when omitted so unrelated saves never persist regular', async () => {
+    const parsed = parseTuiConfig(`theme = "dark"`);
+    expect(parsed.tuiMode).toBeUndefined();
+
+    await saveTuiConfig({ ...parsed, theme: 'light', editorCommand: 'vim' }, filePath);
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('\n# tui_mode = "regular"');
+    expect(text).not.toContain('\ntui_mode =');
+    expect((await loadTuiConfig(filePath)).tuiMode).toBeUndefined();
   });
 
-  it('parses tui_mode = "fullscreen"', () => {
-    const config = parseTuiConfig(`
-tui_mode = "fullscreen"
-`);
-
-    expect(config.tuiMode).toBe('fullscreen');
+  it('parses tui_mode = "fullscreen" and "regular"', () => {
+    expect(parseTuiConfig('tui_mode = "fullscreen"\n').tuiMode).toBe('fullscreen');
+    expect(parseTuiConfig('tui_mode = "regular"\n').tuiMode).toBe('regular');
   });
 
-  it('warns and falls back to regular for unknown tui_mode values without failing the file', () => {
+  it('warns and leaves tuiMode undefined for unknown tui_mode values without failing the file', () => {
     const warnings: string[] = [];
     const config = parseTuiConfig(
       `
@@ -580,89 +635,211 @@ tui_mode = "weird"
       (message) => warnings.push(message),
     );
 
-    expect(config.tuiMode).toBe('regular');
+    expect(config.tuiMode).toBeUndefined();
     expect(config.theme).toBe('dark');
     expect(warnings).toEqual(['[tui.toml] ignoring unknown tui_mode value: weird']);
   });
 
-  it('writes a live tui_mode key even at the default value', async () => {
+  it('keeps tui_mode commented out at the default value', async () => {
     await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
 
     const text = readFileSync(filePath, 'utf-8');
-    expect(text).toContain('\ntui_mode = "regular"');
-    expect(text).not.toContain('# tui_mode');
+    expect(text).toContain('\n# tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)');
+    expect(text).not.toContain('\ntui_mode =');
   });
 
-  it('writes a live tui_mode when fullscreen and round-trips it', async () => {
-    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, tuiMode: 'fullscreen' }, filePath);
+  it.each(['regular', 'fullscreen'] as const)(
+    'writes a live tui_mode when explicitly set to %s and preserves it across unrelated saves',
+    async (tuiMode) => {
+      await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, tuiMode }, filePath);
 
-    const text = readFileSync(filePath, 'utf-8');
-    expect(text).toContain('\ntui_mode = "fullscreen"');
-    expect((await loadTuiConfig(filePath)).tuiMode).toBe('fullscreen');
+      const text = readFileSync(filePath, 'utf-8');
+      expect(text).toContain(`\ntui_mode = "${tuiMode}"`);
+
+      const reloaded = await loadTuiConfig(filePath);
+      expect(reloaded.tuiMode).toBe(tuiMode);
+
+      await saveTuiConfig({ ...reloaded, theme: 'light' }, filePath);
+      expect(readFileSync(filePath, 'utf-8')).toContain(`\ntui_mode = "${tuiMode}"`);
+    },
+  );
+
+  it('does not write tui_mode to disk when env flags are set', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+
+    const created = await loadTuiConfig(filePath);
+    expect(created.tuiMode).toBeUndefined();
+    expect(readFileSync(filePath, 'utf-8')).toContain('\n# tui_mode = "regular"');
+    expect(readFileSync(filePath, 'utf-8')).not.toContain('\ntui_mode =');
+
+    writeFileSync(filePath, 'theme = "dark"\n', 'utf-8');
+    const loaded = await loadTuiConfig(filePath);
+    expect(loaded.tuiMode).toBeUndefined();
+    expect(readFileSync(filePath, 'utf-8')).toBe('theme = "dark"\n');
   });
 });
 
-describe('TUI config tui_mode env migration', () => {
-  it('migrates KIMI_CODE_TUI_FULL_SCREEN=1 into tui_mode when the key is absent', async () => {
-    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
-    writeFileSync(filePath, 'theme = "dark"\n', 'utf-8');
-    const warnings: string[] = [];
+describe('resolveTuiMode', () => {
+  const normalTermEnv = { TERM: 'xterm-256color' };
 
-    const config = await loadTuiConfig(filePath, (message) => warnings.push(message));
-
-    expect(config.tuiMode).toBe('fullscreen');
-    expect(readFileSync(filePath, 'utf-8')).toContain('\ntui_mode = "fullscreen"');
-    expect(warnings).toEqual([]);
+  it('defaults to regular when tui_mode is unset and experimental flag is off', () => {
+    expect(resolveTuiMode(undefined, normalTermEnv)).toEqual({
+      mode: 'regular',
+      config: 'unset',
+    });
+    expect(
+      resolveTuiMode(undefined, { ...normalTermEnv, KIMI_CODE_EXPERIMENTAL_FLAG: '0' }),
+    ).toEqual({
+      mode: 'regular',
+      config: 'unset',
+    });
   });
 
-  it('ignores the env when tui_mode is explicitly regular', async () => {
-    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
-    writeFileSync(filePath, 'tui_mode = "regular"\n', 'utf-8');
+  it.each(['1', 'true', 'TRUE', 'yes', 'on'])(
+    'defaults to fullscreen when tui_mode is unset and KIMI_CODE_EXPERIMENTAL_FLAG=%s',
+    (flag) => {
+      expect(
+        resolveTuiMode(undefined, { ...normalTermEnv, KIMI_CODE_EXPERIMENTAL_FLAG: flag }),
+      ).toEqual({
+        mode: 'fullscreen',
+        config: 'unset',
+      });
+    },
+  );
 
-    const config = await loadTuiConfig(filePath);
-
-    expect(config.tuiMode).toBe('regular');
-    expect(readFileSync(filePath, 'utf-8')).toBe('tui_mode = "regular"\n');
+  it('honors explicit regular or fullscreen in tui.toml over KIMI_CODE_EXPERIMENTAL_FLAG', () => {
+    expect(
+      resolveTuiMode('regular', { ...normalTermEnv, KIMI_CODE_EXPERIMENTAL_FLAG: '1' }),
+    ).toEqual({
+      mode: 'regular',
+      config: 'regular',
+    });
+    expect(
+      resolveTuiMode('fullscreen', { ...normalTermEnv, KIMI_CODE_EXPERIMENTAL_FLAG: '0' }),
+    ).toEqual({
+      mode: 'fullscreen',
+      config: 'fullscreen',
+    });
   });
 
-  it('does not migrate over an explicitly set unknown value', async () => {
-    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
-    writeFileSync(filePath, 'tui_mode = "weird"\n', 'utf-8');
-    const warnings: string[] = [];
+  it('downgrades fullscreen to regular on iTerm2 tmux -CC, Termux, and dumb terminals', () => {
+    const realTmuxCcEnv = {
+      TMUX: '/tmp/tmux-501/default,123,0',
+      TERM_PROGRAM: 'tmux',
+      TERM: 'tmux-256color',
+    };
+    expect(detectTuiModeFallback(realTmuxCcEnv, () => true)).toBe('tmux_cc');
+    expect(resolveTuiMode('fullscreen', realTmuxCcEnv, () => true)).toEqual({
+      mode: 'regular',
+      config: 'fullscreen',
+      fallback: 'tmux_cc',
+    });
+    expect(
+      resolveTuiMode(undefined, { ...realTmuxCcEnv, KIMI_CODE_EXPERIMENTAL_FLAG: '1' }, () => true),
+    ).toEqual({
+      mode: 'regular',
+      config: 'unset',
+      fallback: 'tmux_cc',
+    });
 
-    const config = await loadTuiConfig(filePath, (message) => warnings.push(message));
+    const fastPathTmuxCcEnv = {
+      TMUX: '/tmp/tmux-501/default,123,0',
+      TERM_PROGRAM: 'iTerm.app',
+      TERM: 'xterm-256color',
+    };
+    const neverProbe = vi.fn(() => false);
+    expect(detectTuiModeFallback(fastPathTmuxCcEnv, neverProbe)).toBe('tmux_cc');
+    expect(neverProbe).not.toHaveBeenCalled();
 
-    expect(config.tuiMode).toBe('regular');
-    expect(warnings).toEqual(['[tui.toml] ignoring unknown tui_mode value: weird']);
-    expect(readFileSync(filePath, 'utf-8')).toBe('tui_mode = "weird"\n');
+    const termuxEnv = { TERM: 'xterm-256color', TERMUX_VERSION: '0.118.0' };
+    expect(detectTuiModeFallback(termuxEnv)).toBe('termux');
+    expect(resolveTuiMode('fullscreen', termuxEnv)).toEqual({
+      mode: 'regular',
+      config: 'fullscreen',
+      fallback: 'termux',
+    });
+
+    const dumbEnv = { TERM: 'dumb' };
+    expect(detectTuiModeFallback(dumbEnv)).toBe('dumb_term');
+    expect(resolveTuiMode('fullscreen', dumbEnv)).toEqual({
+      mode: 'regular',
+      config: 'fullscreen',
+      fallback: 'dumb_term',
+    });
   });
 
-  it('only honors the exact value 1 like the old gate', async () => {
-    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', 'true');
-    writeFileSync(filePath, 'theme = "dark"\n', 'utf-8');
+  it('does not downgrade standard tmux sessions or report fallback when already regular', () => {
+    const standardTmux = {
+      TMUX: '/tmp/tmux-501/default,123,0',
+      TERM_PROGRAM: 'tmux',
+      LC_TERMINAL: 'iTerm2',
+      TERM: 'tmux-256color',
+    };
+    expect(detectTuiModeFallback(standardTmux, () => false)).toBeUndefined();
+    expect(resolveTuiMode('fullscreen', standardTmux, () => false)).toEqual({
+      mode: 'fullscreen',
+      config: 'fullscreen',
+    });
 
-    const config = await loadTuiConfig(filePath);
-
-    expect(config.tuiMode).toBe('regular');
-    expect(readFileSync(filePath, 'utf-8')).toBe('theme = "dark"\n');
+    expect(resolveTuiMode('regular', { TERM: 'dumb' })).toEqual({
+      mode: 'regular',
+      config: 'regular',
+    });
+    expect(resolveTuiMode(undefined, { TERM: 'dumb' })).toEqual({
+      mode: 'regular',
+      config: 'unset',
+    });
   });
 
-  it('migrates when the config file does not exist yet', async () => {
-    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
+  it('treats KIMI_CODE_TUI_FULL_SCREEN as highest-priority override bypassing fallback', () => {
+    const tmuxCcEnv = {
+      TMUX: '/tmp/tmux-501/default,123,0',
+      TERM_PROGRAM: 'tmux',
+      TERM: 'tmux-256color',
+    };
+    expect(
+      resolveTuiMode('regular', { ...tmuxCcEnv, KIMI_CODE_TUI_FULL_SCREEN: '1' }, () => true),
+    ).toEqual({
+      mode: 'fullscreen',
+      config: 'regular',
+      overriddenByEnv: true,
+    });
+    expect(
+      resolveTuiMode('fullscreen', { ...normalTermEnv, KIMI_CODE_TUI_FULL_SCREEN: '0' }),
+    ).toEqual({
+      mode: 'regular',
+      config: 'fullscreen',
+      overriddenByEnv: true,
+    });
+  });
+});
 
-    const config = await loadTuiConfig(filePath);
-
-    expect(config.tuiMode).toBe('fullscreen');
-    expect(readFileSync(filePath, 'utf-8')).toContain('\ntui_mode = "fullscreen"');
+describe('resolveAnimationFrameRate', () => {
+  it.each([undefined, '', '   '])('keeps the default frame rate when KIMI_CODE_TUI_ANIMATION_FPS is %j', (value) => {
+    expect(resolveAnimationFrameRate({ KIMI_CODE_TUI_ANIMATION_FPS: value })).toEqual({});
   });
 
-  it('does not re-migrate after a regular preference has been saved', async () => {
-    vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '1');
-    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, tuiMode: 'regular' }, filePath);
+  it.each([
+    ['1', 1],
+    ['8', 8],
+    [' 30 ', 30],
+    ['60', 60],
+  ])('reads KIMI_CODE_TUI_ANIMATION_FPS=%j as %d frames per second', (value, fps) => {
+    expect(resolveAnimationFrameRate({ KIMI_CODE_TUI_ANIMATION_FPS: value })).toEqual({ fps });
+  });
 
-    const config = await loadTuiConfig(filePath);
+  it.each(['abc', '0', '61', '-5', '2.5', '1e1', '0x10', '+8'])(
+    'ignores KIMI_CODE_TUI_ANIMATION_FPS=%j and explains why',
+    (value) => {
+      expect(resolveAnimationFrameRate({ KIMI_CODE_TUI_ANIMATION_FPS: value })).toEqual({
+        warning: `Ignored KIMI_CODE_TUI_ANIMATION_FPS="${value}": expected a whole number from 1 to 60.`,
+      });
+    },
+  );
 
-    expect(config.tuiMode).toBe('regular');
-    expect(readFileSync(filePath, 'utf-8')).toContain('\ntui_mode = "regular"');
+  it('reads process.env by default', () => {
+    vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', '20');
+    expect(resolveAnimationFrameRate()).toEqual({ fps: 20 });
   });
 });

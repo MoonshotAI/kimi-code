@@ -6,8 +6,6 @@ function isBlobRef(url: string): boolean {
   return url.startsWith(BLOBREF_PROTOCOL);
 }
 
-/** Convert a `blobref:<mime>;<hash>` URL into a vis-server blob route.
- *  Non-blobref URLs are returned unchanged. */
 export function resolveBlobRefUrl(
   url: string,
   sessionId: string,
@@ -25,9 +23,6 @@ export function resolveBlobRefUrl(
   return baseUrl ? `${baseUrl}${path}` : path;
 }
 
-/** Walk every record in a wire and replace blobref URLs with vis-server
- *  blob routes so the UI can render them. Only mutates `entry.data`;
- *  `entry.raw` is left untouched. */
 export function rehydrateWireEntries(
   entries: readonly WireEntry[],
   sessionId: string,

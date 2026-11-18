@@ -3,7 +3,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { LifecycleScope } from '#/app/scopes';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { SessionErrors } from '#/session/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -43,8 +43,12 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
   }
 
   begin(): void {
+    this.sessionLocks.hold(this.ctx.sessionId);
+    this.checkWritable();
+  }
+
+  private checkWritable(): void {
     const sessionId = this.ctx.sessionId;
-    this.sessionLocks.hold(sessionId);
     const stale = this.agents
       .list()
       .some(
@@ -59,6 +63,17 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
       `Session "${sessionId}" was updated by another client; reload it before continuing`,
       { details: { sessionId } },
     );
+  }
+
+  acquire(): SessionLockLease {
+    this.begin();
+    return this.sessionLocks.lease(this.ctx.sessionId);
+  }
+
+  tryAcquire(): SessionLockLease | undefined {
+    if (!this.sessionLocks.tryHold(this.ctx.sessionId)) return undefined;
+    this.checkWritable();
+    return this.sessionLocks.lease(this.ctx.sessionId);
   }
 
   private schedule(): void {

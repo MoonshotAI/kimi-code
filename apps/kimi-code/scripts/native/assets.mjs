@@ -16,8 +16,6 @@ import { resolveTargetDeps, SUPPORTED_TARGETS } from './native-deps.mjs';
 
 export { NATIVE_ASSET_MANIFEST_VERSION };
 
-// Re-export for any external consumer that still needs it. Internally we
-// use resolveTargetDeps() exclusively — no more if/else against package names.
 export const NATIVE_TARGETS = Object.freeze(
   Object.fromEntries(
     SUPPORTED_TARGETS.map((t) => {
@@ -243,7 +241,7 @@ export function nativeAssetSummary(manifest) {
 
 export async function collectNativeAssets({ appRoot, target }) {
   const requireFromApp = createRequire(pathToFileURL(resolve(appRoot, 'package.json')));
-  const targetDeps = resolveTargetDeps(target); // throws on unsupported target
+  const targetDeps = resolveTargetDeps(target);
 
   const manifestPackages = [];
   const assets = {};

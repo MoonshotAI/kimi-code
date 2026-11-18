@@ -1,5 +1,5 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -19,7 +19,7 @@ export class TowerMergeTool implements ITowerMergeTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentToolExecutorService private readonly tasks: IAgentToolExecutorService,
     @IAgentTowerService private readonly tower: IAgentTowerService,
   ) {}
 
@@ -105,11 +105,10 @@ export class TowerMergeTool implements ITowerMergeTool {
 
   private activeAgentIds(): ReadonlySet<string> {
     return new Set(
-      this.tasks
-        .list(true)
-        .flatMap((task) =>
-          task.kind === 'agent' && task.agentId !== undefined ? [task.agentId] : [],
-        ),
+      this.tasks.handlers().flatMap((handler) => {
+        const task = handler.snapshot().fields.task;
+        return task?.kind === 'agent' && task.agentId !== undefined ? [task.agentId] : [];
+      }),
     );
   }
 }

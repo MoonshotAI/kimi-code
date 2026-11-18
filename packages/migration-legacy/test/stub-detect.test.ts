@@ -18,7 +18,6 @@ describe('isConfigStubOrMissing', () => {
   });
 
   it('returns true when content matches DEFAULT_CONFIG_FILE_TEXT exactly', async () => {
-    // From packages/kimi-core/src/harness/configs/toml.ts:42
     const stub =
       '# ~/.kimi-code/config.toml\n' +
       '# Runtime settings for Kimi Code.\n' +
@@ -75,8 +74,6 @@ describe('isTuiStubOrMissing', () => {
   });
 
   it('returns true when fields semantically equal default (even after parse round-trip)', async () => {
-    // User loaded the file in an editor; their editor stripped trailing whitespace
-    // or rewrote with different formatting but same fields.
     const reformatted =
       'theme = "auto"\n[editor]\ncommand = ""\n[notifications]\nenabled = true\nnotification_condition = "unfocused"\n';
     await writeFile(join(dir, 'tui.toml'), reformatted, 'utf-8');

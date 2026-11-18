@@ -57,9 +57,6 @@ describe('CronMessageComponent', () => {
 
 describe('StatusMessageComponent', () => {
   it('strips carriage returns so a CRLF line does not render blank', () => {
-    // A trailing `\r` (e.g. from a CRLF server error page) is zero-width for
-    // the line wrapper, so padding spaces appended after it would otherwise
-    // overwrite the visible content. The status component strips `\r`.
     const component = new StatusMessageComponent('Error: boom\r\nmore\r', 'error');
     const text = component
       .render(120)

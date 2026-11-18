@@ -53,7 +53,7 @@ describe('SessionLifecycleService', () => {
         undefined,
         { workspaceId: 'wm_test', persistenceScope: 'sessions/wm_test' },
         { homeDir: '/home' },
-        { ready },
+        { ready, assertValid: () => {}, get: () => undefined },
         undefined,
         undefined,
         undefined,

@@ -10,11 +10,11 @@ import { IFileService } from '#/app/file/fileService';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
-import type { ContentPart, Message } from '#human/llm/message';
-import { mediaFileIdOf, mediaUrlOf } from '#human/llm/protocol/kit/media';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
+import { mediaFileIdOf, mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import type { Model } from '#/llm-adapter/model/catalog';
-import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
-import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
+import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
+import { runWithCredentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import {
   imageUploaderFor,
   mediaAcceptsMime,
@@ -258,14 +258,14 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
     const support = mediaSupportForRequest(request, 'image', position);
-    if (!model.capabilities.image_in || support === undefined) {
+    if (model.spec.capability?.image_in !== true || support === undefined) {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'unsupported',
-        model: model.name,
+        model: model.spec.name,
       });
       const path = await this.displayPath(ref);
-      return model.capabilities.image_in ? degradedImage(path) : unsupportedMedia('image', path);
+      return model.spec.capability?.image_in === true ? degradedImage(path) : unsupportedMedia('image', path);
     }
     const providerKey = model.providerType ?? model.protocol;
     const uploadSupported = support.sources.includes('file') || support.sources.includes('url');
@@ -279,7 +279,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       if (memoed !== undefined) return memoed;
       return this.resolveImageUncached(ref, model, request, inlineKey, undefined, support, signal);
     }
-    const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`;
+    const cacheKey = `image\0${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.endpoint.baseUrl ?? ''}\0${await accountHashFor(model)}`;
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined && mediaAcceptsSource(support, memoed)) return memoed;
     const cachedLlmFileId = await this.readCachedUpload(IMAGE_CACHE_SCOPE, cacheKey);
@@ -315,7 +315,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'read_failed',
-        model: model.name,
+        model: model.spec.name,
       });
       return degradedImage(path);
     }
@@ -334,7 +334,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'invalid',
-        model: model.name,
+        model: model.spec.name,
       });
       return degradedImage(path);
     }
@@ -378,7 +378,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         this.telemetry.track2('media_resolve_fallback', {
           kind: 'image',
           reason: 'upload_failed',
-          model: model.name,
+          model: model.spec.name,
         });
         return undefined;
       }
@@ -397,7 +397,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'image',
         reason: 'upload_failed',
-        model: model.name,
+        model: model.spec.name,
       });
       return undefined;
     }
@@ -445,14 +445,14 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     signal: AbortSignal | undefined,
   ): Promise<ContentPart> {
     const support = mediaSupportForRequest(request, 'video', position);
-    if (!model.capabilities.video_in || support === undefined) {
+    if (model.spec.capability?.video_in !== true || support === undefined) {
       const path = await this.displayPath(ref);
-      return model.capabilities.video_in ? videoTag(path) : unsupportedMedia('video', path);
+      return model.spec.capability?.video_in === true ? videoTag(path) : unsupportedMedia('video', path);
     }
     const providerKey = model.providerType ?? model.protocol;
     const uploadSupported = support.sources.includes('file') || support.sources.includes('url');
     const cacheKey = uploadSupported && supportsLlmUpload(request, 'video')
-      ? `${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.baseUrl ?? ''}\0${await accountHashFor(model)}`
+      ? `${ref.fileId}\0${providerKey}\0${model.protocol}\0${model.endpoint.baseUrl ?? ''}\0${await accountHashFor(model)}`
       : `${ref.fileId}\0${providerKey}`;
 
     const memoed = this.resolved.get(cacheKey);
@@ -521,7 +521,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       ? createVideoUploader(videoUploaderFor(model, request), {
           client: this.telemetry,
           props: {
-            model: model.name,
+            model: model.spec.name,
             provider_type: model.providerType ?? model.protocol,
             protocol: model.protocol,
           },
@@ -544,7 +544,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         this.telemetry.track2('media_resolve_fallback', {
           kind: 'video',
           reason: 'upload_failed',
-          model: model.name,
+          model: model.spec.name,
         });
         return {
           part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
@@ -560,7 +560,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       this.telemetry.track2('media_resolve_fallback', {
         kind: 'video',
         reason: 'upload_failed',
-        model: model.name,
+        model: model.spec.name,
       });
       if (isVideoUploadUnsupportedError(error)) {
         return {
@@ -614,12 +614,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
 
 async function accountHashFor(model: Model): Promise<string> {
   let identity: string | undefined;
-  const authorization = model.headers['Authorization'];
+  const authorization = model.endpoint.headers?.['Authorization'];
   if (authorization !== undefined) {
     identity = `authorization\0${authorization.trim()}`;
   } else {
     try {
-      const apiKey = (await model.credentialProvider?.resolve())?.apiKey;
+      const apiKey = (await model.endpoint.credentials?.resolve())?.apiKey;
       if (apiKey !== undefined && apiKey.length > 0) {
         identity = `api-key\0${stableJwtSubject(apiKey) ?? apiKey}`;
       }

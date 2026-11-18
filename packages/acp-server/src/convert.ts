@@ -13,16 +13,6 @@ import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInput
 import { log } from './log';
 import { isHideOutputMarker } from './marker';
 
-/**
- * Convert an array of ACP {@link ContentBlock}s into agent-core-v2
- * {@link ContentPart}s suitable for a user `ContextMessage`'s `content`.
- *
- * Image parts are built from the client-declared MIME verbatim; run the
- * result through {@link compressPromptImageParts} before submitting so
- * unsupported formats are dropped and MIME aliases canonicalized. Audio and
- * blob embedded resources are dropped with a warning (ACP
- * `promptCapabilities` currently advertise audio as unsupported).
- */
 export function acpBlocksToContentParts(blocks: readonly ContentBlock[]): readonly ContentPart[] {
   const out: ContentPart[] = [];
   for (const block of blocks) {
@@ -56,20 +46,16 @@ export function acpBlocksToContentParts(blocks: readonly ContentBlock[]): readon
     if (block.type === 'resource') {
       const resource = block.resource;
       if ('text' in resource) {
-        // TextResourceContents — wrap as a `<resource>` element so the
-        // model sees the uri provenance alongside the text body.
         const text = `<resource uri="${escapeXmlAttr(resource.uri)}">${resource.text}</resource>`;
         out.push({ type: 'text', text });
         continue;
       }
-      // BlobResourceContents — drop+warn.
       log.warn('acp: dropping blob embedded resource', {
         uri: resource.uri,
         mimeType: resource.mimeType,
       });
       continue;
     }
-    // Future-proof: anything else (new ACP block kinds) → warn and drop.
     log.warn('acp: dropping unsupported prompt content block', {
       type: (block as { type: string }).type,
     });
@@ -77,43 +63,10 @@ export function acpBlocksToContentParts(blocks: readonly ContentBlock[]): readon
   return out;
 }
 
-/**
- * Shrink oversized inline images in a prompt-part list — the ACP ingestion
- * point's input-stage compression, mirroring kap-server's upload-time step
- * (`resolvePromptMediaFiles`). Best effort: a part that cannot be compressed
- * is passed through unchanged.
- *
- * Compression is NOT duplicated by the engine: agent-core-v2's prompt pipeline
- * (`agent/prompt/promptService.ts`) only *extracts* pre-existing compression
- * captions from user text (rerouting them to system reminders) — it never
- * compresses images at the prompt entry, so the edge ingestion point owns
- * that step.
- *
- * Format gating is deliberately left to the engine: the accepted image
- * formats depend on the provider the agent is bound to, which this edge does
- * not know. The engine's prompt pipeline gates every image part against that
- * provider's set (dropping rejected parts for a text notice and rewriting
- * accepted MIME aliases to their canonical form) before anything reaches the
- * session history, so parts in formats we cannot re-encode pass through here
- * untouched.
- *
- * Compression is never silent: a re-encoded image gains a caption text part
- * immediately before it stating what the original was, and the original bytes
- * are persisted (into `originalsDir` — typically the session's
- * media-originals dir — or the shared temp-dir fallback) so the model can
- * read fine detail back via ReadMediaFile + region.
- */
 export async function compressPromptImageParts(
   parts: readonly ContentPart[],
   options: {
     readonly originalsDir?: string | undefined;
-    /**
-     * Longest-edge ceiling (px) override. The ACP server runs the engine
-     * in-process, so the Agent-scope `ImageConfigBridge` has already pushed
-     * the env-resolved `[image]` config section into the compression module's
-     * global seam — leave this `undefined` (the default) and the configured /
-     * built-in cap applies. The override exists for tests.
-     */
     readonly maxImageEdgePx?: number | undefined;
   } = {},
 ): Promise<ContentPart[]> {
@@ -162,14 +115,6 @@ export async function compressPromptImageParts(
   return out;
 }
 
-/**
- * Convert ACP `session/new` / `session/load` `mcpServers` — a named array
- * discriminated by `type` (absent = stdio) — into the engine's name-keyed
- * {@link McpServerConfig} record. Returns `undefined` for an absent/empty
- * list (or when every entry was dropped) so the engine builds no session
- * overlay. The unstable `type: 'acp'` transport is unsupported and dropped
- * with a warning.
- */
 export function acpMcpServersToConfigRecord(
   servers: readonly McpServer[] | undefined,
 ): Record<string, McpServerConfig> | undefined {
@@ -202,7 +147,6 @@ export function acpMcpServersToConfigRecord(
   return Object.keys(out).length === 0 ? undefined : out;
 }
 
-/** ACP env/header lists are `{name, value}` arrays; the engine wants a record. */
 function namedPairsToRecord(
   pairs: readonly { readonly name: string; readonly value: string }[],
 ): Record<string, string> | undefined {
@@ -210,13 +154,6 @@ function namedPairsToRecord(
   return Object.fromEntries(pairs.map((p) => [p.name, p.value]));
 }
 
-/**
- * Minimum-viable XML-attribute escaping for prompt-embedded resource
- * wrappers. The output is consumed by an LLM, not parsed by a canonical
- * XML parser, so we only escape the five characters that would change the
- * apparent tag structure: `&`, `<`, `>`, `"`, `'`. `&` must run
- * first to avoid double-escaping the entities introduced by the others.
- */
 function escapeXmlAttr(s: string): string {
   return s
     .replaceAll('&', '&amp;')
@@ -242,17 +179,9 @@ function fileLinkToTextRef(uri: string): string | null {
     return null;
   }
 
-  // `file://server/share/a.ts` is the URI form of a Windows UNC path
-  // (`\\server\share\a.ts`). `URL.pathname` only carries `/share/a.ts`; the
-  // host is part of the file location, so keep it in the projected text ref.
-  // `file://localhost/...` is still treated as local. Host is lower-cased so
-  // `file://Server/...` and `file://server/...` collapse to one ref.
   const host = url.hostname.toLowerCase();
   const isUncHost = host !== '' && host !== 'localhost';
 
-  // Drive-letter normalization is local-only: a UNC URI never legitimately
-  // carries `/C:/...` in its path, so we leave such inputs untouched rather
-  // than stripping a leading slash that would alter the UNC payload.
   if (!isUncHost && /^\/[A-Za-z]:/.test(path)) path = path.slice(1);
 
   if (isUncHost) {
@@ -271,12 +200,6 @@ function parseLineRange(suffix: string): string | null {
   return match[2] !== undefined ? `${match[1]}-${match[2]}` : match[1]!;
 }
 
-/**
- * Project a {@link ToolInputDisplay} block into an ACP {@link ToolCallContent}
- * entry for the tool-call card. Diff/file_io blocks become inline diffs;
- * plan_review becomes a text content entry; everything else yields `null`
- * (the caller drops it).
- */
 export function displayBlockToAcpContent(block: ToolInputDisplay): ToolCallContent | null {
   if (block.kind === 'diff') {
     return {
@@ -302,11 +225,6 @@ export function displayBlockToAcpContent(block: ToolInputDisplay): ToolCallConte
   return null;
 }
 
-/**
- * Render the text body of a `plan_review` display block. Empty plan → `null`
- * (caller drops the entry). When `block.path` is set, prefix with the on-disk
- * location so the client can show it alongside the markdown body.
- */
 function composePlanContent(
   block: Extract<ToolInputDisplay, { kind: 'plan_review' }>,
 ): string | null {
@@ -317,26 +235,8 @@ function composePlanContent(
   return block.plan;
 }
 
-/**
- * Convert a {@link ToolResultEvent}'s `output` into ACP
- * {@link ToolCallContent} entries.
- *
- * A non-empty string is passed through as a text block; objects/arrays are
- * JSON-stringified (best-effort — falls back to a placeholder on circular
- * structures). Empty/undefined/null output yields an empty array — the caller
- * still emits a `tool_call_update` so the client sees the status transition
- * to completed/failed.
- *
- * Diff content does NOT come from this function: `ToolResultEvent` has no
- * `display` field; diffs attach to `ToolCallStartedEvent.display` and are
- * emitted by `toolCallStartToSessionUpdate`.
- */
 export function toolResultToAcpContent(event: ToolResultEvent): ToolCallContent[] {
   const out = event.output;
-  // Array output containing the HideOutputMarker tells the adapter to suppress
-  // this tool's textual content entirely (e.g. terminal output routed through
-  // its own reverse-RPC channel). Detected before any other processing so
-  // mark-bearing outputs never leak even a stringified preview.
   if (Array.isArray(out) && out.some(isHideOutputMarker)) {
     return [];
   }
@@ -345,7 +245,6 @@ export function toolResultToAcpContent(event: ToolResultEvent): ToolCallContent[
     if (out.length === 0) return [];
     return [{ type: 'content', content: { type: 'text', text: out } }];
   }
-  // Best-effort stringify for object/array outputs.
   let text: string;
   try {
     text = JSON.stringify(out);

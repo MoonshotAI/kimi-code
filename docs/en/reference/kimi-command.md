@@ -28,7 +28,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--agent-file <path>` | | Load a custom agent from a Markdown file for the new session and select it. Cannot be repeated or combined with `--agent`, `--session`, or `--continue` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
-`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#picking-an-environment-for-one-launch)).
+`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#kimi-environment-and-environment-cwd)).
 
 ::: warning
 `--yolo` skips human approval for regular tool calls, including file writes and shell command execution. Use it only in trusted working directories. Plan mode exit approval is not bypassed by `--yolo`; `Bash` inside Plan mode is handled under the regular allow rules.
@@ -183,10 +183,6 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--no-open` | Do not open the browser once the server is ready |
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
-
-::: info
-The `kimi server` command tree is deprecated: any `kimi server …` invocation (including all legacy subcommands) only prints a deprecation notice and exits with code 1 — use `kimi web` instead. The one exception is `kimi server kill`, which stays functional for stopping servers started by a version before 0.28.0. The notice will be removed in the next major version of Kimi Code.
-:::
 
 ::: danger
 `--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and stop the server with `Ctrl+C` when you are done.

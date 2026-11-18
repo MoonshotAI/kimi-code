@@ -1,19 +1,3 @@
-/**
- * Benchmark for the message-component render cache (Phase 1 + 1.5).
- *
- * Measures the cost of re-rendering a long transcript when *nothing* has
- * changed — the common steady-state frame. With the render cache enabled
- * ("cached (warm)") every message returns its previously computed lines, and
- * the GutterContainer returns its cached concatenation, so the cost is roughly
- * O(number of messages). With it disabled ("uncached") every message rebuilds
- * its output (Markdown, Text, truncation) and the container rebuilds the full
- * line array, which is O(total rendered lines) and dominates CPU as the
- * transcript grows.
- *
- * Run:
- *   pnpm --filter @moonshot-ai/kimi-code exec vitest bench test/tui/render-memo.bench.ts
- */
-
 import { bench, describe } from 'vitest';
 
 import type { Component } from '@moonshot-ai/pi-tui';
@@ -81,8 +65,6 @@ function buildGutter(turns: number): GutterContainer {
 describe('render memo — flat child render', () => {
   const messages = buildMessages(TRANSCRIPT_TURNS);
 
-  // Warm up: populate every component's cache so the "cached" case measures
-  // steady-state cache hits rather than first-render cost.
   setRenderCacheEnabled(true);
   for (const message of messages) message.render(WIDTH);
 

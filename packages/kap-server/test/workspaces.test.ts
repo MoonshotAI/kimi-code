@@ -362,13 +362,13 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(promoted.body.data.root).toBe(extra);
     expect(promoted.body.data.additional_dirs).toEqual([root]);
 
-    const session = await postJson<{ workspace_id: string; metadata: { cwd: string } }>(
+    const session = await postJson<{ workspace_id: string; cwd: string }>(
       '/api/v1/sessions',
       { workspace_id: id },
     );
     expect(session.body.code).toBe(0);
     expect(session.body.data.workspace_id).toBe(id);
-    expect(session.body.data.metadata.cwd).toBe(extra);
+    expect(session.body.data.cwd).toBe(extra);
   });
 
   it('rejects invalid primary paths and unknown workspaces (40001/40409/40410)', async () => {
@@ -853,9 +853,9 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
     expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirB}\n`));
 
-    const reloaded = await postJson<{ metadata: { cwd: string } }>(`/api/v1/sessions/${sessionId}:reload`);
+    const reloaded = await postJson<{ cwd: string }>(`/api/v1/sessions/${sessionId}:reload`);
     expect(reloaded.body.code).toBe(0);
-    expect(reloaded.body.data.metadata.cwd).toBe(dirB);
+    expect(reloaded.body.data.cwd).toBe(dirB);
     session = getLiveSessionById((server as RunningServer).core.accessor, sessionId)!;
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);

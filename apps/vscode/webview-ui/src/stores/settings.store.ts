@@ -14,8 +14,6 @@ function saveConfigWithRollback(
 ): void {
   const revision = ++settingsSaveRevision;
   void bridge.saveConfig(config).catch((error: unknown) => {
-    // A later selection supersedes this request; rolling an older request back
-    // would overwrite the user's latest choice.
     if (revision !== settingsSaveRevision) return;
     set(rollback);
     toast.error(`Failed to save model settings: ${error instanceof Error ? error.message : String(error)}`);
@@ -32,7 +30,6 @@ export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
   version: "",
 };
 
-/** Metadata-driven only; mirrors the TUI's thinkingAvailability rules. */
 export function getModelThinkingMode(model: ModelConfig): ThinkingMode {
   if ((model.support_efforts?.length ?? 0) > 0) {
     return "effort";
@@ -102,13 +99,6 @@ function defaultEffortForModel(model: ModelConfig, defaultThinking: boolean, con
   return defaultThinking ? "on" : "off";
 }
 
-/**
- * Whether picking `effort` persists it as the global default — mirrors the
- * extension host's thinkingConfig gate: a pick above the model's effective
- * default effort stays session-only, with the ceiling falling back to the
- * tier below the top when the model carries no listed default. Only listed
- * efforts reach this helper (selectThinkingEffort rejects the rest).
- */
 function persistsAsDefaultEffort(model: ModelConfig, effort: string): boolean {
   const efforts = model.support_efforts ?? [];
   const declared = model.default_effort;
@@ -224,9 +214,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({
       currentModel: modelId,
       thinkingEffort,
-      // The save below persists the derived effort when it changed and
-      // clears the gate — keep the seed in sync, or the next switch derives
-      // from a stale value and saves it back over the persisted one.
       defaultThinkingEffort:
         effortChanged &&
         thinkingEffort !== "off" &&
@@ -257,7 +244,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const thinkingMode = getModelThinkingMode(model);
     if (thinkingMode !== "switch") {
       return;
-    } // Can only toggle in switch mode
+    }
 
     const newEffort = thinkingEffort === "off" ? "on" : "off";
     set({ thinkingEffort: newEffort, defaultThinking: newEffort !== "off" });
@@ -272,9 +259,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const { models, currentModel, thinkingEffort: previousEffort, defaultThinking, defaultThinkingEffort } = get();
     const model = getModelById(models, currentModel);
     if (!model) return;
-    // Match the TUI's commitEffort rule: a boolean "on" never reaches the
-    // engine for effort-capable models; resolve it to the model's default
-    // effort first. "on" remains valid only for genuine boolean models.
     let thinkingEffort = effort;
     if (thinkingEffort === "on" && getModelThinkingMode(model) === "effort") {
       thinkingEffort = defaultEffortForModel(model, true, defaultThinkingEffort);
@@ -283,15 +267,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const alwaysOn = model.capabilities.includes("always_thinking");
     if (thinkingEffort !== "off" && thinkingEffort !== "on" && !allowed.includes(thinkingEffort)) return;
     if (alwaysOn && thinkingEffort === "off") return;
-    // Re-confirming the effort already shown is not an explicit choice —
-    // skip the state update and the config write entirely.
     if (thinkingEffort === previousEffort) return;
     set({
       thinkingEffort,
       defaultThinking: thinkingEffort !== "off",
-      // A pick above the model's effective default effort is session-only
-      // (only the boolean toggle is persisted), so it must not become the
-      // configured-effort seed for future sessions.
       defaultThinkingEffort:
         thinkingEffort !== "off" &&
         thinkingEffort !== "on" &&

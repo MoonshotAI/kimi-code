@@ -447,6 +447,83 @@ describe('GET /api/v1/sessions/{session_id}/media/{file_id} (server-v2)', () => 
     expect((res.json() as Envelope).code).toBe(40407);
   });
 
+  it.each([
+    {
+      name: '趋势图 （全角） 😀.png',
+      mediaType: 'image/png',
+      disposition: 'inline',
+      fallback: '___ ____ __.png',
+      bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    },
+    {
+      name: '报告 （终版） 😀.pdf',
+      mediaType: 'application/pdf',
+      disposition: 'attachment',
+      fallback: '__ ____ __.pdf',
+      bytes: Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a]),
+    },
+  ])('preserves Unicode filenames on upload and session-media downloads: $name', async ({ name, mediaType, disposition, fallback, bytes }) => {
+    const r = await boot();
+    const meta = await uploadFile(r, bytes, name, mediaType);
+    const sessionId = await createSession(r);
+    await materializeUploadedFile(r, sessionId, meta);
+
+    for (const url of [`/api/v1/files/${meta.id}`, `/api/v1/sessions/${sessionId}/media/${meta.id}`]) {
+      const res = await appOf(r).inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toBe(mediaType);
+      expect(String(res.headers['content-disposition'])).toBe(
+        `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      );
+      expect(res.rawPayload).toEqual(bytes);
+    }
+  });
+
+  it('bounds Content-Disposition for extremely long Unicode filenames', async () => {
+    const r = await boot();
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const meta = await uploadFile(r, bytes, '图'.repeat(2000), 'image/png');
+    const sessionId = await createSession(r);
+    await materializeUploadedFile(r, sessionId, meta);
+
+    for (const url of [`/api/v1/files/${meta.id}`, `/api/v1/sessions/${sessionId}/media/${meta.id}`]) {
+      const res = await appOf(r).inject({ method: 'GET', url });
+      const disposition = String(res.headers['content-disposition']);
+      expect(res.statusCode).toBe(200);
+      expect(disposition).toBe(`inline; filename="${'_'.repeat(256)}"`);
+      expect(disposition).not.toContain('filename*=');
+      expect(res.rawPayload).toEqual(bytes);
+    }
+  });
+
+  it('does not split quoted filename escapes when truncating', async () => {
+    const r = await boot();
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const name = `${'a'.repeat(255)}\\${'图'.repeat(300)}`;
+    const mp = buildMultipart({
+      file: { fieldName: 'file', filename: 'upload.png', contentType: 'image/png', data: bytes },
+      fields: [{ name: 'name', value: name }],
+    });
+    const uploaded = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: mp.body,
+      headers: { 'content-type': mp.contentType },
+    });
+    const envelope = uploaded.json() as Envelope<{ id: string; name: string; media_type: string; size: number }>;
+    expect(envelope.code).toBe(0);
+    const meta = envelope.data!;
+    const sessionId = await createSession(r);
+    await materializeUploadedFile(r, sessionId, meta);
+
+    for (const url of [`/api/v1/files/${meta.id}`, `/api/v1/sessions/${sessionId}/media/${meta.id}`]) {
+      const res = await appOf(r).inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(200);
+      expect(String(res.headers['content-disposition'])).toBe(`inline; filename="${'a'.repeat(255)}\\\\"`);
+      expect(res.rawPayload).toEqual(bytes);
+    }
+  });
+
   it('serves a requested byte range from the session copy', async () => {
     const r = await boot();
     const data = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');

@@ -30,7 +30,7 @@ import {
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
   IAgentLifecycleService,
-  IAgentProfileService,
+  IAgentLoopService,
   IEventBus,
   interactions,
   ISessionTokenCountingService,
@@ -218,10 +218,7 @@ export class SessionEventWiring {
         agentId: payload.agentId ?? interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
       interactions.respond(interaction.id, response);
-    } catch {
-      // The session scope died mid-bridge (close/reload): the parked engine
-      // request died with it, and `respond` no-ops on an unknown id anyway.
-    }
+    } catch {}
   }
 
   /**
@@ -241,9 +238,7 @@ export class SessionEventWiring {
         agentId: interactionAgentId(interaction) ?? MAIN_AGENT_ID,
       });
       interactions.respond(interaction.id, result);
-    } catch {
-      // See bridgeApproval.
-    }
+    } catch {}
   }
 
   /**
@@ -260,9 +255,7 @@ export class SessionEventWiring {
         args: payload.args,
       });
       interactions.respond(interaction.id, result);
-    } catch {
-      // See bridgeApproval.
-    }
+    } catch {}
   }
 }
 
@@ -283,7 +276,7 @@ function interactionAgentId(interaction: Interaction): string | undefined {
  * wire-compatibility concerns.
  */
 function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event2<any> {
-  const profile = agent.accessor.get(IAgentProfileService) as IAgentProfileService | undefined;
+  const profile = agent.accessor.get(IAgentLoopService) as IAgentLoopService | undefined;
   const usageService = agent.accessor.get(ISessionUsageService) as ISessionUsageService | undefined;
   const tokenCounting = agent.accessor.get(ISessionTokenCountingService) as
     | ISessionTokenCountingService
@@ -291,12 +284,10 @@ function withStatusSnapshot(agent: IAgentScopeHandle, event: Event2<any>): Event
   if (profile === undefined || usageService === undefined || tokenCounting === undefined) {
     return event;
   }
-  // Externally reported context size, resolved by the `[token_counting]`
-  // strategy inside the service (`ISessionTokenCountingService.statusSize`).
   const context = agentContextOf(agent);
   const contextTokens = tokenCounting.statusSize(context);
-  const capabilities = profile.getModelCapabilities();
-  const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  const model = profile.getModel() === '' ? undefined : profile.resolveModelContext().model;
+  const maxContextTokens = model?.maxInputSize ?? model?.maxContextSize;
   const contextUsage =
     Number.isFinite(contextTokens) &&
     maxContextTokens !== undefined &&

@@ -136,7 +136,6 @@ describe('SessionEventHandler plugin update notices', () => {
 
     handler.handleEvent(toolCallStarted(DATASOURCE_TOOL), sendQueued);
     handler.handleEvent(toolResult(), sendQueued);
-    // The tool result alone must not trigger the notice mid-turn.
     expect(notifier.handleMcpToolCompleted).not.toHaveBeenCalled();
 
     handler.handleEvent(turnEnded('completed'), sendQueued);
@@ -155,7 +154,6 @@ describe('SessionEventHandler plugin update notices', () => {
     handler.handleEvent(turnEnded('cancelled'), sendQueued);
     expect(notifier.handleMcpToolCompleted).not.toHaveBeenCalled();
 
-    // A later completed turn must not replay the cancelled turn's usage.
     handler.handleEvent(turnEnded('completed', 3), sendQueued);
     expect(notifier.handleMcpToolCompleted).not.toHaveBeenCalled();
   });

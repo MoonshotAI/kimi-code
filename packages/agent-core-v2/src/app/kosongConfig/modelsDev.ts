@@ -43,6 +43,11 @@ export interface ModelsDevProviderEntry {
 
 export type ModelsDevCatalog = Record<string, ModelsDevProviderEntry>;
 
+export interface ModelsDevCapability extends ModelCapability {
+  readonly max_context_tokens: number;
+  readonly max_input_tokens?: number;
+}
+
 export interface ModelsDevModel {
   readonly id: string;
   readonly name?: string;
@@ -53,7 +58,7 @@ export interface ModelsDevModel {
   readonly alwaysThinking?: boolean;
   readonly protocol?: 'anthropic';
   readonly baseUrl?: string;
-  readonly capability: ModelCapability;
+  readonly capability: ModelsDevCapability;
 }
 
 const KNOWN_WIRE_TYPES = [

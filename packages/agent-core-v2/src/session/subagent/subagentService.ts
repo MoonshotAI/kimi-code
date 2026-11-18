@@ -15,7 +15,7 @@ import {
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
@@ -91,7 +91,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     const caller = this.requireCaller(input.callerAgentId);
     const fork = input.fork === true;
     await this.catalog.ready;
-    const own = caller.accessor.get(IAgentProfileService).data();
+    const own = caller.accessor.get(IAgentLoopService).data();
     const requested = input.profileName !== undefined && input.profileName.length > 0
       ? input.profileName
       : undefined;
@@ -176,7 +176,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         throw wrapSubagentModelError(
           error,
           plan.model,
-          caller.accessor.get(IAgentProfileService).data().modelAlias,
+          caller.accessor.get(IAgentLoopService).data().modelAlias,
         );
       }
       created.accessor
@@ -185,7 +185,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       const createdUserTools = created.accessor.get(IAgentUserToolService);
       const callerUserTools = caller.accessor.get(IAgentUserToolService);
       if (plan.fork) {
-        const activeToolNames = created.accessor.get(IAgentProfileService).getActiveToolNames();
+        const activeToolNames = created.accessor.get(IAgentLoopService).getActiveToolNames();
         createdUserTools.inheritUserTools(callerUserTools, activeToolNames);
       } else {
         createdUserTools.inheritUserTools(callerUserTools);

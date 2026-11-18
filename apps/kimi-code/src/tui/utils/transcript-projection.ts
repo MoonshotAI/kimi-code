@@ -31,6 +31,7 @@ export function foldRule(item: LogicalTranscriptItem, options: TranscriptPresent
     case 'thinking': return options.thinking === 'grouped' ? 'fold' : 'none';
     case 'explore': return folding === 'none' ? 'none' : 'fold';
     case 'all': return folding === 'all' ? 'fold' : 'none';
+    case 'never': return 'none';
     case 'command':
       if (folding !== 'readonly') return folding === 'all' ? 'fold' : 'none';
       if (!item.fold.argsComplete) return 'pending';

@@ -40,10 +40,8 @@ export type { HookResultEvent } from '@moonshot-ai/agent-core-v2/features/extern
 export type {
   ToolCallStartedEvent,
   ToolCallDeltaEvent,
-  ToolProgressEvent,
+  ToolUpdatedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-
-export type { ToolUpdate } from '@moonshot-ai/agent-core-v2/tool/toolContract';
 export type { McpOAuthAuthorizationUrlUpdateData } from '@moonshot-ai/agent-core-v2/agent/mcp/tools/auth';
 
 export type { ToolCallRequest, ToolCallResponse } from '#/interaction';

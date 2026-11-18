@@ -14,7 +14,8 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import type { ProfileData } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { resolveEffectiveWorkspaceRoots, type EffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
@@ -82,7 +83,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLoopService private readonly profile: IAgentLoopService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @ISessionAgentProfileCatalog private readonly agentCatalog: ISessionAgentProfileCatalog,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
@@ -205,7 +206,6 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
           return;
         }
       }
-      if (!this.toolActiveForBoundProfile(profileData, 'Skill')) return;
       this.reminder.notify(skillsChangeText(listing), { variant: SKILLS_CHANGE_VARIANT });
     } catch (error) {
       this.log.warn('skill change notification failed', { error });

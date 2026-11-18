@@ -1170,4 +1170,39 @@ describe('fold rules', () => {
     expect(titleText(groupView(group, timeline, 100).title)).toBe('Using tools');
     expect(project([unnamed]).map((projection) => projection.kind)).toEqual(['single']);
   });
+
+  it.each([
+    ['compact', ['group', 'row', 'row', 'group']],
+    ['balanced', ['group', 'row', 'row', 'group']],
+    ['detailed', ['group', 'single', 'single', 'group']],
+  ] as const)('keeps cron changes out of the groups in %s', (toolCallDensity, kinds) => {
+    const components = [
+      thought(1000),
+      tool('CronCreate', { cron: '*/5 * * * *', prompt: 'check CI' }),
+      tool('CronDelete', { id: 'cron-1' }),
+      tool('CronList'),
+    ];
+
+    expect(project(components, options({ toolCallDensity })).map((item) => item.kind)).toEqual(kinds);
+  });
+
+  it.each([
+    ['compact', ['group', 'row', 'group']],
+    ['balanced', ['group', 'row', 'row']],
+    ['detailed', ['group', 'single', 'single']],
+  ] as const)('keeps an MCP authenticate call out of the groups in %s', (toolCallDensity, kinds) => {
+    const components = [
+      tool('Read', { path: '/work/.mcp.json' }),
+      tool('mcp__linear__authenticate', {}, null),
+      tool('mcp__linear__list_issues'),
+    ];
+
+    expect(project(components, options({ toolCallDensity })).map((item) => item.kind)).toEqual(kinds);
+  });
+
+  it('keeps the authenticate call of a server whose name ends in an underscore out of the compact groups', () => {
+    const components = [tool('Read', { path: '/work/.mcp.json' }), tool('mcp__linear_prod___authenticate', {}, null)];
+
+    expect(project(components, compact).map((item) => item.kind)).toEqual(['group', 'row']);
+  });
 });

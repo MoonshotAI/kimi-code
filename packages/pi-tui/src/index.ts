@@ -2,10 +2,17 @@
 
 export { Marked, type Token, type Tokens } from "marked";
 // Animation frames
-export { ANIMATION_FRAME_INTERVAL_MS, type AnimationClock, AnimationFrameScheduler } from "./animation-frame.ts";
+export {
+	ANIMATION_FRAME_INTERVAL_MS,
+	type AnimationClock,
+	AnimationFrameScheduler,
+	MAX_ANIMATION_FRAME_RATE,
+} from "./animation-frame.ts";
 // Autocomplete support
 export {
+	type AutocompleteContext,
 	type AutocompleteItem,
+	type AutocompletePreviewContext,
 	type AutocompleteProvider,
 	type AutocompleteSuggestions,
 	CombinedAutocompleteProvider,

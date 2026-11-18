@@ -50,8 +50,6 @@ describe('combineSteerInput', () => {
       head: [{ type: 'text', text: 'a ' }] as PromptPart[],
     },
   ])('drops the separator $name', ({ first, head }) => {
-    // Inserting '\n\n' there would strand a whitespace-only text part between
-    // the two media parts, which `normalizePromptInput` rejects.
     const refPart2 = {
       type: 'image_url',
       imageUrl: { url: 'kimi-file://f_2?path=%2Fcache%2Ff_2.png' },
@@ -61,8 +59,6 @@ describe('combineSteerInput', () => {
   });
 
   it('treats a standalone <media path> tag as plain user text', () => {
-    // Extraction no longer authors machine tags, so a tag in the input is
-    // user text: it merges with adjacent text instead of staying atomic.
     const tag = '<image path="/cache/f_1.png"></image>';
     const result = combineSteerInput([
       {

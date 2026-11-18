@@ -85,17 +85,6 @@ export interface InitializeServerTelemetryOptions {
   readonly version: string;
 }
 
-/**
- * Bootstrap telemetry for the `kimi web` host.
- *
- * Mirrors {@link initializeCliTelemetry}: mints the device id, reads config to
- * honor the `telemetry` toggle and pick up the default model, and attaches the
- * sink with `ui_mode = "web"`.
- *
- * The returned client wraps the `@moonshot-ai/kimi-telemetry` module
- * functions, so the module-level `track` / `withTelemetryContext` (used to
- * fire the startup event) share the same underlying client + sink.
- */
 export function initializeServerTelemetry(
   options: InitializeServerTelemetryOptions,
 ): TelemetryClient {
@@ -137,8 +126,6 @@ function readServerTelemetryConfig(
 ): Pick<KimiConfig, 'telemetry' | 'defaultModel'> {
   try {
     const { config, fileError } = loadRuntimeConfigSafe(configPath);
-    // A broken config fails the server on its own inside KimiCore; for
-    // telemetry just degrade to "enabled, no model" so we never block startup.
     if (fileError !== undefined) return {};
     return config;
   } catch {

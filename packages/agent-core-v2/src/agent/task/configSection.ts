@@ -17,7 +17,6 @@ export const PrintBackgroundModeSchema = z.enum(['exit', 'drain', 'steer']);
 export type PrintBackgroundMode = z.infer<typeof PrintBackgroundModeSchema>;
 
 export const AgentTaskConfigSchema = z.object({
-  maxRunningTasks: z.number().int().min(1).optional(),
   keepAliveOnExit: z.boolean().optional(),
   bashAutoBackgroundOnTimeout: z.boolean().optional(),
   bashTaskTimeoutS: z.number().int().min(0).optional(),
@@ -44,7 +43,6 @@ export function resolvePrintBackgroundMode(config: IConfigService): PrintBackgro
 }
 
 export const KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
-export const MAX_RUNNING_TASKS_ENV = 'KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS';
 export const BASH_TASK_TIMEOUT_S_ENV = 'KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S';
 export const PRINT_WAIT_CEILING_S_ENV = 'KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S';
 export const PRINT_BACKGROUND_MODE_ENV = 'KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE';
@@ -71,7 +69,6 @@ function parsePrintBackgroundMode(raw: string): PrintBackgroundMode | undefined 
 
 export const taskEnvBindings: EnvBindings<AgentTaskConfig> = envBindings(AgentTaskConfigSchema, {
   keepAliveOnExit: { env: KEEP_ALIVE_ON_EXIT_ENV, parse: parseBooleanEnv },
-  maxRunningTasks: { env: MAX_RUNNING_TASKS_ENV, parse: parsePositiveInt },
   bashTaskTimeoutS: { env: BASH_TASK_TIMEOUT_S_ENV, parse: parseNonNegativeInt },
   printWaitCeilingS: { env: PRINT_WAIT_CEILING_S_ENV, parse: parsePositiveInt },
   printBackgroundMode: { env: PRINT_BACKGROUND_MODE_ENV, parse: parsePrintBackgroundMode },

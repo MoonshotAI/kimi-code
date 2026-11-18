@@ -44,7 +44,6 @@ describe('agent-tree', () => {
     expect(tree).toHaveLength(2);
     const ids = tree.map((n) => n.agentId).sort();
     expect(ids).toEqual(['agent-0', 'main']);
-    // orphan is still a root, no children attached anywhere
     const orphan = tree.find((n) => n.agentId === 'agent-0')!;
     expect(orphan.children).toEqual([]);
   });
@@ -77,11 +76,6 @@ describe('agent-tree', () => {
   });
 
   it('compareAgentIds is a deterministic total order when agent-N and foreign ids mix', () => {
-    // 'agent-1a' is a foreign/hand-edited id reachable via state.json keys or
-    // discoverAgentsFromDisk directory names — it does not match agent-N.
-    // Under the new rule: all agent-N ids sort numerically first, then any
-    // non-agent-N id by localeCompare. Sorting any permutation must yield the
-    // same order; the OLD comparator was intransitive and order-dependent here.
     const forward = ['agent-2', 'agent-1a', 'agent-10'];
     const reverse = [...forward].reverse();
     const expected = ['agent-2', 'agent-10', 'agent-1a'];

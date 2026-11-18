@@ -28,7 +28,7 @@ kimi <subcommand> [options]
 | `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent 并为新会话选中它。不可重复传入，也不能与 `--agent`、`--session` 或 `--continue` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
-`-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。隐藏标志 `--environment <id>` 让新会话绑定到已配置的远程环境，`--environment-cwd <path>` 覆盖该环境的工作目录（详见 [远程环境](../guides/remote-environment.md#临时指定环境)）。
+`-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。隐藏标志 `--environment <id>` 让新会话绑定到已配置的远程环境，`--environment-cwd <path>` 覆盖该环境的工作目录（详见 [远程环境](../guides/remote-environment.md#kimi-environment-与-environment-cwd)）。
 
 ::: warning 注意
 `--yolo` 会跳过普通工具调用的人工确认，包括文件写入和 Shell 命令执行，请只在受信任的工作目录下使用。Plan 模式的退出审批不会被 `--yolo` 跳过；Plan 模式下的 `Bash` 按普通放行规则处理。
@@ -38,7 +38,7 @@ kimi <subcommand> [options]
 
 以下组合会在启动时被拒绝：
 
-- `--continue` 与 `--session` 互斥——两者都表示"恢复历史会话"
+- `--continue` 与 `--session` 互斥——两者都表示 "恢复历史会话"
 - `--yolo` 和 `--auto` 互斥——两种权限模式互斥
 - `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
@@ -119,7 +119,7 @@ kimi -p --agent reviewer "审查这个分支上的改动"
 kimi -p "Summarize the current repository status"
 ```
 
-输出采用 transcript 样式：thinking 内容和 Assistant 正文都以 `• ` 开头，换行后两个空格缩进。Assistant 正文输出到 stdout；thinking、工具进度和"恢复会话"提示输出到 stderr。`-p` 模式不会请求人工审批，普通工具调用按 `auto` 权限策略处理，静态 deny 规则仍然生效。
+输出采用 transcript 样式：thinking 内容和 Assistant 正文都以 `• ` 开头，换行后两个空格缩进。Assistant 正文输出到 stdout；thinking、工具进度和 "恢复会话" 提示输出到 stderr。`-p` 模式不会请求人工审批，普通工具调用按 `auto` 权限策略处理，静态 deny 规则仍然生效。
 
 临时切换模型：
 
@@ -183,10 +183,6 @@ kimi web --port 58628    # 指定绑定端口
 | `--no-open` | 就绪后不自动打开浏览器 |
 
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
-
-::: info 提示
-`kimi server` 命令树已废弃：任何 `kimi server …` 调用（含全部旧子命令）只会打印弃用提示并以退出码 1 结束，请改用 `kimi web`。唯一的例外是 `kimi server kill`，它仍然可用，仅用于停止 0.28.0 之前版本启动的服务。该提示将在 Kimi Code 下个大版本移除。
-:::
 
 ::: danger 警告
 `--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后按 `Ctrl+C` 停止服务。

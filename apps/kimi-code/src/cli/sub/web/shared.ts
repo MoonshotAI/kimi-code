@@ -1,9 +1,3 @@
-/**
- * Shared helpers for `kimi web` and its subcommands.
- *
- * Owns the default host/port, option parsers, and health/readiness probes.
- */
-
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -15,7 +9,6 @@ export const DEFAULT_SERVER_HOST = LOCAL_SERVER_HOST;
 export const DEFAULT_SERVER_PORT = 58627;
 export const DEFAULT_SERVER_ORIGIN = serverOrigin(DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT);
 
-/** Filename (under KIMI_CODE_HOME) of the persistent server bearer token. */
 export const SERVER_TOKEN_FILE = 'server.token';
 
 export const DEFAULT_LOG_LEVEL: ServerLogLevel = 'info';
@@ -36,16 +29,13 @@ export interface ParsedServerOptions {
   port: number;
   logLevel: ServerLogLevel;
   debugEndpoints: boolean;
-  /** Allow a non-loopback bind without a TLS-terminating reverse proxy. */
   insecureNoTls: boolean;
-  /** Allow `POST /api/v1/shutdown` on a non-loopback bind. */
   allowRemoteShutdown: boolean;
-  /** Disable bearer-token auth on every route (`--dangerous-bypass-auth`). */
   dangerousBypassAuth: boolean;
-  /** Extra `Host` header values to allow through the DNS-rebinding check. */
   allowedHosts: readonly string[];
-  /** Custom browser tab title for this web UI instance (`--web-title`). */
   webTitle?: string;
+  socketPath?: string;
+  managedBy?: string;
 }
 
 export interface ServerCliOptions {
@@ -53,16 +43,13 @@ export interface ServerCliOptions {
   port?: string;
   logLevel?: string;
   debugEndpoints?: boolean;
-  /** Allow a non-loopback bind without TLS (`--insecure-no-tls`). */
   insecureNoTls?: boolean;
-  /** Allow remote shutdown on a non-loopback bind (`--allow-remote-shutdown`). */
   allowRemoteShutdown?: boolean;
-  /** Disable bearer-token auth on every route (`--dangerous-bypass-auth`). */
   dangerousBypassAuth?: boolean;
-  /** Extra `Host` header values to allow (`--allowed-host`). */
   allowedHost?: string[];
-  /** Custom browser tab title for this web UI instance (`--web-title`). */
   webTitle?: string;
+  socket?: string;
+  managedBy?: string;
 }
 
 export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions {
@@ -76,6 +63,8 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     dangerousBypassAuth: opts.dangerousBypassAuth === true,
     allowedHosts: parseAllowedHostArgs(opts.allowedHost),
     webTitle: opts.webTitle,
+    socketPath: opts.socket,
+    managedBy: opts.managedBy,
   };
 }
 
@@ -116,7 +105,6 @@ export function serverOrigin(host: string, port: number): string {
   return `http://${host}:${port}`;
 }
 
-/** Strip `/api/v1` and trailing slashes so user-supplied origins are uniform. */
 export function normalizeServerOrigin(value: string): string {
   const url = new URL(value);
   url.pathname = url.pathname.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
@@ -125,18 +113,6 @@ export function normalizeServerOrigin(value: string): string {
   return url.toString().replace(/\/$/, '');
 }
 
-/**
- * Read the persistent bearer token for the server.
- *
- * The server writes `<homeDir>/server.token` (0600) on first boot and reuses
- * it across restarts (ROADMAP M5.1); CLI commands that hit a gated REST route
- * read it back here and send it as `Authorization: Bearer <token>`. `homeDir`
- * is the CLI's own KIMI_CODE_HOME resolution (`getDataDir()`).
- *
- * Throws a clear error when the file is missing/unreadable — the usual cause
- * is a server that has never been started (no token file yet), or an older
- * build that predates token auth.
- */
 export function resolveServerToken(homeDir: string): string {
   const tokenPath = join(homeDir, SERVER_TOKEN_FILE);
   try {
@@ -149,7 +125,6 @@ export function resolveServerToken(homeDir: string): string {
   }
 }
 
-/** Best-effort token read: returns `undefined` instead of throwing. */
 export function tryResolveServerToken(homeDir: string): string | undefined {
   try {
     return resolveServerToken(homeDir);
@@ -158,7 +133,6 @@ export function tryResolveServerToken(homeDir: string): string | undefined {
   }
 }
 
-/** An `Authorization: Bearer <token>` header bag for `fetch`. */
 export function authHeaders(token: string): { Authorization: string } {
   return { Authorization: `Bearer ${token}` };
 }
