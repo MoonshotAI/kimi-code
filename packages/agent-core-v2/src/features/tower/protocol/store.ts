@@ -2186,7 +2186,7 @@ export class TowerStore {
     ) {
       if (reviewMission.completionTip === undefined) {
         throw new TowerProtocolError(
-          `artifact mission ${reviewMission.id} has no completion tip recorded — its acceptance-request cannot be bound to an exact branch tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record TowerReview again immediately when the user has asked for the merge, otherwise only after explicit user approval; a noninteractive run without that approval leaves the mission completed and waiting.`,
+          `artifact mission ${reviewMission.id} has no completion tip recorded — its acceptance-request cannot be bound to an exact branch tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record TowerReview again immediately when the user has asked for the merge, otherwise only after explicit user approval.`,
         );
       }
       if (input.acceptanceTip === undefined) {
@@ -2201,7 +2201,7 @@ export class TowerStore {
       }
       if (reviewedCommit !== reviewMission.completionTip) {
         throw new TowerProtocolError(
-          `branch "${input.target}" advanced after the artifact acceptance-request (completion ${reviewMission.completionTip.slice(0, 7)}, current ${reviewedCommit.slice(0, 7)}) — the delivery at the current tip has not been accepted. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance with TowerReview immediately when the user has asked for the merge, otherwise only after explicit user approval; a noninteractive run without that approval leaves the mission completed and waiting.`,
+          `branch "${input.target}" advanced after the artifact acceptance-request (completion ${reviewMission.completionTip.slice(0, 7)}, current ${reviewedCommit.slice(0, 7)}) — the delivery at the current tip has not been accepted. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance with TowerReview immediately when the user has asked for the merge, otherwise only after explicit user approval.`,
         );
       }
     }
