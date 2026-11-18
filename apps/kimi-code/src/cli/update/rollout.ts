@@ -10,7 +10,7 @@ import { getUpdateRolloutLogFile } from '#/utils/paths';
 import { decideUpdate } from './select';
 import type { RolloutBatch, UpdateFeed, UpdateManifest, UpdatePlan } from './types';
 
-export const MAX_ROLLOUT_DELAY_SECONDS = 86_400;
+export const UNCOVERED_ROLLOUT_DELAY_SECONDS = 86_400;
 
 export function rolloutBucket(deviceId: string, version: string): number {
   const digest = createHash('sha256').update(`${deviceId}:${version}`, 'utf-8').digest();
@@ -19,14 +19,16 @@ export function rolloutBucket(deviceId: string, version: string): number {
 
 export function rolloutDelayForBucket(rollout: readonly RolloutBatch[], bucket: number): number {
   let cumulative = 0;
+  let longest = 0;
   for (const batch of rollout) {
     cumulative += batch.percent;
+    longest = Math.max(longest, batch.delaySeconds);
     if (bucket < cumulative) {
-      return Math.min(Math.max(batch.delaySeconds, 0), MAX_ROLLOUT_DELAY_SECONDS);
+      return Math.max(batch.delaySeconds, 0);
     }
   }
   if (rollout.length === 0) return 0;
-  return MAX_ROLLOUT_DELAY_SECONDS;
+  return Math.max(longest, UNCOVERED_ROLLOUT_DELAY_SECONDS);
 }
 
 export function rolloutDelaySeconds(manifest: UpdateManifest, deviceId: string): number {
@@ -89,10 +91,8 @@ export function decidePassiveUpdate(
   const manifest = feed.manifest;
   const bucket = rolloutBucket(deviceId, manifest.version);
   const delaySeconds = rolloutDelayForBucket(manifest.rollout, bucket);
-  const publishedAt = Date.parse(manifest.publishedAt);
-  const eligibleAt = Number.isFinite(publishedAt)
-    ? new Date(publishedAt + delaySeconds * 1000).toISOString()
-    : null;
+  const eligibleDate = new Date(Date.parse(manifest.publishedAt) + delaySeconds * 1000);
+  const eligibleAt = Number.isFinite(eligibleDate.getTime()) ? eligibleDate.toISOString() : null;
   const eligible = isRolloutEligible(manifest, deviceId, now);
   return passiveResult(
     eligible ? plan : { kind: 'none' },
