@@ -4,7 +4,7 @@
 
 ## 会话
 
-这部分接口管理会话本身：创建、列出、读取和修改会话，执行 fork、压缩、撤销等会话动作，以及读取目标、告警、环境、文件历史等会话级信息。返回会话的接口都使用 [会话对象](#会话对象) 格式。
+这部分接口管理会话本身：创建、列出、读取和修改会话，执行 fork、压缩、撤销等会话动作，以及读取目标、告警、环境、上下文、文件历史等会话级信息。返回会话的接口都使用 [会话对象](#会话对象) 格式。
 
 ### 会话对象
 
@@ -511,6 +511,100 @@
 | `environments[].connect_error` | string | `disconnected` 条目的失败原因 |
 
 - `40401`：会话不存在
+
+### 上下文
+
+查看会话中的 Agent 发给模型的内容：系统提示词、工具定义和消息。这些内容经过与 Agent 下一次请求相同的整理：工具结果按模型读到的样子渲染，包括耗时、错误标记和备注；工具结果紧跟在对应的工具调用之后，即使工具运行期间有其他消息插入；空白或孤立的条目会被丢弃；被中断的工具调用会补上占位结果。图片等媒体只列出引用，因为它们的数据要到真正发送请求时才会解析。读取上下文时，如果会话尚未加载到服务进程中，会先加载它。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/v1/sessions/{session_id}/context/summary` | token 用量和按角色划分的上下文组成 |
+| `GET /api/v1/sessions/{session_id}/context/items` | 上下文组成，以及一页上下文条目 |
+| `GET /api/v1/sessions/{session_id}/context/items/{item_id}` | 单个上下文条目的完整内容 |
+
+每个上下文条目属于以下角色之一：`system`（系统提示词）、`definition`（工具定义，包括动态加载的工具 schema）、`user`、`assistant` 或 `tool`（工具结果）。
+
+#### `GET /api/v1/sessions/{session_id}/context/summary`
+
+读取 token 用量，以及上下文在各角色之间的分布。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | 必填。会话 id |
+| `agent_id` | query | string | 可选。要查看的 Agent，默认为 main agent |
+
+成功时 `data` 为：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `session_id` / `agent_id` | string | 被查看的会话和 Agent |
+| `captured_at` | number | 快照时间，Unix 毫秒时间戳 |
+| `model` | string | Agent 的模型别名。可选 |
+| `tokens.used` | number | 已使用的上下文 token 数，与该 Agent 的 [`usage` 帧](./server-api-conversation.md#agent-状态) 一致 |
+| `tokens.max` | number | 模型的上下文窗口大小。可选 |
+| `total_chars` | number | 所有分组的字符总数 |
+| `groups[]` | array | 每个角色一项，按上下文顺序排列，包含 `role`、`count`（条目数）和 `chars` |
+
+字符数统计可读文本和结构化内容（例如工具调用参数和工具 schema），因此只是 token 数的近似。
+
+- `40401`：会话或 Agent 不存在
+
+#### `GET /api/v1/sessions/{session_id}/context/items`
+
+按模型读取的顺序分页列出上下文条目，同时返回组成摘要。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | 必填。会话 id |
+| `agent_id` | query | string | 可选。要查看的 Agent，默认为 main agent |
+| `role` | query | string | 可选。只返回该角色的条目。重复传入该参数可同时选择多个角色 |
+| `offset` | query | number | 可选。跳过的条目数，默认 `0` |
+| `limit` | query | number | 可选。每页条数，`1` 到 `500`，默认 `100` |
+
+成功时 `data` 为 `{ summary, tools, items, total, has_more }`：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `summary` | object | 与 `GET /api/v1/sessions/{session_id}/context/summary` 的格式相同 |
+| `tools[]` | array | 全部工具定义。角色筛选不包含 `definition` 时为空 |
+| `items[]` | array | 一页条目：先是系统提示词，再是消息。角色筛选包含 `definition` 时，工具定义排在系统提示词之后 |
+| `total` | number | 符合筛选条件的条目总数 |
+| `has_more` | boolean | 这一页之后是否还有更多条目 |
+
+`tools[]` 和 `items[]` 中的每一项包含：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | string | `system`、`tool-<index>` 或 `message-<index>`。id 表示位置，因此在压缩或撤销之后会指向不同的条目 |
+| `role` | string | `system` / `definition` / `user` / `assistant` / `tool` |
+| `name` | string | 工具定义、工具调用和工具结果对应的工具名。可选 |
+| `sequence` | number | 在消息中的位置，从 1 开始。系统提示词和工具定义没有该字段 |
+| `preview` | string | 条目文本的前 240 个字符 |
+| `chars` | number | 条目的字符数 |
+| `has_media` | boolean | 条目是否包含图片、音频、视频或文件 |
+
+- `40001`：查询参数不合法，例如 `limit` 超过 `500`
+- `40401`：会话或 Agent 不存在
+
+#### `GET /api/v1/sessions/{session_id}/context/items/{item_id}`
+
+读取单个上下文条目的完整内容。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | 必填。会话 id |
+| `item_id` | path | string | 必填。来自 `GET /api/v1/sessions/{session_id}/context/items` 的条目 id |
+| `agent_id` | query | string | 可选。要查看的 Agent，默认为 main agent |
+
+成功时 `data` 包含条目的 `id`、`role`、`name`、`sequence`、`chars` 和 `has_media`（与条目列表相同），以及：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `parts[]` | array | 解析后的内容。常见的 `kind` 有 `text`、`think`、`function`（工具调用，工具名在 `name`，参数在 `data`）、`definition`（工具 schema 在 `data`）、`media` 和 `data`。系统提示词按一级标题拆分为多个 `text`，标题放在 `name` |
+| `raw` | any | 发给模型的原始条目，其中内联的媒体数据替换为大小占位 |
+
+- `40401`：会话或 Agent 不存在
+- `40403`：条目不存在
 
 ### 导出与媒体
 

@@ -4,7 +4,7 @@ This page lists the REST endpoints under `/api/v1/sessions` (session file system
 
 ## Sessions
 
-These endpoints manage sessions themselves: create, list, read, and update sessions, run session actions such as fork, compact, and undo, and read session-level information such as the goal, warnings, environments, and file history. Every endpoint that returns a session uses the [session object](#session-object) shape.
+These endpoints manage sessions themselves: create, list, read, and update sessions, run session actions such as fork, compact, and undo, and read session-level information such as the goal, warnings, environments, context, and file history. Every endpoint that returns a session uses the [session object](#session-object) shape.
 
 ### Session object
 
@@ -511,6 +511,100 @@ On success, `data` is `{ environments }`:
 | `environments[].connect_error` | string | Failure reason of a `disconnected` entry |
 
 - `40401`: the session does not exist
+
+### Context
+
+Inspect what a session's agent sends to the model: the system prompt, the tool definitions, and the messages. The content goes through the same request shaping as the agent's next request: tool results are rendered the way the model reads them, including wall time, error markers, and notes; each tool result is placed right after its tool call, even when other messages arrived while the tool ran; blank or orphaned entries are dropped; and interrupted tool calls get a placeholder result. Images and other media are listed as references, because their data is resolved only when a request is actually sent. Reading the context loads the session into the server process if it is not loaded yet.
+
+| Method and path | Description |
+| --- | --- |
+| `GET /api/v1/sessions/{session_id}/context/summary` | Token usage and the context composition by role |
+| `GET /api/v1/sessions/{session_id}/context/items` | The composition plus a page of context items |
+| `GET /api/v1/sessions/{session_id}/context/items/{item_id}` | The full content of one context item |
+
+Every context item has one of these roles: `system` (the system prompt), `definition` (a tool definition, including dynamically loaded tool schemas), `user`, `assistant`, or `tool` (a tool result).
+
+#### `GET /api/v1/sessions/{session_id}/context/summary`
+
+Reads the token usage and how the context splits across roles.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | Required. Session id |
+| `agent_id` | query | string | Optional. Agent to inspect. Defaults to the main agent |
+
+On success, `data` is:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `session_id` / `agent_id` | string | The inspected session and agent |
+| `captured_at` | number | When the snapshot was taken, in epoch milliseconds |
+| `model` | string | The agent's model alias. Optional |
+| `tokens.used` | number | Context tokens in use, the same value as the agent's [`usage` frame](./server-api-conversation.md#agent-state) |
+| `tokens.max` | number | The model's context window. Optional |
+| `total_chars` | number | Characters across all groups |
+| `groups[]` | array | One entry per role in context order, with `role`, `count` (number of items), and `chars` |
+
+Character counts cover readable text and structured content such as tool call arguments and tool schemas, so they only approximate token counts.
+
+- `40401`: the session or agent does not exist
+
+#### `GET /api/v1/sessions/{session_id}/context/items`
+
+Lists context items in the order the model reads them, one page at a time, together with the summary.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | Required. Session id |
+| `agent_id` | query | string | Optional. Agent to inspect. Defaults to the main agent |
+| `role` | query | string | Optional. Only return items with this role. Repeat the parameter to select several roles |
+| `offset` | query | number | Optional. Number of items to skip. Default `0` |
+| `limit` | query | number | Optional. Page size, `1` to `500`. Default `100` |
+
+On success, `data` is `{ summary, tools, items, total, has_more }`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `summary` | object | Same shape as `GET /api/v1/sessions/{session_id}/context/summary` |
+| `tools[]` | array | All tool definitions. Empty when a role filter leaves out `definition` |
+| `items[]` | array | A page of items: the system prompt first, then the messages. When a role filter selects `definition`, tool definitions follow the system prompt |
+| `total` | number | Number of items that match the filter |
+| `has_more` | boolean | Whether more items follow this page |
+
+Entries in `tools[]` and `items[]` have:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | `system`, `tool-<index>`, or `message-<index>`. Ids are positions, so they point to different items after compaction or undo |
+| `role` | string | `system` / `definition` / `user` / `assistant` / `tool` |
+| `name` | string | Tool name for tool definitions, tool calls, and tool results. Optional |
+| `sequence` | number | 1-based position among the messages. Absent for the system prompt and tool definitions |
+| `preview` | string | Up to 240 characters of the item's text |
+| `chars` | number | Characters in the item |
+| `has_media` | boolean | Whether the item contains images, audio, video, or files |
+
+- `40001`: invalid query parameters, such as a `limit` above `500`
+- `40401`: the session or agent does not exist
+
+#### `GET /api/v1/sessions/{session_id}/context/items/{item_id}`
+
+Reads one context item in full.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | Required. Session id |
+| `item_id` | path | string | Required. Item id from `GET /api/v1/sessions/{session_id}/context/items` |
+| `agent_id` | query | string | Optional. Agent to inspect. Defaults to the main agent |
+
+On success, `data` has the item's `id`, `role`, `name`, `sequence`, `chars`, and `has_media`, as in the item list, plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `parts[]` | array | Parsed content. Common `kind` values are `text`, `think`, `function` (a tool call, with the tool name in `name` and the arguments in `data`), `definition` (a tool schema in `data`), `media`, and `data`. The system prompt is split into `text` parts at its top-level headings, with each heading in `name` |
+| `raw` | any | The item as sent to the model, with inline media data replaced by a size placeholder |
+
+- `40401`: the session or agent does not exist
+- `40403`: the item does not exist
 
 ### Export and media
 
