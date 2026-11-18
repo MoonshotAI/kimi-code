@@ -728,8 +728,8 @@ describe('WorkspaceFsService git batches', () => {
     expect(pullRequests.results['/c']).toBeNull();
     expect(pullRequests.errors['/b']).toEqual({ code: 40908, msg: 'not a repo' });
     expect(pullRequests.statuses).toEqual({
-      '/a': { status: 'found' },
-      '/c': { status: 'unavailable' },
+      '/a': { pull_request_status: 'found' },
+      '/c': { pull_request_status: 'unavailable' },
     });
   });
 

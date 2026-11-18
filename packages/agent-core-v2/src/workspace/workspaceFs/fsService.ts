@@ -1322,7 +1322,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const statuses = Object.create(null) as NonNullable<FsPullRequestBatchResponse['statuses']>;
     for (const [root, lookup] of Object.entries(lookups)) {
       results[root] = lookup.pullRequest;
-      statuses[root] = { status: lookup.status, error: lookup.error };
+      statuses[root] = { pull_request_status: lookup.status, pull_request_error: lookup.error };
     }
     return { results, errors, statuses };
   }

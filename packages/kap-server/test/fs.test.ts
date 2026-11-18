@@ -740,7 +740,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     const pullRequest = await postFs<null>(id, 'pull_request', {});
     const prBatch = await postFs<{
       results: Record<string, null>;
-      statuses: Record<string, { status: string }>;
+      statuses: Record<string, { pull_request_status: string }>;
     }>(id, 'pull_request:batch', { roots: [work] });
 
     expect(status.code).toBe(0);
@@ -755,7 +755,9 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(pullRequest.data).toBeNull();
     expect(pullRequest.details).toEqual({ pull_request_status: status.data.pull_request_status });
     expect(prBatch.data.results).toEqual({ [work!]: null });
-    expect(prBatch.data.statuses).toEqual({ [work!]: { status: status.data.pull_request_status } });
+    expect(prBatch.data.statuses).toEqual({
+      [work!]: { pull_request_status: status.data.pull_request_status },
+    });
   }, 20000);
 
   it('tells a directory that no longer exists apart from one that is not a repository', async () => {

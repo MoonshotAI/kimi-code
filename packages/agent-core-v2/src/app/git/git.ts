@@ -29,13 +29,15 @@ export const fsPullRequestStatusSchema = z.enum(['found', 'none', 'unavailable',
 export type FsPullRequestStatus = z.infer<typeof fsPullRequestStatusSchema>;
 
 export const fsPullRequestLookupStatusSchema = z.object({
-  status: fsPullRequestStatusSchema,
-  error: z.string().optional(),
+  pull_request_status: fsPullRequestStatusSchema,
+  pull_request_error: z.string().optional(),
 });
 export type FsPullRequestLookupStatus = z.infer<typeof fsPullRequestLookupStatusSchema>;
 
-export interface FsPullRequestLookup extends FsPullRequestLookupStatus {
+export interface FsPullRequestLookup {
   readonly pullRequest: FsPullRequest | null;
+  readonly status: FsPullRequestStatus;
+  readonly error?: string;
 }
 
 export const fsGitStatusRequestSchema = z.object({
