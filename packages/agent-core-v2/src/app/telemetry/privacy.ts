@@ -1,5 +1,4 @@
 const REDACTED_PATH = '<REDACTED: user-file-path>';
-const NODE_MODULES_MARKER = '/node_modules/';
 
 const LABELED_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '<REDACTED: Email>'],
@@ -19,15 +18,18 @@ const FILE_EXTENSION = String.raw`\.[\p{L}\p{M}\p{N}_+#~@$%=-]+`;
 const PATH_BOUNDARY = String.raw`(?![\p{L}\p{M}\p{N}.$_~+\\/-])`;
 const EXTENSION_BOUNDARY = String.raw`(?=$|[\s'",;:!?) }\u0060\]&|]|\.(?=\s|$))`;
 const WINDOWS_EXTENSION_BOUNDARY = String.raw`${EXTENSION_BOUNDARY}(?!\s[^\\/:*?"<>|\u0060]*[\\/])`;
-const WINDOWS_NEXT_DRIVE = String.raw`(?:[,;]\s(?=[^\\/:*?"<>|\u0060]*[A-Za-z]:[\\/])|(?:[,;]|&&?|\|\|?)(?=(?:[\w.-]+=)?[A-Za-z]:[\\/])|\s(?=[^\s\\/:*?"<>|\u0060]*[A-Za-z]:[\\/])|(?:[,;]|&&?|\|\|?)(?=[\\/]))`;
-const WINDOWS_DIAGNOSTIC_COMMA = String.raw`,\s(?![^\\/:*?"<>|\u0060]*[\\/])`;
+const WINDOWS_NEXT_DRIVE = String.raw`(?:[,;]\s(?=[^\\/:*?"<>|\u0060]*[A-Za-z]:[\\/])|(?:[,;\])}]|&&?|\|\|?)(?=[\[(]*(?:[\w.-]+=)?(?:[A-Za-z]:[\\/]|\/|[\\/]{2}))|\s(?=[^\s\\/:*?"<>|\u0060]*(?:[A-Za-z]:[\\/]|[\w.-]+=(?:\/|[\\/]{2}))))`;
+const WINDOWS_DIAGNOSTIC_DELIMITER = String.raw`[,;]\s(?![^\\/:*?"<>|\u0060]*[\\/])`;
 const WINDOWS_CLOSING_QUOTE = String.raw`'\s(?![^\\/:*?"<>|\u0060]*[\\/])`;
-const WINDOWS_CLOSING_PAREN = String.raw`\)(?![\p{L}\p{M}\p{N}.$_~+\\/-])`;
-const WINDOWS_SEGMENT_END = String.raw`(?:${WINDOWS_NEXT_DRIVE}|${WINDOWS_DIAGNOSTIC_COMMA}|${WINDOWS_CLOSING_QUOTE}|${WINDOWS_CLOSING_PAREN})`;
+const WINDOWS_CLOSING_BRACKET = String.raw`[\])}](?![\p{L}\p{M}\p{N}.$_~+\\/-])`;
+const WINDOWS_SEGMENT_END = String.raw`(?:${WINDOWS_NEXT_DRIVE}|${WINDOWS_DIAGNOSTIC_DELIMITER}|${WINDOWS_CLOSING_QUOTE}|${WINDOWS_CLOSING_BRACKET})`;
 const WINDOWS_ATOM = String.raw`(?:(?!${WINDOWS_SEGMENT_END})[^\\/:*?'"<>|\u0000-\u001F\u0060])+`;
 const WINDOWS_COMPONENT = String.raw`(?:(?!${WINDOWS_SEGMENT_END})[^\\/:*?"<>|\u0000-\u001F\u0060])+`;
+const WINDOWS_FINAL_COMPONENT = String.raw`(?:(?!${WINDOWS_SEGMENT_END}|${FILE_EXTENSION}${WINDOWS_EXTENSION_BOUNDARY})[^\\/:*?"<>|\u0000-\u001F\u0060])+`;
 const WINDOWS_QUOTED_COMPONENT = String.raw`${WINDOWS_ATOM}(?:'(?=[^\s\\/])${WINDOWS_ATOM})*`;
-const WINDOWS_FINAL_WITH_EXTENSION = String.raw`${WINDOWS_COMPONENT}?${FILE_EXTENSION}`;
+const WINDOWS_FINAL_ATOM = String.raw`(?:(?!${WINDOWS_SEGMENT_END}|${FILE_EXTENSION}${WINDOWS_EXTENSION_BOUNDARY})[^\\/:*?'"<>|\u0000-\u001F\u0060])+`;
+const WINDOWS_QUOTED_FINAL_COMPONENT = String.raw`${WINDOWS_FINAL_ATOM}(?:'(?=[^\s\\/])${WINDOWS_FINAL_ATOM})*`;
+const WINDOWS_FINAL_WITH_EXTENSION = String.raw`(?:${WINDOWS_FINAL_COMPONENT})?${FILE_EXTENSION}`;
 const WINDOWS_EXTENSION_TAIL = String.raw`(?:[\\/]+${WINDOWS_COMPONENT})*[\\/]+${WINDOWS_FINAL_WITH_EXTENSION}${WINDOWS_EXTENSION_BOUNDARY}`;
 const WINDOWS_GENERIC_TAIL = String.raw`(?:[\\/]+${WINDOWS_COMPONENT})+[\\/]*(?=$|[':*?"<>|\u0000-\u001F\u0060]|${WINDOWS_SEGMENT_END})`;
 const WINDOWS_TAIL = String.raw`(?:${WINDOWS_EXTENSION_TAIL}|${WINDOWS_GENERIC_TAIL})`;
@@ -37,30 +39,34 @@ const WINDOWS_UNC_BASE = String.raw`[\\/]{2}[^\s\\/]+[\\/]+${WINDOWS_COMPONENT}`
 const WINDOWS_UNC_OR_LONG = String.raw`(?:${WINDOWS_LONG_BASE}|${WINDOWS_UNC_BASE})(?:${WINDOWS_TAIL}|[\\/]?)`;
 const WINDOWS_DEVICE_DRIVE = String.raw`[\\/]{2}\.[\\/][A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
 const WINDOWS_DRIVE = String.raw`\b[A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
-const POSIX_LIST_SPLIT = String.raw`(?:(?:[,:;]|&&?|\|\|?)(?=(?:[\w.-]+=)?\/)|\s(?=[\w.-]+=\/)|(?:&&|\|\|)(?![^\s/]*\/))`;
+const POSIX_LIST_SPLIT = String.raw`(?:(?:[,:;]|&&?|\|\|?)(?=(?:[\w.-]+=)?\/)|\s(?=[\w.-]+=\/)|(?:&&|\|\|)(?![^\s/]*\/)|[\])}](?![\p{L}\p{M}\p{N}.$_~+\\/-]))`;
 const POSIX_ATOM = String.raw`(?:(?![,:] | \/|${POSIX_LIST_SPLIT})[^/'"\u0000-\u001F\u0060])+`;
+const POSIX_FINAL_ATOM = String.raw`(?:(?![,:] | \/|${POSIX_LIST_SPLIT}|${FILE_EXTENSION}${EXTENSION_BOUNDARY})[^/'"\u0000-\u001F\u0060])+`;
 const POSIX_COMPONENT = String.raw`${POSIX_ATOM}(?:'(?=[^\s/])${POSIX_ATOM})*`;
-const POSIX_FINAL_WITH_EXTENSION = String.raw`${POSIX_COMPONENT}?${FILE_EXTENSION}`;
+const POSIX_FINAL_COMPONENT = String.raw`${POSIX_FINAL_ATOM}(?:'(?=[^\s/])${POSIX_FINAL_ATOM})*`;
+const POSIX_FINAL_WITH_EXTENSION = String.raw`(?:${POSIX_FINAL_COMPONENT})?${FILE_EXTENSION}`;
 const POSIX_EXTENSION_PATH = String.raw`(?:\/+${POSIX_COMPONENT})+\/+${POSIX_FINAL_WITH_EXTENSION}${EXTENSION_BOUNDARY}`;
 const POSIX_GENERIC_ATOM = String.raw`(?:(?![,:] |${POSIX_LIST_SPLIT})[^/\s'"\u0000-\u001F\u0060])+`;
 const POSIX_GENERIC_COMPONENT = String.raw`${POSIX_GENERIC_ATOM}(?:'(?=[^\s/])${POSIX_GENERIC_ATOM})*`;
-const POSIX_SPACED_NAME = String.raw`(?:[ \t]+(?![\p{Ll}])${POSIX_GENERIC_COMPONENT})*`;
-const POSIX_GENERIC_PATH = String.raw`\/+${POSIX_GENERIC_COMPONENT}(?:[ \t]*\/+${POSIX_GENERIC_COMPONENT})+${POSIX_SPACED_NAME}\/*(?=$|[\s'"\u0000-\u001F\u0060]|[,:] |${POSIX_LIST_SPLIT})`;
+const POSIX_SPACED_NAME = String.raw`(?:[ \t]+(?=[\p{Lu}\p{Lt}])${POSIX_GENERIC_COMPONENT})*`;
+const POSIX_GENERIC_PATH = String.raw`\/+${POSIX_GENERIC_COMPONENT}(?:[ \t]*\/+${POSIX_GENERIC_COMPONENT})+${POSIX_SPACED_NAME}\/*(?=$|[\s'"\u0000-\u001F\u0060]|[,;:] |${POSIX_LIST_SPLIT})`;
 const POSIX_PATH = String.raw`(?<![\p{L}\p{M}\p{N}.$_~+\\/-])(?:${POSIX_EXTENSION_PATH}|${POSIX_GENERIC_PATH})`;
 const WINDOWS_PATH = `${WINDOWS_DEVICE_DRIVE}|${WINDOWS_UNC_OR_LONG}|${WINDOWS_DRIVE}`;
-const WINDOWS_QUOTED_PATH = `'(?:${WINDOWS_PATH.replaceAll(WINDOWS_COMPONENT, WINDOWS_QUOTED_COMPONENT)})'`;
+const WINDOWS_QUOTED_PATH = `'(?:${WINDOWS_PATH.replaceAll(WINDOWS_FINAL_COMPONENT, WINDOWS_QUOTED_FINAL_COMPONENT).replaceAll(WINDOWS_COMPONENT, WINDOWS_QUOTED_COMPONENT)})'`;
 const ABSOLUTE_PATH = new RegExp(`(${WINDOWS_QUOTED_PATH}|${WINDOWS_PATH})|${POSIX_PATH}`, 'gu');
 
 function redactAbsolutePath(match: string, windowsPath: boolean): string {
   if (match.startsWith("'")) return `'${redactAbsolutePath(match.slice(1, -1), windowsPath)}'`;
-  const normalized = match.replaceAll('\\', '/');
+  const normalized = windowsPath ? match.replaceAll('\\', '/') : match;
   if (/\s\//u.test(normalized)) return REDACTED_PATH;
-  const index = windowsPath
-    ? normalized.toLowerCase().indexOf(NODE_MODULES_MARKER)
-    : normalized.indexOf(NODE_MODULES_MARKER);
-  if (index === -1) return REDACTED_PATH;
-  const tail = normalized.slice(index + 1);
-  return /[A-Za-z]:\//.test(tail) || tail.split('/').includes('..') ? REDACTED_PATH : tail;
+  const markerMatch = windowsPath
+    ? /\/node_modules\//i.exec(normalized)
+    : /\/node_modules\//.exec(normalized);
+  if (markerMatch === null) return REDACTED_PATH;
+  const tail = normalized.slice(markerMatch.index + 1);
+  return /[A-Za-z]:[\\/]/.test(tail) || /(?:^|\s|=)(?:\/|[\\/]{2})/.test(tail) || tail.split(/[\\/]/).includes('..')
+    ? REDACTED_PATH
+    : tail;
 }
 
 function cleanTelemetryLine(line: string): string {

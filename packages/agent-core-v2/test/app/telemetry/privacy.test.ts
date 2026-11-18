@@ -498,6 +498,33 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
       'see <REDACTED: URL> for details',
     );
   });
+
+  it('handles dotted diagnostics, POSIX backslashes, Unicode casefold offsets, and mixed roots', () => {
+    expect(cleanTelemetryString('/home/alice/file.txt is not supported by node.js 24')).toBe(
+      `${REDACTED} is not supported by node.js 24`,
+    );
+    expect(cleanTelemetryString('C:\\Users\\alice\\file.txt is not supported by node.js 24')).toBe(
+      `${REDACTED} is not supported by node.js 24`,
+    );
+    expect(cleanTelemetryString(String.raw`/home/alice/foo\node_modules/private-project/secret.txt`)).toBe(
+      REDACTED,
+    );
+    expect(cleanTelemetryString('C:\\Users\\İpek\\node_modules\\pkg\\index.js')).toBe(
+      'node_modules/pkg/index.js',
+    );
+    expect(cleanTelemetryString('old=C:\\Users\\alice\\node_modules\\pkg new=/home/bob/private')).toBe(
+      `old=node_modules/pkg new=${REDACTED}`,
+    );
+    expect(cleanTelemetryString('[C:\\Users\\alice\\cache][D:\\Users\\bob\\private]')).toBe(
+      `[${REDACTED}][${REDACTED}]`,
+    );
+    expect(cleanTelemetryString('/home/alice/cache 无法读取文件')).toBe(
+      `${REDACTED} 无法读取文件`,
+    );
+    expect(cleanTelemetryString('C:\\Users\\alice\\cache; retrying')).toBe(
+      `${REDACTED}; retrying`,
+    );
+  });
 });
 
 describe('cleanTelemetryProperties', () => {
