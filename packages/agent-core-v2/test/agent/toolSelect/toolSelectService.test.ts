@@ -21,6 +21,7 @@ import {
   IAgentLoopService,
   type AfterStepContext,
   type BeforeStepContext,
+  type LoopRequestContent,
   type LoopSnapshot,
   type PromptSubmitContext,
   type Turn,
@@ -252,6 +253,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
 
   history(): readonly ContextMessage[] {
     return [];
+  }
+
+  requestContent(): LoopRequestContent {
+    return { systemPrompt: '', tools: [], messages: this.history() };
   }
 
   historyRevision(): number {

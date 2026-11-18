@@ -4,13 +4,11 @@ import {
   IAgentLoopService,
   IAgentLifecycleService,
   IAgentProfileService,
-  IAgentToolSelectService,
   resumeSessionById,
-  type ContextMessage,
   type IAgentScopeHandle,
   type Scope,
-  type Tool,
 } from '@moonshot-ai/agent-core-v2';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
@@ -66,7 +64,6 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 
 const DEFAULT_ITEMS_LIMIT = 100;
 const PREVIEW_MAX_CHARS = 240;
-const READ_MEDIA_FILE_TOOL_NAME = 'ReadMediaFile';
 const MEDIA_TYPES = new Set([
   'image',
   'image_url',
@@ -116,7 +113,7 @@ function estimateValueChars(value: unknown): number {
 }
 
 function measureMessage(
-  message: ContextMessage,
+  message: Message,
   includePreview: boolean,
 ): { chars: number; hasMedia: boolean; preview: string } {
   const data = asRecord(message);
@@ -201,14 +198,6 @@ async function resolveAgent(
   return { agent, resolvedAgentId };
 }
 
-function filterMediaTools(
-  tools: readonly Tool[],
-  capabilities: { readonly image_in?: boolean; readonly video_in?: boolean } | undefined,
-): readonly Tool[] {
-  if (capabilities?.image_in === true || capabilities?.video_in === true) return tools;
-  return tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME);
-}
-
 export function splitSystemPromptParts(systemPrompt: string): ContextItemPart[] {
   if (!systemPrompt) return [];
   const sections: ContextItemPart[] = [];
@@ -251,27 +240,15 @@ export function splitSystemPromptParts(systemPrompt: string): ContextItemPart[] 
 function readAgentContextSources(agent: IAgentScopeHandle) {
   const loop = agent.accessor.get(IAgentLoopService);
   const profile = agent.accessor.get(IAgentProfileService);
-  const toolSelect = agent.accessor.get(IAgentToolSelectService);
   const legacyStatus = readLegacyStatus(agent);
   const loopData = loop.data();
   const profileData = profile.data();
-  const systemPrompt = loop.getSystemPrompt() || profile.getSystemPrompt();
-  const capabilities = loopData.modelAlias !== undefined
-    ? loopData.modelCapabilities
-    : profileData.modelCapabilities;
-  const rawMessages = loop.history();
-  const disclosure = toolSelect.enabled(capabilities);
-  const requestTools = filterMediaTools(
-    toolSelect.requestTools(loop.baselineTools(), disclosure, true, rawMessages),
-    capabilities,
-  );
-  const tools = requestTools.filter((t) => t.deferred !== true);
-  const messages = toolSelect.shapeHistory(rawMessages, disclosure, requestTools);
+  const request = loop.requestContent();
   const modelAlias = loopData.modelAlias || profileData.modelAlias || legacyStatus?.model || undefined;
   return {
-    systemPrompt,
-    tools,
-    messages,
+    systemPrompt: request.systemPrompt || profile.getSystemPrompt(),
+    tools: request.tools.filter((tool) => tool.deferred !== true),
+    messages: request.messages,
     modelAlias,
     tokens: {
       used: legacyStatus?.contextTokens ?? 0,

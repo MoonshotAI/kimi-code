@@ -244,6 +244,12 @@ export interface LoopDetachedTask {
   readonly completion: ToolCompletionFactory;
 }
 
+export interface LoopRequestContent {
+  readonly systemPrompt: string;
+  readonly tools: readonly Tool[];
+  readonly messages: readonly Message[];
+}
+
 export interface IAgentLoopService extends EffectiveProfileReader {
   readonly _serviceBrand: undefined;
 
@@ -276,6 +282,8 @@ export interface IAgentLoopService extends EffectiveProfileReader {
   removeActiveTool(name: string): void;
 
   history(): readonly ContextMessage[];
+
+  requestContent(): LoopRequestContent;
 
   historyRevision(): number;
 

@@ -15,6 +15,7 @@ import {
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
+import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type {
@@ -154,7 +155,7 @@ describe('context routes on restored sessions and dynamic tools', () => {
       server = undefined;
     }
     if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
     }
   });
@@ -261,6 +262,71 @@ describe('context routes on restored sessions and dynamic tools', () => {
           },
         },
       },
+    ]);
+  });
+
+  it('shows messages the way the model receives them', async () => {
+    const createRes = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server!, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ metadata: { cwd: home! } }),
+    } as never);
+    const created = (await createRes.json()) as { code: number; data: { id: string } };
+    expect(created.code).toBe(0);
+    const sid = created.data.id;
+
+    const live = getLiveSessionById(server!.core.accessor, sid)!;
+    await live.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const main = live.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const loop = main.accessor.get(IAgentLoopService);
+    await loop.setProfile({
+      modelAlias: 'kimi-code/k3',
+      profileName: 'agent',
+      thinkingLevel: 'high',
+      systemPrompt: 'You are Kimi Code.',
+    });
+    const call = (id: string, name: string): ToolCall => ({ type: 'function', id, name, arguments: '{}' });
+    loop.replaceHistory(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'run it' }] },
+        { role: 'assistant', content: [], toolCalls: [call('call_1', 'Bash')] },
+        { role: 'user', content: [{ type: 'text', text: 'reminder sent while the tool ran' }] },
+        {
+          role: 'tool',
+          toolCallId: 'call_1',
+          content: [{ type: 'text', text: 'ok' }],
+          attributes: { durationMs: 1500, note: 'Output truncated.' },
+        },
+        { role: 'assistant', content: [], toolCalls: [call('call_2', 'Read')] },
+        {
+          role: 'tool',
+          toolCallId: 'call_2',
+          content: [{ type: 'text', text: 'missing file' }],
+          attributes: { isError: true },
+        },
+        { role: 'assistant', content: [], toolCalls: [call('call_3', 'Bash')] },
+        { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+      ],
+      'fork',
+    );
+    await main.accessor.get(IEventDispatcher).flush();
+
+    const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
+    expect(page.items.map((entry) => entry.role)).toEqual([
+      'system', 'user', 'assistant', 'tool', 'user', 'assistant', 'tool', 'assistant', 'tool', 'user',
+    ]);
+    const toolTexts = await Promise.all(
+      page.items
+        .filter((entry) => entry.role === 'tool')
+        .map(async (entry) => {
+          const detail = await getJson<ContextItemDetail>(`/api/v1/sessions/${sid}/context/items/${entry.id}`);
+          return detail.parts.map((part) => part.text).join('\n');
+        }),
+    );
+    expect(toolTexts).toEqual([
+      'Wall time: 1.500 seconds\nok\nOutput truncated.',
+      '<system>ERROR: Tool execution failed.</system>\nmissing file',
+      'Tool result is not available in the current context. Do not assume the tool completed successfully.',
     ]);
   });
 });
