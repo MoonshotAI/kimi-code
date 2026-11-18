@@ -174,7 +174,7 @@ export type LlmDeltaEvent =
 export type LlmRetry =
   | {
       readonly type: 'llm.retry';
-      readonly reason: 'backoff';
+      readonly reason: 'backoff' | 'invalid_tool_arguments';
       readonly error: LlmErrorMessage;
       readonly message?: AssistantMessage | null;
       readonly usage?: TokenUsage;

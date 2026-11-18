@@ -400,4 +400,77 @@ describe('loop journal restore', () => {
     expect(Object.isFrozen(restored.input.messages![0]!.content)).toBe(true);
     expect(Object.isFrozen(restored.input.messages![3]!.content)).toBe(true);
   });
+
+  it('preserves raw argument strings and excludes invalid calls with their results', () => {
+    const snapshot = restoreLoopJournal([
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1' } },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'working' } },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 's1', toolCallId: 'good', name: 'weather', args: '{"city":"sf"}' },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 's1', toolCallId: 'empty', name: 'ping', args: '' },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 's1', toolCallId: 'bad', name: 'weather', args: '{"city":' },
+      },
+      { type: 'context.append_loop_event', event: { type: 'tool.result', toolCallId: 'bad', result: { output: 'invalid' } } },
+      { type: 'context.append_loop_event', event: { type: 'tool.result', toolCallId: 'good', result: { output: 'sunny' } } },
+      { type: 'context.append_loop_event', event: { type: 'tool.result', toolCallId: 'empty', result: { output: 'pong' } } },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's1' } },
+    ]);
+
+    expect(snapshot.input.messages!).toMatchObject([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'working' },
+          { type: 'text', text: expect.stringContaining('not executed') },
+        ],
+        toolCalls: [
+          { id: 'good', arguments: '{"city":"sf"}' },
+          { id: 'empty', arguments: '' },
+        ],
+      },
+      { role: 'tool', toolCallId: 'good' },
+      { role: 'tool', toolCallId: 'empty' },
+    ]);
+  });
+
+  it('journals raw invalid arguments with an explicit diagnostic marker', () => {
+    const records: WireRecord[] = [];
+    const journal = new LoopJournal(memoryWire(records), 'main');
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'bad',
+      name: 'weather',
+      arguments: '{"city":',
+    };
+    journal.append({ type: 'turn.started', turnId: 0, trigger: 'normal' });
+    journal.append({ type: 'step.started', turnId: 0, step: 1 });
+    journal.append({
+      type: 'message.appended',
+      turnId: 0,
+      step: 1,
+      source: 'llm',
+      message: assistant('checking', [toolCall]),
+    });
+    journal.append({ type: 'tool.started', turnId: 0, step: 1, toolCall });
+
+    expect(records).toContainEqual(expect.objectContaining({
+      type: 'context.append_loop_event',
+      event: expect.objectContaining({
+        type: 'tool.call',
+        toolCallId: 'bad',
+        args: '{"city":',
+        argsError: expect.any(String),
+      }),
+    }));
+  });
 });

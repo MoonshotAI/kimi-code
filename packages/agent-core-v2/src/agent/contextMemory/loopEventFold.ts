@@ -3,6 +3,7 @@ import { freeze, isDraft, original } from 'immer';
 import type { FinishReason } from '@moonshot-ai/core/llm/response';
 import { createToolMessage, type ContentPart, type ToolCall } from '@moonshot-ai/core/llm/message';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
+import { invalidToolCallText, restoreJournalToolArguments } from '@moonshot-ai/core/llm/tool-arguments';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage, ContextMessageTiming } from './types';
@@ -60,6 +61,7 @@ export type LoopRecordedEvent =
       readonly rawId?: string;
       readonly name: string;
       readonly args?: unknown;
+      readonly argsError?: string;
       readonly extras?: Record<string, unknown>;
       readonly display?: ToolInputDisplay;
       readonly uuid?: string;
@@ -77,6 +79,28 @@ export type LoopRecordedEvent =
       };
       readonly parentUuid?: string;
     };
+
+export type RestoredToolCall =
+  | { readonly call: ToolCall; readonly error?: never }
+  | { readonly call?: never; readonly error: string };
+
+export function restoreToolCall(
+  event: Extract<LoopRecordedEvent, { type: 'tool.call' }>,
+): RestoredToolCall {
+  const restored = restoreJournalToolArguments(event.args);
+  const issue = event.argsError ?? restored.issue?.message;
+  if (issue !== undefined) return { error: invalidToolCallText(event.name, issue) };
+  return {
+    call: {
+      type: 'function',
+      id: event.toolCallId,
+      name: event.name,
+      arguments: restored.arguments,
+      extras: event.extras,
+      rawId: event.rawId,
+    },
+  };
+}
 
 export interface LoopEventFoldSink {
   openAssistant(time: number | undefined): void;
@@ -183,15 +207,13 @@ function createLoopEventFoldWithState(
         }
         case 'tool.call': {
           if (!acceptsOpenStep(event.stepUuid)) return;
-          const call: ToolCall = {
-            type: 'function',
-            id: event.toolCallId,
-            name: event.name,
-            arguments: event.args === undefined ? null : JSON.stringify(event.args),
-            extras: event.extras,
-            rawId: event.rawId,
-          };
-          sink.appendOpenToolCall(call, event.display);
+          const restored = restoreToolCall(event);
+          if (restored.error !== undefined) {
+            sink.appendOpenContent({ type: 'text', text: restored.error });
+            openVacuous = false;
+            return;
+          }
+          sink.appendOpenToolCall(restored.call, event.display);
           pending.set(event.toolCallId, event.name);
           openHasToolCalls = true;
           return;

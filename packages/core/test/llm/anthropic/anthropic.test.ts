@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { anthropicProtocol } from '#/llm/builtin/protocol/anthropic/index';
+import { lowerMessage } from '#/llm/builtin/protocol/anthropic/lower';
+import { createAssistantMessage } from '#/llm/message';
 
 import {
   runDecodeFixtures,
@@ -61,5 +63,40 @@ describe('Anthropic output token ceilings', () => {
     expect(maxTokens('claude-opus-5-5', 64_000)).toBe(64_000);
     expect(maxTokens('claude-unknown-5-5', 130_173)).toBe(130_173);
     expect(maxTokens('claude-unknown-5-5')).toBe(64_000);
+  });
+});
+
+describe('Anthropic tool argument validation', () => {
+  const tool = {
+    name: 'weather',
+    description: 'Get weather',
+    parameters: {
+      type: 'object',
+      properties: { city: { type: 'string' } },
+      required: ['city'],
+    },
+  };
+  const message = (args: string | null) => createAssistantMessage([], [{
+    type: 'function',
+    id: 'call-weather',
+    name: 'weather',
+    arguments: args,
+  }]);
+
+  it.each([null, '', '{}', 'null', '[]', '42', '"text"', '{"city":'])(
+    'rejects invalid input %s instead of sending it or replacing it with an empty object',
+    (args) => {
+      expect(() => lowerMessage(message(args), undefined, [tool])).toThrow(/Invalid arguments/);
+    },
+  );
+
+  it('preserves valid objects and only accepts empty arguments when the schema permits them', () => {
+    expect(lowerMessage(message('{"city":"sf"}'), undefined, [tool])[0]?.content).toMatchObject([
+      { type: 'tool_use', input: { city: 'sf' } },
+    ]);
+    const optional = { ...tool, parameters: { ...tool.parameters, required: [] } };
+    expect(lowerMessage(message(''), undefined, [optional])[0]?.content).toMatchObject([
+      { type: 'tool_use', input: {} },
+    ]);
   });
 });

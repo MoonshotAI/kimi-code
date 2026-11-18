@@ -502,4 +502,42 @@ describe('foldWireRecords', () => {
     if (remaining?.type !== 'message') throw new Error('expected message record');
     expect(remaining.message.content[0]).toMatchObject({ text: 'before' });
   });
+
+  it('keeps raw valid arguments and replaces invalid calls with a visible failure', () => {
+    const folded = fold([
+      loopEvent({ type: 'step.begin', uuid: 's1' }, 1),
+      loopEvent({ type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'working' } }, 2),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'good',
+        name: 'weather',
+        args: '{"city":"sf"}',
+      }, 3),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'bad',
+        name: 'weather',
+        args: '{"city":',
+      }, 4),
+      loopEvent({ type: 'tool.result', toolCallId: 'bad', result: { output: 'invalid' } }, 5),
+      loopEvent({ type: 'tool.result', toolCallId: 'good', result: { output: 'sunny' } }, 6),
+      loopEvent({ type: 'step.end', uuid: 's1' }, 7),
+    ]);
+
+    const messages = messageRecords(folded.replay);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'working' },
+          { type: 'text', text: expect.stringContaining('not executed') },
+        ],
+        toolCalls: [{ id: 'good', arguments: '{"city":"sf"}' }],
+      },
+    });
+    expect(messages[1]).toMatchObject({ message: { role: 'tool', toolCallId: 'good' } });
+  });
 });

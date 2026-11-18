@@ -10,6 +10,7 @@ import { parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import { withoutUndefinedStatusCode } from '#/llm/protocol/rules/status';
 import { createToolCallIdNormalizer } from '#/llm/protocol/rules/tool-call-ids';
 import type { LlmModelSpec, LlmRequest } from '#/llm/request';
+import { invalidToolArgumentsError } from '#/llm/tool-arguments';
 import {
   llmStatusErrorMessage,
   NO_FINISH,
@@ -204,7 +205,10 @@ export async function settleLlmRequest(
     failure: { error: LlmErrorMessage; rawError?: unknown },
     message: AssistantMessage,
   ): LlmOutcome => {
-    const usable = usableOutputOf(message);
+    const content = failure.error.kind === 'invalid_tool_arguments'
+      ? [...message.content, { type: 'text' as const, text: failure.error.message }]
+      : message.content;
+    const usable = usableOutputOf({ ...message, content });
     return {
       type: 'failed',
       ...failure,
@@ -238,6 +242,11 @@ export async function settleLlmRequest(
       onToolCallEnd: (index) => {
         const toolCall = inner.toolCallEnd(index);
         if (toolCall !== undefined) {
+          const error = invalidToolArgumentsError(toolCall, request.profile?.tools ?? []);
+          if (error !== null) {
+            failure = { error };
+            return;
+          }
           onEvent?.({ type: 'llm.delta.tool_call_end', index, toolCall });
         }
       },
@@ -261,6 +270,10 @@ export async function settleLlmRequest(
   }
 
   const message = finishMessage();
+  for (const toolCall of message.toolCalls) {
+    const error = invalidToolArgumentsError(toolCall, request.profile?.tools ?? []);
+    if (error !== null) return failed({ error }, message);
+  }
   const empty = emptyResponseError(message, request.model.spec, finish ?? NO_FINISH);
   if (empty !== null) {
     return failed({ error: empty }, message);

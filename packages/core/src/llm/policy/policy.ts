@@ -1,8 +1,9 @@
 import { estimateUsedContextTokens } from '#/llm/context-usage';
-import type { ToolDescription } from '#/llm/message';
+import { createAssistantMessage, type AssistantMessage, type ToolDescription } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
 import type { LlmOutcome, LlmRunEvent, LlmRunRequested, LlmRunStarted } from '#/llm/response';
+import { cleanToolCallHistory } from '#/llm/tool-arguments';
 import { sha256Hex } from '#/utils/hash';
 import { log } from '#/utils/log';
 
@@ -195,12 +196,24 @@ async function runAttempts(
   const policy = request.policy ?? {};
   const ledger = createRecoveryLedger(recoveries.read(request));
   let attempt = 1;
+  let retryMessage: AssistantMessage | undefined;
   const maxAttempts = resolveMaxAttempts(policy.retry);
 
   while (!signal.aborted) {
-    const recoveredRequest = ledger.apply(request);
+    const requestForAttempt = retryMessage === undefined
+      ? request
+      : {
+          ...request,
+          content: {
+            ...request.content,
+            messages: [...request.content.messages, retryMessage],
+          },
+        };
+    retryMessage = undefined;
+    const recoveredRequest = ledger.apply(requestForAttempt);
     let resolvedRequest = recoveredRequest;
     let recoveryRequest = recoveredRequest;
+    let recoveryUsesResolved = false;
     for (const resolver of listOf(policy.resolvers)) {
       resolvedRequest = await resolver.resolve(resolvedRequest, {
         signal,
@@ -214,12 +227,50 @@ async function runAttempts(
           onEvent?.(event);
         },
       });
-      if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
+      if (resolver.recoveryRequest === 'resolved') {
+        recoveryRequest = resolvedRequest;
+        recoveryUsesResolved = true;
+      }
       if (signal.aborted) {
         return { type: 'aborted', message: null, usage: undefined };
       }
     }
 
+    const cleaned = cleanToolCallHistory(
+      resolvedRequest.content.messages,
+      resolvedRequest.profile?.tools ?? [],
+    );
+    if (cleaned.messages !== resolvedRequest.content.messages) {
+      resolvedRequest = {
+        ...resolvedRequest,
+        content: { ...resolvedRequest.content, messages: cleaned.messages },
+      };
+    }
+    for (const { call, issue } of cleaned.invalid) {
+      onEvent?.({
+        type: 'llm.notice',
+        notice: {
+          source: 'tool-call-arguments',
+          code: 'invalid_tool_call_dropped',
+          message: `Removed invalid historical tool call "${call.name}" and its paired result.`,
+          data: { toolCallId: call.id, toolName: call.name, reason: issue.reason },
+        },
+      });
+    }
+    if (recoveryUsesResolved) {
+      recoveryRequest = resolvedRequest;
+    } else {
+      const cleanedRecovery = cleanToolCallHistory(
+        recoveryRequest.content.messages,
+        recoveryRequest.profile?.tools ?? [],
+      );
+      if (cleanedRecovery.messages !== recoveryRequest.content.messages) {
+        recoveryRequest = {
+          ...recoveryRequest,
+          content: { ...recoveryRequest.content, messages: cleanedRecovery.messages },
+        };
+      }
+    }
     control.onAttempt?.(resolvedRequest, { appliedRecoveries: ledger.applied });
     const requested: LlmRunEvent = llmRequestedEvent(resolvedRequest, attempt);
     log.info({ ...requested }, 'llm event');
@@ -237,6 +288,11 @@ async function runAttempts(
     const result = await settleLlmRequest(resolvedRequest, { signal, onEvent });
     if (result.type === 'done' || result.type === 'aborted') {
       return result;
+    }
+    if (result.error.kind === 'invalid_tool_arguments') {
+      retryMessage = result.message ?? createAssistantMessage([
+        { type: 'text', text: result.error.message },
+      ]);
     }
 
     const proposal = proposeFirst(listOf(policy.recoveries), {
@@ -270,10 +326,13 @@ async function runAttempts(
     }
 
     if (shouldRetry(policy.retry, attempt, result.error, listOf(policy.retryables))) {
-      const delayMs = readRetryAfterMs(result.error) ?? retryBackoffDelay(attempt - 1);
+      const invalidToolArguments = result.error.kind === 'invalid_tool_arguments';
+      const delayMs = invalidToolArguments
+        ? 0
+        : (readRetryAfterMs(result.error) ?? retryBackoffDelay(attempt - 1));
       const retry: LlmRunEvent = {
         type: 'llm.retry',
-        reason: 'backoff',
+        reason: invalidToolArguments ? 'invalid_tool_arguments' : 'backoff',
         failedAttempt: attempt,
         nextAttempt: attempt + 1,
         maxAttempts,

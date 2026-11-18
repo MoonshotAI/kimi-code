@@ -1,4 +1,4 @@
-import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import { restoreToolCall, type LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
 import type { PermissionApprovalResultRecord } from '#/agent/permissionRules/permissionRules';
@@ -328,14 +328,12 @@ class WireReplayFoldState {
             `Received tool_call for unknown step_uuid '${event.stepUuid}' (no open step_begin)`,
           );
         }
-        openStep.toolCalls.push({
-          type: 'function',
-          id: event.toolCallId,
-          rawId: event.rawId,
-          name: event.name,
-          arguments: event.args === undefined ? null : JSON.stringify(event.args),
-          extras: event.extras,
-        });
+        const restored = restoreToolCall(event);
+        if (restored.error !== undefined) {
+          openStep.content.push({ type: 'text', text: restored.error });
+          return;
+        }
+        openStep.toolCalls.push(restored.call);
         if (event.display !== undefined) {
           openStep.toolCallDisplays ??= {};
           openStep.toolCallDisplays[event.toolCallId] = event.display;

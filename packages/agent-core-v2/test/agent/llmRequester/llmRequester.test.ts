@@ -458,6 +458,55 @@ describe('LLMRequester service migration coverage', () => {
       ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
       await ctx.untilTurnEnd();
     });
+
+    it('retries invalid arguments without executing them and keeps a visible clean failure', async () => {
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      });
+      ctx.mockNextProviderResponse({
+        parts: [{ type: 'function', id: 'call_bad', name: 'Lookup', arguments: '{"query":' }],
+        finishReason: 'tool_calls',
+      });
+      ctx.mockNextProviderResponse({
+        parts: [{ type: 'function', id: 'call_good', name: 'Lookup', arguments: '{"query":"moon"}' }],
+        finishReason: 'tool_calls',
+      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+      await ctx.untilToolCall({ content: 'moon-result', output: 'moon-result' });
+      ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
+      await ctx.untilTurnEnd();
+
+      expect(protocolEvents(ctx, 'turn.step.retrying').map((event) => event.args)).toEqual([
+        expect.objectContaining({
+          failedAttempt: 1,
+          nextAttempt: 2,
+          delayMs: 0,
+          errorMessage: expect.stringContaining('not executed'),
+        }),
+      ]);
+      expect(protocolEvents(ctx, 'turn.step.stream_reset')).toHaveLength(1);
+      expect(protocolEvents(ctx, 'toolCall')).toHaveLength(1);
+      expect(ctx.llmCalls).toHaveLength(3);
+      expect(ctx.llmCalls[1]?.history.at(-1)).toMatchObject({ role: 'assistant', toolCalls: [] });
+      expect(JSON.stringify(ctx.llmCalls[1]?.history.at(-1))).toContain('not executed');
+      expect(ctx.context.history()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          toolCalls: [],
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: 'text', text: expect.stringContaining('not executed') }),
+          ]),
+        }),
+      ]));
+    });
   });
 
   describe('request failure logging', () => {
