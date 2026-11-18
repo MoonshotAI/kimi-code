@@ -35,12 +35,12 @@ export class FeedbackRouteError extends Error {
 export class ManagedFeedbackGateway {
   constructor(
     private readonly oauth: IOAuthService,
-    private readonly baseUrl: string | undefined,
+    private readonly baseUrl: () => string,
   ) {}
 
   async create(input: CreateFeedbackRequest, replyContext?: FeedbackTurnContext): Promise<number> {
     const accessToken = await this.accessToken();
-    const result = await fetchSubmitFeedback(kimiCodeFeedbackUrl(this.baseUrl), accessToken, {
+    const result = await fetchSubmitFeedback(kimiCodeFeedbackUrl(this.baseUrl()), accessToken, {
       session_id: input.session_id,
       content: input.content,
       version: input.version,
@@ -61,7 +61,7 @@ export class ManagedFeedbackGateway {
 
   async update(input: UpdateFeedbackRequest): Promise<void> {
     const accessToken = await this.accessToken();
-    const result = await fetchUpdateFeedback(kimiCodeFeedbackUpdateUrl(this.baseUrl), accessToken, {
+    const result = await fetchUpdateFeedback(kimiCodeFeedbackUpdateUrl(this.baseUrl()), accessToken, {
       feedback_id: input.feedback_id,
       content: input.content,
       info: input.info,
@@ -85,7 +85,7 @@ export class ManagedFeedbackGateway {
       if (staged.size !== input.declaredSize) {
         throw new FeedbackRouteError('attachment size does not match x-feedback-file-size', 400);
       }
-      await uploadArchive(this.uploadApi(accessToken), staged, feedbackId, {
+      await uploadArchive(this.uploadApi(accessToken, this.baseUrl()), staged, feedbackId, {
         filename: input.filename,
         maxRetries: 0,
       });
@@ -94,7 +94,7 @@ export class ManagedFeedbackGateway {
     }
   }
 
-  private uploadApi(accessToken: string): FeedbackUploadUrlApi {
+  private uploadApi(accessToken: string, baseUrl: string): FeedbackUploadUrlApi {
     return {
       createUploadUrl: async (input) => {
         const result = await fetchCreateFeedbackUploadUrl(accessToken, {
@@ -102,7 +102,7 @@ export class ManagedFeedbackGateway {
           file_name: input.filename,
           file_size: input.size,
           feedback_id: input.feedbackId,
-        }, { baseUrl: this.baseUrl });
+        }, { baseUrl });
         if (result.kind === 'error') throw upstreamError(result);
         return {
           uploadId: result.upload_id,
@@ -118,7 +118,7 @@ export class ManagedFeedbackGateway {
         const result = await fetchCompleteFeedbackUpload(accessToken, {
           upload_id: input.uploadId,
           parts: input.parts.map((part) => ({ part_number: part.partNumber, etag: part.etag })),
-        }, { baseUrl: this.baseUrl });
+        }, { baseUrl });
         if (result.kind === 'error') throw upstreamError(result);
       },
     };

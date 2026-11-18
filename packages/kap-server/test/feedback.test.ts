@@ -212,6 +212,50 @@ describe('feedback routes', () => {
     expect(JSON.stringify(kfcRequests[1]?.body)).not.toContain('session_id');
   });
 
+  it('uses the active global region without a base URL override', async () => {
+    await server.close();
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      env: { ...process.env, KIMI_CODE_BASE_URL: undefined },
+    });
+    baseUrl = `http://127.0.0.1:${server.port}`;
+    vi.spyOn(server.core.accessor.get(IOAuthService), 'getRegion').mockReturnValue('global');
+    vi.spyOn(server.core.accessor.get(IOAuthService), 'resolveTokenProvider').mockReturnValue({
+      getAccessToken: vi.fn(async () => 'managed-kimi-token'),
+    });
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/coding/v1/feedback')) {
+        requested.push(url);
+        return originalFetch(`http://127.0.0.1:${(kfc.address() as AddressInfo).port}/feedback`, init);
+      }
+      return originalFetch(input, init);
+    });
+    const response = await post('/api/v1/feedback', {
+      content: 'global details',
+      version: '1.2.3',
+      os: 'macOS 26.1',
+      info: {
+        schema_version: 1,
+        kind: 'global',
+        source: 'sidebar',
+        client: 'desktop',
+        category: 'bug',
+        upload_session: false,
+        upload_logs: false,
+        attachments: [],
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(requested).toEqual(['https://api.kimi.ai/coding/v1/feedback']);
+  });
+
   it('maps a persisted root turn to the final model request after the session closes', async () => {
     const createdResponse = await post('/api/v1/sessions', { metadata: { cwd: home } });
     const created = (await createdResponse.json()) as { readonly data: { readonly id: string } };

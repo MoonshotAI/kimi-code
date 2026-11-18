@@ -19,6 +19,7 @@ import {
   feedbackIdParamsSchema,
   updateFeedbackRequestSchema,
 } from '../protocol/rest-feedback';
+import { clientConfigsBaseUrl } from '../services/clientConfigs';
 import { FeedbackRouteError, ManagedFeedbackGateway } from '../services/feedback';
 import type { ConversationService } from '../services/conversation/conversationService';
 import type { CreateFeedbackRequest } from '../protocol/rest-feedback';
@@ -49,11 +50,12 @@ export function registerFeedbackRoutes(
   core: Scope,
   conversations: ConversationService,
 ): void {
-  const gateway = new ManagedFeedbackGateway(
-    core.accessor.get(IOAuthService),
+  const oauth = core.accessor.get(IOAuthService);
+  const gateway = new ManagedFeedbackGateway(oauth, () => clientConfigsBaseUrl(
     core.accessor.get(IBootstrapService).getEnv('KIMI_CODE_BASE_URL') ??
       process.env['KIMI_CODE_BASE_URL'],
-  );
+    oauth.getRegion(),
+  ));
   app.addContentTypeParser('application/octet-stream', (_request, payload, done) => {
     done(null, payload);
   });
