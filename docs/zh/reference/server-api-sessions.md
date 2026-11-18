@@ -4,7 +4,7 @@
 
 ## 会话
 
-这部分接口管理会话本身：创建、列出、读取和修改会话，执行 fork、压缩、撤销等会话动作，以及读取目标、告警、环境、文件历史等会话级信息。返回会话的接口都使用 [会话对象](#会话对象) 格式。
+这部分接口管理会话本身：创建、列出、读取和修改会话，执行 fork、压缩、撤销等会话动作，以及读取目标、告警、文件历史等会话级信息。返回会话的接口都使用 [会话对象](#会话对象) 格式。
 
 ### 会话对象
 
@@ -59,8 +59,6 @@
 | `metadata` | body | object | 自定义元数据。`metadata.cwd` 是工作目录，未提供 `workspace_id` 时必填；与 `workspace_id` 同时提供时必须等于工作区根目录。其他键保存为会话的自定义元数据，保留键 `goal`、`parent_session_id`、`child_session_kind` 会被丢弃 |
 | `title` | body | string | 初始标题，至少 1 个字符。不提供时会话没有标题 |
 | `agent_config` | body | object | main agent 的部分配置，在返回会话之前应用。字段与 [`POST /api/v1/sessions/{session_id}/profile`](#post-api-v1-sessions-session-id-profile) 的 `agent_config` 相同，另加 `profile` |
-| `environment_id` | body | string | main agent 运行所在的环境 id，`local` 表示本机。不提供时使用 `config.toml` 中 `[environments]` 的 `default`，没有配置时为本机。非本机环境必须已在 `[environments]` 中声明或已注册。提供了非 `local` 的值时，服务端在返回会话之前就创建 main agent |
-| `environment_cwd` | body | string | 环境上的工作目录。提供时必须同时提供 `environment_id`。非本机环境不提供时，使用该环境在 `[environments]` 中的 `defaultCwd` |
 
 创建会话时就绑定 main agent：
 
@@ -74,13 +72,11 @@
 
 成功时 `data` 为新会话的 [会话对象](#会话对象)。
 
-- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供；`metadata.cwd` 与工作区根目录不一致；`agent_config` 设置了 `tower_mode: true`（`details` 列出该字段）；`agent_config.model` 未配置；`agent_config.profile` 是未知的 Agent 档案；模型不支持 `agent_config.thinking`；提供了 `environment_cwd` 但没有 `environment_id`；非本机环境未声明、注册失败，或没有可用的工作目录
+- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供；`metadata.cwd` 与工作区根目录不一致；`agent_config` 设置了 `tower_mode: true`（`details` 列出该字段）；`agent_config.model` 未配置；`agent_config.profile` 是未知的 Agent 档案；模型不支持 `agent_config.thinking`
 - `40113`：没有可用模型，而 `agent_config` 设置了 `profile` 或 `thinking`
-- `40409`：工作目录不存在或不是目录。使用非本机环境时，不检查工作目录是否存在
+- `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
-- `40420`：环境不存在
 - `40913`–`40918`、`40920`：`agent_config` 因目标相关错误无法应用
-- `40926`：环境不可用
 
 #### `GET /api/v1/sessions`
 
@@ -98,7 +94,7 @@
 | `sort` | query | string | `updated_at_desc`（默认）/ `updated_at_asc` / `created_at_desc` |
 | `view` | query | string | `flat`（默认）/ `by_workspace` |
 | `group_page_size` | query | integer | `view=by_workspace` 时每个工作区返回的会话数：1–100，默认 `5`（使用 `id,archived` 投影时上限 `10000`） |
-| `include` | query | string | 逗号分隔的附加字段组。目前支持 `git`（分支与 PR 信息，按环境与工作目录去重并缓存 60 秒） |
+| `include` | query | string | 逗号分隔的附加字段组。目前支持 `git`（分支与 PR 信息，按工作目录去重并缓存 60 秒） |
 | `fields` | query | string | 逗号分隔的字段投影。目前只支持 `id,archived`，每项裁剪为 `{ id, archived }`（用于全选匹配场景） |
 | `page_size` | query | integer | 1–100，默认 `50`；使用 `id,archived` 投影时上限放宽至 `10000`。`view=by_workspace` 时按组计数 |
 | `page_token` | query | string | 上一页返回的翻页令牌 |
@@ -447,15 +443,13 @@
 - `40917`：objective 为空
 - `40918`：objective 超过 4000 字符
 
-### 告警与环境
+### 告警
 
-读取会话级告警，以及 main agent 运行所在的环境和会话可用的环境。
+读取会话级告警。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
-| `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
-| `GET /api/v1/sessions/{session_id}/environments` | 列出会话工作区已注册的环境 |
 
 #### `GET /api/v1/sessions/{session_id}/warnings`
 
@@ -472,43 +466,6 @@
 | `warnings[].code` | string | 告警代码，例如 `agents-md-oversized` |
 | `warnings[].message` | string | 告警信息 |
 | `warnings[].severity` | string | `info` / `warning` / `error` |
-
-- `40401`：会话不存在
-
-#### `GET /api/v1/sessions/{session_id}/environment`
-
-读取 main agent 的环境绑定，即该会话的 Agent 循环运行在哪个环境上。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | 必填。会话 id |
-
-成功时 `data` 为：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `workspace_id` | string | 工作区 id |
-| `environment_id` | string | 绑定的环境 id |
-| `cwd` | string | 被绑定环境上的工作目录。绑定带有该值时才返回 |
-
-- `40401`：会话不存在
-
-#### `GET /api/v1/sessions/{session_id}/environments`
-
-列出会话可用的环境，即会话所在工作区已注册的环境。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | 必填。会话 id |
-
-成功时 `data` 为 `{ environments }`：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `environments[].environment_id` | string | 环境 id |
-| `environments[].type` | string | `local` / `ssh` / `docker` / `command` |
-| `environments[].status` | string | `pending` / `connecting` / `ready` / `disconnected` / `disposed`。`pending` 表示没有可用连接、也没有观察到失败（尚未连接过） |
-| `environments[].connect_error` | string | `disconnected` 条目的失败原因 |
 
 - `40401`：会话不存在
 
@@ -880,7 +837,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 覆盖项的应用顺序与生效方式、`prompt_id` 的幂等规则都与提示词提交相同。
 
-成功时 `data` 与提示词提交返回的被接受提示词结构相同。错误也与提示词提交一致，包括校验、媒体、环境和幂等错误。
+成功时 `data` 与提示词提交返回的被接受提示词结构相同。错误也与提示词提交一致，包括校验、媒体和幂等错误。
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 

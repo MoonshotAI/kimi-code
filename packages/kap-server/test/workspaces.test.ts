@@ -11,6 +11,7 @@ import {
   IAgentLifecycleService,
   IAgentToolRegistryService,
   IAtomicDocumentStore,
+  ISessionManager,
   type ISessionScopeHandle,
   IWorkspaceInstanceManager,
   resumeSessionById,
@@ -771,10 +772,17 @@ describe('server-v2 /api/v1/workspaces', () => {
     const sessionId = createdSession.body.data.id;
     const explicitSession = await postJson<{ id: string }>('/api/v1/sessions', {
       workspace_id: workspaceId,
-      environment_id: 'local',
-      environment_cwd: dirA,
     });
     expect(explicitSession.body.code).toBe(0);
+    await (server as RunningServer).core.accessor.get(ISessionManager).close(explicitSession.body.data.id);
+    const explicitHandle = await (server as RunningServer).core.accessor.get(ISessionManager).create({
+      sessionId: explicitSession.body.data.id,
+      workspaceId,
+      workDir: dirA,
+      environmentId: 'local',
+      environmentCwd: dirA,
+    });
+    expect(explicitHandle.id).toBe(explicitSession.body.data.id);
 
     const ensureAgent = async (session: ISessionScopeHandle) => {
       const agents = session.accessor.get(IAgentLifecycleService);

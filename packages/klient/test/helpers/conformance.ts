@@ -764,18 +764,13 @@ export function defineKlientConformance(
       }
     });
 
-    it('agent environment binding and media events are available through every transport', async () => {
+    it('agent media events are available through every transport', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),
         title: 'conformance environment',
       });
       try {
         const agent = target.klient.session(created.id).agent('main');
-        const binding = await agent.getEnvironment();
-        expect(binding.environmentId).toBe('local');
-        expect(binding).toEqual({ environmentId: 'local' });
-        expect(await agent.getEnvironment()).toEqual(binding);
-
         const seen: unknown[] = [];
         const sub = agent.events.on('tool.result', (event) => seen.push(event));
         await new Promise((resolve) => {

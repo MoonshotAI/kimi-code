@@ -71,7 +71,6 @@ import {
 import * as slashCommands from './commands/dispatch';
 import { resolveUserInput, skillVariantPathsForInput } from './commands/resolve';
 import { applyTranscriptPresentation, runQueuedModelSwitch } from './commands/config';
-import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
@@ -183,7 +182,6 @@ import {
   type ModelSwitchPersistence,
   type QueuedMessage,
   type QueuedPromptMessage,
-  type EnvironmentSlotState,
   type SteerInputItem,
   type SteerOutcome,
   type StepRetryState,
@@ -510,8 +508,6 @@ export class KimiTUI {
         additionalDirs: startupInput.additionalDirs,
         agentProfile: startupInput.agentProfile,
         agentFiles: startupInput.cliOptions.agentFiles,
-        environment: startupInput.cliOptions.environment,
-        environmentCwd: startupInput.cliOptions.environmentCwd,
         startupNotice: startupInput.startupNotice,
       },
     };
@@ -614,19 +610,6 @@ export class KimiTUI {
       };
     });
     const skillCommandNames = new Set(this.skillCommandMap.keys());
-    const remoteSuggest =
-      this.environmentIdOf(this.state.appState.environment) === 'local'
-        ? undefined
-        : async (query: string) => {
-            const session = this.session;
-            if (session === undefined) return undefined;
-            const result = await this.harness.suggestFiles(this.state.appState.workDir, {
-              query,
-              sessionId: session.id,
-              followGitignore: false,
-            });
-            return result?.items;
-          };
     const provider = new FileMentionProvider(
       slashCommands,
       this.state.appState.workDir,
@@ -634,7 +617,7 @@ export class KimiTUI {
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
       skillCommandNames,
-      remoteSuggest,
+      undefined,
       ({ commandName, path, start }) => {
         this.skillVariantPaths.set(start, {
           commandName: commandName.startsWith('skill:') ? commandName : `skill:${commandName}`,
@@ -656,21 +639,15 @@ export class KimiTUI {
     this.state.editor.setSkillCommandNames(skillCommandNames);
   }
 
-  private environmentIdOf(environment: AppState['environment']): string {
-    return (environment ?? this.creationEnvironment)?.environmentId ?? this.options.startup.environment ?? 'local';
-  }
-
   private footerGitBinding(state: AppState): FooterGitBinding | null {
-    const local = this.environmentIdOf(state.environment) === 'local';
     const sessionId = state.sessionId === '' ? undefined : state.sessionId;
-    if (sessionId === undefined && !local) return null;
     const { workDir } = state;
     return {
-      key: [sessionId ?? '', workDir, local ? 'local' : 'remote'].join('\0'),
+      key: [sessionId ?? '', workDir].join('\0'),
       source: {
         status: () => this.harness.getGitStatus(workDir, { sessionId }),
         pullRequest: () => this.harness.getGitPullRequest(workDir, { sessionId }),
-        localWorkDir: local ? workDir : undefined,
+        localWorkDir: workDir,
       },
     };
   }
@@ -971,10 +948,6 @@ export class KimiTUI {
   private startupProgressLabel(): string {
     const { startup } = this.options;
     if (startup.sessionFlag !== undefined || startup.continueLast) return 'Restoring session…';
-    const environmentId = this.creationEnvironment?.environmentId ?? startup.environment;
-    if (environmentId !== undefined && environmentId !== 'local') {
-      return `Connecting to ${environmentId}…`;
-    }
     return 'Preparing Kimi Code…';
   }
 
@@ -1099,7 +1072,6 @@ export class KimiTUI {
     }
     if (this.session !== undefined) {
       this.sessionEventHandler.startSubscription();
-      void this.refreshEnvironmentSlot(this.session);
       void this.showSessionWarnings(this.session);
     }
     if (shouldReplayHistory) {
@@ -1220,11 +1192,7 @@ export class KimiTUI {
         }
       } else {
         await this.hydrateLazyConfigDefaults();
-        if (this.creationEnvironment?.environmentId !== undefined && this.creationEnvironment.environmentId !== 'local') {
-          void this.ensureSession();
-        } else {
-          this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
-        }
+        this.appendStartupNotice(SESSIONLESS_STARTUP_NOTICE);
       }
       if (session !== undefined && shouldReplayHistory) {
         await this.applyStartupModesToResumedSession(session);
@@ -3074,11 +3042,6 @@ export class KimiTUI {
   async hydrateLazyConfigDefaults(includeModel = true): Promise<void> {
     const { startup } = this.options;
     const config = await this.harness.getConfig({ reload: true });
-    this.creationEnvironment = await this.harness.resolveSessionEnvironment({
-      workDir: this.state.appState.workDir,
-      environmentId: startup.environment,
-      environmentCwd: startup.environmentCwd,
-    });
     this.refreshSlashCommandAutocomplete();
     const patch: Partial<AppState> = includeModel
       ? lazyModelSelection(config, startup.model ?? config.defaultModel)
@@ -3097,36 +3060,7 @@ export class KimiTUI {
     this.setAppState(patch);
   }
 
-  private creationEnvironment?: { readonly environmentId: string; readonly cwd?: string };
-
-  private async environmentForNewSession(): Promise<
-    { readonly environmentId: string; readonly environmentCwd?: string } | undefined
-  > {
-    const session = this.session;
-    if (session !== undefined) {
-      const binding = await session.getEnvironment();
-      if (binding.environmentId !== 'local' && binding.cwd === undefined) {
-        throw new Error(
-          `Cannot start a new session on ${binding.environmentId}: the current binding has no working directory`,
-        );
-      }
-      return {
-        environmentId: binding.environmentId,
-        environmentCwd: binding.cwd,
-      };
-    }
-    const startupEnvironment = this.options.startup.environment;
-    if (startupEnvironment === undefined) return undefined;
-    return {
-      environmentId: startupEnvironment,
-      environmentCwd: this.options.startup.environmentCwd,
-    };
-  }
-
-  private async createSessionFromCurrentState(
-    bindStartupAgent = false,
-    inherited?: { readonly environmentId: string; readonly environmentCwd?: string },
-  ): Promise<Session> {
+  private async createSessionFromCurrentState(bindStartupAgent = false): Promise<Session> {
     this.cacheHint.refreshConfigInBackground();
     const model = this.state.appState.model.trim();
     if (model.length === 0) {
@@ -3160,19 +3094,8 @@ export class KimiTUI {
       if (this.state.appState.agentFiles !== undefined) {
         options.agentFiles = [...this.state.appState.agentFiles];
       }
-      if (this.options.startup.environment !== undefined) {
-        options.environmentId = this.options.startup.environment;
-        options.environmentCwd = this.options.startup.environmentCwd;
-      }
-    } else if (inherited !== undefined) {
-      options.environmentId = inherited.environmentId;
-      options.environmentCwd = inherited.environmentCwd;
     }
     return this.harness.createSession(options);
-  }
-
-  promptSshPassword(environmentId: string): Promise<string | undefined> {
-    return promptSshPassword(this, environmentId);
   }
 
   async ensureSession(): Promise<Session | undefined> {
@@ -3194,46 +3117,36 @@ export class KimiTUI {
   }
 
   private async lazyCreateSession(): Promise<Session | undefined> {
-    const environmentId = this.creationEnvironment?.environmentId ?? this.options.startup.environment;
-    const progress = environmentId !== undefined && environmentId !== 'local'
-      ? this.showProgressSpinner(`Connecting to ${environmentId}…`)
-      : undefined;
-    let ready = false;
+    let session: Session;
     try {
-      let session: Session;
-      try {
-        session = await this.createSessionFromCurrentState(true);
-      } catch (error) {
-        const msg = formatErrorMessage(error);
-        this.showError(`Failed to start a session: ${msg}`);
-        return undefined;
-      }
-      this.resetSessionRuntime({ keepQueuedMessages: true });
-      await this.setSession(session, 0);
-      this.setAppState({ sessionId: session.id });
-      try {
-        await this.activateRuntime();
-        await this.syncRuntimeState(session);
-      } catch (error) {
-        this.sessionEventHandler.startSubscription();
-        const msg = formatErrorMessage(error);
-        this.showError(`Post-create setup failed: ${msg}`);
-        return undefined;
-      }
-      try {
-        await this.refreshSkillCommands(session);
-        await this.refreshPluginCommands(session);
-      } catch {}
-      this.sessionEventHandler.startSubscription();
-      void this.showSessionWarnings(session);
-      if (this.state.appState.lazySessionThinking !== undefined) {
-        this.setAppState({ lazySessionThinking: undefined });
-      }
-      ready = true;
-      return session;
-    } finally {
-      progress?.stop({ ok: ready, label: ready ? 'Session ready.' : 'Session setup failed.' });
+      session = await this.createSessionFromCurrentState(true);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      this.showError(`Failed to start a session: ${msg}`);
+      return undefined;
     }
+    this.resetSessionRuntime({ keepQueuedMessages: true });
+    await this.setSession(session, 0);
+    this.setAppState({ sessionId: session.id });
+    try {
+      await this.activateRuntime();
+      await this.syncRuntimeState(session);
+    } catch (error) {
+      this.sessionEventHandler.startSubscription();
+      const msg = formatErrorMessage(error);
+      this.showError(`Post-create setup failed: ${msg}`);
+      return undefined;
+    }
+    try {
+      await this.refreshSkillCommands(session);
+      await this.refreshPluginCommands(session);
+    } catch {}
+    this.sessionEventHandler.startSubscription();
+    void this.showSessionWarnings(session);
+    if (this.state.appState.lazySessionThinking !== undefined) {
+      this.setAppState({ lazySessionThinking: undefined });
+    }
+    return session;
   }
 
   async setSession(
@@ -3270,37 +3183,6 @@ export class KimiTUI {
       goal: goalResult.goal,
     });
     this.syncAdditionalDirs(session);
-    await this.refreshEnvironmentSlot(session);
-  }
-
-  async refreshEnvironmentSlot(session: Session | undefined = this.session): Promise<void> {
-    if (session === undefined) return;
-    let next: EnvironmentSlotState;
-    try {
-      next = await session.getEnvironmentState();
-    } catch {
-      return;
-    }
-    if (this.session !== session) return;
-    const previous = this.state.appState.environment;
-    if (
-      previous !== undefined &&
-      previous.environmentId === next.environmentId &&
-      previous.type === next.type &&
-      previous.status === next.status &&
-      previous.cwd === next.cwd &&
-      previous.connectError === next.connectError
-    ) {
-      return;
-    }
-    this.setAppState({ environment: next });
-    if (
-      previous?.environmentId !== next.environmentId ||
-      previous?.type !== next.type ||
-      previous?.cwd !== next.cwd
-    ) {
-      this.setupAutocomplete();
-    }
   }
 
   private async applyStartupModesToResumedSession(session: Session): Promise<void> {
@@ -3356,7 +3238,7 @@ export class KimiTUI {
     this.session = undefined;
     this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
-    this.setAppState({ goal: null, environment: undefined });
+    this.setAppState({ goal: null });
     return previous;
   }
 
@@ -3375,7 +3257,6 @@ export class KimiTUI {
         (request, response) => {
           this.appendApprovalTranscriptEntry(request, response);
         },
-        () => this.resolveApprovalEnvironment(),
         this.programStatus,
         this.streamingUI.timeline,
       ),
@@ -3567,7 +3448,6 @@ export class KimiTUI {
       this.showError(`Failed to replay session history: ${msg}`);
     } finally {
       this.sessionEventHandler.startSubscription();
-      void this.refreshEnvironmentSlot(session);
     }
     const resumeState = session.getResumeState();
     this.surveyController.seedFromResumedAgents(resumeState?.sessionMetadata.agents ?? {});
@@ -3623,33 +3503,26 @@ export class KimiTUI {
     void this.showSessionWarnings(session);
   }
 
-  async createNewSession(inherited?: {
-    readonly environmentId: string;
-    readonly environmentCwd?: string;
-  }): Promise<void> {
+  async createNewSession(): Promise<void> {
     if (this.state.appState.isReplaying) {
       this.showError('Cannot start a new session while history is replaying.');
       return;
     }
     if (this.newSessionPromise !== null) return this.newSessionPromise;
-    this.newSessionPromise = this.assembleNewSession(inherited).finally(() => {
+    this.newSessionPromise = this.assembleNewSession().finally(() => {
       this.newSessionPromise = null;
       this.modelMigration.retry();
     });
     return this.newSessionPromise;
   }
 
-  private async assembleNewSession(inherited?: {
-    readonly environmentId: string;
-    readonly environmentCwd?: string;
-  }): Promise<void> {
+  private async assembleNewSession(): Promise<void> {
     const progress = this.showProgressSpinner('Starting a new session…');
     let ready = false;
     try {
       let session: Session;
       try {
-        const environment = inherited ?? (await this.environmentForNewSession());
-        session = await this.createSessionFromCurrentState(false, environment);
+        session = await this.createSessionFromCurrentState(false);
       } catch (error) {
         const msg = formatErrorMessage(error);
         this.showError(`Failed to start a new session: ${msg}`);
@@ -4737,8 +4610,6 @@ export class KimiTUI {
     try {
       info = await this.harness.getWorkspaceTrustInfo(workDir, {
         additionalDirs: this.state.appState.additionalDirs,
-        environmentId: this.options.startup.environment,
-        environmentCwd: this.options.startup.environmentCwd,
       });
     } catch {
       info = {
@@ -4910,21 +4781,10 @@ export class KimiTUI {
   }
 
   private async deleteCurrentSessionFromPicker(session: SessionRow): Promise<void> {
-    let inherited: { readonly environmentId: string; readonly environmentCwd?: string } | undefined;
-    let inheritError: unknown;
-    try {
-      inherited = await this.environmentForNewSession();
-    } catch (error) {
-      inheritError = error;
-    }
     const startReplacement = async (): Promise<void> => {
       this.setAppState({ sessionId: '' });
       this.clearTranscriptAndRedraw();
-      if (inheritError !== undefined) {
-        this.showError(`Failed to start a new session: ${formatErrorMessage(inheritError)}`);
-        return;
-      }
-      await this.createNewSession(inherited);
+      await this.createNewSession();
     };
     try {
       await this.closeSession('deleting session');
@@ -5047,12 +4907,6 @@ export class KimiTUI {
       this.patchLivePane({ pendingApproval: null });
       this.approvalController.cancelAll('Approval panel displaced', false);
     }, 'approval');
-  }
-
-  private resolveApprovalEnvironment(): string | undefined {
-    const environment = this.state.appState.environment;
-    if (environment === undefined || environment.environmentId === 'local') return undefined;
-    return `${environment.type}:${environment.environmentId}`;
   }
 
   private hideApprovalPanel(): void {

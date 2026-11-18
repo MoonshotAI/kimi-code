@@ -1,19 +1,15 @@
 import { createHash } from 'node:crypto';
 
 import {
-  EnvironmentError,
-  IEnvironmentService,
   ISessionIndex,
   ISessionIndexMirror,
   IWorkspaceAliases,
-  environmentBindingId,
   LOCAL_ENVIRONMENT_ID,
   setSessionArchivedBatch,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
-import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -35,7 +31,6 @@ import {
 } from '../protocol/rest-session';
 import type { Session, SessionActivity, SessionGit } from '../protocol/session';
 import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
-import { withTimeout } from '../transport/errors';
 import type { HostSources } from '../services/hosts/hostFanout';
 import { resolveSessionFacts, toWireSession, type SessionFacts } from './sessions';
 import { listAllSessionsAcrossHosts, listSessionsAcrossHosts, type SessionsListOutcome } from './sessionsAcrossHosts';
@@ -62,7 +57,6 @@ interface SessionListRouteHost {
 const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_GROUP_PAGE_SIZE = 5;
 const GIT_DOMAIN_TTL_MS = 60_000;
-const REMOTE_GIT_DOMAIN_TIMEOUT_MS = 3_000;
 const GIT_DOMAIN_UNAVAILABLE: SessionGit = {};
 const PAGE_TOKEN_VERSION = 1;
 
@@ -180,15 +174,13 @@ function mapPullRequest(pr: FsPullRequest | null): SessionGit['pull_request'] {
 
 interface GitTarget {
   readonly key: string;
-  readonly environmentId: string;
   readonly cwd: string;
 }
 
 function gitTarget(summary: SessionSummary, workspaceCwd: string): GitTarget | undefined {
-  const environmentId = summary.environmentId ?? LOCAL_ENVIRONMENT_ID;
-  const cwd = environmentId === LOCAL_ENVIRONMENT_ID ? workspaceCwd : summary.environmentCwd;
-  if (cwd === undefined || cwd.length === 0) return undefined;
-  return { key: environmentBindingId(environmentId, cwd), environmentId, cwd };
+  if (summary.environmentId !== undefined && summary.environmentId !== LOCAL_ENVIRONMENT_ID) return undefined;
+  if (workspaceCwd.length === 0) return undefined;
+  return { key: workspaceCwd, cwd: workspaceCwd };
 }
 
 class GitDomainResolver {
@@ -242,34 +234,18 @@ class GitDomainResolver {
         .finally(() => this.inflight.delete(key));
       this.inflight.set(key, pending);
     }
-    if (target.environmentId === LOCAL_ENVIRONMENT_ID) return pending;
-    return withTimeout(pending, REMOTE_GIT_DOMAIN_TIMEOUT_MS).catch(() => undefined);
+    return pending;
   }
 
   private async fetch(target: GitTarget): Promise<SessionGit | undefined> {
     try {
-      let status: Awaited<ReturnType<IGitService['status']>>;
-      if (target.environmentId === LOCAL_ENVIRONMENT_ID) {
-        status = await this.core.accessor.get(IGitService).status(target.cwd);
-      } else {
-        const environments = this.core.accessor.get(IEnvironmentService);
-        const lease = environments.acquire({ environmentId: target.environmentId }, ['fs']);
-        try {
-          status = await new GitService(
-            environments,
-            lease.environment.fs!,
-            target.environmentId,
-          ).status(target.cwd);
-        } finally {
-          lease.dispose();
-        }
-      }
+      const status = await this.core.accessor.get(IGitService).status(target.cwd);
       return {
         branch: status.branch.length === 0 ? undefined : status.branch,
         pull_request: mapPullRequest(status.pullRequest),
       };
-    } catch (error) {
-      return error instanceof EnvironmentError ? undefined : GIT_DOMAIN_UNAVAILABLE;
+    } catch {
+      return GIT_DOMAIN_UNAVAILABLE;
     }
   }
 }

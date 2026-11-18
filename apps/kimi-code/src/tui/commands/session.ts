@@ -11,7 +11,6 @@ import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { buildExportMarkdown } from '../utils/export-markdown';
-import { sessionWorkDir } from '../utils/session-work-dir';
 import type { SlashCommandHost } from './dispatch';
 
 export async function handleTitleCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -58,7 +57,7 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
       await forked.close();
     } catch (error) {
       const msg = formatErrorMessage(error);
-      host.showError(`Session forked (${forkId}), but failed to release its environment: ${msg}`);
+      host.showError(`Session forked (${forkId}), but failed to release its session: ${msg}`);
       return;
     }
     const command = forkResumeCommand(host.state.appState.workDir, forkId);
@@ -116,7 +115,7 @@ export async function handleExportMdCommand(host: SlashCommandHost, args: string
 
     const md = buildExportMarkdown({
       sessionId: session.id,
-      workDir: sessionWorkDir(host.state.appState),
+      workDir: host.state.appState.workDir,
       history: context.history,
       tokenCount: context.tokenCount,
       now,

@@ -8,7 +8,6 @@ import {
   HostFolderPermissionError,
   IHostFileSystem,
   IHostFolderBrowser,
-  IEnvironmentService,
   isError2,
   type HostFileStat,
   type Scope,
@@ -33,7 +32,6 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { createEnvironmentReadStream, type EnvironmentReadStreamSource } from './fs';
-import { sendEnvironmentError } from './environment';
 
 interface FsContentReply {
   type(mime: string): FsContentReply;
@@ -49,7 +47,7 @@ interface WorkspaceFsRouteHost {
     handler: (
       req: {
         id: string;
-        query: { path?: string; environment_id?: string };
+        query: { path?: string };
         headers: Record<string, unknown>;
       },
       reply: FsContentReply,
@@ -134,7 +132,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests. `environment_id` selects the filesystem of a shared app-level environment; defaults to local.',
+        'Serve the raw content of any file on the host filesystem by absolute path. Supports ETag caching and single-range requests.',
       tags: ['workspaces'],
       operationId: 'fsContent',
     },
@@ -163,7 +161,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description:
-        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist. `environment_id` selects the filesystem of a shared app-level environment; defaults to local.',
+        'Create a directory on the host filesystem by absolute path (folder-picker "new folder" backend). Non-recursive: the parent directory must already exist.',
       tags: ['workspaces'],
       operationId: 'fsMkdir',
     },
@@ -180,27 +178,19 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
 
 const fsContentQuerySchema = z.object({
   path: z.string().min(1),
-  environment_id: z.string().min(1).optional(),
 });
 
 interface FsContentRequest {
   id: string;
-  query: { path: string; environment_id?: string };
+  query: { path: string };
   headers: Record<string, unknown>;
 }
 
-async function acquireFsSource(
-  core: Scope,
-  environmentId: string,
-): Promise<EnvironmentReadStreamSource> {
-  if (environmentId === 'local') {
-    return {
-      hostFs: core.accessor.get(IHostFileSystem),
-      lease: { track: (resource) => resource, dispose: () => {} },
-    };
-  }
-  const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId }, ['fs']);
-  return { hostFs: lease.environment.fs!, lease };
+function acquireFsSource(core: Scope): EnvironmentReadStreamSource {
+  return {
+    hostFs: core.accessor.get(IHostFileSystem),
+    lease: { track: (resource) => resource, dispose: () => {} },
+  };
 }
 
 function sendAcquireError(
@@ -215,7 +205,6 @@ function sendAcquireError(
       send: (payload) => sendRawError(rawReply, payload as { code: ErrorCode }),
     };
   }
-  if (sendEnvironmentError(reply, requestId, err)) return;
   if (rawResponse) {
     sendRawError(
       reply as FsContentReply,
@@ -248,7 +237,7 @@ async function handleFsContent(
 
   let source: EnvironmentReadStreamSource;
   try {
-    source = await acquireFsSource(core, req.query.environment_id ?? 'local');
+    source = acquireFsSource(core);
   } catch (error) {
     sendAcquireError(reply, requestId, error, true);
     return;
@@ -343,7 +332,6 @@ async function handleFsContent(
 
 const fsMkdirBodySchema = z.object({
   path: z.string().min(1),
-  environment_id: z.string().min(1).optional(),
 });
 
 const fsMkdirResponseSchema = z.object({
@@ -352,7 +340,7 @@ const fsMkdirResponseSchema = z.object({
 
 interface FsMkdirRequest {
   id: string;
-  body: { path: string; environment_id?: string };
+  body: { path: string };
 }
 
 async function handleFsMkdir(
@@ -371,7 +359,7 @@ async function handleFsMkdir(
 
   let source: EnvironmentReadStreamSource;
   try {
-    source = await acquireFsSource(core, req.body.environment_id ?? 'local');
+    source = acquireFsSource(core);
   } catch (error) {
     sendAcquireError(reply, requestId, error);
     return;

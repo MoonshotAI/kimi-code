@@ -97,7 +97,6 @@ describe('Event public types', () => {
         case 'goal.updated':
         case 'skill.activated':
         case 'plugin_command.activated':
-        case 'environment.status.changed':
         case 'error':
         case 'warning':
         case 'turn.started':

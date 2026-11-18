@@ -505,7 +505,7 @@ fd（一个文件查找命令行工具）可用时，服务端采用与本地 `@
 
 ## 本机文件
 
-不需要会话或工作区，直接按绝对路径访问服务端所在机器的文件系统，用于跨目录的文件补全和文件夹选择器。`fs:content` 和 `fs:mkdir` 还可以通过 `environment_id` 访问其他已注册环境的文件系统。
+不需要会话或工作区，直接按绝对路径访问服务端所在机器的文件系统，用于跨目录的文件补全和文件夹选择器。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -560,37 +560,31 @@ fd（一个文件查找命令行工具）可用时，服务端采用与本地 `@
 
 ### `GET /api/v1/fs:content`
 
-以流式返回本机文件系统上任意文件的原始字节；传 `environment_id` 时改为读取该环境的文件系统。这个接口只受 API token（见 [鉴权](./server-api.md#鉴权)）保护，暴露端口时务必谨慎。响应支持 Range 请求与 ETag 缓存，见 [二进制与流式端点](#二进制与流式端点)。
+以流式返回本机文件系统上任意文件的原始字节。这个接口只受 API token（见 [鉴权](./server-api.md#鉴权)）保护，暴露端口时务必谨慎。响应支持 Range 请求与 ETag 缓存，见 [二进制与流式端点](#二进制与流式端点)。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `path` | query | string | 必填。绝对文件路径 |
-| `environment_id` | query | string | 要读取的环境 id，可从 [`GET /api/v1/sessions/{session_id}/environments`](./server-api-sessions.md#get-api-v1-sessions-session-id-environments) 获取。默认 `local`（服务端所在机器） |
 
 - `40001`：`path` 缺失或不是绝对路径，或路径既不是普通文件也不是目录（如设备文件、套接字）
 - `40409`：路径不存在
 - `40411`：权限不足
-- `40420`：`environment_id` 指定的环境不存在
 - `40906`：路径是目录
-- `40926`：`environment_id` 指定的环境不可用，或不提供文件系统能力
 
 ### `POST /api/v1/fs:mkdir`
 
-按绝对路径在本机文件系统上创建一个目录，是文件夹选择器「新建文件夹」的后端；传 `environment_id` 时改为在该环境的文件系统上创建。不递归创建，父目录必须已存在。
+按绝对路径在本机文件系统上创建一个目录，是文件夹选择器「新建文件夹」的后端。不递归创建，父目录必须已存在。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `path` | body | string | 必填。绝对目录路径 |
-| `environment_id` | body | string | 目标环境 id，可从 [`GET /api/v1/sessions/{session_id}/environments`](./server-api-sessions.md#get-api-v1-sessions-session-id-environments) 获取。默认 `local`（服务端所在机器） |
 
 成功时 `data` 为 `{ path }`。
 
 - `40001`：`path` 不是绝对路径
 - `40409`：父路径不存在，或路径中某一级不是目录
 - `40411`：权限不足
-- `40420`：`environment_id` 指定的环境不存在
 - `40919`：路径已存在
-- `40926`：`environment_id` 指定的环境不可用，或不提供文件系统能力
 
 ## 二进制与流式端点
 

@@ -47,7 +47,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   if (session === undefined) {
     await host.hydrateLazyConfigDefaults();
     host.showStatus(
-      'Environment and TUI config reloaded; no active session.',
+      'TUI config reloaded; no active session.',
       'success',
     );
   }

@@ -176,19 +176,13 @@ describe('runStatusLineCommand', () => {
 });
 
 describe('FooterComponent status_line command', () => {
-  it('passes the remote binding cwd and suppresses the local git branch', async () => {
+  it('passes the session cwd to the status line command', async () => {
     const dir = join(tmpdir(), `sl-remote-cwd-${process.pid}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(dir, { recursive: true });
     const captured = join(dir, 'payload.json');
     const footer = new FooterComponent({
       ...baseState,
       statusLine: { items: null, command: `tee ${captured} >/dev/null; printf remote-cwd` },
-      environment: {
-        environmentId: 'dev-box',
-        type: 'ssh',
-        status: 'ready',
-        cwd: '/remote/proj',
-      },
     });
     try {
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -196,7 +190,7 @@ describe('FooterComponent status_line command', () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
       expect(plain(footer.render(120)[0]!)).toContain('remote-cwd');
       expect(JSON.parse(readFileSync(captured, 'utf8'))).toMatchObject({
-        cwd: '/remote/proj',
+        cwd: baseState.workDir,
         gitBranch: null,
       });
     } finally {

@@ -26,7 +26,6 @@ import { ISessionTitleService } from '@moonshot-ai/agent-core-v2/session/session
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
 import { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
-import { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBinding';
 import { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import { ISessionActivityView } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import { ISessionPromptPredictionService } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
@@ -63,7 +62,6 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   agentLoopService: IAgentLoopService,
   agentPermissionModeService: IAgentPermissionModeService,
   agentCommandService: IAgentCommandService,
-  agentEnvironmentBindingService: IAgentEnvironmentBindingService,
   agentTokenCountingService: ISessionTokenCountingService,
   sessionActivityView: ISessionActivityView,
   sessionPromptPredictionService: ISessionPromptPredictionService,

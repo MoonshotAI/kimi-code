@@ -63,17 +63,8 @@ export const sessionCreateSchema = z
       .extend({ profile: z.string().min(1).optional() })
       .optional(),
     workspace_id: workspaceIdSchema.optional(),
-    environment_id: z.string().min(1).optional(),
-    environment_cwd: z.string().min(1).optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.environment_cwd !== undefined && value.environment_id === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'environment_cwd requires environment_id',
-        path: ['environment_cwd'],
-      });
-    }
     if (value.agent_config?.tower_mode === true) {
       ctx.addIssue({
         code: 'custom',

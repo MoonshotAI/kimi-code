@@ -441,8 +441,6 @@ async function resolveNativeSession(
       profile: agentProfileName ?? 'agent',
       model,
     },
-    environmentId: opts.environment,
-    environmentCwd: opts.environmentCwd,
   });
   const agentContext = await ensureMainAgent(session);
   const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;

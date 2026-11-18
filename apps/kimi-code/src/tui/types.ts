@@ -5,8 +5,6 @@ import type {
   PermissionMode,
   ProviderConfig,
   PromptPart,
-  SessionEnvironmentStatus,
-  SessionEnvironmentType,
   ThinkingEffort,
   TokenUsage,
   ToolInputDisplay,
@@ -26,14 +24,6 @@ export interface BannerState {
   subText: string | null;
   display: BannerDisplay;
   ttlHours?: number;
-}
-
-export interface EnvironmentSlotState {
-  readonly environmentId: string;
-  readonly type: SessionEnvironmentType;
-  readonly status: SessionEnvironmentStatus;
-  readonly cwd?: string;
-  readonly connectError?: string;
 }
 
 export interface AppState {
@@ -82,7 +72,6 @@ export interface AppState {
   goal?: GoalSnapshot | null;
   mcpServersSummary: string | null;
   banner?: BannerState | null;
-  environment?: EnvironmentSlotState;
 }
 
 export function sumTokenUsage(total: TokenUsage): number | undefined {
@@ -339,8 +328,6 @@ export interface TUIStartupOptions {
   readonly additionalDirs?: readonly string[];
   readonly agentProfile?: string;
   readonly agentFiles?: readonly string[];
-  readonly environment?: string;
-  readonly environmentCwd?: string;
   readonly startupNotice?: string;
 }
 

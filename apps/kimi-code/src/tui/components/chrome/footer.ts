@@ -8,10 +8,8 @@ import { transcriptGroupingActive } from '#/tui/config';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
-import type { AppState, EnvironmentSlotState } from '#/tui/types';
+import type { AppState } from '#/tui/types';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
-import { sessionWorkDir } from '#/tui/utils/session-work-dir';
-import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 import {
   StatusLineCommandRunner,
   type StatusLinePayload,
@@ -32,10 +30,9 @@ import {
 
 export type ToolOutputExpandHint = 'expand' | 'collapse';
 
-const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'environment', 'cwd', 'git'] as const;
+const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git'] as const;
 
 const MAX_CWD_SEGMENTS = 3;
-const MAX_ENVIRONMENT_REASON_WIDTH = 40;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
 
 const TIP_ROTATE_INTERVAL_MS = 10_000;
@@ -132,10 +129,6 @@ function modelDisplayName(state: AppState): string {
   return effective?.displayName ?? effective?.model ?? state.model;
 }
 
-function isRemoteEnvironment(environment: AppState['environment']): environment is EnvironmentSlotState {
-  return environment !== undefined && environment.environmentId !== 'local';
-}
-
 function shortenCwd(path: string, home: string | undefined): string {
   if (!path) return path;
   let work = path;
@@ -188,9 +181,6 @@ export class FooterComponent implements Component {
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly environmentSpinner = new SpinnerTicker(() => {
-    this.onRefresh();
-  });
   private statusLineRunner: StatusLineCommandRunner | null = null;
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
@@ -201,18 +191,13 @@ export class FooterComponent implements Component {
     this.runningFullscreen = runningFullscreen;
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
-    this.syncEnvironmentSpinner(state.environment);
     this.syncStatusLineRunner(state);
   }
 
   setState(state: AppState): void {
     this.syncGitCache(state);
-    if (state.environment?.status === 'ready' && this.state.environment?.status !== 'ready') {
-      this.gitCache?.refresh();
-    }
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
-    this.syncEnvironmentSpinner(state.environment);
     this.syncStatusLineRunner(state);
     this.state = state;
   }
@@ -388,7 +373,6 @@ export class FooterComponent implements Component {
       goal: [],
       model: [],
       tasks: [],
-      environment: [],
       cwd: [],
       git: [],
       tips: [],
@@ -450,36 +434,7 @@ export class FooterComponent implements Component {
     }
     slots['tasks'] = taskBadges;
 
-    const environment = state.environment;
-    const remote = isRemoteEnvironment(environment);
-    if (remote) {
-      const tone =
-        environment.status === 'disconnected'
-          ? colors.error
-          : environment.status === 'ready' || environment.status === 'pending'
-            ? colors.textDim
-            : colors.warning;
-      const label = environment.environmentId;
-      const reason =
-        environment.status === 'disconnected' && environment.connectError !== undefined
-          ? environment.connectError.split('\n', 1)[0]
-          : undefined;
-      const spinner =
-        environment.status === 'connecting' ? `${this.environmentSpinner.current} ` : '';
-      slots['environment'] = [
-        chalk.hex(tone)(
-          reason === undefined
-            ? `${spinner}${label}`
-            : `${spinner}${label} (${truncateToWidth(reason, MAX_ENVIRONMENT_REASON_WIDTH, '…')})`,
-        ),
-      ];
-    }
-
-    const bindingCwd = remote ? environment.cwd : undefined;
-    const cwd =
-      bindingCwd !== undefined
-        ? shortenCwd(bindingCwd, undefined)
-        : shortenCwd(state.workDir, process.env['HOME']);
+    const cwd = shortenCwd(state.workDir, process.env['HOME']);
     if (cwd) slots['cwd'] = [chalk.hex(colors.textDim)(cwd)];
 
     const git = this.gitCache?.getStatus() ?? null;
@@ -492,7 +447,7 @@ export class FooterComponent implements Component {
     const state = this.state;
     return {
       model: modelDisplayName(state),
-      cwd: sessionWorkDir(state),
+      cwd: state.workDir,
       gitBranch: this.gitCache?.getStatus()?.branch ?? null,
       permissionMode: state.permissionMode,
       planMode: state.planMode,
@@ -527,25 +482,12 @@ export class FooterComponent implements Component {
     }
   }
 
-  private syncEnvironmentSpinner(environment: AppState['environment']): void {
-    const connecting =
-      environment !== undefined &&
-      environment.environmentId !== 'local' &&
-      environment.status === 'connecting';
-    if (connecting) {
-      this.environmentSpinner.start();
-    } else {
-      this.environmentSpinner.stop();
-    }
-  }
-
   dispose(): void {
     this.gitCache?.dispose();
     if (this.goalTimer !== null) {
       clearInterval(this.goalTimer);
       this.goalTimer = null;
     }
-    this.environmentSpinner.dispose();
   }
 
   private goalWallClockMs(goal: AppState['goal']): number | undefined {

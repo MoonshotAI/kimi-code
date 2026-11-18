@@ -84,7 +84,6 @@ const mcpServerStdioWireSchema = z.object({
   env: stringRecordSchema.optional(),
   cwd: z.string().optional(),
   executor: z.enum(['local', 'kaos']).optional(),
-  environment_id: z.string().min(1).optional(),
   ...mcpServerCommonWireFields,
 });
 
@@ -230,7 +229,6 @@ function fromMcpServerConfigWire(wire: McpServerConfigWire): McpServerConfig {
       env: wire.env,
       cwd: wire.cwd,
       executor: wire.executor,
-      environment_id: wire.environment_id,
       ...common,
     };
   }
@@ -269,7 +267,6 @@ function toMcpServerConfigDataWire(
       env_keys: envKeys,
       cwd: config.cwd,
       executor: config.executor,
-      environment_id: config.environment_id,
       ...common,
     };
   }

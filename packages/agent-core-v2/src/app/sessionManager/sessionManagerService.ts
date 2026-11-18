@@ -1,8 +1,6 @@
 
 import { IEnvironmentService } from '#/app/environment/environment';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
-import { normalizeRemoteCwd } from '#/environment/environmentDefaults';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
@@ -74,21 +72,10 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
-    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
     @IEnvironmentService private readonly environments: IEnvironmentService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
   ) {}
-
-  async resolveCreationEnvironment(options: CreateManagedSessionOptions) {
-    const opened = await this.openCreation(options);
-    opened.lease.dispose();
-    return {
-      workspaceId: opened.workspaceId,
-      environmentId: opened.environmentId,
-      environmentCwd: opened.environmentCwd,
-    };
-  }
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
     const opened = await this.openCreation(options);
@@ -112,48 +99,21 @@ export class SessionManager implements ISessionManager {
 
   private async openCreation(options: CreateManagedSessionOptions) {
     await this.environments.ready;
-    const declarations = options.environmentId === LOCAL_ENVIRONMENT_ID
-      ? undefined
-      : await this.environmentDeclarations.declarations();
-    const environmentId = options.environmentId ?? declarations?.defaultId;
-    const remote = environmentId !== undefined && environmentId !== LOCAL_ENVIRONMENT_ID;
-    if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
+    const environmentId = options.environmentId ?? LOCAL_ENVIRONMENT_ID;
+    if (environmentId !== LOCAL_ENVIRONMENT_ID) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, `[environments] has been removed; use [hosts] for SSH sessions.`);
+    }
+    if (options.workDir !== undefined) await this.assertUsableWorkDir(options.workDir);
     const lease = await this.workspaces.acquire(
       options.workspaceId === undefined
         ? { root: options.workDir }
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
     try {
-      if (!remote) {
-        return {
-          workspaceId: lease.instance.id,
-          environmentId,
-          environmentCwd: options.environmentCwd,
-          lease,
-        };
-      }
-      const registrationError = this.environmentDeclarations.registrationError(environmentId);
-      if (registrationError !== undefined) throw registrationError;
-      const declared = declarations?.entries.find((entry) => entry.id === environmentId);
-      if (declared === undefined && this.environments.current(environmentId) === undefined) {
-        throw new Error2(
-          ErrorCodes.CONFIG_INVALID,
-          `environment "${environmentId}" is not declared in [environments]`,
-        );
-      }
-      const cwd = options.environmentCwd ?? declared?.entry.defaultCwd;
-      if (cwd === undefined) {
-        throw new Error2(
-          ErrorCodes.CONFIG_INVALID,
-          declared === undefined
-            ? `environment "${environmentId}" requires a cwd`
-            : `environment "${environmentId}" does not set defaultCwd in [environments]`,
-        );
-      }
       return {
         workspaceId: lease.instance.id,
         environmentId,
-        environmentCwd: declared === undefined ? cwd : normalizeRemoteCwd(cwd),
+        environmentCwd: options.environmentCwd,
         lease,
       };
     } catch (error) {

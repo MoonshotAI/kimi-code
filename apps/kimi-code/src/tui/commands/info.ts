@@ -25,7 +25,6 @@ import {
 import { detectInstallSource } from '#/cli/update/source';
 import { isManagedUsageProvider } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
-import { sessionWorkDir } from '../utils/session-work-dir';
 import { openUrl } from '#/utils/open-url';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
 import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
@@ -67,15 +66,7 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     return;
   }
 
-  const remoteSession =
-    host.state.appState.environment !== undefined &&
-    host.state.appState.environment.environmentId !== 'local';
-  if (remoteSession) {
-    host.showStatus(
-      'Codebase attachment is not supported for remote sessions — the scanner only reads the local filesystem.',
-    );
-  }
-  const level = await promptFeedbackAttachment(host, remoteSession, availability.session);
+  const level = await promptFeedbackAttachment(host, false, availability.session);
   if (level === undefined) {
     host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
@@ -170,7 +161,7 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
   const reportArgs = {
     version: appState.version,
     model: appState.model,
-    workDir: sessionWorkDir(appState),
+    workDir: appState.workDir,
     sessionId: appState.sessionId,
     sessionTitle: appState.sessionTitle,
     thinkingEffort: appState.thinkingEffort,

@@ -14,7 +14,7 @@ Attachment paths and compression details share the tool-output budget. Large lis
 
 Kimi Code CLI supports three MCP server connection methods:
 
-- **stdio**: The CLI starts the MCP server as a child process and communicates via standard input/output. Suitable for command-line tools. By default the server runs on the machine running Kimi Code; setting [`environment_id`](#running-stdio-servers-in-a-remote-environment) starts it inside a [remote environment](../guides/remote-environment.md) instead.
+- **stdio**: The CLI starts the MCP server as a child process and communicates via standard input/output. Suitable for command-line tools. By default the server runs on the machine running Kimi Code.
 - **HTTP**: The CLI connects to an already-running HTTP endpoint. Suitable for remote services or processes that need to run persistently.
 - **SSE**: The CLI connects to a legacy HTTP+SSE endpoint (Server-Sent Events, a streaming HTTP mechanism). Prefer HTTP for new MCP servers, but use `transport: "sse"` when a service still exposes only the older SSE transport.
 
@@ -62,7 +62,6 @@ Optional fields:
 | Field | Type | Applies to | Description |
 | --- | --- | --- | --- |
 | `env` | `Record<string, string>` | stdio | Environment variables injected into the child process |
-| `environment_id` | `string` | stdio | Id of the [remote environment](../guides/remote-environment.md) that starts the server; defaults to `local` |
 | `cwd` | `string` | stdio | Working directory for the child process |
 | `headers` | `Record<string, string>` | HTTP, SSE | Static request headers appended to every request |
 | `bearerTokenEnvVar` | `string` | HTTP, SSE | Name of an environment variable that contains a bearer token |
@@ -84,50 +83,6 @@ Plugins can also declare MCP servers in their manifest. Servers declared by a pl
 ::: warning Note
 stdio entries in a project-level `.kimi-code/mcp.json` execute commands when a session starts. Only enable these in repositories you trust.
 :::
-
-## Running stdio servers in a remote environment
-
-A stdio server normally runs on the machine running Kimi Code, even for sessions bound to a remote environment. Setting `environment_id` on the server entry changes that: the CLI starts the server inside the named [remote environment](../guides/remote-environment.md), so the process, its working directory, and everything it touches live on the target.
-
-```toml
-# config.toml
-[environments.dev-box]
-type = "ssh"
-host = "dev-box"
-defaultCwd = "/srv/work"
-```
-
-```json
-{
-  "mcpServers": {
-    "remote-fs": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv/data"],
-      "environment_id": "dev-box"
-    }
-  }
-}
-```
-
-`environment_id` references an environment declared in `[environments]` in `config.toml` (see [Declare Docker and custom-command environments](../guides/remote-environment.md#declare-docker-and-custom-command-environments)). The field defaults to `local` and never follows the session's own environment binding: a session bound to `dev-box` still runs stdio servers without `environment_id` locally. A cold environment connects on demand when the server starts.
-
-### Environment variables for remote stdio servers
-
-A remote stdio server inherits `PATH`, `HOME`, and the rest of its base environment from the target — not from your machine — so local paths never leak into a remote process. The CLI sends only the `env` overlay as literal values, and the target resolves everything else.
-
-```json
-{
-  "mcpServers": {
-    "remote-db": {
-      "command": "db-mcp-server",
-      "environment_id": "dev-box",
-      "env": { "LOG_LEVEL": "debug" }
-    }
-  }
-}
-```
-
-In this example the server receives `LOG_LEVEL=debug` from `env`; every other variable is resolved from the target's own environment.
 
 ## Loading tools on demand
 

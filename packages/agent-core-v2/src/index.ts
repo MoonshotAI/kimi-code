@@ -40,8 +40,7 @@ export * from '#/app/environment/environment';
 export * from '#/app/environment/environmentService';
 export * from '#/environment/environmentRegistry';
 export * from '#/environment/environmentProvider';
-export * from '#/remote/declaration/remoteEnvironmentDeclaration';
-import '#/remote/declaration/configSection';
+import '#/app/config/environmentsConfigSection';
 export * from '#/program/program';
 export * from '#/workspace/workspaceInstance/workspaceInstance';
 export * from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -51,8 +50,6 @@ export * from '#/agent/environmentBinding/environmentBindingService';
 export * from '#/agent/environmentBinding/agentEnvironment';
 export * from '#/app/sessionManager/sessionManager';
 export * from '#/app/sessionManager/sessionManagerService';
-export * from '#/app/environmentDeclaration/environmentDeclaration';
-export * from '#/app/environmentDeclaration/environmentDeclarationService';
 
 export * from '#/_base/log/log';
 export * from '#/_base/log/logConfig';

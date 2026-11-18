@@ -97,11 +97,6 @@ export const setModelResultSchema = z.object({
   providerName: z.string().optional(),
 });
 
-export const environmentBindingSchema = z.object({
-  environmentId: z.string(),
-  cwd: z.string().optional(),
-});
-
 export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']);
 
 export const setPermissionPayloadSchema = z.object({

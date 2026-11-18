@@ -505,7 +505,7 @@ No error codes beyond the [common error codes](#common-rules).
 
 ## Host files
 
-Access the file system of the machine running the server directly by absolute path, without a session or workspace. These endpoints serve cross-directory file completion and the folder picker. `fs:content` and `fs:mkdir` can also reach the file system of another registered environment through `environment_id`.
+Access the file system of the machine running the server directly by absolute path, without a session or workspace. These endpoints serve cross-directory file completion and the folder picker.
 
 | Method and path | Description |
 | --- | --- |
@@ -560,37 +560,31 @@ On success, `data` is `{ home, recent_roots }`: `home` is the user's home direct
 
 ### `GET /api/v1/fs:content`
 
-Streams the raw bytes of any file on the host filesystem; with `environment_id`, reads that environment's file system instead. This endpoint is gated only by the API token (see [Authentication](./server-api.md#authentication)), so be careful when exposing the port. The response supports Range requests and ETag caching; see [Binary and streaming endpoints](#binary-and-streaming-endpoints).
+Streams the raw bytes of any file on the host filesystem. This endpoint is gated only by the API token (see [Authentication](./server-api.md#authentication)), so be careful when exposing the port. The response supports Range requests and ETag caching; see [Binary and streaming endpoints](#binary-and-streaming-endpoints).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `path` | query | string | Required. Absolute file path |
-| `environment_id` | query | string | Id of the environment to read, available from [`GET /api/v1/sessions/{session_id}/environments`](./server-api-sessions.md#get-api-v1-sessions-session-id-environments). Default `local` (the machine running the server) |
 
 - `40001`: `path` is missing or not absolute, or the path is neither a regular file nor a directory (such as a device file or socket)
 - `40409`: path not found
 - `40411`: permission denied
-- `40420`: the environment given by `environment_id` not found
 - `40906`: path is a directory
-- `40926`: the environment given by `environment_id` is unavailable or does not provide the file system capability
 
 ### `POST /api/v1/fs:mkdir`
 
-Creates one directory on the host filesystem by absolute path. This is the backend of the folder picker's "New folder" action; with `environment_id`, it creates the directory on that environment's file system instead. Non-recursive: the parent directory must already exist.
+Creates one directory on the host filesystem by absolute path. This is the backend of the folder picker's "New folder" action. Non-recursive: the parent directory must already exist.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `path` | body | string | Required. Absolute directory path |
-| `environment_id` | body | string | Target environment id, available from [`GET /api/v1/sessions/{session_id}/environments`](./server-api-sessions.md#get-api-v1-sessions-session-id-environments). Default `local` (the machine running the server) |
 
 On success, `data` is `{ path }`.
 
 - `40001`: `path` is not absolute
 - `40409`: parent path not found, or a component of the path is not a directory
 - `40411`: permission denied
-- `40420`: the environment given by `environment_id` not found
 - `40919`: path already exists
-- `40926`: the environment given by `environment_id` is unavailable or does not provide the file system capability
 
 ## Binary and streaming endpoints
 

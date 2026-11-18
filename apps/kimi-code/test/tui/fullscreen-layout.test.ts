@@ -226,7 +226,6 @@ function mountFullscreenKimiTui(): { driver: ActivityDockDriver; vt: VirtualTerm
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
-      environment: undefined,
     },
     tuiConfig: {
       theme: 'dark',

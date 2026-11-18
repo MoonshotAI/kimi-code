@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import {
   Error2,
   ErrorCodes,
-  IEnvironmentService,
   ISessionIndex,
   IEventService,
   IWorkspaceAliases,
@@ -23,9 +22,6 @@ import {
   type FsPullRequest,
   IGitService,
 } from '@moonshot-ai/agent-core-v2/app/git/git';
-import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
-import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
-import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '../src/protocol/session';
@@ -213,16 +209,6 @@ const gitStub: IGitService = {
   },
   findWorkTree: async () => null,
 };
-
-function hostProcessWithoutGh(): HostProcessService {
-  const service = new HostProcessService();
-  const spawn = service.spawn.bind(service);
-  service.spawn = async (command, args, options) => {
-    if (command === 'gh') throw new Error('gh is not used in these tests');
-    return spawn(command, args, options);
-  };
-  return service;
-}
 
 describe('server /api/v1/sessions list', () => {
   let server: RunningServer | undefined;
@@ -676,159 +662,7 @@ describe('server /api/v1/sessions list', () => {
 
     await getData('?include=git');
     expect(gitState.calls.toSorted()).toEqual(['/repo/a', '/repo/b']);
-  });
-
-  it('routes session git by environment even when local and remote cwds collide', async () => {
-    const remoteRepo = await mkdtemp(join(tmpdir(), 'kimi-v1-session-git-remote-'));
-    const remoteSummary: SessionSummary = {
-      id: 'remote-git',
-      workspaceId: WS_A,
-      cwd: '/repo/remote-local',
-      environmentId: 'dev-box',
-      environmentCwd: remoteRepo,
-      createdAt: 6_000,
-      updatedAt: 6_000,
-      archived: false,
-    };
-    const localShadow: SessionSummary = {
-      id: 'local-shadow',
-      workspaceId: WS_A,
-      cwd: remoteRepo,
-      createdAt: 5_500,
-      updatedAt: 5_500,
-      archived: false,
-    };
-    try {
-      execFileSync('git', ['init'], { cwd: remoteRepo, stdio: ['ignore', 'pipe', 'pipe'] });
-      const remoteBranch = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], {
-        cwd: remoteRepo,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim();
-      gitState.responses.set(remoteRepo, { branch: 'local-shadow', pullRequest: null });
-      await (server as RunningServer).close();
-      await bootSeeded([...SUMMARIES, localShadow, remoteSummary]);
-      const registration = (server as RunningServer).core.accessor.get(IEnvironmentService).register(
-        Object.assign(
-          new FakeEnvironment(
-            { environmentId: 'dev-box', generation: 'remote-generation' },
-            { capabilities: ['fs', 'process'] },
-          ),
-          { fs: new HostFileSystem(), process: hostProcessWithoutGh() },
-        ),
-      );
-      try {
-        const page = await getData('?include=git');
-        const byId = new Map(page.items.map((item) => [item.id, item as Session]));
-        expect(byId.get('remote-git')?.git?.branch).toBe(remoteBranch);
-        expect(byId.get('local-shadow')?.git?.branch).toBe('local-shadow');
-        expect(gitState.calls.filter((cwd) => cwd === remoteRepo)).toHaveLength(1);
-
-        await getData('?include=git');
-        expect(gitState.calls.filter((cwd) => cwd === remoteRepo)).toHaveLength(1);
-      } finally {
-        await registration.remove();
-      }
-    } finally {
-      await rm(remoteRepo, { recursive: true, force: true });
-    }
-  }, 15000);
-
-  it('does not cache remote git while its environment is not ready', async () => {
-    const remoteRepo = await mkdtemp(join(tmpdir(), 'kimi-v1-session-git-pending-'));
-    const remoteSummary: SessionSummary = {
-      id: 'remote-pending',
-      workspaceId: WS_A,
-      cwd: '/repo/remote-local',
-      environmentId: 'dev-box',
-      environmentCwd: remoteRepo,
-      createdAt: 6_000,
-      updatedAt: 6_000,
-      archived: false,
-    };
-    try {
-      execFileSync('git', ['init'], { cwd: remoteRepo, stdio: ['ignore', 'pipe', 'pipe'] });
-      const remoteBranch = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], {
-        cwd: remoteRepo,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim();
-      await (server as RunningServer).close();
-      await bootSeeded([...SUMMARIES, remoteSummary]);
-      const environment = new FakeEnvironment(
-        { environmentId: 'dev-box', generation: 'remote-generation' },
-        { capabilities: ['fs', 'process'], status: 'connecting' },
-      );
-      const registration = (server as RunningServer).core.accessor.get(IEnvironmentService).register(
-        Object.assign(environment, { fs: new HostFileSystem(), process: hostProcessWithoutGh() }),
-      );
-      try {
-        const pending = await getData('?include=git');
-        expect(
-          (pending.items.find((item) => item.id === 'remote-pending') as Session | undefined)?.git,
-        ).toEqual({});
-
-        environment.setStatus('ready');
-        const ready = await getData('?include=git');
-        expect(
-          (ready.items.find((item) => item.id === 'remote-pending') as Session | undefined)?.git
-            ?.branch,
-        ).toBe(remoteBranch);
-      } finally {
-        await registration.remove();
-      }
-    } finally {
-      await rm(remoteRepo, { recursive: true, force: true });
-    }
-  }, 15000);
-
-  it('times out a stalled remote git lookup without starting a second one', async () => {
-    const remoteSummary: SessionSummary = {
-      id: 'remote-stalled',
-      workspaceId: WS_A,
-      cwd: '/repo/remote-local',
-      environmentId: 'dev-box',
-      environmentCwd: '/remote/stalled',
-      createdAt: 6_000,
-      updatedAt: 6_000,
-      archived: false,
-    };
-    let spawns = 0;
-    let release: (() => void) | undefined;
-    const released = new Promise<never>((_resolve, reject) => {
-      release = () => reject(new Error('released'));
-    });
-    released.catch(() => {});
-    const stalledProcess = {
-      spawn: () => {
-        spawns += 1;
-        return released;
-      },
-    } as unknown as HostProcessService;
-    await (server as RunningServer).close();
-    await bootSeeded([...SUMMARIES, remoteSummary]);
-    const registration = (server as RunningServer).core.accessor.get(IEnvironmentService).register(
-      Object.assign(
-        new FakeEnvironment(
-          { environmentId: 'dev-box', generation: 'remote-generation' },
-          { capabilities: ['fs', 'process'] },
-        ),
-        { fs: new HostFileSystem(), process: stalledProcess },
-      ),
-    );
-    try {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const page = await getData('?include=git');
-        expect(
-          (page.items.find((item) => item.id === 'remote-stalled') as Session | undefined)?.git,
-        ).toEqual({});
-      }
-      expect(spawns).toBe(1);
-    } finally {
-      release?.();
-      await registration.remove();
-    }
-  }, 20000);
+  });;;;
 
   it('degrades non-git cwds to an empty git object without failing the request', async () => {
     await (server as RunningServer).close();

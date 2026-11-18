@@ -3,7 +3,6 @@ import { registerMigrateCommand, type MigrateCommandOptions } from '#/migration/
 import { registerImportSessionsCommand } from '#/session-import/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
-import { EXEC_SERVER_COMMAND } from './exec-server';
 import type { CLIOptions } from './options';
 import type { InstallIntent, UpdateChannel } from './update/types';
 import { registerAcpCommand } from './sub/acp';
@@ -28,8 +27,6 @@ export type UpdateDownloadHandler = (
   intent: InstallIntent,
   channel: UpdateChannel,
 ) => void;
-export type ExecServerCommandHandler = (listen: string) => void;
-
 export function createProgram(
   version: string,
   onMain: MainCommandHandler,
@@ -37,7 +34,6 @@ export function createProgram(
   onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
   onUpgrade: UpgradeCommandHandler = () => {},
   onUpdateDownload: UpdateDownloadHandler = () => {},
-  onExecServer: ExecServerCommandHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
@@ -128,16 +124,6 @@ export function createProgram(
     )
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
-    .addOption(
-      new Option('--environment <id>', 'Bind the new session to the configured environment <id>.')
-        .hideHelp(),
-    )
-    .addOption(
-      new Option(
-        '--environment-cwd <path>',
-        'Set the working directory on the environment selected by --environment.',
-      ).hideHelp(),
-    )
     .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
@@ -186,14 +172,6 @@ export function createProgram(
       );
     });
 
-  program
-    .command(EXEC_SERVER_COMMAND, { hidden: true })
-    .option('--listen <transport>', 'Transport to listen on. Only "stdio" is supported.', 'stdio')
-    .allowExcessArguments(false)
-    .action((options: { listen: string }) => {
-      onExecServer(options.listen);
-    });
-
   program.argument('[args...]').action((args: string[]) => {
     if (args.length > 0) {
       program.error(`unknown command '${args[0]}'. See '${CLI_COMMAND_NAME} --help'.`);
@@ -219,8 +197,6 @@ export function createProgram(
       agent: raw['agent'] as string | undefined,
       agentFiles: raw['agentFile'] as string[],
       addDirs: raw['addDir'] as string[],
-      environment: raw['environment'] as string | undefined,
-      environmentCwd: raw['environmentCwd'] as string | undefined,
     };
 
     onMain(opts);

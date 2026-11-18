@@ -33,7 +33,6 @@ import { resolveCommandPath } from '#/utils/process/resolve-command';
 import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
-import { detectNativeInstall } from './update/source';
 import { createKimiCodeHostIdentity } from './host-identity';
 
 export async function runShell(
@@ -79,12 +78,6 @@ export async function runShell(
         outcome: 'error',
         reason: outcome.reason,
       });
-    },
-    sshPassword: {
-      prompt: (environmentId) => tui.promptSshPassword(environmentId),
-      askpassCommand: detectNativeInstall()
-        ? [process.execPath]
-        : [process.execPath, ...process.execArgv, process.argv[1]!],
     },
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   };

@@ -68,7 +68,6 @@ function makeStartupInput(): KimiTUIStartupInput {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
-      environment: undefined,
     },
     tuiConfig: {
       theme: 'dark',
@@ -238,7 +237,6 @@ function makeHarness(initialSession: Session) {
       },
     })),
     setConfig: vi.fn(async () => ({ providers: {} })),
-    resolveSessionEnvironment: vi.fn(async () => ({ environmentId: 'local', cwd: undefined })),
     onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => initialSession),
     resumeSession: vi.fn(async () => initialSession),

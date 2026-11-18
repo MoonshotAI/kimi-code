@@ -168,7 +168,6 @@ function defaultOpts(): CLIOptions {
     skillsDirs: [],
     agent: undefined,
     agentFiles: [],
-    environment: undefined,
   };
 }
 
