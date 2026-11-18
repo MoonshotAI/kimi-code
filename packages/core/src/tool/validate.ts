@@ -3,7 +3,7 @@ import {
   validateToolArgs,
   type JsonType,
   type ToolArgsValidator,
-} from '#/tool/args-validator';
+} from '#/tool/args';
 
 import type { ExecutableTool } from './types';
 
