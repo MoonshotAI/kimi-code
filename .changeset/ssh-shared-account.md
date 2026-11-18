@@ -1,7 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": patch
+"@moonshot-ai/kimi-code": minor
 ---
 
-Support configuring SSH hosts for Kimi Code projects, with each host using its own Kimi login and optional copied custom model providers.
-
-Fix missing or out-of-order sessions when paging projects across SSH hosts.
+Add SSH devices: connect a machine over SSH from the Devices settings to create projects and run sessions on it, with each device using its own Kimi login and optionally your copied custom model providers.
