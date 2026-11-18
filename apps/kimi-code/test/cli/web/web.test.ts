@@ -1,3 +1,5 @@
+import { spawn, type ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -18,8 +20,11 @@ import {
   attachDaemon,
   DaemonBusyError,
   daemonSocketPath,
+  daemonUpgradeLogPath,
   defaultEnsureDaemonDeps,
   ensureDaemon,
+  runKimiCommand,
+  runLoggedCommand,
   type DaemonConnection,
   type DaemonLease,
   type EnsureDaemonDeps,
@@ -1424,6 +1429,56 @@ describe('`kimi server ensure-daemon`', () => {
 
     await ensureDaemon(makeDeps({ sshAuthSock: undefined }));
     expect(readlinkSync(agentSocket)).toBe('/tmp/ssh-2/agent.200');
+  });
+
+  it.skipIf(process.platform === 'win32')('runs a background command detached and returns its exit code with only its own output, appended to the log', async () => {
+    const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+    vi.mocked(spawn).mockImplementation(actual.spawn);
+    const logPath = daemonUpgradeLogPath(homeDir);
+    mkdirSync(join(homeDir, 'server'), { recursive: true });
+    writeFileSync(logPath, 'earlier run\n');
+    try {
+      await expect(
+        runLoggedCommand(
+          [process.execPath, '-e', 'console.log("Updated"); console.error("warning: slow mirror"); process.exit(3)'],
+          logPath,
+        ),
+      ).resolves.toEqual({ code: 3, output: 'Updated\nwarning: slow mirror\n' });
+      expect(spawn).toHaveBeenCalledWith(
+        process.execPath,
+        ['-e', expect.any(String)],
+        expect.objectContaining({ detached: true }),
+      );
+      expect(readFileSync(logPath, 'utf8')).toBe('earlier run\nUpdated\nwarning: slow mirror\n');
+      await expect(runLoggedCommand([join(homeDir, 'missing-kimi'), '--version'], logPath)).resolves.toMatchObject({
+        code: null,
+        output: expect.stringContaining('ENOENT'),
+      });
+    } finally {
+      vi.mocked(spawn).mockReset();
+    }
+  });
+
+  it('re-runs this kimi binary for background commands and logs them next to the daemon log', async () => {
+    vi.stubEnv('KIMI_CODE_HOME', homeDir);
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    vi.mocked(spawn).mockImplementation(() => {
+      setImmediate(() => child.emit('close', 0));
+      return child as unknown as ChildProcess;
+    });
+    try {
+      await expect(runKimiCommand(['upgrade', '--yes'])).resolves.toEqual({ code: 0, output: '' });
+      expect(spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [...process.execArgv, process.argv[1], 'upgrade', '--yes'],
+        expect.objectContaining({ detached: true }),
+      );
+      expect(child.unref).toHaveBeenCalledOnce();
+      expect(existsSync(join(homeDir, 'server', 'upgrade.log'))).toBe(true);
+    } finally {
+      vi.mocked(spawn).mockReset();
+      vi.unstubAllEnvs();
+    }
   });
 
   it('releases the lock after a failure and clears dead or corrupted lock files', async () => {

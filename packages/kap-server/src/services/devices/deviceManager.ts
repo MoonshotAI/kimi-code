@@ -8,7 +8,7 @@ import {
 
 import type { DeviceSnapshot } from '../../protocol/events-zod';
 import { AccountDeviceBridge, type RemoteControlRelay } from './accountDeviceBridge';
-import { DeviceConnectError, type DeviceBridge } from './deviceBridge';
+import { DeviceConnectError, type DeviceBridge, type DeviceUpgradeResult } from './deviceBridge';
 import type { DeviceSources } from './deviceFanout';
 import {
   collectSharedProviders,
@@ -55,7 +55,8 @@ export function toDeviceSnapshot(info: DeviceInfo): DeviceSnapshot {
   const { id, entry, bridge, conflict } = info;
   const disabled = entry.enabled === false;
   const ssh = entry.connection === 'account' ? undefined : entry;
-  const registration = bridge instanceof AccountDeviceBridge ? bridge.registration : undefined;
+  const account = bridge instanceof AccountDeviceBridge ? bridge : undefined;
+  const registration = account?.registration;
   return {
     id,
     connection: entry.connection ?? 'ssh',
@@ -75,6 +76,10 @@ export function toDeviceSnapshot(info: DeviceInfo): DeviceSnapshot {
     platform: registration?.platform,
     alias: registration?.alias,
     duplicate_of: conflict?.failure === 'duplicate' ? conflict.duplicateOf : undefined,
+    install: ssh === undefined ? account?.install : 'cli',
+    remote_upgrade: ssh === undefined ? account?.remoteUpgrade : true,
+    upgrade_status: bridge?.upgradeState?.status,
+    upgrade_error: bridge?.upgradeState?.error,
   };
 }
 
@@ -141,16 +146,15 @@ export class DeviceManager {
   }
 
   async connect(id: string): Promise<DeviceSession> {
-    await this.core.accessor.get(IConfigService).ready;
-    const entry = this.section()[id];
-    if (entry === undefined) throw new DeviceConnectError('unknown', `device "${id}" is not configured`);
-    if (entry.enabled === false) throw new DeviceConnectError('unknown', `device "${id}" is disabled`);
-    const record = this.record(id, entry);
-    this.assertUsable(id);
-    record.started = true;
+    const record = await this.usableRecord(id);
     const session = await record.bridge.connect();
     this.assertUsable(id);
     return session;
+  }
+
+  async upgrade(id: string): Promise<DeviceUpgradeResult> {
+    const record = await this.usableRecord(id);
+    return record.bridge.upgrade();
   }
 
   activate(): void {
@@ -189,6 +193,17 @@ export class DeviceManager {
   private assertUsable(id: string): void {
     const conflict = this.conflictOf(id);
     if (conflict !== undefined) throw new DeviceConnectError(conflict.failure, conflictMessage(id, conflict));
+  }
+
+  private async usableRecord(id: string): Promise<BridgeRecord> {
+    await this.core.accessor.get(IConfigService).ready;
+    const entry = this.section()[id];
+    if (entry === undefined) throw new DeviceConnectError('unknown', `device "${id}" is not configured`);
+    if (entry.enabled === false) throw new DeviceConnectError('unknown', `device "${id}" is disabled`);
+    const record = this.record(id, entry);
+    this.assertUsable(id);
+    record.started = true;
+    return record;
   }
 
   private record(id: string, entry: DeviceEntry): BridgeRecord {

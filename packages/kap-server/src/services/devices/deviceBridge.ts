@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import { metaResponseSchema } from '../../protocol/rest-meta';
 import { deviceGet, DeviceSourceError } from './deviceFanout';
 import { DEVICE_API_LEVEL } from './deviceProtocol';
@@ -34,6 +36,29 @@ export class DeviceConnectError extends Error {
   }
 }
 
+export type DeviceInstall = 'desktop' | 'cli';
+
+export interface DeviceUpgradeState {
+  readonly status: 'installing' | 'restarting' | 'failed';
+  readonly error?: string;
+}
+
+export interface DeviceUpgradeResult {
+  readonly status: 'started' | 'update_on_device' | 'unsupported';
+  readonly message?: string;
+}
+
+export class DeviceUpgradeInProgressError extends Error {
+  constructor() {
+    super('an upgrade is already in progress on this device');
+    this.name = 'DeviceUpgradeInProgressError';
+  }
+}
+
+export function isUpgrading(state: DeviceUpgradeState | undefined): boolean {
+  return state?.status === 'installing' || state?.status === 'restarting';
+}
+
 export interface RemoteDeviceIdentity {
   readonly deviceId: string;
   readonly productName?: string;
@@ -46,7 +71,9 @@ export interface DeviceBridge {
   readonly remoteVersion: string | undefined;
   readonly session: DeviceSession | undefined;
   readonly identity: RemoteDeviceIdentity | undefined;
+  readonly upgradeState: DeviceUpgradeState | undefined;
   connect(): Promise<DeviceSession>;
+  upgrade(): Promise<DeviceUpgradeResult>;
   start(): void;
   dispose(): void;
 }
@@ -54,21 +81,25 @@ export interface DeviceBridge {
 export interface RemoteDeviceMeta {
   readonly identity?: RemoteDeviceIdentity;
   readonly serverVersion?: string;
+  readonly systemUpgrade: boolean;
 }
 
 const remoteMetaSchema = metaResponseSchema
   .pick({ server_version: true, product: true, device_id: true, device_api_level: true })
-  .partial();
+  .partial()
+  .extend({ capabilities: z.object({ system_upgrade: z.boolean().optional() }).optional() });
 
 export async function readRemoteMeta(session: DeviceSession): Promise<RemoteDeviceMeta> {
   const parsed = remoteMetaSchema.safeParse(await deviceGet<unknown>(session, '/api/v1/meta'));
   if (!parsed.success) throw new DeviceSourceError(undefined, 'device returned unexpected server metadata');
   const meta = parsed.data;
+  const systemUpgrade = meta.capabilities?.system_upgrade === true;
   if (meta.device_id === undefined || meta.device_api_level === undefined || meta.device_api_level < DEVICE_API_LEVEL) {
-    return { serverVersion: meta.server_version };
+    return { serverVersion: meta.server_version, systemUpgrade };
   }
   return {
     identity: { deviceId: meta.device_id, productName: meta.product },
     serverVersion: meta.server_version,
+    systemUpgrade,
   };
 }

@@ -165,4 +165,27 @@ describe('ManagedIdleExit', () => {
     await exit.sweep();
     expect(onIdle).toHaveBeenCalledTimes(1);
   });
+
+  it('exits as soon as no session is live once asked to exit when idle, ignoring attached connections and the idle window', async () => {
+    const state = { sessions: 1, connections: 2 };
+    const { exit, onIdle } = setup(state);
+    try {
+      exit.exitWhenIdle();
+      await exit.sweep();
+      expect(onIdle).not.toHaveBeenCalled();
+      state.sessions = 0;
+      await exit.sweep();
+      expect(onIdle).toHaveBeenCalledTimes(1);
+    } finally {
+      await exit.close();
+    }
+  });
+
+  it('ignores a request to exit when idle after it was closed', async () => {
+    const { exit, onIdle } = setup({ sessions: 0, connections: 0 });
+    await exit.close();
+    exit.exitWhenIdle();
+    await exit.sweep();
+    expect(onIdle).not.toHaveBeenCalled();
+  });
 });

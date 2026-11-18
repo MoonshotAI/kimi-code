@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { closeSync, fstatSync, mkdirSync, openSync } from 'node:fs';
 import { mkdir, open, readFile, rename, rm, symlink } from 'node:fs/promises';
 import { createConnection, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION, type HostCommandResult } from '@moonshot-ai/kap-server';
 import type { Command } from 'commander';
 
 import { getDataDir } from '#/utils/paths';
@@ -22,6 +22,8 @@ const ENSURE_DAEMON_MANAGED_BY = 'ensure-daemon';
 
 const LOCK_FILE = 'ensure-daemon.lock';
 const LOG_FILE = 'ensure-daemon.log';
+const UPGRADE_LOG_FILE = 'upgrade.log';
+const COMMAND_OUTPUT_TAIL_BYTES = 16 * 1024;
 const SOCKET_FILE = 'daemon.sock';
 const AGENT_SOCKET_FILE = 'forwarded-ssh-agent.sock';
 const POLL_INTERVAL_MS = 200;
@@ -104,6 +106,10 @@ export function daemonSocketPath(homeDir: string): string {
 
 export function daemonLogPath(homeDir: string): string {
   return join(homeDir, 'server', LOG_FILE);
+}
+
+export function daemonUpgradeLogPath(homeDir: string): string {
+  return join(homeDir, 'server', UPGRADE_LOG_FILE);
 }
 
 export function supportsBackgroundServer(platform: NodeJS.Platform = process.platform): boolean {
@@ -231,10 +237,54 @@ export function attachDaemon(deps: EnsureDaemonDeps): Promise<AttachedDaemon> {
   });
 }
 
-function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: string): void {
-  const argv = detectNativeInstall()
+function kimiArgv(): string[] {
+  return detectNativeInstall()
     ? [process.execPath]
     : [process.execPath, ...process.execArgv, process.argv[1]!];
+}
+
+export function runKimiCommand(args: readonly string[]): Promise<HostCommandResult> {
+  return runLoggedCommand([...kimiArgv(), ...args], daemonUpgradeLogPath(getDataDir()));
+}
+
+export async function runLoggedCommand(argv: readonly string[], logPath: string): Promise<HostCommandResult> {
+  const { child, offset } = spawnLogged(argv, logPath);
+  const exit = await new Promise<{ code: number | null; error?: Error }>((resolve) => {
+    child.once('error', (error) => resolve({ code: null, error }));
+    child.once('close', (code) => resolve({ code }));
+  });
+  const output = await readLogTail(logPath, offset);
+  return { code: exit.code, output: exit.error === undefined ? output : `${output}${exit.error.message}\n` };
+}
+
+function spawnLogged(argv: readonly string[], logPath: string): { readonly child: ChildProcess; readonly offset: number } {
+  mkdirSync(dirname(logPath), { recursive: true });
+  const log = openSync(logPath, 'a', 0o600);
+  try {
+    const offset = fstatSync(log).size;
+    const child = spawn(argv[0]!, argv.slice(1), { detached: true, stdio: ['ignore', log, log] });
+    child.unref();
+    return { child, offset };
+  } finally {
+    closeSync(log);
+  }
+}
+
+async function readLogTail(logPath: string, offset: number): Promise<string> {
+  const handle = await open(logPath, 'r');
+  try {
+    const { size } = await handle.stat();
+    const start = Math.max(offset, size - COMMAND_OUTPUT_TAIL_BYTES);
+    const buffer = Buffer.alloc(Math.max(0, size - start));
+    await handle.read(buffer, 0, buffer.length, start);
+    return buffer.toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: string): void {
+  const argv = kimiArgv();
   mkdirSync(dirname(logPath), { recursive: true });
   const log = openSync(logPath, 'w', 0o600);
   try {

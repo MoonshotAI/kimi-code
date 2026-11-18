@@ -12,7 +12,7 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { deviceSnapshotSchema } from '../protocol/events-zod';
-import { DeviceConnectError } from '../services/devices/deviceBridge';
+import { DeviceConnectError, DeviceUpgradeInProgressError } from '../services/devices/deviceBridge';
 import { deviceSnapshots, toDeviceSnapshot, type DeviceManager } from '../services/devices/deviceManager';
 import { deviceWireSchema, sshDeviceWireSchema } from '../services/devices/devicesConfig';
 import { providerCopyResultSchema } from '../services/devices/deviceProviders';
@@ -32,6 +32,10 @@ const testResultSchema = z.object({
   remote_version: z.string().optional(),
   connect_error: z.string().optional(),
   connect_failure: z.string().optional(),
+});
+const upgradeResultSchema = z.object({
+  status: z.enum(['started', 'update_on_device', 'unsupported']),
+  message: z.string().optional(),
 });
 
 export function registerDevicesRoutes(app: DevicesRouteHost, core: Scope, manager: DeviceManager): void {
@@ -196,6 +200,40 @@ export function registerDevicesRoutes(app: DevicesRouteHost, core: Scope, manage
     },
   );
   app.post(copyProvidersRoute.path, copyProvidersRoute.options, copyProvidersRoute.handler as never);
+
+  const upgradeRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/devices::upgrade',
+      body: deviceIdBodySchema,
+      success: { data: upgradeResultSchema },
+      errors: {
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        [ErrorCode.DEVICE_UPGRADE_IN_PROGRESS]: {},
+      },
+      description:
+        'Upgrade Kimi Code on a device. SSH devices, and account devices running a Kimi Code CLI that supports it, upgrade in the background and report progress in the device upgrade_status; the desktop app and older CLIs answer with how to update on that computer',
+      tags: ['devices'],
+    },
+    async (req, reply) => {
+      const { id } = req.body;
+      if (manager.section()[id] === undefined) {
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `device "${id}" is not configured`, req.id));
+        return;
+      }
+      try {
+        reply.send(okEnvelope(await manager.upgrade(id), req.id));
+      } catch (error) {
+        reply.send(
+          error instanceof DeviceUpgradeInProgressError
+            ? errEnvelope(ErrorCode.DEVICE_UPGRADE_IN_PROGRESS, `device "${id}" is already being upgraded`, req.id)
+            : errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id),
+        );
+      }
+    },
+  );
+  app.post(upgradeRoute.path, upgradeRoute.options, upgradeRoute.handler as never);
 
   const putRoute = defineRoute(
     {

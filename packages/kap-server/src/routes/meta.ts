@@ -24,6 +24,7 @@ export interface MetaRouteOptions {
   readonly startedAt: string;
   readonly dangerousBypassAuth: boolean;
   readonly webTitle?: string;
+  readonly systemUpgrade?: boolean;
   readonly getExperimentalFlags: () => Record<string, boolean> | Promise<Record<string, boolean>>;
   readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
 }
@@ -46,6 +47,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       tasks: true as const,
       interactions_list: true as const,
       session_wait: true as const,
+      system_upgrade: opts.systemUpgrade === true ? (true as const) : undefined,
     }),
     server_id: opts.serverId,
     started_at: opts.startedAt,

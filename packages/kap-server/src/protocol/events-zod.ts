@@ -106,6 +106,10 @@ export const deviceSnapshotSchema = z.object({
   platform: z.string().optional(),
   alias: z.string().optional(),
   duplicate_of: z.string().optional(),
+  install: z.enum(['desktop', 'cli']).optional(),
+  remote_upgrade: z.boolean().optional(),
+  upgrade_status: z.enum(['installing', 'restarting', 'failed']).optional(),
+  upgrade_error: z.string().optional(),
 });
 
 export type DeviceSnapshot = z.infer<typeof deviceSnapshotSchema>;

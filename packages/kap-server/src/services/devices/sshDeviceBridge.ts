@@ -6,14 +6,19 @@ import type { SshDeviceEntry } from '@moonshot-ai/agent-core-v2';
 
 import {
   DeviceConnectError,
+  DeviceUpgradeInProgressError,
+  isUpgrading,
   readRemoteMeta,
   type DeviceBridge,
   type DeviceConnectFailure,
   type DeviceStatus,
+  type DeviceUpgradeResult,
+  type DeviceUpgradeState,
   type RemoteDeviceIdentity,
 } from './deviceBridge';
 import { DEVICE_API_LEVEL, DEVICE_PROTOCOL_VERSION } from './deviceProtocol';
 import type { DeviceSession } from './deviceSession';
+import { readVersionLine, upgradeOutputTail } from './deviceUpgrade';
 import { StdioDeviceSession } from './stdioDeviceSession';
 
 interface BootstrapMarker {
@@ -27,7 +32,6 @@ interface BootstrapMarker {
 const BOOTSTRAP_MARKER = '__KIMI_ENSURE_DAEMON__';
 const DEFAULT_REMOTE_BIN = '~/.kimi-code/bin/kimi';
 const BARE_BIN = /^[A-Za-z0-9._+-]+$/;
-const VERSION_LINE = /^v?\d+\.\d+\.\d+\S*$/;
 const SSH_OPTIONS = [
   '-o',
   'BatchMode=yes',
@@ -42,6 +46,7 @@ const SSH_OPTIONS = [
 ];
 const BOOTSTRAP_TIMEOUT_MS = 60_000;
 const VERSION_TIMEOUT_MS = 20_000;
+const UPGRADE_TIMEOUT_MS = 10 * 60_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const RETRYABLE: ReadonlySet<DeviceConnectFailure> = new Set([
   'connection_refused',
@@ -72,6 +77,11 @@ export function remoteKimiCommand(remoteBin: string | undefined, subcommand: str
   return `${bin} --version; ${bin} ${subcommand}`;
 }
 
+export function remoteUpgradeCommand(remoteBin: string | undefined): string {
+  const bin = remoteBinCommand(remoteBin);
+  return `${bin} upgrade --yes && ${bin} --version`;
+}
+
 export function classifySshFailure(stderr: string, exitCode: number | null): DeviceConnectFailure {
   if (/Could not resolve hostname|Name or service not known|nodename nor servname/i.test(stderr)) return 'host_not_found';
   if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(stderr)) return 'host_key_changed';
@@ -82,13 +92,6 @@ export function classifySshFailure(stderr: string, exitCode: number | null): Dev
   if (exitCode === 126 || exitCode === 127) return 'executor_not_found';
   if (/unknown command|unknown option|too many arguments|excess arguments|has been deprecated/i.test(stderr)) return 'outdated';
   return 'unknown';
-}
-
-function readVersionLine(stdout: string): string | undefined {
-  return stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .findLast((line) => VERSION_LINE.test(line));
 }
 
 function readMarker(stdout: string): BootstrapMarker | undefined {
@@ -214,6 +217,8 @@ export class SshDeviceBridge implements DeviceBridge {
   private errorValue: string | undefined;
   private remoteVersionValue: string | undefined;
   private identityValue: RemoteDeviceIdentity | undefined;
+  private upgradeValue: DeviceUpgradeState | undefined;
+  private upgradeFrom: string | undefined;
   private sessionValue: ActiveDeviceSession | undefined;
   private connecting: Promise<DeviceSession> | undefined;
   private readonly children = new Set<ChildProcess>();
@@ -255,10 +260,23 @@ export class SshDeviceBridge implements DeviceBridge {
     return this.identityValue;
   }
 
+  get upgradeState(): DeviceUpgradeState | undefined {
+    return this.upgradeValue;
+  }
+
   connect(): Promise<DeviceSession> {
     if (this.disposed) return Promise.reject(new DeviceConnectError('unknown', 'device bridge disposed'));
     if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue.session);
     return this.establishOnce();
+  }
+
+  upgrade(): Promise<DeviceUpgradeResult> {
+    if (this.disposed) return Promise.reject(new DeviceConnectError('unknown', 'device bridge disposed'));
+    if (isUpgrading(this.upgradeValue)) return Promise.reject(new DeviceUpgradeInProgressError());
+    this.upgradeFrom = this.remoteVersionValue;
+    this.setUpgrade({ status: 'installing' });
+    void this.install();
+    return Promise.resolve({ status: 'started' });
   }
 
   start(): void {
@@ -284,24 +302,71 @@ export class SshDeviceBridge implements DeviceBridge {
 
   async probe(): Promise<void> {
     const result = await this.collect(
-      [
-        '-T',
-        ...SSH_OPTIONS,
-        ...identityArgs(this.entry),
-        this.entry.host,
-        remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon --probe'),
-      ],
+      this.sshArgs(remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon --probe')),
       VERSION_TIMEOUT_MS,
     );
     if (checkBootstrapOutput(result.stdout)) return;
     throw sshFailure(result);
   }
 
+  private sshArgs(remoteCommand: string): string[] {
+    return ['-T', ...SSH_OPTIONS, ...identityArgs(this.entry), this.entry.host, remoteCommand];
+  }
+
   private update(status: DeviceStatus, failure?: DeviceConnectFailure, error?: string): void {
     this.statusValue = status;
     this.failureValue = failure;
     this.errorValue = error;
+    if (this.upgradeValue !== undefined) this.upgradeValue = this.settledUpgrade(this.upgradeValue);
     this.options.onChange?.();
+  }
+
+  private setUpgrade(state: DeviceUpgradeState): void {
+    this.upgradeValue = state;
+    this.options.onChange?.();
+  }
+
+  private async install(): Promise<void> {
+    const result = await this.collect(this.sshArgs(remoteUpgradeCommand(this.entry.remoteBin)), UPGRADE_TIMEOUT_MS);
+    if (this.disposed) return;
+    if (result.code !== 0) {
+      this.setUpgrade({
+        status: 'failed',
+        error: upgradeOutputTail(result.stderr) ?? upgradeOutputTail(result.stdout) ?? `kimi upgrade exited with code ${String(result.code)}`,
+      });
+      return;
+    }
+    const installed = readVersionLine(result.stdout);
+    if (installed !== undefined && installed === this.upgradeFrom) {
+      this.setUpgrade({ status: 'failed', error: upgradeOutputTail(result.stdout) ?? `kimi ${installed} is already the newest version` });
+      return;
+    }
+    this.setUpgrade({ status: 'restarting' });
+    await this.restart();
+  }
+
+  private async restart(): Promise<void> {
+    await this.connecting?.catch(() => undefined);
+    if (this.disposed) return;
+    const active = this.sessionValue;
+    this.sessionValue = undefined;
+    active?.session.close(new Error('the device server is restarting after an upgrade'));
+    active?.child.kill();
+    await this.establishOnce().catch(() => undefined);
+  }
+
+  private settledUpgrade(upgrade: DeviceUpgradeState): DeviceUpgradeState | undefined {
+    if (upgrade.status === 'installing') return upgrade;
+    if (this.statusValue === 'ready') {
+      if (this.remoteVersionValue !== this.upgradeFrom) return undefined;
+      return upgrade.status === 'restarting'
+        ? { status: 'failed', error: `the device still runs kimi ${this.remoteVersionValue ?? '(unknown version)'} after the upgrade` }
+        : upgrade;
+    }
+    const gaveUp = this.statusValue === 'disconnected' && this.failureValue !== undefined && !RETRYABLE.has(this.failureValue);
+    return upgrade.status === 'restarting' && gaveUp
+      ? { status: 'failed', error: this.errorValue ?? 'the device did not reconnect after the upgrade' }
+      : upgrade;
   }
 
   private async establish(): Promise<DeviceSession> {
@@ -355,13 +420,7 @@ export class SshDeviceBridge implements DeviceBridge {
     return new Promise<ActiveDeviceSession>((resolve, reject) => {
       const child = spawn(
         this.sshProgram,
-        [
-          '-T',
-          ...SSH_OPTIONS,
-          ...identityArgs(this.entry),
-          this.entry.host,
-          remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon'),
-        ],
+        this.sshArgs(remoteKimiCommand(this.entry.remoteBin, 'server ensure-daemon')),
         { stdio: ['pipe', 'pipe', 'pipe'], env: this.env },
       );
       this.track(child);

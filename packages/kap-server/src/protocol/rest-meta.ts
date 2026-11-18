@@ -12,6 +12,7 @@ export const metaCapabilitiesSchema = z.object({
   tasks: z.literal(true),
   interactions_list: z.literal(true),
   session_wait: z.literal(true),
+  system_upgrade: z.literal(true).optional(),
 });
 
 export type MetaCapabilities = z.infer<typeof metaCapabilitiesSchema>;

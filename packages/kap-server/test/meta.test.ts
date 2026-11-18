@@ -258,6 +258,9 @@ describe('/api/v1/meta features', () => {
     expect(metaBody.code).toBe(0);
     expect(metaBody.data.capabilities['interactions_list']).toBe(true);
     expect(metaBody.data.capabilities['session_wait']).toBe(true);
+    expect(metaBody.data.capabilities).not.toHaveProperty('system_upgrade');
+    const upgrade = await authedFetch(server as RunningServer, base, '/api/v1/system:upgrade', { method: 'POST' });
+    expect(upgrade.status).toBe(404);
 
     const unauthed = await fetch(`${base}/api/v1/kap.md`);
     expect(unauthed.status).toBe(401);

@@ -34,6 +34,7 @@ import { registerSessionListAndBatchRoutes } from './sessionList';
 import { registerSessionsRoutes } from './sessions';
 import { deviceSources, type DeviceManager } from '../services/devices/deviceManager';
 import { registerImportProvidersRoute } from '../services/devices/deviceProviders';
+import { registerSystemUpgradeRoutes, type SystemUpgrade } from '../services/devices/deviceUpgrade';
 import { registerDevicesRoutes } from './devices';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
@@ -72,6 +73,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly managedDevice?: boolean;
+  readonly systemUpgrade?: SystemUpgrade;
   readonly webTitle?: string;
 }
 
@@ -96,6 +98,7 @@ export async function registerApiV1Routes(
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
         webTitle: opts.webTitle,
+        systemUpgrade: opts.systemUpgrade !== undefined,
         getExperimentalFlags: async () => {
           await core.accessor.get(IConfigService).ready;
           return core.accessor.get(IFlagService).snapshot();
@@ -143,6 +146,12 @@ export async function registerApiV1Routes(
       registerDevicesRoutes(apiV1 as unknown as Parameters<typeof registerDevicesRoutes>[0], core, opts.deviceManager);
       if (opts.managedDevice === true) {
         registerImportProvidersRoute(apiV1 as unknown as Parameters<typeof registerImportProvidersRoute>[0], core);
+      }
+      if (opts.systemUpgrade !== undefined) {
+        registerSystemUpgradeRoutes(
+          apiV1 as unknown as Parameters<typeof registerSystemUpgradeRoutes>[0],
+          opts.systemUpgrade,
+        );
       }
       registerSessionRatingRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],

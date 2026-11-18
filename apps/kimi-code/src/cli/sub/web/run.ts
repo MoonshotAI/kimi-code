@@ -29,7 +29,7 @@ import {
   isLoopbackHost,
   splitTokenFragment,
 } from './access-urls';
-import { supportsBackgroundServer, type AttachedDaemon } from './ensure-daemon';
+import { runKimiCommand, supportsBackgroundServer, type AttachedDaemon } from './ensure-daemon';
 import { type NetworkAddress } from './networks';
 import {
   attachBackgroundServer,
@@ -413,6 +413,7 @@ async function startServerInProcess(options: ParsedServerOptions): Promise<Route
     webTitle: options.webTitle,
     socketPath: options.socketPath,
     managedBy: options.managedBy,
+    runHostCommand: runKimiCommand,
     telemetry: true,
     webAssetsDir,
   });

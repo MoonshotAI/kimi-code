@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import {
   RemoteControlDeviceClientError,
   RemoteControlLoginRequiredError,
@@ -7,13 +9,20 @@ import {
 
 import {
   DeviceConnectError,
+  DeviceUpgradeInProgressError,
+  isUpgrading,
   readRemoteMeta,
   type DeviceBridge,
   type DeviceConnectFailure,
+  type DeviceInstall,
   type DeviceStatus,
+  type DeviceUpgradeResult,
+  type DeviceUpgradeState,
   type RemoteDeviceIdentity,
+  type RemoteDeviceMeta,
 } from './deviceBridge';
 import { DeviceRequestError, type DeviceSession } from './deviceSession';
+import { readSystemUpgrade, startSystemUpgrade } from './deviceUpgrade';
 import { RelayDeviceSession } from './relayDeviceSession';
 
 export type RemoteControlRelay = Pick<RemoteControlDeviceClient, 'listDevices' | 'relayAccess'>;
@@ -25,7 +34,10 @@ export interface AccountDeviceBridgeOptions {
 const FIRST_RETRY_DELAY_MS = 1000;
 const MAX_RETRY_DELAY_MS = 30_000;
 const OUTDATED_POLL_MS = 60_000;
+const FIRST_UPGRADE_POLL_MS = 1000;
+const MAX_UPGRADE_POLL_MS = 15_000;
 const RETRYABLE: ReadonlySet<DeviceConnectFailure> = new Set(['offline', 'relay_unavailable', 'unknown']);
+const DESKTOP_PRODUCT = 'kimi-code-desktop';
 
 function relayError(error: unknown): DeviceConnectError {
   const message = error instanceof Error ? error.message : String(error);
@@ -44,6 +56,11 @@ function outdatedError(version: string | undefined): DeviceConnectError {
   );
 }
 
+function installOf(product: string | undefined): DeviceInstall | undefined {
+  if (product === undefined || product.length === 0) return undefined;
+  return product === DESKTOP_PRODUCT ? 'desktop' : 'cli';
+}
+
 export class AccountDeviceBridge implements DeviceBridge {
   private statusValue: DeviceStatus = 'pending';
   private failureValue: DeviceConnectFailure | undefined;
@@ -51,6 +68,10 @@ export class AccountDeviceBridge implements DeviceBridge {
   private remoteVersionValue: string | undefined;
   private identityValue: RemoteDeviceIdentity;
   private registrationValue: RemoteControlDevice | undefined;
+  private remoteUpgradeValue: boolean | undefined;
+  private upgradeValue: DeviceUpgradeState | undefined;
+  private upgradeFrom: string | undefined;
+  private upgradeRequested = false;
   private sessionValue: RelayDeviceSession | undefined;
   private connecting: Promise<DeviceSession> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -93,6 +114,18 @@ export class AccountDeviceBridge implements DeviceBridge {
     return this.registrationValue;
   }
 
+  get install(): DeviceInstall | undefined {
+    return installOf(this.identityValue.productName ?? this.registrationValue?.client_version.split('/', 1)[0]);
+  }
+
+  get remoteUpgrade(): boolean | undefined {
+    return this.install === 'desktop' ? false : this.remoteUpgradeValue;
+  }
+
+  get upgradeState(): DeviceUpgradeState | undefined {
+    return this.upgradeValue;
+  }
+
   connect(): Promise<DeviceSession> {
     if (this.disposed) return Promise.reject(new DeviceConnectError('unknown', 'device bridge disposed'));
     if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue);
@@ -100,6 +133,16 @@ export class AccountDeviceBridge implements DeviceBridge {
       this.connecting = undefined;
     });
     return this.connecting;
+  }
+
+  async upgrade(): Promise<DeviceUpgradeResult> {
+    if (this.upgradeRequested || isUpgrading(this.upgradeValue)) throw new DeviceUpgradeInProgressError();
+    this.upgradeRequested = true;
+    try {
+      return await this.requestUpgrade();
+    } finally {
+      this.upgradeRequested = false;
+    }
   }
 
   start(): void {
@@ -111,6 +154,74 @@ export class AccountDeviceBridge implements DeviceBridge {
     clearTimeout(this.retryTimer);
     this.sessionValue?.close();
     this.sessionValue = undefined;
+  }
+
+  private async requestUpgrade(): Promise<DeviceUpgradeResult> {
+    const session = await this.connect().catch((error: unknown) => {
+      if (this.install === 'desktop' || (error instanceof DeviceConnectError && error.failure === 'outdated')) return undefined;
+      throw error;
+    });
+    if (session !== undefined) await this.refresh(session);
+    if (this.install === 'desktop') {
+      return { status: 'update_on_device', message: 'this device runs the Kimi Code desktop app; update it on that computer' };
+    }
+    if (this.remoteUpgradeValue !== true) {
+      return {
+        status: 'unsupported',
+        message: `Kimi Code ${this.remoteVersionValue ?? '(unknown version)'} on this device cannot be upgraded remotely; run \`kimi upgrade\` on the device`,
+      };
+    }
+    const upgradeSession = new RelayDeviceSession(this.deviceId, this.relay);
+    try {
+      await startSystemUpgrade(upgradeSession);
+    } catch (error) {
+      upgradeSession.close();
+      throw error;
+    }
+    this.upgradeFrom = this.remoteVersionValue;
+    this.setUpgrade({ status: 'installing' });
+    void this.followUpgrade(upgradeSession).finally(() => {
+      upgradeSession.close();
+    });
+    return { status: 'started' };
+  }
+
+  private async followUpgrade(session: DeviceSession): Promise<void> {
+    for (
+      let delay = FIRST_UPGRADE_POLL_MS;
+      isUpgrading(this.upgradeValue) && !this.disposed;
+      delay = Math.min(delay * 2, MAX_UPGRADE_POLL_MS)
+    ) {
+      await sleep(delay, undefined, { ref: false });
+      if (isUpgrading(this.upgradeValue) && !this.disposed) await this.pollUpgrade(session).catch(() => undefined);
+    }
+  }
+
+  private async pollUpgrade(session: DeviceSession): Promise<void> {
+    await this.refresh(session);
+    if (!isUpgrading(this.upgradeValue)) {
+      if (this.sessionValue === undefined) this.start();
+      return;
+    }
+    const remote = await readSystemUpgrade(session);
+    if (!isUpgrading(this.upgradeValue)) return;
+    switch (remote.state) {
+      case 'installing':
+      case 'restarting':
+        if (this.upgradeValue?.status !== remote.state) this.setUpgrade({ status: remote.state });
+        return;
+      case 'failed':
+        this.setUpgrade({ status: 'failed', error: remote.message ?? 'the upgrade failed on the device' });
+        return;
+      case 'idle':
+        await this.refresh(session);
+        if (isUpgrading(this.upgradeValue)) {
+          this.setUpgrade({
+            status: 'failed',
+            error: `the device restarted still on Kimi Code ${this.remoteVersionValue ?? '(unknown version)'}; try again`,
+          });
+        }
+    }
   }
 
   private async establish(): Promise<DeviceSession> {
@@ -150,17 +261,27 @@ export class AccountDeviceBridge implements DeviceBridge {
       this.onTransportFailure(session);
     });
     try {
-      const meta = await readRemoteMeta(session);
-      this.assertActive();
+      const meta = await this.refresh(session);
       if (meta.identity === undefined) throw outdatedError(meta.serverVersion);
-      this.identityValue = meta.identity;
-      this.remoteVersionValue = meta.serverVersion;
       return session;
     } catch (error) {
       session.close();
       if (error instanceof DeviceRequestError) throw new DeviceConnectError('offline', error.message);
       throw error;
     }
+  }
+
+  private async refresh(session: DeviceSession): Promise<RemoteDeviceMeta> {
+    const meta = await readRemoteMeta(session);
+    this.assertActive();
+    this.remoteUpgradeValue = meta.systemUpgrade;
+    if (meta.identity !== undefined) this.identityValue = meta.identity;
+    if (meta.serverVersion !== undefined) this.remoteVersionValue = meta.serverVersion;
+    if (this.upgradeFrom !== undefined && meta.serverVersion !== undefined && meta.serverVersion !== this.upgradeFrom) {
+      this.upgradeFrom = undefined;
+      this.setUpgrade(undefined);
+    }
+    return meta;
   }
 
   private async reachRelay(): Promise<readonly RemoteControlDevice[]> {
@@ -200,6 +321,11 @@ export class AccountDeviceBridge implements DeviceBridge {
 
   private assertActive(): void {
     if (this.disposed) throw new DeviceConnectError('unknown', 'device bridge disposed');
+  }
+
+  private setUpgrade(state: DeviceUpgradeState | undefined): void {
+    this.upgradeValue = state;
+    this.options.onChange?.();
   }
 
   private update(status: DeviceStatus, failure?: DeviceConnectFailure, error?: string): void {

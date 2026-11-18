@@ -5,11 +5,14 @@ import { closeIdleSessions } from './sessionIdleReaper';
 
 export const DEFAULT_MANAGED_IDLE_EXIT_MS = 10 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 30_000;
+const DRAIN_SWEEP_INTERVAL_MS = 2_000;
 
 export class ManagedIdleExit {
   private timer: ReturnType<typeof setInterval> | undefined;
   private idleSince: number;
   private fired = false;
+  private closed = false;
+  private draining = false;
   private inFlight: Promise<void> | undefined;
 
   constructor(
@@ -24,11 +27,16 @@ export class ManagedIdleExit {
   }
 
   start(): void {
-    if (this.timer !== undefined) return;
-    this.timer = setInterval(() => {
-      void this.sweep();
-    }, this.sweepIntervalMs);
-    this.timer.unref?.();
+    if (this.timer !== undefined || this.closed) return;
+    this.schedule(this.sweepIntervalMs);
+  }
+
+  exitWhenIdle(): void {
+    if (this.draining || this.closed) return;
+    this.draining = true;
+    clearInterval(this.timer);
+    this.schedule(DRAIN_SWEEP_INTERVAL_MS);
+    void this.sweep();
   }
 
   sweep(): Promise<void> {
@@ -42,6 +50,7 @@ export class ManagedIdleExit {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     if (this.timer !== undefined) {
       clearInterval(this.timer);
       this.timer = undefined;
@@ -49,18 +58,25 @@ export class ManagedIdleExit {
     await this.inFlight;
   }
 
+  private schedule(intervalMs: number): void {
+    this.timer = setInterval(() => {
+      void this.sweep();
+    }, intervalMs);
+    this.timer.unref?.();
+  }
+
   private async sweepOnce(): Promise<void> {
-    if (this.fired) return;
-    if (this.connections.size() > 0) {
+    if (this.fired || this.closed) return;
+    if (!this.draining && this.connections.size() > 0) {
       this.idleSince = this.now();
       return;
     }
     await closeIdleSessions(this.sessions, 0);
-    if (this.connections.size() > 0 || this.sessions.list().length > 0) {
+    if (this.sessions.list().length > 0 || (!this.draining && this.connections.size() > 0)) {
       this.idleSince = this.now();
       return;
     }
-    if (this.now() - this.idleSince < this.idleExitMs) return;
+    if (!this.draining && this.now() - this.idleSince < this.idleExitMs) return;
     this.fired = true;
     this.onIdle();
   }

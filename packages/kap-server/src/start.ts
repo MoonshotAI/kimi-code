@@ -92,6 +92,7 @@ import { ConversationService } from './services/conversation/conversationService
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { DeviceManager, deviceSnapshots } from './services/devices/deviceManager';
 import { matchDeviceProxyPath, proxyDeviceWebSocket, registerDeviceProxyRoutes } from './services/devices/deviceProxy';
+import { SystemUpgrade, type HostCommandRunner } from './services/devices/deviceUpgrade';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
@@ -144,6 +145,7 @@ export interface ServerStartOptions {
   readonly socketPath?: string;
   readonly managedBy?: string;
   readonly managedIdleExitMs?: number;
+  readonly runHostCommand?: HostCommandRunner;
 }
 
 export interface RunningServer {
@@ -373,7 +375,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   let rpcServer: { close(): Promise<void> } | undefined;
 
-  const close = async (): Promise<void> => {
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closing ??= closeServer();
+    return closing;
+  };
+  const closeServer = async (): Promise<void> => {
     await rpcServer?.close();
     if (wssDebug !== undefined) {
       for (const client of wssDebug.clients) client.terminate();
@@ -453,6 +460,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           opts.managedIdleExitMs ?? DEFAULT_MANAGED_IDLE_EXIT_MS,
           requestClose,
         );
+  const systemUpgrade =
+    opts.managedBy === 'ensure-daemon' && opts.runHostCommand !== undefined && managedIdleExit !== undefined
+      ? new SystemUpgrade(opts.runHostCommand, serverVersion, () => managedIdleExit.exitWhenIdle(), logger)
+      : undefined;
   const conversations = new ConversationService(core);
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
   core.accessor.get(IGlobalSearchService);
@@ -570,6 +581,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     sessionRating,
     dangerousBypassAuth: opts.disableAuth === true,
     managedDevice: opts.managedBy === 'ensure-daemon',
+    systemUpgrade,
     webTitle: opts.webTitle,
   });
 

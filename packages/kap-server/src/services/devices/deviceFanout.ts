@@ -35,12 +35,12 @@ function queryString(query: DeviceQuery): string {
   return text === '' ? '' : `?${text}`;
 }
 
-export async function deviceGet<T>(session: DeviceSession, path: string, query: DeviceQuery = {}): Promise<T> {
-  const response = await session.request({
-    method: 'GET',
-    path: `${path}${queryString(query)}`,
-    headers: { accept: 'application/json' },
-  });
+export function deviceGet<T>(session: DeviceSession, path: string, query: DeviceQuery = {}): Promise<T> {
+  return deviceRequest<T>(session, 'GET', `${path}${queryString(query)}`);
+}
+
+export async function deviceRequest<T>(session: DeviceSession, method: string, path: string): Promise<T> {
+  const response = await session.request({ method, path, headers: { accept: 'application/json' } });
   let body: { code?: number; msg?: string; data?: T };
   try {
     body = JSON.parse(response.body.toString('utf8')) as typeof body;
