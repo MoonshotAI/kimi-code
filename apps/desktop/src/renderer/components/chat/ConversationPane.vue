@@ -19,6 +19,7 @@ import { WorkspaceTrustDialog } from '@moonshot-ai/app-components';
 import ChatDock from './ChatDock.vue';
 import SessionInfoPanel from './SessionInfoPanel.vue';
 import { useSessionInfoLayout } from '../../composables/useSessionInfoLayout';
+import { useTranscriptStabilityProbe } from '../../composables/useTranscriptStabilityProbe';
 import WorkspaceHome from './WorkspaceHome.vue';
 import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
@@ -527,6 +528,7 @@ const approvalBusy = computed<boolean>(() => {
 });
 
 const panesRef = ref<HTMLElement | null>(null);
+useTranscriptStabilityProbe(panesRef);
 const dockRef = ref<HTMLElement | null>(null);
 const panesScrollbarWidth = ref(0);
 const dockHeight = ref(0);
