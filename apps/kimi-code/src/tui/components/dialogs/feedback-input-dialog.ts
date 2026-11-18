@@ -9,6 +9,7 @@ import {
   type Focusable,
   type TUI,
 } from '@moonshot-ai/pi-tui';
+import { normalizeCapsLockedCtrl } from '#/tui/components/editor/custom-editor';
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 
@@ -53,16 +54,17 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
   }
 
   handleInput(data: string): void {
-    if (this.done || isKeyRelease(data)) return;
+    const key = normalizeCapsLockedCtrl(data);
+    if (this.done || isKeyRelease(key)) return;
     if (
-      matchesKey(data, Key.escape) ||
-      matchesKey(data, Key.ctrl('c')) ||
-      matchesKey(data, Key.ctrl('d'))
+      matchesKey(key, Key.escape) ||
+      matchesKey(key, Key.ctrl('c')) ||
+      matchesKey(key, Key.ctrl('d'))
     ) {
       this.cancel();
       return;
     }
-    this.input.handleInput(data);
+    this.input.handleInput(key);
   }
 
   override invalidate(): void {

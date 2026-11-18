@@ -123,6 +123,22 @@ describe('FeedbackInputDialogComponent', () => {
     expect(collected).toEqual([{ kind: 'ok', value: 'First line\nSecond line' }]);
   });
 
+  it('inserts a newline for Caps Lock Ctrl-J and ignores its release', () => {
+    const { dialog, collected } = makeDialog();
+    for (const ch of 'first') dialog.handleInput(ch);
+    dialog.handleInput(`${ESC}[74;69u`);
+    dialog.handleInput(`${ESC}[74;69:3u`);
+    for (const ch of 'second') dialog.handleInput(ch);
+    submit(dialog);
+    expect(collected).toEqual([{ kind: 'ok', value: 'first\nsecond' }]);
+  });
+
+  it('cancels on Caps Lock Ctrl-C', () => {
+    const { dialog, collected } = makeDialog();
+    dialog.handleInput(`${ESC}[67;69u`);
+    expect(collected).toEqual([{ kind: 'cancel' }]);
+  });
+
   it('supports Shift-Enter and editing an earlier line', () => {
     const { dialog, collected } = makeDialog();
     for (const ch of 'first') dialog.handleInput(ch);
