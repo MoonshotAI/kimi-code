@@ -9,7 +9,7 @@ export {
 
 export const FEEDBACK_STATUS_SUBMITTING = 'Submitting feedback…';
 export const FEEDBACK_STATUS_UPLOADING = 'Uploading attachments, this could take a few minutes…';
-export const FEEDBACK_STATUS_SUCCESS = 'Feedback submitted, thank you!';
+export const FEEDBACK_STATUS_SUCCESS = "Thanks for taking the time to write this. It'll help us make Kimi better";
 export const FEEDBACK_STATUS_CANCELLED = 'Feedback cancelled.';
 export const FEEDBACK_STATUS_NETWORK_ERROR = 'Network error, failed to submit feedback.';
 export const FEEDBACK_STATUS_FALLBACK = 'Opening GitHub Issues as fallback…';

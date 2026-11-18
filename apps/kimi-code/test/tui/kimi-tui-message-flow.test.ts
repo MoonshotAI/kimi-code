@@ -3289,7 +3289,7 @@ command = "vim"
       'k2',
     );
     const transcript = stripSgr(renderTranscript(driver));
-    expect(transcript).toContain('Feedback submitted, thank you!');
+    expect(transcript).toContain("Thanks for taking the time to write this. It'll help us make Kimi better");
     expect(transcript).toContain('Feedback ID: 3');
     expect(transcript).toContain('attachment upload failed');
   });

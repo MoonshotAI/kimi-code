@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-The feedback dialog now has a multiline input box; Shift-Enter or Ctrl-J inserts a new line.
+The feedback dialog accepts multiple lines, and thanks you for helping improve Kimi.
