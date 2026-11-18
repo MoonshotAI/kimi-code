@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Button } from '@moonshot-ai/app-ui';
 import { HistoryAllKey, HistoryScrollKey, HistoryStateKey } from '@moonshot-ai/app-core/contracts';
 import HistoryRow from './HistoryRow.vue';
-import { HistoryHeights } from './historyHeights';
+import { HistoryHeights } from '@moonshot-ai/app-core/lib';
 
 const props = withDefaults(defineProps<{
   items: readonly T[];

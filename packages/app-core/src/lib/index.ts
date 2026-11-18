@@ -81,6 +81,7 @@ export * from './swarmMode';
 export * from './taskOutput';
 export * from './toolText';
 export * from './towerMode';
+export * from './transcriptScroll';
 export * from './transcriptSearch';
 export * from './transcriptSelectAll';
 export * from './upgrade';
