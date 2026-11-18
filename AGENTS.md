@@ -41,7 +41,7 @@
 
 | 检查 | 命令 | 说明 |
 |---|---|---|
-| lint 和仓库检查 | `pnpm lint` | 必须以 0 退出。它会运行注释检查、oxlint、agent-core-v2 的导入边界检查，以及 `scripts/checks/` 里的守卫和棘轮。如果报错出现在你没碰过的代码里，先运行 `pnpm install` 再试：安装的依赖比 lockfile 旧时，类型感知规则会报出并不存在的错误 |
+| lint 和仓库检查 | `pnpm lint` | 必须以 0 退出。它会运行注释检查、oxlint、agent-core-v2 的导入边界检查，以及 `scripts/checks/` 里的守卫、棘轮和说明文件检查。如果报错出现在你没碰过的代码里，先运行 `pnpm install` 再试：安装的依赖比 lockfile 旧时，类型感知规则会报出并不存在的错误 |
 | 单个项目的类型检查 | `pnpm exec tsc -p <目录>/tsconfig.json --noEmit` | CI 对 `packages/*` 和 `apps/kimi-code` 就是这样跑的，不需要先构建。`pnpm typecheck` 会先构建所有包 |
 | 受影响的测试 | `pnpm exec vitest run --reporter=agent <文件或目录>` | 只输出失败。不要默认跑全量 |
 | minidb | `pnpm --filter @moonshot-ai/minidb test` | 不在根目录的测试里，CI 也不跑 |
@@ -136,6 +136,8 @@
 - 项目地图里，每个工作区包写一行，而且只写一行；包的深入说明放在包自己的 `AGENTS.md` 里。
 - 如果 lint 规则、测试或脚本能拦住这类错误，就加检查而不是写规则；有检查执行的规则，旁边写明是哪个检查。
 - 说明文件的改动要聚焦，并有代码事实支撑。
+- 新规则写进来之前，先确认三件事：同一类失误至少出现过两次；写进来会改变 agent 的做法；半年后仍然成立。
+- `pnpm lint` 里的 `scripts/checks/instructions.mjs` 会检查：所有 `AGENTS.md` 里的行内链接和反引号里的仓库路径是否存在，根目录的 `AGENTS.md` 有没有超过体积上限。指向本仓库之外的路径或构建产物时，把它加进 `scripts/checks/instructions.json` 的 `unresolved`，并写明理由。超出上限时，先把只有某个目录需要的内容挪进那个目录的 `AGENTS.md`，再压缩；只有确实需要更多篇幅时，才调高 `scripts/checks/instructions.json` 里的上限，并在 PR 里写明理由。
 
 ## 发布流程
 
