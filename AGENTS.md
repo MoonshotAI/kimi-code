@@ -7,18 +7,18 @@
 ## 工作原则
 
 - 用第一性原理思考：从真实需求、代码事实和验证结果出发；目标不清楚时，先和用户讨论。
-- 以代码为准，不以文档为准。除非用户明确要求，否则不要为了理解实现去读一般的 Markdown。
+- 以代码为准，不以文档为准。除非用户明确要求，或者某份 `AGENTS.md`（包括子目录里的）指向了某份设计文档，否则不要为了理解实现去读一般的 Markdown。文档和代码不一致时，以代码为准，并在同一个改动里修正文档。
 - 改代码之前，先读相关代码和最新的约束，并遵守目录树里离改动最近的 `AGENTS.md`。
 - 改动保持聚焦，不要顺手夹带无关的重构。
 - 提交时不要加任何 co-author 署名；也不要在提交说明、PR 描述或任何说明文字里透露 agent 的身份。
 
 ## 项目地图
 
-- `apps/kimi-code`：CLI / TUI 应用。它通过 `@moonshot-ai/kimi-code-sdk` 使用核心能力，不得直接依赖引擎包。编写或修改它的终端界面时，使用 `write-tui` 技能（`.agents/skills/write-tui/SKILL.md`）。
+- `apps/kimi-code`：CLI / TUI 应用，TUI 主路径通过 `@moonshot-ai/kimi-code-sdk` 使用核心能力。编写或修改它的终端界面时，使用 `write-tui` 技能（`.agents/skills/write-tui/SKILL.md`）。
 - 浏览器 Web UI：**源码已经不在本仓库。** 它在 code-app 仓库（`apps/web`）开发，以提交进本仓库的预构建产物 `apps/kimi-code/dist-web` 发布（该目录被 gitignore，需要强制添加），用 `KIMI_CODE_REPO=<本仓库路径> pnpm run sync:web` 从 code-app 同步。只要 Web UI 的发布内容需要变化，就在同一个改动里同步并提交这份产物。`apps/kimi-code/scripts/check-web-assets.mjs` 在打包时检查产物是否缺失。要在本仓库的服务上开发或调试 Web UI，在这里运行 `pnpm dev:server`，再让 code-app 的 `pnpm dev:web` 通过 `KIMI_SERVER_URL` 指向它。
 - `apps/vis`、`apps/vis/server`、`apps/vis/web`：会话和回放的可视化调试工具。
 - `packages/agent-core-v2`：DI × Scope 的 agent 引擎（kap-server 背后的 v2 移植版）。三个 `LifecycleScope` 层级 `App` / `Session` / `Agent`（`app/scopes.ts`），加上 L3 单元层（`Service`/`Fiber` 单元、集合贡献点、`src/features/` 里的 Feature 接缝）；`WorkspaceInstance`/`Program` 图在运行时通过 `IWorkspaceInstanceManager` 实例化，App 作用域的 `ISessionManager` 通过 `Program` 为每个工作区创建会话控制器。
-- `packages/core`：不依赖 DI 的 Loop、LLM 和工具运行时。LLM 文档按读者组织：[使用结果和事件](packages/core/docs/llm/calling.md)、[构建请求](packages/core/docs/llm/building.md)以及[请求契约参考](packages/core/docs/llm/building-reference.md)；先[理解架构](packages/core/docs/llm/maintaining.md)，再按[维护指南](packages/core/docs/llm/maintenance-guide.md)操作。
+- `packages/core`：不依赖 DI 的 Loop、LLM 和工具运行时。LLM 模块的设计指南是 `packages/agent-core-v2/docs/en/llm.md`。
 - `packages/node-sdk`：公开的 TypeScript SDK 和 harness。
 - `packages/oauth`：Kimi OAuth 和托管认证工具。
 - `packages/telemetry`：共享的客户端遥测基础设施。
@@ -29,6 +29,22 @@
 - `packages/klient`：客户端 SDK，一层以契约驱动的 agent-core-v2 门面（`global.*` / `session(id).*` / `agent(id).*`，用 zod 校验）；按子路径入口选择传输方式（`@moonshot-ai/klient/ipc|memory`，两者返回的都是同一种 `Klient`）；e2e 测试套件也放在这里。见 `packages/klient/AGENTS.md`。
 - `packages/tree-sitter-bash`：纯 TypeScript 的 bash 解析器（没有运行时依赖，不用 wasm）；`parse(source, { timeoutMs, maxNodes })` 在确定的预算内运行，返回可辨识联合类型的 `ParseResult`。调用方必须把中止或 `hasError` 的语法树当作「无法分析」并降级处理。它只负责解析，不做安全判断；见该包 README 的「Known differences」一节。
 - `packages/minidb`：kap-server 搜索索引背后的嵌入式 JSON 文档库（`MiniDb`）：快照 + WAL 持久化（带独占写锁）、支持超出内存数据量的全文检索层，以及持久化的索引代际。见 `packages/minidb/AGENTS.md`。
+
+## 结束前的验证
+
+结束任何代码改动之前，必须运行 `pnpm lint`；类型检查和测试，按改动涉及的范围从下表里选。
+
+| 检查 | 命令 | 说明 |
+|---|---|---|
+| lint 和仓库检查 | `pnpm lint` | 必须以 0 退出。它会运行注释检查、oxlint、agent-core-v2 的导入边界检查，以及 `scripts/checks/` 里的守卫和棘轮。如果报错出现在你没碰过的代码里，先运行 `pnpm install` 再试：安装的依赖比 lockfile 旧时，类型感知规则会报出并不存在的错误 |
+| 单个项目的类型检查 | `pnpm exec tsc -p <目录>/tsconfig.json --noEmit` | CI 对 `packages/*` 和 `apps/kimi-code` 就是这样跑的，不需要先构建。`pnpm typecheck` 会先构建所有包 |
+| 受影响的测试 | `pnpm exec vitest run --reporter=agent <文件或目录>` | 只输出失败。不要默认跑全量 |
+| minidb | `pnpm --filter @moonshot-ai/minidb test` | 不在根目录的测试里，CI 也不跑 |
+| pi-tui | `pnpm --filter @moonshot-ai/pi-tui test` | 用的是 `node --test` |
+
+- 修 bug 要带回归测试：没有修复时它必须失败，并且写在用户能看到这个 bug 的那一层，例如 kap-server 的测试、klient 的一致性测试（`packages/klient/test/helpers/conformance.ts`）或 TUI 的虚拟终端（`packages/pi-tui/test/virtual-terminal.ts`）。只测改动的那个函数的单测，证明不了 bug 修好了。同一个 bug 的其他触发方式也要覆盖。
+- PR 的 CI 不在 Windows 和 macOS 上跑测试。改动涉及路径、子进程、shell 或终端输入时，在 PR 里写明在哪些平台核对过、怎么核对的。
+- 只汇报你实际运行过的命令和结果。某项检查没法运行，就写「未验证」和原因；不要把已有的失败写成通过。
 
 ## 环境要求
 
@@ -49,30 +65,57 @@
 
 - JS/TS 代码里不写注释。`pnpm lint`（`scripts/check-comments.mjs`）会拒绝所有注释，只放行工具指令（`@ts-*`、`oxlint-`/`eslint-` 禁用指令、`prettier-ignore` 等）、shebang、`/// <reference>`，以及 JS 文件里只有一个标签的 JSDoc `@type` 类型断言。用命名、类型和结构表达代码在做什么；要表达一条约束，就把它变成类型、测试或 lint 规则，而不是写一段注释。
 - `.commentignore`（gitignore 语法）里列出的路径不受这项检查约束。除非用户要求，不要动这些文件里现有的注释；只有用户要求时，才往 `.commentignore` 里加条目。
-- 可选的对象属性，直接传 `undefined`，不要用条件展开。
-  - 是：`{ user }`
-  - 否：`{ ...(user ? { user } : undefined) }`
 - 可选的对象属性，类型里不需要再额外允许 `undefined`。
   - 是：`interface Options { user?: User }`
   - 否：`interface Options { user?: User | undefined }`
 - 只有一个参数的内部方法，不要为了风格统一改成 options 对象。
 - 只按抽象层级拆分函数：每个函数读起来是同一个层级的叙述（Step-down Rule）；不增加新抽象层级的包装函数，尤其是只有一个调用点的，应该内联而不是抽出来。
 - 除了包自己的 `index.ts`，其他 `index.ts` 优先写成 `export * from './module';`。
-- 不要新增太多测试文件。优先把测试加到对应组件或模块已有的测试文件里。
-- 测试因为用户的修改而失败时，默认先修测试；除非实现确实有 bug，否则不要为了满足旧测试而改实现。
-- 除非用户明确要求，不要为了对外兼容牺牲代码质量。破坏性改动走 changeset 和 `major` 版本升级，受下文「工作流要求」里关于 `major` 的规则约束。
+- 除非用户明确要求，不要为了对外兼容牺牲代码质量。但行为不能悄悄改变：每项行为变化都写进 PR 的行为变化表；破坏性改动走 changeset 并升 `major`；写 `major` 之前，先停下来等用户确认（见「工作流要求」里的 changeset 规则）。
+
+## 测试
+
+- 测试加到被改模块已有的测试文件里；只有找不到合适的文件时才新建。
+- 改动之后有测试失败，先判断错的是哪一边，再动手改：
+  - 任务本来就要改变这个测试断言的行为：更新测试，并把这项变化写进 PR 的行为变化表。
+  - 否则：修实现。
+- 预期值取自 issue、需求规格或文档写明的契约，不要照抄代码当前的输出。
+- 不许靠这些手段让测试通过：削弱断言、删掉失败的测试、用 sleep 或超时做同步、重试到通过、不看 diff 就重写快照。`pnpm lint` 已经会拒绝 `.only` 和新增的 `.skip`。
+- flaky 测试也一样不许跳过、加 sleep 或重试：先找根因并修掉。找不到根因时可以删掉它，这是唯一允许删除失败测试的情况。
+- 改写、移植或搬家删掉了测试时，把它的断言搬到新的代码路径上，除非是有意去掉这个行为。
+- 只要删了测试，就在 PR 描述里写明删了哪个、它覆盖什么、为什么删。
+- 现有测试断言的行为看起来是错的：不要为了让自己的改动通过而改它，在 PR 描述里把它报为疑似 bug。
+- 修改或删除守护契约文件（见「代码评审规则」）的测试或快照之前，先停下来问用户。
+- 同一个失败修了三次还没过，就停下来，汇报试过什么、怀疑什么。推送之后，CI 失败最多修两轮；还不过，就停下来交给人。
+
+## 改行为之前
+
+- 移植、改写或搬家，不要和行为改动放在同一个 PR 里。
+- 改动超过 2,000 行（不算生成文件、lockfile 和快照）时，停下来提议拆分。机械改动不受这个限制，例如把发布分支同步回 main、批量重命名和批量删除。实在拆不开的，在 PR 描述里写明原因。
+- 新增状态、名单或映射表之前，先找这件事现有的归属，复用它，不要另抄一份。
+- 新增事件、消息类型或枚举成员时，更新所有按它分支的地方；`default` 分支不能把它静默吞掉。
+- 对照这个仓库里过去的 bug 漏掉过的情形，检查你的改动：
+  - 旧版本写入的会话被恢复或回放；
+  - 会话进行到一半时服务端或 CLI 重启；
+  - 回合进行中到达的事件：后台任务的结果、排队或插话的消息、审批；
+  - 工作还在进行时发生取消、撤销或压缩；
+  - 两个客户端连着同一个会话；
+  - Windows 路径、CRLF 换行、UTF-8 BOM；
+  - 无效或不完整的配置：必须报错说明，不能被忽略。
+- 开 PR 之前，先用下面的「代码评审规则」检查自己的 diff，并补上它们要求的内容。
 
 ## 实验特性
 
 - 还没公开的功能，放在实验开关后面。开关由环境变量驱动，默认关闭：`KIMI_CODE_EXPERIMENTAL_<NAME>` 控制单个开关，`KIMI_CODE_EXPERIMENTAL_FLAG` 打开全部。优先级是：单个开关的环境变量 > 配置里的 `[experimental]` > 总开关环境变量 > 开关的 `default`。正式发布时，把对应条目的 `default` 改成 `true`。
   - `packages/agent-core-v2` 和 kap-server 的模块：没有集中的开关目录。在所属领域里用 `registerFlagDefinition` 在导入时声明开关，再用 `IFlagService.enabled(id)` 检查。
 
-## 在哪里更新说明
+## 说明文件怎么维护
 
-- 几乎影响每个任务的硬规则：更新根目录的 `AGENTS.md`。
-- 只影响某个目录的规则：更新离它最近的子目录 `AGENTS.md`。
+- 代码改动让某份 `AGENTS.md` 写的事实（路径、命令、地图条目）不再成立时，在同一个 PR 里更新它。
+- 新增或修改规则，单独提 PR。几乎每个任务都要用到的规则，写进根目录的 `AGENTS.md`；只影响某个目录的规则，写进离它最近的子目录 `AGENTS.md`。
 - 项目地图的条目保持一到两句；包的深入说明放在包自己的 `AGENTS.md` 里。
-- 说明文件的更新要聚焦，并有代码事实支撑。
+- 如果 lint 规则、测试或脚本能拦住这类错误，就加检查而不是写规则；有检查执行的规则，旁边写明是哪个检查。
+- 说明文件的改动要聚焦，并有代码事实支撑。
 
 ## 发布流程
 
@@ -83,7 +126,6 @@
 
 - 读代码优先用 `rg` / `rg --files`。
 - 设计改动时，先遵循现有的边界和局部写法。
-- 完成任何代码改动之前，运行 `pnpm lint`，它必须以 0 退出。它会运行注释检查、oxlint、agent-core-v2 的导入边界检查，以及 `scripts/checks/` 里的守卫和棘轮。如果报错出现在你没碰过的代码里，先运行 `pnpm install` 再跑一次 lint：安装的依赖比 lockfile 旧时，类型感知规则会报出并不存在的错误。
 - lint 报错要在代码里修。不要为了跑通而加禁用指令、修改 `.oxlintrc.json` 或 `.oxlintrc.ratchet.json`、重写 lint 快照，或者调高 `scripts/checks/baselines/` 里的棘轮基线；如果某条规则不适合你的情况，停下来报告。确实需要的禁用指令，要写明规则名，并在 ` -- ` 后面写原因。
 - `.oxlintrc.ratchet.json` 里的规则在现有代码中已有违规，按文件冻结在 `scripts/checks/baselines/oxlint-ratchet.json`。新代码不能增加违规；修掉现有违规后，运行 `node scripts/checks/ratchet.mjs --update` 降低基线。
 - 不要运行 `pnpm lint:fix`：oxlint 的有些自动修复会改变行为（例如 `unicorn/no-unnecessary-await` 会删掉一个 `await`，后面代码的执行时机就变了）。
