@@ -29,6 +29,7 @@ import type {
   CronDeletePayload,
   CronTask,
   ExportSessionManifest,
+  FeedbackModelRequest,
   FileHistoryCheckpointed,
   FileHistoryTracked,
   Forked,
@@ -189,6 +190,7 @@ export type AgentRecord =
   | WireRecordOf<'prompt.completed', PromptCompleted>
   | WireRecordOf<'prompt.steered', PromptSteered>
   | WireRecordOf<'environment.set_binding', EnvironmentSetBinding>
+  | WireRecordOf<'feedback.model_request_recorded', FeedbackModelRequest>
   | WireRecordOf<'subagent.cancelled', SubagentCancelled>
   | WireRecordOf<'subagent.completed', SubagentCompleted>
   | WireRecordOf<'subagent.failed', SubagentFailed>

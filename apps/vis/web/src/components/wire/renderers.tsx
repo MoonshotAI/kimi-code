@@ -839,6 +839,19 @@ export const WIRE_RENDERERS: RendererMap = {
     ),
   },
 
+  'feedback.model_request_recorded': {
+    tone: 'meta',
+    label: 'model',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.model}</Mono>
+          <Dim>{r.provider} / turn {r.turnId} / step {r.step}</Dim>
+        </span>
+      ),
+    }),
+  },
+
   'usage.record': {
     tone: 'meta',
     label: 'usage',

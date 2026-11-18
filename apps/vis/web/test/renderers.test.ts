@@ -77,6 +77,16 @@ describe('wire renderers', () => {
       .toSorted();
 
     expect(renderedCurrentTypes).toEqual(upstreamTypes);
+    const modelRequest = WIRE_RENDERERS['feedback.model_request_recorded'].headline({
+      type: 'feedback.model_request_recorded',
+      agentId: 'main',
+      rootTurnId: 1,
+      turnId: 1,
+      step: 2,
+      model: 'mock-model',
+      provider: 'mock-provider',
+    });
+    expect(renderToStaticMarkup(modelRequest.main)).toContain('mock-model');
     const renderer = WIRE_RENDERERS['mcp.server_failure_resolved'];
     const headline = renderer.headline({
       type: 'mcp.server_failure_resolved',

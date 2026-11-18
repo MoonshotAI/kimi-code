@@ -483,6 +483,7 @@ export function projectContext(
       case 'plan.revision':
       case 'plugin.session_start':
       case 'environment.set_binding':
+      case 'feedback.model_request_recorded':
       case 'staleGuard.recorded':
       case 'staleGuard.cleared':
       case 'interruptionReminder.recorded':
