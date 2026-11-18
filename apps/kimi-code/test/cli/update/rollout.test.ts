@@ -84,6 +84,13 @@ describe('rolloutDelayForBucket', () => {
     expect(rolloutDelayForBucket(rollout, 99)).toBe(UNCOVERED_ROLLOUT_DELAY_SECONDS);
   });
 
+  it('keeps uncovered buckets behind the longest configured delay', () => {
+    const rollout: readonly RolloutBatch[] = [{ percent: 30, delaySeconds: 172_800 }];
+    expect(rolloutDelayForBucket(rollout, 29)).toBe(172_800);
+    expect(rolloutDelayForBucket(rollout, 30)).toBe(172_800);
+    expect(rolloutDelayForBucket(rollout, 99)).toBe(172_800);
+  });
+
   it('tolerates percents summing past 100', () => {
     const rollout: readonly RolloutBatch[] = [
       { percent: 60, delaySeconds: 0 },
@@ -198,6 +205,22 @@ describe('decidePassiveUpdate', () => {
       bucket: rolloutBucket('device-a', '2.0.0'),
       delaySeconds: 86_400,
       eligibleAt: new Date(PUBLISHED_AT_MS + 86_400 * 1000).toISOString(),
+    });
+  });
+
+  it('reports held without throwing when the batch delay exceeds the Date range', () => {
+    const manifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 8_640_000_000_000 }] });
+    const decision = decidePassiveUpdate(
+      '1.0.0',
+      { channel: 'stable', latest: '2.0.0', manifest },
+      'device-a',
+      now,
+    );
+    expect(decision).toMatchObject({
+      plan: { kind: 'none' },
+      reason: 'held',
+      delaySeconds: 8_640_000_000_000,
+      eligibleAt: null,
     });
   });
 
