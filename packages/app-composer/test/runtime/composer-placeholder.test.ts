@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildComposerPlaceholderOverlay, buildPromptPredictionOverlay, commandArgumentPlaceholderAnchor, composerPlaceholderAnchor, composerPlaceholderLayout, isEmptyComposerDoc, setComposerPlaceholderOverlayText } from '../../src/runtime/composerPlaceholder';
+import { buildComposerPlaceholderOverlay, commandArgumentPlaceholderAnchor, composerPlaceholderAnchor, composerPlaceholderLayout, isEmptyComposerDoc, setComposerPlaceholderOverlayText } from '../../src/runtime/composerPlaceholder';
 import { textToDoc } from '../../src/model';
 
 class FakeEl {
@@ -41,13 +41,12 @@ describe('composer placeholder overlay', () => {
     expect(el.hidden).toBe(true);
     expect(el.innerHTML).toBe('Ask Kimi');
 
-    const prediction = buildPromptPredictionOverlay('Fix <tests>') as unknown as FakeEl;
+    const prediction = buildComposerPlaceholderOverlay('Fix <tests>') as unknown as FakeEl;
     expect(prediction.tagName).toBe('SPAN');
-    expect(prediction.className).toBe('composer-prompt-prediction-overlay');
+    expect(prediction.className).toBe('composer-placeholder-overlay');
     expect(prediction.getAttribute('aria-hidden')).toBe('true');
     expect(prediction.hidden).toBe(true);
-    expect(prediction.textContent).toBe('Fix <tests>');
-    expect(prediction.innerHTML).toBe('');
+    expect(prediction.innerHTML).toBe('Fix &lt;tests&gt;');
   });
 
   it('keeps exact kbd pairs and escapes every other tag on updates', () => {

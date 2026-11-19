@@ -18,12 +18,13 @@ interface ActivePrediction {
   readonly turnId: number;
   readonly session: Session;
   readonly startedAt: number;
+  parked: boolean;
+  acceptKey: 'tab' | 'right' | undefined;
 }
 
 interface PredictionSuggestion extends ActivePrediction {
   readonly prediction: string;
   accepted: boolean;
-  parked: boolean;
 }
 
 type DismissReason =
@@ -40,55 +41,82 @@ type DismissReason =
 export class PromptPredictionController {
   private active: ActivePrediction | undefined;
   private suggestion: PredictionSuggestion | undefined;
+  private latestTurn: { readonly session: Session; readonly turnId: number } | undefined;
   private readonly attempted = new Set<string>();
   private suppressNextChange = false;
 
-  constructor(private readonly host: PromptPredictionHost) {}
+  constructor(private readonly host: PromptPredictionHost) {
+    this.host.state.editor.setPromptPredictionPlaceholder(() => this.placeholder());
+  }
 
   handlePlanModeChanged(planMode: boolean): void {
     if (planMode) this.dismiss('plan');
   }
 
   handleTurnStarted(): void {
+    this.latestTurn = undefined;
     this.dismiss('new_turn');
   }
 
   handleTurnEnded(event: TurnEndedEvent): void {
+    this.latestTurn = undefined;
     this.dismiss('new_turn');
     if (event.reason !== 'completed' || typeof event.turnId !== 'number') return;
     const session = this.host.session;
-    if (session === undefined || !this.canUseEditor()) return;
-    const key = `${session.id}:${String(event.turnId)}`;
-    if (this.attempted.has(key)) return;
+    if (session === undefined) return;
+    this.latestTurn = { session, turnId: event.turnId };
+    this.startPrediction();
+  }
+
+  private startPrediction(): boolean {
+    const target = this.latestTurn;
+    if (target === undefined || this.host.session !== target.session || !this.canUseEditor()) return false;
+    const key = `${target.session.id}:${String(target.turnId)}`;
+    if (this.attempted.has(key)) return false;
     this.attempted.add(key);
     const active: ActivePrediction = {
       predictionId: randomUUID(),
-      turnId: event.turnId,
-      session,
+      turnId: target.turnId,
+      session: target.session,
       startedAt: Date.now(),
+      parked: false,
+      acceptKey: undefined,
     };
     this.active = active;
-    void session.predictNextPrompt({
+    this.host.state.ui.requestRender();
+    void target.session.predictNextPrompt({
       predictionId: active.predictionId,
       expectedTurnId: active.turnId,
     })
       .then((prediction) => {
         if (this.active !== active) return;
         this.active = undefined;
-        if (prediction === null || this.host.session !== session || !this.canUseEditor()) return;
-        this.suggestion = { ...active, prediction, accepted: false, parked: false };
+        if (prediction === null || this.host.session !== target.session || !this.canUsePrediction()) {
+          this.host.state.ui.requestRender();
+          return;
+        }
+        this.suggestion = {
+          ...active,
+          prediction,
+          accepted: false,
+          parked: active.parked || this.host.state.editor.getText().trim().length > 0,
+        };
         this.host.state.editor.setPromptPrediction(prediction);
-        this.host.state.ui.requestRender();
         this.host.track('prediction_shown', {
           prediction_id: active.predictionId,
           turn_id: active.turnId,
           duration_ms: Date.now() - active.startedAt,
           prediction_chars: prediction.length,
         });
+        if (active.acceptKey !== undefined && this.canUseEditor()) this.accept(active.acceptKey);
+        else this.host.state.ui.requestRender();
       })
       .catch(() => {
-        if (this.active === active) this.active = undefined;
+        if (this.active !== active) return;
+        this.active = undefined;
+        this.host.state.ui.requestRender();
       });
+    return true;
   }
 
   handlePreInput(data: string): boolean {
@@ -98,13 +126,15 @@ export class PromptPredictionController {
       this.dismiss('escape');
       return hadPrediction && !autocomplete;
     }
-    if (
-      (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) &&
-      this.suggestion?.accepted === false &&
-      this.host.state.editor.inputMode === 'prompt' &&
-      !this.host.state.editor.hasAutocompleteActivity()
-    ) {
-      return this.accept(matchesKey(data, Key.right) ? 'right' : 'tab');
+    if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+      const key = matchesKey(data, Key.right) ? 'right' : 'tab';
+      if (this.suggestion !== undefined && this.canUseEditor()) return this.accept(key);
+      if (this.active !== undefined && this.canUseEditor()) {
+        this.active.acceptKey = key;
+        this.host.state.ui.requestRender();
+        return true;
+      }
+      if (key === 'tab') return this.startPrediction();
     }
     return false;
   }
@@ -114,13 +144,16 @@ export class PromptPredictionController {
       this.suppressNextChange = false;
       return;
     }
-    if (this.active !== undefined) this.cancelActive('input');
-    const suggestion = this.suggestion;
-    if (suggestion?.accepted === false && !suggestion.parked && text.length > 0) {
-      suggestion.parked = true;
-      this.host.state.editor.parkPromptPrediction();
-      this.host.state.ui.requestRender();
+    if (this.active !== undefined) {
+      this.active.parked = this.active.parked || text.trim().length > 0;
+      if (text.trim().length > 0) this.active.acceptKey = undefined;
     }
+    const suggestion = this.suggestion;
+    if (suggestion?.accepted === false) suggestion.parked = suggestion.parked || text.trim().length > 0;
+    if (suggestion?.accepted === true && text.trim().length === 0) {
+      this.host.state.editor.setPromptPrediction(suggestion.prediction);
+    }
+    if (this.active !== undefined || suggestion?.accepted === false) this.host.state.ui.requestRender();
   }
 
   handleSubmit(text: string): void {
@@ -156,17 +189,19 @@ export class PromptPredictionController {
   }
 
   reset(): void {
+    this.latestTurn = undefined;
     this.attempted.clear();
     this.dismiss('session');
   }
 
   dispose(): void {
     this.dismiss('shutdown');
+    this.host.state.editor.setPromptPredictionPlaceholder(undefined);
   }
 
   private accept(key: 'tab' | 'right'): boolean {
     const suggestion = this.suggestion;
-    if (suggestion === undefined || suggestion.accepted) return false;
+    if (suggestion === undefined) return false;
     const text = this.host.state.editor.getPromptPrediction();
     if (text === undefined) return false;
     this.suppressNextChange = true;
@@ -187,7 +222,19 @@ export class PromptPredictionController {
     return true;
   }
 
-  private canUseEditor(): boolean {
+  private placeholder(): string | undefined {
+    if (!this.canUseEditor()) return undefined;
+    if (this.active !== undefined) {
+      return this.active.parked ? 'Type a message… Tab to predict' : 'Predicting next prompt…';
+    }
+    if (this.suggestion?.accepted === false) {
+      return this.suggestion.parked ? 'Type a message… Tab to predict' : this.suggestion.prediction;
+    }
+    if (this.latestTurn === undefined) return undefined;
+    return this.attempted.has(`${this.latestTurn.session.id}:${String(this.latestTurn.turnId)}`) ? undefined : 'Tab to predict';
+  }
+
+  private canUsePrediction(): boolean {
     const { state } = this.host;
     return (
       !this.host.aborted &&
@@ -204,19 +251,30 @@ export class PromptPredictionController {
       state.tasksBrowser === undefined &&
       !state.externalEditorRunning &&
       state.livePane.pendingApproval === null &&
-      state.livePane.pendingQuestion === null &&
+      state.livePane.pendingQuestion === null
+    );
+  }
+
+  private canUseEditor(): boolean {
+    const { state } = this.host;
+    return (
+      this.canUsePrediction() &&
       state.editor.inputMode === 'prompt' &&
-      state.editor.getText().length === 0 &&
+      state.editor.getText().trim().length === 0 &&
       !state.editor.hasAutocompleteActivity()
     );
   }
 
   private dismiss(reason: DismissReason): void {
-    if (this.active !== undefined) this.cancelActive(reason);
+    const hadActive = this.active !== undefined;
+    if (hadActive) this.cancelActive(reason);
     const suggestion = this.suggestion;
     this.suggestion = undefined;
     this.host.state.editor.setPromptPrediction(undefined);
-    if (suggestion === undefined) return;
+    if (suggestion === undefined) {
+      if (hadActive) this.host.state.ui.requestRender();
+      return;
+    }
     this.host.state.ui.requestRender();
     this.host.track('prediction_dismissed', {
       prediction_id: suggestion.predictionId,

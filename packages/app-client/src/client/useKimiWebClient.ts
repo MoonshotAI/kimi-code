@@ -723,9 +723,9 @@ function hasPendingLocalWork(sessionId: string): boolean {
 function hasEmptyPromptPredictionInput(sessionId: string): boolean {
   const editor = liveComposerEditorFor(composerSessionScope(sessionId));
   if (editor !== undefined) {
-    return editor.getText().length === 0 && editor.getAttachmentInventory().activeIds.size === 0;
+    return editor.getText().trim().length === 0 && editor.getAttachmentInventory().activeIds.size === 0;
   }
-  if ((safeGetString(draftStorageKey(sessionId)) ?? '').length > 0) return false;
+  if ((safeGetString(draftStorageKey(sessionId)) ?? '').trim().length > 0) return false;
   const snapshot = safeGetJson<{ attachmentOrder?: unknown }>(draftSnapshotStorageKey(sessionId));
   return !Array.isArray(snapshot?.attachmentOrder) || snapshot.attachmentOrder.length === 0;
 }
@@ -743,8 +743,7 @@ function canUsePromptPrediction(sessionId: string): boolean {
     !modeStore().goalMode &&
     !hasPendingLocalWork(sessionId) &&
     (rawState.approvalsBySession[sessionId] ?? []).length === 0 &&
-    (rawState.questionsBySession[sessionId] ?? []).length === 0 &&
-    hasEmptyPromptPredictionInput(sessionId)
+    (rawState.questionsBySession[sessionId] ?? []).length === 0
   );
 }
 
@@ -3461,6 +3460,17 @@ export function useKimiWebClient() {
     promptPrediction: computed(() => {
       const current = promptPredictionController.suggestion.value;
       return current !== null && canUsePromptPrediction(current.sessionId) ? current : null;
+    }),
+    promptPredictionHasTurn: computed(() => {
+      if (promptPredictionController.predictionTarget.value === undefined) return false;
+      if (promptPredictionController.active.value !== undefined || promptPredictionController.suggestion.value !== null) return true;
+      return promptPredictionController.canAttemptPrediction();
+    }),
+    promptPredictionPending: computed(() => {
+      const current = promptPredictionController.active.value;
+      return current !== undefined && canUsePromptPrediction(current.sessionId) && hasEmptyPromptPredictionInput(current.sessionId)
+        ? { sessionId: current.sessionId, parked: current.parked }
+        : null;
     }),
     acceptPromptPrediction: (key: 'tab' | 'right') => promptPredictionController.accept(key),
     handlePromptPredictionInput: () => promptPredictionController.handleInput(),
