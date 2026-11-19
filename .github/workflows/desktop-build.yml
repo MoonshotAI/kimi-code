@@ -31,6 +31,10 @@ on:
         description: 'Canary 目标正式版；release 分支自动计算，其他分支必须填写'
         type: string
         required: false
+      canary-sequence:
+        description: '人工纠正用的 Canary 序号；必须大于旧 code-app 最后的 328，留空则自动计算'
+        type: number
+        required: false
       preview:
         description: '独立 Preview 体验包：macOS arm64 和 Windows x64，只上传 Artifact，不发布更新；与 canary 互斥'
         required: false
@@ -181,6 +185,7 @@ jobs:
         if: inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))
         env:
           CANARY_TARGET_VERSION: ${{ inputs.target-version }}
+          CANARY_SEQUENCE: ${{ inputs.canary-sequence }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           node scripts/canary-version.mjs >> "$GITHUB_OUTPUT"

@@ -47,9 +47,12 @@ if (process.argv.includes('--stamp')) {
     }
   }
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(target ?? '')) throw new Error('Set a stable Canary target version');
-  const run = process.env.GITHUB_RUN_NUMBER;
+  const runNumber = process.env.GITHUB_RUN_NUMBER;
   const attempt = process.env.GITHUB_RUN_ATTEMPT;
   const sha = process.env.GITHUB_SHA;
-  if (!/^[1-9]\d*$/.test(run ?? '') || !/^[1-9]\d*$/.test(attempt ?? '') || !/^[0-9a-f]{40}$/.test(sha ?? '')) throw new Error('Invalid build identity');
+  if (!/^[1-9]\d*$/.test(runNumber ?? '') || !/^[1-9]\d*$/.test(attempt ?? '') || !/^[0-9a-f]{40}$/.test(sha ?? '')) throw new Error('Invalid build identity');
+  // The old code-app repository reached canary.328 at monorepo desktop-build run 14.
+  const run = process.env.CANARY_SEQUENCE?.trim() || String(Number(runNumber) + 314);
+  if (!/^[1-9]\d*$/.test(run) || Number(run) <= 328) throw new Error('Canary sequence must be greater than 328');
   process.stdout.write(`version=${target}-canary.${run}.${attempt}.g${sha.slice(0, 8)}\n`);
 }
