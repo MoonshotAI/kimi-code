@@ -1,11 +1,11 @@
-import { createWriteStream } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { arch, platform, release, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { ErrorCodes, ISessionExportService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
+import { ErrorCodes, IFileService, ISessionExportService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
 import { desktopFeedbackFlag } from '@moonshot-ai/agent-core-v2/app/auth/feedback/flag';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import { registerFlagDefinition } from '@moonshot-ai/agent-core-v2/app/flag/flagRegistry';
@@ -22,16 +22,20 @@ import {
   feedbackAttachmentResponseSchema,
   feedbackParamsSchema,
   feedbackResponseSchema,
+  feedbackSessionArchiveResponseSchema,
+  feedbackSessionArchiveSchema,
   feedbackSessionAttachmentSchema,
   updateFeedbackSchema,
 } from '../protocol/rest-feedback';
 import type { ConversationService } from '../services/conversation/conversationService';
-import { FeedbackError, openFeedbackGateway, readFeedbackFile } from '../services/feedback/feedbackService';
+import { FeedbackError, openFeedbackGateway, readFeedbackFile, requireFeedbackToken } from '../services/feedback/feedbackService';
+import { FEEDBACK_ARCHIVE_LIMIT, fetchRemoteFeedbackArchive } from '../services/feedback/sessionArchive';
+import type { HostBridgeManager } from '../services/hosts/hostBridgeManager';
 
 const MIB = 1024 * 1024;
 const VIDEO_LIMIT = 100 * MIB;
 const IMAGE_LIMIT = 10 * MIB;
-const ARCHIVE_LIMIT = 500 * MIB;
+const ARCHIVE_TTL_SECONDS = 24 * 60 * 60;
 
 registerFlagDefinition(desktopFeedbackFlag);
 
@@ -48,7 +52,7 @@ type FeedbackRouteRegistration = (path: string, options: ReturnType<typeof defin
 export function registerFeedbackRoutes(
   app: { post: FeedbackRouteRegistration; patch: FeedbackRouteRegistration },
   core: Scope,
-  options: { readonly hostIdentity: KimiHostIdentity; readonly conversations: ConversationService },
+  options: { readonly hostIdentity: KimiHostIdentity; readonly conversations: ConversationService; readonly hostBridges: HostBridgeManager },
 ): void {
   const create = defineRoute({
     method: 'POST',
@@ -118,17 +122,49 @@ export function registerFeedbackRoutes(
   });
   app.post(attachFile.path, attachFile.options, attachFile.handler as RouteHandlerMethod);
 
+  async function exportSession(sessionId: string, outputPath: string, signal: AbortSignal): Promise<void> {
+    await core.accessor.get(ISessionExportService).export({
+      sessionId, outputPath, includeGlobalLog: false, includeDesktopLog: false, version: options.hostIdentity.version,
+    }, { signal });
+    if ((await stat(outputPath)).size > FEEDBACK_ARCHIVE_LIMIT) throw fileTooLarge();
+  }
+
+  const sessionErrors = { ...feedbackErrors, [ErrorCode.SESSION_NOT_FOUND]: {}, [ErrorCode.FILE_TOO_LARGE]: {} };
+  const prepareSession = defineRoute({
+    method: 'POST',
+    path: '/feedback/session-archives',
+    body: feedbackSessionArchiveSchema,
+    success: { data: feedbackSessionArchiveResponseSchema },
+    errors: sessionErrors,
+    description: 'Prepare an expiring session-only archive for a feedback attachment on another host',
+    tags: ['feedback'],
+  }, async (req, reply) => {
+    await withFeedback(req, reply, core, async () => {
+      await requireFeedbackToken(core);
+      return withAttachment(reply as FastifyReply, async (scratch, signal) => {
+        const path = join(scratch, 'session.zip');
+        await exportSession(req.body.session_id, path, signal);
+        const files = core.accessor.get(IFileService);
+        const meta = await files.save(createReadStream(path, { signal }), 'session.zip', {
+          mimeType: 'application/zip', expiresInSec: ARCHIVE_TTL_SECONDS,
+        });
+        if (signal.aborted) {
+          await files.delete(meta.id);
+          signal.throwIfAborted();
+        }
+        return { file_id: meta.id, size: meta.size };
+      });
+    });
+  });
+  app.post(prepareSession.path, prepareSession.options, prepareSession.handler as RouteHandlerMethod);
+
   const attachSession = defineRoute({
     method: 'POST',
     path: '/feedback/{feedback_id}/attachments/session',
     params: feedbackParamsSchema,
     body: feedbackSessionAttachmentSchema,
     success: { data: feedbackAttachmentResponseSchema },
-    errors: {
-      ...feedbackErrors,
-      [ErrorCode.SESSION_NOT_FOUND]: {},
-      [ErrorCode.FILE_TOO_LARGE]: {},
-    },
+    errors: sessionErrors,
     description: 'Export and upload an authorized session without global diagnostics',
     tags: ['feedback'],
   }, async (req, reply) => {
@@ -137,15 +173,13 @@ export function registerFeedbackRoutes(
       return withAttachment(reply as FastifyReply, async (scratch, signal) => {
         const filename = 'session.zip';
         const path = join(scratch, filename);
-        await core.accessor.get(ISessionExportService).export({
-          sessionId: req.body.session_id,
-          outputPath: path,
-          includeGlobalLog: false,
-          includeDesktopLog: false,
-          version: options.hostIdentity.version,
-        }, { signal });
+        if (req.body.host_id === undefined) {
+          await exportSession(req.body.session_id, path, signal);
+        } else {
+          const host = await options.hostBridges.connect(req.body.host_id);
+          await fetchRemoteFeedbackArchive(host, req.body.session_id, path, signal);
+        }
         const file = await readFeedbackFile(filename, path, signal);
-        if (file.size > ARCHIVE_LIMIT) throw fileTooLarge();
         return { upload_id: await gateway.upload(req.params.feedback_id, file, signal) };
       });
     });
@@ -216,7 +250,7 @@ async function receiveFile(
   let filename: string | undefined;
   try {
     for await (const part of req.parts({
-      limits: { files: 1, fields: 0, parts: 2, fileSize: kind === 'media' ? VIDEO_LIMIT + 1 : ARCHIVE_LIMIT + 1 },
+      limits: { files: 1, fields: 0, parts: 2, fileSize: kind === 'media' ? VIDEO_LIMIT + 1 : FEEDBACK_ARCHIVE_LIMIT + 1 },
     })) {
       if (part.type !== 'file') throw badFile();
       if (part.fieldname !== 'file') {
@@ -267,7 +301,7 @@ function safeFilename(filename: string): string {
 }
 
 function attachmentLimit(kind: 'media' | 'diagnostics', mime: string): number | undefined {
-  if (kind === 'diagnostics') return mime === 'application/zip' ? ARCHIVE_LIMIT : undefined;
+  if (kind === 'diagnostics') return mime === 'application/zip' ? FEEDBACK_ARCHIVE_LIMIT : undefined;
   if (mime.startsWith('image/')) return IMAGE_LIMIT;
   if (mime.startsWith('video/')) return VIDEO_LIMIT;
   return undefined;

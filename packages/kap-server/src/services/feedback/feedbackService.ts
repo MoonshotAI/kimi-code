@@ -38,24 +38,28 @@ export class FeedbackError extends Error {
   }
 }
 
-export async function openFeedbackGateway(core: Scope): Promise<FeedbackGateway> {
+export async function requireFeedbackToken(core: Scope): Promise<string> {
   const oauth = core.accessor.get(IOAuthService);
   const tokenProvider = oauth.resolveTokenProvider(KIMI_CODE_PROVIDER_NAME);
   if (tokenProvider === undefined) {
     throw new FeedbackError(ErrorCode.AUTH_TOKEN_MISSING, 'Sign in to Kimi to send feedback.');
   }
-  const configuredUrl = core.accessor.get(IProviderService).get(KIMI_CODE_PROVIDER_NAME)?.baseUrl;
-  const managedUrl = isManagedKimiCodeBaseUrl(configuredUrl) ? configuredUrl : undefined;
-  const override = core.accessor.get(IBootstrapService).getEnv('KIMI_CODE_FEEDBACK_BASE_URL');
-  const url = feedbackUrl(override ?? managedUrl);
   try {
-    return new FeedbackGateway(url, await tokenProvider.getAccessToken());
+    return await tokenProvider.getAccessToken();
   } catch (error) {
     if (error instanceof OAuthUnauthorizedError) {
       throw new FeedbackError(ErrorCode.AUTH_TOKEN_MISSING, 'Sign in to Kimi to send feedback.');
     }
     throw error;
   }
+}
+
+export async function openFeedbackGateway(core: Scope): Promise<FeedbackGateway> {
+  const token = await requireFeedbackToken(core);
+  const configuredUrl = core.accessor.get(IProviderService).get(KIMI_CODE_PROVIDER_NAME)?.baseUrl;
+  const managedUrl = isManagedKimiCodeBaseUrl(configuredUrl) ? configuredUrl : undefined;
+  const override = core.accessor.get(IBootstrapService).getEnv('KIMI_CODE_FEEDBACK_BASE_URL');
+  return new FeedbackGateway(feedbackUrl(override ?? managedUrl), token);
 }
 
 export class FeedbackGateway {

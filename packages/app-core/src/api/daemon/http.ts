@@ -55,6 +55,7 @@ function appendQuery(params: URLSearchParams, query: RestQuery): void {
 }
 
 function timeoutSignal(timeoutMs = REQUEST_TIMEOUT_MS): AbortSignal | undefined {
+  if (timeoutMs === Infinity) return undefined;
   try {
     return AbortSignal.timeout(timeoutMs);
   } catch {

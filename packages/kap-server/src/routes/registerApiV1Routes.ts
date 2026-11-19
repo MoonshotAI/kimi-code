@@ -192,6 +192,7 @@ export async function registerApiV1Routes(
       registerFeedbackRoutes(apiV1 as unknown as Parameters<typeof registerFeedbackRoutes>[0], core, {
         hostIdentity: opts.hostIdentity,
         conversations: opts.conversations,
+        hostBridges: opts.hostBridges,
       });
       registerSessionMediaRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionMediaRoutes>[0],

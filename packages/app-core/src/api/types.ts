@@ -1064,7 +1064,7 @@ export interface KimiWebApi {
   createFeedback(input: CreateFeedbackInput): Promise<{ feedback_id: number }>;
   updateFeedback(feedbackId: number, input: UpdateFeedbackInput, sessionId?: string): Promise<{ feedback_id: number }>;
   uploadFeedbackAttachment(feedbackId: number, input: FeedbackAttachmentInput, signal?: AbortSignal): Promise<{ upload_id: number }>;
-  uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal): Promise<{ upload_id: number }>;
+  uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal, globalFeedback?: { hostId?: string }): Promise<{ upload_id: number }>;
   getTurnFileChanges(
     sessionId: string,
     turnNumber: number,

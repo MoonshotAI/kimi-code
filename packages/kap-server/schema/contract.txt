@@ -1595,6 +1595,25 @@ POST /api/v1/feedback response 200<code=40401>: shape 2bda561c
 POST /api/v1/feedback response 200<code=40421>: shape 647cc887
 POST /api/v1/feedback response 200<code=40936>: shape 9bd41b04
 POST /api/v1/feedback response 200<code=50001>: shape c8fef53e
+POST /api/v1/feedback/session-archives request.session_id: string minLength=1 maxLength=200
+POST /api/v1/feedback/session-archives request: object
+POST /api/v1/feedback/session-archives response 200: oneOf
+POST /api/v1/feedback/session-archives response 200<code=0>.code: enum 0
+POST /api/v1/feedback/session-archives response 200<code=0>.data.file_id: string pattern="^f_[A-Za-z0-9][A-Za-z0-9_-]*$"
+POST /api/v1/feedback/session-archives response 200<code=0>.data.size: integer maximum=9007199254740991 exclusiveMinimum=true
+POST /api/v1/feedback/session-archives response 200<code=0>.data: object closed
+POST /api/v1/feedback/session-archives response 200<code=0>.details: any optional
+POST /api/v1/feedback/session-archives response 200<code=0>.msg: string
+POST /api/v1/feedback/session-archives response 200<code=0>.request_id: string
+POST /api/v1/feedback/session-archives response 200<code=0>: object closed
+POST /api/v1/feedback/session-archives response 200<code=40001>: shape a642160a
+POST /api/v1/feedback/session-archives response 200<code=40111>: shape 00776ba9
+POST /api/v1/feedback/session-archives response 200<code=40112>: shape fa735462
+POST /api/v1/feedback/session-archives response 200<code=40401>: shape 2bda561c
+POST /api/v1/feedback/session-archives response 200<code=40936>: shape 9bd41b04
+POST /api/v1/feedback/session-archives response 200<code=41301>: shape b2ce4116
+POST /api/v1/feedback/session-archives response 200<code=50001>: shape c8fef53e
+POST /api/v1/feedback/session-archives: operation
 POST /api/v1/feedback/{feedback_id}/attachments param path:feedback_id: integer maximum=9007199254740991 exclusiveMinimum=0
 POST /api/v1/feedback/{feedback_id}/attachments param query:kind: enum "diagnostics"|"media"
 POST /api/v1/feedback/{feedback_id}/attachments request.file: string format binary
@@ -1611,14 +1630,10 @@ POST /api/v1/feedback/{feedback_id}/attachments response 200<code=40001>: shape 
 POST /api/v1/feedback/{feedback_id}/attachments response 200<code=40111>: shape 00776ba9
 POST /api/v1/feedback/{feedback_id}/attachments response 200<code=40112>: shape fa735462
 POST /api/v1/feedback/{feedback_id}/attachments response 200<code=40936>: shape 9bd41b04
-POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.code: enum 41301
-POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.data: enum null nullable
-POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.details: any optional
-POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.msg: string
-POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.request_id: string
-POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>: object closed
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>: shape b2ce4116
 POST /api/v1/feedback/{feedback_id}/attachments response 200<code=50001>: shape c8fef53e
 POST /api/v1/feedback/{feedback_id}/attachments/session param path:feedback_id: integer maximum=9007199254740991 exclusiveMinimum=0
+POST /api/v1/feedback/{feedback_id}/attachments/session request.host_id: string pattern="^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" optional
 POST /api/v1/feedback/{feedback_id}/attachments/session request.session_id: string minLength=1 maxLength=200
 POST /api/v1/feedback/{feedback_id}/attachments/session request: object
 POST /api/v1/feedback/{feedback_id}/attachments/session response 200: oneOf
@@ -1634,12 +1649,7 @@ POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=40111>
 POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=40112>: shape fa735462
 POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=40401>: shape 2bda561c
 POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=40936>: shape 9bd41b04
-POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.code: enum 41301
-POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.data: enum null nullable
-POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.details: any optional
-POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.msg: string
-POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.request_id: string
-POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>: object closed
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>: shape b2ce4116
 POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=50001>: shape c8fef53e
 POST /api/v1/feedback/{feedback_id}/attachments/session: operation
 POST /api/v1/feedback/{feedback_id}/attachments: operation
@@ -4730,6 +4740,11 @@ shape b29a9b49.is_error: boolean optional
 shape b29a9b49.output: any
 shape b29a9b49.tool_call_id: string minLength=1
 shape b29a9b49.type: enum "tool_result"
+shape b2ce4116.code: enum 41301
+shape b2ce4116.data: enum null nullable
+shape b2ce4116.details: any optional
+shape b2ce4116.msg: string
+shape b2ce4116.request_id: string
 shape b3ba90e0.code: enum 0
 shape b3ba90e0.data: shape 84077bce
 shape b3ba90e0.details: any optional

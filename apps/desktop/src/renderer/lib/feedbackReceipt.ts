@@ -35,7 +35,7 @@ export function showFeedbackReceipt(
   attachments: readonly FeedbackAttachment[],
   signal: AbortSignal,
   handleLoginError: (error: unknown, sessionId?: string) => boolean,
-  authorizeSession?: () => Promise<AbortSignal | undefined>,
+  globalFeedback?: { hostId?: string; authorizeSession?: () => Promise<AbortSignal | undefined> },
 ): void {
   const receipt = { kind: 'submitted', feedbackId } as const;
   showNotice(() => receipt, signal);
@@ -50,8 +50,8 @@ export function showFeedbackReceipt(
         const api = getKimiWebApi();
         if (item.kind === 'session') {
           let uploadSignal = signal;
-          if (authorizeSession !== undefined) {
-            const host = await authorizeSession();
+          if (globalFeedback?.authorizeSession !== undefined) {
+            const host = await globalFeedback.authorizeSession();
             if (host === undefined) {
               failed.push(item);
               continue;
@@ -59,7 +59,7 @@ export function showFeedbackReceipt(
             uploadSignal = AbortSignal.any([signal, host]);
           }
           uploadSignal.throwIfAborted();
-          await api.uploadFeedbackSession(feedbackId, item.sessionId, uploadSignal);
+          await api.uploadFeedbackSession(feedbackId, item.sessionId, uploadSignal, globalFeedback && { hostId: globalFeedback.hostId });
         } else {
           const file = item.kind === 'media' ? item.file : (diagnostics ??= await collectFeedbackDiagnostics());
           signal.throwIfAborted();

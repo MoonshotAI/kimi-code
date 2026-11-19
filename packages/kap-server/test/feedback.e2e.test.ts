@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { closeSessionById, IOAuthService, MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2';
+import { closeSessionById, IOAuthService, ISessionExportService, MAIN_AGENT_ID, sessionDirOf } from '@moonshot-ai/agent-core-v2';
 import { OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, assert, beforeAll, describe, expect, it, type TestContext, vi } from 'vitest';
 
 import { ErrorCode } from '../src/protocol/error-codes';
+import type { HostSession } from '../src/services/hosts/hostSession';
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -287,6 +289,129 @@ default_model = "alternate"
     expect(result.code).toBe(0);
     expect(receivedParts.get(result.data.upload_id)).toEqual({ method: 'POST', bytes: Buffer.from('chosen image') });
     expect(completed.at(-1)).toEqual({ upload_id: result.data.upload_id, parts: [{ part_number: 1, etag: '"test-etag"' }] });
+  });
+
+  async function connectRemoteFeedbackHost({ onTestFinished }: TestContext) {
+    const remoteFeedbackRequests: string[] = [];
+    const remoteGateway = createServer((req, res) => {
+      remoteFeedbackRequests.push(req.url ?? '');
+      res.writeHead(409).end();
+    });
+    await new Promise<void>(resolve => remoteGateway.listen(0, '127.0.0.1', resolve));
+    onTestFinished(() => remoteGateway[Symbol.asyncDispose]());
+    const address = remoteGateway.address();
+    if (address === null || typeof address === 'string') throw new Error('No remote feedback gateway port.');
+    const remoteHome = await mkdtemp(join(home, 'remote-'));
+    const remoteToken = 'test-remote-feedback-access-token';
+    const oauth: IOAuthService = {
+      ...server.core.accessor.get(IOAuthService),
+      resolveTokenProvider: () => ({ getAccessToken: async () => remoteToken }),
+      getCachedAccessToken: async () => remoteToken,
+    };
+    const remote = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: remoteHome,
+      configPath: join(home, 'config.toml'), logLevel: 'silent', skipInstanceRegistry: true,
+      env: { ...process.env, KIMI_CODE_FEEDBACK_BASE_URL: `http://127.0.0.1:${address.port}/coding/v1/` },
+      seeds: [[IOAuthService, oauth]],
+    });
+    onTestFinished(() => remote.close());
+    const remoteOrigin = `http://127.0.0.1:${remote.port}`;
+    const forward = vi.fn<HostSession['request']>(async ({ method, path, headers, body, signal }) => {
+      const forwardedHeaders = new Headers(authHeaders(remote));
+      for (const [key, value] of Object.entries(headers)) {
+        if (value !== undefined) forwardedHeaders.set(key, Array.isArray(value) ? value.join(', ') : value);
+      }
+      const response = await fetch(remoteOrigin + path, { method, headers: forwardedHeaders, body: body && new Uint8Array(body), signal });
+      return { status: response.status, headers: Object.fromEntries(response.headers), body: Buffer.from(await response.arrayBuffer()) };
+    });
+    const connect = vi.spyOn(server.hostBridges, 'connect').mockResolvedValue({
+      request: forward,
+      openWebSocket: () => { throw new Error('Unexpected WebSocket.'); },
+    });
+    onTestFinished(() => { connect.mockRestore(); });
+    return { remote, remoteHome, connect, forward, remoteFeedbackRequests };
+  }
+
+  it('attaches a remote-only session to the global feedback created on this host', async context => {
+    const { remote, remoteHome, connect, forward, remoteFeedbackRequests } = await connectRemoteFeedbackHost(context);
+    const createdSession = await remote.app.inject({
+      method: 'POST', url: '/api/v1/sessions', headers: authHeaders(remote), payload: { metadata: { cwd: remoteHome } },
+    });
+    const { data: session } = createdSession.json<{ data: { id: string; workspace_id: string } }>();
+    const sessionDir = sessionDirOf(remoteHome, `sessions/${session.workspace_id}`, session.id);
+    await writeFile(join(sessionDir, 'remote-only.txt'), 'This file belongs to the selected session.');
+    const logs = join(remoteHome, 'logs');
+    await mkdir(logs, { recursive: true });
+    await writeFile(join(logs, 'kimi-code.log'), 'remote global log');
+    await writeFile(join(logs, 'kimi-code-desktop.log'), 'remote desktop log');
+
+    const { data: feedback } = await request<{ feedback_id: number }>('POST', '/feedback', {
+      kind: 'global', source: 'sidebar', category: 'bug', content: 'Issue on a remote host', upload_session: true,
+    });
+    const path = `/feedback/${feedback.feedback_id}/attachments/session`;
+    const attached = await request<{ upload_id: number }>('POST', path, { session_id: session.id, host_id: 'example' });
+    expect(attached.code, JSON.stringify(attached)).toBe(0);
+    expect(connect).toHaveBeenCalledWith('example');
+    const [prepare, download, remove] = forward.mock.calls.map(([req]) => req);
+    expect(prepare).toMatchObject({ method: 'POST', path: '/api/v1/feedback/session-archives' });
+    assert.isDefined(prepare?.body);
+    expect(JSON.parse(prepare.body.toString())).toEqual({ session_id: session.id });
+    assert.isDefined(download);
+    expect(download).toMatchObject({
+      method: 'GET', path: expect.stringMatching(/^\/api\/v1\/files\/[^/]+$/),
+      headers: { range: expect.stringMatching(/^bytes=0-\d+$/) },
+    });
+    expect(remove).toMatchObject({ method: 'DELETE', path: download.path });
+    expect(forward).toHaveBeenCalledTimes(3);
+    const deleted = await remote.app.inject({ method: 'GET', url: download.path, headers: authHeaders(remote) });
+    expect(deleted.json()).toMatchObject({ code: ErrorCode.FILE_NOT_FOUND });
+    expect(uploads.get(attached.data.upload_id)).toMatchObject({ feedback_id: feedback.feedback_id, file_name: 'session.zip' });
+    const archive = receivedParts.get(attached.data.upload_id)?.bytes;
+    expect(archive?.includes(Buffer.from('remote-only.txt'))).toBe(true);
+    for (const forbidden of ['logs/global/kimi-code.log', 'logs/kimi-desktop.log', 'logs/kimi-web.jsonl']) {
+      expect(archive?.includes(Buffer.from(forbidden))).toBe(false);
+    }
+    expect(completed.at(-1)).toMatchObject({ upload_id: attached.data.upload_id });
+
+    const previousUploads = uploads.size;
+    const missing = await request('POST', path, { session_id: 'missing-session', host_id: 'example' });
+    expect(missing.code).toBe(ErrorCode.SESSION_NOT_FOUND);
+    expect(forward).toHaveBeenCalledTimes(4);
+    expect(uploads.size).toBe(previousUploads);
+    expect(remoteFeedbackRequests).toEqual([]);
+  });
+
+  it('cancels the remote archive export when the feedback client disconnects', async context => {
+    const { remote, remoteFeedbackRequests } = await connectRemoteFeedbackHost(context);
+    const started = new Promise<AbortSignal>(resolve => {
+      vi.spyOn(remote.core.accessor.get(ISessionExportService), 'export').mockImplementationOnce(async (_input, options) => {
+        const signal = options?.signal;
+        assert.isDefined(signal);
+        resolve(signal);
+        await once(signal, 'abort');
+        throw new Error('Session export cancelled.');
+      });
+    });
+    const { data } = await request<{ feedback_id: number }>('POST', '/feedback', {
+      kind: 'global', source: 'sidebar', category: 'other', content: 'Cancel the attachment', upload_session: true,
+    });
+    const previousUploads = uploads.size;
+    const client = new AbortController();
+    context.onTestFinished(() => client.abort());
+    const response = fetch(`http://127.0.0.1:${server.port}/api/v1/feedback/${data.feedback_id}/attachments/session`, {
+      method: 'POST', headers: authHeaders(server, { 'content-type': 'application/json' }), signal: client.signal,
+      body: JSON.stringify({ host_id: 'example', session_id: 'example-session' }),
+    });
+    const remoteSignal = await Promise.race([
+      started,
+      response.then(async result => { throw new Error(await result.text()); }),
+    ]);
+    const stopped = once(remoteSignal, 'abort');
+    client.abort();
+    await expect(response).rejects.toMatchObject({ name: 'AbortError' });
+    await stopped;
+    expect(uploads.size).toBe(previousUploads);
+    expect(remoteFeedbackRequests).toEqual([]);
   });
 
   it('rates the selected historical turn, updates that rating, and uploads a session without diagnostics', async () => {

@@ -169,7 +169,7 @@ export function useDesktopFeedback(deps: {
           info.kind === 'ok' ? info.userInfo.userId : undefined);
         if (userId !== undefined && userId === await deps.hostUserId(host)) return hostSignal;
       };
-      showFeedbackReceipt(id, attachments, signal, handleLoginError, authorizeSession);
+      showFeedbackReceipt(id, attachments, signal, handleLoginError, { hostId: host, authorizeSession });
       return id;
     } catch (error) {
       if (signal.aborted) return;
