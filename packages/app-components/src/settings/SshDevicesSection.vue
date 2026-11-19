@@ -8,6 +8,7 @@ import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { deviceDefinition, devicesStore, type DeviceAccount, type DeviceProviderCopy } from '@moonshot-ai/app-client/stores';
 import { Banner, Button, Field, Icon, IconButton, Input, Menu, MenuItem, SegmentedControl, StatusDot, Switch, Tooltip } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
+import { useDeviceRowReveal } from '../composables/useDeviceRowReveal';
 import { useDeviceFailureText } from '../composables/useDeviceFailureText';
 import DeviceTestResult from './DeviceTestResult.vue';
 
@@ -41,7 +42,6 @@ const testing = ref(false);
 const error = ref('');
 const testFailure = ref<{ failure?: AppDeviceConnectFailure; reason: string; hint: string; detail: string }>();
 const pendingIds = ref<Record<string, boolean>>({});
-const flashId = ref('');
 const backButton = ref<HTMLButtonElement>();
 const nameInput = ref<InstanceType<typeof Input>>();
 const loadFailed = ref(false);
@@ -53,7 +53,7 @@ const targetTouched = ref(false);
 const rowMenuRef = ref<InstanceType<typeof Menu> | null>(null);
 const rowMenuId = ref('');
 const { open: rowMenuOpen, menuStyle: rowMenuStyle, showAnchored: showRowMenu, close: closeRowMenu } = useAnchoredMenu(rowMenuRef);
-let flashTimer = 0;
+const { flashId, flash: flashRow, reveal: revealRow } = useDeviceRowReveal(rootEl);
 let copyFeedbackTimer = 0;
 let testAbort: AbortController | undefined;
 
@@ -86,7 +86,6 @@ const writeBlocked = computed(() => busy.value || testing.value || addingHost.va
 watch(subpage, (open) => emit('page', open), { immediate: true });
 
 onUnmounted(() => {
-  window.clearTimeout(flashTimer);
   window.clearTimeout(copyFeedbackTimer);
   testAbort?.abort();
 });
@@ -243,14 +242,6 @@ function cancelTest(): void {
   clearResult();
 }
 
-function flashRow(deviceId: string): void {
-  flashId.value = deviceId;
-  window.clearTimeout(flashTimer);
-  flashTimer = window.setTimeout(() => {
-    flashId.value = '';
-  }, 1200);
-}
-
 function applyFocusDevice(): void {
   const targetId = store.focusDeviceId;
   const openAdd = store.addIfEmpty;
@@ -268,12 +259,7 @@ function applyFocusDevice(): void {
   }
   if (!row) return;
   if (isExpandable(row)) openDetailId.value = row.id;
-  flashRow(row.id);
-  void nextTick(() => {
-    const el = [...(rootEl.value?.querySelectorAll<HTMLElement>('[data-device-id]') ?? [])]
-      .find((item) => item.dataset.deviceId === row.id);
-    el?.scrollIntoView?.({ block: 'nearest' });
-  });
+  revealRow(row.id);
 }
 
 watch(() => [store.focusDeviceId, store.addIfEmpty, store.loaded] as const, applyFocusDevice, { immediate: true });

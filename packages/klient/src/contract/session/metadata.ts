@@ -24,6 +24,7 @@ const sessionClientIdentitySchema = z.object({
 
 export const sessionMetaSchema = z.object({
   id: z.string(),
+  clientIdentity: sessionClientIdentitySchema.optional(),
   version: z.number().optional(),
   title: z.string().optional(),
   titleKind: z.enum(['replaceable', 'generated', 'custom']).optional(),
@@ -39,7 +40,6 @@ export const sessionMetaSchema = z.object({
   agents: z.record(z.string(), agentMetaSchema).optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
   lastTurnReason: z.enum(['completed', 'cancelled', 'failed']).optional(),
-  clientIdentity: sessionClientIdentitySchema.optional(),
 });
 
 export const sessionMetaPatchSchema = z.object({

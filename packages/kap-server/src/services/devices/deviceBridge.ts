@@ -89,6 +89,39 @@ export interface DeviceBridge {
   dispose(): void;
 }
 
+export abstract class DeviceBridgeState {
+  protected statusValue: DeviceStatus = 'pending';
+  protected failureValue: DeviceConnectFailure | undefined;
+  protected errorValue: string | undefined;
+  protected remoteVersionValue: string | undefined;
+  protected upgradeValue: DeviceUpgradeState | undefined;
+  protected disposed = false;
+
+  get status(): DeviceStatus {
+    return this.statusValue;
+  }
+
+  get failure(): DeviceConnectFailure | undefined {
+    return this.failureValue;
+  }
+
+  get error(): string | undefined {
+    return this.errorValue;
+  }
+
+  get remoteVersion(): string | undefined {
+    return this.remoteVersionValue;
+  }
+
+  get upgradeState(): DeviceUpgradeState | undefined {
+    return this.upgradeValue;
+  }
+
+  protected rejectDisposed(): Promise<never> {
+    return Promise.reject(new DeviceConnectError('unknown', 'device bridge disposed'));
+  }
+}
+
 export interface RemoteDeviceMeta {
   readonly identity?: RemoteDeviceIdentity;
   readonly serverVersion?: string;

@@ -35,7 +35,7 @@ const props = defineProps<{
   onCancelOAuthLogin: () => Promise<void>;
   onGetOAuthRegion?: () => Promise<OAuthRegion | null>;
   title?: string;
-  remoteDevice?: boolean;
+  remoteHost?: boolean;
 }>();
 
 const { step, pollError, flow, secondsLeft, autoOpenBlocked, errorMessage, startFlow, cancelFlow } = useOAuthLoginFlow({
@@ -203,7 +203,7 @@ function formatSeconds(s: number): string {
           {{ pollError ? t('login.pollErrorTitle') : t('login.failedTitle') }}
         </span>
         <span class="center-hint">
-          {{ pollError ? t(remoteDevice ? 'login.devicePollErrorHint' : 'login.pollErrorHint') : (errorMessage ?? t(remoteDevice ? 'login.deviceErrorHint' : 'login.errorHint')) }}
+          {{ pollError ? t(remoteHost ? 'login.hostPollErrorHint' : 'login.pollErrorHint') : (errorMessage ?? t(remoteHost ? 'login.hostErrorHint' : 'login.errorHint')) }}
         </span>
       </div>
       <div class="actions">

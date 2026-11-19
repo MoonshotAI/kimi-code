@@ -15,6 +15,7 @@ import type {
   AppModel,
   AppProvider,
   AppProviderDetail,
+  AppServerMeta,
   AuthResult,
   ImportCatalogProviderInput,
   ImportCatalogProviderResult,
@@ -360,20 +361,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return { status: 'ok', uptimeSec: data.uptime_sec ?? 0 };
   }
 
-  async getMeta(): Promise<{
-    protocolVersion: string;
-    serverVersion: string;
-    serverId: string;
-    startedAt: string;
-    homeDir: string;
-    capabilities: Record<string, boolean>;
-    openInApps: string[];
-    dangerousBypassAuth: boolean;
-    experimentalFlags: Record<string, boolean>;
-    backend: 'v1' | 'v2';
-    webTitle: string;
-    deviceId: string;
-  }> {
+  async getMeta(): Promise<AppServerMeta> {
     const data = await this.http.get<WireMeta>('/meta');
     return {
       protocolVersion: data.kimi_agent_protocol_version ?? '',

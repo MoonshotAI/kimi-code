@@ -132,10 +132,6 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
-const sessionGetQuerySchema = z.object({ devices: z.literal('include').optional() });
-
-const deviceSessionSchema = sessionSchema;
-
 async function sessionOnDevices(devices: DeviceSources, id: string) {
   return findOnDevices(devices, async (session) => {
     try {
@@ -146,6 +142,10 @@ async function sessionOnDevices(devices: DeviceSources, id: string) {
     }
   });
 }
+
+const sessionGetQuerySchema = z.object({ devices: z.literal('include').optional() });
+
+const deviceSessionSchema = sessionSchema;
 
 const sessionActionTailParamSchema = z.object({
   tail: z.string().min(1),

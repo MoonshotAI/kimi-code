@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppDeviceUpgradeStatus } from '@moonshot-ai/app-core/api';
 import { deviceInstall, isLongOffline, isRetryableDeviceFailure, LONG_OFFLINE_DAYS } from '@moonshot-ai/app-core/lib';
@@ -8,6 +8,7 @@ import { track } from '@moonshot-ai/app-client/contracts';
 import { authStore, devicesStore, type DeviceDisplayState, type MyDevice } from '@moonshot-ai/app-client/stores';
 import { Button, Icon, IconButton, Input, Menu, MenuItem, Spinner, StatusDot, Switch, Tooltip } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
+import { useDeviceRowReveal } from '../composables/useDeviceRowReveal';
 import { useDeviceFailureText } from '../composables/useDeviceFailureText';
 
 const props = defineProps<{
@@ -43,9 +44,8 @@ const renameInput = ref<InstanceType<typeof Input> | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const menuId = ref('');
 const rootEl = ref<HTMLElement>();
-const flashId = ref('');
 const { open: menuOpen, menuStyle, showAnchored, close: closeMenu } = useAnchoredMenu(menuRef);
-let flashTimer = 0;
+const { flashId, reveal: revealRow } = useDeviceRowReveal(rootEl);
 
 const rows = computed(() => store.myDevices);
 const folded = computed(() => rows.value.filter((row) => row.device === undefined && row.registration !== undefined && isLongOffline(row.registration, now.value)));
@@ -70,8 +70,6 @@ watch(menuOpen, (open) => {
   if (!open) menuId.value = '';
 });
 
-onUnmounted(() => window.clearTimeout(flashTimer));
-
 function applyFocusDevice(): void {
   const targetId = store.focusDeviceId;
   if (!targetId || store.deviceFor(targetId)?.connection !== 'account') return;
@@ -79,16 +77,7 @@ function applyFocusDevice(): void {
   const row = rows.value.find((item) => item.id === targetId);
   if (row === undefined) return;
   if (folded.value.includes(row)) foldOpen.value = true;
-  flashId.value = row.id;
-  window.clearTimeout(flashTimer);
-  flashTimer = window.setTimeout(() => {
-    flashId.value = '';
-  }, 1200);
-  void nextTick(() => {
-    const el = [...(rootEl.value?.querySelectorAll<HTMLElement>('[data-device-id]') ?? [])]
-      .find((item) => item.dataset.deviceId === row.id);
-    el?.scrollIntoView?.({ block: 'nearest' });
-  });
+  revealRow(row.id);
 }
 
 watch(() => store.focusDeviceId, applyFocusDevice, { immediate: true });

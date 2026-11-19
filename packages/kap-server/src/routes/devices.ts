@@ -49,6 +49,27 @@ export function registerDevicesRoutes(app: DevicesRouteHost, core: Scope, manage
     return next;
   };
 
+  const unavailable = (error: unknown, requestId: string) =>
+    errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), requestId);
+
+  const sendForConfiguredDevice = async (
+    req: { readonly id: string; readonly body: { readonly id: string } },
+    reply: { send(payload: unknown): unknown },
+    action: (id: string) => Promise<unknown>,
+    failure: (error: unknown, id: string) => unknown = (error) => unavailable(error, req.id),
+  ): Promise<void> => {
+    const { id } = req.body;
+    if (manager.section()[id] === undefined) {
+      reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `device "${id}" is not configured`, req.id));
+      return;
+    }
+    try {
+      reply.send(okEnvelope(await action(id), req.id));
+    } catch (error) {
+      reply.send(failure(error, id));
+    }
+  };
+
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -186,18 +207,7 @@ export function registerDevicesRoutes(app: DevicesRouteHost, core: Scope, manage
       description: 'Copy shareable custom model providers on this computer to a device, replacing providers with the same name there',
       tags: ['devices'],
     },
-    async (req, reply) => {
-      const { id } = req.body;
-      if (manager.section()[id] === undefined) {
-        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `device "${id}" is not configured`, req.id));
-        return;
-      }
-      try {
-        reply.send(okEnvelope(await manager.copyProviders(id), req.id));
-      } catch (error) {
-        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
-      }
-    },
+    (req, reply) => sendForConfiguredDevice(req, reply, (id) => manager.copyProviders(id)),
   );
   app.post(copyProvidersRoute.path, copyProvidersRoute.options, copyProvidersRoute.handler as never);
 
@@ -216,22 +226,12 @@ export function registerDevicesRoutes(app: DevicesRouteHost, core: Scope, manage
         'Upgrade Kimi Code on a device. SSH devices, and account devices running a Kimi Code CLI that supports it, upgrade in the background and report progress in the device upgrade_status; the desktop app and older CLIs answer with how to update on that computer',
       tags: ['devices'],
     },
-    async (req, reply) => {
-      const { id } = req.body;
-      if (manager.section()[id] === undefined) {
-        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `device "${id}" is not configured`, req.id));
-        return;
-      }
-      try {
-        reply.send(okEnvelope(await manager.upgrade(id), req.id));
-      } catch (error) {
-        reply.send(
-          error instanceof DeviceUpgradeInProgressError
-            ? errEnvelope(ErrorCode.DEVICE_UPGRADE_IN_PROGRESS, `device "${id}" is already being upgraded`, req.id)
-            : errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id),
-        );
-      }
-    },
+    (req, reply) =>
+      sendForConfiguredDevice(req, reply, (id) => manager.upgrade(id), (error, id) =>
+        error instanceof DeviceUpgradeInProgressError
+          ? errEnvelope(ErrorCode.DEVICE_UPGRADE_IN_PROGRESS, `device "${id}" is already being upgraded`, req.id)
+          : unavailable(error, req.id),
+      ),
   );
   app.post(upgradeRoute.path, upgradeRoute.options, upgradeRoute.handler as never);
 

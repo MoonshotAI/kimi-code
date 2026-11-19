@@ -1060,10 +1060,25 @@ export interface RemoteControlStatus {
   };
 }
 
+export interface AppServerMeta {
+  protocolVersion: string;
+  serverVersion: string;
+  serverId: string;
+  startedAt: string;
+  homeDir: string;
+  capabilities: Record<string, boolean>;
+  openInApps: string[];
+  dangerousBypassAuth: boolean;
+  experimentalFlags: Record<string, boolean>;
+  backend: 'v1' | 'v2';
+  webTitle: string;
+  deviceId: string;
+}
+
 export interface KimiWebApi {
   dispose(): void;
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
-  getMeta(): Promise<{ protocolVersion: string; serverVersion: string; serverId: string; startedAt: string; homeDir: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean; experimentalFlags: Record<string, boolean>; backend: 'v1' | 'v2'; webTitle: string; deviceId: string }>;
+  getMeta(): Promise<AppServerMeta>;
   getRemoteControlStatus(): Promise<RemoteControlStatus>;
   setRemoteControlEnabled(enabled: boolean): Promise<RemoteControlStatus>;
   listRemoteControlDevices(): Promise<RcDeviceList>;

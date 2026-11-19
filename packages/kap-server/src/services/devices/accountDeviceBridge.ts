@@ -9,6 +9,7 @@ import {
 
 import {
   DEFAULT_UPGRADE_TIMEOUT_MS,
+  DeviceBridgeState,
   DeviceConnectError,
   DeviceUpgradeInProgressError,
   isUpgrading,
@@ -65,15 +66,10 @@ function installOf(product: string | undefined): DeviceInstall | undefined {
   return product === DESKTOP_PRODUCT ? 'desktop' : 'cli';
 }
 
-export class AccountDeviceBridge implements DeviceBridge {
-  private statusValue: DeviceStatus = 'pending';
-  private failureValue: DeviceConnectFailure | undefined;
-  private errorValue: string | undefined;
-  private remoteVersionValue: string | undefined;
+export class AccountDeviceBridge extends DeviceBridgeState implements DeviceBridge {
   private identityValue: RemoteDeviceIdentity;
   private registrationValue: RemoteControlDevice | undefined;
   private remoteUpgradeValue: boolean | undefined;
-  private upgradeValue: DeviceUpgradeState | undefined;
   private upgradeFrom: string | undefined;
   private upgradeRequested = false;
   private upgradeAttempt = 0;
@@ -83,7 +79,6 @@ export class AccountDeviceBridge implements DeviceBridge {
   private connecting: Promise<DeviceSession> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private retryDelay = 0;
-  private disposed = false;
   private readonly upgradeTimeoutMs: number;
 
   constructor(
@@ -91,24 +86,9 @@ export class AccountDeviceBridge implements DeviceBridge {
     private readonly relay: RemoteControlRelay,
     private readonly options: AccountDeviceBridgeOptions = {},
   ) {
+    super();
     this.identityValue = { deviceId };
     this.upgradeTimeoutMs = options.upgradeTimeoutMs ?? DEFAULT_UPGRADE_TIMEOUT_MS;
-  }
-
-  get status(): DeviceStatus {
-    return this.statusValue;
-  }
-
-  get failure(): DeviceConnectFailure | undefined {
-    return this.failureValue;
-  }
-
-  get error(): string | undefined {
-    return this.errorValue;
-  }
-
-  get remoteVersion(): string | undefined {
-    return this.remoteVersionValue;
   }
 
   get session(): DeviceSession | undefined {
@@ -131,12 +111,8 @@ export class AccountDeviceBridge implements DeviceBridge {
     return this.install === 'desktop' ? false : this.remoteUpgradeValue;
   }
 
-  get upgradeState(): DeviceUpgradeState | undefined {
-    return this.upgradeValue;
-  }
-
   connect(): Promise<DeviceSession> {
-    if (this.disposed) return Promise.reject(new DeviceConnectError('unknown', 'device bridge disposed'));
+    if (this.disposed) return this.rejectDisposed();
     if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue);
     this.connecting ??= this.establish().finally(() => {
       this.connecting = undefined;

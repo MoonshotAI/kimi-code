@@ -228,12 +228,16 @@ export const sessionIdProjectionSchema = z.object({
 });
 export type SessionIdProjection = z.infer<typeof sessionIdProjectionSchema>;
 
-export const listSessionsFlatResponseSchema = z.object({
-  items: z.array(z.union([sessionSchema, sessionIdProjectionSchema])),
+const sessionListPageFields = {
   total: z.number().int().nonnegative(),
   has_more: z.boolean(),
   next_page_token: z.string().min(1).optional(),
   unavailable_devices: z.array(z.string()).optional(),
+};
+
+export const listSessionsFlatResponseSchema = z.object({
+  items: z.array(z.union([sessionSchema, sessionIdProjectionSchema])),
+  ...sessionListPageFields,
 });
 export type ListSessionsFlatResponse = z.infer<typeof listSessionsFlatResponseSchema>;
 
@@ -247,10 +251,7 @@ export type SessionWorkspaceGroup = z.infer<typeof sessionWorkspaceGroupSchema>;
 
 export const listSessionsGroupedResponseSchema = z.object({
   groups: z.array(sessionWorkspaceGroupSchema),
-  total: z.number().int().nonnegative(),
-  has_more: z.boolean(),
-  next_page_token: z.string().min(1).optional(),
-  unavailable_devices: z.array(z.string()).optional(),
+  ...sessionListPageFields,
 });
 export type ListSessionsGroupedResponse = z.infer<typeof listSessionsGroupedResponseSchema>;
 

@@ -385,26 +385,25 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     }
   }
 
-  function handleUnavailableDevices(deviceIds: readonly string[]): void {
-    if (deviceIds.length === 0) return;
+  function devicesAffecting(deviceIds: readonly string[]) {
     const deviceSet = new Set(deviceIds);
     const affected = mergedWorkspaces.value
       .filter((w) => w.deviceId !== undefined && deviceSet.has(w.deviceId))
       .map((w) => w.id);
     const affectedSet = new Set(affected);
-    const selection = inspectDeviceSelection(deviceSet, affectedSet);
+    return { deviceSet, affected, affectedSet, selection: inspectDeviceSelection(deviceSet, affectedSet) };
+  }
+
+  function handleUnavailableDevices(deviceIds: readonly string[]): void {
+    if (deviceIds.length === 0) return;
+    const { affected, affectedSet, selection } = devicesAffecting(deviceIds);
     clearWorkspaceTrustState(affected);
     applyDeviceSelectionExit(selection, affectedSet);
   }
 
   function removeDeviceWorkspaces(deviceIds: readonly string[]): string[] {
     if (deviceIds.length === 0) return [];
-    const deviceSet = new Set(deviceIds);
-    const affected = mergedWorkspaces.value
-      .filter((w) => w.deviceId !== undefined && deviceSet.has(w.deviceId))
-      .map((w) => w.id);
-    const affectedSet = new Set(affected);
-    const selection = inspectDeviceSelection(deviceSet, affectedSet);
+    const { deviceSet, affected, affectedSet, selection } = devicesAffecting(deviceIds);
     workspaces.value = workspaces.value.filter((w) => w.deviceId === undefined || !deviceSet.has(w.deviceId));
     clearWorkspaceTrustState(affected, true);
     clearWorkspacePaginationState(affected);

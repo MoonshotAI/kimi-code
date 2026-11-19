@@ -16,6 +16,7 @@ import {
   STRIPPED_REQUEST_HEADERS,
   type DeviceSession,
 } from './deviceSession';
+import { rawDataToString } from './rawData';
 
 const PROXY_PATH = /^\/api\/v1\/devices\/([^/?]+)\/proxy(\/[^?]*)?(\?.*)?$/;
 const SESSION_CREATE_PATH = /^\/api\/v1\/sessions(?:\?|$)/;
@@ -168,13 +169,6 @@ export function registerDeviceProxyRoutes(
       });
     }
   });
-}
-
-function rawDataToString(data: RawData): string {
-  if (typeof data === 'string') return data;
-  if (Buffer.isBuffer(data)) return data.toString('utf8');
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  return Buffer.from(data).toString('utf8');
 }
 
 const proxyWss = new WebSocketServer({

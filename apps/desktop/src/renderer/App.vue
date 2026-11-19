@@ -2745,7 +2745,7 @@ function openPr(url: string): void {
       v-if="showLogin || deviceLoginId !== null"
       :key="deviceLoginId ?? 'local'"
       :title="deviceLoginTitle"
-      :remote-device="deviceLoginId !== null"
+      :remote-host="deviceLoginId !== null"
       :on-start-o-auth-login="deviceLoginId !== null ? (region) => devicesStore().startLogin(region) : handleStartOAuthLogin"
       :on-poll-o-auth-login="deviceLoginId !== null ? () => devicesStore().pollLogin() : handlePollOAuthLogin"
       :on-cancel-o-auth-login="deviceLoginId !== null ? () => devicesStore().cancelLogin() : handleCancelOAuthLogin"

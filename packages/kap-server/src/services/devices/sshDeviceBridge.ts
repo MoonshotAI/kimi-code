@@ -6,6 +6,7 @@ import type { SshDeviceEntry } from '@moonshot-ai/agent-core-v2';
 
 import {
   DEFAULT_UPGRADE_TIMEOUT_MS,
+  DeviceBridgeState,
   DeviceConnectError,
   DeviceUpgradeInProgressError,
   isUpgrading,
@@ -214,19 +215,13 @@ export interface SshDeviceBridgeOptions {
   readonly onChange?: () => void;
 }
 
-export class SshDeviceBridge implements DeviceBridge {
-  private statusValue: DeviceStatus = 'pending';
-  private failureValue: DeviceConnectFailure | undefined;
-  private errorValue: string | undefined;
-  private remoteVersionValue: string | undefined;
+export class SshDeviceBridge extends DeviceBridgeState implements DeviceBridge {
   private identityValue: RemoteDeviceIdentity | undefined;
-  private upgradeValue: DeviceUpgradeState | undefined;
   private upgradeFrom: string | undefined;
   private upgradeTimer: ReturnType<typeof setTimeout> | undefined;
   private sessionValue: ActiveDeviceSession | undefined;
   private connecting: Promise<DeviceSession> | undefined;
   private readonly children = new Set<ChildProcess>();
-  private disposed = false;
   private reconnecting = false;
   private reconnectGeneration = 0;
   private readonly sshProgram: string;
@@ -237,25 +232,10 @@ export class SshDeviceBridge implements DeviceBridge {
     private readonly entry: SshDeviceEntry,
     private readonly options: SshDeviceBridgeOptions = {},
   ) {
+    super();
     this.sshProgram = options.sshProgram ?? 'ssh';
     this.env = options.env ?? process.env;
     this.upgradeTimeoutMs = options.upgradeTimeoutMs ?? DEFAULT_UPGRADE_TIMEOUT_MS;
-  }
-
-  get status(): DeviceStatus {
-    return this.statusValue;
-  }
-
-  get failure(): DeviceConnectFailure | undefined {
-    return this.failureValue;
-  }
-
-  get error(): string | undefined {
-    return this.errorValue;
-  }
-
-  get remoteVersion(): string | undefined {
-    return this.remoteVersionValue;
   }
 
   get session(): DeviceSession | undefined {
@@ -266,12 +246,8 @@ export class SshDeviceBridge implements DeviceBridge {
     return this.identityValue;
   }
 
-  get upgradeState(): DeviceUpgradeState | undefined {
-    return this.upgradeValue;
-  }
-
   connect(): Promise<DeviceSession> {
-    if (this.disposed) return Promise.reject(new DeviceConnectError('unknown', 'device bridge disposed'));
+    if (this.disposed) return this.rejectDisposed();
     if (this.sessionValue !== undefined) return Promise.resolve(this.sessionValue.session);
     return this.establishOnce();
   }
