@@ -114,7 +114,7 @@ describe('actor handler execution', () => {
 
     const detachedEvent = await detached;
     expect(extractText(detachedEvent.outcome.message)).toBe('background task_id=task-bg');
-    expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 0 })).toMatchObject({ running: ['bg'] });
+    expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 0 })).toMatchObject({ running: ['bg'], timedOut: true });
     expect((await turn).type).toBe('done');
     gate.resolve();
     expect(await loop.waitForTasks({ taskId: 'bg', timeoutMs: 1000 })).toMatchObject({ completed: ['bg'] });
@@ -374,5 +374,68 @@ describe('actor handler execution', () => {
     const unknown = unknownLoop.state.messages.find((entry): entry is ToolMessage => entry.role === 'tool');
     expect(unknown?.attributes?.isError).toBe(true);
     await unknownLoop.close();
+  });
+});
+
+describe('actor interruption', () => {
+  it('keeps detached tools running across turn abort and stops them on close', async () => {
+    let requests = 0;
+    let backgroundSignal: AbortSignal | undefined;
+    const scripted = createMockProviderRequester((_request, signal) => {
+      requests += 1;
+      if (requests === 1) return done('', [call('background')]);
+      return {
+        parts: [{ type: 'text', text: 'pending' }],
+        error: new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+      };
+    });
+    const executor = executorFrom(['Bash'], async (context) => {
+      context.onDetach(() => ({ content: textToolContent('background') }));
+      context.detach('background');
+      backgroundSignal = context.signal;
+      return new Promise<ToolReturn>((resolve) => {
+        context.signal.addEventListener('abort', () => {
+          resolve({ content: [{ type: 'text', text: 'background stopped' }] });
+        }, { once: true });
+      });
+    });
+    const loop = createLoop({ requester: scripted, executor });
+    const pendingRequest = loop.wait('llm.streaming.part', {
+      match: (event) => event.part.type === 'text' && event.part.text === 'pending',
+    });
+    const turn = loop.runTurn(prompt());
+    await pendingRequest;
+
+    loop.abort('stop turn');
+
+    expect((await turn).type).toBe('aborted');
+    expect(backgroundSignal?.aborted).toBe(false);
+    await loop.close();
+    expect(backgroundSignal?.aborted).toBe(true);
+  });
+});
+
+describe('background task waiting', () => {
+  it('returns immediately for an unknown id and when no tasks are running', async () => {
+    const loop = createLoop({
+      requester: requester([]),
+      executor: executorFrom(['Bash'], async () => ({ content: [] })),
+    });
+
+    await expect(loop.waitForTasks({ taskId: 'missing', timeoutMs: 1_000 })).resolves.toEqual({
+      completed: [],
+      running: [],
+      unknown: ['missing'],
+      timedOut: false,
+    });
+    await expect(loop.waitForTasks({ timeoutMs: 1_000 })).resolves.toEqual({
+      completed: [],
+      running: [],
+      unknown: [],
+      timedOut: false,
+    });
+    await loop.close();
   });
 });

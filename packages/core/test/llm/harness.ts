@@ -170,6 +170,7 @@ export async function runGenerate<TOptions, TRequest, TResponse, TChunk, TClient
     endpoint?: LlmEndpoint;
     stream?: boolean;
     signal?: AbortSignal;
+    maxAttemptsPerStep?: number;
   },
 ): Promise<{ outcome: LlmOutcome; events: LlmRunEvent[] }> {
   const events: LlmRunEvent[] = [];
@@ -189,7 +190,7 @@ export async function runGenerate<TOptions, TRequest, TResponse, TChunk, TClient
         messages: input.module.content.messages,
         usedTokens: input.module.content.usedTokens,
       },
-      policy: { retry: { maxAttemptsPerStep: 1 } },
+      policy: { retry: { maxAttemptsPerStep: input.maxAttemptsPerStep ?? 1 } },
     },
     {
       signal: input.signal ?? new AbortController().signal,
