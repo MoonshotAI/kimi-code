@@ -1,16 +1,11 @@
-import { hostIdSchema } from '@moonshot-ai/agent-core-v2';
 import { FILE_ID_REGEX } from '@moonshot-ai/agent-core-v2/app/file/fileService';
+import { hostIdSchema } from '@moonshot-ai/agent-core-v2/app/hostsConfig/configSection';
 import { z } from 'zod';
+import { feedbackReasonIdSchema } from './feedback-reasons';
 
 const identifier = z.string().trim().min(1).max(200);
 const content = z.string().trim().min(1).max(2000);
-const reasonId = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
 const client = z.enum(['desktop', 'web']);
-
-export const FEEDBACK_REASONS_CONFIG = 'desktop_feedback_reasons';
-export const feedbackReasonsSchema = z.object({
-  reasons: z.array(z.object({ id: reasonId, zh: z.string().trim().min(1), en: z.string().trim().min(1) })).max(12),
-}).refine(({ reasons }) => new Set(reasons.map((reason) => reason.id)).size === reasons.length);
 
 export const createFeedbackSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -36,7 +31,7 @@ export const createFeedbackSchema = z.discriminatedUnion('kind', [
 export const updateFeedbackSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('details'),
-    reasons: z.array(reasonId).max(12),
+    reasons: z.array(feedbackReasonIdSchema).max(12),
     content: content.optional(),
     upload_session: z.boolean().optional(),
   }),

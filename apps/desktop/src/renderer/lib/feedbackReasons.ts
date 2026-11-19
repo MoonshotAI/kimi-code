@@ -1,4 +1,4 @@
-import { FEEDBACK_REASONS_CONFIG, feedbackReasonsSchema } from '@moonshot-ai/kap-server/protocol/rest-feedback';
+import { FEEDBACK_REASONS_CONFIG, feedbackReasonsSchema } from '@moonshot-ai/kap-server/protocol/feedback-reasons';
 import type { z } from 'zod';
 import { getKimiWebApi } from '../api';
 
