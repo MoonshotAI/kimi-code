@@ -9,6 +9,23 @@ Shared test infrastructure for this repository: a protocol-level fake model, a d
 | `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, environment isolation, the network guard, waits, timeouts, media samples and normalizers |
 | `@moonshot-ai/testkit/vitest` | fixture definitions for `test.extend` and the network guard hooks |
 
+## Writing a test
+
+This is a private workspace package. When adopting it in another package, add `"@moonshot-ai/testkit": "workspace:^"` to that package's `devDependencies` and run `pnpm install` at the repository root. Choose a guide by what the test needs to observe.
+
+| What you want to test | Guide |
+|---|---|
+| What a provider client sends and how it parses the reply | [假模型与 SDK 测试](docs/model.md) |
+| What a KAP client sees during tool use, approval, cancellation or restart | [编写 KAP 场景测试](docs/kap-scenarios.md) |
+| Code that reads configuration, uses a workspace or produces snapshots | [夹具、隔离与快照](docs/fixtures.md) |
+
+To try the tool-call example or run both suites, use these commands from the repository root.
+
+```sh
+pnpm exec vitest run --reporter=agent tests/scenarios/conversation.test.ts -t 'runs a tool call'
+pnpm exec vitest run --reporter=agent packages/testkit tests/scenarios
+```
+
 ## A scenario test
 
 ```ts
@@ -52,15 +69,15 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 |---|---|
 | `say(text \| chunks)` | text, one chunk per array entry |
 | `think(text, then?)`, `thinkSigned(text, signature, then?)` | reasoning before the next step |
-| `call(name, args, { text, id, rawArguments, argumentChunks, invalid })` | one tool call; `rawArguments` sends bytes as they are |
+| `call(name, args, { text, id, rawArguments, argumentChunks, invalid })` | one tool call. OpenAI and streaming Anthropic can preserve raw argument text. Google and non-streaming Anthropic require a JSON object |
 | `reply(...)`, `batch(...)` | several parts in one reply; `batch` reads as parallel calls |
-| `interleave(step)` | interleaves the argument pieces of parallel calls |
+| `interleave(step)` | interleaves argument pieces of parallel calls in an OpenAI stream |
 | `finishWith(reason, step)`, `withUsage(usage, step)` | finish reason and token usage, including cache reads and writes |
 | `paced(ms, step)`, `after(ms, step)` | delay between chunks, or before the reply |
 | `held(name, step, beforeUnit?)` | pauses before a chunk until the test releases it |
 | `httpError(status, options)` | an HTTP error with body, headers, `retry-after`, request and trace ids |
 | `streamError(step, options)`, `disconnect(step)` | fails or drops the stream after the step's chunks |
-| `networkError()`, `rawResponse({ status, headers, chunks })` | a reset connection, or arbitrary bytes |
+| `networkError()`, `rawResponse({ status, headers, chunks })` | a connection reset, or a custom response body built from UTF-8 string chunks |
 
 Tool calls get deterministic ids, `call_<requestIndex>_<callIndex>`; `model.callId(r, c)` returns them.
 
@@ -80,13 +97,13 @@ An unscripted request on `main`, `subagent` or `compaction` gets HTTP 400, which
 
 `model.verify()` fails the test when any of these happened:
 
-- a request had no scripted step;
-- a step was never used, or a hold was reached but never settled;
-- a request's messages were malformed: an empty message, a repeated user message, or a tool result missing, unknown or out of order;
+- a lane with the `fail` policy received a request with no scripted step;
+- a step was never used, or a request is still paused at a named hold;
+- a message was empty, two adjacent user messages had the same nonempty text, or a tool result was missing, unknown or out of order;
 - a request used the wrong API key or an unknown endpoint;
 - a scripted call names a tool the request did not offer, or its arguments break the offered schema: a missing required argument, an unknown argument, or a top-level type or enum mismatch. Pass `{ invalid: true }` to send such a call on purpose. Calls with unparseable `rawArguments` are not checked.
 
-`checkMessages: false` and `checkCalls: false` turn the last two checks off for a whole model.
+`checkMessages: false` disables message sequence checks. `checkCalls: false` disables checks on scripted tool calls. Both options apply to the whole model.
 
 When the testkit itself cannot answer (a step function or a route matcher throws, or a step asks for a status or header the transport cannot send), the request gets HTTP 400, which the engine does not retry, and `verify()` reports why.
 
@@ -99,7 +116,7 @@ const request = await model.hold('slow').reached();
 model.hold('slow').release();
 ```
 
-A hold can also `fail(status)` before the headers or `cut()` the connection. `model.releaseHeld()` releases every hold a request is waiting at, and leaves holds that no request has reached yet. Every request is recorded as `model.requests(lane?)` / `model.request(index)` with its raw body, parsed body, headers, metadata, state (`pending`, `streaming`, `held`, `finished`, `aborted`, `cut`, `failed`) and a normalized `view` of system text, tools and messages. Helpers include `firstUserText`, `userTextsSinceReply`, `remindersSinceReply` and `texts(role)`. `model.waitForRequest(index | predicate)` waits for one to arrive.
+A hold can also `fail(status)` before the headers or `cut()` the connection. `model.releaseHeld()` releases every hold a request is waiting at, and leaves holds that no request has reached yet. After parsing and routing, `model.requests(lane?)` and `model.request(index)` expose the raw body, parsed body, headers, metadata, state (`pending`, `streaming`, `held`, `finished`, `aborted`, `cut`, `failed`) and a normalized `view` of system text, tools and messages. Earlier failures such as invalid JSON or a wrong API key appear in `model.problems()`. Helpers include `firstUserText`, `userTextsSinceReply`, `remindersSinceReply` and `texts(role)`. `model.waitForRequest(index | predicate)` waits for a matching record.
 
 ## The KAP harness
 
@@ -110,7 +127,8 @@ A hold can also `fail(status)` before the headers or `cut()` the connection. `mo
 | `createSession`, `session`, `prompt`, `steer`, `prompts`, `cancel`, `undo`, `fork`, `compact` | the REST calls of the same names |
 | `turns(sessionId, agentId?)` | every persisted turn, across pages |
 | `interactions`, `answer`, `waitForInteraction` | pending approvals and questions |
-| `wait(sessionId, ms)`, `waitIdle(sessionId, { onInteraction })` | wait until no turn runs, nothing is queued and nothing waits for an answer |
+| `wait(sessionId, ms)` | returns one long-poll result, including pending interactions and whether the poll timed out |
+| `waitIdle(sessionId, { onInteraction })` | waits for the active prompt and queue to clear. A pending interaction requires an answer or an `onInteraction` handler |
 | `connect()` | a `KapSocket` that answers server pings, with `subscribe`, `command`, `waitFor`, `conversation` and `turns` |
 | `restart()` | restarts the server on the same home and token |
 | `rest` | a `KapRest` client for routes without a helper |
@@ -123,7 +141,7 @@ A hold can also `fail(status)` before the headers or `cut()` the connection. `mo
 ## Engine behaviors worth knowing
 
 - The engine retries 408, 409, 429, 500, 502, 503, 504 and 529 with a backoff that starts at 0.5 s, up to 10 attempts per step. Use a 400 to fail a turn fast.
-- It reads only an integer-second `retry-after` header; `retry-after-ms` is ignored.
+- For OpenAI and Anthropic, use `httpError(status, { retryAfterSeconds })` to supply a `retry-after` header in seconds. For Google the fake also encodes this delay in the error body's `google.rpc.RetryInfo`.
 - A reply with no finish reason, or with reasoning only, is retried.
 - A new tool-call index ends the previous call, so `interleave` exercises client robustness, not an engine happy path.
 - Google clients detect a mid-stream error only when its JSON arrives as a chunk of its own. The fake model lets the client drain earlier chunks before it sends one.
