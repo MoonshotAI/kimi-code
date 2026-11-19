@@ -192,15 +192,36 @@ describe('skill grouping', () => {
 
     const sections = [...document.querySelectorAll('.slash-section-label')];
     expect(sections.map((section) => section.textContent)).toEqual(['Commands', 'Skills']);
-    expect(sections[0]?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('/plan');
-    expect(sections[1]?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('/skill:lark-calendar');
+    expect(sections[0]?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('plan');
+    expect(sections[1]?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('skill:lark-calendar');
     expect([...document.querySelectorAll('.slash-item')].map((row) => row.querySelector('.slash-icon') !== null))
       .toEqual([false, true, true]);
     expect(document.querySelector('.composer-menu-hints')?.textContent).toContain('complete');
     expect([...document.querySelectorAll('.slash-name')].map((element) => element.textContent)).toEqual([
-      '/plan',
-      '/skill:lark-calendar',
-      '/skill:lark-approval',
+      'plan',
+      'skill:lark-calendar',
+      'skill:lark-approval',
     ]);
+  });
+
+  it('highlights the match in a name shown without its leading slash', async () => {
+    app = createApp({
+      render: () => h(SlashMenu, {
+        items: [
+          { name: '/plan', desc: 'commands.plan.desc' },
+          { name: '/skill:lark-calendar', desc: 'Calendar', isSkill: true },
+        ],
+        ranges: [{ name: [[1, 3]] }, { name: [[0, 2], [7, 11]] }],
+        activeIndex: 0,
+      }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    const names = [...document.querySelectorAll('.slash-name')];
+    expect(names.map((name) => name.textContent)).toEqual(['plan', 'skill:lark-calendar']);
+    expect(names.map((name) => [...name.querySelectorAll('.slash-match')].map((hit) => hit.textContent)))
+      .toEqual([['pl'], ['s', 'lark']]);
   });
 });

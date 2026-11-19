@@ -37,6 +37,12 @@ function pieces(text: string, ranges?: [number, number][]): { text: string; hit:
   return out;
 }
 
+function shiftRanges(ranges: [number, number][] | undefined, offset: number): [number, number][] | undefined {
+  return ranges
+    ?.map(([s, e]): [number, number] => [Math.max(s - offset, 0), e - offset])
+    .filter(([s, e]) => e > s);
+}
+
 const skillIcon = mentionIconSvg('skill', '', '');
 
 function onMenuMouseDown(event: MouseEvent): void {
@@ -51,9 +57,10 @@ const segmented = computed(() =>
   props.items.map((item, i) => {
     const desc = descText(item);
     const ranges = props.ranges?.[i] ?? matchRanges(props.query, item.name, desc);
+    const label = item.name.replace(/^\//, '');
     return {
       item,
-      namePieces: pieces(item.name, ranges.name),
+      namePieces: pieces(label, shiftRanges(ranges.name, item.name.length - label.length)),
       desc,
       descPieces: pieces(desc, ranges.desc),
       dir: item.workspaceLabel ?? (item.sourceKind === undefined ? undefined : t(`mention.${item.sourceKind}`)),
