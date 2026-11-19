@@ -22,7 +22,10 @@ export function messageProblems(messages: readonly ViewMessage[]): string[] {
     } else if (pendingCalls.size > 0) {
       problems.push(`${where} arrives before the results of tool calls ${[...pendingCalls].join(', ')}`);
     }
-    for (const toolCall of message.calls) pendingCalls.add(toolCall.id);
+    for (const toolCall of message.calls) {
+      if (pendingCalls.has(toolCall.id)) problems.push(`${where} repeats pending tool call ID ${toolCall.id}`);
+      pendingCalls.add(toolCall.id);
+    }
   });
   for (const id of pendingCalls) problems.push(`tool call ${id} has no result`);
   return problems;

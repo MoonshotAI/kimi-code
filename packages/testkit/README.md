@@ -102,6 +102,7 @@ An unscripted request on `main`, `subagent` or `compaction` gets HTTP 400, which
 - a lane with the `fail` policy received a request with no scripted step;
 - a step was never used, or a request is still paused at a named hold;
 - a message was empty, two adjacent user messages had the same nonempty text, or a tool result was missing, unknown or out of order;
+- two tool calls used the same ID while the first call was still awaiting a result;
 - a request used the wrong API key or an unknown endpoint;
 - a scripted call names a tool the request did not offer, or its arguments break the offered schema: a missing required argument, an unknown argument, or a top-level type or enum mismatch. Pass `{ invalid: true }` to send such a call on purpose. Calls with unparseable `rawArguments` are not checked.
 

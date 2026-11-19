@@ -365,3 +365,36 @@ describe('google genai', () => {
     expect(() => model.verify()).toThrow(/carries tool arguments as a JSON object/);
   });
 });
+
+it.each([
+  {
+    protocol: 'OpenAI', path: '/v1/chat/completions', field: 'messages', options: { model: 'testkit-model' },
+    user: { role: 'user', content: 'run' },
+    calls: (...ids: string[]) => ({ role: 'assistant', tool_calls: ids.map((id) => ({ type: 'function', id, function: { name: 'Bash', arguments: '{}' } })) }),
+    result: { role: 'tool', tool_call_id: 'shared', content: 'done' },
+  },
+  {
+    protocol: 'Anthropic', path: '/v1/messages', field: 'messages', options: { model: 'testkit-model', max_tokens: 10 },
+    user: { role: 'user', content: 'run' },
+    calls: (...ids: string[]) => ({ role: 'assistant', content: ids.map((id) => ({ type: 'tool_use', id, name: 'Bash', input: {} })) }),
+    result: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'shared', content: 'done' }] },
+  },
+  {
+    protocol: 'Google', path: '/v1beta/models/testkit-model:generateContent', field: 'contents', options: {},
+    user: { role: 'user', parts: [{ text: 'run' }] },
+    calls: (...ids: string[]) => ({ role: 'model', parts: ids.map((id) => ({ functionCall: { id, name: 'Bash', args: {} } })) }),
+    result: { role: 'user', parts: [{ functionResponse: { id: 'shared', name: 'Bash', response: { output: 'done' } } }] },
+  },
+])('rejects a duplicate pending $protocol tool call ID and accepts reuse after a result', async ({ path, options, field, user, calls, result }) => {
+  const model = fakeModel();
+  const send = (messages: unknown[]): Promise<Response> => model.fetch(`http://testkit.invalid${path}`, {
+    method: 'POST',
+    body: JSON.stringify({ ...options, [field]: messages }),
+  });
+
+  expect((await send([user, calls('shared'), result, calls('shared'), result])).status).toBe(200);
+  model.verify();
+
+  expect((await send([user, calls('shared', 'shared'), result])).status).toBe(200);
+  expect(() => model.verify()).toThrow(/messages\[1\].*shared/);
+});
