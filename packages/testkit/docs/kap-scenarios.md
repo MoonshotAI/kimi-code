@@ -65,8 +65,9 @@ test('取消正在准备的回复后，同一会话仍能继续', async ({ kap, 
 
 客户端（app-core、app-client，以后的 TUI）要用真实服务端的帧验证 reducer 时，先在场景测试里录制，再在客户端的包里回放。
 
-- **录制**：订阅前用 `new KapRecorder(socket, sessionId)` 记下起点，在每个用户可见的阶段调用 `recorder.checkpoint(name)`，例如订阅后、模型停在挂起点时、回合结束后。它只保留这个会话、`main` agent 的对话帧。最后用 `recorder.recording({ serverVersion, kapVersion, initial, final })` 得到规范化后的录制，交给 `expectGolden` 入库。ID 按值编号，时间换成固定值，字段类型不变。[首轮录制](../../../tests/scenarios/replay.test.ts)
-- **回放**：消费方用 `readKapRecording(repoPath(...))` 读取，格式版本不对会直接失败。再用 `replayKapRecording(recording, { start, apply })` 把每个阶段的帧依次交给生产 reducer，得到每个阶段的视图。消费方自己维护业务期望，不改录制文件。[客户端回放](../../../packages/app-core/test/replay/first-turn.test.ts) · [录制工具](../src/kap/recording.ts)
+- **录制**：`new KapRecorder(sessionId)` 之后，订阅前用 `recorder.watch(stream, socket, agentId)` 登记一路帧流，`agentId` 默认是 `main`。多个客户端或多个 agent 各登记一路，可以在回合中途再加入，例如中途订阅的第二个客户端。在每个用户可见的阶段调用 `recorder.checkpoint(name)`，例如订阅后、模型停在挂起点时、回合结束后，每路流都会记下自上一阶段以来这个会话、这个 agent 的对话帧。最后用 `recorder.recording({ serverVersion, kapVersion, pages })` 得到规范化后的录制，`pages` 给出每路流的起止 REST 页，再交给 `expectGolden` 入库。所有流共用一套编号：同一个 ID 在每路流里是同一个记号，时间换成固定值，字段类型不变。[首轮录制](../../../tests/scenarios/replay.test.ts)
+- **回放**：消费方用 `readKapRecording(repoPath(...))` 读取，格式版本不对会直接失败。再用 `replayKapRecording(recording, stream, { start, apply })` 把一路流每个阶段的帧依次交给生产 reducer，得到每个阶段的视图。`apply` 要像生产的 socket 一样先过滤帧类型。消费方自己维护业务期望，不改录制文件。
+- **变异回放**：`mutateKapRecording(recording, { stream, checkpoint }, change)` 只改一个阶段的帧，`change` 用 `dropFrames(match)`、`duplicateFrames(match)` 或 `insertUnknownFrame(index)`。它们匹配不到帧时报错，免得变异落空。用来证明 reducer 对重复帧幂等、忽略不认识的帧类型，以及断言在丢帧时确实会失败。[客户端回放](../../../packages/app-core/test/replay/first-turn.test.ts) · [录制工具](../src/kap/recording.ts)
 - **更新录制**：只有在本地显式运行 `pnpm qa:refresh replay` 才会重写，随后评审数据差异；CI 只比较。
 
 ## 测试审批与拒绝

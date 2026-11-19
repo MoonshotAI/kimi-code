@@ -11,7 +11,7 @@ import { FIXED_TIME } from '#/fixtures/normalize';
 import { isConversationFrame, turnsFromFrames, type KapFrame } from '#/kap/frames';
 import { startKap, type KapRunningServer } from '#/kap/harness';
 import { KapProcess } from '#/kap/process';
-import { KapRecorder, readKapRecording, replayKapRecording, type KapRecording } from '#/kap/recording';
+import { dropFrames, duplicateFrames, insertUnknownFrame, KapRecorder, mutateKapRecording, readKapRecording, replayKapRecording, UNKNOWN_FRAME_TYPE, type KapRecording } from '#/kap/recording';
 import { KapEnvelopeError, KapRest } from '#/kap/rest';
 import { KapCommandError, KapSocket, WS_BEARER_PROTOCOL_PREFIX } from '#/kap/socket';
 
@@ -399,66 +399,113 @@ describe('KapProcess', () => {
 });
 
 describe('KAP recordings', () => {
-  it('keeps one session and agent per checkpoint and gives the same token to an ID wherever it appears', () => {
-    const frames: KapFrame[] = [{ type: 'turns', session_id: 's-1', agent_id: 'main', turns: [], has_more: false }];
-    const socket = { get frames() { return frames; }, mark: () => frames.length } as unknown as KapSocket;
-    const recorder = new KapRecorder(socket, 's-1');
-    frames.push(
+  const fakeSocket = (frames: KapFrame[]): KapSocket => ({ get frames() { return frames; }, mark: () => frames.length }) as unknown as KapSocket;
+  const emptyPage = { turns: [], has_more: false };
+
+  it('keeps one session and agent per stream and gives the same token to an ID in every stream', () => {
+    const first: KapFrame[] = [{ type: 'turns', session_id: 's-1', agent_id: 'main', turns: [], has_more: false }];
+    const second: KapFrame[] = [];
+    const recorder = new KapRecorder('s-1');
+    recorder.watch('primary', fakeSocket(first));
+    recorder.watch('child', fakeSocket(first), 'subagent-1');
+    expect(() => recorder.watch('primary', fakeSocket(second))).toThrow('already has a stream named primary');
+    first.push(
       { type: 'turns', session_id: 's-1', agent_id: 'main', turns: [], has_more: false, event_created_at: '2026-11-19T08:00:00.000Z' },
       { type: 'turns', session_id: 's-2', agent_id: 'main', turns: [], has_more: false },
     );
-    expect(recorder.checkpoint('subscribed')).toHaveLength(1);
-    frames.push(
+    expect(recorder.checkpoint('subscribed')).toEqual({ primary: [expect.objectContaining({ type: 'turns' })], child: [] });
+    recorder.watch('late', fakeSocket(second));
+    first.push(
       { type: 'turn.started', session_id: 's-1', agent_id: 'main', turn: { turn_id: 't-9', ordinal: 0, items: [] } },
       { type: 'turn.started', session_id: 's-1', agent_id: 'subagent-1', turn: { turn_id: 't-10', ordinal: 0, items: [] } },
       { type: 'session.updated', session_id: 's-1', agent_id: 'main' },
     );
+    second.push({ type: 'turns', session_id: 's-1', agent_id: 'main', turns: [{ turn_id: 't-9', ordinal: 0, items: [] }], has_more: false });
     recorder.checkpoint('started');
+    const final = { turns: [{ turn_id: 't-9', ordinal: 0, items: [] }], has_more: false };
+    expect(() => recorder.recording({ serverVersion: '1.0.0', kapVersion: '1', pages: { primary: { initial: emptyPage, final } } })).toThrow('no REST pages for stream child');
     const recording = recorder.recording({
       serverVersion: '1.0.0',
       kapVersion: '1',
-      initial: { turns: [], has_more: false },
-      final: { turns: [{ turn_id: 't-9', ordinal: 0, items: [] }], has_more: false },
+      pages: { primary: { initial: emptyPage, final }, child: { initial: emptyPage, final: emptyPage }, late: { initial: emptyPage, final } },
     });
-    expect(recording.checkpoints.map((checkpoint) => [checkpoint.name, checkpoint.frames.map((frame) => frame.type)])).toEqual([
-      ['subscribed', ['turns']],
-      ['started', ['turn.started']],
-    ]);
-    expect(recording.checkpoints[0]?.frames[0]).toMatchObject({ session_id: '<session_id:1>', event_created_at: FIXED_TIME });
-    expect(recording.checkpoints[1]?.frames[0]?.['turn']).toMatchObject({ turn_id: '<turn_id:1>' });
-    expect(recording.final.turns[0]).toMatchObject({ turn_id: '<turn_id:1>' });
+    const shape = Object.fromEntries(Object.entries(recording.streams).map(([name, stream]) => [name, stream.checkpoints.map(({ name: at, frames }) => [at, frames.map((frame) => frame.type)])]));
+    expect(shape).toEqual({
+      primary: [['subscribed', ['turns']], ['started', ['turn.started']]],
+      child: [['subscribed', []], ['started', ['turn.started']]],
+      late: [['started', ['turns']]],
+    });
+    expect(recording.streams['primary']?.checkpoints[0]?.frames[0]).toMatchObject({ session_id: '<session_id:1>', event_created_at: FIXED_TIME });
+    expect(recording.streams['primary']?.checkpoints[1]?.frames[0]?.['turn']).toMatchObject({ turn_id: '<turn_id:1>' });
+    expect(recording.streams['child']?.checkpoints[1]?.frames[0]?.['turn']).toMatchObject({ turn_id: '<turn_id:2>' });
+    expect(recording.streams['late']?.checkpoints[0]?.frames[0]?.['turns']).toEqual([expect.objectContaining({ turn_id: '<turn_id:1>' })]);
+    expect(recording.streams['late']?.final.turns[0]).toMatchObject({ turn_id: '<turn_id:1>' });
+    expect(recording.streams['child']?.agentId).toBe('subagent-1');
+    expect(() => new KapRecorder('s-1').checkpoint('empty')).toThrow('Watch at least one socket');
   });
 
-  it('replays checkpoints in order and refuses recordings it cannot read', async () => {
+  it('replays each stream in order and refuses recordings it cannot read', async () => {
     const home = await createTestHome('testkit-recording');
     try {
       const recording: KapRecording = {
-        format: 1,
+        format: 2,
         serverVersion: '1.0.0',
         kapVersion: '1',
-        initial: { turns: [], has_more: false },
-        checkpoints: [
-          { name: 'first', frames: [{ type: 'turn.started' }] },
-          { name: 'second', frames: [{ type: 'item.started' }, { type: 'turn.ended' }] },
-        ],
-        final: { turns: [], has_more: false },
+        streams: {
+          primary: {
+            agentId: 'main',
+            initial: emptyPage,
+            checkpoints: [
+              { name: 'first', frames: [{ type: 'turn.started' }] },
+              { name: 'second', frames: [{ type: 'item.started' }, { type: 'turn.ended' }] },
+            ],
+            final: emptyPage,
+          },
+        },
       };
       const path = join(home.root, 'trace.json');
       await writeFile(path, JSON.stringify(recording));
-      const replayed = replayKapRecording(await readKapRecording(path), {
-        start: (page) => [`start:${page.turns.length}`],
-        apply: (seen, frame) => [...seen, frame.type],
-      });
-      expect(replayed).toEqual([
+      const typesSeen = { start: (page: { turns: readonly unknown[] }) => [`start:${page.turns.length}`], apply: (seen: string[], frame: KapFrame) => [...seen, frame.type] };
+      expect(replayKapRecording(await readKapRecording(path), 'primary', typesSeen)).toEqual([
         { name: 'first', view: ['start:0', 'turn.started'] },
         { name: 'second', view: ['start:0', 'turn.started', 'item.started', 'turn.ended'] },
       ]);
-      await writeFile(path, JSON.stringify({ ...recording, format: 2 }));
-      await expect(readKapRecording(path)).rejects.toThrow(/uses KAP recording format 2; this testkit reads format 1/);
-      await writeFile(path, JSON.stringify({ ...recording, checkpoints: [{ name: 'broken' }] }));
+      expect(() => replayKapRecording(recording, 'late', typesSeen)).toThrow('has no stream named late; it has primary');
+      await writeFile(path, JSON.stringify({ ...recording, format: 1 }));
+      await expect(readKapRecording(path)).rejects.toThrow(/uses KAP recording format 1; this testkit reads format 2/);
+      await writeFile(path, JSON.stringify({ ...recording, streams: { primary: { ...recording.streams['primary'], checkpoints: [{ name: 'broken' }] } } }));
+      await expect(readKapRecording(path)).rejects.toThrow(/is not a complete KAP recording/);
+      await writeFile(path, JSON.stringify({ ...recording, streams: {} }));
       await expect(readKapRecording(path)).rejects.toThrow(/is not a complete KAP recording/);
     } finally {
       await home.remove();
     }
+  });
+
+  it('drops, duplicates and adds frames in one checkpoint of one stream', () => {
+    const frames: KapFrame[] = [
+      { type: 'item.started', session_id: '<session_id:1>', agent_id: 'main' },
+      { type: 'item.delta', session_id: '<session_id:1>', agent_id: 'main' },
+      { type: 'turn.ended', session_id: '<session_id:1>', agent_id: 'main' },
+    ];
+    const recording: KapRecording = {
+      format: 2,
+      serverVersion: '1.0.0',
+      kapVersion: '1',
+      streams: { primary: { agentId: 'main', initial: emptyPage, checkpoints: [{ name: 'partial', frames }, { name: 'completed', frames }], final: emptyPage } },
+    };
+    const at = { stream: 'primary', checkpoint: 'partial' };
+    const typesAt = (changed: KapRecording, checkpoint: number) => changed.streams['primary']!.checkpoints[checkpoint]!.frames.map((frame) => frame.type);
+    expect(typesAt(mutateKapRecording(recording, at, dropFrames((frame) => frame.type === 'item.delta')), 0)).toEqual(['item.started', 'turn.ended']);
+    expect(typesAt(mutateKapRecording(recording, at, duplicateFrames((frame) => frame.type === 'item.delta')), 0)).toEqual(['item.started', 'item.delta', 'item.delta', 'turn.ended']);
+    const withUnknown = mutateKapRecording(recording, at, insertUnknownFrame(1));
+    expect(typesAt(withUnknown, 0)).toEqual(['item.started', UNKNOWN_FRAME_TYPE, 'item.delta', 'turn.ended']);
+    expect(withUnknown.streams['primary']!.checkpoints[0]!.frames[1]).toEqual({ type: UNKNOWN_FRAME_TYPE, session_id: '<session_id:1>', agent_id: 'main' });
+    expect(typesAt(withUnknown, 1)).toEqual(['item.started', 'item.delta', 'turn.ended']);
+    expect(recording.streams['primary']!.checkpoints[0]!.frames).toHaveLength(3);
+    expect(() => mutateKapRecording(recording, at, dropFrames((frame) => frame.type === 'notice'))).toThrow('dropFrames matched no frame');
+    expect(() => mutateKapRecording(recording, at, duplicateFrames(() => false))).toThrow('duplicateFrames matched no frame');
+    expect(() => mutateKapRecording(recording, at, insertUnknownFrame(4))).toThrow('outside 0..3');
+    expect(() => mutateKapRecording(recording, { stream: 'primary', checkpoint: 'later' }, insertUnknownFrame(0))).toThrow('no checkpoint named later');
   });
 });
