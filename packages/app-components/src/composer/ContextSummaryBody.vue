@@ -241,8 +241,6 @@ const rows = computed(() => {
 }
 .ctx-role-name {
   color: var(--color-text);
-  text-decoration: underline dotted var(--color-text-faint);
-  text-underline-offset: 3px;
   cursor: default;
   border-radius: var(--radius-xs);
 }
