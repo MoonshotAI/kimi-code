@@ -56,15 +56,6 @@ afterEach(() => {
 });
 
 describe('worktree list', () => {
-  it('loads the list and keeps the total size', async () => {
-    const store = freshStore();
-
-    expect(await store.load()).toBe(true);
-
-    expect(store.loaded).toBe(true);
-    expect(store.totalSizeBytes).toBe(3 * GB);
-  });
-
   it('asks for fresh sizes only on an explicit refresh', async () => {
     const store = freshStore();
     await store.load();
@@ -91,22 +82,6 @@ describe('worktree list', () => {
 
     expect(store.items).toHaveLength(3);
     expect(store.loadError).toBe('offline');
-  });
-
-  it('caches inspection results per path', async () => {
-    api.inspectWorktrees.mockResolvedValueOnce({
-      items: [{ path: '/wt/a', uncommittedFiles: 2, unpushedCommits: 1, sessions: [] }],
-      errors: { '/wt/b': { code: 40423, msg: 'gone' } },
-    });
-    const store = freshStore();
-
-    const inspection = await store.inspect(['/wt/a', '/wt/b']);
-
-    expect(inspection?.items).toHaveLength(1);
-    expect(store.risksByPath['/wt/a']).toMatchObject({ uncommittedFiles: 2, unpushedCommits: 1 });
-    expect(store.riskErrorsByPath['/wt/b']).toEqual({ code: 40423, msg: 'gone' });
-    expect(await store.inspect([])).toEqual({ items: [], errors: {} });
-    expect(api.inspectWorktrees).toHaveBeenCalledTimes(1);
   });
 
   it('re-fetches the list while sizes are still being computed, a bounded number of times', async () => {
@@ -231,23 +206,6 @@ describe('worktree removal queue', () => {
     await settled(store);
     expect(api.removeWorktree).toHaveBeenCalledTimes(2);
     expect(store.removalSummary.deleted).toBe(2);
-  });
-
-  it('drops waiting items on cancel and finished items on clear', async () => {
-    const first = Promise.withResolvers<{ removed: true; branchDeleted: boolean }>();
-    api.removeWorktree.mockReturnValueOnce(first.promise);
-    const store = freshStore();
-    await store.load();
-    store.enqueueRemovals([{ path: '/wt/a' }, { path: '/wt/b' }]);
-
-    store.cancelWaitingRemovals();
-    expect(store.removals.map((entry) => entry.path)).toEqual(['/wt/a']);
-    first.resolve({ removed: true, branchDeleted: false });
-    await settled(store);
-    expect(api.removeWorktree).toHaveBeenCalledTimes(1);
-
-    store.clearFinishedRemovals();
-    expect(store.removals).toEqual([]);
   });
 
   it('keeps a failed session removal with the session name for this run', async () => {

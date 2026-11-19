@@ -4,8 +4,6 @@ import { defineStore } from 'pinia';
 import {
   worktreeRemoveFailure,
   type AppWorktree,
-  type AppWorktreeRisk,
-  type GitBatchError,
   type WorktreeInspection,
   type WorktreeRemoveFailureReason,
 } from '@moonshot-ai/app-core/api';
@@ -77,8 +75,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
   const loading = ref(false);
   const refreshingSizes = ref(false);
   const loadError = ref<string | null>(null);
-  const risksByPath = ref<Record<string, AppWorktreeRisk>>({});
-  const riskErrorsByPath = ref<Record<string, GitBatchError>>({});
   const removals = ref<WorktreeRemovalItem[]>([]);
   const deletedSessionTitles = ref<Record<string, string>>({});
   const lastRemindedLevel = ref(loadRemindedLevel());
@@ -190,18 +186,7 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
   async function inspect(paths: readonly string[]): Promise<WorktreeInspection | null> {
     if (paths.length === 0) return { items: [], errors: {} };
     try {
-      const inspection = await getKimiWebApi().inspectWorktrees([...paths]);
-      const nextRisks = { ...risksByPath.value };
-      const nextErrors = { ...riskErrorsByPath.value };
-      for (const path of paths) {
-        delete nextRisks[path];
-        delete nextErrors[path];
-      }
-      for (const risk of inspection.items) nextRisks[risk.path] = risk;
-      for (const [path, error] of Object.entries(inspection.errors)) nextErrors[path] = error;
-      risksByPath.value = nextRisks;
-      riskErrorsByPath.value = nextErrors;
-      return inspection;
+      return await getKimiWebApi().inspectWorktrees([...paths]);
     } catch {
       return null;
     }
@@ -217,11 +202,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
     items.value = items.value.filter((item) => item.path !== path);
     if (removed.sizeBytes !== undefined && totalSizeBytes.value !== undefined) {
       setTotalSize(Math.max(0, totalSizeBytes.value - removed.sizeBytes));
-    }
-    if (risksByPath.value[path] !== undefined) {
-      const next = { ...risksByPath.value };
-      delete next[path];
-      risksByPath.value = next;
     }
     if (deletedSessionTitles.value[path] !== undefined) {
       const next = { ...deletedSessionTitles.value };
@@ -291,14 +271,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
     void pump();
   }
 
-  function cancelWaitingRemovals(): void {
-    removals.value = removals.value.filter((item) => item.state !== 'waiting');
-  }
-
-  function clearFinishedRemovals(): void {
-    removals.value = removals.value.filter((item) => item.state === 'waiting' || item.state === 'deleting');
-  }
-
   function removalFor(path: string): WorktreeRemovalItem | undefined {
     return removals.value.find((item) => item.path === path);
   }
@@ -361,8 +333,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
     loading.value = false;
     refreshingSizes.value = false;
     loadError.value = null;
-    risksByPath.value = {};
-    riskErrorsByPath.value = {};
     removals.value = [];
     deletedSessionTitles.value = {};
     cancelSizeBackfill();
@@ -378,8 +348,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
     refreshingSizes,
     loadError,
     groups,
-    risksByPath,
-    riskErrorsByPath,
     removals,
     deletedSessionTitles,
     removalSummary,
@@ -392,8 +360,6 @@ export const useWorktreesStore = defineStore('kimi.worktrees', () => {
     inspect,
     enqueueRemovals,
     retryFailedRemovals,
-    cancelWaitingRemovals,
-    clearFinishedRemovals,
     removalFor,
     dismissRemovals,
     recordSessionRemovalFailure,
