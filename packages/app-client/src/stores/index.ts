@@ -21,5 +21,7 @@ export { useGoalStore, goalStore, setGoalHooks, goalErrorMessage, type GoalHooks
 export { useWarningsStore, warningsStore, operationFailureNotice, warningDetail, warningKey } from './warnings';
 export { useSessionRatingStore, sessionRatingStore, enableSessionRating, SESSION_RATING_EVALUATION_DELAY_MS, SESSION_RATING_THANKS_VISIBLE_MS, SESSION_RATING_UNDO_WINDOW_MS, type SessionRatingOptions } from './sessionRating';
 export { useModelSwitchConfirmStore, modelSwitchConfirmStore, type ModelSwitchConfirmRequest, type ModelSwitchCompactionOutcome } from './modelSwitchConfirm';
-export { useSessionInfoStore, sessionInfoStore, type SessionFolderGitState, type SessionFolderInfoRow } from './sessionInfo';
+export { useSessionInfoStore, sessionInfoStore, type SessionFolderGitState, type SessionFolderInfoRow, type SessionInfoRefreshError } from './sessionInfo';
+export { useNewSessionEnvironmentStore, newSessionEnvironmentStore, type NewSessionEnvironmentView, type WorkspaceBranchesState } from './newSessionEnvironment';
+export { useWorktreesStore, worktreesStore, type WorktreeRemovalItem, type WorktreeRemovalRequest, type WorktreeRemovalState, type WorktreeRemovalSummary, type WorktreeSessionRemovalFailure } from './worktrees';
 export { usePinnedOrderStore, pinnedOrderStore } from './pinnedOrder';

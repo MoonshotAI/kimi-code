@@ -65,6 +65,28 @@ describe('sessionList.deleteSession', () => {
     expect(sessionListStore().hasDeletedTombstone('s2')).toBe(true);
   });
 
+  it('passes worktree options through and returns the worktree outcome', async () => {
+    const outcome = { deleted: true, worktree: { outcome: 'kept_in_use', otherSessions: 2 } };
+    const deleteSessionMock = vi.fn().mockResolvedValue(outcome);
+    getKimiWebApiMock.mockReturnValue({ deleteSession: deleteSessionMock });
+    sessionsStore().setSessions([makeSession('s1', 0), makeSession('s2', 1)] as never);
+
+    const result = await sessionListStore().deleteSessionWithOptions('s2', { removeWorktree: true, deleteBranch: false });
+
+    expect(result).toEqual(outcome);
+    expect(deleteSessionMock).toHaveBeenCalledExactlyOnceWith('s2', { removeWorktree: true, deleteBranch: false });
+    expect(ids(sessionsStore().sessions)).toEqual(['s1']);
+  });
+
+  it('returns null and keeps the row when deleting with options fails', async () => {
+    getKimiWebApiMock.mockReturnValue({ deleteSession: vi.fn().mockRejectedValue(new Error('network down')) });
+    sessionsStore().setSessions([makeSession('s1', 0)] as never);
+    setSessionListHooks({ pushOperationFailure: vi.fn() });
+
+    expect(await sessionListStore().deleteSessionWithOptions('s1', { removeWorktree: true })).toBeNull();
+    expect(ids(sessionsStore().sessions)).toEqual(['s1']);
+  });
+
   it('removes the row from doneSessions too', async () => {
     const deleteSessionMock = vi.fn().mockResolvedValue({ deleted: true });
     getKimiWebApiMock.mockReturnValue({ deleteSession: deleteSessionMock });

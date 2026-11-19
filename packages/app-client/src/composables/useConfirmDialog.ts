@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, ref, shallowRef } from 'vue';
 
 export type ConfirmVariant = 'primary' | 'danger';
 
@@ -20,7 +20,12 @@ type ConfirmRequest = ConfirmOptions & {
 
 const current = ref<ConfirmRequest | null>(null);
 const busy = ref(false);
-const isConfirmOpen = computed(() => current.value !== null);
+const confirmSurfaces = shallowRef<(() => boolean)[]>([]);
+const isConfirmOpen = computed(() => current.value !== null || confirmSurfaces.value.some((isOpen) => isOpen()));
+
+export function registerConfirmSurface(isOpen: () => boolean): void {
+  confirmSurfaces.value = [...confirmSurfaces.value, isOpen];
+}
 
 function settle(ok: boolean): void {
   const req = current.value;

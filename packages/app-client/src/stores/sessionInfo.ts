@@ -1,29 +1,56 @@
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
 
-import { isDaemonApiError, type GitStatusEntry, type ReadRequestOptions } from '@moonshot-ai/app-core/api';
+import {
+  FS_DIRECTORY_NOT_FOUND_CODE,
+  FS_GIT_UNAVAILABLE_CODE,
+  isDaemonApiError,
+  type GitBatchError,
+  type GitStatusEntry,
+  type PullRequestBatchResult,
+  type ReadRequestOptions,
+} from '@moonshot-ai/app-core/api';
 import { workspaceFolders, type WorkspaceFolder } from '@moonshot-ai/app-core/client';
+import { isWorktreeSession, sessionDirectoryRoots } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi } from '../client/deps';
 import { sessionsStore } from './sessions';
 import { workspacesStore } from './workspaces';
 import { clientPinia } from './pinia';
 
-const FS_GIT_UNAVAILABLE_CODE = 40908;
-
 export type SessionFolderGitState =
   | { status: 'loading' }
   | { status: 'ready'; value: GitStatusEntry }
   | { status: 'non-git' }
-  | { status: 'error' };
+  | { status: 'missing' }
+  | { status: 'error'; output?: string };
 
 export interface SessionFolderInfoRow extends WorkspaceFolder {
   state: SessionFolderGitState;
+  statusLoading?: boolean;
+  pullRequestLoading?: boolean;
+}
+
+export interface SessionInfoRefreshError {
+  output: string;
+}
+
+function errorOutput(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
   const observedBySession = ref<Record<string, readonly WorkspaceFolder[]>>({});
   const foldersBySession = ref<Record<string, readonly WorkspaceFolder[]>>({});
   const stateBySession = ref<Record<string, Record<string, SessionFolderGitState>>>({});
+  const pullRequestLoadingBySession = ref<Record<string, Record<string, boolean>>>({});
+  const refreshingBySession = ref<Record<string, boolean>>({});
+  const statusLoadingBySession = ref<Record<string, boolean>>({});
+  const statusRequestBySession = new Map<string, symbol>();
+  const refreshErrorBySession = ref<Record<string, SessionInfoRefreshError>>({});
   const generationBySession = new Map<string, number>();
   const inFlightBySession = new Map<string, Promise<void>>();
   const queuedRefreshBySession = new Map<string, Promise<void>>();
@@ -33,7 +60,8 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
     if (!session) return [];
     const workspaceId = workspacesStore().workspaceIdForSession(session);
     const workspace = workspacesStore().mergedWorkspaces.find((item) => item.id === workspaceId);
-    return workspaceFolders({ root: workspace?.root ?? session.cwd, additionalDirs: workspace?.additionalDirs ?? [] });
+    const [root = '', ...additionalDirs] = sessionDirectoryRoots(session, workspace);
+    return workspaceFolders({ root, additionalDirs });
   }
 
   function rows(sessionId: string): SessionFolderInfoRow[] {
@@ -42,7 +70,17 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
     return folders.map((folder) => ({
       ...folder,
       state: stateBySession.value[sessionId]?.[folder.path] ?? { status: 'loading' },
+      statusLoading: statusLoadingBySession.value[sessionId] === true,
+      pullRequestLoading: pullRequestLoadingBySession.value[sessionId]?.[folder.path] === true,
     }));
+  }
+
+  function refreshing(sessionId: string): boolean {
+    return refreshingBySession.value[sessionId] === true;
+  }
+
+  function refreshError(sessionId: string): SessionInfoRefreshError | null {
+    return refreshErrorBySession.value[sessionId] ?? null;
   }
 
   function signature(folders: readonly WorkspaceFolder[]): string {
@@ -53,71 +91,197 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
     stateBySession.value[sessionId] = { ...stateBySession.value[sessionId], [path]: state };
   }
 
-  function setLoadError(sessionId: string, path: string, code?: number): void {
+  function setPullRequestLoading(sessionId: string, paths: readonly string[], loading: boolean): void {
+    const next = { ...pullRequestLoadingBySession.value[sessionId] };
+    for (const path of paths) {
+      if (loading) next[path] = true;
+      else delete next[path];
+    }
+    pullRequestLoadingBySession.value[sessionId] = next;
+  }
+
+  function setRefreshError(sessionId: string, output: string | null): void {
+    if (output === null) delete refreshErrorBySession.value[sessionId];
+    else refreshErrorBySession.value[sessionId] = { output };
+  }
+
+  function setLoadError(sessionId: string, path: string, error: { code?: number; output: string }): boolean {
+    if (error.code === FS_GIT_UNAVAILABLE_CODE) {
+      setState(sessionId, path, { status: 'non-git' });
+      return false;
+    }
+    if (error.code === FS_DIRECTORY_NOT_FOUND_CODE) {
+      setState(sessionId, path, { status: 'missing' });
+      return false;
+    }
     const current = stateBySession.value[sessionId]?.[path];
-    if (code !== FS_GIT_UNAVAILABLE_CODE && current?.status === 'ready') return;
-    setState(sessionId, path, { status: code === FS_GIT_UNAVAILABLE_CODE ? 'non-git' : 'error' });
+    if (current?.status === 'ready') return true;
+    setState(sessionId, path, { status: 'error', output: error.output });
+    return false;
+  }
+
+  function syncWorktreeMissing(sessionId: string, folders: readonly WorkspaceFolder[]): void {
+    const primary = folders.find((folder) => folder.primary);
+    if (primary === undefined) return;
+    const session = sessionsStore().sessions.find((item) => item.id === sessionId);
+    if (session === undefined || !isWorktreeSession(session) || session.cwd !== primary.path) return;
+    const status = stateBySession.value[sessionId]?.[primary.path]?.status;
+    const missing = status === 'missing';
+    if (status !== 'missing' && status !== 'ready' && status !== 'non-git') return;
+    if ((session.worktree?.missing === true) === missing) return;
+    sessionsStore().updateSession(sessionId, (current) =>
+      current.worktree === undefined ? current : { ...current, worktree: { ...current.worktree, missing } },
+    );
   }
 
   function isCurrent(sessionId: string, generation: number, path: string, options?: ReadRequestOptions): boolean {
     return generationBySession.get(sessionId) === generation &&
-      observedBySession.value[sessionId]?.some((folder) => folder.path === path) === true &&
+      foldersBySession.value[sessionId]?.some((folder) => folder.path === path) === true &&
       options?.signal?.aborted !== true;
   }
 
+  function applyPullRequests(
+    sessionId: string,
+    generation: number,
+    roots: readonly string[],
+    result: PullRequestBatchResult | { failure: string },
+    options?: ReadRequestOptions,
+  ): void {
+    for (const root of roots) {
+      const current = stateBySession.value[sessionId]?.[root];
+      if (!isCurrent(sessionId, generation, root, options) || current?.status !== 'ready') continue;
+      const { pullRequestStatus: _status, pullRequestError: _error, ...rest } = current.value;
+      if ('failure' in result) {
+        setState(sessionId, root, {
+          status: 'ready',
+          value: { ...rest, pullRequestStatus: 'failed', pullRequestError: result.failure },
+        });
+        continue;
+      }
+      const rootError: GitBatchError | undefined = result.errors[root];
+      if (rootError !== undefined) {
+        setState(sessionId, root, {
+          status: 'ready',
+          value: { ...rest, pullRequestStatus: 'failed', pullRequestError: rootError.msg },
+        });
+        continue;
+      }
+      if (!Object.hasOwn(result.results, root)) continue;
+      const reported = result.statuses[root];
+      const value: GitStatusEntry = { ...rest, pullRequest: result.results[root] ?? null };
+      if (reported?.status !== undefined) value.pullRequestStatus = reported.status;
+      if (reported?.error !== undefined) value.pullRequestError = reported.error;
+      if (reported?.status === 'failed' && value.pullRequest === null) value.pullRequest = current.value.pullRequest;
+      setState(sessionId, root, { status: 'ready', value });
+    }
+  }
+
   function load(sessionId: string, generation: number, options?: ReadRequestOptions): Promise<void> {
-    const folders = observedBySession.value[sessionId] ?? [];
+    const folders = foldersBySession.value[sessionId] ?? [];
+    refreshingBySession.value[sessionId] = true;
     const promise = (async () => {
       if (folders.length === 0) return;
       const api = getKimiWebApi();
       const roots = folders.map(folder => folder.path);
       try {
-        const batch = await api.getGitStatusBatch(sessionId, { roots, includePullRequest: false }, options);
+        const request = Symbol('status');
+        statusRequestBySession.set(sessionId, request);
+        statusLoadingBySession.value[sessionId] = true;
+        const batch = await api
+          .getGitStatusBatch(sessionId, { roots, includePullRequest: false, includeUntracked: true }, options)
+          .finally(() => {
+            if (statusRequestBySession.get(sessionId) !== request) return;
+            statusRequestBySession.delete(sessionId);
+            delete statusLoadingBySession.value[sessionId];
+          });
+        let staleOutput: string | null = null;
         for (const folder of folders) {
           if (!isCurrent(sessionId, generation, folder.path, options)) return;
           const value = batch.results[folder.path];
           if (value !== undefined) {
             const previous = stateBySession.value[sessionId]?.[folder.path];
-            setState(sessionId, folder.path, {
-              status: 'ready',
-              value: {
-                ...value,
-                pullRequest: previous?.status === 'ready' ? previous.value.pullRequest : value.pullRequest,
-              },
-            });
+            const { pullRequestStatus: _status, pullRequestError: _error, ...status } = value;
+            const next: GitStatusEntry = previous?.status === 'ready'
+              ? { ...status, pullRequest: previous.value.pullRequest }
+              : status;
+            if (previous?.status === 'ready') {
+              if (previous.value.pullRequestStatus !== undefined) next.pullRequestStatus = previous.value.pullRequestStatus;
+              if (previous.value.pullRequestError !== undefined) next.pullRequestError = previous.value.pullRequestError;
+            }
+            setState(sessionId, folder.path, { status: 'ready', value: next });
           } else {
-            setLoadError(sessionId, folder.path, batch.errors[folder.path]?.code);
+            const rootError = batch.errors[folder.path];
+            const kept = setLoadError(sessionId, folder.path, {
+              code: rootError?.code,
+              output: rootError?.msg ?? '',
+            });
+            if (kept) staleOutput = rootError?.msg ?? '';
           }
         }
+        setRefreshError(sessionId, staleOutput);
+        syncWorktreeMissing(sessionId, folders);
         const prRoots = roots.filter(root => batch.results[root] !== undefined);
+        setPullRequestLoading(
+          sessionId,
+          roots.filter((root) => !prRoots.includes(root)),
+          false,
+        );
         if (prRoots.length === 0) return;
-        let pullRequests;
+        let pullRequests: PullRequestBatchResult | { failure: string };
         try {
           pullRequests = await api.getPullRequestBatch(sessionId, { roots: prRoots }, options);
-        } catch {
-          return;
+        } catch (error) {
+          if (isAbort(error)) return;
+          pullRequests = { failure: errorOutput(error) };
         }
-        for (const root of prRoots) {
-          const current = stateBySession.value[sessionId]?.[root];
-          if (isCurrent(sessionId, generation, root, options) && current?.status === 'ready' && Object.hasOwn(pullRequests.results, root)) {
-            setState(sessionId, root, {
-              status: 'ready',
-              value: { ...current.value, pullRequest: pullRequests.results[root] ?? null },
-            });
-          }
-        }
+        applyPullRequests(sessionId, generation, prRoots, pullRequests, options);
+        if (generationBySession.get(sessionId) === generation) setPullRequestLoading(sessionId, prRoots, false);
       } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') return;
+        if (isAbort(error)) return;
+        const output = errorOutput(error);
+        const code = isDaemonApiError(error) ? error.code : undefined;
+        let stale = false;
         for (const folder of folders) {
           if (!isCurrent(sessionId, generation, folder.path, options)) return;
-          setLoadError(sessionId, folder.path, isDaemonApiError(error) ? error.code : undefined);
+          if (setLoadError(sessionId, folder.path, { code, output })) stale = true;
         }
+        setRefreshError(sessionId, stale ? output : null);
+        setPullRequestLoading(sessionId, roots, false);
+        syncWorktreeMissing(sessionId, folders);
       }
     })().finally(() => {
-      if (inFlightBySession.get(sessionId) === promise) inFlightBySession.delete(sessionId);
+      if (inFlightBySession.get(sessionId) === promise) {
+        inFlightBySession.delete(sessionId);
+        delete refreshingBySession.value[sessionId];
+      }
     });
     inFlightBySession.set(sessionId, promise);
     return promise;
+  }
+
+  function adoptFolders(sessionId: string, folders: readonly WorkspaceFolder[]): void {
+    const nextSignature = signature(folders);
+    const previousFolders = foldersBySession.value[sessionId];
+    foldersBySession.value[sessionId] = folders.map((folder) => ({ ...folder }));
+    if (previousFolders === undefined || signature(previousFolders) !== nextSignature) {
+      stateBySession.value[sessionId] = {};
+      pullRequestLoadingBySession.value[sessionId] = {};
+      setRefreshError(sessionId, null);
+    }
+    const pendingPullRequests: string[] = [];
+    for (const folder of folders) {
+      if (stateBySession.value[sessionId]?.[folder.path] === undefined) {
+        setState(sessionId, folder.path, { status: 'loading' });
+        pendingPullRequests.push(folder.path);
+      }
+    }
+    setPullRequestLoading(sessionId, pendingPullRequests, true);
+  }
+
+  function nextGeneration(sessionId: string): number {
+    const generation = (generationBySession.get(sessionId) ?? 0) + 1;
+    generationBySession.set(sessionId, generation);
+    return generation;
   }
 
   function observe(sessionId: string, folders: readonly WorkspaceFolder[]): Promise<void> {
@@ -132,55 +296,58 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
     if (observedBySession.value[sessionId] !== undefined && signature(observedBySession.value[sessionId]) === nextSignature) {
       return inFlightBySession.get(sessionId) ?? Promise.resolve();
     }
-    observedBySession.value[sessionId] = folders.map((folder) => ({ ...folder }));
-    const previousFolders = foldersBySession.value[sessionId];
-    foldersBySession.value[sessionId] = observedBySession.value[sessionId];
-    if (previousFolders === undefined || signature(previousFolders) !== nextSignature) {
-      stateBySession.value[sessionId] = {};
-    }
-    for (const folder of folders) {
-      if (stateBySession.value[sessionId]?.[folder.path] === undefined) setState(sessionId, folder.path, { status: 'loading' });
-    }
-    const generation = (generationBySession.get(sessionId) ?? 0) + 1;
-    generationBySession.set(sessionId, generation);
-    return load(sessionId, generation);
+    adoptFolders(sessionId, folders);
+    observedBySession.value[sessionId] = foldersBySession.value[sessionId]!;
+    return load(sessionId, nextGeneration(sessionId));
   }
 
-  function refresh(sessionId: string, options?: ReadRequestOptions): Promise<void> {
-    const observed = observedBySession.value[sessionId];
-    if (!observed) return Promise.resolve();
+  function reload(sessionId: string, options?: ReadRequestOptions): Promise<void> {
     const queued = queuedRefreshBySession.get(sessionId);
     if (queued) return queued;
     const existing = inFlightBySession.get(sessionId);
     if (existing) {
       const pending = existing.finally(() => {
         queuedRefreshBySession.delete(sessionId);
-        if (!observedBySession.value[sessionId]) return;
-        const generation = (generationBySession.get(sessionId) ?? 0) + 1;
-        generationBySession.set(sessionId, generation);
-        return load(sessionId, generation, options);
+        if (!foldersBySession.value[sessionId]) return;
+        return load(sessionId, nextGeneration(sessionId), options);
       });
       queuedRefreshBySession.set(sessionId, pending);
       return pending;
     }
-    const generation = (generationBySession.get(sessionId) ?? 0) + 1;
-    generationBySession.set(sessionId, generation);
-    return load(sessionId, generation, options);
+    return load(sessionId, nextGeneration(sessionId), options);
+  }
+
+  function refresh(sessionId: string, options?: ReadRequestOptions): Promise<void> {
+    if (!observedBySession.value[sessionId]) return Promise.resolve();
+    return reload(sessionId, options);
+  }
+
+  function refreshNow(sessionId: string, options?: ReadRequestOptions): Promise<void> {
+    if (observedBySession.value[sessionId]) return reload(sessionId, options);
+    const folders = foldersForSession(sessionId);
+    if (folders.length === 0) return Promise.resolve();
+    adoptFolders(sessionId, folders);
+    return reload(sessionId, options);
   }
 
   function unobserve(sessionId: string): void {
     delete observedBySession.value[sessionId];
     generationBySession.set(sessionId, (generationBySession.get(sessionId) ?? 0) + 1);
     inFlightBySession.delete(sessionId);
+    delete refreshingBySession.value[sessionId];
+    statusRequestBySession.delete(sessionId);
+    delete statusLoadingBySession.value[sessionId];
   }
 
   function discard(sessionId: string): void {
     unobserve(sessionId);
     delete foldersBySession.value[sessionId];
     delete stateBySession.value[sessionId];
+    delete pullRequestLoadingBySession.value[sessionId];
+    delete refreshErrorBySession.value[sessionId];
   }
 
-  return { foldersForSession, rows, observe, refresh, unobserve, discard };
+  return { foldersForSession, rows, refreshing, refreshError, observe, refresh, refreshNow, unobserve, discard };
 });
 
 export function sessionInfoStore() {

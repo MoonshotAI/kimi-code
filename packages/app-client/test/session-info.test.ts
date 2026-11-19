@@ -13,6 +13,26 @@ function gitStatus(branch: string): GitStatusEntry {
   return { branch, ahead: 0, behind: 0, entries: {}, additions: 1, deletions: 0, pullRequest: null };
 }
 
+function worktree(
+  status: NonNullable<AppSession['worktree']>['setup']['status'],
+  overrides: Partial<NonNullable<AppSession['worktree']>> = {},
+): NonNullable<AppSession['worktree']> {
+  return {
+    path: '/wt/a',
+    branch: 'kimi/a',
+    ...overrides,
+    setup: {
+      status,
+      purpose: 'create',
+      request: { sourceBranch: 'main' },
+      steps: [],
+      commandsRan: 0,
+      startedAt: '2026-11-18T00:00:00.000Z',
+      script: 'none',
+    },
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -32,8 +52,12 @@ function statusBatch(results: Record<string, GitStatusEntry>, errors: GitStatusB
   return { results, errors };
 }
 
-function prBatch(results: PullRequestBatchResult['results'], errors: PullRequestBatchResult['errors'] = {}): PullRequestBatchResult {
-  return { results, errors };
+function prBatch(
+  results: PullRequestBatchResult['results'],
+  errors: PullRequestBatchResult['errors'] = {},
+  statuses: PullRequestBatchResult['statuses'] = {},
+): PullRequestBatchResult {
+  return { results, statuses, errors };
 }
 
 function mockBatches(getGitStatusBatch: unknown, getPullRequestBatch = vi.fn().mockResolvedValue(prBatch({}))) {
@@ -77,12 +101,33 @@ describe('sessionInfoStore', () => {
 
     await sessionInfoStore().observe('s1', folders('/a', '/b'));
 
-    expect(getGitStatusBatch).toHaveBeenCalledExactlyOnceWith('s1', { roots: ['/a', '/b'], includePullRequest: false }, undefined);
+    expect(getGitStatusBatch).toHaveBeenCalledExactlyOnceWith('s1', { roots: ['/a', '/b'], includePullRequest: false, includeUntracked: true }, undefined);
     expect(getPullRequestBatch).toHaveBeenCalledExactlyOnceWith('s1', { roots: ['/a', '/b'] }, undefined);
     expect(sessionInfoStore().rows('s1').map(row => [row.path, row.state])).toEqual([
       ['/a', { status: 'ready', value: gitStatus('branch-a') }],
       ['/b', { status: 'ready', value: gitStatus('branch-b') }],
     ]);
+  });
+
+  it('flags the status as loading only while the status request is in flight', async () => {
+    let resolveStatus!: (value: ReturnType<typeof statusBatch>) => void;
+    let resolvePullRequests!: (value: ReturnType<typeof prBatch>) => void;
+    const getGitStatusBatch = vi.fn().mockReturnValue(new Promise((resolve) => { resolveStatus = resolve; }));
+    const getPullRequestBatch = vi.fn().mockReturnValue(new Promise((resolve) => { resolvePullRequests = resolve; }));
+    mockBatches(getGitStatusBatch, getPullRequestBatch);
+
+    const observed = sessionInfoStore().observe('s1', folders('/a'));
+    await Promise.resolve();
+    expect(sessionInfoStore().rows('s1')[0]?.statusLoading).toBe(true);
+
+    resolveStatus(statusBatch({ '/a': gitStatus('branch-a') }));
+    await vi.waitFor(() => expect(getPullRequestBatch).toHaveBeenCalledOnce());
+    expect(sessionInfoStore().rows('s1')[0]?.statusLoading).toBe(false);
+    expect(sessionInfoStore().refreshing('s1')).toBe(true);
+
+    resolvePullRequests(prBatch({ '/a': null }));
+    await observed;
+    expect(sessionInfoStore().rows('s1')[0]?.statusLoading).toBe(false);
   });
 
   it('isolates non-git and failed folders in the batch response', async () => {
@@ -183,7 +228,7 @@ describe('sessionInfoStore', () => {
 
     const pending = sessionInfoStore().observe('s1', folders('/a'));
     await vi.waitFor(() => expect(sessionInfoStore().rows('s1')[0]?.state.status).toBe('ready'));
-    expect(getGitStatusBatch).toHaveBeenCalledExactlyOnceWith('s1', { roots: ['/a'], includePullRequest: false }, undefined);
+    expect(getGitStatusBatch).toHaveBeenCalledExactlyOnceWith('s1', { roots: ['/a'], includePullRequest: false, includeUntracked: true }, undefined);
     expect(getPullRequestBatch).toHaveBeenCalledExactlyOnceWith('s1', { roots: ['/a'] }, undefined);
     expect(sessionInfoStore().rows('s1')[0]?.state).toEqual({ status: 'ready', value: gitStatus('main') });
 
@@ -207,11 +252,15 @@ describe('sessionInfoStore', () => {
 
     await sessionInfoStore().observe('s1', folders('/a'));
     await sessionInfoStore().refresh('s1');
+    expect(sessionInfoStore().rows('s1')[0]?.state).toEqual({
+      status: 'ready',
+      value: { ...gitStatus('main'), pullRequest, pullRequestStatus: 'failed', pullRequestError: 'offline' },
+    });
     await sessionInfoStore().refresh('s1');
 
     expect(sessionInfoStore().rows('s1')[0]?.state).toEqual({
       status: 'ready',
-      value: { ...gitStatus('main'), pullRequest },
+      value: { ...gitStatus('main'), pullRequest, pullRequestStatus: 'failed', pullRequestError: 'offline' },
     });
   });
 
@@ -255,5 +304,121 @@ describe('sessionInfoStore', () => {
       status: 'ready',
       value: gitStatus('feature'),
     });
+  });
+
+  it('uses the worktree directory as the main folder of a worktree session', () => {
+    sessionsStore().setSessions([
+      { id: 's1', workspaceId: 'ws1', cwd: '/wt/a', worktree: worktree('ready') } as AppSession,
+      { id: 's2', workspaceId: 'ws1', cwd: '/repo', worktree: worktree('running', { path: undefined }) } as AppSession,
+      { id: 's3', workspaceId: 'ws1', cwd: '/repo', worktree: worktree('local') } as AppSession,
+    ]);
+    workspacesStore().workspaces = [seedWorkspace('ws1', '/repo', ['/extra'])];
+
+    expect(sessionInfoStore().foldersForSession('s1')).toEqual(folders('/wt/a', '/extra'));
+    expect(sessionInfoStore().foldersForSession('s2')).toEqual(folders('/repo', '/extra'));
+    expect(sessionInfoStore().foldersForSession('s3')).toEqual(folders('/repo', '/extra'));
+  });
+
+  it('keeps data and raises the refreshing flag while a refresh runs', async () => {
+    const next = deferred<GitStatusBatchResult>();
+    const getGitStatusBatch = vi.fn()
+      .mockResolvedValueOnce(statusBatch({ '/a': gitStatus('main') }))
+      .mockReturnValueOnce(next.promise);
+    mockBatches(getGitStatusBatch, vi.fn().mockResolvedValue(prBatch({ '/a': null })));
+    await sessionInfoStore().observe('s1', folders('/a'));
+    expect(sessionInfoStore().refreshing('s1')).toBe(false);
+
+    const refreshed = sessionInfoStore().refresh('s1');
+    expect(sessionInfoStore().refreshing('s1')).toBe(true);
+    expect(sessionInfoStore().rows('s1')[0]?.state).toEqual({ status: 'ready', value: gitStatus('main') });
+    next.resolve(statusBatch({ '/a': gitStatus('feature') }));
+    await refreshed;
+
+    expect(sessionInfoStore().refreshing('s1')).toBe(false);
+    expect(sessionInfoStore().rows('s1')[0]?.state).toEqual({ status: 'ready', value: gitStatus('feature') });
+  });
+
+  it('reports a failed refresh with its raw output and clears it after a successful retry', async () => {
+    const getGitStatusBatch = vi.fn()
+      .mockResolvedValueOnce(statusBatch({ '/a': gitStatus('main') }))
+      .mockRejectedValueOnce(new Error('request timed out'))
+      .mockResolvedValueOnce(statusBatch({ '/a': gitStatus('main') }));
+    mockBatches(getGitStatusBatch, vi.fn().mockResolvedValue(prBatch({ '/a': null })));
+    await sessionInfoStore().observe('s1', folders('/a'));
+    expect(sessionInfoStore().refreshError('s1')).toBeNull();
+
+    await sessionInfoStore().refresh('s1');
+    expect(sessionInfoStore().refreshError('s1')).toEqual({ output: 'request timed out' });
+    expect(sessionInfoStore().rows('s1')[0]?.state).toEqual({ status: 'ready', value: gitStatus('main') });
+
+    await sessionInfoStore().refresh('s1');
+    expect(sessionInfoStore().refreshError('s1')).toBeNull();
+  });
+
+  it('shows a load failure with its output when there is no earlier data', async () => {
+    mockBatches(vi.fn().mockRejectedValue(new Error('offline')));
+    await sessionInfoStore().observe('s1', folders('/a'));
+
+    expect(sessionInfoStore().rows('s1')[0]?.state).toEqual({ status: 'error', output: 'offline' });
+    expect(sessionInfoStore().refreshError('s1')).toBeNull();
+  });
+
+  it('marks a missing directory apart from a non-git one and flags the worktree session invalid', async () => {
+    sessionsStore().setSessions([{ id: 's1', workspaceId: 'ws1', cwd: '/wt/a', worktree: worktree('ready') } as AppSession]);
+    workspacesStore().workspaces = [seedWorkspace('ws1', '/repo', ['/plain'])];
+    const getGitStatusBatch = vi.fn()
+      .mockResolvedValueOnce(statusBatch({}, {
+        '/wt/a': { code: 40422, msg: 'directory not found' },
+        '/plain': { code: 40908, msg: 'not a repo' },
+      }))
+      .mockResolvedValueOnce(statusBatch({ '/wt/a': gitStatus('kimi/a') }, { '/plain': { code: 40908, msg: 'not a repo' } }));
+    mockBatches(getGitStatusBatch, vi.fn().mockResolvedValue(prBatch({ '/wt/a': null })));
+
+    await sessionInfoStore().observe('s1', sessionInfoStore().foldersForSession('s1'));
+    expect(sessionInfoStore().rows('s1').map(row => [row.path, row.state.status])).toEqual([
+      ['/wt/a', 'missing'],
+      ['/plain', 'non-git'],
+    ]);
+    expect(sessionsStore().sessions[0]?.worktree?.missing).toBe(true);
+
+    await sessionInfoStore().refresh('s1');
+    expect(sessionInfoStore().rows('s1')[0]?.state.status).toBe('ready');
+    expect(sessionsStore().sessions[0]?.worktree?.missing).toBe(false);
+  });
+
+  it('tracks the pull request as loading until its batch settles, then keeps its status', async () => {
+    const pr = deferred<PullRequestBatchResult>();
+    mockBatches(
+      vi.fn().mockResolvedValue(statusBatch({ '/a': gitStatus('main'), '/b': gitStatus('main') })),
+      vi.fn().mockReturnValue(pr.promise),
+    );
+    const pending = sessionInfoStore().observe('s1', folders('/a', '/b'));
+    await vi.waitFor(() => expect(sessionInfoStore().rows('s1')[0]?.state.status).toBe('ready'));
+    expect(sessionInfoStore().rows('s1').map(row => row.pullRequestLoading)).toEqual([true, true]);
+
+    pr.resolve(prBatch(
+      { '/a': null, '/b': null },
+      {},
+      { '/a': { status: 'unavailable' }, '/b': { status: 'failed', error: 'gh: timeout' } },
+    ));
+    await pending;
+
+    expect(sessionInfoStore().rows('s1').map(row => row.pullRequestLoading)).toEqual([false, false]);
+    expect(sessionInfoStore().rows('s1').map(row => row.state)).toEqual([
+      { status: 'ready', value: { ...gitStatus('main'), pullRequestStatus: 'unavailable' } },
+      { status: 'ready', value: { ...gitStatus('main'), pullRequestStatus: 'failed', pullRequestError: 'gh: timeout' } },
+    ]);
+  });
+
+  it('refreshes a session that is not on screen when asked explicitly', async () => {
+    sessionsStore().setSessions([{ id: 's2', workspaceId: 'ws1', cwd: '/repo' } as AppSession]);
+    workspacesStore().workspaces = [seedWorkspace('ws1', '/repo', [])];
+    const getGitStatusBatch = vi.fn().mockResolvedValue(statusBatch({ '/repo': gitStatus('main') }));
+    mockBatches(getGitStatusBatch, vi.fn().mockResolvedValue(prBatch({ '/repo': null })));
+
+    await sessionInfoStore().refreshNow('s2');
+
+    expect(getGitStatusBatch).toHaveBeenCalledExactlyOnceWith('s2', { roots: ['/repo'], includePullRequest: false, includeUntracked: true }, undefined);
+    expect(sessionInfoStore().rows('s2')[0]?.state).toEqual({ status: 'ready', value: gitStatus('main') });
   });
 });

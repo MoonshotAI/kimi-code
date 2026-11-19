@@ -161,6 +161,36 @@ describe('sessionsForView', () => {
     });
     expect(rows[1]).toMatchObject({ id: 's2', workspaceId: 'ws-b', workspaceName: 'Beta' });
   });
+
+  it('tags worktree sessions with the environment they actually use', () => {
+    seedWorkspaces();
+    const setup = (status: 'running' | 'ready' | 'local') => ({
+      status,
+      purpose: 'create' as const,
+      request: { sourceBranch: 'main' },
+      steps: [],
+      commandsRan: 0,
+      startedAt: T1,
+      script: 'none' as const,
+    });
+    sessionsStore().setSessions([
+      sessionRow('local', { updatedAt: T1 }),
+      { ...sessionRow('creating', { updatedAt: T1 }), worktree: { setup: setup('running') } },
+      { ...sessionRow('ready', { updatedAt: T1 }), worktree: { path: '/wt/a', setup: setup('ready') } },
+      { ...sessionRow('gone', { updatedAt: T1 }), worktree: { path: '/wt/b', missing: true, setup: setup('ready') } },
+      { ...sessionRow('fallback', { updatedAt: T1 }), worktree: { setup: setup('local') } },
+    ]);
+
+    const tags = Object.fromEntries(sessionViewsStore().sessionsForView.map((row) => [row.id, row.environment]));
+
+    expect(tags).toEqual({
+      local: undefined,
+      creating: 'settingUp',
+      ready: 'worktree',
+      gone: 'invalid',
+      fallback: undefined,
+    });
+  });
 });
 
 describe('workspaceGroups / mobileWorkspaceGroups', () => {

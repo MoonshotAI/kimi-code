@@ -7,6 +7,8 @@ import {
 import type {
   AppSession,
   AppWarning,
+  DeleteSessionInput,
+  DeleteSessionResult,
   ReadRequestOptions,
   SessionGroup,
   SessionGroupsPage,
@@ -270,21 +272,25 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
     }
   }
 
-  async function deleteSession(id: string): Promise<boolean> {
+  async function deleteSessionWithOptions(id: string, input?: DeleteSessionInput): Promise<DeleteSessionResult | null> {
     sessionRatingStore().endSession(id);
     try {
       const api = getKimiWebApi();
-      await api.deleteSession(id);
+      const result = input === undefined ? await api.deleteSession(id) : await api.deleteSession(id, input);
       await applySessionDeletedLocally(id);
-      return true;
+      return result ?? { deleted: true };
     } catch (err) {
       if (deletedTombstoneIds.has(id)) {
         await applySessionDeletedLocally(id);
-        return true;
+        return { deleted: true };
       }
       sessionListHooks?.pushOperationFailure('deleteSession', err, { sessionId: id });
-      return false;
+      return null;
     }
+  }
+
+  async function deleteSession(id: string): Promise<boolean> {
+    return (await deleteSessionWithOptions(id)) !== null;
   }
 
   async function applyRemoteSessionArchived(
@@ -1170,6 +1176,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
     noteSessionDeleted,
     applySessionDeletedLocally,
     deleteSession,
+    deleteSessionWithOptions,
     applyRemoteSessionArchived,
     applyRemoteSessionRestored,
     restoreSession,

@@ -16,7 +16,14 @@ import { dismissToastByKey, onToast, toast, toastReplaceRevision } from './toast
 import { planAdminBatchToast, undoBatchDirectionOf, type AdminBatchToastPlan } from './adminBatchToast';
 import type { ToastOptions } from '@moonshot-ai/app-ui';
 import { consumeDraftPromotionOnSessionChange, getDraftPromotion } from './draftPromotion';
-import { DaemonApiError, isDaemonApiError, MANAGED_KIMI_CODE_PROVIDER_ID, type AppWorkspace } from '@moonshot-ai/app-core/api';
+import {
+  DaemonApiError,
+  isDaemonApiError,
+  MANAGED_KIMI_CODE_PROVIDER_ID,
+  type AppSessionWorktree,
+  type AppWorkspace,
+  type SessionWorktreeRetryInput,
+} from '@moonshot-ai/app-core/api';
 import {
   type DropPosition,
   type PinnedInsertTarget,
@@ -26,6 +33,15 @@ import type { ConnectIssue } from '@moonshot-ai/app-core/lib';
 import { track } from '../contracts';
 import { basename, isDesktop, logWarn, workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { insertSessionByRecency, sessionDisplayStatus } from '@moonshot-ai/app-core/lib';
+import {
+  classifySessionEnvironment,
+  sessionEnvironmentTag,
+  sessionWorktreeBlocksSend,
+  sessionWorktreeCard,
+  sessionWorktreeHoldsPrompts,
+  type SessionEnvironmentKind,
+  type SessionWorktreeCard,
+} from '@moonshot-ai/app-core/lib';
 import { buildApprovalBlock } from '@moonshot-ai/app-core/client';
 import { ackThinkingPending, foldDaemonThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { permissionModeFromConfig } from '@moonshot-ai/app-core/lib';
@@ -90,6 +106,11 @@ import { sessionReadScope, workspaceReadScope } from './observationScope';
 import { createSessionActions } from './sessionActions';
 import { usePromptPipeline } from './usePromptPipeline';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
+import {
+  WORKTREE_RESULT_TOAST_MS,
+  openWorktreeSettings,
+  useWorktreeManageDialogs,
+} from '../composables/useWorktreeManageDialogs';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
 import { closeSessionBusyWindow, openSessionBusyWindow } from '../lib/perfTracking';
 import { waitForSessionExecution, type SessionExecutionState } from '../lib/sessionExecutionReadiness';
@@ -124,6 +145,7 @@ import { sessionRuntimeStore } from '../stores/sessionRuntime';
 import { sessionRatingStore } from '../stores/sessionRating';
 import { sessionInfoStore } from '../stores/sessionInfo';
 import { pinnedOrderStore } from '../stores/pinnedOrder';
+import { worktreesStore } from '../stores/worktrees';
 import { composerAttachmentStore } from '../lib/composerAttachmentStore';
 import { formatTime, sessionViewsStore } from '../stores/sessionViews';
 
@@ -698,7 +720,8 @@ function hasPendingLocalWork(sessionId: string): boolean {
   return (
     promptStore().inFlightBySession[sessionId] === true ||
     (promptStore().queuedBySession[sessionId] ?? []).length > 0 ||
-    (promptStore().optimisticMessagesBySession[sessionId] ?? []).length > 0
+    (promptStore().optimisticMessagesBySession[sessionId] ?? []).length > 0 ||
+    promptStore().hasHeldFirstPrompt(sessionId)
   );
 }
 
@@ -1033,12 +1056,19 @@ function applySessionWorkBaseline(
     }
     const lastTurnReason = workChanged ? session.lastTurnReason : baseline.lastTurnReason;
     const title = run.titleEventSessions.has(session.id) ? session.title : baseline.title;
+    const cwd = workChanged ? session.cwd : baseline.cwd;
+    const worktree =
+      workChanged || JSON.stringify(session.worktree) === JSON.stringify(baseline.worktree)
+        ? session.worktree
+        : baseline.worktree;
     if (
       session.busy === busy &&
       session.mainTurnActive === mainTurnActive &&
       session.pendingInteraction === pendingInteraction &&
       session.lastTurnReason === lastTurnReason &&
-      session.title === title
+      session.title === title &&
+      session.cwd === cwd &&
+      session.worktree === worktree
     ) {
       return session;
     }
@@ -1050,6 +1080,8 @@ function applySessionWorkBaseline(
       pendingInteraction,
       lastTurnReason,
       title,
+      cwd,
+      worktree,
     };
   });
   if (sessionsChanged) setSessions(nextSessions);
@@ -1732,7 +1764,9 @@ const turns = computed<ChatTurn[]>(() => {
   if (conversation === null) return [];
   const options = { sessionId: sid, getFileUrl: getFileUrlById, getSessionMediaUrl };
   const base = mainConversationProjector(conversation.view.turns, options);
-  const uncovered = unechoedOptimisticMessages(sid);
+  const held = promptStore().heldFirstPromptBySession[sid];
+  const unechoed = unechoedOptimisticMessages(sid);
+  const uncovered = held === undefined ? unechoed : [held, ...unechoed];
   if (uncovered.length === 0) return base;
   const startNo = base.filter((turn) => turn.role !== 'compaction').length + 1;
   return [...base, ...uncovered.map((msg, index) => pendingPromptTurn(msg, startNo + index, options))];
@@ -2663,6 +2697,7 @@ const doneSessionsAll = computed<Session[]>(() => {
         archived: true,
         cwdLabel: s.cwd ? basename(s.cwd) : '-',
         pullRequest: s.pullRequest,
+        environment: sessionEnvironmentTag(s),
       };
     })
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -2741,6 +2776,66 @@ const promptPipeline = usePromptPipeline(rawState, {
   selectSession: sessionSelection.selectSession,
   upsertSessionSorted,
 });
+
+watch(
+  () =>
+    rawState.sessions
+      .filter((session) => sessionWorktreeHoldsPrompts(session) || sessionWorktreeBlocksSend(session))
+      .map((session) => session.id)
+      .join('\n'),
+  (next, previous) => {
+    const stillGated = new Set(next === '' ? [] : next.split('\n'));
+    for (const id of previous === '' ? [] : previous.split('\n')) {
+      if (stillGated.has(id)) continue;
+      promptPipeline.syncWorktreeHold(id);
+      reloadSessionDirectoryViews(id);
+    }
+  },
+);
+
+function reloadSessionDirectoryViews(id: string): void {
+  if (!rawState.sessions.some((session) => session.id === id)) return;
+  const readOptions = id === rawState.activeSessionId
+    ? sessionReadScope.options(id)
+    : sessionReadScope.offscreenOptions(id);
+  filesStore().clearSessionFileTree(id);
+  void filesStore().loadGitStatus(id, readOptions);
+  void sessionInfoStore().refresh(id, readOptions);
+}
+
+watch(
+  () => new Map(rawState.sessions.map((session) => [session.id, session.cwd])),
+  (next, previous) => {
+    for (const [id, cwd] of next) {
+      const before = previous.get(id);
+      if (before !== undefined && before !== cwd) reloadSessionDirectoryViews(id);
+    }
+  },
+);
+
+const activeSessionWorktree = computed<AppSession['worktree']>(
+  () => rawState.sessions.find((session) => session.id === rawState.activeSessionId)?.worktree,
+);
+
+const activeSessionEnvironment = computed<SessionEnvironmentKind>(() =>
+  classifySessionEnvironment({ worktree: activeSessionWorktree.value }),
+);
+
+const activeWorktreeCard = computed<SessionWorktreeCard | null>(() => sessionWorktreeCard(activeSessionWorktree.value));
+
+const activeWorktreeHoldsPrompts = computed<boolean>(() =>
+  sessionWorktreeHoldsPrompts({ worktree: activeSessionWorktree.value }),
+);
+
+const activeWorktreeBlocksSend = computed<boolean>(() =>
+  sessionWorktreeBlocksSend({ worktree: activeSessionWorktree.value }),
+);
+
+const activeMainDirectory = computed<string>(
+  () =>
+    workspacesStore().mainDirectoryFor(rawState.activeSessionId, activeWorkspaceId.value) ||
+    (visibleWorkspace.value?.root ?? ''),
+);
 
 const sessionActions = createSessionActions({
   mainUndoTarget,
@@ -2987,12 +3082,62 @@ async function archiveSessionWithToast(id: string): Promise<void> {
   showActionToast({ kind: 'archive', id });
 }
 
-async function deleteSessionWithToast(id: string, opts?: { title?: string }): Promise<void> {
-  const title =
-    opts?.title ??
-    rawState.sessions.find((s) => s.id === id)?.title ??
-    sessionListStore().doneSessions.find((s) => s.id === id)?.title ??
-    id;
+async function deleteWorktreeSessionWithToast(
+  id: string,
+  title: string,
+  path: string,
+  branch: string | undefined,
+): Promise<boolean> {
+  const outcome = await useWorktreeManageDialogs().requestSessionDeletion(
+    { sessionId: id, title, path, ...(branch === undefined ? {} : { branch }) },
+    ({ deleteBranch }) => sessionListStore().deleteSessionWithOptions(id, { removeWorktree: true, deleteBranch }),
+  );
+  if (!outcome.confirmed) return outcome.directoryMissing !== true;
+  const result = outcome.value;
+  if (result === null) return true;
+  const worktrees = worktreesStore();
+  if (result.worktree?.outcome === 'failed') {
+    worktrees.recordSessionRemovalFailure({
+      path,
+      sessionTitle: title,
+      branch,
+      reason: 'in_use',
+      output: result.worktree.output,
+    });
+    if (worktrees.loaded) void worktrees.load();
+    toast({
+      layout: 'bar',
+      mode: 'replace',
+      title: t('worktreeManage.toastSessionDirectoryKept'),
+      duration: WORKTREE_RESULT_TOAST_MS,
+      actions: [
+        {
+          label: t('worktreeManage.manage'),
+          onClick: ({ dismiss }) => {
+            dismiss();
+            openWorktreeSettings();
+          },
+        },
+      ],
+    });
+    return true;
+  }
+  if (worktrees.loaded) void worktrees.load();
+  showActionToast({ kind: 'delete' });
+  return true;
+}
+
+async function deleteSessionWithToast(
+  id: string,
+  opts?: { title?: string; worktree?: AppSessionWorktree },
+): Promise<void> {
+  const known =
+    rawState.sessions.find((s) => s.id === id) ?? sessionListStore().doneSessions.find((s) => s.id === id);
+  const title = opts?.title ?? known?.title ?? id;
+  const worktree = opts?.worktree ?? known?.worktree;
+  if (worktree?.path !== undefined && classifySessionEnvironment({ worktree }) === 'worktree') {
+    if (await deleteWorktreeSessionWithToast(id, title, worktree.path, worktree.branch)) return;
+  }
   let deleted = false;
   const confirmed = await confirm({
     title: t('sidebar.deleteConfirmTitle'),
@@ -3383,6 +3528,22 @@ export function useKimiWebClient() {
     clearSideChatDraftIfUnchanged: sideChat.clearSideChatDraftIfUnchanged,
     uploadImage: promptPipeline.uploadImage,
     abortCurrentPrompt: promptPipeline.abortCurrentPrompt,
+    activeSessionWorktree,
+    activeSessionEnvironment,
+    activeWorktreeCard,
+    activeWorktreeHoldsPrompts,
+    activeWorktreeBlocksSend,
+    activeMainDirectory,
+    heldFirstPromptBySession: computed(() => promptStore().heldFirstPromptBySession),
+    runSessionWorktreeAction: promptPipeline.runSessionWorktreeAction,
+    retrySessionWorktree: (sessionId: string, input?: SessionWorktreeRetryInput) =>
+      promptPipeline.runSessionWorktreeAction(sessionId, 'retry', input),
+    cancelSessionWorktree: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'cancel'),
+    useLocalForSessionWorktree: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'useLocal'),
+    skipSessionWorktreeScript: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'skipScript'),
+    runSessionWorktreeScript: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'runScript'),
+    recreateSessionWorktree: (sessionId: string) => promptPipeline.runSessionWorktreeAction(sessionId, 'recreate'),
+    deleteSession: sessionListStore().deleteSessionWithOptions,
     respondApproval: approvalsStore().respondApproval,
     respondQuestion: approvalsStore().respondQuestion,
     dismissQuestion: approvalsStore().dismissQuestion,
