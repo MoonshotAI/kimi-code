@@ -251,7 +251,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       runtime: providerCatalogRuntime,
     });
     this._register(this.requesterBinder);
+    const rawRequester = (): FullLoopLlmRequester => {
+      const loop = this.loop;
+      if (loop === undefined) throw new BugIndicatingError('Agent loop is not started');
+      return loop.requester;
+    };
     this.requester = {
+      get llm() {
+        return rawRequester();
+      },
       coreRequester: (options) => this.coreRequester(options),
       operationRequester: (requester, options) => this.operationRequester(requester, options),
       prepareOperation: async (options, _signal) => {

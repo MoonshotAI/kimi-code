@@ -86,6 +86,7 @@ export type OperationRequesterOptions = Omit<
 export type CoreLoopRequester = LoopLlmRequester;
 
 export interface LoopRequester {
+  readonly llm: FullLoopLlmRequester;
   coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester;
   operationRequester(
     requester: FullLoopLlmRequester,

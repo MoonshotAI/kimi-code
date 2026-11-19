@@ -580,7 +580,8 @@ describe('Agent loop', () => {
         new AbortController().signal,
       );
       expect(registryRequest).toHaveBeenCalledTimes(1);
-      const operation = localLoop.requester.operationRequester(coreLoop.requester, operationOptions);
+      expect(localLoop.requester.llm).toBe(coreLoop.requester);
+      const operation = localLoop.requester.operationRequester(localLoop.requester.llm, operationOptions);
       expect(registryRequest).toHaveBeenCalledTimes(1);
       expect(contentsOf(operation).model?.maxOutputTokens).toBe(512);
       const operationMessages = [createUserMessage('operation-derived')];
@@ -3612,6 +3613,9 @@ describe('aborted step tool execution', () => {
 
   it('settles a message-less notification without creating an LLM request', async () => {
     const requester: LoopRequester = {
+      llm: createMockProviderRequester(async () => {
+        throw new Error('request must not run');
+      }),
       coreRequester: () => createMockProviderRequester(async () => {
         throw new Error('request must not run');
       }),

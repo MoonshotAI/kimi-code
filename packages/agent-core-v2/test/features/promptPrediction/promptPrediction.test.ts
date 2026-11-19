@@ -4,7 +4,7 @@ import { Emitter } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import type { CoreLoopRequester, OperationLoopRequesterOptions } from '#/agent/loop/requesterContract';
+import type { OperationRequesterOptions } from '#/agent/loop/requesterContract';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
@@ -12,6 +12,15 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { SessionPromptPredictionService } from '#/features/promptPrediction/promptPredictionService';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
+import {
+  contentsOf,
+  createRequester,
+  requesterContents,
+  type LlmDimension,
+  type LlmRequestPart,
+  type LlmRequester,
+} from '@moonshot-ai/core/llm/requester';
+import type { FullLoopLlmRequester } from '@moonshot-ai/core/loop/request';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   ISessionActivityView,
@@ -62,25 +71,32 @@ describe('SessionPromptPredictionService', () => {
     let nextResult: () => Promise<PredictionOutcome> = () =>
       Promise.resolve({ ...finish(structured('inspect the failing test')), requestId: undefined });
     const requests: Array<{
-      options: OperationLoopRequesterOptions;
-      input?: Parameters<CoreLoopRequester['generate']>[0];
+      options: OperationRequesterOptions;
+      raw: FullLoopLlmRequester;
+      input?: LlmRequestPart;
       signal?: AbortSignal;
     }> = [];
     const requester = {
-      prepareOperation: async (options: OperationLoopRequesterOptions, signal: AbortSignal) => {
-        const request: (typeof requests)[number] = { options, signal };
+      llm: createRequester() as FullLoopLlmRequester,
+      operationRequester: (raw: FullLoopLlmRequester, options: OperationRequesterOptions) => {
+        const request: (typeof requests)[number] = { options, raw };
         requests.push(request);
         options.onTrace?.({ requestId: 'request-1' });
-        return {
-          generate: (
-            input: Parameters<CoreLoopRequester['generate']>[0],
-            control: { signal: AbortSignal },
-          ) => {
-            request.input = input;
+        const wrap = (current: FullLoopLlmRequester): FullLoopLlmRequester => ({
+          [requesterContents]: contentsOf(current),
+          with: ((next: LlmRequestPart | LlmRequester<LlmDimension>) =>
+            wrap(current.with(contentsOf(next)))) as FullLoopLlmRequester['with'],
+          request: (rest) => current.request(rest),
+          generate: (rest, control) => {
+            request.input = contentsOf(current.with(rest));
             request.signal = control.signal;
             return nextResult();
           },
-        };
+        });
+        return wrap(raw);
+      },
+      prepareOperation: async () => {
+        throw new Error('prompt prediction must not use prepareOperation');
       },
     };
     const loop = {
@@ -157,6 +173,7 @@ describe('SessionPromptPredictionService', () => {
       request_id: 'request-1',
     }));
     expect(requests).toHaveLength(1);
+    expect(requests[0]?.raw).toBe(requester.llm);
     expect(requests[0]?.options.source()).toEqual({
       type: 'operation',
       turnId: 0,

@@ -143,21 +143,21 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         requestKind: 'prompt_prediction',
       } as const;
       let trace: LLMRequestTrace | undefined;
-      const requester = await scope.loop.requester.prepareOperation({
+      const requester = scope.loop.requester.operationRequester(scope.loop.requester.llm, {
         maxOutputSize: PROMPT_PREDICTION_MAX_OUTPUT_TOKENS,
         source: () => source,
         onTrace: (value) => {
           trace = value;
         },
-      }, active.deadline.signal);
-      const outcome = await abortable(requester.generate(
-        {
-          content: {
-            messages: [...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)],
-          },
-          model: { responseFormat: PROMPT_PREDICTION_RESPONSE_FORMAT },
-          profile: {},
+      });
+      const outcome = await abortable(requester.with({
+        content: {
+          messages: [...contextSnapshot, createUserMessage(PROMPT_PREDICTION_INSTRUCTION)],
         },
+        model: { responseFormat: PROMPT_PREDICTION_RESPONSE_FORMAT },
+        profile: {},
+      }).generate(
+        {},
         { signal: active.deadline.signal },
       ), active.deadline.signal);
       if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
