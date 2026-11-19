@@ -105,7 +105,7 @@ pnpm --filter kimi-code-app run e2e:headless --quarantine --retries=0
 从根目录运行 `pnpm qa:layers` 验证已有协议快照、回放、历史数据、KAP/ACP 共有行为及客户端分页预算。[分层检查工作流](../.github/workflows/layered-qa.yml)在修改这些测试基建的 PR、夜间和手动触发时，均在 Linux、macOS 和 Windows 上运行。冷恢复使用[已发布 CLI 写出的原始格式](scenarios/fixtures/released-2.6.3/README.md)；宿主已经看到回合结束时，持久化写入仍可能进行中。
 
 - [协议字段检查](../packages/kap-server/test/apiSurface.test.ts)重新读取真实服务的 OpenAPI 和 AsyncAPI，与[入库文档](../packages/kap-server/schema/)比较。评审时看 [contract.txt](../packages/kap-server/schema/contract.txt)：一行一个字段，带类型、约束和默认值，多处共用的结构只列一次。有差异时，检查会列出每个变化，并按方向分成破坏、非破坏和未分类三类，例如请求新增必填字段属于破坏，响应新增字段属于非破坏；默认值变了归为未分类，由人判断不传该字段的客户端会不会受影响。测试宿主版本固定以隔离包版本变更，KAP 协议版本取实际值。显式更新用 `pnpm qa:refresh schema`，它同时重写两份文档和摘要。同一文件还用契约哈希钉住 `HOST_API_LEVEL`：字段、操作或消息变化后哈希改变，测试失败，由人判断新客户端连接旧版远程宿主是否会出错，需要时升级级别，再更新文件里的哈希；只改描述不影响哈希。内部调试路由不属于契约，单独列出。[契约工具](../packages/testkit/src/contract/)
-- [能力表](scenarios/capabilities/conversation.json)登记 KAP 与 ACP 实际公布的字段。共有首轮用真实协议对照相同提问和回答，再核对各自的结束信号。其他单侧字段仍由各自协议维护；能力表的两个传输字段集合可以不同。[对照入口](../packages/acp-server/test/kap-parity.test.ts)
+- [能力表](scenarios/capabilities/conversation.json)登记 KAP 与 ACP 实际公布的能力，以及两边共有的行为场景：首轮回答、回合中取消、拒绝写文件。[对照入口](../packages/acp-server/test/kap-parity.test.ts)把每个场景用两种协议各跑一遍，结果先换成同一套词，例如 KAP 的 `interrupted` 和 ACP 的 `cancelled` 都记为取消，再分别与场景的期望比较。已知分歧写进 `divergences` 并附原因，这条场景改为断言分歧仍在；两边都符合期望后它会失败，提醒删掉条目。公布的每项能力都要出现在某个场景里，或在 `exempt` 里写明原因；能力增减而表没跟上时，守卫用例失败。
 - PR 中客户端分页用 240 个会话回合，验证并发加载每个旧页只读一次。另用 `pnpm qa:history-perf` 在 Electron 测 240 条界面消息（120 轮问答），以 1280×900 窗口比较全量渲染和窗口化渲染。全量基线应挂载 240 条，窗口化初始和滚动挂载均以 32 条为上限。同一工作流在 macos-15 上对交替顺序的三对样本比较打开耗时和 JS 堆增长中位数，并保留环境与原始数据。同一提交的相对预算可以检出窗口化失效；跨版本共同变慢需要对照留存的历史产物。
 
 ## 改动行的变异测试
