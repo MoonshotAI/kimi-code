@@ -15,8 +15,18 @@ import {
 } from '../lib/worktreeManage';
 import { worktreesStore } from '../stores/worktrees';
 import { registerConfirmSurface } from './useConfirmDialog';
+import {
+  WORKTREE_RESULT_TOAST_MS,
+  answerExistingWorktreeProject,
+  askExistingWorktreeProject,
+  worktreeProjectPrompt as projectPrompt,
+} from './worktreeProjectPrompt';
 
-export const WORKTREE_RESULT_TOAST_MS = 8000;
+export {
+  WORKTREE_RESULT_TOAST_MS,
+  type WorktreeProjectPromptChoice,
+  type WorktreeProjectPromptState,
+} from './worktreeProjectPrompt';
 
 export interface WorktreeDeleteConfirmState {
   kind: 'worktrees';
@@ -58,14 +68,6 @@ export type WorktreeSessionDeleteResult<T> =
   | { confirmed: false; directoryMissing?: true }
   | { confirmed: true; value: T };
 
-export interface WorktreeProjectPromptState {
-  project: string;
-  branch?: string;
-  sessionCount: number;
-}
-
-export type WorktreeProjectPromptChoice = 'switch' | 'create' | 'dismiss';
-
 interface RemovalBatch {
   id: number;
   items: WorktreeRemovalProgressItem[];
@@ -75,14 +77,12 @@ interface RemovalBatch {
 const deleteDialog = ref<WorktreeDeleteDialogState | null>(null);
 const deleteRequestPending = ref(false);
 const batches = ref<RemovalBatch[]>([]);
-const projectPrompt = ref<WorktreeProjectPromptState | null>(null);
 
 let requestSeq = 0;
 let batchSeq = 0;
 let watching = false;
 let sessionRun: ((deleteBranch: boolean) => Promise<void>) | null = null;
 let sessionCancel: (() => void) | null = null;
-let projectResolve: ((choice: WorktreeProjectPromptChoice) => void) | null = null;
 let settingsOpener: (() => void) | null = null;
 
 registerConfirmSurface(() => deleteDialog.value !== null || projectPrompt.value !== null);
@@ -308,7 +308,7 @@ async function requestSessionDeletion<T>(
       } catch (error) {
         finish();
         deleteDialog.value = null;
-        reject(error);
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     };
     const state: WorktreeSessionDeleteState = {
@@ -325,21 +325,6 @@ async function requestSessionDeletion<T>(
   });
 }
 
-function askExistingWorktreeProject(info: WorktreeProjectPromptState): Promise<WorktreeProjectPromptChoice> {
-  projectResolve?.('dismiss');
-  return new Promise<WorktreeProjectPromptChoice>((resolve) => {
-    projectResolve = resolve;
-    projectPrompt.value = info;
-  });
-}
-
-function answerExistingWorktreeProject(choice: WorktreeProjectPromptChoice): void {
-  const resolve = projectResolve;
-  projectResolve = null;
-  projectPrompt.value = null;
-  resolve?.(choice);
-}
-
 const deleteProgress = computed<WorktreeRemovalProgress | null>(() => {
   const state = deleteDialog.value;
   if (state === null || state.kind !== 'worktrees' || state.phase === 'confirm') return null;
@@ -350,12 +335,10 @@ const deleteProgress = computed<WorktreeRemovalProgress | null>(() => {
 export function resetWorktreeManageDialogs(): void {
   requestSeq += 1;
   sessionCancel?.();
-  projectResolve?.('dismiss');
-  projectResolve = null;
+  answerExistingWorktreeProject('dismiss');
   deleteDialog.value = null;
   deleteRequestPending.value = false;
   batches.value = [];
-  projectPrompt.value = null;
 }
 
 export function useWorktreeManageDialogs() {

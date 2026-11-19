@@ -43,6 +43,9 @@ export function useCreateCardActions(): CreateCardActions {
         return client.recreateSessionWorktree(sessionId);
       case 'stop':
         return client.cancelSessionWorktree(sessionId);
+      case 'manage':
+      case 'viewOutput':
+        return Promise.resolve(false);
       default:
         return Promise.resolve(false);
     }

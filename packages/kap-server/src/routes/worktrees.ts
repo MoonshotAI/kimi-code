@@ -62,7 +62,7 @@ interface WorktreeRouteHost {
 
 const sessionIdParamSchema = z.object({ session_id: z.string().min(1) });
 
-const optionalBody = <T extends z.ZodTypeAny>(schema: T) =>
+const optionalBody = <T extends z.ZodType>(schema: T) =>
   z.preprocess((value) => value ?? {}, schema);
 
 const SESSION_WORKTREE_ACTION_DESCRIPTIONS: Readonly<Record<SessionWorktreeAction, string>> = {

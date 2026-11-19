@@ -44,7 +44,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { getDeviceApi, getKimiWebApi, t } from '../client/deps';
 import { toast } from '../client/toast';
-import { WORKTREE_RESULT_TOAST_MS, useWorktreeManageDialogs } from '../composables/useWorktreeManageDialogs';
+import { WORKTREE_RESULT_TOAST_MS, askExistingWorktreeProject } from '../composables/worktreeProjectPrompt';
 import { track } from '../contracts';
 import { sessionsStore } from './sessions';
 import { pinnedOrderStore } from './pinnedOrder';
@@ -647,7 +647,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     const existing = lookup?.workspace;
     if (lookup === null || existing === undefined || workspaceRootKey(existing.root) === rootKey) return 'proceed';
     const project = workspaceById.value.get(existing.id)?.name ?? existing.name;
-    const choice = await useWorktreeManageDialogs().askExistingWorktreeProject({
+    const choice = await askExistingWorktreeProject({
       project,
       sessionCount: lookup.sessionCount,
       ...(lookup.branch === undefined ? {} : { branch: lookup.branch }),

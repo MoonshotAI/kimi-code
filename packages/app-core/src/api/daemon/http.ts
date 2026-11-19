@@ -16,6 +16,11 @@ const ERROR_ENVELOPE_MAX_BYTES = 64 * 1024;
 
 export const SERVER_AUTH_UNAUTHORIZED_CODE = 40101;
 
+export interface DaemonEnvelope<T> {
+  data: T;
+  details: unknown;
+}
+
 export interface DaemonHttpClientOptions {
   origin: string;
   identity?: ClientIdentity;
@@ -329,7 +334,7 @@ export class DaemonHttpClient {
     path: string,
     body?: unknown,
     opts?: DaemonRequestOptions,
-  ): Promise<{ data: T; details: unknown }> {
+  ): Promise<DaemonEnvelope<T>> {
     return this.requestEnvelope<T>('POST', path, body, undefined, opts);
   }
 
@@ -752,7 +757,7 @@ export class DaemonHttpClient {
     body?: unknown,
     query?: RestQuery,
     opts: DaemonRequestOptions = {},
-  ): Promise<{ data: T; details: unknown }> {
+  ): Promise<DaemonEnvelope<T>> {
     const allowCodes = opts.allowCodes ?? [];
     const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
     const callerSignal = opts.signal;

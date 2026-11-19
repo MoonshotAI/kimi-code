@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 async function freshFacade() {
-  vi.stubGlobal('WebSocket', class {});
+  vi.stubGlobal('WebSocket', class { close(): void {} });
   vi.resetModules();
   const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
   const { sessionsStore } = await import('../src/stores/sessions');

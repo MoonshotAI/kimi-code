@@ -69,7 +69,7 @@ afterEach(() => {
 
 describe('useKimiWebClient worktree session', () => {
   it('holds the first prompt until the session update reports a ready worktree', { timeout: 30_000 }, async () => {
-    vi.stubGlobal('WebSocket', class {});
+    vi.stubGlobal('WebSocket', class { close(): void {} });
     const storageData = new Map<string, string>();
     vi.stubGlobal('localStorage', {
       get length() { return storageData.size; },
@@ -77,7 +77,7 @@ describe('useKimiWebClient worktree session', () => {
       getItem: (key: string) => storageData.get(key) ?? null,
       key: (index: number) => [...storageData.keys()][index] ?? null,
       removeItem: (key: string) => { storageData.delete(key); },
-      setItem: (key: string, value: string) => { storageData.set(key, String(value)); },
+      setItem: (key: string, value: string) => { storageData.set(key, value); },
     });
     vi.resetModules();
 

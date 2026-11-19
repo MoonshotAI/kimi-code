@@ -99,6 +99,10 @@ function blockTitleKey(setup: AppWorktreeSetup): string {
           return 'scriptFailed';
         case 'script_timeout':
           return 'scriptTimeout';
+        case 'create_failed':
+        case 'disk_full':
+        case undefined:
+          return 'createFailed';
         default:
           return 'createFailed';
       }

@@ -117,7 +117,7 @@ export function worktreeDeleteRows(
   if (batch) {
     const risky = (target: WorktreeDeleteTarget): boolean =>
       target.risk !== null && isRisky(effectiveRisk(target.risk, deleteBranch));
-    const ordered = [...targets].sort((a, b) => Number(risky(b)) - Number(risky(a)));
+    const ordered = targets.toSorted((a, b) => Number(risky(b)) - Number(risky(a)));
     rows.push({
       kind: 'target',
       icon: 'folder',
@@ -301,7 +301,7 @@ export function worktreeRemovalProgress(items: readonly WorktreeRemovalProgressI
   const deleted = items.filter((item) => item.state === 'deleted').length;
   const failed = items.filter((item) => item.state === 'failed').length;
   return {
-    items: [...items].sort((a, b) => PROGRESS_ORDER[a.state] - PROGRESS_ORDER[b.state]),
+    items: items.toSorted((a, b) => PROGRESS_ORDER[a.state] - PROGRESS_ORDER[b.state]),
     total: items.length,
     completed: deleted + failed,
     deleted,

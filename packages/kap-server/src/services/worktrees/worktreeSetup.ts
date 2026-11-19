@@ -283,14 +283,17 @@ export class WorktreeCreation {
         onOutput,
       });
     }).catch(
-      (error: NodeJS.ErrnoException): CommandResult => ({
-        exitCode: null,
-        stdout: '',
-        output: `${error.message}\n`,
-        timedOut: false,
-        aborted: false,
-        spawnError: error,
-      }),
+      (error: unknown): CommandResult => {
+        const failure: NodeJS.ErrnoException = error instanceof Error ? error : new Error(String(error));
+        return {
+          exitCode: null,
+          stdout: '',
+          output: `${failure.message}\n`,
+          timedOut: false,
+          aborted: false,
+          spawnError: failure,
+        };
+      },
     );
     if (result.exitCode === 0) {
       setStep(progress, 'create', { state: 'done', output: undefined });
