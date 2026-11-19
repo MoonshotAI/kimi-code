@@ -19,7 +19,7 @@ export function useTranscriptStabilityProbe(scroller: Ref<HTMLElement | null>): 
     }
     if (logged >= LOG_LIMIT) return;
     logged++;
-    logWarn('transcript stability', { engine: 'legacy', ...event });
+    logWarn('transcript stability', event);
   }
 
   function sync(): void {
@@ -27,7 +27,7 @@ export function useTranscriptStabilityProbe(scroller: Ref<HTMLElement | null>): 
     probe = null;
     const element = scroller.value;
     if (!element || !(import.meta.env.DEV || canary.isCanaryBuild.value)) return;
-    probe = createStabilityProbe(element, { placeholderSelector: '.history-space, .transcript-space', onEvent: log });
+    probe = createStabilityProbe(element, { placeholderSelector: '.transcript-space', onEvent: log });
   }
 
   watch([scroller, canary.isCanaryBuild], sync, { immediate: true, flush: 'post' });
