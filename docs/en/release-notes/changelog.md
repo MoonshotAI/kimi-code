@@ -11,9 +11,11 @@ This page documents the changes in each Kimi Code CLI release.
 ### Features
 
 - Add support for Amazon Bedrock providers, configured with `type = "bedrock"` and `AWS_REGION`.
+- Add experimental next-prompt predictions in the TUI after completed turns. Enable with `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` and press Tab or Right Arrow to accept.
 - Add a Follow-up behavior setting under `/settings`; choose Steer to make Enter steer your message into the running turn instead of queueing it.
 - View running foreground agents and their activity in `/tasks`.
 - Add `kimi web --json`, `GET /api/v1/sessions/{session_id}/interactions`, `POST /api/v1/sessions/{session_id}:wait`, and `GET /api/v1/kap.md` for HTTP-driven KAP automation.
+- web: Show project and session titles in browser tab titles.
 - Expose `KIMI_CODE_SESSION_ID` and `KIMI_CODE_WORKSPACE_ID` in `Bash` tool child processes.
 - Support configuring SSH hosts for Kimi Code projects, with each host using its own Kimi login and optional copied custom model providers.
 
