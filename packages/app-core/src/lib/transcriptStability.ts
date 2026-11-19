@@ -96,6 +96,7 @@ export function createStabilityProbe(scroller: HTMLElement, options: StabilityPr
 
   let report = emptyReport();
   let frameTimes: number[] = [];
+  let frameCursor = 0;
   let lastFrameTime = 0;
   let writesThisFrame = 0;
   let lastInput = Number.NEGATIVE_INFINITY;
@@ -268,8 +269,9 @@ export function createStabilityProbe(scroller: HTMLElement, options: StabilityPr
     if (stopped) return;
     report.frames++;
     if (lastFrameTime) {
-      frameTimes.push(time - lastFrameTime);
-      if (frameTimes.length > FRAME_SAMPLE_CAP) frameTimes = frameTimes.slice(-FRAME_SAMPLE_CAP);
+      if (frameTimes.length < FRAME_SAMPLE_CAP) frameTimes.push(time - lastFrameTime);
+      else frameTimes[frameCursor] = time - lastFrameTime;
+      frameCursor = (frameCursor + 1) % FRAME_SAMPLE_CAP;
     }
     lastFrameTime = time;
     if (writesThisFrame > 1) {
@@ -293,7 +295,7 @@ export function createStabilityProbe(scroller: HTMLElement, options: StabilityPr
 
   return {
     report() {
-      const sorted = [...frameTimes].toSorted((a, b) => a - b);
+      const sorted = frameTimes.toSorted((a, b) => a - b);
       return {
         ...report,
         frameP50Ms: percentile(sorted, 0.5),
@@ -304,6 +306,7 @@ export function createStabilityProbe(scroller: HTMLElement, options: StabilityPr
     reset() {
       report = emptyReport();
       frameTimes = [];
+      frameCursor = 0;
       lastFrameTime = 0;
       writesThisFrame = 0;
       previous = null;

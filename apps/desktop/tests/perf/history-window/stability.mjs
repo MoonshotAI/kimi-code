@@ -378,6 +378,7 @@ async function scenarioDisclosure(probe) {
     probe.reset();
     const before = offsetOf(head);
     head.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    head.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
     head.click();
     const series = await trackFrames(() => (head.isConnected ? offsetOf(head) - before : null), 1000);
     results[step] = { anchorDrift: drift(series), finalDrift: head.isConnected ? Math.round(offsetOf(head) - before) : 'detached' };
@@ -386,6 +387,7 @@ async function scenarioDisclosure(probe) {
 }
 
 async function scenarioTocJump(probe) {
+  if (sessionId.value !== 'st-a') return { skipped: 'tocJump runs after sessionSwitch' };
   const rail = document.querySelector('.toc-scroll');
   if (!rail) return { skipped: 'no toc rail' };
   const label = 'Question 20';
@@ -399,6 +401,7 @@ async function scenarioTocJump(probe) {
   probe.reset();
   const clicked = performance.now();
   button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
   button.click();
   const target = () => pane().querySelector('[data-turn-id="st-a-38"]');
   const series = await trackFrames(() => {
