@@ -73,11 +73,12 @@ const props = defineProps<{
   mainView?: 'chat' | 'sessionAdmin';
   panelTabs?: PanelTab[];
   availableTabs?: PanelLauncherItem[];
-  feedbackEnabled?: boolean;
+  globalFeedbackEnabled?: boolean;
+  replyFeedbackEnabled?: boolean;
 }>();
 
 const feedbackCommands: readonly SlashCommand[] = [{ name: '/feedback', desc: 'feedback.send', noArgs: true }];
-const extraBuiltinCommands = computed(() => props.feedbackEnabled ? feedbackCommands : undefined);
+const extraBuiltinCommands = computed(() => props.globalFeedbackEnabled ? feedbackCommands : undefined);
 
 const emit = defineEmits<{
   submit: [payload: ComposerSubmitPayload];
@@ -1012,10 +1013,10 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @reorder-queue="handleReorderQueue"
               @steer-queued="emit('steerQueued', $event)"
             >
-              <template v-if="feedbackEnabled" #assistant-reply-actions="{ turn }">
+              <template v-if="replyFeedbackEnabled" #assistant-reply-actions="{ turn }">
                 <TurnFeedbackActions :target="feedbackTurnTarget(sessionId, turn)" />
               </template>
-              <template v-if="feedbackEnabled" #assistant-reply-status="{ turn }">
+              <template v-if="replyFeedbackEnabled" #assistant-reply-status="{ turn }">
                 <TurnFeedbackStatus :target="feedbackTurnTarget(sessionId, turn)" />
               </template>
             </ChatPane>

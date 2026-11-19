@@ -1,12 +1,14 @@
-import { expect, test } from './fixtures/app';
-import { sessionRowById } from './fixtures/sessions';
+import { expect, test, type DesktopApp } from './fixtures/app';
+import type { StubModel } from './fixtures/model';
+import { sendAndFinish, sessionRowById } from './fixtures/sessions';
+
+const envelope = (data: unknown) => ({ code: 0, msg: '', data });
 
 test('submits global and reply feedback with opt-in attachments', async ({ app, model }) => {
   const page = app.window;
   const feedbackRequests: Array<{ path: string; method: string; body: unknown }> = [];
   const uploaded: Array<{ kind: string | null; bytes: Buffer }> = [];
   const sessionUploads: Array<{ path: string; body: unknown }> = [];
-  const envelope = (data: unknown) => ({ code: 0, msg: '', data });
   let signedIn = false;
   let failSubmission = true;
   let failDiagnostics = true;
@@ -217,4 +219,90 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await page.getByRole('button', { name: 'Poor response' }).click();
   await expect(page.getByRole('dialog', { name: 'Sign in to Kimi Code' })).toBeVisible();
   await expect(details).toBeHidden();
+});
+
+const hostId = 'example';
+const hostProxy = `/api/v1/hosts/${hostId}/proxy`;
+type OwnedRecord = { host_id?: string };
+type SessionDirectory = OwnedRecord & { items?: OwnedRecord[]; groups?: (OwnedRecord & { sessions: OwnedRecord[] })[] };
+
+async function openSshConversation(app: DesktopApp, model: StubModel, flags: { local: boolean; remote: boolean }) {
+  const page = app.window;
+  const reply = 'The remote task finished.';
+  const sessionId = await sendAndFinish(app, model, 'Check the task', reply);
+  const requests: Array<{ path: string; body: unknown }> = [];
+  await page.addInitScript(prefix => {
+    window.WebSocket = class extends WebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(String(url).replace(prefix, ''), protocols);
+      }
+    };
+  }, hostProxy);
+  await page.route(`**${hostProxy}/**`, route => route.continue({ url: route.request().url().replace(hostProxy, '') }));
+  await page.route('**/api/v1/hosts', route => route.fulfill({ json: envelope({ hosts: [{
+    id: hostId, host: 'example.test', enabled: true, status: 'ready',
+  }] }) }));
+  await page.route(url => url.searchParams.get('hosts') === 'include' && /\/(workspaces|sessions)(\/[^/]+)?$/.test(url.pathname), async route => {
+    const local = new URL(route.request().url());
+    local.searchParams.delete('hosts');
+    const data = await page.evaluate(async url => (await (await fetch(url)).json() as { data: SessionDirectory }).data, local.href);
+    for (const group of data.groups ?? []) {
+      group.host_id = hostId;
+      for (const session of group.sessions) session.host_id = hostId;
+    }
+    for (const item of data.items ?? []) item.host_id = hostId;
+    if (local.pathname.endsWith(`/sessions/${sessionId}`)) data.host_id = hostId;
+    await route.fulfill({ json: envelope(data) });
+  });
+  await page.route('**/api/v1/meta', route => route.fulfill({ json: envelope({
+    server_version: '2.6.3', capabilities: {}, experimental_flags: { desktop_feedback: route.request().url().includes(hostProxy) ? flags.remote : flags.local },
+  }) }));
+  await page.route('**/api/v1/auth', route => route.fulfill({ json: envelope({
+    models_ready: true, providers_count: 1, managed_provider: { status: 'authenticated' },
+  }) }));
+  await page.route('**/api/v1/oauth/userinfo*', route => route.fulfill({ json: envelope({ kind: 'error' }) }));
+  await page.route('**/api/v1/feedback**', route => {
+    requests.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    return route.fulfill({ json: envelope({ feedback_id: 31, upload_id: 32 }) });
+  });
+  const remoteSessionRead = page.waitForRequest(request => request.url().includes(`${hostProxy}/api/v1/sessions/${sessionId}`));
+  await page.reload();
+  await remoteSessionRead;
+  await expect(page.getByText(reply, { exact: true })).toBeVisible();
+  return { sessionId, requests };
+}
+
+test('local feedback remains available when the SSH conversation host disables it', async ({ app, model }) => {
+  const { requests } = await openSshConversation(app, model, { local: true, remote: false });
+  const page = app.window;
+  await expect(page.getByRole('button', { name: 'Good response' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Poor response' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Send feedback' })).toBeVisible();
+  const input = page.getByRole('combobox', { name: 'Message input' });
+  await input.fill('/feedback');
+  await input.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('checkbox', { name: /Include this conversation/ })).toHaveCount(0);
+  await dialog.getByRole('textbox', { name: 'Description' }).fill('A desktop issue');
+  await app.snapshot('ssh-conversation-with-local-feedback');
+  await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
+  await expect(page.locator('.feedback-receipt-toast')).toContainText('31');
+  expect(requests).toEqual([{ path: '/api/v1/feedback', body: expect.objectContaining({ kind: 'global', source: 'command', upload_session: false }) }]);
+});
+
+test('the SSH conversation accepts reply feedback when local feedback is disabled', async ({ app, model }) => {
+  const { sessionId, requests } = await openSshConversation(app, model, { local: false, remote: true });
+  const page = app.window;
+  await expect(page.getByRole('button', { name: 'Send feedback' })).toHaveCount(0);
+  const input = page.getByRole('combobox', { name: 'Message input' });
+  await input.fill('/');
+  await expect(page.getByRole('listbox')).toBeVisible();
+  await expect(page.getByRole('option', { name: /\/feedback/i })).toHaveCount(0);
+  await input.press('Escape');
+  await input.fill('');
+  await page.getByRole('button', { name: 'Good response' }).click();
+  await expect(page.getByRole('button', { name: 'Remove like' })).toBeVisible();
+  await app.snapshot('ssh-reply-feedback-without-local-feedback');
+  expect(requests).toEqual([{ path: `${hostProxy}/api/v1/feedback`, body: expect.objectContaining({ kind: 'turn', session_id: sessionId, rating: 'up' }) }]);
 });

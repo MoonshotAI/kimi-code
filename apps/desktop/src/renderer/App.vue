@@ -1443,14 +1443,27 @@ type SubmitPayload = {
   forceQueue?: boolean;
 };
 const forcedUpgradeVisible = ref(false);
-const feedbackEnabled = computed(() => client.experimentalFlags.value['desktop_feedback'] === true);
+const globalFeedbackEnabled = computed(() => client.experimentalFlags.value['desktop_feedback'] === true);
 const globalFeedbackTarget = ref<GlobalFeedbackTarget | null>(null);
+function feedbackSessionHost(sessionId: string): string | undefined {
+  const session = sessionsStore().sessions.find(entry => entry.id === sessionId);
+  if (session !== undefined) return session.hostId;
+  return sessionId === activeSessionId.value ? client.visibleWorkspace.value?.hostId : undefined;
+}
+
+function sessionFeedbackEnabled(sessionId: string | null | undefined): boolean {
+  if (!sessionId) return false;
+  const hostId = feedbackSessionHost(sessionId);
+  return hostId === undefined ? globalFeedbackEnabled.value : hostsStore().experimentalFlags.get(hostId)?.['desktop_feedback'] === true;
+}
+
+const replyFeedbackEnabled = computed(() => sessionFeedbackEnabled(activeSessionId.value));
+const feedbackSessionUploadEnabled = computed(() => sessionFeedbackEnabled(globalFeedbackTarget.value?.sessionId));
 const desktopFeedback = useDesktopFeedback({
   signedIn: () => signedIn.value,
   accountId: () => managedUserInfo.value?.userId,
   openLogin,
-  sessionHost: (sessionId) => sessionsStore().sessions.find((session) => session.id === sessionId)?.hostId
-    ?? (sessionId === activeSessionId.value ? client.visibleWorkspace.value?.hostId : undefined),
+  sessionHost: feedbackSessionHost,
   hostAccounts: () => hostsStore().accounts,
   hostUserId: async (hostId) => {
     const account = await getDeviceApi(hostId).getUserInfo();
@@ -1462,7 +1475,7 @@ provide(DesktopFeedbackKey, desktopFeedback);
 watch(desktopFeedback.accountEpoch, () => { globalFeedbackTarget.value = null; }, { flush: 'sync' });
 
 function openGlobalFeedback(source: GlobalFeedbackTarget['source']): void {
-  if (!feedbackEnabled.value || globalFeedbackTarget.value !== null || !desktopFeedback.requireLogin()) return;
+  if (!globalFeedbackEnabled.value || globalFeedbackTarget.value !== null || !desktopFeedback.requireLogin()) return;
   desktopFeedback.closePopover();
   const hasConversation = mainView.value === 'chat' && client.turns.value.some((turn) => turn.role === 'user');
   globalFeedbackTarget.value = {
@@ -1929,7 +1942,7 @@ function enableSwarmMode(): void {
 
 async function handleCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue'; preserveDraft?: boolean }): Promise<void> {
   const { cmd, attachments, restoreText, restoreEntries, snapshot, preserveDraft } = payload;
-  if (cmd === '/feedback' && feedbackEnabled.value && payload.skillName === undefined) {
+  if (cmd === '/feedback' && globalFeedbackEnabled.value && payload.skillName === undefined) {
     openGlobalFeedback('command');
     return;
   }
@@ -2459,7 +2472,7 @@ function openPr(url: string): void {
         :collapsed="sidebarCollapsed"
         :dragging="sidebarDragging"
         :col-width="sideWidth"
-        :feedback-enabled="feedbackEnabled"
+        :feedback-enabled="globalFeedbackEnabled"
         @select="handleSelectSession($event)"
         @create="runShortcutAction('newSession', 'button')"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
@@ -2511,7 +2524,8 @@ function openPr(url: string): void {
       :loading-more-error="loadMoreMessagesError"
       :panel-tabs="panel.panelTabs.value"
       :available-tabs="sessionInfoAvailableTabs"
-      :feedback-enabled="feedbackEnabled"
+      :global-feedback-enabled="globalFeedbackEnabled"
+      :reply-feedback-enabled="replyFeedbackEnabled"
       @select-workspace="handleDraftWorkspaceSelect($event)"
       @add-workspace="requestWorkspaceDialog()"
       @open-pr="openPr"
@@ -2868,7 +2882,12 @@ function openPr(url: string): void {
     />
     <!-- Login Dialog overlay. It is outside `.app` so `/login` can open it too. -->
     <ScreenshotGuidanceDialog />
-    <GlobalFeedbackDialog :key="desktopFeedback.accountEpoch.value" :target="globalFeedbackTarget" @close="globalFeedbackTarget = null" />
+    <GlobalFeedbackDialog
+      :key="desktopFeedback.accountEpoch.value"
+      :target="globalFeedbackTarget"
+      :session-upload-enabled="feedbackSessionUploadEnabled"
+      @close="globalFeedbackTarget = null"
+    />
     <LoginDialog
       v-if="showLogin || hostLoginId !== null"
       :key="hostLoginId ?? 'local'"
