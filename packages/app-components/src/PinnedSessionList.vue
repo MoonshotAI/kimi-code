@@ -707,6 +707,14 @@ const {
 .pin-row :deep(.se) {
   --se-pad-x: calc(var(--sb-pad-x, 16px) - var(--sb-inset, 8px));
 }
+.pin-row + .pin-row {
+  padding-top: var(--space-05);
+}
+.pin-row + .pin-workspace,
+.pin-workspace + .pin-row,
+.pin-workspace + .pin-workspace {
+  padding-top: var(--space-1-5);
+}
 .pin-row.drop-before,
 .pin-workspace.drop-before {
   box-shadow: inset 0 2px 0 var(--color-accent);

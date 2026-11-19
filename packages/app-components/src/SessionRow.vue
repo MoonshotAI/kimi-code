@@ -45,13 +45,22 @@ const emit = defineEmits<{
   pin: [id: string];
 }>();
 
-const showSubRow = computed(() => !props.compactPinned && props.session.cwdLabel !== undefined);
-const isFlat = computed(() => showSubRow.value);
-const compactWorkspaceTooltip = computed(() => {
-  if (!props.compactPinned || renaming.value) return null;
+const isFlat = computed(() => !props.compactPinned && props.session.cwdLabel !== undefined);
+const pinnedWorkspaceLabel = computed(() => {
+  if (!props.compactPinned) return null;
   const label = props.session.workspaceName ?? props.session.cwdLabel;
   return label && label !== '-' ? label : null;
 });
+const subLabel = computed(() =>
+  props.compactPinned
+    ? pinnedWorkspaceLabel.value
+    : (props.session.workspaceName ?? props.session.cwdLabel),
+);
+const showSubRow = computed(() => isFlat.value || pinnedWorkspaceLabel.value !== null);
+const showSubIcon = computed(() => !props.compactPinned || props.session.hostId !== undefined);
+const showCompactPr = computed(
+  () => props.compactPinned && !showSubRow.value && !renaming.value && Boolean(props.session.pullRequest),
+);
 const displayStatus = computed(() =>
   renaming.value
     ? ('idle' as const)
@@ -427,6 +436,8 @@ function openPullRequest(): void {
       on: active,
       flat: isFlat,
       'compact-pinned': compactPinned,
+      'has-sub': showSubRow,
+      'has-compact-pr': showCompactPr,
       'has-badge': hasBadge,
     }"
     @click="emit('select', session.id)"
@@ -435,59 +446,57 @@ function openPullRequest(): void {
     @mouseenter="onTitleEnter"
   >
     <div class="row">
-      <Tooltip :text="compactWorkspaceTooltip">
-        <div class="row-main">
-          <span v-if="!isFlat" class="lead">
-            <Icon v-if="compactPinned" class="lead-icon" name="message" />
-          </span>
+      <div class="row-main">
+        <span v-if="!isFlat" class="lead">
+          <Icon v-if="compactPinned" class="lead-icon" name="message" />
+        </span>
 
-          <div class="left">
-            <div
-              v-if="renaming"
-              ref="renameWrapRef"
-              class="rename-wrap"
-              :class="{ generating: generatingTitle }"
-              @click.stop
-            >
-              <input
-                ref="renameInputRef"
-                v-model="renameValue"
-                class="rename-input"
-                :readonly="generatingTitle"
-                @keydown.enter.stop="onRenameEnter"
-                @keydown.esc.stop="onRenameEscape"
-                @compositionstart="handleCompositionStart"
-                @compositionend="handleCompositionEnd"
-                @blur="commitRename"
-              />
-              <span v-if="generatingTitle" class="gen-dots" aria-hidden="true"><i /><i /><i /></span>
-              <Tooltip v-if="config?.autoSessionTitle !== false" :text="t('sidebar.genTitle')">
-                <IconButton
-                  class="gen-title-btn"
-                  size="sm"
-                  :label="t('sidebar.genTitle')"
-                  :disabled="generatingTitle"
-                  @mousedown.prevent.stop
-                  @click.stop="onGenTitle"
-                >
-                  <Icon name="gen-title" />
-                </IconButton>
-              </Tooltip>
-            </div>
-            <span v-else ref="titleRef" class="t" @dblclick.stop="startRename"><span ref="titleInnerRef" class="t-inner"><button
-              v-if="emojiSplit.emoji"
-              type="button"
-              class="emoji"
-              :aria-label="t('sidebar.setEmoji')"
-              @click.stop="openPickerFromRow"
-              @dblclick.stop
-            >{{ emojiSplit.emoji }}</button>{{ displayText }}</span></span>
+        <div class="left">
+          <div
+            v-if="renaming"
+            ref="renameWrapRef"
+            class="rename-wrap"
+            :class="{ generating: generatingTitle }"
+            @click.stop
+          >
+            <input
+              ref="renameInputRef"
+              v-model="renameValue"
+              class="rename-input"
+              :readonly="generatingTitle"
+              @keydown.enter.stop="onRenameEnter"
+              @keydown.esc.stop="onRenameEscape"
+              @compositionstart="handleCompositionStart"
+              @compositionend="handleCompositionEnd"
+              @blur="commitRename"
+            />
+            <span v-if="generatingTitle" class="gen-dots" aria-hidden="true"><i /><i /><i /></span>
+            <Tooltip v-if="config?.autoSessionTitle !== false" :text="t('sidebar.genTitle')">
+              <IconButton
+                class="gen-title-btn"
+                size="sm"
+                :label="t('sidebar.genTitle')"
+                :disabled="generatingTitle"
+                @mousedown.prevent.stop
+                @click.stop="onGenTitle"
+              >
+                <Icon name="gen-title" />
+              </IconButton>
+            </Tooltip>
           </div>
+          <span v-else ref="titleRef" class="t" @dblclick.stop="startRename"><span ref="titleInnerRef" class="t-inner"><button
+            v-if="emojiSplit.emoji"
+            type="button"
+            class="emoji"
+            :aria-label="t('sidebar.setEmoji')"
+            @click.stop="openPickerFromRow"
+            @dblclick.stop
+          >{{ emojiSplit.emoji }}</button>{{ displayText }}</span></span>
         </div>
-      </Tooltip>
+      </div>
 
       <button
-        v-if="compactPinned && !renaming && session.pullRequest"
+        v-if="showCompactPr && session.pullRequest"
         type="button"
         class="pr compact-pr"
         :class="`pr--${session.pullRequest.state}`"
@@ -570,9 +579,9 @@ function openPullRequest(): void {
       </span>
     </div>
 
-    <div v-if="showSubRow" class="sub">
-      <WorkspaceIcon class="sub-icon" :host-id="session.hostId" size="sm" status="none" />
-      <span class="sub-text">{{ session.workspaceName ?? session.cwdLabel }}</span>
+    <div v-if="showSubRow" class="sub" :class="{ 'sub--pinned': compactPinned }">
+      <WorkspaceIcon v-if="showSubIcon" class="sub-icon" :host-id="session.hostId" size="sm" status="none" />
+      <span class="sub-text">{{ subLabel }}</span>
       <!-- PR association (v2 git domain): a small tag at the second line's
            right edge; click opens the PR (system browser / new tab). Open PRs
            stand out in success green, merged in purple, closed stays neutral. -->
@@ -719,7 +728,10 @@ function openPullRequest(): void {
 .lead-icon {
   color: var(--color-text-muted);
 }
-.se.compact-pinned:hover .act {
+.se.compact-pinned.has-sub {
+  padding: var(--space-1-5) var(--se-pad-x);
+}
+.se.has-compact-pr:hover .act {
   min-width: calc(2 * var(--icon-button-sm) + 2px - (var(--se-pad-x) - var(--sb-action-inset, 3px)));
 }
 .unread-dot {
@@ -796,6 +808,10 @@ function openPullRequest(): void {
   font-size: var(--text-xs);
   line-height: var(--leading-tight);
   user-select: none;
+}
+.sub--pinned {
+  margin-top: var(--space-05);
+  padding-left: calc(var(--sb-gutter, 16px) + var(--sb-gap, 6px));
 }
 .sub-icon {
   flex: none;

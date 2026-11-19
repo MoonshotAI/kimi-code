@@ -80,13 +80,15 @@ test('pinned workspaces share the pinned section, support manual reordering, sur
   await expect(group('second-project').getByText(SECOND)).toBeVisible();
   await app.snapshot('before-pinning-workspace');
 
-  await test.step('pin a session and then a workspace, appending new pins at the tail with compact single-line rows', async () => {
+  await test.step('pin a session and then a workspace, appending new pins at the tail with iconless workspace subtitles', async () => {
     await sessionRow(app, FIRST).hover();
     await sessionRow(app, FIRST).getByRole('button', { name: 'Pin', exact: true }).click();
     const pinnedFirstRow = sidebar.locator('.pinned [data-session-id]').filter({ hasText: FIRST });
     await expect(pinnedFirstRow).toBeVisible();
     await expect(pinnedFirstRow).toHaveClass(/compact-pinned/);
-    await expect(pinnedFirstRow.locator('.sub')).toHaveCount(0);
+    await expect(pinnedFirstRow.locator('.sub')).toHaveCount(1);
+    await expect(pinnedFirstRow.locator('.sub-icon')).toHaveCount(0);
+    await expect(pinnedFirstRow.locator('.sub-text')).toHaveText('workspace');
     await expect(pinnedFirstRow.locator('.lead-icon')).toBeVisible();
 
     await group('second-project').getByRole('button', { name: 'Options' }).click({ force: true });

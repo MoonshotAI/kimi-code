@@ -402,7 +402,7 @@ describe('SessionListPanel re-render scope', () => {
     expect(reads).toBe(readsPerPass * 2);
   });
 
-  it('renders standalone pinned sessions as compact single-line rows with message icon, interleaved order and drag reordering', async () => {
+  it('renders standalone pinned sessions with message icon, iconless workspace subtitle, interleaved order and drag reordering', async () => {
     app?.unmount();
     const pinnedGroup = group(0, 1);
     const otherGroup = group(1, 1);
@@ -438,10 +438,13 @@ describe('SessionListPanel re-render scope', () => {
 
     const compactRow = host.querySelector(`.pinned [data-session-id="${pinnedSingle.id}"]`)!;
     expect(compactRow.classList.contains('compact-pinned')).toBe(true);
+    expect(compactRow.classList.contains('has-sub')).toBe(true);
     expect(compactRow.classList.contains('flat')).toBe(false);
     expect(compactRow.querySelector('.lead .lead-icon')?.getAttribute('data-icon')).toBe('message');
-    expect(compactRow.querySelector('.sub')).toBeNull();
-    expect(compactRow.querySelector('.compact-pr')?.textContent).toContain('#1279');
+    expect(compactRow.querySelector('.sub.sub--pinned .sub-text')?.textContent).toBe('Workspace 1');
+    expect(compactRow.querySelector('.sub .sub-icon')).toBeNull();
+    expect(compactRow.querySelector('.sub .pr')?.textContent).toContain('#1279');
+    expect(compactRow.querySelector('.compact-pr')).toBeNull();
 
     const pinRowWrapper = compactRow.closest<HTMLElement>('.pin-row')!;
     const pinWsWrapper = host.querySelector<HTMLElement>('.pinned .pin-workspace')!;
