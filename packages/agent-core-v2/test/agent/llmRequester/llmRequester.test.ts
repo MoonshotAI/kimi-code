@@ -869,6 +869,17 @@ describe('LLMRequester service migration coverage', () => {
           const sideCalls = ctx.llmCalls.slice(3);
           expect(sideCalls.map((call) => countMedia(call.history)).toSorted()).toEqual([0, 1, 1]);
           expect(ctx.llmCalls).toHaveLength(6);
+
+          const loop = ctx.get(IAgentLoopService) as IAgentLoopService & {
+            resetLoop(): Promise<void>;
+          };
+          await loop.resetLoop();
+          ctx.mockNextResponse({ type: 'text', text: 'After reset.' });
+          await ctx.rpc.prompt({ input: [{ type: 'text', text: 'fresh recovery memory' }] });
+          await ctx.untilTurnEnd();
+
+          expect(countMedia(ctx.llmCalls.at(-1)!.history)).toBeGreaterThan(2);
+          expect(ctx.llmCalls).toHaveLength(7);
         } finally {
           await ctx.dispose();
         }

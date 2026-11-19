@@ -1,6 +1,7 @@
 import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '@moonshot-ai/core/llm/message';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { call, held, reply, say, think, thinkSigned } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -39,10 +40,12 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import type { ProviderConfig } from '#/llm-adapter/provider/provider';
 
 import {
   agentService,
   appService,
+  configServices,
   createTestAgent,
   InMemoryWireRecordPersistence,
   permissionModeServices,
@@ -145,6 +148,150 @@ describe('Agent loop', () => {
     messages:
       user: text "Hello"
   `);
+  });
+
+  it('freezes request config for the turn and refreshes model, thinking, and params on the next turn', async () => {
+    const requests: LlmRequest[] = [];
+    const overrides = { temperature: 0.2, topP: 0.7 };
+    let localLoop!: IAgentLoopService;
+    const generate = createMockProvider(async (request) => {
+      requests.push(request);
+      if (requests.length === 1) {
+        await localLoop.setModel('second-model');
+        localLoop.setThinking('high');
+        Object.assign(overrides, { temperature: 0.9, topP: 0.4 });
+        return {
+          parts: [
+            { type: 'text', text: 'working' },
+            { type: 'function', id: 'call-work', name: 'Work', arguments: '{}' },
+          ],
+        };
+      }
+      return { parts: [{ type: 'text', text: 'done' }] };
+    });
+    const firstProvider: ProviderConfig & { readonly type: string } = {
+      type: 'kimi',
+      apiKey: 'test-key',
+      baseUrl: 'https://first.example.test/v1',
+      customHeaders: { 'X-Custom': 'first' },
+    };
+    const secondProvider: ProviderConfig & { readonly type: string } = {
+      type: 'openai',
+      apiKey: 'test-key',
+      baseUrl: 'https://second.example.test/v1',
+      customHeaders: { 'X-Custom': 'second' },
+    };
+    const local = createTestAgent(
+      { autoConfigure: false, generate },
+      configServices(() => ({
+        defaultModel: 'first-model',
+        providers: { kimi: firstProvider, other: secondProvider },
+        models: {
+          'first-model': {
+            provider: 'kimi',
+            model: 'first-wire-model',
+            maxContextSize: 128_000,
+            maxOutputSize: 4_096,
+            capabilities: ['thinking', 'tool_use'],
+            supportEfforts: ['low', 'high'],
+            defaultEffort: 'low',
+          },
+          'second-model': {
+            provider: 'other',
+            model: 'second-wire-model',
+            maxContextSize: 256_000,
+            maxOutputSize: 8_192,
+            capabilities: ['thinking', 'tool_use'],
+            supportEfforts: ['low', 'high'],
+            defaultEffort: 'low',
+          },
+        },
+        modelOverrides: overrides,
+      })),
+      permissionModeServices('yolo'),
+    );
+    try {
+      await local.restorePersisted();
+      localLoop = local.get(IAgentLoopService);
+      await localLoop.setModel('first-model');
+      localLoop.update({
+        activeToolNames: ['Work'],
+        systemPrompt: 'turn-system',
+        thinkingLevel: 'low',
+      });
+      local.get(IAgentToolRegistryService).register({
+        name: 'Work',
+        description: 'Run one step.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+        resolveExecution: () => ({
+          approvalRule: 'Work',
+          execute: async () => ({ output: 'work-result' }),
+        }),
+      });
+
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+      await local.untilTurnEnd();
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'second turn' }] });
+      await local.untilTurnEnd();
+
+      expect(requests).toHaveLength(3);
+      expect(requests.map((request) => ({
+        name: request.model.spec.name,
+        maxOutputTokens: request.model.maxOutputTokens,
+        sampling: request.model.sampling,
+        thinkingEffort: request.model.thinking?.effort,
+        baseUrl: request.endpoint?.baseUrl,
+        customHeader: request.endpoint?.headers?.['X-Custom'],
+      }))).toEqual([
+        {
+          name: 'first-wire-model',
+          maxOutputTokens: 4_096,
+          sampling: { temperature: 0.2, topP: 0.7 },
+          thinkingEffort: 'low',
+          baseUrl: 'https://first.example.test/v1',
+          customHeader: 'first',
+        },
+        {
+          name: 'first-wire-model',
+          maxOutputTokens: 4_096,
+          sampling: { temperature: 0.2, topP: 0.7 },
+          thinkingEffort: 'low',
+          baseUrl: 'https://first.example.test/v1',
+          customHeader: 'first',
+        },
+        {
+          name: 'second-wire-model',
+          maxOutputTokens: 8_192,
+          sampling: { temperature: 0.9, topP: 0.4 },
+          thinkingEffort: 'high',
+          baseUrl: 'https://second.example.test/v1',
+          customHeader: 'second',
+        },
+      ]);
+      expect(requests.map((request) => request.protocol.recoveryKey)).toEqual([
+        JSON.stringify(['openai', 'kimi', 'openai', false, false]),
+        JSON.stringify(['openai', 'kimi', 'openai', false, false]),
+        JSON.stringify(['openai', 'openai', 'openai', false, false]),
+      ]);
+      const firstMetadata = requests[0]?.endpoint?.headers?.['X-Msh-Client-Metadata'];
+      const secondMetadata = requests[1]?.endpoint?.headers?.['X-Msh-Client-Metadata'];
+      expect(JSON.parse(firstMetadata!)).toMatchObject({
+        agent_role: 'main',
+        turn_trigger: 'user',
+        step_reason: 'turn_start',
+      });
+      expect(JSON.parse(secondMetadata!)).toMatchObject({ step_reason: 'tool_results' });
+      const resolvers = requests[0]?.policy?.resolvers;
+      const resolved = typeof resolvers === 'function' ? resolvers() : resolvers;
+      expect(resolved?.slice(0, 4).map((resolver) => resolver.id)).toEqual([
+        'tool-select',
+        'agent-media-tools',
+        'structure',
+        'agent-media',
+      ]);
+    } finally {
+      await local.dispose();
+    }
   });
 
   it('persists a turn.ended wire record with the end reason and duration', async () => {
