@@ -29,6 +29,7 @@ document.querySelector('#app').style.cssText = 'height:100vh;display:flex';
 const app = createApp({ setup: () => () => shown.value ? h(ConversationPane, { sessionId: sessionId.value, status, mobile: mobile.value, working: active.value, style: 'height:100%;width:100%' }) : null });
 app.provide(IconResolverKey, name => getIcon(name)?.component);
 app.provide(ResolveImageKey, src => imageResolver(src));
+window.__setImageResolver = fn => { imageResolver = fn; globalThis.__resolveImageUrl = fn; };
 app.use(createPinia());
 app.use(i18n);
 app.mount('#app');

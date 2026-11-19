@@ -56,9 +56,19 @@ async function userWheel(probe, deltaY) {
   await frame();
 }
 
-function svgImage() {
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="320"><rect width="640" height="320" fill="#88aaff"/></svg>';
-  return `data:image/svg+xml;base64,${btoa(svg)}`;
+const pngCache = new Map();
+function pngImage(width = 640, height = 320, color = '#88aaff') {
+  const key = `${width}x${height}${color}`;
+  if (!pngCache.has(key)) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, width, height);
+    pngCache.set(key, canvas.toDataURL('image/png'));
+  }
+  return pngCache.get(key);
 }
 
 function codeBlock(lang, lines, tag) {
@@ -73,9 +83,14 @@ function answer(i) {
     Array.from({ length: 4 }, (_, j) => `Paragraph ${j}: the result stays readable while surrounding content changes height.`).join('\n\n'),
     i % 3 === 0 ? codeBlock('ts', 80, `long_${i}`) : '',
     `| Name | Value |\n| --- | --- |\n| sample | ${i} |\n| other | ${i * 2} |`,
-    i % 4 === 0 ? `![chart ${i}](${svgImage()})` : '',
+    i % 4 === 0 ? `![chart ${i}](${pngImage()})` : '',
     `END_${i}`,
   ].filter(Boolean).join('\n\n');
+}
+
+function writeTools(id) {
+  if (fileChangeCount === 0) return [{ id: `${id}-tool`, name: 'read', arg: JSON.stringify({ path: `src/${id}.ts` }), status: 'ok', output: ['Read file'] }];
+  return Array.from({ length: fileChangeCount }, (_, k) => ({ id: `${id}-tool-${k}`, name: 'write', arg: JSON.stringify({ path: `src/feature/file_${k}.ts` }), status: 'ok', output: ['Wrote file'] }));
 }
 
 function fixture(session, count, start = 0) {
@@ -88,7 +103,7 @@ function fixture(session, count, start = 0) {
     return {
       id: `${session}-${i}`, sessionId: session, role: 'assistant', no: n, daemonTurnId: n, daemonTurnState: 'completed',
       text: answer(i), thinking: 'Retained reasoning for this answer.',
-      tools: [{ id: `${session}-tool-${i}`, name: 'write', arg: JSON.stringify({ path: `src/item_${i}.ts` }), status: 'ok', output: ['Wrote file'] }],
+      tools: writeTools(`${session}-${i}`),
     };
   });
 }
@@ -100,7 +115,7 @@ function streamingChunks() {
     Array.from({ length: 6 }, (_, j) => `Streaming paragraph ${j}: ${'tokens arrive and the layout grows '.repeat(3)}`).join('\n\n'),
     codeBlock('ts', 80, 'stream_long'),
     `| Step | Value |\n| --- | --- |\n| one | 1 |\n| two | 2 |`,
-    `![streamed](${svgImage()})`,
+    '![streamed](assets/streamed.png)',
     codeBlock('py', 10, 'stream_b'),
     'STREAM_END',
   ].join('\n\n');
@@ -174,7 +189,7 @@ async function stream(probe) {
   phases.stream = probe.report();
   probe.reset();
   active.value = false;
-  setLastText(turns.value.at(-1).text, { daemonTurnState: 'completed' });
+  setLastText(turns.value.at(-1).text, { daemonTurnState: 'completed', tools: writeTools(turns.value.at(-1).id) });
   await sleep(1800);
   phases.settle = probe.report();
   return phases;
@@ -215,6 +230,89 @@ async function scenarioTurnDiffOnOpen(probe) {
   return { probe: probe.report(), anchor: anchor?.label, anchorDrift: drift(series) };
 }
 
+function textEl(text) {
+  return [...pane().querySelectorAll('.paragraph-node, p')].find(el => el.textContent.startsWith(text)) ?? null;
+}
+
+function heavyDoc() {
+  return ['Heavy answer with many code blocks.', ...Array.from({ length: 34 }, (_, k) => `Block ${k} explanation.\n\n${codeBlock('ts', 3, `heavy_${k}`)}`), 'HEAVY_END'].join('\n\n');
+}
+
+async function scenarioStreamEndRead(probe, name, doc, marker) {
+  fileChangeCount = 3;
+  fileChangeDelay = 300;
+  await openSession(name, 20, { streaming: true });
+  for (let i = 0; i < doc.length; i += 160) {
+    setLastText(doc.slice(0, i + 160));
+    await sleep(30);
+  }
+  setLastText(doc);
+  await sleep(600);
+  const el = textEl(marker);
+  assert(el, `marker ${marker} missing`);
+  await userWheel(probe, offsetOf(el) - pane().clientHeight * 0.4);
+  await sleep(500);
+  const before = offsetOf(textEl(marker));
+  probe.reset();
+  active.value = false;
+  setLastText(doc, { daemonTurnState: 'completed', tools: writeTools(turns.value.at(-1).id) });
+  const series = await trackFrames(() => {
+    const e = textEl(marker);
+    return e ? offsetOf(e) - before : null;
+  }, 1500);
+  return { probe: probe.report(), elementDrift: drift(series) };
+}
+
+function mediaDoc(tag) {
+  return [
+    `## Media ${tag}`,
+    'Intro paragraph before the diagram.',
+    '```mermaid\ngraph TD\n  A[Start] --> B{Check}\n  B -->|yes| C[Done]\n  B -->|no| D[Retry]\n  D --> B\n  C --> E[Report]\n```',
+    'Paragraph between the diagram and the image.',
+    `![local chart](assets/${tag}-chart.png)`,
+    'Paragraph after the local image.',
+    `![remote chart](${pngImage()})`,
+    `MEDIA_END_${tag}`,
+    ...Array.from({ length: 14 }, (_, k) => `Trailing paragraph ${k} keeps reading content below the media.`),
+  ].join('\n\n');
+}
+
+function mediaFixture(session, count) {
+  const list = fixture(session, count);
+  list[list.length - 1] = { ...list.at(-1), text: mediaDoc(session), tools: [] };
+  return list;
+}
+
+let imageDelay = 50;
+
+async function scenarioMediaOpen(probe) {
+  fileChangeCount = 0;
+  imageDelay = 900;
+  const media = mediaFixture('st-media', 20);
+  const marker = 'MEDIA_END_st-media';
+  const visit = async (first) => {
+    sessionId.value = 'st-media';
+    turns.value = media;
+    await until(() => turnEl('st-media-19') && textEl(marker) && (!first || distance() < 2), 'media session');
+    if (first) await userWheel(probe, offsetOf(textEl(marker)) - pane().clientHeight * 0.6);
+    await frame();
+    const before = offsetOf(textEl(marker));
+    probe.reset();
+    const series = await trackFrames(() => {
+      const e = textEl(marker);
+      return e ? offsetOf(e) - before : null;
+    }, 1500);
+    return { probe: probe.report(), elementDrift: drift(series) };
+  };
+  const first = await visit(true);
+  sessionId.value = 'st-media-other';
+  turns.value = fixture('st-media-other', 6);
+  await sleep(800);
+  const second = await visit(false);
+  imageDelay = 50;
+  return { first, second };
+}
+
 async function scenarioLoadOlder(probe) {
   fileChangeCount = 0;
   timing.olderDelayMs = 600;
@@ -242,7 +340,7 @@ async function scenarioSessionSwitch(probe) {
   for (let i = 0; i < 6; i++) await userWheel(probe, -1500);
   await sleep(600);
   const anchor = readingElement();
-  const turnId = anchor?.closest('[data-turn-id]')?.dataset.turnId;
+  const turnId = anchor?.closest('[data-turn-id]')?.dataset.turnId ?? readingAnchor()?.id;
   assert(turnId, 'No anchor turn in session A');
   const before = offsetOf(turnEl(turnId));
   await openSession('st-b', 60);
@@ -350,10 +448,17 @@ async function scenarioFastScroll(probe) {
   return { probe: probe.report() };
 }
 
-window.runStability = async () => {
+window.runStability = async (only = '') => {
+  window.__setImageResolver(async src => {
+    if (!src.startsWith('assets/')) return src;
+    await sleep(imageDelay);
+    return pngImage(480, 360, '#ffaa66');
+  });
+  const selected = only ? new Set(only.split(',')) : null;
   const probe = createStabilityProbe(pane(), { placeholderSelector: PLACEHOLDER });
   const results = {};
   const run = async (name, fn) => {
+    if (selected && !selected.has(name)) return;
     try { results[name] = await fn(); }
     catch (error) { results[name] = { error: String(error?.message ?? error) }; }
   };
@@ -362,6 +467,9 @@ window.runStability = async () => {
     await run('readAboveStream', () => scenarioReadAboveStream(probe));
     await run('turnDiffOnOpen', () => scenarioTurnDiffOnOpen(probe));
     await run('loadOlder', () => scenarioLoadOlder(probe));
+    await run('streamEndCode', () => scenarioStreamEndRead(probe, 'st-code', streamingChunks().at(-1), 'Streaming paragraph 3'));
+    await run('streamEndHeavy', () => scenarioStreamEndRead(probe, 'st-heavy', heavyDoc(), 'Block 20 explanation.'));
+    await run('mediaOpen', () => scenarioMediaOpen(probe));
     await run('sessionSwitch', () => scenarioSessionSwitch(probe));
     await run('disclosure', () => scenarioDisclosure(probe));
     await run('tocJump', () => scenarioTocJump(probe));
