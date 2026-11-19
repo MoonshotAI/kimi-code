@@ -10,12 +10,13 @@ import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import type { WireRecord } from '#/wire/record';
 import type { TestAgentContext } from '../../harness';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolExecutorService, type AgentToolHook } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { BashInput } from '#/agent/tools/os/bash/bash';
 import type { SubagentToolInput } from '#/agent/tools/agent/agent';
 import {
+  composeToolExecutorHooks,
   memoryOutputStore,
   ToolExecutor as HandlerToolExecutor,
   type LegacyToolAgentContext,
@@ -46,7 +47,7 @@ export function startBashTask(ctx: TestAgentContext, args: BashInput) {
     id: toolCallId,
     name: 'Bash',
     arguments: JSON.stringify(args),
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
 }
 
 export function startAgentTask(ctx: TestAgentContext, args: SubagentToolInput) {
@@ -56,7 +57,7 @@ export function startAgentTask(ctx: TestAgentContext, args: SubagentToolInput) {
     id: `agent-task-${String(++agentTaskSequence)}`,
     name: 'Agent',
     arguments: JSON.stringify(args),
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
 }
 
 let loopTaskSequence = 0;
@@ -207,7 +208,13 @@ export function createTaskChannel(
     : options.persistence ?? createAgentTaskPersistence(`/tmp/kimi-bash-task-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const store: ToolOutputStore = persistence ?? memoryOutputStore();
   const handlers = new Map<string, ToolExecutionHandler>();
-  const raw = new HandlerToolExecutor<LegacyToolAgentContext>([], { outputStore: store });
+  const hooks: AgentToolHook[] = [];
+  const raw = new HandlerToolExecutor<LegacyToolAgentContext>([], {
+    outputStore: store,
+    get hook() {
+      return composeToolExecutorHooks(hooks);
+    },
+  });
   const reduced = new AgentTaskService('main');
   const history = {
     _serviceBrand: undefined,
@@ -224,7 +231,15 @@ export function createTaskChannel(
     release: (taskId: string) => {
       handlers.delete(taskId);
     },
-    registerHook: () => ({ dispose: () => {} }),
+    registerHook: (hook: AgentToolHook) => {
+      hooks.push(hook);
+      return {
+        dispose: () => {
+          const index = hooks.indexOf(hook);
+          if (index >= 0) hooks.splice(index, 1);
+        },
+      };
+    },
     registerLegacyStarting: () => ({ dispose: () => {} }),
     recordDupType: () => {},
   } as unknown as IAgentToolExecutorService;
@@ -465,7 +480,7 @@ export async function startControlledTask(
     id: toolCallId,
     name: 'ControlledTask',
     arguments: '{}',
-  }, { turnId: 0 });
+  }, { origin: 'loop', turnId: 0 });
   channel.handlers.set(handler.taskId, handler);
   for (let attempt = 0; attempt < 50 && handler.snapshot().fields['task'] === undefined; attempt++) {
     await Promise.resolve();

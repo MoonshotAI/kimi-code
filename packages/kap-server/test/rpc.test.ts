@@ -1,9 +1,5 @@
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import {
+  IEnvironmentService,
   ErrorCodes,
   IAgentGoalService,
   IAgentLifecycleService,
@@ -23,6 +19,10 @@ import {
   IWorkspaceService,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type {
   AgentEnvironmentBindingSnapshot,
   ServiceIdentifier,

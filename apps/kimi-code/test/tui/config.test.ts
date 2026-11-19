@@ -12,6 +12,7 @@ import {
   parseTuiConfig,
   renderTuiConfig,
   removeLegacySurveySetting,
+  resolveAnimationFrameRate,
   resolveTuiMode,
   saveTuiConfig,
   TuiConfigParseError,
@@ -560,6 +561,53 @@ mermaid = "${value}"
   });
 });
 
+describe('TUI config follow_up_behavior', () => {
+  it('leaves follow_up_behavior unset when the key is omitted', () => {
+    expect(parseTuiConfig(`theme = "dark"`).followUpBehavior).toBeUndefined();
+  });
+
+  it('parses "queue" and "steer"', () => {
+    expect(parseTuiConfig(`follow_up_behavior = "queue"`).followUpBehavior).toBe('queue');
+    expect(parseTuiConfig(`follow_up_behavior = "steer"`).followUpBehavior).toBe('steer');
+  });
+
+  it('warns and leaves unknown values unset without failing the file', () => {
+    const warnings: string[] = [];
+    for (const [value, shown] of [['"fast"', 'fast'], ['1', '1']] as const) {
+      warnings.length = 0;
+      const config = parseTuiConfig(
+        `
+theme = "dark"
+follow_up_behavior = ${value}
+`,
+        (message) => warnings.push(message),
+      );
+
+      expect(config.followUpBehavior).toBeUndefined();
+      expect(config.theme).toBe('dark');
+      expect(warnings).toEqual([`[tui.toml] ignoring unknown follow_up_behavior value: ${shown}`]);
+    }
+  });
+
+  it('writes the commented default line into a freshly created config', async () => {
+    await loadTuiConfig(filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('\n# follow_up_behavior = "queue" # "queue" | "steer"\n');
+    expect(text).not.toMatch(/^follow_up_behavior/m);
+    expect((await loadTuiConfig(filePath)).followUpBehavior).toBeUndefined();
+  });
+
+  it.each(['queue', 'steer'] as const)('writes a live %s line once chosen and round-trips it', async (value) => {
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, followUpBehavior: value }, filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain(`\nfollow_up_behavior = "${value}" # "queue" | "steer"\n`);
+    expect(text).not.toContain('# follow_up_behavior');
+    expect((await loadTuiConfig(filePath)).followUpBehavior).toBe(value);
+  });
+});
+
 describe('TUI config tui_mode', () => {
   it('leaves tuiMode undefined when omitted so unrelated saves never persist regular', async () => {
     const parsed = parseTuiConfig(`theme = "dark"`);
@@ -764,5 +812,34 @@ describe('resolveTuiMode', () => {
       config: 'fullscreen',
       overriddenByEnv: true,
     });
+  });
+});
+
+describe('resolveAnimationFrameRate', () => {
+  it.each([undefined, '', '   '])('keeps the default frame rate when KIMI_CODE_TUI_ANIMATION_FPS is %j', (value) => {
+    expect(resolveAnimationFrameRate({ KIMI_CODE_TUI_ANIMATION_FPS: value })).toEqual({});
+  });
+
+  it.each([
+    ['1', 1],
+    ['8', 8],
+    [' 30 ', 30],
+    ['60', 60],
+  ])('reads KIMI_CODE_TUI_ANIMATION_FPS=%j as %d frames per second', (value, fps) => {
+    expect(resolveAnimationFrameRate({ KIMI_CODE_TUI_ANIMATION_FPS: value })).toEqual({ fps });
+  });
+
+  it.each(['abc', '0', '61', '-5', '2.5', '1e1', '0x10', '+8'])(
+    'ignores KIMI_CODE_TUI_ANIMATION_FPS=%j and explains why',
+    (value) => {
+      expect(resolveAnimationFrameRate({ KIMI_CODE_TUI_ANIMATION_FPS: value })).toEqual({
+        warning: `Ignored KIMI_CODE_TUI_ANIMATION_FPS="${value}": expected a whole number from 1 to 60.`,
+      });
+    },
+  );
+
+  it('reads process.env by default', () => {
+    vi.stubEnv('KIMI_CODE_TUI_ANIMATION_FPS', '20');
+    expect(resolveAnimationFrameRate()).toEqual({ fps: 20 });
   });
 });

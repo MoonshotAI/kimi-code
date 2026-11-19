@@ -1,0 +1,72 @@
+import { computed, ref } from 'vue';
+
+export type ConfirmVariant = 'primary' | 'danger';
+
+export type ConfirmOptions = {
+  title: string;
+  message?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: ConfirmVariant;
+  initialFocus?: 'confirm' | 'cancel';
+  action?: () => unknown;
+};
+
+type ConfirmRequest = ConfirmOptions & {
+  seq: number;
+  resolve: (ok: boolean) => void;
+  reject: (err: unknown) => void;
+};
+
+const current = ref<ConfirmRequest | null>(null);
+const busy = ref(false);
+const isConfirmOpen = computed(() => current.value !== null);
+
+function settle(ok: boolean): void {
+  const req = current.value;
+  if (!req || busy.value) return;
+  current.value = null;
+  req.resolve(ok);
+}
+
+async function runAction(): Promise<void> {
+  const req = current.value;
+  if (!req || busy.value) return;
+  if (!req.action) {
+    settle(true);
+    return;
+  }
+  busy.value = true;
+  try {
+    await req.action();
+    if (current.value === req) current.value = null;
+    req.resolve(true);
+  } catch (error) {
+    if (current.value === req) current.value = null;
+    req.reject(error);
+  } finally {
+    busy.value = false;
+  }
+}
+
+let confirmSeq = 0;
+
+function confirm(options: ConfirmOptions): Promise<boolean> {
+  if (busy.value) return Promise.resolve(false);
+  if (current.value) settle(false);
+  return new Promise<boolean>((resolve, reject) => {
+    confirmSeq += 1;
+    current.value = { ...options, seq: confirmSeq, resolve, reject };
+  });
+}
+
+export function useConfirmDialog(): {
+  current: typeof current;
+  busy: typeof busy;
+  isConfirmOpen: typeof isConfirmOpen;
+  confirm: typeof confirm;
+  settle: typeof settle;
+  runAction: typeof runAction;
+} {
+  return { current, busy, isConfirmOpen, confirm, settle, runAction };
+}

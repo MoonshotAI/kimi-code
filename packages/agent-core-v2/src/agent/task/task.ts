@@ -1,9 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type {
-  AgentTaskInfo,
-  AgentTaskInfoBase,
-  AgentTaskStatus,
-} from './types';
+import type { Event } from '#/_base/event';
+import type { AgentTaskInfo } from './types';
 
 export { AgentTaskPersistence } from './persist';
 export type {
@@ -45,6 +42,7 @@ export interface AgentTaskNotificationContext {
 
 export interface IAgentTaskService {
   readonly _serviceBrand: undefined;
+  readonly onDidChangeTask: Event<AgentTaskInfo>;
   getTask(taskId: string): AgentTaskInfo | undefined;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];
   getOutputSnapshot(

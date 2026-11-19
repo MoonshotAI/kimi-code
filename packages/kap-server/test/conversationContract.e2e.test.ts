@@ -258,8 +258,14 @@ function replayFrames(frames: readonly any[]): any[] {
   return turns;
 }
 
-const getSessionFacts = (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> =>
-  rest(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}`);
+const getSessionFacts = async (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> => {
+  const session = await rest<{ activity: 'idle' | 'turn' | 'background'; pending_interaction?: string }>(
+    server,
+    base,
+    `/api/v1/sessions/${encodeURIComponent(sid)}`,
+  );
+  return { busy: session.activity !== 'idle', pending_interaction: session.pending_interaction };
+};
 
 async function createSession(server: RunningServer, base: string): Promise<string> {
   const data = await rest<{ id: string }>(server, base, '/api/v1/sessions', {
@@ -339,8 +345,8 @@ async function subscribeConversation(
     frames.push(frame);
     if (CONVERSATION_FRAME_TYPES.has(frame.type) && frame.agent_id === agentId) conversation.push(frame);
     if (frame.type === 'task') tasks.push(frame);
-    if (frame.type === 'agent' && frame.agent_id === MAIN_AGENT_ID) agents.push(frame);
-    if (frame.type === 'todo' && frame.agent_id === MAIN_AGENT_ID) todos.push(frame);
+    if (frame.type === 'agent' && frame.agent_id === agentId) agents.push(frame);
+    if (frame.type === 'todo' && frame.agent_id === agentId) todos.push(frame);
   });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', () => {
@@ -531,7 +537,7 @@ describe('conversation contract e2e', () => {
     const channel = await subscribeConversation(server!, sid);
     try {
       const steer = await submitPrompt(server!, base, sid, 'steered request');
-      await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${steer.prompt_id}:steer`, { method: 'POST', body: {} });
+      await rest(server!, base, `/api/v1/sessions/${sid}/prompts:steer`, { method: 'POST', body: { prompt_ids: [steer.prompt_id] } });
       await idle(server!, base, sid);
       const before = await getTurns(server!, base, sid);
       expect(before.turns).toHaveLength(2);
@@ -746,7 +752,7 @@ describe('conversation contract e2e', () => {
       id: 'call_s9_watch',
       name: 'Bash',
       arguments: JSON.stringify({ command: "printf '  VITE ready\\n'", description: 'npm run dev', run_in_background: true }),
-    }, { turnId: 0 });
+    }, { origin: 'loop', turnId: 0 });
     await handler;
     await until('background output', () => handler.output().preview.includes('VITE ready'));
     const taskId = handler.taskId;
@@ -793,7 +799,7 @@ describe('conversation contract e2e', () => {
       id: 'call_s9_child_watch',
       name: 'Bash',
       arguments: JSON.stringify({ command: "printf ' RUN  v3.2.4\\n'", description: 'pnpm test --watch', run_in_background: true }),
-    }, { turnId: 0 });
+    }, { origin: 'loop', turnId: 0 });
     await childHandler;
     await until('child output', () => childHandler.output().preview.includes('RUN  v3.2.4'));
     const childTaskId = childHandler.taskId;
@@ -889,4 +895,109 @@ describe('conversation contract e2e', () => {
       'recall the token',
     ]);
   }, 60000);
+
+  it('S11: sessions/{id}:cancel stops a running turn, is idempotent once idle, and stops background tasks when include_background is true', async () => {
+    await boot([
+      {
+        match: (body) => body.includes('slow turn'),
+        respond: () => sseTextChunks('part-1 ', 'part-2'),
+        pause: { afterEvents: 1, ms: 5000 },
+      },
+    ]);
+    const created = await rest<{ id: string; cwd: string; activity: string }>(server!, base, '/api/v1/sessions', {
+      method: 'POST',
+      body: { cwd: '/tmp' },
+    });
+    expect(created.cwd).toBe('/tmp');
+    expect(created.activity).toBe('idle');
+    const sid = created.id;
+
+    const channel = await subscribeConversation(server!, sid);
+    await submitPrompt(server!, base, sid, 'slow turn');
+    await until('running turn started', () => channel.turns().some((t) => t.status === 'running'));
+    const turnId = channel.turns().find((t) => t.status === 'running')!.turn_id as string;
+
+    const first = await rest<{ cancelled: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
+      { method: 'POST', body: {} },
+    );
+    expect(first).toEqual({ cancelled: true });
+    await until(
+      'turn ended as interrupted',
+      () => channel.turns().find((t) => t.turn_id === turnId)?.status === 'ended',
+    );
+    expect(channel.turns().find((t) => t.turn_id === turnId)).toMatchObject({
+      status: 'ended',
+      outcome: 'interrupted',
+      end_reason: 'user_cancelled',
+    });
+
+    const second = await rest<{ cancelled: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
+      { method: 'POST', body: {} },
+    );
+    expect(second).toEqual({ cancelled: false });
+
+    const sessionAfter = await rest<{ activity: string; last_turn_outcome?: string }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}`,
+    );
+    expect(sessionAfter.activity).toBe('idle');
+    expect(sessionAfter.last_turn_outcome).toBe('interrupted');
+
+    const main = getLiveSessionById(server!.core.accessor, sid)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf(MAIN_AGENT_ID)!;
+    main.accessor.get(IAgentPermissionModeService).setMode('yolo');
+    const bgHandler = main.accessor.get(IAgentToolExecutorService).executor.execute(
+      {
+        type: 'function',
+        id: 'call_bg_1',
+        name: 'Bash',
+        arguments: JSON.stringify({
+          command: 'sleep 10',
+          description: 'long sleep',
+          run_in_background: true,
+        }),
+      },
+      { origin: 'loop', turnId: 1 },
+    );
+    await bgHandler;
+    const bgTaskId = bgHandler.taskId;
+    await until(
+      'background task running',
+      () => channel.tasks.some((t) => t.task_id === bgTaskId && t.status === 'running' && t.detached === true),
+    );
+
+    const keepBg = await rest<{ cancelled: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
+      { method: 'POST', body: {} },
+    );
+    expect(keepBg).toEqual({ cancelled: false });
+    expect(
+      channel.tasks.filter((t) => t.task_id === bgTaskId).at(-1)?.status,
+    ).toBe('running');
+
+    const stopBg = await rest<{ cancelled: boolean }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}:cancel`,
+      { method: 'POST', body: { include_background: true } },
+    );
+    expect(stopBg).toEqual({ cancelled: true });
+    await until(
+      'background task stopped',
+      () => channel.tasks.filter((t) => t.task_id === bgTaskId).at(-1)?.status === 'ended',
+    );
+    expect(channel.tasks.filter((t) => t.task_id === bgTaskId).at(-1)?.outcome).toBe('killed');
+
+    channel.close();
+  });
 }, 90000);

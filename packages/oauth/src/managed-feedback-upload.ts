@@ -59,9 +59,18 @@ export function kimiCodeFeedbackUploadCompleteUrl(baseUrl?: string): string {
 export async function fetchCreateFeedbackUploadUrl(
   accessToken: string,
   body: CreateFeedbackUploadUrlBody,
-  opts: { timeoutMs?: number; baseUrl?: string } = {},
+  opts: {
+    timeoutMs?: number;
+    baseUrl?: string;
+    feedbackUrl?: string;
+    headers?: Readonly<Record<string, string>>;
+  } = {},
 ): Promise<FetchCreateFeedbackUploadUrlResult> {
-  const result = await postJson(kimiCodeFeedbackUploadUrl(opts.baseUrl), accessToken, body, opts);
+  const url =
+    opts.feedbackUrl === undefined
+      ? kimiCodeFeedbackUploadUrl(opts.baseUrl)
+      : `${opts.feedbackUrl.replace(/\/+$/, '')}/upload_url`;
+  const result = await postJson(url, accessToken, body, opts);
   if (result.kind === 'error') return result;
   const parsed = readUpload(result.payload);
   if (parsed === undefined) {
@@ -73,9 +82,18 @@ export async function fetchCreateFeedbackUploadUrl(
 export async function fetchCompleteFeedbackUpload(
   accessToken: string,
   body: CompleteFeedbackUploadBody,
-  opts: { timeoutMs?: number; baseUrl?: string } = {},
+  opts: {
+    timeoutMs?: number;
+    baseUrl?: string;
+    feedbackUrl?: string;
+    headers?: Readonly<Record<string, string>>;
+  } = {},
 ): Promise<FetchCompleteFeedbackUploadResult> {
-  const result = await postJson(kimiCodeFeedbackUploadCompleteUrl(opts.baseUrl), accessToken, body, opts);
+  const url =
+    opts.feedbackUrl === undefined
+      ? kimiCodeFeedbackUploadCompleteUrl(opts.baseUrl)
+      : `${opts.feedbackUrl.replace(/\/+$/, '')}/upload_complete`;
+  const result = await postJson(url, accessToken, body, opts);
   if (result.kind === 'error') return result;
   return { kind: 'ok' };
 }
@@ -84,7 +102,7 @@ async function postJson(
   url: string,
   accessToken: string,
   body: unknown,
-  opts: { timeoutMs?: number },
+  opts: { timeoutMs?: number; headers?: Readonly<Record<string, string>> },
 ): Promise<{ readonly kind: 'ok'; readonly payload: unknown } | FetchFeedbackUploadError> {
   const controller = new AbortController();
   const timer = setTimeout(() => {
@@ -94,6 +112,7 @@ async function postJson(
     const res = await fetch(url, {
       method: 'POST',
       headers: {
+        ...opts.headers,
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json',
         'Content-Type': 'application/json',

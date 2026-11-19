@@ -6,6 +6,66 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.6.3 (2026-11-17)
+
+### Bug Fixes
+
+- Fix duplicate output and a lingering loading spinner after foreground shell commands.
+- Fix background notifications incorrectly stopping Tower tasks.
+- Fix external Stop hooks not running after each completed turn.
+- Prevent restored background task notifications from starting model requests when sessions are resumed or forked.
+- Fix Windows WebBridge updates failing while the daemon is running.
+- Fix several known issues.
+
+## 2.6.2 (2026-11-14)
+
+### Features
+
+- Support optional `search_url` and `feedback_url` fields on custom registry (`api.json`) providers for `WebSearch` and `/feedback`.
+
+### Polish
+
+- Remove the text-only "No attachment" option from `/feedback` (text-only `/feedback` submissions are no longer available), show the current session's files before confirmation, and include session `request_id` metadata.
+
+### Bug Fixes
+
+- Fix multi-second loading delays when reopening long sessions with many tool calls.
+- Reject failed or unfinished Kimi media uploads instead of caching unusable file references.
+- Fix missing live subagent updates in the Swarm panel during execution.
+- web: Improved interactions and fixed known bugs.
+
+## 2.6.1 (2026-11-13)
+
+### Bug Fixes
+
+- Fix multi-second loading delays when reopening long sessions.
+- Fix long sessions stalling with empty replies instead of compacting when tool results include notes, errors, or timing headers.
+
+## 2.6.0 (2026-11-12)
+
+We recommend switching to fullscreen mode via `/settings -> TUI mode -> Fullscreen` (takes effect after restarting) for a better experience.
+
+### Features
+
+- Fold consecutive tool calls and thinking into summary lines in fullscreen mode and hide Activated skill cards for model-loaded skills; adjust folding in `/settings`, or set `tool_call_density = "ungrouped"` and `thinking = "ungrouped"` under `[transcript]` in `tui.toml` to keep the previous layout.
+- Include hidden and `.gitignore`-ignored paths by default in `@` file path completion, ranking non-ignored files first at equal match quality.
+- Keep same-name workspace skills selectable in a dedicated TUI Skills group, with directory, global, or built-in labels distinguishing their sources.
+- Support copying selected text with `Ctrl-C` or `Cmd-C` in fullscreen mode, and add a Copy on select toggle in `/settings`.
+- Persist user and local-project permission rules (in `config.toml` and trusted `.kimi-code/local.toml`) and apply them when sessions start, with `deny` taking precedence over `ask` and `allow`.
+- Add artifact missions in Tower with key-deliverable review and human acceptance, and show mission kinds in status and mission views.
+
+### Polish
+
+- Copy only to the system clipboard outside SSH and mosh instead of also sending OSC 52 through the terminal; set `KIMI_CODE_CLIPBOARD_OSC52=1` to keep the old behavior.
+- Allow `primary` as an ordinary `[secondary_model]` model alias; Tower reviewers now use the pool default instead of the primary model, so using the primary model requires selecting an explicit pool alias or setting `default_model`.
+- Add the `KIMI_CODE_TUI_ANIMATION_FPS` environment variable (an integer from `1` to `60`) to adjust the frame rate of in-progress title shimmer animations.
+
+### Bug Fixes
+
+- Apply `[[permission.rules]]` from `config.toml` when a session starts, including `deny`, `ask`, and `allow` rules in print mode.
+- Follow the current primary directory for default local workdirs after a primary swap while keeping tools, project configuration, and session indexes in sync; pass an explicit `environmentCwd` to retain pinned-directory behavior.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.5.3 (2026-11-10)
 
 ### Features

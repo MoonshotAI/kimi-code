@@ -7,14 +7,20 @@ import {
   BUDGET_THINKING_EFFORTS,
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
-} from '#human/llm/builtin/protocol/anthropic/legalize';
+} from '@moonshot-ai/core/llm/builtin/protocol/anthropic/legalize';
+import {
+  bedrockWireProtocolOf,
+  inferBedrockProtocol,
+  resolveBedrockBaseUrl,
+  stripBedrockInferenceProfilePrefix,
+} from '@moonshot-ai/core/llm/builtin/provider/bedrock/routing';
 
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
 import { ProtocolSchema, type Protocol } from '../protocol/protocol';
-import type { ProviderConfig } from '../provider/provider';
+import type { IProviderService, ProviderConfig, ProvidersSection } from '../provider/provider';
 import { explainProviderEndpoint, getProviderDefinition } from '../provider/provider-definition';
 
-import type { ModelRecord } from './model';
+import type { IModelService, ModelRecord, ModelsSection } from './model';
 import type { ResolvedModelAuthMaterial } from './model.types';
 import { drivesThinkingThroughTraits } from './thinking';
 
@@ -45,7 +51,11 @@ export function resolveModelAuthMaterial(args: {
   const providerEndpoint =
     providerAuthType === undefined
       ? {}
-      : explainProviderEndpoint(providerAuthType, args.provider?.env ?? {});
+      : explainProviderEndpoint(
+          providerAuthType,
+          args.provider?.env ?? {},
+          resolveModelProtocol(args.model, args.provider),
+        );
   const declared = declaredProviderCredential(args.provider ?? {}, args.providerName);
   if (declared.kind === 'conflict') {
     throw new Error2(CONFIG_INVALID_ERROR_CODE, declared.message);
@@ -70,6 +80,17 @@ export function resolveModelAuthMaterial(args: {
     return {
       oauth: args.provider.oauth,
       oauthProviderKey: args.model.providerId ?? args.model.provider,
+    };
+  }
+  if (args.provider?.type === 'bedrock') {
+    const env = args.provider.env ?? {};
+    const region = nonEmpty(env['AWS_REGION']) ?? nonEmpty(env['AWS_DEFAULT_REGION']);
+    const profile = nonEmpty(env['AWS_PROFILE']);
+    return {
+      aws: {
+        region: region ?? process.env['AWS_REGION'] ?? process.env['AWS_DEFAULT_REGION'],
+        profile: profile ?? process.env['AWS_PROFILE'],
+      },
     };
   }
   return {};
@@ -99,7 +120,11 @@ export function effectiveModelConfig(
 }
 
 export function withAnthropicProfile(model: ModelRecord, providerType?: string): ModelRecord {
-  const wireName = model.name ?? model.model;
+  const rawWireName = model.name ?? model.model;
+  const wireName =
+    providerType === 'bedrock' && rawWireName !== undefined
+      ? stripBedrockInferenceProfilePrefix(rawWireName)
+      : rawWireName;
   const protocol = model.protocol ?? providerType;
   const profile =
     wireName === undefined
@@ -154,6 +179,11 @@ export function resolveModelProtocol(
     }
     const definition = getProviderDefinition(providerType);
     if (definition !== undefined) {
+      if (providerType === 'bedrock') {
+        const wireName = model.name ?? model.model;
+        const inferred = wireName === undefined ? undefined : inferBedrockProtocol(wireName);
+        if (inferred !== undefined) return inferred;
+      }
       return definition.baseProtocol;
     }
   }
@@ -163,6 +193,7 @@ export function resolveModelProtocol(
 export function resolveEndpointBaseUrl(
   model: ModelRecord,
   provider: ProviderConfig,
+  providerId?: string,
 ): string | undefined {
   const fromModel = nonEmpty(model.baseUrl);
   if (fromModel !== undefined) {
@@ -174,8 +205,29 @@ export function resolveEndpointBaseUrl(
   }
   const endpointType = provider.type ?? model.protocol;
   const endpoint =
-    endpointType === undefined ? {} : explainProviderEndpoint(endpointType, provider.env ?? {});
-  return nonEmpty(endpoint.baseUrl);
+    endpointType === undefined
+      ? {}
+      : explainProviderEndpoint(endpointType, provider.env ?? {}, resolveModelProtocol(model, provider));
+  const fromEndpoint = nonEmpty(endpoint.baseUrl);
+  if (fromEndpoint !== undefined) return fromEndpoint;
+  if (provider.type === 'bedrock') {
+    const wireName = nonEmpty(model.name ?? model.model);
+    const protocol =
+      bedrockWireProtocolOf(model.protocol) ??
+      (wireName === undefined ? undefined : inferBedrockProtocol(wireName)) ??
+      'openai';
+    const env = { ...process.env, ...provider.env };
+    const baseUrl = resolveBedrockBaseUrl(protocol, env);
+    if (baseUrl === undefined) {
+      const id = providerId ?? 'bedrock';
+      throw new Error2(
+        CONFIG_INVALID_ERROR_CODE,
+        `Provider "${id}" could not resolve an AWS region to build the endpoint URL. Set AWS_REGION (or AWS_DEFAULT_REGION) in the provider's [providers.${id}.env] sub-table, or export it in the environment.`,
+      );
+    }
+    return baseUrl;
+  }
+  return undefined;
 }
 
 export type ModelReadyFailureReason =
@@ -224,6 +276,38 @@ export function resolveModelForReady(
     return { resolved: false, reason: 'unresolvable' };
   }
   return { resolved: true };
+}
+
+export function resolveActiveModelProvider(
+  modelAlias: string | undefined,
+  models: Pick<IModelService, 'get'> & Partial<Pick<IModelService, 'getDefaultModel'>>,
+  providers: Pick<IProviderService, 'get'> & Partial<Pick<IProviderService, 'getDefaultProvider'>>,
+  config?: { get<T>(domain: string): T | undefined },
+):
+  | {
+      readonly modelId: string;
+      readonly model: ModelRecord;
+      readonly providerName: string;
+      readonly provider: ProviderConfig;
+    }
+  | undefined {
+  const modelId =
+    nonEmpty(modelAlias) ??
+    nonEmpty(models.getDefaultModel?.()) ??
+    nonEmpty(config?.get<string>('defaultModel'));
+  if (modelId === undefined) return undefined;
+  const model = models.get(modelId) ?? config?.get<ModelsSection>('models')?.[modelId];
+  if (model === undefined) return undefined;
+  const providerName =
+    nonEmpty(model.providerId) ??
+    nonEmpty(model.provider) ??
+    nonEmpty(providers.getDefaultProvider?.()) ??
+    nonEmpty(config?.get<string>('defaultProvider'));
+  if (providerName === undefined) return undefined;
+  const provider =
+    providers.get(providerName) ?? config?.get<ProvidersSection>('providers')?.[providerName];
+  if (provider === undefined) return undefined;
+  return { modelId, model, providerName, provider };
 }
 
 export function nonEmpty(value: string | undefined): string | undefined {

@@ -9,11 +9,6 @@ interface GoalCompletionStats {
   readonly wallClockMs: number;
 }
 
-/**
- * Deterministic goal-completion text rendered by the TUI when the model marks a
- * goal `complete`. It is built from the final snapshot, so the figures
- * (turns / tokens / time) are exact and do not depend on model prose.
- */
 export function buildGoalCompletionMessage(goal: GoalSnapshot): string {
   return buildGoalCompletionMessageFromStats(goal);
 }

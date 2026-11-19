@@ -63,6 +63,14 @@
       workspacePaths = [
         ./packages/acp-server
         ./packages/agent-core-v2
+        ./packages/app-client
+        ./packages/app-components
+        ./packages/app-composer
+        ./packages/app-core
+        ./packages/app-i18n
+        ./packages/app-markdown
+        ./packages/app-ui
+        ./packages/core
         ./packages/kap-server
         ./packages/klient
         ./packages/migration-legacy
@@ -75,6 +83,8 @@
         ./packages/session-import
         ./packages/telemetry
         ./packages/tree-sitter-bash
+        ./packages/vite-preset
+        ./apps/desktop
         ./apps/kimi-code
         ./apps/vscode
         ./apps/vis
@@ -86,6 +96,14 @@
       workspaceNames = [
         "@moonshot-ai/acp-server"
         "@moonshot-ai/agent-core-v2"
+        "@moonshot-ai/app-client"
+        "@moonshot-ai/app-components"
+        "@moonshot-ai/app-composer"
+        "@moonshot-ai/app-core"
+        "@moonshot-ai/app-i18n"
+        "@moonshot-ai/app-markdown"
+        "@moonshot-ai/app-ui"
+        "@moonshot-ai/core"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/minidb"
@@ -98,6 +116,8 @@
         "@moonshot-ai/session-import"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/tree-sitter-bash"
+        "@moonshot-ai/vite-preset"
+        "kimi-code-app"
         "@moonshot-ai/kimi-code"
         "kimi-code"
         "@moonshot-ai/vis"
@@ -134,11 +154,13 @@
               fileset = lib.fileset.unions (
                 [
                   ./build
+                  ./patches
                   ./.npmrc
                   ./.nvmrc
                   ./package.json
                   ./pnpm-lock.yaml
                   ./pnpm-workspace.yaml
+                  ./tsconfig.base.json
                   ./tsconfig.json
                   ./vitest.config.ts
                   ./LICENSE
@@ -153,7 +175,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 5;
-              hash = "sha256-Jo/qTBS8SwKNTmSnwTjxBjlwmJ6GpnfyzB6r0iiihSY=";
+              hash = "sha256-JiwS/wfwbQxWy0sR/AauFxE5aYOOCINqONAux2fU++8=";
             };
 
             nativeBuildInputs = [
@@ -191,10 +213,11 @@
                     "// runVerifyStep skipped in nix sandbox (sigtool lacks -dv)"
               ''}
               # The SEA blob step (scripts/native/02-sea-blob.mjs) embeds the
-              # Kimi web assets from apps/kimi-code/dist-web and fails if that
-              # directory is missing. The bundle is committed (synced from the
-              # code-app repo) — verify it is in place before producing the
-              # native executable.
+              # Kimi web assets from apps/kimi-code/dist-web. The bundle is not
+              # committed — build it from the desktop renderer's web variant,
+              # then verify it is in place before producing the native
+              # executable.
+              node apps/kimi-code/scripts/sync-web-dist.mjs
               node apps/kimi-code/scripts/check-web-assets.mjs
               pnpm --filter=@moonshot-ai/kimi-code run build:native:sea
               runHook postBuild

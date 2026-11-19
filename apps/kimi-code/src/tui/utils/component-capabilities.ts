@@ -2,10 +2,6 @@ export interface Expandable {
   setExpanded(expanded: boolean): void;
 }
 
-/**
- * An expandable component that can say whether ctrl+o would change what it
- * shows — content it keeps out of its collapsed form.
- */
 export interface HidesContent extends Expandable {
   hasHiddenContent(): boolean;
   isExpanded(): boolean;
@@ -60,7 +56,6 @@ function omitsExpandHint(obj: unknown): boolean {
   );
 }
 
-/** Whether an expandable component currently shows its expanded form. */
 export function isExpandedComponent(obj: unknown): boolean {
   return (
     isExpandable(obj) &&

@@ -15,11 +15,17 @@ import {
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
+  IConfigRegistry,
+  IConfigService,
   IEventService,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   ISessionActivityView,
+  ISessionContext,
+  ISessionIndex,
   ISessionManager,
+  ISessionMetadata,
+  IWorkspaceService,
   followSessionLifecycles,
   getLiveSessionById,
   resumeSessionById,
@@ -28,18 +34,22 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type {
   ConfigWarningItem,
+  HostChangedEvent,
   ModelCatalogRefreshChange,
   ModelCatalogRefreshFailure,
   ModelCatalogRetiredDefault,
   SessionCreatedEvent,
   SessionMetaUpdatedEvent,
   Event,
+  PushEvent,
 } from './events';
 import {
   configChangedEventSchema,
   modelCatalogChangedEventSchema,
 } from '../../../protocol/events-zod';
 import type { ConversationMessage } from '../../../protocol/conversation';
+import type { ConfigResponse } from '../../../protocol/rest-config';
+import { sessionSchema, type Session } from '../../../protocol/session';
 import type { InteractionEventMessage, InteractionOutcome } from '../../../protocol/interaction';
 import {
   approvalExpiresAt,
@@ -49,6 +59,8 @@ import {
 import { toWireQuestion } from '../../../protocol/question-wire';
 import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
+import { toConfigResponse } from '../../../routes/config';
+import { resolveSessionFacts, toWireSession, type SessionFacts, type SessionWireFields } from '../../../routes/sessions';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
 import type {
@@ -56,17 +68,12 @@ import type {
   ConversationService,
 } from '../../../services/conversation/conversationService';
 import { mapError } from '../../errors';
-import { ensureMainAgent } from '../../mainAgent';
+import { ensureMainAgent, MAIN_AGENT_ID } from '../../mainAgent';
 import { SessionAgentFeed } from './sessionAgentFeed';
 import { SessionTaskFeed } from './sessionTaskFeed';
 import { toTaskMessage } from './taskState';
 
-export interface EventEnvelope {
-  readonly type: string;
-  readonly session_id?: string;
-  readonly timestamp: string;
-  readonly payload: unknown;
-}
+export type EventEnvelope = PushEvent & { readonly event_created_at: string };
 
 export interface BroadcastLogger {
   warn(obj: unknown, msg: string): void;
@@ -113,7 +120,6 @@ interface WorkTracker {
   deferred?: SessionActivityState;
 }
 
-const GLOBAL_SESSION_ID = '__global__';
 const CONVERSATION_PAGE_TURNS = 10;
 
 function disposeSessionState(state: SessionState): void {
@@ -184,6 +190,13 @@ export class SessionEventBroadcaster {
     this.feedSubscription = opts.conversations.onDidCreateFeed((created) => {
       this.onFeedCreated(created);
     });
+  }
+
+  publishHostChanged(hosts: HostChangedEvent['hosts']): void {
+    this.enqueueGlobal('event.host.changed', () => ({
+      type: 'event.host.changed',
+      hosts,
+    }));
   }
 
   addGlobalTarget(target: BroadcastTarget): void {
@@ -480,13 +493,28 @@ export class SessionEventBroadcaster {
     agentId: string,
     frame: TaskEventMessage | AgentFeedMessage,
   ): void {
+    const ended = frame.type === 'agent' && frame.status === 'ended';
+    let checkEvict = false;
     for (const [target, agents] of state.targets) {
-      if (!agents.has(agentId)) continue;
+      const subscription = agents.get(agentId);
+      if (subscription === undefined) continue;
+      if (ended) {
+        subscription.conversation?.feed.flushPending();
+        releaseConversation(subscription);
+        if (agentId !== MAIN_AGENT_ID) {
+          agents.delete(agentId);
+          if (agents.size === 0) {
+            state.targets.delete(target);
+            checkEvict = true;
+          }
+        }
+      }
       try {
         target.send(frame);
       } catch {
       }
     }
+    if (checkEvict) this.evictDetachedSession(state.sessionId);
   }
 
   private trackWork(sessionId: string, session: ISessionScopeHandle): void {
@@ -531,16 +559,76 @@ export class SessionEventBroadcaster {
     this.enqueueWorkChanged(sessionId, deferred);
   }
 
+  private async sessionEvent(
+    change: 'created' | 'updated' | 'archived' | 'restored' | 'deleted',
+    sessionId: string,
+    candidate?: unknown,
+    patch?: { title?: string; lastPrompt?: string },
+    factsOverride?: SessionFacts,
+    eventTime?: number,
+  ): Promise<Event | undefined> {
+    const parsed = sessionSchema.safeParse(candidate);
+    let session: Session | undefined = parsed.success ? parsed.data : undefined;
+    if (session === undefined) {
+      let summary = candidate as (SessionWireFields & { cwd?: string }) | undefined;
+      if (summary === undefined) {
+        const live = getLiveSessionById(this.opts.core.accessor, sessionId);
+        if (live !== undefined) {
+          try {
+            const meta = await live.accessor.get(ISessionMetadata).read();
+            const ctx = live.accessor.get(ISessionContext);
+            summary = {
+              id: meta.id,
+              workspaceId: ctx.workspaceId,
+              cwd: ctx.cwd,
+              title: meta.title,
+              lastPrompt: meta.lastPrompt,
+              createdAt: meta.createdAt,
+              updatedAt: meta.updatedAt,
+              archived: meta.archived,
+              archivedAt: meta.archivedAt,
+              custom: meta.custom,
+            };
+          } catch {
+            summary = undefined;
+          }
+        }
+      }
+      summary ??= (await this.opts.core.accessor.get(ISessionIndex).get(sessionId)) as
+        | (SessionWireFields & { cwd?: string })
+        | undefined;
+      if (summary === undefined) return undefined;
+      const cwd = summary.cwd ?? (await this.opts.core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
+      if (cwd === undefined) return undefined;
+      session = toWireSession(summary, cwd, factsOverride ?? resolveSessionFacts(this.opts.core, sessionId));
+    }
+    if (change === 'archived') {
+      session = {
+        ...session,
+        archived: true,
+        archived_at:
+          session.archived_at ?? new Date(eventTime ?? Date.now()).toISOString(),
+        activity: 'idle',
+        pending_interaction: undefined,
+      };
+    } else if (change === 'restored') {
+      const { archived_at: _archivedAt, ...rest } = session;
+      session = { ...rest, archived: false };
+    }
+    if (patch?.title !== undefined) session = { ...session, title: patch.title };
+    if (patch?.lastPrompt !== undefined) session = { ...session, last_prompt: patch.lastPrompt };
+    return { type: 'session', change, session };
+  }
+
+  private async currentConfig(): Promise<ConfigResponse> {
+    const config = this.opts.core.accessor.get(IConfigService);
+    await config.ready;
+    return toConfigResponse(config.getAll(), this.opts.core.accessor.get(IConfigRegistry));
+  }
+
   private enqueueWorkChanged(sessionId: string, work: SessionActivityState): void {
-    this.enqueueGlobal('event.session.work_changed', () => ({
-      type: 'event.session.work_changed',
-      busy: work.busy,
-      main_turn_active: work.mainTurnActive,
-      pending_interaction: work.pendingInteraction,
-      last_turn_reason: work.lastTurnReason,
-      agentId: 'main',
-      sessionId,
-    }));
+    const snapshotFacts: SessionFacts = { ...work, live: true };
+    this.enqueueGlobal('session', () => this.sessionEvent('updated', sessionId, undefined, undefined, snapshotFacts));
   }
 
   private onCoreEvent(event: Event2<any>): void {
@@ -548,66 +636,53 @@ export class SessionEventBroadcaster {
     if (event.type === 'event.session.created') {
       const payload = sessionCreatedPayload(corePayload);
       if (payload === undefined) return;
-      this.enqueueGlobal(event.type, () => ({
-        type: 'event.session.created',
-        session: payload.session,
-        agentId: 'main',
-        sessionId: payload.sessionId,
-      }));
+      this.enqueueGlobal(event.type, () => this.sessionEvent('created', payload.sessionId, payload.session));
       return;
     }
     if (event.type === 'event.session.archived' || event.type === 'event.session.restored') {
       const payload = sessionLifecyclePayload(corePayload);
       if (payload === undefined) return;
-      const type = event.type;
-      this.enqueueGlobal(
-        type,
-        () => ({
-          type,
-          workspace_id: payload.workspaceId,
-          agentId: 'main',
-          sessionId: payload.sessionId,
-        }),
-        GLOBAL_SESSION_ID,
+      const change = event.type === 'event.session.archived' ? 'archived' : 'restored';
+      const eventTime = typeof (event as { readonly time?: unknown }).time === 'number'
+        ? ((event as { readonly time: number }).time)
+        : undefined;
+      this.enqueueGlobal(event.type, () =>
+        this.sessionEvent(change, payload.sessionId, payload.session, undefined, undefined, eventTime),
       );
       return;
     }
     if (event.type === 'event.session.deleted') {
       const payload = sessionLifecyclePayload(corePayload);
       if (payload === undefined) return;
-      this.enqueueGlobal(
-        event.type,
-        () => ({
-          type: 'event.session.deleted',
-          workspace_id: payload.workspaceId,
-          agentId: 'main',
-          sessionId: payload.sessionId,
-        }),
-        GLOBAL_SESSION_ID,
-      );
+      this.enqueueGlobal(event.type, () => this.sessionEvent('deleted', payload.sessionId, payload.session));
       return;
     }
     if (event.type === 'event.workspace.created' || event.type === 'event.workspace.updated') {
       const workspace = workspaceLifecyclePayload(corePayload);
       if (workspace === undefined) return;
-      const type = event.type;
-      this.enqueueGlobal(type, async () => ({
-        type,
+      const change = event.type === 'event.workspace.created' ? 'created' : 'updated';
+      this.enqueueGlobal(event.type, async () => ({
+        type: 'workspace',
+        change,
         workspace: await toWireWorkspace(this.opts.core, workspace),
-        agentId: 'main',
-        sessionId: GLOBAL_SESSION_ID,
       }));
       return;
     }
     if (event.type === 'event.workspace.deleted') {
       const payload = workspaceDeletedPayload(corePayload);
       if (payload === undefined) return;
-      this.enqueueGlobal(event.type, () => ({
-        type: 'event.workspace.deleted',
-        workspace_id: payload.workspaceId,
-        root: payload.root,
-        agentId: 'main',
-        sessionId: GLOBAL_SESSION_ID,
+      this.enqueueGlobal(event.type, async () => ({
+        type: 'workspace',
+        change: 'deleted',
+        workspace: await toWireWorkspace(this.opts.core, payload.workspace ?? {
+          id: payload.workspaceId,
+          root: payload.root,
+          name: payload.root,
+          kind: 'implicit',
+          additionalDirs: [],
+          createdAt: 0,
+          lastOpenedAt: 0,
+        }),
       }));
       return;
     }
@@ -616,20 +691,14 @@ export class SessionEventBroadcaster {
       if (payload === undefined) return;
       const sessionId = sessionMetaUpdatedSessionId(corePayload);
       if (sessionId === undefined) return;
-      this.enqueueGlobal(event.type, () => ({
-        type: 'session.meta.updated',
-        ...payload,
-        agentId: 'main',
-        sessionId,
+      this.enqueueGlobal(event.type, () => this.sessionEvent('updated', sessionId, undefined, {
+        title: payload.title ?? (typeof payload.patch?.['title'] === 'string' ? payload.patch['title'] : undefined),
+        lastPrompt: typeof payload.patch?.['lastPrompt'] === 'string' ? payload.patch['lastPrompt'] : undefined,
       }));
       return;
     }
     if (event.type === 'event.plugin.changed') {
-      this.enqueueGlobal(event.type, () => ({
-        type: 'event.plugin.changed',
-        agentId: 'main',
-        sessionId: GLOBAL_SESSION_ID,
-      }));
+      this.enqueueGlobal(event.type, () => ({ type: 'invalidated', kind: 'plugins' }));
       return;
     }
     if (event.type === 'event.capability.changed') {
@@ -638,19 +707,16 @@ export class SessionEventBroadcaster {
       this.enqueueGlobal(event.type, () => ({
         type: 'event.capability.changed',
         ...payload,
-        agentId: 'main',
-        sessionId: GLOBAL_SESSION_ID,
       }));
       return;
     }
     if (event.type === 'event.config.warning') {
       const payload = configWarningPayload(corePayload);
       if (payload === undefined) return;
-      this.enqueueGlobal(event.type, () => ({
-        type: 'event.config.warning',
+      this.enqueueGlobal(event.type, async () => ({
+        type: 'config',
+        config: await this.currentConfig(),
         warnings: payload.warnings,
-        agentId: 'main',
-        sessionId: GLOBAL_SESSION_ID,
       }));
       return;
     }
@@ -658,52 +724,39 @@ export class SessionEventBroadcaster {
       const payload = configChangedPayload(corePayload);
       if (payload === undefined) return;
       this.enqueueGlobal(event.type, () => ({
-        type: 'event.config.changed',
-        changedFields: payload.changedFields,
+        type: 'config',
         config: payload.config,
-        agentId: 'main',
-        sessionId: GLOBAL_SESSION_ID,
-      }) as Event);
+      }));
       return;
     }
     if (event.type === 'event.model_catalog.changed') {
       const payload = modelCatalogChangedPayload(corePayload);
       if (payload === undefined) return;
-      this.enqueueGlobal(event.type, () => ({
-        type: 'event.model_catalog.changed',
-        changed: payload.changed,
-        unchanged: payload.unchanged,
-        failed: payload.failed,
-        retired_default: payload.retired_default,
-        agentId: 'main',
-        sessionId: GLOBAL_SESSION_ID,
-      }));
+      this.enqueueGlobal(event.type, () => ({ type: 'invalidated', kind: 'models' }));
       return;
     }
   }
 
   private enqueueGlobal(
     eventType: string,
-    build: () => Event | Promise<Event>,
-    envelopeSessionId?: string,
+    build: () => Event | undefined | Promise<Event | undefined>,
   ): void {
     if (this.closed) return;
     this.globalQueue = this.globalQueue
       .then(async () => {
         const event = await build();
-        this.sendGlobal(event, envelopeSessionId ?? event.sessionId);
+        if (event === undefined) return;
+        this.sendGlobal(event);
       })
       .catch((error: unknown) => this.logDispatchError(eventType, error));
   }
 
-  private sendGlobal(event: Event, envelopeSessionId: string): void {
-    const envelope: EventEnvelope = {
-      type: event.type,
-      session_id: envelopeSessionId,
-      timestamp:
-        event.time !== undefined ? new Date(event.time).toISOString() : new Date().toISOString(),
-      payload: event,
-    };
+  private sendGlobal(event: Event): void {
+    const { agentId: _agentId, sessionId: _sessionId, time, ...fields } = event;
+    const envelope = {
+      ...fields,
+      event_created_at: time !== undefined ? new Date(time).toISOString() : new Date().toISOString(),
+    } as EventEnvelope;
     for (const target of this.globalTargets) {
       try {
         target.send(envelope, 'immediate');
@@ -895,16 +948,16 @@ function sessionCreatedPayload(
 
 function sessionLifecyclePayload(
   payload: unknown,
-): { sessionId: string; workspaceId: string } | undefined {
+): { sessionId: string; workspaceId: string; session?: unknown } | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
-  const candidate = payload as { sessionId?: unknown; workspaceId?: unknown };
+  const candidate = payload as { sessionId?: unknown; workspaceId?: unknown; session?: unknown };
   if (typeof candidate.sessionId !== 'string' || candidate.sessionId.length === 0) {
     return undefined;
   }
   if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.length === 0) {
     return undefined;
   }
-  return { sessionId: candidate.sessionId, workspaceId: candidate.workspaceId };
+  return { sessionId: candidate.sessionId, workspaceId: candidate.workspaceId, session: candidate.session };
 }
 
 function workspaceLifecyclePayload(payload: unknown): Workspace | undefined {
@@ -934,14 +987,18 @@ function workspaceLifecyclePayload(payload: unknown): Workspace | undefined {
 
 function workspaceDeletedPayload(
   payload: unknown,
-): { workspaceId: string; root: string } | undefined {
+): { workspaceId: string; root: string; workspace?: Workspace } | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
-  const candidate = payload as { workspaceId?: unknown; root?: unknown };
+  const candidate = payload as { workspaceId?: unknown; root?: unknown; workspace?: unknown };
   if (typeof candidate.workspaceId !== 'string' || candidate.workspaceId.length === 0) {
     return undefined;
   }
   if (typeof candidate.root !== 'string' || candidate.root.length === 0) return undefined;
-  return { workspaceId: candidate.workspaceId, root: candidate.root };
+  return {
+    workspaceId: candidate.workspaceId,
+    root: candidate.root,
+    workspace: candidate.workspace as Workspace | undefined,
+  };
 }
 
 interface CapabilityChangedPayload {
@@ -952,7 +1009,7 @@ interface CapabilityChangedPayload {
     percent?: number;
     error?: string;
     note?: string;
-    confirmationRequired?: 'stop-processes';
+    confirmation_required?: 'stop-processes';
   };
 }
 
@@ -965,8 +1022,11 @@ function capabilityChangedPayload(payload: unknown): CapabilityChangedPayload | 
   const running = (install as { running?: unknown }).running;
   if (typeof running !== 'boolean') return undefined;
   const out: CapabilityChangedPayload['install'] = { running };
-  if ((install as { confirmationRequired?: unknown }).confirmationRequired === 'stop-processes') {
-    out.confirmationRequired = 'stop-processes';
+  if (
+    (install as { confirmationRequired?: unknown }).confirmationRequired === 'stop-processes' ||
+    (install as { confirmation_required?: unknown }).confirmation_required === 'stop-processes'
+  ) {
+    out.confirmation_required = 'stop-processes';
   }
   for (const key of ['step', 'error', 'note'] as const) {
     const value = (install as Record<string, unknown>)[key];
@@ -998,7 +1058,7 @@ const modelCatalogChangedPayloadSchema = modelCatalogChangedEventSchema.omit({ t
 
 function configChangedPayload(
   payload: unknown,
-): { changedFields: string[]; config: unknown } | undefined {
+): { changedFields: string[]; config: ConfigResponse } | undefined {
   const parsed = configChangedPayloadSchema.safeParse(payload);
   if (!parsed.success) return undefined;
   return { changedFields: parsed.data.changedFields, config: parsed.data.config };

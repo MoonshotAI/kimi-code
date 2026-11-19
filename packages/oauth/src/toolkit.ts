@@ -9,20 +9,6 @@ import {
   type KimiHostIdentity,
 } from './identity';
 import {
-  fetchSubmitFeedback,
-  kimiCodeFeedbackUrl,
-  type FetchSubmitFeedbackResult,
-  type SubmitFeedbackBody,
-} from './managed-feedback';
-import {
-  fetchCompleteFeedbackUpload,
-  fetchCreateFeedbackUploadUrl,
-  type CompleteFeedbackUploadBody,
-  type CreateFeedbackUploadUrlBody,
-  type FetchCompleteFeedbackUploadResult,
-  type FetchCreateFeedbackUploadUrlResult,
-} from './managed-feedback-upload';
-import {
   KIMI_CODE_OAUTH_KEY,
   KIMI_CODE_PROVIDER_NAME,
   provisionManagedKimiCodeConfig,
@@ -138,8 +124,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async status(
-    providerName?: string | undefined,
-    oauthRef?: KimiOAuthTokenRef | undefined,
+    providerName?: string,
+    oauthRef?: KimiOAuthTokenRef,
   ): Promise<AuthStatus> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
@@ -155,7 +141,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async login(
-    providerName?: string | undefined,
+    providerName?: string,
     options: KimiOAuthLoginOptions = {},
   ): Promise<KimiOAuthLoginResult> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
@@ -228,8 +214,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async logout(
-    providerName?: string | undefined,
-    oauthRef?: KimiOAuthTokenRef | undefined,
+    providerName?: string,
+    oauthRef?: KimiOAuthTokenRef,
   ): Promise<KimiOAuthLogoutResult> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
@@ -244,7 +230,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async ensureFresh(
-    providerName?: string | undefined,
+    providerName?: string,
     options: {
       readonly force?: boolean | undefined;
       readonly oauthRef?: KimiOAuthTokenRef | undefined;
@@ -267,8 +253,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   tokenProvider(
-    providerName?: string | undefined,
-    oauthRef?: KimiOAuthTokenRef | undefined,
+    providerName?: string,
+    oauthRef?: KimiOAuthTokenRef,
   ): BearerTokenProvider {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
@@ -279,7 +265,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async getManagedUsage(
-    providerName?: string | undefined,
+    providerName?: string,
     options: {
       readonly oauthRef?: KimiOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
@@ -302,7 +288,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   async getManagedUserInfo(
-    providerName?: string | undefined,
+    providerName?: string,
     options: {
       readonly oauthRef?: KimiOAuthTokenRef | undefined;
       readonly baseUrl?: string | undefined;
@@ -324,77 +310,10 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     }
   }
 
-  async submitFeedback(
-    body: SubmitFeedbackBody,
-    providerName?: string | undefined,
-    options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
-      readonly baseUrl?: string | undefined;
-    } = {},
-  ): Promise<FetchSubmitFeedbackResult> {
-    return this.withAccessToken(
-      providerName,
-      options,
-      (accessToken) => fetchSubmitFeedback(managedFeedbackUrl(options.baseUrl), accessToken, body),
-    );
-  }
-
-  private async withAccessToken<T>(
-    providerName: string | undefined,
-    options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
-      readonly baseUrl?: string | undefined;
-    },
-    run: (accessToken: string) => Promise<T>,
-  ): Promise<T | { readonly kind: 'error'; readonly message: string }> {
-    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    try {
-      const accessToken = await this.ensureFresh(name, {
-        oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
-      });
-      return await run(accessToken);
-    } catch (error) {
-      return {
-        kind: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  async createFeedbackUploadUrl(
-    body: CreateFeedbackUploadUrlBody,
-    providerName?: string | undefined,
-    options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
-      readonly baseUrl?: string | undefined;
-    } = {},
-  ): Promise<FetchCreateFeedbackUploadUrlResult> {
-    return this.withAccessToken(
-      providerName,
-      options,
-      (accessToken) => fetchCreateFeedbackUploadUrl(accessToken, body, { baseUrl: options.baseUrl }),
-    );
-  }
-
-  async completeFeedbackUpload(
-    body: CompleteFeedbackUploadBody,
-    providerName?: string | undefined,
-    options: {
-      readonly oauthRef?: KimiOAuthTokenRef | undefined;
-      readonly baseUrl?: string | undefined;
-    } = {},
-  ): Promise<FetchCompleteFeedbackUploadResult> {
-    return this.withAccessToken(
-      providerName,
-      options,
-      (accessToken) => fetchCompleteFeedbackUpload(accessToken, body, { baseUrl: options.baseUrl }),
-    );
-  }
-
   managerFor(
     providerName: string,
     oauthKey = KIMI_CODE_OAUTH_KEY,
-    oauthHost?: string | undefined,
+    oauthHost?: string,
   ): OAuthManager {
     const storageName = resolveKimiTokenStorageName({ providerName, oauthKey });
     const effectiveOAuthHost = oauthHost ?? this.flowConfig.oauthHost;
@@ -415,9 +334,6 @@ export class KimiOAuthToolkit<TConfig = unknown> {
         identity === undefined
           ? undefined
           : () =>
-              // Full identity headers (User-Agent + X-Msh-*): the OAuth host
-              // reads the platform for the client family and the UA (suffix)
-              // for the runtime surface, e.g. kimi web's `(web)`.
               createKimiDefaultHeaders({
                 homeDir: this.homeDir,
                 ...identity,
@@ -429,8 +345,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   private defaultOAuthKey(
-    baseUrl?: string | undefined,
-    oauthHost?: string | undefined,
+    baseUrl?: string,
+    oauthHost?: string,
   ): string {
     return resolveKimiCodeOAuthKey({
       oauthHost: oauthHost ?? this.flowConfig.oauthHost,
@@ -438,7 +354,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     });
   }
 
-  private defaultOAuthRef(baseUrl?: string | undefined): KimiOAuthTokenRef {
+  private defaultOAuthRef(baseUrl?: string): KimiOAuthTokenRef {
     return {
       key: this.defaultOAuthKey(baseUrl, this.flowConfig.oauthHost),
       oauthHost: this.flowConfig.oauthHost,
@@ -446,8 +362,8 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   }
 
   private oauthHostFor(
-    oauthRef?: KimiOAuthTokenRef | undefined,
-    oauthHost?: string | undefined,
+    oauthRef?: KimiOAuthTokenRef,
+    oauthHost?: string,
   ): string {
     return oauthRef?.oauthHost ?? oauthHost ?? this.flowConfig.oauthHost;
   }
@@ -492,10 +408,6 @@ function managedUsageUrl(baseUrl: string | undefined): string {
 function managedUserInfoUrl(baseUrl: string | undefined): string {
   if (baseUrl === undefined) return kimiCodeUserInfoUrl();
   return `${baseUrl.replace(/\/+$/, '')}/me`;
-}
-
-function managedFeedbackUrl(baseUrl: string | undefined): string {
-  return kimiCodeFeedbackUrl(baseUrl);
 }
 
 function normalizeOAuthHost(oauthHost: string): string {

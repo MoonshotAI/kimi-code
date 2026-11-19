@@ -4,16 +4,11 @@ import { KIMI_CODE_HOME } from '../config';
 import { importSessionZip } from '../lib/import-store';
 import { ZipImportError } from '../lib/zip-import';
 
-/** Reject obviously-too-large uploads before buffering the whole body. The zip
- *  itself (compressed) is capped here; the uncompressed cap lives in
- *  `extractZip`. */
-const MAX_ZIP_BYTES = 500 * 1024 * 1024; // 500 MiB
+const MAX_ZIP_BYTES = 500 * 1024 * 1024;
 
 export function importsRoute(home: string = KIMI_CODE_HOME): Hono {
   const r = new Hono();
 
-  // Upload a `/export-debug-zip` bundle. The raw zip bytes are the request
-  // body; the original filename may be passed via `?name=` for display.
   r.post('/', async (c) => {
     const declared = Number(c.req.header('content-length') ?? '0');
     if (Number.isFinite(declared) && declared > MAX_ZIP_BYTES) {

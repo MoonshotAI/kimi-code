@@ -1,15 +1,3 @@
-/**
- * Device Code OAuth flow — pure HTTP wrappers.
- *
- * Three endpoints, all POST form-encoded to the OAuth host:
- *  - `/api/oauth/device_authorization` → DeviceAuthorization
- *  - `/api/oauth/token` (grant_type=device_code) → polling result
- *  - `/api/oauth/token` (grant_type=refresh_token) → refreshed TokenInfo
- *
- * No state is kept here — `OAuthManager` drives the flow and decides
- * when to poll / refresh / store.
- */
-
 import { extractApiErrorMessage } from './api-error';
 import {
   OAuthConnectionError,
@@ -27,9 +15,6 @@ function pickErrorDetail(data: Record<string, unknown>): string {
 }
 
 function tokenFromResponse(payload: Record<string, unknown>): TokenInfo {
-  // Required-field validation. Reject responses that are missing
-  // any of the three load-bearing fields rather than persisting empty
-  // strings that will fail mysteriously later.
   const accessToken = payload['access_token'];
   if (typeof accessToken !== 'string' || accessToken.length === 0) {
     throw new OAuthError('OAuth response missing access_token');
@@ -53,18 +38,16 @@ function tokenFromResponse(payload: Record<string, unknown>): TokenInfo {
   };
 }
 
-/** HTTP client default timeout for OAuth requests. */
 const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 
 async function postForm(
   url: string,
   params: Record<string, string>,
-  deviceHeaders?: OAuthRequestHeaders | undefined,
+  deviceHeaders?: OAuthRequestHeaders,
   options?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<{ status: number; data: Record<string, unknown> }> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
   const body = new URLSearchParams(params).toString();
-  // Compose a timeout signal with the optional caller signal.
   const signals: AbortSignal[] = [AbortSignal.timeout(timeoutMs)];
   if (options?.signal !== undefined) signals.push(options.signal);
   const signal = AbortSignal.any(signals);
@@ -91,18 +74,10 @@ async function postForm(
   try {
     const parsed: unknown = await response.json();
     if (isRecord(parsed)) data = parsed;
-  } catch {
-    // Non-JSON response — leave data empty; caller interprets by status.
-  }
+  } catch {}
   return { status, data };
 }
 
-/**
- * Flatten a fetch rejection into a readable message. undici throws a generic
- * `TypeError: fetch failed` and hides the real reason (DNS, refused, TLS,
- * timeout) in a nested `cause` chain — walk it so the surfaced message names
- * the actual failure instead of just "fetch failed".
- */
 function describeFetchFailure(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const messages = new Set<string>();
@@ -113,8 +88,6 @@ function describeFetchFailure(error: unknown): string {
   }
   return [...messages].join(': ');
 }
-
-// ── requestDeviceAuthorization ────────────────────────────────────────
 
 export async function requestDeviceAuthorization(
   config: OAuthFlowConfig,
@@ -133,7 +106,6 @@ export async function requestDeviceAuthorization(
     );
   }
 
-  // Required-field validation for the device authorization response.
   const userCode = data['user_code'];
   const deviceCode = data['device_code'];
   const verificationUriComplete = data['verification_uri_complete'];
@@ -156,8 +128,6 @@ export async function requestDeviceAuthorization(
     interval: Number(data['interval'] ?? 5),
   };
 }
-
-// ── pollDeviceToken ───────────────────────────────────────────────────
 
 export type DevicePollResult =
   | { readonly kind: 'success'; readonly token: TokenInfo }
@@ -210,15 +180,9 @@ export async function pollDeviceToken(
   }
 }
 
-// ── refreshAccessToken ────────────────────────────────────────────────
-
 export interface RefreshOptions {
   readonly deviceHeaders?: OAuthRequestHeaders | undefined;
   readonly maxRetries?: number | undefined;
-  /**
-   * Backoff between retries in ms. Defaults to `2 ** attempt * 1000` (1s, 2s).
-   * Accepts an attempt-indexed callable for testability (set to `() => 0`).
-   */
   readonly backoffMs?: ((attempt: number) => number) | undefined;
   readonly sleep?: ((ms: number) => Promise<void>) | undefined;
 }
@@ -253,8 +217,6 @@ export async function refreshAccessToken(
         options.deviceHeaders,
       ));
     } catch (error) {
-      // Transport-level failure (DNS, connection refused, timeout). Treat
-      // as retryable to match Python's `aiohttp.ClientError` handling.
       lastError = error instanceof Error ? error : new OAuthError(String(error));
       if (attempt < maxRetries - 1) {
         await sleep(backoff(attempt));
@@ -280,7 +242,6 @@ export async function refreshAccessToken(
         await sleep(backoff(attempt));
         continue;
       }
-      // fall through: out of retries, surface the retryable error
     } else {
       throw new OAuthError(desc);
     }

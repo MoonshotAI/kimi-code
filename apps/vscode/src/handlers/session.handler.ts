@@ -79,9 +79,7 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
         .filter(([name, type]) => type === vscode.FileType.Directory && !name.startsWith("."))
         .map(([name]) => name)
         .toSorted();
-    } catch {
-      // The native picker remains available when directory enumeration fails.
-    }
+    } catch {}
 
     const picked = await vscode.window.showQuickPick(
       [

@@ -1,6 +1,6 @@
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 
 import { type ErrorCode } from '#/errors';
 import { Error2 } from '#/_base/errors/errors';

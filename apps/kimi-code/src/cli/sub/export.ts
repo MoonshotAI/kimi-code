@@ -1,10 +1,3 @@
-/**
- * `kimi export` sub-command.
- *
- * CLI glue only: session lookup, previous-session confirmation, and output.
- * The actual ZIP/manifest export is owned by the SDK.
- */
-
 import { createInterface } from 'node:readline/promises';
 
 import {
@@ -204,9 +197,6 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
     stdout: overrides.stdout ?? process.stdout,
     stderr: overrides.stderr ?? process.stderr,
     exit: overrides.exit ?? ((code: number) => process.exit(code)),
-    // The v2 harness boots an engine whose watchers hold the event loop open;
-    // close it so a one-shot command can exit. No-op when the run never needed
-    // the harness.
     close: async () => {
       await harness?.close();
     },

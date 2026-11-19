@@ -1,44 +1,3 @@
-/**
- * Scan submitted text for media placeholders and produce the prompt content
- * we'll send to the SDK prompt endpoint.
- *
- * `extractMediaAttachments` (sync) is the single expansion path for prompts:
- *   - image placeholders expand to inline image content parts. When the paste
- *     was uploaded to the daemon file store (`ImageAttachment.fileId`, v2
- *     engine only), the placeholder instead expands to a bare
- *     `kimi-file://<id>` image part — the engine's prompt intake materializes
- *     the session copy and rewrites the reference with its `?path=`, making
- *     the part self-contained (no paired tag is authored); without a `fileId`
- *     the inline base64 form is emitted unchanged (the only form the v1
- *     engine accepts). Compression captions for paste-time-downsampled images
- *     are NOT authored here: extraction runs before a first session exists,
- *     so `resolveOriginalCaptions` adds them at dispatch time, persisting the
- *     in-memory original (`ImageAttachment.original`) into the session's
- *     media-originals dir first;
- *   - video placeholders expand to a bare `kimi-file://<id>` video part:
- *     the paste was uploaded to the daemon file store in the background
- *     (`VideoAttachment.fileId`), and the engine's prompt intake
- *     materializes the session copy and rewrites the reference with its
- *     `?path=`, exactly like an uploaded image. A video without a usable
- *     upload — still in flight after the bounded submit wait, failed, or
- *     expired — aborts extraction with an error: video bytes have no
- *     inline fallback form.
- *
- * `rewriteMediaPlaceholders` is the separate text channel for slash-command
- * args (`/skill`, plugin commands): those are plain text, so media is rendered
- * as a `<video|image path="…">` tag / plain-text reference into cache-dir
- * copies the model opens with `ReadMediaFile`.
- *
- * Rules for both:
- *   - Only placeholders that resolve against `store` get extracted.
- *     A literal `[image #999 ...]` the user typed themselves stays in
- *     the text (we can't hallucinate files for it).
- *   - Order is preserved for text/image/video segments.
- *   - Adjacent text segments are flattened — empty / whitespace-only
- *     segments drop out so we never emit `{type:'text', text:' '}`
- *     noise between two media parts.
- */
-
 import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -65,22 +24,10 @@ import type {
 const PLACEHOLDER_REGEX = /\[(image|video) #(\d+) (?:(\(\d+×\d+\))|([^\]]+))\]/g;
 
 export interface ExtractionResult {
-  /** Flat list of parts in input order; empty array when no media matched. */
   parts: PromptPart[];
-  /**
-   * Did we find at least one matching attachment? When false, callers
-   * should keep the prompt on the plain text path.
-   */
   hasMedia: boolean;
-  /** Image attachment ids matched, in the order they appeared. */
   imageAttachmentIds: number[];
-  /** Video attachment ids matched, in the order they appeared. */
   videoAttachmentIds: number[];
-  /**
-   * Image bytes captured while extracting the prompt. A cache-hint resend can
-   * outlive the attachment store and daemon file ids, so it uses these
-   * snapshots to rebuild the image parts as inline data URLs.
-   */
   imageSnapshots: ImageResendSnapshot[];
   mediaSnapshots?: readonly MediaAttachment[];
   mediaGeneration?: number;
@@ -91,12 +38,6 @@ export interface ImageResendSnapshot {
   readonly mime: string;
   readonly width: number;
   readonly height: number;
-  /**
-   * Pre-compression original captured at extraction, so a new-session resend
-   * can still persist it and author the compression caption after the image
-   * store (and its attachments) was cleared. Previously persisted originals
-   * are recovered from the local resend copy; absent for untouched pastes.
-   */
   readonly original?: {
     readonly bytes: Uint8Array;
     readonly width: number;
@@ -125,17 +66,12 @@ export function extractMediaAttachments(
     if (idStr === undefined) continue;
     const id = Number.parseInt(idStr, 10);
     const attachment = store.get(id);
-    if (attachment === undefined) continue; // stale / user-typed — leave as text
+    if (attachment === undefined) continue;
     if (attachment.kind !== kind) continue;
     mediaSnapshots.push(attachment);
     const before = text.slice(cursor, match.index);
     pushText(parts, before);
     if (attachment.kind === 'video') {
-      // The paste was uploaded to the daemon file store in the background:
-      // reference it by a bare `kimi-file://` url — the engine's prompt
-      // intake materializes the session copy, so the edge stages no local
-      // copy. Throws when the upload is unusable (still in flight, failed,
-      // expired): a video has no inline fallback.
       parts.push(videoPartForAttachment(attachment));
       videoAttachmentIds.push(id);
     } else {
@@ -156,14 +92,7 @@ export function extractMediaAttachments(
                 mime: original.mime,
               },
       });
-      // No compression caption here: `resolveOriginalCaptions` authors it
-      // at dispatch time, once the session (and its media-originals dir)
-      // is known.
       if (attachment.fileId !== undefined) {
-        // The bytes were uploaded to the daemon file store at paste time
-        // (v2): reference them by a bare `kimi-file://` url — the engine's
-        // prompt intake materializes the session copy and rewrites the
-        // reference with its `?path=`, so the edge stages no local copy.
         parts.push({
           type: 'image_url',
           imageUrl: { url: buildDaemonFileUrl(attachment.fileId) },
@@ -182,10 +111,6 @@ export function extractMediaAttachments(
   store.retainFileIds([...imageAttachmentIds, ...videoAttachmentIds]);
   const freshParts = refreshExpiringImageFileRefs(parts, imageAttachmentIds, store);
   return {
-    // Text-only submissions drop the synthesised parts array — the
-    // caller's contract is "parts is meaningful iff hasMedia", and
-    // emitting a stray TextPart confuses consumers that branch on
-    // `parts.length > 0`.
     parts: hasMedia ? freshParts : [],
     hasMedia,
     imageAttachmentIds,
@@ -196,17 +121,6 @@ export function extractMediaAttachments(
   };
 }
 
-/**
- * Give media referenced by `text` a bounded moment to finish its background
- * paste ingestion (image compression/upload, video daemon upload — see
- * `ImageAttachment.pending` / `VideoAttachment.pending`) before extraction,
- * so a paste-then-immediately-submit still expands to the daemon-ref form.
- * The returned promise resolves after `timeoutMs` at the latest; an image
- * whose ingestion has not landed by then extracts to the inline fallback
- * form, a video refuses the submission (no inline form exists). Returns
- * undefined when nothing is pending, so the submit path stays synchronous
- * for media-free prompts.
- */
 export function pendingMediaIngestions(
   text: string,
   store: ImageAttachmentStore,
@@ -236,11 +150,6 @@ export function pendingMediaIngestions(
   });
 }
 
-/**
- * Replace daemon refs that may expire before validation reaches the server
- * with the attachment's retained bytes. Called both at extraction time and
- * again when a queued/cache-hint submission is actually dispatched.
- */
 export function refreshExpiringImageFileRefs(
   parts: readonly PromptPart[],
   imageAttachmentIds: readonly number[],
@@ -277,22 +186,6 @@ export function refreshExpiringImageFileRefs(
   return changed ? next : [...parts];
 }
 
-/**
- * Make an extraction safe to resend after a session reset. The reset clears
- * the image store and deletes unretained daemon file ids, so uploaded image
- * refs must be replaced with the bytes captured during the original
- * extraction. Video refs pass through unchanged: their uploads were retained
- * by the stash, and `ImageAttachmentStore.clear` keeps retained uploads
- * alive for exactly this resend (unclaimed survivors fall to the daemon's
- * staging TTL).
- *
- * Snapshots of compressed pastes also carry the pre-compression original: the
- * cleared store took the attachment with it, so dispatch-time caption
- * resolution can no longer find either. `makeExtractionResendable` persists
- * that original into `originalsDir` (the NEW session's media-originals dir;
- * temp-dir fallback when undefined) and authors the compression caption
- * itself, right before the rebuilt image part.
- */
 export function makeExtractionResendable(
   extraction: ExtractionResult,
   originalsDir?: string,
@@ -353,15 +246,11 @@ export function makeExtractionResendable(
   return {
     ...extraction,
     parts,
-    // The new session's store no longer contains these ids. The rebuilt parts
-    // carry their own bytes, so keeping stale ids would break thumbnail and
-    // later cleanup lookups.
     imageAttachmentIds: [],
   };
 }
 
 export interface MediaTagRewriteResult {
-  /** Input text with resolved placeholders replaced by media references. */
   text: string;
   hasMedia: boolean;
   imageAttachmentIds: number[];
@@ -370,28 +259,8 @@ export interface MediaTagRewriteResult {
   cachedVideos: VideoAttachment[];
 }
 
-/**
- * How a resolved placeholder is rendered into command args:
- *  - `'tag'`: the `<image|video path="…"></…>` convention, for channels
- *    that pass args through verbatim (plugin commands).
- *  - `'plain'`: a plain-text file reference with no XML tag/attribute
- *    boundary characters, for channels that XML-escape args (`/skill`
- *    args are escaped by both `renderSkillAttributes` and
- *    `expandSkillParameters`, which would mangle the tag form).
- */
 export type MediaReferenceStyle = 'tag' | 'plain';
 
-/**
- * Rewrite media placeholders in slash-command args (`/skill:foo …`,
- * plugin commands) into references pointing at cache-dir copies. Command
- * args are a plain-text channel — unlike `extractMediaAttachments`, which
- * inlines image parts for the prompt endpoint — so the model reaches the
- * media through `ReadMediaFile` instead, the same way it already handles
- * pasted videos.
- *
- * Surrounding text is preserved verbatim (args are user content, not
- * LLM parts), and unresolved placeholders stay literal.
- */
 export function rewriteMediaPlaceholders(
   text: string,
   store: ImageAttachmentStore,
@@ -476,17 +345,12 @@ function cleanupStagingPaths(paths: readonly string[]): void {
   for (const path of paths) {
     try {
       unlinkSync(path);
-    } catch {
-      // Best effort: a failed copy may not have created the target.
-    }
+    } catch {}
   }
 }
 
 function pushText(parts: PromptPart[], segment: string): void {
   if (segment.length === 0) return;
-  // Keep whitespace-only segments only when they sit between non-empty
-  // text elsewhere — the simpler rule "drop everything whitespace-only"
-  // is fine here because the LLM doesn't care about inter-image spaces.
   if (segment.trim().length === 0) return;
   const last = parts.at(-1);
   if (last?.type === 'text') {
@@ -504,12 +368,6 @@ function imagePartForAttachment(att: ImageAttachment): Extract<PromptPart, { typ
   };
 }
 
-/**
- * Is this image part still what the attachment holds? Extraction encodes the
- * attachment as of extraction time; a paste whose background ingestion
- * (compression/daemon upload) landed afterwards mutated it, leaving the part
- * carrying the pre-compression form — which no caption may describe.
- */
 function imagePartMatchesAttachment(
   part: Extract<PromptPart, { type: 'image_url' }>,
   attachment: ImageAttachment,
@@ -521,13 +379,6 @@ function imagePartMatchesAttachment(
   return url === imagePartForAttachment(attachment).imageUrl.url;
 }
 
-/**
- * A `video_url` prompt part referencing the paste's daemon upload by a bare
- * `kimi-file://` url — the engine's prompt intake materializes the session
- * copy before the part reaches the model or the persisted history. Throws
- * when the upload is unusable: video bytes have no inline fallback, so the
- * submission is refused with an actionable message instead.
- */
 function videoPartForAttachment(att: VideoAttachment): PromptPart {
   const fileId = att.fileId;
   const expired =
@@ -549,18 +400,9 @@ function videoPartForAttachment(att: VideoAttachment): PromptPart {
   );
 }
 
-/**
- * Copy a pasted video into the shared cache for the slash-command args
- * channel (`rewriteMediaPlaceholders`): command args are plain text, so the
- * model reaches the video through `ReadMediaFile` on the cache copy — the
- * prompt-part channel never stages one (see `videoPartForAttachment`).
- */
 function materializeVideoToCache(att: VideoAttachment, escapeProofName = false): string {
   const cacheDir = getCacheDir();
   mkdirSync(cacheDir, { recursive: true });
-  // The label permits XML boundary chars (`<>&"`); plain references go
-  // through skill-arg escaping, where they would no longer match the file
-  // on disk, so strip them from the cache name in that mode.
   const label = escapeProofName ? att.label.replaceAll(/[<>&"]/g, '_') : att.label;
   const target = join(cacheDir, `${randomUUID()}-${label}`);
   copyFileSync(att.sourcePath, target);
@@ -576,11 +418,6 @@ const IMAGE_MIME_EXTENSION: Readonly<Record<string, string>> = {
   'image/tiff': 'tif',
 };
 
-/**
- * File-extension hint for an image MIME (`image/png` → `png`). The real
- * format is always sniffed from the bytes, so this only names files (cache
- * copies, daemon upload labels).
- */
 export function imageExtensionForMime(mime: string): string {
   return IMAGE_MIME_EXTENSION[mime.trim().toLowerCase()] ?? 'img';
 }
@@ -588,20 +425,13 @@ export function imageExtensionForMime(mime: string): string {
 function materializeImageToCache(att: ImageAttachment): string {
   const cacheDir = getCacheDir();
   mkdirSync(cacheDir, { recursive: true });
-  // ReadMediaFile sniffs the real format from the bytes, so the extension
-  // only needs to be a reasonable hint.
   const target = join(cacheDir, `${randomUUID()}.${imageExtensionForMime(att.mime)}`);
   writeFileSync(target, att.bytes);
   return target;
 }
 
-/** Opening every compression caption starts with (see buildImageCompressionCaption). */
 const CAPTION_OPENING = '<system>Image compressed to fit model limits:';
 
-/**
- * The session-owned originals store for compression captions, when the
- * session's dir is known; undefined falls back to the shared temp dir.
- */
 export function originalsDirForSession(session: Session | undefined): string | undefined {
   const sessionDir = session?.summary?.sessionDir;
   return sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir);
@@ -616,7 +446,6 @@ function readOriginalImageBytes(path: string | undefined): Uint8Array | undefine
   }
 }
 
-/** Register originals in the session before any caption advertises a readback reference. */
 export function resolveSessionOriginalCaptions(
   parts: readonly PromptPart[],
   imageAttachmentIds: readonly number[],
@@ -666,7 +495,6 @@ export async function makeSessionExtractionResendable(
   return makeExtractionResendable(extraction, originalsDirForSession(session), references);
 }
 
-/** Persist a local resend copy and render captions, preferring explicit session references. */
 export function resolveOriginalCaptions(
   parts: readonly PromptPart[],
   imageAttachmentIds: readonly number[],
@@ -688,20 +516,12 @@ export function resolveOriginalCaptions(
       out.push(part);
       continue;
     }
-    // The part was encoded from the attachment at extraction; a paste whose
-    // background ingestion landed afterwards mutated it (compressed bytes,
-    // daemon file id), leaving the part carrying the pre-compression form.
-    // Caption only when the two still agree — otherwise the caption would
-    // describe an image the model did not receive.
     if (!imagePartMatchesAttachment(part, attachment)) {
       out.push(part);
       continue;
     }
     const original = attachment.original;
     if (original.path === undefined && original.bytes !== undefined) {
-      // A persistence failure (unwritable dir, full disk) leaves the path
-      // unset — and the bytes retained — so a later dispatch retries; this
-      // dispatch captions without a readback path.
       const path = persistOriginalImageSync(original.bytes, original.mime, originalsDir);
       if (path !== null) store.setOriginalPath(attachment.id, path);
     }
@@ -732,12 +552,6 @@ export function resolveOriginalCaptions(
   return changed ? out : [...parts];
 }
 
-/**
- * Synchronous twin of the engine's `persistOriginalImage` — same
- * content-addressed naming and the same size-capped eviction: the dispatch
- * paths that resolve captions cannot await. Exported for tests; production
- * callers go through `resolveOriginalCaptions` / `makeExtractionResendable`.
- */
 export function persistOriginalImageSync(
   bytes: Uint8Array,
   mime: string,
@@ -751,23 +565,18 @@ export function persistOriginalImageSync(
     const target = join(targetDir, `${hash}.${imageExtensionForMime(mime)}`);
     mkdirSync(targetDir, { recursive: true });
     const existing = statSync(target, { throwIfNoEntry: false });
-    // Content-addressed: an existing entry with the right size IS this image.
     if (existing === undefined || existing.size !== bytes.length) {
       writeFileSync(target, bytes);
     }
     sweepCacheSync(targetDir, maxTotalBytes);
-    // The just-written file may itself have been evicted by the sweep when a
-    // single original exceeds the cap; report persistence honestly.
     return statSync(target, { throwIfNoEntry: false }) === undefined ? null : target;
   } catch {
     return null;
   }
 }
 
-/** Per-store ceiling; mirrors the engine originals store. */
-const DEFAULT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024; // 1 GiB
+const DEFAULT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
 
-/** Evict oldest files (by mtime) until the store fits `maxTotalBytes`. */
 function sweepCacheSync(dir: string, maxTotalBytes: number): void {
   const entries: { path: string; size: number; mtimeMs: number }[] = [];
   for (const name of readdirSync(dir)) {
@@ -784,23 +593,14 @@ function sweepCacheSync(dir: string, maxTotalBytes: number): void {
     try {
       unlinkSync(entry.path);
       total -= entry.size;
-    } catch {
-      // Best effort, mirroring the async twin.
-    }
+    } catch {}
   }
 }
 
-/** Mirrors agent-core-v2's `originalImageCacheDir` (not re-exported through the SDK). */
 function originalImageTempDir(): string {
   return join(tmpdir(), 'kimi-code-original-images');
 }
 
-/**
- * Plain-text media reference for channels that XML-escape args (`/skill`).
- * Free of `& < > "` (UUID image names; boundary chars stripped from video
- * cache names — see materializeVideoToCache) so it survives
- * `escapeXml`/`escapeXmlTags` untouched.
- */
 function formatMediaReference(kind: 'image' | 'video', path: string): string {
   return `Attached ${kind} file: ${path} (open it with ReadMediaFile)`;
 }

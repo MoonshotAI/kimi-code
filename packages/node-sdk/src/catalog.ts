@@ -4,12 +4,10 @@ import {
   modelsDevProviderModels,
   resolveModelsDevImport,
   type ModelCapability,
-} from '@moonshot-ai/agent-core-v2';
-import type {
-  ModelsDevCatalog as Catalog,
-  ModelsDevImportInvalidReason as CatalogImportInvalidReason,
-  ModelsDevModel as CatalogModel,
-  ModelsDevProviderEntry as CatalogProviderEntry,
+  type ModelsDevCatalog as Catalog,
+  type ModelsDevImportInvalidReason as CatalogImportInvalidReason,
+  type ModelsDevModel as CatalogModel,
+  type ModelsDevProviderEntry as CatalogProviderEntry,
 } from '@moonshot-ai/agent-core-v2';
 
 export { modelsDevProviderModels as catalogProviderModels };
@@ -118,8 +116,6 @@ export function catalogModelToAlias(providerId: string, model: CatalogModel): Mo
     maxContextSize: model.capability.max_context_tokens,
     maxInputSize: model.capability.max_input_tokens,
     maxOutputSize: model.maxOutputSize,
-    // A model that always reasons advertises `always_thinking` instead of
-    // `thinking`, so the UI locks thinking on and offers no off option.
     capabilities:
       model.alwaysThinking === true
         ? caps?.map((cap) => (cap === 'thinking' ? 'always_thinking' : cap))

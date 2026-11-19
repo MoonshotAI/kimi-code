@@ -194,23 +194,17 @@ function trackUpgradeEvent(
 ): void {
   try {
     track(event, properties);
-  } catch {
-    // Telemetry must never affect upgrade flow.
-  }
+  } catch {}
 }
 
 function logUpgradeInfo(logger: UpgradeLogger, message: string, payload: Record<string, unknown>): void {
   try {
     logger.info(message, payload);
-  } catch {
-    // Diagnostic logging must never affect upgrade flow.
-  }
+  } catch {}
 }
 
 function logUpgradeWarn(logger: UpgradeLogger, message: string, payload: Record<string, unknown>): void {
   try {
     logger.warn(message, payload);
-  } catch {
-    // Diagnostic logging must never affect upgrade flow.
-  }
+  } catch {}
 }

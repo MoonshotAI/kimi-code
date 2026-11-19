@@ -1,6 +1,6 @@
-import type { LlmRecovery, LlmRecoveryRecord } from '#human/llm/policy/recovery';
-import type { LlmResolver } from '#human/llm/policy/resolver';
-import type { LlmRequest } from '#human/llm/request';
+import type { LlmRecovery, LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
+import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 
 import type { AgentLoopProjector } from './projector';
 

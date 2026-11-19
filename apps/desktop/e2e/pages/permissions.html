@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Store finder</title>
+<style>html{background:#fff;color:#111}</style>
+<h1>Store finder</h1>
+<button type="button" id="locate">Share location</button>
+<button type="button" id="screen">Share screen</button>
+<label>Attachment <input type="file" id="attachment"></label>
+<p id="status">Idle</p>
+<ul id="received" aria-label="Received files"></ul>
+<script>
+  const status = document.getElementById('status');
+  document.getElementById('locate').addEventListener('click', () => {
+    status.textContent = 'Locating';
+    navigator.geolocation.getCurrentPosition(
+      position => { status.textContent = `Location: ${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)}`; },
+      error => { status.textContent = `Location error: ${error.message}`; },
+    );
+  });
+  document.getElementById('screen').addEventListener('click', () => {
+    status.textContent = 'Asking for the screen';
+    navigator.mediaDevices.getDisplayMedia({ video: true }).then(
+      () => { status.textContent = 'Screen shared'; },
+      error => { status.textContent = `Screen sharing failed: ${error.name}`; },
+    );
+  });
+  window.pickFile = () => {
+    status.textContent = 'Opening file system picker';
+    window.showOpenFilePicker().then(
+      () => { status.textContent = 'File system picker returned'; },
+      error => { status.textContent = `File system picker failed: ${error.name}`; },
+    );
+  };
+  const input = document.getElementById('attachment');
+  input.addEventListener('change', () => {
+    for (const file of input.files) {
+      const item = document.createElement('li');
+      item.textContent = file.name;
+      document.getElementById('received').append(item);
+    }
+  });
+  input.addEventListener('cancel', () => { status.textContent = 'Attachment picker cancelled'; });
+</script>
+</html>

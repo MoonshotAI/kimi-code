@@ -1,27 +1,12 @@
-/**
- * In-process dispatcher — resolves a wire triple `(service, method, args)`
- * against a live engine scope and mirrors kap-server's dispatcher semantics
- * (reflection call, non-function members are property reads, `main` agent
- * auto-materialized via `ensureMainAgent`, other registered agents lazily
- * rebuilt via `getOrRestoreAgent`). Scope routing resolves workspace
- * instances through `IWorkspaceInstanceManager` and live sessions through the
- * App `SessionManager`, matching the server's `resolveScope`. Every argument,
- * result, and event payload passes
- * through `wireClone` (a JSON round-trip), so consumers observe
- * byte-identical data no matter whether the call crossed a socket or stayed
- * in-process — and non-serializable leaks fail early.
- *
- * Shared by the memory transport and the IPC host, which guarantees ipc and
- * memory behave identically by construction.
- */
-
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 import type { IAgentScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2/workspace/workspaceInstance/workspaceInstanceManager';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
-import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import {
+  IAgentLifecycleService,
+  MAIN_AGENT_ID,
+} from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
 import { getOrRestoreAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/getOrRestoreAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
@@ -33,21 +18,19 @@ import {
   type InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
-import { IAgentLoopService, type LoopNotifyEntry, type PromptPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { IAgentLoopService, type LoopNotifyMessage, type PromptPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
-import {
-  generateModel,
-  type ModelRequestInput,
-  type ModelRequestParams,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
-import { streamWithCredentialRecovery } from '@moonshot-ai/agent-core-v2/llm-adapter/model/credential-recovery';
+import type { LlmRequestContent, LlmRequestModel, LlmRequestProfile } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
+import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
+import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import {
   fromCorePart,
   toCorePart,
   type ContentPart as LegacyContentPart,
 } from '@moonshot-ai/agent-core-v2/human/message';
-import type { ContentPart as CoreContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart as CoreContentPart } from '@moonshot-ai/core/llm/message';
 import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';
 import type {
@@ -70,14 +53,12 @@ import type { EventSourceRef, IDisposable, ScopeRef } from '../../core/channel.j
 import { RPCError } from '../../core/errors.js';
 import { IEventService, serviceTokens } from './serviceRegistry.js';
 
-/** Structural minimum of an engine `Scope` / `IScopeHandle`. */
 export interface ScopeLike {
   readonly accessor: {
     get<T>(id: ServiceIdentifier<T>): T;
   };
 }
 
-/** JSON round-trip so in-process data matches wire data exactly. */
 export function wireClone<T>(value: T): T {
   if (value === undefined) return value;
   return JSON.parse(JSON.stringify(value)) as T;
@@ -120,11 +101,6 @@ function projectAgentEvent(event: unknown): unknown {
   return { ...event, output: projectToolResultOutput(event.output) };
 }
 
-/**
- * `sessionInteractionService` stays on the wire after the engine moved the
- * interaction kernel into a process-global module singleton: the view
- * forwards to the singleton, scoping every call by the `sessionId` tag.
- */
 function pendingInteractionsOfSession(sessionId: string): readonly Interaction[] {
   return interactions.findAll({
     resolved: false,
@@ -165,9 +141,9 @@ function withSessionTags<TPayload>(
 
 function interactionServiceView(sessionId: string): Record<string, unknown> {
   return {
-    request: (req: InteractionRequest<unknown>) =>
+    request: (req: InteractionRequest) =>
       interactions.request(withSessionTags(sessionId, req)),
-    enqueue: (req: InteractionRequest<unknown>) =>
+    enqueue: (req: InteractionRequest) =>
       interactions.enqueue(withSessionTags(sessionId, req)),
     respond: (id: string, response: unknown) => {
       respondScoped(sessionId, id, response);
@@ -191,12 +167,6 @@ function interactionServiceView(sessionId: string): Record<string, unknown> {
   };
 }
 
-/**
- * `sessionApprovalService` / `sessionQuestionService` stay on the wire as
- * facade views over the same singleton: lists are the session's pending
- * payloads with their interaction ids, decisions write back through
- * `respond`.
- */
 function approvalServiceView(sessionId: string): Record<string, unknown> {
   return {
     listPending: () =>
@@ -224,18 +194,11 @@ function questionServiceView(sessionId: string): Record<string, unknown> {
   };
 }
 
-/**
- * `agentSkillService` stays on the wire after the engine moved the skill
- * kernel into a per-agent DI service: the view forwards to the agent's
- * `IAgentSkillService` resolved straight from the agent scope handle.
- */
 type LegacyPromptPayload = Omit<PromptPayload, 'input'> & {
   readonly input: readonly LegacyContentPart[];
 };
-type LegacySteerEntry = Omit<LoopNotifyEntry, 'message'> & {
-  readonly message: Omit<LoopNotifyEntry['message'], 'content'> & {
-    readonly content: readonly LegacyContentPart[];
-  };
+type LegacySteerEntry = Omit<LoopNotifyMessage, 'content'> & {
+  readonly content: readonly LegacyContentPart[];
 };
 type LegacyPromptWithSkillsInput = Omit<PromptWithSkillsInput, 'input'> & {
   readonly input: readonly LegacyContentPart[];
@@ -261,7 +224,7 @@ function agentLoopServiceView(agent: IAgentScopeHandle): Record<string, unknown>
     notifyClient: (input: LegacySteerEntry) =>
       loop.notifyClient({
         ...input,
-        message: { ...input.message, content: input.message.content.map(toCorePart) },
+        content: input.content.map(toCorePart),
       }),
     get: () => loop.history(),
     cancelFromUser: (turnId?: number) => {
@@ -290,32 +253,17 @@ export interface MemoryDispatcher {
 
 const REQUEST_INVALID = 40001;
 const NOT_FOUND = 40404;
-/** kap-server wire codes mirrored so memory/ipc surface the same numeric codes as `/api/v2/mcp`. */
 const MCP_SERVER_NOT_FOUND = 40408;
 const MCP_OAUTH_FAILED = 40929;
 const PROMPT_ID_CONFLICT = 40927;
 
-/** Wire name of the engine's `IMcpManagementService` decorator id. */
 const MCP_MANAGEMENT_SERVICE = 'mcpManagementService';
 
-/**
- * Session-scope domain services whose methods take the lifecycle-issued
- * `AgentContext` as their first argument. The wire stays agentId-only (the
- * scope ref already carries it), so the live context is resolved here at the
- * edge — after `wireClone`, since the context is a live object that must
- * never cross the JSON round-trip.
- */
 const AGENT_CONTEXT_SERVICES: ReadonlySet<string> = new Set([
   'agentTokenCountingService',
   'agentUsageService',
 ]);
 
-/**
- * Engine file errors cross the facade as public `RPCError`s, never as the
- * engine's raw `Error2`. The dispatcher is shared by both transports, so
- * memory and ipc then surface the identical `NOT_FOUND` code for a stale or
- * expired upload id.
- */
 function rethrowFileErrorAsRpc(error: unknown): never {
   if (error instanceof Error2 && error.code === FileErrors.codes.FILE_NOT_FOUND) {
     throw new RPCError(NOT_FOUND, error.message, error.details);
@@ -323,13 +271,6 @@ function rethrowFileErrorAsRpc(error: unknown): never {
   throw error;
 }
 
-/**
- * Same treatment for the MCP management plane: its coded rejections cross as
- * `RPCError`s carrying the kap-server wire codes, so memory and ipc behave
- * identically (a raw `Error2` would cross ipc as a generic 50001) and both
- * match `/api/v2/mcp` — `mcp.server_not_found` → 40408, `request.invalid` /
- * `config.invalid` → 40001, `mcp.oauth_failed` → 40929.
- */
 function rethrowMcpManagementErrorAsRpc(error: unknown): never {
   if (error instanceof Error2) {
     switch (error.code) {
@@ -353,14 +294,12 @@ interface ResolvedScope {
   readonly sessionId?: string;
 }
 
-/** Structural view of the engine's `IFileService` used by the wire adaptation. */
 type FileServiceWireTarget = {
   save(source: Readable, filename: string, options?: SaveOptions): Promise<FileMeta>;
   get(fileId: string): Promise<GetResult>;
 };
 
 export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
-  /** Mirrors kap-server's `resolveScope`, incl. main-agent materialization. */
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
     if (scope.workspaceId !== undefined) {
       const lease = await root.accessor
@@ -439,7 +378,6 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     return resolved.like.accessor.get(token) as Record<string, unknown>;
   }
 
-  /** Mirrors kap-server's WS `eventMap` per scope kind. */
   function subscribeStream(
     resolved: ResolvedScope,
     name: string,
@@ -517,10 +455,6 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     async call(scope, service, method, args) {
       const resolved = await resolveScope(scope);
       const instance = resolveService(resolved, service);
-      // `fileService` adapts bytes ⇄ streams: the JSON wire cannot carry
-      // `save`'s Readable source or `get`'s result stream, so both cross as
-      // base64 strings (the same kind of wire adaptation as
-      // `modelResolver.generate` in `stream`).
       if (service === 'fileService' && method === 'save') {
         const [data, filename, options] = args as [string, string, SaveOptions | undefined];
         const files = instance as FileServiceWireTarget;
@@ -578,8 +512,6 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     },
 
     stream(scope, service, method, args): AsyncIterable<unknown> {
-      // Special case: direct generate initializes one core request here;
-      // credential recovery and client cancellation stay at this boundary.
       if (service === 'modelResolver' && method === 'generate') {
         return {
           [Symbol.asyncIterator]() {
@@ -592,21 +524,27 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
                 const resolved = await resolveScope(scope);
                 const [modelId, input, params] = args;
                 const model = resolved.like.accessor.get(IModelCatalog).get(modelId as string);
-                const request = resolved.like.accessor
+                const requester = resolved.like.accessor
                   .get(IProtocolAdapterRegistry)
-                  .request(model, wireClone(params) as ModelRequestParams | undefined);
-                const iterable = streamWithCredentialRecovery(
-                  model.credentialProvider,
-                  () =>
-                    generateModel(
-                      request,
-                      wireClone(input) as ModelRequestInput,
-                      controller.signal,
-                      wireClone(params) as ModelRequestParams | undefined,
-                    ),
-                  controller.signal,
-                );
-                source = iterable[Symbol.asyncIterator]();
+                  .request(model, wireClone(params) as InitializedLlmRequestPart | undefined);
+                const resolvedInput = wireClone(input) as LlmRequestProfile &
+                  LlmRequestContent &
+                  Pick<LlmRequestModel, 'responseFormat'>;
+                source = streamLlmRequest(
+                  requester.request({
+                    model: { responseFormat: resolvedInput.responseFormat },
+                    profile: {
+                      systemPrompt: resolvedInput.systemPrompt,
+                      tools: resolvedInput.tools,
+                    },
+                    content: { messages: resolvedInput.messages },
+                    policy: {
+                      retry: { maxAttemptsPerStep: 1 },
+                      recoveries: [credentialRecovery],
+                    },
+                  }),
+                  { signal: controller.signal },
+                )[Symbol.asyncIterator]();
               })();
               return started;
             };
@@ -628,9 +566,6 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         };
       }
 
-      // The underlying service method returns an AsyncIterable; we wire-clone
-      // each yielded chunk so in-process consumers observe the same data as
-      // networked ones.
       return {
         [Symbol.asyncIterator]() {
           let source: AsyncIterator<unknown> | undefined;
@@ -674,8 +609,6 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     },
 
     listen(scope, source, handler, onError) {
-      // Scope resolution can be async (main-agent materialization); the
-      // subscription attaches once settled. Disposing early cancels it.
       let inner: IDisposable | undefined;
       let disposed = false;
       void resolveScope(scope).then(

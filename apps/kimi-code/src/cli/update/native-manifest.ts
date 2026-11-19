@@ -1,14 +1,3 @@
-/**
- * Per-release native artifact manifest (`/binaries/<version>/manifest.json`).
- *
- * Published alongside the release and consumed by the install scripts; the
- * staged updater reuses the same file so checksums and file names have a
- * single source of truth. Entries point at the bare platform binary
- * (`kimi-code-<target>[.exe]`), not an archive; an entry may additionally
- * carry `zstd` (or the legacy `compressed` field), pointing at the
- * zstd-compressed variant of that binary.
- */
-
 import { valid } from 'semver';
 import { z } from 'zod';
 
@@ -33,11 +22,6 @@ const PlatformEntrySchema = z.object({
     .optional(),
 });
 
-/**
- * Deliberately NOT `.strict()` — unknown fields are ignored so future
- * manifest additions never break shipped clients (same contract philosophy
- * as the rollout manifest in `cdn.ts`).
- */
 export const NativeReleaseManifestSchema = z.object({
   version: z.string().refine((value) => valid(value) !== null, { error: 'invalid semver' }),
   platforms: z.record(z.string(), PlatformEntrySchema),
@@ -54,15 +38,6 @@ export function nativeBinaryUrl(version: string, filename: string): string {
   return `${kimiCodeCdnBinariesBase()}/${version}/${filename}`;
 }
 
-/**
- * Fetch and parse the per-release manifest. **Throws** on any failure
- * (network, non-2xx, malformed body, unknown version) — callers treat a
- * throw as "staging failed" and record an install failure.
- *
- * `version` goes into the URL, so it must be a valid semver (it always is:
- * upstream sources are the CDN `latest.json` / the `upgrade` command).
- * `fetchImpl` is injectable for tests.
- */
 export async function fetchNativeReleaseManifest(
   version: string,
   fetchImpl: typeof fetch = fetch,
@@ -74,18 +49,12 @@ export async function fetchNativeReleaseManifest(
   const timeout = setTimeout(() => {
     controller.abort();
   }, MANIFEST_FETCH_TIMEOUT_MS);
-  // The timeout must stay armed until the BODY is fully consumed: a CDN or
-  // proxy can deliver headers within the limit and then stall mid-body, and
-  // resolving `fetch()` alone would clear the timer and hang the worker.
   try {
     const response = await fetchImpl(nativeManifestUrl(version), { signal: controller.signal });
     if (!response.ok) {
       throw new Error(`native manifest for ${version} returned HTTP ${response.status}`);
     }
     const manifest = NativeReleaseManifestSchema.parse(JSON.parse(await response.text()));
-    // A stale or mispublished endpoint can answer with ANOTHER release's
-    // manifest: its checksums would then be applied to this version's binary
-    // and every download would fail verification. Reject the mismatch here.
     if (manifest.version !== version) {
       throw new Error(`manifest for ${version} served content for ${manifest.version}`);
     }
@@ -95,12 +64,6 @@ export async function fetchNativeReleaseManifest(
   }
 }
 
-/**
- * Pick the entry for the running platform. The release pipeline keys
- * platforms by `<node platform>-<node arch>` (win32-x64, darwin-arm64, …).
- * **Throws** when the platform is missing — a silent skip would strand the
- * update in a retry loop.
- */
 export function selectPlatformEntry(
   manifest: NativeReleaseManifest,
   platform: NodeJS.Platform,

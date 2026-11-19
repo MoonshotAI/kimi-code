@@ -1,9 +1,3 @@
-/**
- * Scenario: Webview state crosses the VS Code bridge during settings changes, MCP edits, and chat failures.
- * Responsibilities: model metadata and selections remain provider-aware; MCP edits stay lossless; chat errors recover visibly.
- * Wiring: the real Zustand store and MCP bridge; settings saves, toast, and the VS Code messaging API are the only replaced boundaries.
- * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts test/settings-store.test.ts
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MCP_SECRET_MASK } from "../shared/legacy-sdk";
@@ -483,8 +477,6 @@ describe("Webview thinking effort parity with the TUI", () => {
     boundary.saveConfig.mockResolvedValue({ ok: true });
     useSettingsStore.getState().initModels(SWITCH_MODELS, "seeded", true, "medium");
 
-    // "medium" is unsupported here, so the switch derives the model default
-    // "max"; with the delivered default at the top tier the host persists it.
     useSettingsStore.getState().updateModel("max-default");
 
     expect(useSettingsStore.getState().thinkingEffort).toBe("max");
@@ -515,8 +507,6 @@ describe("Webview thinking effort parity with the TUI", () => {
 
   it("leaves the seed alone when the switch re-confirms the active effort", () => {
     boundary.saveConfig.mockResolvedValue({ ok: true });
-    // No persisted effort: the seed starts undefined and the session derives
-    // "max" from the model default.
     useSettingsStore.getState().initModels([
       ...SWITCH_MODELS,
       {
@@ -529,8 +519,6 @@ describe("Webview thinking effort parity with the TUI", () => {
       },
     ], "max-default", true);
 
-    // The derived effort equals the active one, so the host leaves the stored
-    // preference untouched — the seed must not invent one either.
     useSettingsStore.getState().updateModel("max-default-b");
 
     expect(useSettingsStore.getState().thinkingEffort).toBe("max");
@@ -581,7 +569,6 @@ describe("Webview mid-turn warnings", () => {
       terminal: false,
     });
 
-    // The turn is still running: nothing unlocks, nothing flushes, nothing is retried.
     expect(boundary.toastWarning).toHaveBeenCalledWith("Internal error occurred.");
     const state = useChatStore.getState();
     expect(state.isStreaming).toBe(true);
@@ -589,7 +576,6 @@ describe("Webview mid-turn warnings", () => {
     expect(state.pendingInput).not.toBeNull();
     expect(state.messages.at(-1)?.inlineError).toBeUndefined();
 
-    // The genuine terminal still completes the turn and flushes the queue.
     useChatStore.getState().processEvent({ type: "stream_complete", result: { status: "finished" } });
     expect(useChatStore.getState().isStreaming).toBe(false);
     await vi.waitFor(() => {

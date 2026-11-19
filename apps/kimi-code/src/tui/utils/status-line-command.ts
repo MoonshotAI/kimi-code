@@ -1,13 +1,3 @@
-/**
- * User-provided status line command (`status_line.command` in tui.toml).
- *
- * The footer spawns the command with a JSON snapshot on stdin and renders the
- * first stdout line. Runs are throttled and time-boxed; any failure (spawn
- * error, nonzero exit, timeout) yields null so the caller falls back to the
- * built-in layout. Mirrors Claude Code's statusLine contract at the seam:
- * JSON in, first line out, 300ms ceiling.
- */
-
 import { spawn } from 'node:child_process';
 
 export const STATUS_LINE_COMMAND_TIMEOUT_MS = 300;
@@ -46,8 +36,6 @@ export function runStatusLineCommand(
       child = spawn(isWin ? (process.env['ComSpec'] ?? 'cmd.exe') : 'sh', isWin ? ['/d', '/s', '/c', command] : ['-c', command], {
         stdio: ['pipe', 'pipe', 'ignore'],
         env: { ...process.env, KIMI_CODE_STATUS_LINE: '1' },
-        // Own process group on POSIX so a timeout can drop the whole tree,
-        // not just the shell wrapper.
         detached: !isWin,
       });
     } catch {
@@ -60,9 +48,7 @@ export function runStatusLineCommand(
       if (isWin) {
         try {
           spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-        } catch {
-          // best effort
-        }
+        } catch {}
       } else {
         try {
           process.kill(-child.pid, 'SIGKILL');
@@ -81,11 +67,8 @@ export function runStatusLineCommand(
     let stdout = '';
     child.stdout?.setEncoding('utf-8');
     child.stdout?.on('data', (chunk: string) => {
-      if (stdout.includes('\n')) return; // first line is complete
+      if (stdout.includes('\n')) return;
       stdout += chunk;
-      // Only the first line is ever used; stop accumulating past it (and cap
-      // a missing-newline stream) so a chatty command can't grow memory
-      // unboundedly before the timeout lands.
       const cut = stdout.indexOf('\n');
       if (cut >= 0) {
         stdout = stdout.slice(0, cut + 1);
@@ -107,19 +90,11 @@ export function runStatusLineCommand(
       finish(firstLine.length > 0 ? firstLine : null);
     });
 
-    child.stdin?.on('error', () => {
-      // The command closed stdin early (e.g. `true`); nothing more to send.
-    });
+    child.stdin?.on('error', () => {});
     child.stdin?.end(JSON.stringify(payload));
   });
 }
 
-/**
- * Throttled cache around `runStatusLineCommand` for a sync render path:
- * `current()` returns the last good line, and a refresh is kicked off in the
- * background at most once per interval. `onUpdate` fires when a fresh line
- * lands so the footer can repaint.
- */
 export class StatusLineCommandRunner {
   private lastRunAt = 0;
   private cached: string | null = null;
@@ -139,8 +114,6 @@ export class StatusLineCommandRunner {
   maybeRefresh(payload: StatusLinePayload): void {
     const now = Date.now();
     if (this.inFlight || now - this.lastRunAt < STATUS_LINE_RERUN_INTERVAL_MS) {
-      // Don't drop the update: land it as soon as the current gap expires,
-      // so a final state change is never lost to throttling.
       this.pendingPayload = payload;
       this.scheduleTrailing(now);
       return;

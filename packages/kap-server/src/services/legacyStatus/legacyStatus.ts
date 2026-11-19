@@ -32,8 +32,8 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   const context = agentContextOf(agent);
   const usage = usageService.status(context);
   const contextTokens = tokenCounting.statusSize(context);
-  const capabilities = profile.getModelCapabilities();
-  let maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+  const modelSpec = profile.getModel() === '' ? undefined : profile.resolveModelContext().model;
+  let maxContextTokens = modelSpec?.maxInputSize ?? modelSpec?.maxContextSize ?? 0;
   if (maxContextTokens === 0 && profile.getModel() === '') {
     maxContextTokens = defaultModelContextTokens(agent) ?? 0;
   }
@@ -54,8 +54,8 @@ function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined
     return undefined;
   }
   try {
-    const capabilities = catalog.get(defaultModel).capabilities;
-    return capabilities.max_input_tokens ?? capabilities.max_context_tokens;
+    const model = catalog.get(defaultModel);
+    return model.spec.maxInputSize ?? model.spec.maxContextSize;
   } catch {
     return undefined;
   }

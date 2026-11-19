@@ -24,7 +24,6 @@ import { TODO_LIST_TOOL_NAME, readTodoItems, todoProgress, type TodoItem } from 
 import { TODO_LIST_REMINDER_VARIANT, todoListStaleReminder } from './todoListReminder';
 import { ToolsUpdateStore, type TodoState } from './todoOps';
 
-import '#/agent/loop/turnOps';
 
 registerEvent2Class(ToolsUpdateStore);
 

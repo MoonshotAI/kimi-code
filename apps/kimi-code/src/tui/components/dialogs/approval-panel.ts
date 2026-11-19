@@ -1,13 +1,3 @@
-/**
- * ApprovalPanel — the approval request UI that replaces the editor.
- *
- * A DockSection: the title is the head, the request (command, diff, …) is the
- * body, and the choices with their key hints are the foot. Docked in
- * fullscreen, a long request scrolls (Shift+↑/↓, wheel) while the choices
- * stay on screen; the choices also take hover and clicks. `Ctrl+N` lends the
- * keyboard to the Updates panel; meanwhile the panel fades.
- */
-
 import {
   Input,
   matchesKey,
@@ -48,8 +38,6 @@ function truncateOneLine(text: string, max: number): string {
 }
 
 const DIFF_SUMMARY_MAX_LINES = 10;
-// Rows of the docked description area; a longer description is cut so the
-// key hint below it stays on screen.
 const DESCRIPTION_AREA_MAX_ROWS = 3;
 const REVIEW_DETAIL_MAX_LINES = 2;
 const CONTENT_SUMMARY_MAX_LINES = 10;
@@ -235,11 +223,8 @@ function headerFor(toolName: string): string {
 }
 
 export interface ApprovalPanelOptions {
-  /** Dock the panel (fullscreen): the request body scrolls past this many rows. */
   readonly layout?: DockLayout;
-  /** Whether the terminal window has focus; the panel fades while it does not. */
   readonly isTerminalFocused?: () => boolean;
-  /** `Ctrl+N`: hand the keyboard to the Updates panel; false when it has nothing to show. */
   readonly onFocusUpdates?: () => boolean;
 }
 
@@ -256,11 +241,8 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
     | undefined;
   private readonly isTerminalFocused: () => boolean;
   private readonly onFocusUpdates: (() => boolean) | undefined;
-  /** A click this soon after the panel appeared was aimed at what was there before. */
   private readonly shownAt = Date.now();
-  /** Foot row of each choice in the last render, for mouse hit-testing. */
   private choiceRows: readonly number[] = [];
-  /** Choice under the pointer: highlighted and previewed, but not selected. */
   private hoverIndex: number | undefined;
 
   constructor(
@@ -376,7 +358,6 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
     }
   }
 
-  /** Faded while another panel holds the keyboard or the terminal window is inactive. */
   protected renderPart(part: DockPart, width: number): string[] {
     const lines =
       part === 'head'
@@ -448,12 +429,6 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
     return lines.map((line) => truncateToWidth(line, width));
   }
 
-  /**
-   * The choices and key hints. Inline, a choice's description sits under its
-   * label; docked, the selected choice's description fills a fixed area under
-   * the list, as tall as the longest one, so moving the selection never moves
-   * the rows.
-   */
   private renderFoot(width: number): string[] {
     this.ensureValidSelection();
     this.feedbackInput.focused = this.focused && this.feedbackMode;

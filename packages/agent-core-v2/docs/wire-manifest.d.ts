@@ -441,7 +441,7 @@ interface InterruptionReminderRequestedPayload {
 interface LlmRequestPayload {
   _name: 'llm.request';
   agentId: string;
-  kind: 'loop' | 'compaction';
+  kind: 'loop' | 'compaction' | 'prediction';
   provider: string;
   model: string;
   modelAlias?: string;
@@ -1009,7 +1009,7 @@ interface UsageRecordPayload {
   model: string;
   usage: TokenUsage;
   /** UsageRecordScope */
-  usageScope?: 'session' | 'turn';
+  usageScope?: 'session' | 'turn' | 'prediction';
 }
 
 /** Record type → payload sketch. */

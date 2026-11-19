@@ -8,6 +8,7 @@ import {
   type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
   type AgentTaskStatus,
+  AgentTaskPersistence,
 } from '#/agent/task/task';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { Event } from '#/_base/event';
@@ -48,7 +49,6 @@ import {
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentTaskRequestService, AgentTaskService } from '#/agent/task/taskService';
 import { createTaskCompletionEntry, IAgentTaskOutputService } from '#/agent/task/taskOutput';
-import { AgentTaskPersistence } from '#/agent/task/task';
 
 const posixEnv: IHostEnvironment = {
   _serviceBrand: undefined,
@@ -347,6 +347,7 @@ async function executeTool(
     name: 'Bash',
     arguments: JSON.stringify(ctx.args),
   }, {
+    origin: 'loop',
     turnId: ctx.turnId,
     onForegroundTaskStart: ctx.onForegroundTaskStart,
   });
@@ -589,6 +590,8 @@ describe('BashTool', () => {
       NO_COLOR: '1',
       TERM: 'dumb',
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
+      KIMI_CODE_SESSION_ID: 's',
+      KIMI_CODE_WORKSPACE_ID: 'w',
     });
     expect(proc.stdin.end).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({

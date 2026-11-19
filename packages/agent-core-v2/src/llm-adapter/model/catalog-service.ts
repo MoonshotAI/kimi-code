@@ -14,8 +14,8 @@ import {
   createOAuthCredentialProvider,
   createStaticCredentialProvider,
 } from '#human/credentials/credentials';
-import type { LlmCredentialProvider } from '#human/llm-requester/requester';
-import type { ModelCapability } from '../contract/capability';
+import type { LlmCredentialProvider, ModelCapability } from '@moonshot-ai/core/llm/request';
+import { createBedrockTokenProvider } from '@moonshot-ai/core/llm/builtin/provider/bedrock/credentials';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
 import {
   IProtocolAdapterRegistry,
@@ -205,9 +205,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     provider: CatalogProviderInfo,
   ): Promise<ProviderCredentialState> {
     const declared = declaredProviderCredential(provider, providerId);
+    const hasApiKey = hasConfiguredApiKey(provider);
+    const hasOAuthToken = await this.hasCachedToken(providerId, provider);
     return {
-      hasApiKey: hasConfiguredApiKey(provider),
-      hasOAuthToken: await this.hasCachedToken(providerId, provider),
+      hasApiKey,
+      hasOAuthToken,
+      supportsAmbientCredential: provider.type === 'bedrock' && !hasApiKey && !hasOAuthToken,
       hasCredentialConflict: declared.kind === 'conflict',
     };
   }
@@ -275,12 +278,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       wireName,
       providerType,
     );
-    const capabilities = resolveModelCapabilities(
-      model.capabilities,
-      detectedCapability,
-      model.maxContextSize,
-      model.maxInputSize,
-    );
+    const capabilities = resolveModelCapabilities(model.capabilities, detectedCapability);
     const providerOptions = buildProtocolProviderOptions(
       model,
       protocol,
@@ -291,28 +289,36 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
 
     return {
       id,
-      name: wireName,
       aliases: model.aliases ?? [],
       protocol,
-      baseUrl: resolvedBaseUrl,
-      headers: resolveOutboundHeaders(
-        providerConfig?.type,
-        providerConfig?.customHeaders,
-        this.hostRequestHeaders,
-      ),
-      capabilities,
-      maxContextSize: model.maxContextSize,
-      maxInputSize: model.maxInputSize,
+      spec: {
+        provider: providerType ?? protocol,
+        name: wireName,
+        capability: capabilities,
+        thinking: {
+          supportEfforts: model.supportEfforts,
+          defaultEffort: model.defaultEffort,
+          offEffort: providerOptions?.offEffort,
+          alwaysThinking: declared.has('always_thinking'),
+          adaptiveThinking: providerOptions?.adaptiveThinking,
+        },
+        maxContextSize: model.maxContextSize,
+        maxInputSize: model.maxInputSize,
+      },
+      endpoint: {
+        baseUrl: resolvedBaseUrl,
+        headers: resolveOutboundHeaders(
+          providerConfig?.type,
+          providerConfig?.customHeaders,
+          this.hostRequestHeaders,
+        ),
+        credentials: credentialProvider,
+      },
       maxOutputSize: model.maxOutputSize,
       displayName: model.displayName,
       reasoningKey: model.reasoningKey,
-      supportEfforts: model.supportEfforts,
-      defaultEffort: model.defaultEffort,
-      alwaysThinking: declared.has('always_thinking'),
-      adaptiveThinking: model.adaptiveThinking,
       providerType,
       providerName,
-      credentialProvider,
       providerOptions,
     };
   }
@@ -338,7 +344,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       return {
         providerConfig,
         providerName: providerId,
-        resolvedBaseUrl: resolveEndpointBaseUrl(model, providerConfig),
+        resolvedBaseUrl: resolveEndpointBaseUrl(model, providerConfig, providerId),
       };
     }
 
@@ -401,6 +407,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         tokens.getAccessToken(providerKey, oauthRef, { force: options?.force === true }),
       );
     }
+    if (auth.aws !== undefined) {
+      return createBedrockTokenProvider({
+        region: auth.aws.region,
+        profile: auth.aws.profile,
+      });
+    }
     return createStaticCredentialProvider(undefined);
   }
 }
@@ -419,22 +431,18 @@ export function resolveOutboundHeaders(
 
 function resolveModelCapabilities(
   declaredCapabilities: readonly string[] | undefined,
-  detected: ModelCapability,
-  maxContextSize: number,
-  maxInputSize: number | undefined,
+  detected: ModelCapability | undefined,
 ): ModelCapability {
   const declared = new Set((declaredCapabilities ?? []).map((c) => c.trim().toLowerCase()));
   return {
-    image_in: declared.has('image_in') || detected.image_in,
-    video_in: declared.has('video_in') || detected.video_in,
-    audio_in: declared.has('audio_in') || detected.audio_in,
-    thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
-    tool_use: declared.has('tool_use') || detected.tool_use,
-    max_context_tokens: maxContextSize,
-    max_input_tokens: maxInputSize,
+    image_in: declared.has('image_in') || detected?.image_in === true,
+    video_in: declared.has('video_in') || detected?.video_in === true,
+    audio_in: declared.has('audio_in') || detected?.audio_in === true,
+    thinking:
+      declared.has('thinking') || declared.has('always_thinking') || detected?.thinking === true,
+    tool_use: declared.has('tool_use') || (detected !== undefined && detected.tool_use !== false),
     dynamically_loaded_tools:
-      declared.has('dynamically_loaded_tools') ||
-      detected.dynamically_loaded_tools === true,
+      declared.has('dynamically_loaded_tools') || detected?.dynamically_loaded_tools === true,
   };
 }
 
@@ -448,16 +456,18 @@ function effectiveRecordOf(definition: CatalogModel): ModelRecord {
   return {
     ...base,
     capabilities: overrides?.capabilities ?? raw.capabilities,
-    maxContextSize: definition.maxContextSize,
-    maxInputSize: definition.maxInputSize,
+    maxContextSize: definition.spec.maxContextSize,
+    maxInputSize: definition.spec.maxInputSize,
     maxOutputSize: definition.maxOutputSize,
     displayName: definition.displayName,
     reasoningKey: definition.reasoningKey,
-    adaptiveThinking: definition.adaptiveThinking,
+    adaptiveThinking: definition.spec.thinking?.adaptiveThinking,
     supportEfforts:
-      definition.supportEfforts === undefined ? undefined : [...definition.supportEfforts],
-    defaultEffort: definition.defaultEffort,
-    offEffort: definition.offEffort,
+      definition.spec.thinking?.supportEfforts === undefined
+        ? undefined
+        : [...definition.spec.thinking.supportEfforts],
+    defaultEffort: definition.spec.thinking?.defaultEffort,
+    offEffort: definition.spec.thinking?.offEffort,
   };
 }
 

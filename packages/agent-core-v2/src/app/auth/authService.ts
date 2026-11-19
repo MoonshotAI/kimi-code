@@ -725,6 +725,7 @@ export class AuthSummaryService implements IAuthSummaryService {
         providerName,
       });
       if (auth.apiKey !== undefined) return;
+      if (auth.aws !== undefined) return;
       if (auth.apiKeyEnv !== undefined) {
         if (nonEmpty(process.env[auth.apiKeyEnv]) !== undefined) return;
         throw new AuthCredentialEnvMissingError(providerName, auth.apiKeyEnv);
@@ -735,6 +736,7 @@ export class AuthSummaryService implements IAuthSummaryService {
         if (nonEmpty(token) !== undefined) return;
         throw new AuthTokenMissingError(providerKey);
       }
+      if (provider?.type === 'vertexai') return;
       throw new AuthTokenMissingError(providerName);
     } catch (error) {
       this.telemetry.track2('auth_ensure_ready_failed', {

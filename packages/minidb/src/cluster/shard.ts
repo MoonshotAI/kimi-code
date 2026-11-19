@@ -16,7 +16,7 @@ export class ShardHandle {
   private constructor(
     readonly shardId: number,
     readonly dir: string,
-    readonly db: MiniDb<unknown>,
+    readonly db: MiniDb,
     readonly writer: boolean,
   ) {}
 
@@ -30,7 +30,7 @@ export class ShardHandle {
     renewMs: number,
   ): Promise<ShardHandle> {
     const db = await MiniDb.open({ ...opts, dir });
-    const handle = new ShardHandle(shardId, dir, db as MiniDb<unknown>, true);
+    const handle = new ShardHandle(shardId, dir, db as MiniDb, true);
     if (renewMs > 0) {
       handle.leaseTimer = setInterval(() => {
         void db.renewLock().catch(() => {});
@@ -52,7 +52,7 @@ export class ShardHandle {
       autoCompact: false,
       fsyncPolicy: 'no',
     });
-    return new ShardHandle(shardId, dir, db as MiniDb<unknown>, false);
+    return new ShardHandle(shardId, dir, db as MiniDb, false);
   }
 
   async close(): Promise<void> {

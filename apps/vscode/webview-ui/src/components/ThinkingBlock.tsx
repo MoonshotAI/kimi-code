@@ -18,7 +18,6 @@ export function ThinkingBlock({ content, finished, compact }: ThinkingBlockProps
   const isStreaming = !finished;
 
   if (!showThinkingContent) {
-    // Hidden mode: static label, no interaction
     return (
       <div className="rounded-lg border border-zinc-200/50 bg-zinc-50/30 dark:border-zinc-800/50 dark:bg-zinc-900/10 overflow-hidden">
         <div
@@ -34,7 +33,6 @@ export function ThinkingBlock({ content, finished, compact }: ThinkingBlockProps
     );
   }
 
-  // Show mode: clickable, expandable/collapsible
   if (!content && !isStreaming) {
     return null;
   }

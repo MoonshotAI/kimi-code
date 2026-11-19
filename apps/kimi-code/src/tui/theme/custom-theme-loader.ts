@@ -1,7 +1,3 @@
-/**
- * Custom theme loader — reads JSON files from `~/.kimi-code/themes/`.
- */
-
 import { readdirSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -15,7 +11,6 @@ import { getBuiltInPalette } from './colors';
 export const CustomThemeSchema = z.object({
   name: z.string().min(1),
   displayName: z.string().optional(),
-  /** Built-in palette that unspecified tokens fall back to. Defaults to `dark`. */
   base: z.enum(['dark', 'light']).optional(),
   colors: z.record(z.string(), z.string()).optional(),
 });
@@ -24,11 +19,6 @@ export type CustomThemeDefinition = z.infer<typeof CustomThemeSchema>;
 
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 
-/**
- * Names reserved for built-in themes. A `dark.json` / `light.json` /
- * `auto.json` file would collide with the built-in value, so it can never be
- * selected as a custom theme — hide it from listings.
- */
 const RESERVED_THEME_NAMES: ReadonlySet<string> = new Set(['dark', 'light', 'auto']);
 
 export function getCustomThemesDir(): string {
@@ -45,10 +35,6 @@ async function readCustomTheme(name: string): Promise<ParsedCustomTheme | null> 
     const content = await readFile(join(getCustomThemesDir(), `${name}.json`), 'utf-8');
     const parsed = CustomThemeSchema.parse(JSON.parse(content));
 
-    // Invalid hex values are dropped (the token falls back to the base
-    // palette). We intentionally do not print here: this loader can run while
-    // pi-tui owns the terminal, where raw stdout/stderr writes corrupt the
-    // rendered screen. Authoring-time validation lives in the JSON schema.
     const colors = Object.fromEntries(
       Object.entries(parsed.colors ?? {}).filter(([, v]) => HEX_COLOR_REGEX.test(v)),
     ) as Partial<ColorPalette>;
@@ -63,7 +49,6 @@ export async function loadCustomTheme(name: string): Promise<Partial<ColorPalett
   return (await readCustomTheme(name))?.colors ?? null;
 }
 
-/** Load a custom theme and merge it onto its base palette (dark unless `base` says otherwise). */
 export async function loadCustomThemeMerged(name: string): Promise<ColorPalette | null> {
   const parsed = await readCustomTheme(name);
   if (parsed === null) return null;
@@ -86,7 +71,6 @@ export async function listCustomThemes(): Promise<string[]> {
   }
 }
 
-/** Synchronous variant for UI paths (e.g. the `/theme` picker) that cannot await. */
 export function listCustomThemesSync(): string[] {
   try {
     const entries = readdirSync(getCustomThemesDir(), { withFileTypes: true });

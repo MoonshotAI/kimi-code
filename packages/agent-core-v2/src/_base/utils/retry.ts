@@ -50,10 +50,10 @@ export function retryErrorFields(error: unknown): RetryErrorFields {
   return {
     errorName: error instanceof Error
       ? error.name
-      : typeof structured?.kind === 'string'
-        ? structured.kind
-        : typeof structured?.name === 'string'
-          ? structured.name
+      : typeof structured?.name === 'string'
+        ? structured.name
+        : typeof structured?.kind === 'string'
+          ? structured.kind
           : typeof error,
     errorMessage: error instanceof Error
       ? error.message

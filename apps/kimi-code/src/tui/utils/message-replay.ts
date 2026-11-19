@@ -25,14 +25,6 @@ import { nextTranscriptId } from './transcript-id';
 
 export const REPLAY_TURN_LIMIT = 10;
 
-/**
- * Resume fetches one extra turn of records: the SDK trims the replay to the
- * requested limit before returning it, and a trim that lands between a
- * bundled prompt and the hook results recorded immediately before it would
- * make them unrecoverable. The extra margin lets the TUI-side limiter
- * (session-replay's preserveBundleHookResults) do the final cut without
- * losing them.
- */
 export const REPLAY_FETCH_TURN_LIMIT = REPLAY_TURN_LIMIT + 1;
 
 export interface ReplayRenderContext {
@@ -57,7 +49,6 @@ export interface SkillActivationProjection {
   readonly skillArgs?: string;
   readonly skillSource?: string;
   readonly trigger: SkillActivationTrigger;
-  /** The activation rode a bundled prompt message, not a standalone one. */
   readonly bundled?: boolean;
 }
 
@@ -74,7 +65,8 @@ export interface ReplayBackgroundProjection {
 }
 
 export function appStateFromResumeAgent(agent: ResumedAgentState): Partial<AppState> {
-  const maxContextTokens = agent.config.modelCapabilities?.max_context_tokens ?? 0;
+  const maxContextTokens =
+    agent.config.model?.maxInputSize ?? agent.config.model?.maxContextSize ?? 0;
   const contextTokens = agent.context.tokenCount;
   const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
   return {
@@ -128,10 +120,6 @@ export function replayBackgroundProjection(
       agentId,
       parentToolCallId: info.taskId,
       description: info.description,
-      // The persisted task record carries the spawn-time model/effort (v2);
-      // keep them across a resume so the terminal transcript entry can show
-      // them. Model maps through the catalog like the live path; boolean
-      // effort states carry no level and are dropped.
       model:
         info.model === undefined
           ? undefined
@@ -165,9 +153,6 @@ export function limitReplayRecordsByTurn(
   records: readonly AgentReplayRecord[],
   maxTurns: number,
 ): readonly AgentReplayRecord[] {
-  // Defensive slice — the core already trims the replay when the caller passes
-  // `replayTurnLimit` on resume; the boundary predicate lives in the SDK
-  // (`limitAgentReplayByTurns`).
   return limitAgentReplayByTurns(records, maxTurns);
 }
 
@@ -237,10 +222,6 @@ export function toolResultOutput(content: readonly ContentPart[]): string {
 }
 
 export function contentPartsToText(content: readonly ContentPart[]): string {
-  // A daemon-ref media part is self-contained and renders as a bare
-  // `[image]`/`[video]` placeholder downstream — neither the materialization
-  // path nor the internal `kimi-file://` url may surface as user text. A
-  // standalone `<media path>` tag is user text and stays verbatim.
   return content.map(contentPartToText).join('');
 }
 
@@ -297,10 +278,6 @@ export function withoutUserPromptSubmitHookParts(
   return content.filter((part) => !isUserPromptSubmitHookPart(part));
 }
 
-/**
- * agent-core-v2's task domain persists the terminal notification under the
- * 'task' spelling (v1 used 'background_task'); both reach replay verbatim.
- */
 export interface TaskNotificationOrigin {
   readonly kind: 'task';
   readonly taskId: string;
@@ -333,15 +310,6 @@ export function skillActivationFromOrigin(
   };
 }
 
-/**
- * The v2 engine bundles a prompt's inline skill activations into the prompt
- * message itself: the rendered skill blocks precede the caller's parts in
- * the content, and this origin field carries every activation's metadata so
- * replay can rebuild the per-skill cards from the single message. The SDK's
- * origin union is typed from the v1 engine, which never sets the field, so
- * read it structurally here instead of widening the deprecated v1 package's
- * types.
- */
 export function bundledSkillsFromOrigin(
   origin: PromptOrigin | undefined,
 ): readonly SkillActivationProjection[] {
@@ -367,11 +335,6 @@ export function bundledSkillsFromOrigin(
   }));
 }
 
-/**
- * Content parts the caller actually typed: skill blocks are meta-marked at
- * construction; legacy wires carry no marks, so the leading unmarked parts
- * (one per bundled activation) are annotated first, then filtered out.
- */
 export function stripBundledSkillParts(message: ContextMessage): readonly ContentPart[] {
   return annotateBundledSkillParts(
     message.content,
@@ -389,9 +352,6 @@ export function userSlashSkillPromptText(
   const name = skill.skillSource === 'builtin' ? skill.skillName : `skill:${skill.skillName}`;
   const args = skill.skillArgs ?? '';
   const command = args.trim().length > 0 ? `/${name} ${args}` : `/${name}`;
-  // Media parts mean the caller content came from an external activation with
-  // attachments (e.g. kap-server), never from a typed command: keep the
-  // command identity and show the attachment rendering alongside it.
   if (callerParts.some((part) => part.type !== 'text')) {
     const attachmentText = contentPartsToText(callerParts).trim();
     return attachmentText.length > 0 ? `${command} ${attachmentText}` : command;
@@ -399,11 +359,6 @@ export function userSlashSkillPromptText(
   const callerText = contentPartsToText(callerParts);
   const trimmed = callerText.trim();
   if (trimmed.length === 0) return command;
-  // Text-only caller content is ambiguous: a saved typed command always
-  // starts with the slash mention, while external text attachments (the
-  // kap-server activation API accepts text attachments) are arbitrary prose
-  // — prepend the reconstructed command for the latter so the activated
-  // skill stays identifiable.
   if (trimmed.startsWith('/')) return callerText;
   return `${command} ${trimmed}`;
 }

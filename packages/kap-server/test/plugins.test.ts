@@ -392,21 +392,21 @@ describe('server-v2 /api/v1 plugins', () => {
       version: string;
       enabled: boolean;
       origin: string;
-      catalogId?: string;
-      installedAt: string;
+      catalog_id?: string;
+      installed_at: string;
     }>('POST', '/api/v1/plugins', { source });
     expect(installed.body.code).toBe(0);
     expect(installed.body.data).toMatchObject({
       id: 'demo-plugin',
       version: '1.0.0',
       description: 'test plugin',
-      shortDescription: 'test short description',
-      longDescription: 'test long description',
+      short_description: 'test short description',
+      long_description: 'test long description',
       enabled: true,
       origin: 'custom',
-      installedAt: expect.any(String),
+      installed_at: expect.any(String),
     });
-    expect(installed.body.data.catalogId).toBeUndefined();
+    expect(installed.body.data.catalog_id).toBeUndefined();
 
     const list = await call<{ plugins: { id: string; enabled: boolean }[] }>(
       'GET',
@@ -424,12 +424,12 @@ describe('server-v2 /api/v1 plugins', () => {
 
   it('returns installed and marketplace capability details without installing', async () => {
     type CapabilityDetails = {
-      skills: Array<{ name: string; displayName?: string; description?: string }>;
-      mcpServers: Array<{
+      skills: Array<{ name: string; display_name?: string; description?: string }>;
+      mcp_servers: Array<{
         name: string;
-        displayName?: string;
+        display_name?: string;
         description?: string;
-        iconUrl?: string;
+        icon_url?: string;
         transport: string;
       }>;
     };
@@ -438,14 +438,14 @@ describe('server-v2 /api/v1 plugins', () => {
     const info = await call<CapabilityDetails>('GET', '/api/v1/plugins/demo-plugin');
     expect(info.body.code).toBe(0);
     expect(info.body.data.skills).toEqual([
-      { name: 'demo-skill', displayName: 'Demo Skill', description: 'Demo skill override' },
+      { name: 'demo-skill', display_name: 'Demo Skill', description: 'Demo skill override' },
     ]);
-    expect(info.body.data.mcpServers).toHaveLength(1);
-    expect(info.body.data.mcpServers[0]).toMatchObject({
+    expect(info.body.data.mcp_servers).toHaveLength(1);
+    expect(info.body.data.mcp_servers[0]).toMatchObject({
       name: 'demo',
-      displayName: 'Demo MCP',
+      display_name: 'Demo MCP',
       description: 'Demo MCP description',
-      iconUrl: 'https://example.com/demo-mcp.png',
+      icon_url: 'https://example.com/demo-mcp.png',
       transport: 'stdio',
     });
     const localizedInfo = await call<CapabilityDetails>(
@@ -453,33 +453,34 @@ describe('server-v2 /api/v1 plugins', () => {
       '/api/v1/plugins/demo-plugin?locale=en-US',
     );
     expect(localizedInfo.body.data.skills).toEqual([
-      { name: 'demo-skill', displayName: 'English Skill', description: 'English skill description' },
+      { name: 'demo-skill', display_name: 'English Skill', description: 'English skill description' },
     ]);
-    expect(localizedInfo.body.data.mcpServers[0]).toMatchObject({
+    expect(localizedInfo.body.data.mcp_servers[0]).toMatchObject({
       name: 'demo',
-      displayName: 'English MCP',
+      display_name: 'English MCP',
       description: 'English MCP description',
-      iconUrl: 'https://example.com/demo-mcp.png',
+      icon_url: 'https://example.com/demo-mcp.png',
       transport: 'stdio',
     });
     await call('POST', '/api/v1/plugins/demo-plugin:remove');
 
     await useDemoArtifact('demo-plugin', '2.0.0', true);
     const preview = await call<CapabilityDetails>('POST', '/api/v1/plugins/preview', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
       locale: 'en-US',
     });
     expect(preview.body.code).toBe(0);
     expect(preview.body.data.skills).toEqual([
-      { name: 'demo-skill', displayName: 'English Skill', description: 'English skill description' },
+      { name: 'demo-skill', display_name: 'English Skill', description: 'English skill description' },
     ]);
-    expect(preview.body.data.mcpServers).toHaveLength(1);
-    expect(preview.body.data.mcpServers[0]).toMatchObject({
+    expect(preview.body.data.mcp_servers).toHaveLength(1);
+    expect(preview.body.data.mcp_servers[0]).toMatchObject({
       name: 'demo',
-      displayName: 'English MCP',
+      display_name: 'English MCP',
       description: 'English MCP description',
-      iconUrl: 'https://example.com/demo-mcp.png',
+      icon_url: 'https://example.com/demo-mcp.png',
       transport: 'stdio',
     });
     const installed = await call<{ plugins: unknown[] }>('GET', '/api/v1/plugins');
@@ -518,22 +519,22 @@ describe('server-v2 /api/v1 plugins', () => {
     expect((await call('POST', '/api/v1/plugins/demo-plugin:explode')).body.code).toBe(40001);
     expect((await call('POST', '/api/v1/plugins/nope:remove')).body.code).toBe(40419);
     expect((await call('POST', '/api/v1/plugins', { source: '' })).body.code).toBe(40001);
-    expect((await call('POST', '/api/v1/plugins', { marketplaceId: 'missing-plugin' })).body.code).toBe(40419);
+    expect((await call('POST', '/api/v1/plugins', { marketplace_id: 'missing-plugin' })).body.code).toBe(40419);
     expect(
       (
         await call('POST', '/api/v1/plugins', {
           source: '/tmp/demo',
-          marketplaceId: 'demo-plugin',
-          expectedVersion: '2.0.0',
+          marketplace_id: 'demo-plugin',
+          expected_version: '2.0.0',
         })
       ).body.code,
     ).toBe(40001);
     expect(
-      (await call('POST', '/api/v1/plugins', { marketplaceId: 'demo-plugin' })).body.code,
+      (await call('POST', '/api/v1/plugins', { marketplace_id: 'demo-plugin' })).body.code,
     ).toBe(40001);
   });
 
-  it('fans out event.plugin.changed over WS on install and remove', async () => {
+  it('fans out invalidated over WS on install and remove', async () => {
     const ws = new WebSocket(`${base.replace('http', 'ws')}/api/v1/ws`, [
       `kimi-code.bearer.${bearerToken(server!)}`,
     ]);
@@ -549,10 +550,10 @@ describe('server-v2 /api/v1 plugins', () => {
       });
       const source = await makePluginDir('demo-plugin', '1.0.0');
       await call('POST', '/api/v1/plugins', { source });
-      await vi.waitFor(() => expect(types).toContain('event.plugin.changed'));
+      await vi.waitFor(() => expect(types).toContain('invalidated'));
       await call('POST', '/api/v1/plugins/demo-plugin:remove');
       await vi.waitFor(() => {
-        expect(types.filter((type) => type === 'event.plugin.changed').length).toBeGreaterThanOrEqual(2);
+        expect(types.filter((type) => type === 'invalidated').length).toBeGreaterThanOrEqual(2);
       });
     } finally {
       ws.close();
@@ -581,9 +582,9 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(defaultMarketplace.body.data.entries.map((entry) => entry.id)).not.toContain('demo-plugin');
     expect(defaultMarketplace.body.data.entries.map((entry) => entry.id)).toContain('cli-only');
     const rejected = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
-      expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
     expect(rejected.body.code).toBe(40001);
 
@@ -605,9 +606,9 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(desktopMarketplace.body.data.entries.map((entry) => entry.id)).toContain('demo-plugin');
     expect(desktopMarketplace.body.data.entries.map((entry) => entry.id)).not.toContain('cli-only');
     const installed = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
-      expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
     expect(installed.body.code).toBe(0);
     expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
@@ -649,12 +650,12 @@ describe('server-v2 /api/v1 plugins', () => {
         classification: string;
         source: string;
         platforms?: string[];
-        distribution?: { weight?: number; userLevel?: string };
+        distribution?: { weight?: number; user_level?: string };
         locale?: Record<string, unknown>;
         billing?: string;
         installed?: { version?: string; enabled: boolean };
-        updateAvailable?: boolean;
-        capabilityId?: string;
+        update_available?: boolean;
+        capability_id?: string;
       }>;
     }>('GET', '/api/v1/plugins/marketplace');
     expect(before.body.code).toBe(0);
@@ -680,35 +681,35 @@ describe('server-v2 /api/v1 plugins', () => {
       'http://marketplace.test/plugins/relative.zip',
     );
     expect(before.body.data.entries.find((entry) => entry.id === 'meta-plugin')).toMatchObject({
-      shortDescription: 'Short description',
-      longDescription: 'Long description',
-      defaultLocale: 'en-us',
+      short_description: 'Short description',
+      long_description: 'Long description',
+      default_locale: 'en-us',
       locale: {
-        defaultLocale: 'en-us',
-        'zh-cn': { displayName: '本地化名称', shortDescription: '短介绍', longDescription: '完整介绍' },
+        default_locale: 'en-us',
+        'zh-cn': { display_name: '本地化名称', short_description: '短介绍', long_description: '完整介绍' },
       },
       billing: 'free',
-      distribution: { userLevel: 'pro' },
+      distribution: { user_level: 'pro' },
     });
-    expect(before.body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')?.capabilityId).toBeUndefined();
+    expect(before.body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')?.capability_id).toBeUndefined();
 
     await useDemoArtifact('demo-plugin', '1.0.0');
     await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '1.0.0',
-      expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '1.0.0',
+      expected_sha256: artifactDigest(),
     });
     catalog.plugins[0]!['version'] = '2.0.0';
     const after = await call<{
       entries: Array<{
         id: string;
         installed?: { version?: string; enabled: boolean };
-        updateAvailable?: boolean;
+        update_available?: boolean;
       }>;
     }>('GET', '/api/v1/plugins/marketplace');
     expect(after.body.data.entries.find((entry) => entry.id === 'demo-plugin')).toMatchObject({
       installed: { version: '1.0.0', enabled: true },
-      updateAvailable: true,
+      update_available: true,
     });
     await call('POST', '/api/v1/plugins/demo-plugin:remove');
   });
@@ -720,12 +721,12 @@ describe('server-v2 /api/v1 plugins', () => {
       entries: Array<{
         id: string;
         installed?: { version?: string; enabled: boolean };
-        updateAvailable?: boolean;
+        update_available?: boolean;
       }>;
     }>('GET', '/api/v1/plugins/marketplace');
     const customEntry = response.body.data.entries.find((entry) => entry.id === 'demo-plugin');
     expect(customEntry).not.toHaveProperty('installed');
-    expect(customEntry).not.toHaveProperty('updateAvailable');
+    expect(customEntry).not.toHaveProperty('update_available');
 
     const installedPath = join(home!, 'plugins', 'installed.json');
     const installedFile = JSON.parse(await readFile(installedPath, 'utf8')) as {
@@ -739,12 +740,12 @@ describe('server-v2 /api/v1 plugins', () => {
       entries: Array<{
         id: string;
         installed?: { version?: string; enabled: boolean };
-        updateAvailable?: boolean;
+        update_available?: boolean;
       }>;
     }>('GET', '/api/v1/plugins/marketplace');
     expect(legacy.body.data.entries.find((entry) => entry.id === 'demo-plugin')).toMatchObject({
       installed: { version: '1.0.0', enabled: true },
-      updateAvailable: true,
+      update_available: true,
     });
   });
 
@@ -776,13 +777,13 @@ describe('server-v2 /api/v1 plugins', () => {
     base = `http://127.0.0.1:${server.port}`;
     custom = true;
 
-    const { body } = await call<{ entries: Array<{ id: string; capabilityId?: string }> }>(
+    const { body } = await call<{ entries: Array<{ id: string; capability_id?: string }> }>(
       'GET',
       '/api/v1/plugins/marketplace',
     );
     expect(body.code).toBe(0);
     expect(
-      body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')?.capabilityId,
+      body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')?.capability_id,
     ).toBe('kimi-webbridge');
     const expectedCuId =
       process.platform === 'darwin'
@@ -796,7 +797,7 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(cuIds).toEqual(expectedCuId === undefined ? [] : [expectedCuId]);
     if (expectedCuId === undefined) return;
     expect(
-      body.data.entries.find((entry) => entry.id === expectedCuId)?.capabilityId,
+      body.data.entries.find((entry) => entry.id === expectedCuId)?.capability_id,
     ).toBe('kimi-cu');
 
     const cuSource = await makePluginDir(expectedCuId, '0.5.4');
@@ -836,18 +837,18 @@ describe('server-v2 /api/v1 plugins', () => {
     const { body } = await call<{
       entries: Array<{
         id: string;
-        capabilityId?: string;
+        capability_id?: string;
         installed?: { version?: string; enabled: boolean };
-        updateAvailable?: boolean;
+        update_available?: boolean;
       }>;
     }>('GET', '/api/v1/plugins/marketplace');
 
     expect(body.code).toBe(0);
     expect(body.data.entries.map((entry) => entry.id)).not.toContain('kimi-webbridge');
     expect(body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')).toMatchObject({
-      capabilityId: 'kimi-webbridge',
+      capability_id: 'kimi-webbridge',
       installed: { version: '1.0.0', enabled: true },
-      updateAvailable: true,
+      update_available: true,
     });
 
     catalog.plugins = catalog.plugins.filter((entry) => entry['id'] !== 'kimi-browser-extension');
@@ -858,8 +859,8 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(legacyOnly.body.code).toBe(0);
     expect(legacyOnly.body.data.entries.map((entry) => entry.id)).not.toContain('kimi-webbridge');
     const rejected = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'kimi-webbridge',
-      expectedVersion: '1.0.0',
+      marketplace_id: 'kimi-webbridge',
+      expected_version: '1.0.0',
     });
     expect(rejected.body.code).toBe(40001);
     expect(rejected.body.msg).toContain('install "kimi-browser-extension" instead');
@@ -978,7 +979,7 @@ describe('server-v2 /api/v1 plugins', () => {
     const installed = await call<{ id: string; origin: string; source: string }>(
       'POST',
       '/api/v1/plugins',
-      { marketplaceId: 'local-plugin' },
+      { marketplace_id: 'local-plugin' },
     );
 
     expect(installed.body.code).toBe(0);
@@ -995,8 +996,8 @@ describe('server-v2 /api/v1 plugins', () => {
     catalog = { plugins: [{ id: 'local-plugin', source }] };
 
     const installed = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'local-plugin',
-      expectedVersion: '1.0.0',
+      marketplace_id: 'local-plugin',
+      expected_version: '1.0.0',
     });
 
     expect(installed.body.code).toBe(40934);
@@ -1031,7 +1032,7 @@ describe('server-v2 /api/v1 plugins', () => {
     const installed = await call<{ id: string; origin: string; source: string }>(
       'POST',
       '/api/v1/plugins',
-      { marketplaceId: 'github-plugin' },
+      { marketplace_id: 'github-plugin' },
     );
 
     expect(installed.body.code).toBe(0);
@@ -1047,8 +1048,8 @@ describe('server-v2 /api/v1 plugins', () => {
     await useDemoArtifact();
 
     const result = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
     });
 
     expect(result.body.code).toBe(40001);
@@ -1061,45 +1062,46 @@ describe('server-v2 /api/v1 plugins', () => {
     const installed = await call<{
       id: string;
       origin: string;
-      catalogId?: string;
-      installedAt: string;
-      originalSource?: string;
+      catalog_id?: string;
+      installed_at: string;
+      original_source?: string;
     }>('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
     expect(installed.body.code).toBe(0);
     expect(installed.body.data).toMatchObject({
       id: 'demo-plugin',
       origin: 'marketplace',
-      catalogId: 'demo-plugin',
-      installedAt: expect.any(String),
-      originalSource: 'https://cdn.example.test/demo.zip',
+      catalog_id: 'demo-plugin',
+      installed_at: expect.any(String),
+      original_source: 'https://cdn.example.test/demo.zip',
     });
     expect(artifactAuthorizations).toEqual([undefined]);
     expect(catalogRequestHeaders[0]?.get('X-Msh-Device-Id')).toBeNull();
     expect(artifactRequestHeaders[0]?.get('X-Msh-Device-Id')).toBeNull();
 
     const customSource = await makePluginDir('demo-plugin', '3.0.0');
-    const customInstall = await call<{ origin: string; catalogId?: string; installedAt: string }>(
+    const customInstall = await call<{ origin: string; catalog_id?: string; installed_at: string }>(
       'POST',
       '/api/v1/plugins',
       { source: customSource },
     );
     expect(customInstall.body.data).toMatchObject({
       origin: 'custom',
-      installedAt: installed.body.data.installedAt,
+      installed_at: installed.body.data.installed_at,
     });
-    expect(customInstall.body.data.catalogId).toBeUndefined();
+    expect(customInstall.body.data.catalog_id).toBeUndefined();
 
-    const marketplaceAgain = await call<{ origin: string; installedAt: string }>(
+    const marketplaceAgain = await call<{ origin: string; installed_at: string }>(
       'POST',
       '/api/v1/plugins',
-      { marketplaceId: 'demo-plugin', expectedVersion: '2.0.0', expectedSha256: artifactDigest() },
+      { marketplace_id: 'demo-plugin', expected_version: '2.0.0', expected_sha256: artifactDigest() },
     );
     expect(marketplaceAgain.body.data).toMatchObject({
       origin: 'marketplace',
-      installedAt: installed.body.data.installedAt,
+      installed_at: installed.body.data.installed_at,
     });
     await call('POST', '/api/v1/plugins/demo-plugin:remove');
   });
@@ -1175,9 +1177,9 @@ describe('server-v2 /api/v1 plugins', () => {
   it('returns catalogChanged before downloading when expectedVersion is stale', async () => {
     await useDemoArtifact();
     const result = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '1.9.0',
-      expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '1.9.0',
+      expected_sha256: artifactDigest(),
     });
     expect(result.body.code).toBe(40934);
     expect(result.body.msg).toContain('refresh the catalog');
@@ -1188,26 +1190,27 @@ describe('server-v2 /api/v1 plugins', () => {
     await useDemoArtifact();
     catalog.plugins[0]!['sha256sum'] = '0'.repeat(64);
     const changed = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
-      expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
     expect(changed.body.code).toBe(40934);
     expect(changed.body.msg).toContain('refresh the catalog');
     expect(artifactAuthorizations).toEqual([]);
 
     const sha = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
-      expectedSha256: '0'.repeat(64),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: '0'.repeat(64),
     });
     expect(sha.body.code).toBe(40001);
     expect(sha.body.msg).toContain('SHA-256 mismatch');
 
     await useDemoArtifact('actual-id');
     const manifest = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
     expect(manifest.body.code).toBe(40001);
     expect(manifest.body.msg).toContain('manifest ID mismatch');
@@ -1233,11 +1236,11 @@ describe('server-v2 /api/v1 plugins', () => {
     custom = true;
 
     const response = await call<{
-      entries: Array<{ id: string; capabilityId?: string }>;
+      entries: Array<{ id: string; capability_id?: string }>;
     }>('GET', '/api/v1/plugins/marketplace');
 
     expect(response.body.code).toBe(0);
-    expect(response.body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')?.capabilityId)
+    expect(response.body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')?.capability_id)
       .toBe('kimi-webbridge');
   });
 
@@ -1298,8 +1301,9 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(catalogRequestHeaders[0]?.get('X-Msh-Device-Id')).toEqual(expect.any(String));
 
     const installed = await call<{ origin: string }>('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
     expect(installed.body.code).toBe(0);
     expect(installed.body.data.origin).toBe('marketplace');
@@ -1356,8 +1360,9 @@ describe('server-v2 /api/v1 plugins', () => {
     custom = true;
 
     const installed = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
 
     expect(installed.body.code).toBe(0);
@@ -1417,8 +1422,9 @@ describe('server-v2 /api/v1 plugins', () => {
     custom = true;
 
     const installed = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
 
     expect(installed.body.code).toBe(0);
@@ -1453,8 +1459,9 @@ describe('server-v2 /api/v1 plugins', () => {
     custom = true;
 
     const installed = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
 
     expect(installed.body.code).toBe(40001);
@@ -1498,8 +1505,9 @@ describe('server-v2 /api/v1 plugins', () => {
     custom = true;
 
     const installed = await call('POST', '/api/v1/plugins', {
-      marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+      marketplace_id: 'demo-plugin',
+      expected_version: '2.0.0',
+      expected_sha256: artifactDigest(),
     });
 
     expect(installed.body.code).toBe(40001);
@@ -1785,13 +1793,13 @@ describe('server-v2 /api/v1 plugins', () => {
     custom = true;
 
     const result = await call<{
-      plugins: Array<{ id: string; origin: string; installedAt: string }>;
+      plugins: Array<{ id: string; origin: string; installed_at: string }>;
     }>('GET', '/api/v1/plugins');
     expect(result.body.data.plugins).toEqual([
       expect.objectContaining({
         id: 'legacy-plugin',
         origin: 'unknown',
-        installedAt: '2026-01-01T00:00:00.000Z',
+        installed_at: '2026-01-01T00:00:00.000Z',
       }),
     ]);
     await call('POST', '/api/v1/plugins/legacy-plugin:remove');

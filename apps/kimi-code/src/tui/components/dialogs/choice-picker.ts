@@ -1,13 +1,3 @@
-/**
- * ChoicePicker — modal single-select list for slash commands that ask
- * the user to pick from a small set of preset values.
- *
- * Mirrors SessionPickerComponent's container-replacement pattern: host
- * calls `showChoicePicker(...)` which clears the editor container,
- * addChild(picker), setFocus(picker); the picker invokes `onSelect` or
- * `onCancel`, and the host tears it down.
- */
-
 import {
   matchesKey,
   Key,
@@ -29,16 +19,10 @@ import { SearchableList } from '#/tui/utils/searchable-list';
 import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
 export interface ChoiceOption {
-  /** Value passed to onSelect (e.g. the actual editor command string). */
   readonly value: string;
-  /** Display text shown in the list. */
   readonly label: string;
-  /** Optional semantic tone for labels that need stronger visual treatment. */
   readonly tone?: 'danger';
-  /** Optional explanatory text shown below the label. */
   readonly description?: string | undefined;
-  /** Color token applied to the description while this option is selected, drawing
-   *  attention to important details. Falls back to `textMuted` when unset or not selected. */
   readonly descriptionTone?: ColorToken;
 }
 
@@ -46,21 +30,15 @@ export interface ChoicePickerOptions {
   readonly title: string;
   readonly hint?: string;
   readonly formatHint?: (text: string) => string;
-  /** Plain text shown in `noticeTone`, or Markdown rendered with the Markdown theme. */
   readonly notice?: string | { readonly markdown: string };
-  /** Color tone for a plain-text notice. Defaults to 'success'. */
   readonly noticeTone?: 'success' | 'warning';
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   readonly initialValue?: string;
-  /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   readonly spaceSelect?: boolean;
-  /** Items per page. Lists longer than this paginate. */
   readonly pageSize?: number;
   readonly onSelect: (value: string) => void;
-  /** When provided, Alt+S invokes this with the selected value instead of
-   * onSelect — used to apply the choice to the current session only. */
   readonly onSessionOnlySelect?: (value: string) => void;
   readonly onCancel: () => void;
 }
@@ -128,7 +106,6 @@ export class ChoicePickerComponent implements Component, Focusable {
       if (chosen !== undefined) this.opts.onSessionOnlySelect(chosen.value);
       return;
     }
-    // Left/Right page through the list (this picker has no horizontal control).
     if (matchesKey(data, Key.left)) {
       this.list.pageUp();
       return;
@@ -137,7 +114,6 @@ export class ChoicePickerComponent implements Component, Focusable {
       this.list.pageDown();
       return;
     }
-    // Space confirmation is opt-out; searchable lists always route it to the query.
     const isSpace = matchesKey(data, Key.space) || printableChar(data) === ' ';
     if (
       matchesKey(data, Key.enter) ||
@@ -208,9 +184,6 @@ export class ChoicePickerComponent implements Component, Focusable {
     const view = this.list.view();
     const options = view.items;
 
-    // Header mirrors the model dialog (see model-selector.ts): border, title
-    // with a "(type to search)" suffix until you type, the hint, a blank, then
-    // the search line. Key vocabulary is lowercase to match every list dialog.
     const navParts = ['↑↓ navigate'];
     if (view.page.pageCount > 1) navParts.push('←→ page');
     navParts.push('Enter select', 'Esc cancel');
@@ -315,6 +288,8 @@ export interface ChoicePreview {
 export interface PreviewChoicePickerOptions extends ChoicePickerOptions {
   readonly preview: ChoicePreview;
   readonly layout?: DockLayout;
+  readonly previewLabel?: string;
+  readonly onPreviewScroll?: (direction: -1 | 1) => void;
 }
 
 const PREVIEW_LABEL = [' Preview', ''] as const;
@@ -336,6 +311,17 @@ export class PreviewChoicePickerComponent extends DockSection implements Focusab
   }
 
   handleInput(data: string): void {
+    const scrollPreview = this.opts.onPreviewScroll;
+    if (scrollPreview !== undefined) {
+      if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.left)) {
+        scrollPreview(-1);
+        return;
+      }
+      if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.right)) {
+        scrollPreview(1);
+        return;
+      }
+    }
     if (this.layout !== undefined && (matchesKey(data, 'shift+up') || matchesKey(data, 'shift+down'))) {
       this.scrollBody(matchesKey(data, 'shift+up') ? -1 : 1);
       return;
@@ -356,11 +342,21 @@ export class PreviewChoicePickerComponent extends DockSection implements Focusab
 
   protected renderPart(part: DockPart, width: number): string[] {
     switch (part) {
-      case 'head':
+      case 'head': {
+        const hints = [
+          this.bodyOverflows(width) ? 'shift+↑/↓ scroll' : undefined,
+          this.opts.onPreviewScroll === undefined ? undefined : '←→ page',
+        ].filter((part) => part !== undefined);
         return [
-          ...this.picker.renderHead(width, this.bodyOverflows(width) ? ' · shift+↑/↓ scroll' : ''),
-          ...this.finishLines(PREVIEW_LABEL.map((line) => currentTheme.fg('textMuted', line)), width),
+          ...this.picker.renderHead(width, hints.length > 0 ? ` · ${hints.join(' · ')}` : ''),
+          ...this.finishLines(
+            [this.opts.previewLabel ?? PREVIEW_LABEL[0], ''].map((line) =>
+              currentTheme.fg('textMuted', line),
+            ),
+            width,
+          ),
         ];
+      }
       case 'body':
         return this.finishLines(this.previewLines(width), width);
       case 'foot':

@@ -4802,7 +4802,7 @@ describe('state lock recovery and prepared writes', () => {
     }
   });
 
-  it('runs TowerComplete validation outside the state lock and stays idempotent under concurrency', async () => {
+  it('runs TowerComplete validation outside the state lock', async () => {
     const mission = await setupMission({
       title: 'feature x',
       scope: 'src/x/**',
@@ -4823,18 +4823,32 @@ describe('state lock recovery and prepared writes', () => {
       },
     );
     try {
-      const results = await Promise.all([
-        store.complete('w1', 'same completion report'),
-        store.complete('w1', 'same completion report'),
-      ]);
+      await store.complete('w1', 'same completion report');
       expect(observed.length).toBeGreaterThan(0);
       expect(observed).not.toContain(true);
-      expect(results.filter((result) => result.notificationCreated)).toHaveLength(1);
-      const messages = await store.readInbox('tower', 20);
-      expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('keeps TowerComplete idempotent under concurrency', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+      status: 'active',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', missionId: mission.id }),
+    );
+    const results = await Promise.all([
+      store.complete('w1', 'same completion report'),
+      store.complete('w1', 'same completion report'),
+    ]);
+    expect(results.filter((result) => result.notificationCreated)).toHaveLength(1);
+    const messages = await store.readInbox('tower', 20);
+    expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
   });
 
   it('publishes a completion notification atomically while another complete prepares', async () => {

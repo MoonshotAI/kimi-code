@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  runWithCredentialRecovery,
-  streamWithCredentialRecovery,
-} from '#/llm-adapter/model/credential-recovery';
-import type { LlmCredentialProvider } from '#human/llm-requester/requester';
+import { runWithCredentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
+import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 
 const unauthorized = Object.assign(new Error('unauthorized'), { status: 401 });
 const forbidden = Object.assign(new Error('forbidden'), { status: 403 });
@@ -70,58 +67,5 @@ describe('runWithCredentialRecovery', () => {
       }),
     ).rejects.toBe(unauthorized);
     expect(runs).toBe(2);
-  });
-});
-
-describe('streamWithCredentialRecovery', () => {
-  async function collect<T>(stream: AsyncIterable<T>): Promise<T[]> {
-    const items: T[] = [];
-    for await (const item of stream) items.push(item);
-    return items;
-  }
-
-  it('re-creates the stream once after a recoverable error', async () => {
-    let invalidations = 0;
-    let factories = 0;
-    const provider: LlmCredentialProvider = {
-      resolve: () => undefined,
-      canRecover: (error) => error === unauthorized,
-      invalidate: () => (invalidations += 1),
-    };
-    const items = await collect(
-      streamWithCredentialRecovery(provider, async function* () {
-        factories += 1;
-        yield 'a';
-        if (factories === 1) throw unauthorized;
-        yield 'b';
-      }),
-    );
-    expect(items).toEqual(['a', 'a', 'b']);
-    expect(factories).toBe(2);
-    expect(invalidations).toBe(1);
-  });
-
-  it('rethrows a second recoverable error and non-recoverable errors', async () => {
-    const provider: LlmCredentialProvider = {
-      resolve: () => undefined,
-      canRecover: (error) => error === unauthorized,
-      invalidate: () => {},
-    };
-    await expect(
-      collect(
-        streamWithCredentialRecovery(provider, async function* () {
-          yield 'x';
-          throw unauthorized;
-        }),
-      ),
-    ).rejects.toBe(unauthorized);
-    await expect(
-      collect(
-        streamWithCredentialRecovery(provider, async function* () {
-          yield 'x';
-          throw forbidden;
-        }),
-      ),
-    ).rejects.toBe(forbidden);
   });
 });

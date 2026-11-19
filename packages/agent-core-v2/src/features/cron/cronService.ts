@@ -3,7 +3,7 @@ import { assign, fromCallback, sendTo, setup, type Snapshot } from 'xstate';
 
 import { createDecorator, IInstantiationService } from '#/_base/di/instantiation';
 import { IntervalTimer } from '#/_base/utils/timer';
-import type { CronJobOrigin, CronMissedOrigin } from '#/agent/contextMemory/types';
+import type { CronJobOrigin, CronMissedOrigin, ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import {
   AgentActorService,
@@ -22,9 +22,8 @@ import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from '#/features/
 import type { CronDeletedEvent, CronScheduledEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { BugIndicatingError } from '#/errors';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
-import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { Forked } from '#/session/agentLifecycle/forked';

@@ -4,7 +4,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentLoopProjector } from '#/agent/loop/projector';
 import { ErrorCodes, Error2 } from '#/errors';
-import type { ContentPart, Message, TextPart, ToolCall } from '#human/llm/message';
+import type { ContentPart, Message, TextPart, ToolCall } from '@moonshot-ai/core/llm/message';
 
 function projectLegacy(history: readonly ContextMessage[]): Message[] {
   const openCalls = new Map<string, ToolCall>();

@@ -12,8 +12,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventService } from '#/app/event/event';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
-import type { ContentPart } from '#human/llm/message';
-import { skillActivationPart } from '#human/agent/origin';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
+import { skillActivationPart } from '@moonshot-ai/core/llm/origin';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -158,11 +158,9 @@ export class AgentSkillService implements IAgentSkillService {
     const status = this.loop.snapshot();
     const steerable = input.steerIfActive === true && status.state === 'running';
     const submission = {
-      message: {
-        role: 'user' as const,
-        content: [...prepared.map((activation) => activation.part), ...input.input],
-      },
-      meta: {
+      role: 'user' as const,
+      content: [...prepared.map((activation) => activation.part), ...input.input],
+      attributes: {
         promptId: input.promptId,
         origin: {
           kind: 'user',
@@ -306,8 +304,9 @@ export class AgentSkillService implements IAgentSkillService {
     const status = this.loop.snapshot();
     const running = status.state === 'running';
     const submission = {
-      message: { role: 'user' as const, content: [...input] },
-      meta: { promptId, origin },
+      role: 'user' as const,
+      content: [...input],
+      attributes: { promptId, origin },
     };
     const { id } = running ? this.loop.sendNow(submission) : this.loop.submit(submission);
     return this.loop.promptHandle(id)!.launched;

@@ -1,8 +1,7 @@
-import { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '#/agent/mcp/tools/auth';
+import { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE, createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { describe, expect, it } from 'vitest';
 
 import { AlreadyAuthorizedError, type BeginAuthorizationResult, type McpOAuthService } from '#/mcpCore/oauth/service';
-import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { LegacyExecutableToolAdapter, ToolExecutor } from '#/tool/executor';
 
 function fakeOAuthService(
@@ -31,7 +30,7 @@ function runTool(opts: {
   });
   const handler = new ToolExecutor([new LegacyExecutableToolAdapter(tool)]).execute(
     { type: 'function', id: 'tc', name: tool.name, arguments: '{}' },
-    { turnId: 0 },
+    { origin: 'loop', turnId: 0 },
   );
   const snapshots: Array<Readonly<Record<string, unknown>>> = [];
   handler.observe((event) => {

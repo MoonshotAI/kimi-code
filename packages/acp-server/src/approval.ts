@@ -1,13 +1,3 @@
-/**
- * ACP `session/request_permission` ↔ agent-core-v2 approval mappers.
- *
- * Pure functions that translate an `ApprovalRequest` (raised by the engine's
- * `AgentPermissionGate` and surfaced through the `interaction` kernel) into the
- * ACP `PermissionOption[]` + `ToolCallUpdate` surfaced to the client, and the
- * client's `RequestPermissionResponse` back into an `ApprovalResponse`. Kept
- * free of IO so the mappings stay unit-testable without a live connection.
- */
-
 import type {
   PermissionOption,
   RequestPermissionResponse,
@@ -22,30 +12,10 @@ import type {
 import { displayBlockToAcpContent } from './convert';
 import { acpToolCallId } from './events-map';
 
-/**
- * Canonical option ids surfaced to the ACP client.
- *
- * The wire-level `PermissionOption.optionId` is opaque to the client (it
- * round-trips back in `RequestPermissionResponse.outcome.optionId`), so the
- * host is free to pick any stable string. These literals are the single source
- * of truth on both the build- and the parse-side; tests import them rather
- * than re-typing the strings.
- */
 export const APPROVE_ONCE_OPTION_ID = 'approve_once';
 export const APPROVE_ALWAYS_OPTION_ID = 'approve_always';
 export const REJECT_OPTION_ID = 'reject';
 
-/**
- * `plan_review` optionId namespace. Picked deliberately so the `plan_*` prefix
- * never collides with the canonical `approve_*` / `reject` namespace nor with
- * the question bridge's `q{n}_*` namespace.
- *
- *  - `plan_opt_<i>` — one per `display.options[i]` (rendered as `allow_once`
- *    so the user can pick A / B / C without re-entering the prompt).
- *  - `plan_approve` — fallback approve when `display.options` is absent or
- *    has fewer than two entries.
- *  - `plan_revise` / `plan_reject_and_exit` — the two reject-side exits.
- */
 export const PLAN_APPROVE_OPTION_ID = 'plan_approve';
 export const PLAN_REVISE_OPTION_ID = 'plan_revise';
 export const PLAN_REJECT_AND_EXIT_OPTION_ID = 'plan_reject_and_exit';
@@ -54,14 +24,6 @@ function planOptOptionId(i: number): string {
   return `plan_opt_${i}`;
 }
 
-/**
- * The three canonical permission options surfaced to the ACP client for a
- * non-`plan_review` approval prompt.
- *
- * Order is load-bearing: ACP clients render options top-to-bottom, so
- * allow-once is the primary action, allow-always the secondary, and reject the
- * terminal/dangerous action that should be hardest to click by accident.
- */
 const CANONICAL_OPTIONS: readonly PermissionOption[] = [
   { optionId: APPROVE_ONCE_OPTION_ID, name: 'Approve once', kind: 'allow_once' },
   {
@@ -72,17 +34,6 @@ const CANONICAL_OPTIONS: readonly PermissionOption[] = [
   { optionId: REJECT_OPTION_ID, name: 'Reject', kind: 'reject_once' },
 ];
 
-/**
- * Build the {@link PermissionOption}[] surfaced to the ACP client for an
- * approval prompt.
- *
- * When the request's display block carries `kind: 'plan_review'`, the options
- * expand to one `allow_once` per `display.options[i]` (A / B / C) — or a
- * single `plan_approve` fallback when the policy did not supply ≥ 2 discrete
- * options — plus the two `reject_once` exits `Revise` and `Reject and Exit`.
- *
- * For every other display kind, returns the canonical 3-option list.
- */
 export function approvalRequestToPermissionOptions(
   req: ApprovalRequest,
 ): readonly PermissionOption[] {
@@ -109,27 +60,6 @@ export function approvalRequestToPermissionOptions(
   ];
 }
 
-/**
- * Translate an ACP {@link RequestPermissionResponse} into an engine
- * {@link ApprovalResponse}.
- *
- * Decision mapping (canonical / non-plan_review path):
- *  - `cancelled` outcome → `decision: 'cancelled'`.
- *  - `approve_once`  → `decision: 'approved'` (no scope, one-shot).
- *  - `approve_always` → `decision: 'approved'` with `scope: 'session'` so the
- *    engine installs a session-runtime allow rule for subsequent invocations.
- *  - `reject`        → `decision: 'rejected'`.
- *  - Legacy Python kimi-cli (< v0.9.0) ids `approve` / `approve_for_session`
- *    map like `approve_once` / `approve_always` so custom ACP clients built
- *    against the old SDK are not silently rejected.
- *  - Any other optionId → defensive `rejected` (rejecting is strictly safer
- *    than approving for an unknown id).
- *
- * For `plan_review`, the `plan_opt_<i>` / `plan_approve` / `plan_revise` /
- * `plan_reject_and_exit` optionIds map directly to the discriminator, and the
- * matched option's label is attached as `selectedLabel` so the downstream
- * policy can drive its branch off a stable string.
- */
 export function permissionResponseToApprovalResponse(
   req: ApprovalRequest,
   response: RequestPermissionResponse,
@@ -143,21 +73,14 @@ export function permissionResponseToApprovalResponse(
   }
   switch (optionId) {
     case APPROVE_ONCE_OPTION_ID:
-    // Legacy Python kimi-cli (< v0.9.0) used 'approve' as the allow-once
-    // optionId. Keep accepting it so custom ACP clients built against the
-    // old SDK are not silently rejected.
     case 'approve':
       return { decision: 'approved' };
     case APPROVE_ALWAYS_OPTION_ID:
-    // Legacy Python kimi-cli (< v0.9.0) used 'approve_for_session' as the
-    // allow-always optionId. Same backward-compatibility rationale as the
-    // 'approve' branch above.
     case 'approve_for_session':
       return { decision: 'approved', scope: 'session' };
     case REJECT_OPTION_ID:
       return { decision: 'rejected' };
     default:
-      // Unknown optionId — defensive fallback. Reject is safer than approve.
       return { decision: 'rejected' };
   }
 }
@@ -187,23 +110,6 @@ function mapPlanReviewOptionId(
   return { decision: 'rejected' };
 }
 
-/**
- * Build the ACP {@link ToolCallUpdate} that scopes a permission request to a
- * specific in-flight tool call.
- *
- * The `toolCallId` is the prefixed ACP wire id `${turnId}:${rawId}` — matching
- * the id format used by all other tool_call/tool_call_update notifications —
- * so the client can correlate the approval prompt with the tool card it
- * already rendered. If `req.turnId` is `undefined` the raw id is used as a
- * defensive fallback (in practice approvals always fire after
- * `tool.call.started`, so the fallback is effectively unreachable).
- *
- * Content shape:
- *  - If `req.display` produces a diff-bearing entry, prepend it so the diff /
- *    plan card is the headline of the approval prompt.
- *  - Always append a human-readable action summary
- *    (`"Requesting approval to ${req.action}"`) so the prompt is never empty.
- */
 export function buildPermissionToolCallUpdate(req: ApprovalRequest): ToolCallUpdate {
   const rawId = req.toolCallId ?? req.toolName;
   const toolCallId = req.turnId !== undefined ? acpToolCallId(req.turnId, rawId) : rawId;
@@ -223,15 +129,6 @@ export function buildPermissionToolCallUpdate(req: ApprovalRequest): ToolCallUpd
   };
 }
 
-/**
- * Look up the matched {@link PermissionOption}'s display name for the given
- * response and return a new {@link ApprovalResponse} carrying `selectedLabel`.
- * Returns the input unchanged when the outcome was `cancelled`, the optionId
- * is unknown, or it is in the `plan_*` namespace (the plan_review branch
- * attaches `selectedLabel` inside the mapper already).
- *
- * Pure: returns a fresh object (never mutates the input).
- */
 export function attachSelectedLabel(
   response: RequestPermissionResponse,
   approval: ApprovalResponse,

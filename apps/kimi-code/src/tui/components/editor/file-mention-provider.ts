@@ -47,17 +47,6 @@ export type RemoteMentionSuggest = (
   query: string,
 ) => Promise<readonly RemoteMentionCandidate[] | undefined>;
 
-/**
- * Kimi wrapper around pi-tui's combined autocomplete provider.
- *
- * File / folder mention behavior uses pi-tui's fd-backed provider whenever fd
- * is available, fanning out across the working directory and any additional
- * roots so `@` completion pushes the query down to fd instead of enumerating
- * every file. A small filesystem fallback is used only while managed fd is
- * downloading, when it is unavailable, or if fd fails to spawn. Ordinary path
- * completion is still handled by pi-tui's readdir-backed path completer. This
- * wrapper also keeps Kimi-specific slash-command guards.
- */
 export class FileMentionProvider implements AutocompleteProvider {
   readonly autocompleteDebounceMs = 80;
   private readonly inner: CombinedAutocompleteProvider;
@@ -76,8 +65,6 @@ export class FileMentionProvider implements AutocompleteProvider {
   ) {
     this.workspaceLabels = workspaceLabelsForCommands(slashCommands);
     this.additionalDirs = additionalDirs.map((dir) => resolveMentionDirectory(workDir, dir));
-    // Build an expanded list that includes alias entries so that
-    // inner's argument completion can find commands by alias too.
     const expanded: SlashAutocompleteCommand[] = [];
     for (const cmd of slashCommands) {
       expanded.push(cmd);
@@ -99,20 +86,11 @@ export class FileMentionProvider implements AutocompleteProvider {
     const currentLine = lines[cursorLine] ?? '';
     const textBeforeCursor = currentLine.slice(0, cursorCol);
 
-    // `@` file / folder mentions take priority over the slash-command guards
-    // below. Without this, typing `@` inside a slash command's argument text
-    // (e.g. `/goal Fix the @|checkout docs`) would be swallowed by
-    // `shouldSuppressSlashArgumentCompletion` before the mention branch ever
-    // runs, so the file list never opens.
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
       if (this.remoteSuggest !== undefined) {
         return getRemoteMentionSuggestions(this.remoteSuggest, atPrefix, options.signal);
       }
-      // fd backs `@` completion across every root (cwd + additional dirs). Fall
-      // back to the filesystem scanner when fd is unavailable, not executable
-      // (e.g. the managed binary was removed or lost execute permission), or if
-      // spawning it fails below. A genuine fd no-match still returns null.
       if (this.fdPath === null || !isExecutableFd(this.fdPath)) {
         return getFsMentionSuggestions(
           this.workDir,
@@ -124,7 +102,6 @@ export class FileMentionProvider implements AutocompleteProvider {
       try {
         return await this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
       } catch {
-        // If fd fails to spawn unexpectedly, keep @ completion usable.
         return getFsMentionSuggestions(
           this.workDir,
           this.additionalDirs,
@@ -134,12 +111,6 @@ export class FileMentionProvider implements AutocompleteProvider {
       }
     }
 
-    // An inline skill token the cursor is still on stays eligible for skill
-    // selection even when the input begins with a slash command and has text
-    // after the cursor — the argument suppression below guards the command's
-    // own arguments, not an inline skill the user inserts mid-text. Computed
-    // before the leading-whitespace suppression: an indented inline token
-    // (`  /skill:rev`) is a skill reference, not a path to suppress.
     const inlineSkillPrefix = extractInlineSkillPrefix(textBeforeCursor, cursorLine);
 
     if (
@@ -149,8 +120,6 @@ export class FileMentionProvider implements AutocompleteProvider {
       return null;
     }
 
-    // A `/` at the start of a later line is an inline skill reference, not a
-    // start-of-message slash command: offer the skill-only picker there.
     if (
       cursorLine > 0 &&
       textBeforeCursor.trim() === '/' &&
@@ -171,9 +140,6 @@ export class FileMentionProvider implements AutocompleteProvider {
       return null;
     }
 
-    // Handle slash-command name completion ourselves so that aliases are
-    // searchable and visible in the label. Only the first line can host a
-    // start-of-message slash command; later lines are inline skill territory.
     if (!options.force && cursorLine === 0 && textBeforeCursor.startsWith('/')) {
       const spaceIndex = textBeforeCursor.indexOf(' ');
       if (spaceIndex === -1) {
@@ -197,8 +163,6 @@ export class FileMentionProvider implements AutocompleteProvider {
             matches.push({ cmd, score: nameScore, viaAlias: false, label: cmd.name });
             continue;
           }
-          // Aliases only count when the primary name missed; the label then
-          // lists them so the user can see why the command matched.
           const aliases = cmd.aliases ?? [];
           let bestAliasScore: number | null = null;
           for (const alias of aliases) {
@@ -217,7 +181,6 @@ export class FileMentionProvider implements AutocompleteProvider {
           }
         }
 
-        // Primary-name matches outrank alias matches on score ties.
         matches.sort((a, b) =>
           Number(a.cmd.isSkill === true) - Number(b.cmd.isSkill === true) ||
           a.score - b.score ||
@@ -243,10 +206,6 @@ export class FileMentionProvider implements AutocompleteProvider {
       }
     }
 
-    // In bash mode `/` is a path separator, not a slash command. Skip slash
-    // command argument handling so an absolute path that happens to start with
-    // a command name (e.g. `/add-dir/...`) completes inside the path instead of
-    // returning the command's argument completions.
     if (this.getInputMode() !== 'bash') {
       const slashArgumentSuggestions = await getSlashArgumentSuggestions(this.slashCommands, textBeforeCursor);
       if (slashArgumentSuggestions !== null) {
@@ -254,17 +213,11 @@ export class FileMentionProvider implements AutocompleteProvider {
       }
     }
 
-    // Inline skill selection: `/` after whitespace mid-input in prompt mode.
-    // Runs after slash-command argument handling so known commands such as
-    // `/add-dir /` keep their own argument completions.
     if (
       inlineSkillPrefix !== null &&
       this.getInputMode() !== 'bash' &&
       options.force !== true
     ) {
-      // A mid-input `/` in prompt mode is only meaningful as skill selection;
-      // when no skills are registered, suppress path completion instead of
-      // offering root directories.
       return this.getInlineSkillSuggestions(inlineSkillPrefix);
     }
 
@@ -273,9 +226,6 @@ export class FileMentionProvider implements AutocompleteProvider {
       if (inner === null || this.getInputMode() !== 'bash') {
         return inner;
       }
-      // In bash mode `/` is a path separator; hide dot-prefixed entries to
-      // match the `/add-dir` directory completer (registry.ts skips any name
-      // starting with `.`). Ordinary prompt-mode path completion is left as-is.
       return { ...inner, items: inner.items.filter((item) => !isDotPrefixedEntry(item)) };
     } catch {
       return null;
@@ -373,10 +323,6 @@ export class FileMentionProvider implements AutocompleteProvider {
         start: lineStart + cursorCol - prefix.length,
       });
     }
-    // Inline skill selection mid-input: pi-tui's default applyCompletion
-    // treats mid-line slash prefixes as file paths and drops the `/`. Preserve
-    // the slash and add a trailing space so the completed token stays a valid
-    // skill reference (e.g. `hello /rev` -> `hello /skill:review `).
     if (
       item.data?.['inlineSkill'] === true &&
       this.getInputMode() !== 'bash' &&
@@ -392,24 +338,13 @@ export class FileMentionProvider implements AutocompleteProvider {
         return {
           lines: newLines,
           cursorLine,
-          // +2 for the preserved "/" and the appended " ".
           cursorCol: beforePrefix.length + item.value.length + 2,
         };
       }
     }
-    // In bash mode a leading `/` is a path, but pi-tui's applyCompletion
-    // mistakes it for a slash command (prefix starts with `/`, nothing before
-    // it, no second `/`) and prepends another `/`, producing e.g.
-    // `//Applications/ ` with a trailing space that also blocks further
-    // completion. Handle path completion ourselves so the value replaces the
-    // prefix verbatim.
     if (this.getInputMode() === 'bash' && prefix.startsWith('/')) {
       return applyPathCompletion(lines, cursorLine, cursorCol, item, prefix);
     }
-    // Editor caches suggestions.prefix across in-flight refreshes. Re-cut the
-    // live `@` token so Tab/Enter does not splice a second `@` onto a stale range.
-    // Only mention pickers have a prefix that starts with `@`. Path/slash lists
-    // can still be visible after the user types `@`, including a `@scope/` entry.
     if (prefix.startsWith('@')) {
       const currentLine = lines[cursorLine] ?? '';
       const textBeforeCursor = currentLine.slice(0, cursorCol);
@@ -427,24 +362,12 @@ export class FileMentionProvider implements AutocompleteProvider {
   }
 }
 
-/**
- * Extract the inline skill prefix (e.g. `/rev`) from `text` when the cursor is
- * positioned after a `/` that is preceded by whitespace and not part of the
- * leading slash-command area. Returns `null` when the context is not an inline
- * skill trigger.
- *
- * On lines after the first, a `/` at the start of the line always begins an
- * inline skill prefix — including the partially typed `/rev` — so the picker
- * stays in skill-only mode while the token is completed.
- */
 export function extractInlineSkillPrefix(text: string, cursorLine: number = 0): string | null {
   if (cursorLine > 0) {
     const trimmedStart = text.trimStart();
     const match = /^\/[^\s/]*$/.exec(trimmedStart);
     if (match !== null) return match[0];
   }
-  // findInlineSkillTokens skips the leading slash-command area, so a line such
-  // as `/skill:review args /` still yields the trailing `/` token.
   const tokens = findInlineSkillTokens(text, {
     isKnownSkill: () => true,
     allowEmpty: true,
@@ -484,9 +407,6 @@ function extractQuotedAtPrefix(text: string): string | null {
 }
 
 function isExecutableFd(fdPath: string): boolean {
-  // Bare command names (for example "fd" discovered on the system PATH) are
-  // trusted: spawn resolves them through PATH. Only absolute/relative paths are
-  // probed, which is how the managed fd is referenced and which can go stale.
   if (!fdPath.includes('/') && !fdPath.includes('\\')) {
     return true;
   }
@@ -498,11 +418,6 @@ function isExecutableFd(fdPath: string): boolean {
   }
 }
 
-/**
- * Match the `/add-dir` directory completer, which skips every entry whose name
- * starts with `.` (see registry.ts). pi-tui's path completer sets `label` to
- * the entry basename, with a trailing `/` for directories.
- */
 function workspaceLabelsForCommands(
   commands: readonly SlashAutocompleteCommand[],
 ): ReadonlyMap<string, string> {
@@ -529,14 +444,6 @@ function isDotPrefixedEntry(item: AutocompleteItem): boolean {
   return name.startsWith('.');
 }
 
-/**
- * Replace `prefix` with `item.value` verbatim, mirroring pi-tui's file-path
- * branch (no trailing space, so a completed directory can be extended with the
- * next `/`). Used in bash mode to avoid pi-tui's slash-command branch, which
- * would prepend an extra `/` to a bare leading `/` path. For a quoted
- * directory value (path contains spaces), the cursor stays inside the closing
- * quote so follow-up `/` completion keeps working.
- */
 function applyPathCompletion(
   lines: string[],
   cursorLine: number,
@@ -673,9 +580,7 @@ function collectFsMentionCandidates(
       if (!isDirectory && isSymlink) {
         try {
           isDirectory = statSync(absolutePath).isDirectory();
-        } catch {
-          // Broken symlink or permission error — keep it as a file candidate.
-        }
+        } catch {}
       }
 
       scanned += 1;
@@ -865,11 +770,6 @@ function shouldSuppressSlashArgumentCompletion(
   return textAfterCursor.trimStart().length > 0;
 }
 
-/**
- * All tokens must fuzzy-match `text`; returns the summed score, or null when
- * any token misses. An empty token list matches everything with score 0.
- * Mirrors pi-tui fuzzyFilter's token semantics — keep in sync if it changes.
- */
 function scoreTokens(tokens: readonly string[], text: string): number | null {
   let score = 0;
   for (const token of tokens) {
@@ -880,10 +780,6 @@ function scoreTokens(tokens: readonly string[], text: string): number | null {
   return score;
 }
 
-/**
- * Mirrors CombinedAutocompleteProvider's description rendering so the
- * intercepted name completion keeps showing the argument hint.
- */
 function formatSlashCommandDescription(cmd: SlashAutocompleteCommand): string | undefined {
   const desc = cmd.description ?? '';
   const full = cmd.argumentHint

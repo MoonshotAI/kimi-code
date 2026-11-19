@@ -8,12 +8,10 @@ describe('pageView', () => {
   });
 
   it('derives the page containing the selected index', () => {
-    // index 12 with pageSize 8 lives on page 1 (items 8..15).
     expect(pageView(60, 12, 8)).toEqual({ page: 1, pageCount: 8, start: 8, end: 16 });
   });
 
   it('clamps the final page slice to the total', () => {
-    // 60 items, pageSize 8 → last page is page 7 (items 56..59).
     expect(pageView(60, 59, 8)).toEqual({ page: 7, pageCount: 8, start: 56, end: 60 });
   });
 

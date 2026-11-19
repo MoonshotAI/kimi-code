@@ -61,9 +61,6 @@ describe('writeMigrationErrorsLog', () => {
   });
 
   it('appends a second block when a later run also has failures', async () => {
-    // Cross-run history: a user who retries the migration and hits failures
-    // each time must end up with one log that shows every attempt — the team
-    // can analyze the full retry sequence from a single file.
     const ses1 = join(src, 'ses-1');
     const ses2 = join(src, 'ses-2');
     await mkdir(ses1, { recursive: true });
@@ -81,12 +78,10 @@ describe('writeMigrationErrorsLog', () => {
     });
 
     const log = await readFile(migrationErrorsLogFile(tgt), 'utf-8');
-    // Both run headers survive (append-only, no overwrite).
     const headerMatches = log.match(/===== migration run @ /g) ?? [];
     expect(headerMatches).toHaveLength(2);
     expect(log).toContain('2026-05-19T00:00:00Z');
     expect(log).toContain('2026-05-20T00:00:00Z');
-    // Both runs' failure data survive.
     expect(log).toContain('first-run reason');
     expect(log).toContain('second-run reason');
     expect(log).toContain(ses1);
@@ -94,8 +89,6 @@ describe('writeMigrationErrorsLog', () => {
   });
 
   it('appends after an earlier failed run when the later run has no failures', async () => {
-    // The earlier failure record must NOT be deleted by a successful retry —
-    // we want the timeline visible even after the user recovers.
     const ses1 = join(src, 'ses-1');
     await mkdir(ses1, { recursive: true });
     await writeFile(join(ses1, 'context.jsonl'), '{"role":"user","content":"a"}\n');

@@ -102,9 +102,6 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
   }
 
   try {
-    // Attach no longer overwrites session modes with the configured defaults
-    // (resumed sessions keep their own), so apply the model/effort that the
-    // composer submitted with this prompt before the turn starts.
     const status = await runtime.session.getStatus();
     let model = status.model;
     if (params.model && model !== params.model) {
@@ -146,8 +143,6 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
 
 const abortChat: Handler<void, { aborted: boolean }> = async (_, ctx) => {
   const runtime = ctx.getSession();
-  // Do not claim an abort when there is no runtime to cancel — the webview
-  // would otherwise show the task as stopped while the engine keeps running.
   if (runtime === undefined) return { aborted: false };
   await runtime.cancel();
   return { aborted: true };

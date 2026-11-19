@@ -49,6 +49,7 @@ import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLi
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 import { stubBootstrap } from '../bootstrap/stubs';
@@ -728,6 +729,56 @@ describe('sessionExport', () => {
       code: 'session.not_found',
       details: { sessionId: 'ses_missing' },
     } satisfies Partial<Error2>);
+
+    await mkdir(join(tmp, 'logs'), { recursive: true });
+    await writeFile(join(tmp, 'logs', 'kimi-code.log'), 'global log\n', 'utf8');
+    const fallbackZip = join(tmp, 'fallback-global.zip');
+    const fallbackResult = await ix.get(ISessionExportService).export({
+      sessionId: '',
+      outputPath: fallbackZip,
+      includeGlobalLog: true,
+      version: '1.0.0-test',
+    });
+    expect(fallbackResult.entries).toEqual(['manifest.json', 'logs/global/kimi-code.log']);
+  });
+
+  it('previews session files excluding file-history and resolves the latest main requestId', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-preview-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_live', 'ses_live');
+    await mkdir(join(sessionDir, 'agents', 'main'), { recursive: true });
+    await mkdir(join(sessionDir, 'file-history'), { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf8');
+    await writeFile(join(sessionDir, 'file-history', 'blob-1'), 'secret\n', 'utf8');
+    await writeFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), '{}\n', 'utf8');
+    ix = createTestServices(tmp, {
+      summary: {
+        id: 'ses_live',
+        workspaceId: 'ws_live',
+        title: 'Live',
+        createdAt: 1,
+        updatedAt: 2,
+        archived: false,
+      },
+      lifecycleHandle: liveSessionHandle({
+        meta: {
+          id: 'ses_live',
+          title: 'Live',
+          createdAt: 1,
+          updatedAt: 2,
+          archived: false,
+        },
+        sessionLog: stubLog(),
+        agentWire: { flush: async () => {} },
+        lastRequestId: 'req-turn-2',
+      }),
+    });
+
+    await expect(ix.get(ISessionExportService).preview!('ses_live')).resolves.toEqual({
+      sessionId: 'ses_live',
+      sessionDir,
+      files: ['agents/main/wire.jsonl', 'state.json'],
+      requestId: 'req-turn-2',
+    });
   });
 
   it('flushes live session and agent state before packaging', async () => {
@@ -954,6 +1005,7 @@ function liveSessionHandle(options: {
   readonly meta: SessionMeta;
   readonly sessionLog: LogService;
   readonly agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flush'>;
+  readonly lastRequestId?: string;
 }): ISessionScopeHandle {
   const agentHandle = testAgentHandle(options.agentWire);
   const lifecycle = stubAgentLifecycle([agentHandle]);
@@ -964,6 +1016,16 @@ function liveSessionHandle(options: {
       [ISessionMetadata, stubSessionMetadata(options.meta)],
       [ILogService, options.sessionLog],
       [IAgentLifecycleService, lifecycle],
+      [
+        ISessionRequestAttributionService,
+        {
+          _serviceBrand: undefined,
+          of: () => ({ lastRequestId: options.lastRequestId }),
+          noteUserInput: () => {},
+          noteActiveRequest: () => {},
+          noteSubagentDispatch: () => ({}),
+        } satisfies ISessionRequestAttributionService,
+      ],
     ]),
     dispose: () => {},
   };

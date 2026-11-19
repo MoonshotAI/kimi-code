@@ -14,10 +14,6 @@ import { buildExportMarkdown } from '../utils/export-markdown';
 import { sessionWorkDir } from '../utils/session-work-dir';
 import type { SlashCommandHost } from './dispatch';
 
-// ---------------------------------------------------------------------------
-// Session commands
-// ---------------------------------------------------------------------------
-
 export async function handleTitleCommand(host: SlashCommandHost, args: string): Promise<void> {
   const title = args.trim();
   if (title.length === 0) {
@@ -32,8 +28,6 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
 
   let session = host.session;
   if (session === undefined) {
-    // Setting a title needs a live session; lazy-create it on first use (the
-    // bare read-only form above works session-less).
     session = await host.ensureSession();
     if (session === undefined) return;
   }
@@ -67,17 +61,10 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
       host.showError(`Session forked (${forkId}), but failed to release its environment: ${msg}`);
       return;
     }
-    // Stay in the source session: switching to the fork would close the
-    // source, killing its in-flight turn and background tasks. The fork is
-    // an independent copy the user can switch to explicitly via /sessions,
-    // or enter from a new CLI process with the printed resume command.
     const command = forkResumeCommand(host.state.appState.workDir, forkId);
     let clipboardNote: string;
     try {
       const method = await copyTextToClipboard(command);
-      // OSC 52 delivery is fire-and-forget: terminals without OSC 52 support
-      // silently drop the sequence, so only native delivery may claim success
-      // (same wording convention as /copy).
       clipboardNote =
         method === 'native'
           ? 'Command copied to clipboard'
@@ -98,10 +85,6 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
 
 function forkResumeCommand(workDir: string, forkId: string): string {
   const dir = quoteShellArg(workDir);
-  // cmd.exe's `cd` only updates the given drive's remembered directory — a
-  // terminal on a different drive stays put, and the resume then runs in the
-  // wrong working directory. `pushd` switches drive + directory in both
-  // cmd.exe and PowerShell (`cd /d` would break PowerShell).
   const changeDir = process.platform === 'win32' ? `pushd ${dir}` : `cd ${dir}`;
   return `${changeDir} && kimi --resume ${quoteShellArg(forkId)}`;
 }

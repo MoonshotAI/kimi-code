@@ -1,6 +1,6 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { ToolDescription } from '#human/llm/message';
-import { isMcpToolName } from '#/tool/toolContract';
+import type { ToolDescription } from '@moonshot-ai/core/llm/message';
+import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 
 import { SELECT_TOOLS_TOOL_NAME, type ToolSelectAnnouncementDisclosure } from './toolSelect';
@@ -16,7 +16,7 @@ export function isDynamicToolSchemaMessage(
 }
 
 export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
-  const origin = message.origin;
+  const origin = message.origin ?? (message.attributes?.origin as ContextMessage['origin']);
   if (origin?.kind === 'injection') return origin.variant === LOADABLE_TOOLS_VARIANT;
   return origin?.kind === 'system_trigger' && origin.name === LOADABLE_TOOLS_VARIANT;
 }
@@ -35,9 +35,10 @@ export function isToolSelectAnnouncementDisclosure(
 function announcementDisclosure(
   message: ContextMessage,
 ): ToolSelectAnnouncementDisclosure | undefined {
-  if (message.origin?.kind !== 'injection') return undefined;
-  return isToolSelectAnnouncementDisclosure(message.origin.disclosure)
-    ? message.origin.disclosure
+  const origin = message.origin ?? (message.attributes?.origin as ContextMessage['origin']);
+  if (origin?.kind !== 'injection') return undefined;
+  return isToolSelectAnnouncementDisclosure(origin.disclosure)
+    ? origin.disclosure
     : undefined;
 }
 
@@ -143,6 +144,36 @@ export function collectCurrentDynamicTools(
     }
   }
   return loaded;
+}
+
+export function collectPendingSchemaUpdateNames(
+  history: readonly ContextMessage[],
+  current: readonly ToolInfo[],
+): Set<string> {
+  const first = new Map<string, ToolDescription>();
+  const latest = new Map<string, ToolDescription>();
+  for (const message of history) {
+    if (!isDynamicToolSchemaMessage(message)) continue;
+    for (const tool of message.tools ?? []) {
+      if (!first.has(tool.name)) first.set(tool.name, tool);
+      latest.set(tool.name, tool);
+    }
+  }
+  const currentByName = new Map(current.map((tool) => [tool.name, tool]));
+  const pending = new Set<string>();
+  for (const [name, firstTool] of first) {
+    const latestTool = latest.get(name);
+    const currentTool = currentByName.get(name);
+    if (latestTool === undefined || currentTool === undefined) continue;
+    const currentSchema = { ...currentTool, parameters: currentTool.parameters ?? {} };
+    if (
+      toolSelectSchemaSignature(latestTool) === toolSelectSchemaSignature(currentSchema) &&
+      toolSelectSchemaSignature(firstTool) !== toolSelectSchemaSignature(currentSchema)
+    ) {
+      pending.add(name);
+    }
+  }
+  return pending;
 }
 
 export function collectLoadedDynamicToolNames(

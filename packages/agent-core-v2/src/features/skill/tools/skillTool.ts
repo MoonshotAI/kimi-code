@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { historyEntryFromContext } from '#/agent/loop/history';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { renderModelToolSkillPrompt } from '#/features/skill/prompt';
 import { IAgentSkillService } from '#/features/skill/skillService';
 import type { ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
@@ -38,6 +39,7 @@ export class SkillTool implements ISkillTool {
     @IAgentSkillService private readonly skill: IAgentSkillService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentLoopService private readonly loop: IAgentLoopService,
+    @IAgentToolResultTruncationService private readonly truncation: IAgentToolResultTruncationService,
   ) {}
 
   resolveExecution(args: SkillToolInput): ToolExecution {
@@ -49,20 +51,28 @@ export class SkillTool implements ISkillTool {
       display: { kind: 'skill_call', skill_name: args.skill, args: args.args },
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.skill),
-      execute: () => executeModelSkill(
+      execute: (executionContext) => executeModelSkill(
         this.catalog,
         this.skill,
         this.loop,
+        this.truncation,
         args,
         context.queryDepth,
         this.sessionContext.sessionId,
+        executionContext.toolCallId,
         context.workspaceDir,
       ),
     };
   }
 
   withInitialQueryDepth(initialQueryDepth: number, workspaceDir?: string): SkillTool {
-    const clone = new SkillTool(this.catalog, this.skill, this.sessionContext, this.loop);
+    const clone = new SkillTool(
+      this.catalog,
+      this.skill,
+      this.sessionContext,
+      this.loop,
+      this.truncation,
+    );
     clone.queryDepth = initialQueryDepth;
     clone.workspaceDir = workspaceDir;
     return clone;
@@ -73,9 +83,11 @@ export async function executeModelSkill(
   catalog: ISessionSkillCatalog,
   skillService: IAgentSkillService,
   loop: IAgentLoopService,
+  truncation: IAgentToolResultTruncationService,
   args: SkillToolInput,
   queryDepth: number,
   sessionId: string,
+  toolCallId: string,
   parentWorkspaceDir?: string,
 ): Promise<ExecutableToolResult> {
   const currentDepth = queryDepth;
@@ -117,6 +129,11 @@ export async function executeModelSkill(
     skillSource: skill.source,
   };
   const skillContent = catalog.catalog.renderSkillPrompt(skill, skillArgs, { sessionId });
+  const truncated = await truncation.truncateForModel({
+    toolName: 'Skill',
+    toolCallId,
+    result: { output: skillContent },
+  });
   const message: ContextMessage = {
     role: 'user',
     content: [
@@ -125,7 +142,7 @@ export async function executeModelSkill(
         text: renderModelToolSkillPrompt({
           skillName: skill.name,
           skillArgs,
-          skillContent,
+          skillContent: truncated.output,
           skillSource: skill.source,
           skillDir: skill.dir,
           trigger,

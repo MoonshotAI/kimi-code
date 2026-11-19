@@ -5,6 +5,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { BindAgentInput, ProfileBindingSnapshot } from '#/agent/profile/profile';
 import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
+import type { ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 
 export interface AgentScopeCreatedEvent {
   readonly context: AgentContext;
@@ -18,6 +19,7 @@ export interface CreateAgentOptions {
   readonly agentId?: string;
   readonly binding?: BindAgentInput;
   readonly initialProfile?: ProfileBindingSnapshot;
+  readonly initialTools?: readonly Tool[];
   readonly environmentId?: string;
   readonly environmentCwd?: string;
   readonly forkedFrom?: string;
@@ -52,6 +54,7 @@ export interface IAgentLifecycleService {
   remove(agent: AgentContext): Promise<void>;
 
   handleOf(agentId: string): IAgentScopeHandle | undefined;
+  whenCreateSettled?(agentId?: string): Promise<void>;
 
   adopt(handle: IAgentScopeHandle): AgentContext;
 }

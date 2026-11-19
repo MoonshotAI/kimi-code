@@ -10,7 +10,7 @@ import {
 import { AgentActivityViewer } from '@/tui/components/dialogs/agent-activity-viewer';
 import { TaskOutputViewer } from '@/tui/components/dialogs/task-output-viewer';
 import { SubagentActivityStore } from '@/tui/controllers/subagent-activity-store';
-import { TasksBrowserController } from '@/tui/controllers/tasks-browser';
+import { TasksBrowserController, type TasksBrowserState } from '@/tui/controllers/tasks-browser';
 import { darkColors } from '@/tui/theme/colors';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
@@ -18,7 +18,6 @@ function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
 }
 
-/** Minimal Terminal stub — only `rows` is read by the component. */
 function fakeTerminal(rows: number, columns = 120): Terminal {
   return {
     start: () => {},
@@ -109,7 +108,6 @@ describe('TasksBrowserApp — full-screen rendering', () => {
       tasks: [task({ taskId: 'bash-aaaaaaaa', status: 'running' })],
       selectedTaskId: 'bash-aaaaaaaa',
     });
-    // Two terminals with different heights — verify render adapts.
     const small = new TasksBrowserApp(props, fakeTerminal(15, 120)).render(120);
     const big = new TasksBrowserApp(props, fakeTerminal(40, 120)).render(120);
     expect(small.length).toBe(15);
@@ -131,8 +129,6 @@ describe('TasksBrowserApp — full-screen rendering', () => {
       ],
       selectedTaskId: 'agent-aaaaaaaa',
     });
-    // 10 rows = the smallest terminal that still renders the full layout; the
-    // render must emit exactly that many lines (no overflow truncation).
     const lines = new TasksBrowserApp(props, fakeTerminal(10, 120)).render(120);
     expect(lines.length).toBe(10);
     expect(strip(lines.join('\n'))).toContain('Preview Output');
@@ -388,7 +384,7 @@ describe('TasksBrowserApp — full-screen rendering', () => {
 
   it('shows empty-state copy in the Tasks pane when no tasks', () => {
     const out = strip(makeApp().render(120).join('\n'));
-    expect(out).toContain('No background tasks');
+    expect(out).toContain('No tasks');
   });
 
   it('filters out terminal tasks when filter=active', () => {
@@ -401,12 +397,17 @@ describe('TasksBrowserApp — full-screen rendering', () => {
     expect(out).not.toContain('bash-bbbbbbbb');
   });
 
-  it('filters out foreground tasks (detached === false)', () => {
+  it('shows running foreground agents alongside background tasks', () => {
     const tasks = [
+      task({ taskId: 'agent-foreground', kind: 'agent', detached: false, status: 'running' }),
+      task({ taskId: 'agent-finished', kind: 'agent', detached: false, status: 'completed' }),
       task({ taskId: 'bash-foreground', detached: false, status: 'running' }),
       task({ taskId: 'bash-background', detached: true, status: 'running' }),
     ];
-    const out = strip(makeApp({ tasks, filter: 'all' }).render(120).join('\n'));
+    const out = strip(makeApp({ tasks, selectedTaskId: 'agent-foreground' }).render(120).join('\n'));
+    expect(out).toContain('agent-foreground');
+    expect(out).toContain('Foreground');
+    expect(out).not.toContain('agent-finished');
     expect(out).not.toContain('bash-foreground');
     expect(out).toContain('bash-background');
   });
@@ -418,7 +419,6 @@ describe('TasksBrowserApp — full-screen rendering', () => {
   });
 
   it('keeps ghost tasks whose detached field is undefined', () => {
-    // task() leaves `detached` undefined by default, mimicking reconcile ghosts.
     const tasks = [task({ taskId: 'bash-ghost', status: 'lost' })];
     const out = strip(makeApp({ tasks, filter: 'all' }).render(120).join('\n'));
     expect(out).toContain('bash-ghost');
@@ -499,11 +499,11 @@ describe('TasksBrowserApp — input handling', () => {
       task({ taskId: 'bash-cccccccc', status: 'running', startedAt: 3 }),
     ];
     const app = makeApp({ tasks, selectedTaskId: 'bash-aaaaaaaa', onSelect });
-    app.handleInput('[B'); // ↓
+    app.handleInput('[B');
     expect(onSelect).toHaveBeenLastCalledWith('bash-bbbbbbbb');
     app.handleInput('j');
     expect(onSelect).toHaveBeenLastCalledWith('bash-cccccccc');
-    app.handleInput('[A'); // ↑
+    app.handleInput('[A');
     expect(onSelect).toHaveBeenLastCalledWith('bash-bbbbbbbb');
   });
 
@@ -521,11 +521,6 @@ describe('TasksBrowserApp — input handling', () => {
   });
 });
 
-// When a terminal (e.g. the VSCode integrated terminal) enables the Kitty
-// keyboard protocol disambiguate flag, ordinary printable keys arrive as
-// CSI-u sequences: `r` → "\x1b[114u", `q` → "\x1b[113u". These tests pin
-// down that the tasks panel's literal-character shortcuts still fire
-// under Kitty mode.
 describe('TasksBrowserApp — Kitty CSI-u printable input', () => {
   const kitty = (ch: string): string => `\u001B[${String(ch.codePointAt(0) ?? 0)}u`;
 
@@ -645,7 +640,7 @@ describe('TasksBrowserApp — stop confirmation', () => {
     const app = makeApp({ tasks, selectedTaskId: 'bash-aaaaaaaa', onSelect, onStopConfirmed });
     app.handleInput('s');
     onSelect.mockClear();
-    app.handleInput('[B'); // ↓ arrow should be swallowed
+    app.handleInput('[B');
     expect(onSelect).not.toHaveBeenCalled();
     expect(strip(app.render(120).join('\n'))).not.toContain('Stop bash-aaaaaaaa?');
   });
@@ -694,7 +689,7 @@ describe('TasksBrowserController — opening an agent task', () => {
       requestRender: () => {},
     };
     const state = {
-      tasksBrowser: undefined as unknown,
+      tasksBrowser: undefined as TasksBrowserState | undefined,
       terminal: fakeTerminal(30),
       ui,
       editor: {},
@@ -702,14 +697,13 @@ describe('TasksBrowserController — opening an agent task', () => {
     };
     const host = {
       state,
-      backgroundTasks: new Map(tasks.map((t) => [t.taskId, t])),
       sessionEventHandler: { subAgentEventHandler: { activityStore: store } },
       session: {
         listBackgroundTasks: async () => tasks,
         getBackgroundTaskOutput: async () => 'captured output',
       },
       showError: vi.fn(),
-      setTasksBrowser(value: unknown) {
+      setTasksBrowser(value: TasksBrowserState | undefined) {
         state.tasksBrowser = value;
       },
     };
@@ -721,6 +715,7 @@ describe('TasksBrowserController — opening an agent task', () => {
       taskId: 'agent-task-1',
       kind: 'agent',
       agentId: 'agent-1',
+      parentToolCallId: 'tc-1',
       status: 'running',
     } as Partial<BackgroundTaskInfo>);
     if (store !== null) {
@@ -759,6 +754,90 @@ describe('TasksBrowserController — opening an agent task', () => {
     const viewer = (state.tasksBrowser as { viewer: { component: unknown } }).viewer;
     expect(viewer.component).toBeInstanceOf(TaskOutputViewer);
     controller.close();
+  });
+
+  it('shows the captured output of a background task after the same agent is called again', async () => {
+    const store = new SubagentActivityStore();
+    const taskInfo = { ...agentTaskInfo(store), detached: true, status: 'completed' as const };
+    store.markCompleted('agent-1', 'Previous result');
+    store.ensureRecord({ agentId: 'agent-1', agentName: 'explore', parentToolCallId: 'tc-2' });
+    const { host, state } = makeControllerHost([taskInfo], store);
+    const controller = new TasksBrowserController(host as never);
+    try {
+      await controller.show();
+      state.tasksBrowser?.component.handleInput('\r');
+      await vi.waitFor(() => {
+        const viewer = state.tasksBrowser?.viewer?.component;
+        expect(viewer).toBeInstanceOf(TaskOutputViewer);
+        expect(strip(viewer?.render(120).join('\n') ?? '')).toContain('captured output');
+      });
+    } finally {
+      controller.close();
+    }
+  });
+
+  it('opens a foreground agent, follows its activity, and keeps the result until closing', async () => {
+    vi.useFakeTimers();
+    const store = new SubagentActivityStore();
+    const tasks = [
+      { ...agentTaskInfo(null), detached: false },
+      task({ taskId: 'bash-background', detached: true, startedAt: Date.now() }),
+    ];
+    const { host, state } = makeControllerHost(tasks, store);
+    const controller = new TasksBrowserController(host as never);
+    try {
+      await controller.show();
+      const browser = state.tasksBrowser!.component;
+      browser.handleInput('s');
+      expect(strip(browser.render(120).join('\n'))).not.toContain('Stop agent-task-1?');
+      browser.handleInput('\t');
+      browser.handleInput('\r');
+
+      const viewer = state.tasksBrowser!.viewer?.component;
+      expect(viewer).toBeInstanceOf(AgentActivityViewer);
+      expect(strip(viewer!.render(120).join('\n'))).toContain('Waiting for activity');
+
+      store.ensureRecord({ agentId: 'agent-1', agentName: 'explore', parentToolCallId: 'tc-1' });
+      store.applyEvent({
+        sessionId: 's1',
+        agentId: 'agent-1',
+        type: 'thinking.delta',
+        turnId: 1,
+        delta: 'Inspect the public entry point.',
+      } as Event);
+      store.applyEvent({
+        sessionId: 's1',
+        agentId: 'agent-1',
+        type: 'assistant.delta',
+        turnId: 1,
+        delta: 'Found the main entry point.',
+      } as Event);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      const active = strip(viewer!.render(120).join('\n'));
+      expect(active).toContain('Thinking');
+      expect(active).toContain('Inspect the public entry point.');
+      expect(active).toContain('Found the main entry point.');
+
+      tasks.shift();
+      const record = store.get('agent-1')!;
+      store.markCompleted('agent-1', 'Agent result');
+      store.drop('agent-1');
+      controller.onSubagentSettled(record);
+
+      const completed = strip(viewer!.render(120).join('\n'));
+      expect(completed).toContain('completed');
+      expect(completed).toContain('Agent result');
+      viewer!.handleInput('\u001B');
+      await Promise.resolve();
+      const list = strip(browser.render(120).join('\n'));
+      expect(list).not.toContain('agent-task-1');
+      expect(list).toContain('bash-background');
+      expect(list).toContain('captured output');
+    } finally {
+      controller.close();
+      vi.useRealTimers();
+    }
   });
 
   it('feeds the preview pane from the activity store for agent tasks', async () => {

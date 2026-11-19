@@ -184,6 +184,8 @@ export class BashTool implements IBashTool {
       TERM: 'dumb',
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
       SHELL: env.shellPath,
+      KIMI_CODE_SESSION_ID: this.ctx.sessionId,
+      KIMI_CODE_WORKSPACE_ID: this.ctx.workspaceId,
     };
 
     return processService.spawn(env.shellPath, ['-c', shellCommand], { cwd: effectiveCwd, env: noninteractiveEnv });

@@ -13,7 +13,8 @@ import {
   type TestInstantiationService,
 } from '#/_base/di/test';
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
-import { emptyUsage } from '#human/llm-requester/usage';
+import { emptyUsage } from '@moonshot-ai/core/llm/usage';
+import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import { appendContext, stubContextMemory } from '../../agent/contextMemory/stubs';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
@@ -41,6 +42,8 @@ import {
   PermissionApprovalResolved,
 } from '#/agent/toolApproval/toolApprovalService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import type { ExecutableTool } from '#/tool/toolContract';
 import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
 import { makeHookRunner } from './runner-stub';
@@ -78,6 +81,7 @@ import {
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IModelService } from '#/llm-adapter/model/model';
 
+import { createTestAgent } from '../../harness';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
@@ -316,102 +320,131 @@ describe('IExternalHooksRunnerService integration', () => {
     expect(results[0]?.reason).toContain('tests not written');
   });
 
-  it('limits external Stop hook continuations to once per active turn', async () => {
-    const disposables = new DisposableStore();
-    let ix: TestInstantiationService | undefined;
-    try {
-      const loop = stubLoopWithHooks();
-      const context = stubContextMemory();
-      const stopInputs: unknown[] = [];
-      const hookEngine = {
+  it('runs external Stop after TurnEnded with final step facts and limits continuation reentry', async () => {
+    const stopInputs: Array<Record<string, unknown>> = [];
+    const stopStates: string[] = [];
+    const ctx = createTestAgent({
+      hookEngine: {
         trigger: async () => [],
         fireAndForgetTrigger: async () => [],
-        triggerBlock: async (_event: string, args: { inputData?: unknown }) => {
-          stopInputs.push(args.inputData);
-          return { block: true, reason: `continue ${stopInputs.length}` };
+        triggerBlock: async (event: string, args?: { inputData?: unknown }) => {
+          if (event !== 'Stop') return undefined;
+          stopStates.push(loop.snapshot().state);
+          stopInputs.push(args?.inputData as Record<string, unknown>);
+          return stopInputs.length === 1
+            ? { block: true, reason: 'continue once from Stop' }
+            : undefined;
         },
-      };
-
-      ix = createServices(disposables, {
-        strict: true,
-        additionalServices: (reg) => {
-          registerStateServices(reg);
-          registerTestAgentWireServices(reg, 'wire/external-hooks');
-          reg.defineInstance(IBootstrapService, stubBootstrap());
-          reg.defineInstance(ISessionContext, stubSessionContext());
-          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
-          reg.definePartialInstance(IConfigService, {});
-          reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentLoopService, context);
-          reg.defineInstance(IAgentLoopService, loop);
-          registerAgentEventBus(reg);
-          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-          reg.definePartialInstance(IAgentPermissionGate, {});
-          reg.definePartialInstance(IAgentFullCompactionService, {
-            hooks: createHooks(['onWillCompact']),
-          });
-          reg.definePartialInstance(IAgentTaskService, {});
-        },
-      });
-      activateAgentEventBus(ix);
-      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
-      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
-      ix.get(IAgentExternalHooksService);
-      const eventBus = ix.get(IEventBus);
-
-      const signal = new AbortController().signal;
-      const filtered: AfterStepContext = {
-        ...makeAfterStep(signal),
+      },
+    });
+    const loop = ctx.get(IAgentLoopService);
+    const settle = async (): Promise<void> => {
+      await loop.settled();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    };
+    try {
+      ctx.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'filtered' }],
         finishReason: 'filtered',
-      };
-      await loop.hooks.onDidFinishStep.run(filtered);
-      expect(loop.snapshot().hasPendingRequests).toBe(false);
+      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'filtered turn' }] });
+      await settle();
       expect(stopInputs).toEqual([]);
-      expect(context.messages).toEqual([]);
 
-      const first = makeAfterStep(signal);
-      await loop.hooks.onDidFinishStep.run(first);
-      expect(loop.snapshot().hasPendingRequests).toBe(true);
-      loop.drainNextBatch(context);
-      expect(context.messages.at(-1)).toEqual(
+      const lookupCall: ToolCall = {
+        type: 'function',
+        id: 'call_lookup',
+        name: 'Lookup',
+        arguments: '{"query":"moon"}',
+      };
+      const lookupTool: ExecutableTool<{ query: string }> = {
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        resolveExecution: () => ({
+          approvalRule: 'Lookup',
+          execute: async () => ({ output: 'lookup-result' }),
+        }),
+      };
+      loop.update({ activeToolNames: ['Lookup'] });
+      ctx.get(IAgentToolRegistryService).register(lookupTool);
+      ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
+      ctx.mockNextResponse({ type: 'text', text: 'First final answer.' });
+      ctx.mockNextResponse({ type: 'text', text: 'Continued answer.' });
+      ctx.mockNextResponse({ type: 'text', text: 'Next ordinary answer.' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first ordinary turn' }] });
+      await ctx.untilApproval(true);
+      await vi.waitFor(() => {
+        expect(ctx.llmCalls).toHaveLength(4);
+      });
+      await settle();
+
+      expect(stopStates).toEqual(['idle']);
+      expect(stopInputs).toHaveLength(1);
+      expect(stopInputs[0]).toMatchObject({
+        turnId: 1,
+        step: 2,
+        firstStepOfTurn: false,
+        finishReason: 'completed',
+        usage: expect.objectContaining({ output: expect.any(Number) }),
+        stopHookActive: false,
+      });
+      expect(ctx.contextData().history).toContainEqual(
         expect.objectContaining({
           role: 'user',
-          content: [{ type: 'text', text: 'continue 1' }],
+          content: [{ type: 'text', text: 'continue once from Stop' }],
           origin: { kind: 'system_trigger', name: 'stop_hook' },
         }),
       );
-      expect(loop.drainNextBatch(context)).toBeUndefined();
 
-      const second = makeAfterStep(signal);
-      await loop.hooks.onDidFinishStep.run(second);
-      expect(loop.snapshot().hasPendingRequests).toBe(false);
-      expect(stopInputs).toEqual([{ stopHookActive: false }]);
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next ordinary turn' }] });
+      await vi.waitFor(() => {
+        expect(ctx.llmCalls).toHaveLength(5);
+      });
+      await settle();
 
-      eventBus.publish(
-        new TurnEnded({
-          agentId: 'main',
-          turnId: 0,
-          reason: 'completed',
-          durationMs: 0,
-        }),
-      );
+      expect(stopInputs).toHaveLength(2);
+      expect(stopInputs[1]).toMatchObject({
+        turnId: 3,
+        step: 1,
+        firstStepOfTurn: true,
+        finishReason: 'completed',
+        stopHookActive: false,
+      });
+      expect(stopStates).toEqual(['idle', 'idle']);
+      expect(ctx.llmCalls).toHaveLength(5);
 
-      const nextTurn = makeAfterStep(signal);
-      await loop.hooks.onDidFinishStep.run(nextTurn);
-      expect(loop.snapshot().hasPendingRequests).toBe(true);
-      loop.drainNextBatch(context);
-      expect(context.messages.at(-1)).toEqual(
-        expect.objectContaining({
-          role: 'user',
-          content: [{ type: 'text', text: 'continue 2' }],
-          origin: { kind: 'system_trigger', name: 'stop_hook' },
-        }),
-      );
-      expect(loop.drainNextBatch(context)).toBeUndefined();
-      expect(stopInputs).toEqual([{ stopHookActive: false }, { stopHookActive: false }]);
+      loop.hooks.onDidFinishStep.register('test-queued-notify', async (hookCtx, next) => {
+        if (hookCtx.turnId === 4) {
+          loop.notify({
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'queued follow-up turn' }],
+              origin: { kind: 'user' },
+            },
+          });
+        }
+        await next();
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'Queued source answer.' });
+      ctx.mockNextResponse({ type: 'text', text: 'Queued follow-up answer.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'queued source turn' }] });
+      await vi.waitFor(() => {
+        expect(ctx.llmCalls).toHaveLength(7);
+      });
+      await settle();
+
+      expect(stopInputs).toHaveLength(3);
+      expect(stopInputs[2]).toMatchObject({ turnId: 5, step: 1 });
+      expect(stopStates).toEqual(['idle', 'idle', 'idle']);
     } finally {
-      ix?.dispose();
-      disposables.dispose();
+      await ctx.dispose();
     }
   });
 
@@ -676,19 +709,25 @@ describe('IExternalHooksRunnerService integration', () => {
       ix.set(IExternalHooksRunnerService, new SyncDescriptor(ExternalHooksRunnerService));
       ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
       ix.get(IAgentExternalHooksService);
+      const eventBus = ix.get(IEventBus);
 
       const afterStep = makeAfterStep(new AbortController().signal);
-      let completed = false;
-      const pending = loop.hooks.onDidFinishStep.run(afterStep).then(() => {
-        completed = true;
-      });
+      await loop.hooks.onDidFinishStep.run(afterStep);
+      eventBus.publish(
+        new TurnEnded({
+          agentId: 'main',
+          turnId: afterStep.turnId,
+          reason: 'completed',
+          durationMs: 0,
+        }),
+      );
       await flushMicrotasks();
-      expect(completed).toBe(false);
+      expect(loop.snapshot().hasPendingRequests).toBe(false);
 
       resolveReady();
-      await pending;
-
-      expect(loop.snapshot().hasPendingRequests).toBe(true);
+      await vi.waitFor(() => {
+        expect(loop.snapshot().hasPendingRequests).toBe(true);
+      });
       loop.drainNextBatch(context);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
@@ -1597,6 +1636,14 @@ describe('IExternalHooksRunnerService integration', () => {
         block: false,
       });
       await loop.hooks.onDidFinishStep.run(makeAfterStep(new AbortController().signal));
+      eventBus.publish(
+        new TurnEnded({
+          agentId: 'main',
+          turnId: 0,
+          reason: 'completed',
+          durationMs: 0,
+        }),
+      );
       await compactionHooks.onWillCompact.run({
         abortController: new AbortController(),
         promise: Promise.resolve({ tokensAfter: 0 } as unknown as CompactionResult),
@@ -1604,6 +1651,7 @@ describe('IExternalHooksRunnerService integration', () => {
         tokenCount: 1,
       });
       await flushMicrotasks();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
       expect(seen.map((call) => call.event).toSorted()).toEqual([
         'PermissionRequest',

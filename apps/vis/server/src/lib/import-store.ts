@@ -1,18 +1,3 @@
-// apps/vis/server/src/lib/import-store.ts
-//
-// Imported debug bundles (`/export-debug-zip` zips) live under
-// `<home>/imported/<importId>/`, unzipped to the same on-disk shape as a real
-// session directory (state.json, agents/<id>/wire.jsonl, tasks/, cron/, logs/)
-// plus the bundle's `manifest.json`. Because the layout matches a session
-// directory, every existing read path (wire / context / tasks / cron / blobs /
-// logs) works against an imported session once `session-store` resolves its
-// directory — see `findSessionDir`.
-//
-// This module owns ONLY: id allocation, safe extraction, validation, the
-// vis-side `import-meta.json` sidecar, enumeration, and deletion. Summary /
-// detail construction stays in `session-store` so imported and local sessions
-// share one code path.
-
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -40,12 +25,6 @@ function newImportId(): string {
   return `imp_${randomBytes(6).toString('hex')}`;
 }
 
-/**
- * Extract a debug zip into a fresh `imported/<id>/` directory and validate it
- * looks like a session bundle. On any failure the partial directory is removed
- * so a bad upload never lingers in the imported list. Returns the bundle's
- * `import-meta.json` contents.
- */
 export async function importSessionZip(
   home: string,
   zipBuffer: Buffer,
@@ -59,8 +38,6 @@ export async function importSessionZip(
   try {
     await extractZip(zipBuffer, dir);
 
-    // A debug bundle must contain a main wire; without it there is nothing to
-    // visualize. `state.json` / `manifest.json` are best-effort.
     const hasMainWire = await pathExists(join(dir, 'agents', 'main', 'wire.jsonl'));
     if (!hasMainWire) {
       throw new ZipImportError(
@@ -83,7 +60,6 @@ export async function importSessionZip(
   }
 }
 
-/** Enumerate imported bundle ids (newest-first by directory mtime). */
 export async function listImportedIds(home: string): Promise<string[]> {
   const root = importedRootOf(home);
   let entries: import('node:fs').Dirent[];
@@ -108,9 +84,6 @@ export async function readImportMeta(home: string, importId: string): Promise<Im
   try {
     const raw = await readFile(join(importedDirOf(home, importId), META_FILE), 'utf8');
     const meta = JSON.parse(raw) as ImportInfo;
-    // The sidecar is vis-written, but re-sanitize the manifest in case the
-    // imported directory was hand-edited, so a corrupt type cannot reach the
-    // session list and crash the UI.
     return { ...meta, manifest: meta.manifest ? sanitizeManifest(meta.manifest) : null };
   } catch {
     return null;
@@ -133,7 +106,6 @@ async function readManifest(dir: string): Promise<ImportManifest | null> {
   }
 }
 
-/** Declared string fields of {@link ImportManifest}. */
 const MANIFEST_STRING_FIELDS = [
   'sessionId', 'exportedAt', 'kimiCodeVersion', 'wireProtocolVersion', 'os',
   'nodejsVersion', 'sessionFirstActivity', 'sessionLastActivity', 'title',
@@ -149,12 +121,6 @@ const SHELL_ENV_STRING_FIELDS = [
   'shell',
 ] as const;
 
-/**
- * Coerce an untrusted manifest object so every declared string field is either
- * a string or absent. A type-corrupt bundle (e.g. `{ "workspaceDir": 123 }`)
- * would otherwise propagate a non-string into `SessionSummary.workDir`, where
- * the session rail calls `.split('/')` and crashes the whole list.
- */
 function sanitizeManifest(raw: unknown): ImportManifest | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const o = raw as Record<string, unknown>;

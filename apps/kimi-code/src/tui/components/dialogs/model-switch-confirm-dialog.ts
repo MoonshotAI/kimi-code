@@ -1,8 +1,3 @@
-/**
- * Cloud-gated model or effort confirmation. Model switches keep their
- * session-specific actions; effort switches offer only confirm and cancel.
- */
-
 import {
   Container,
   matchesKey,

@@ -1,7 +1,3 @@
-/**
- * Plan describing the contents detected under the source `~/.kimi/` directory.
- * Produced by detect(); consumed by runMigration().
- */
 export interface MigrationPlan {
   readonly sourceHome: string;
   readonly hasConfig: boolean;
@@ -9,22 +5,12 @@ export interface MigrationPlan {
   readonly hasUserHistory: boolean;
   readonly hasSkills: boolean;
   readonly skillsSourceHome?: string;
-  /** Legacy `~/.kimi/plans/` (share-dir independent) holds plan files to copy. */
   readonly hasPlans: boolean;
-  /**
-   * OAuth login names that will require a fresh `/login` after migration,
-   * derived from config semantics (providers carrying an `oauth` ref) unioned
-   * with basenames found under credentials/.
-   */
   readonly oauthCredentials: readonly string[];
   readonly workdirs: readonly WorkDirEntry[];
   readonly detectedPlugins: readonly string[];
   readonly detectedMcpOauthServers: readonly string[];
-  readonly totalSessions: number; // sum across workdirs (real, post-classify)
-  /**
-   * Session storage that detection could see but could not safely inspect.
-   * Optional for callers that persisted or constructed an older plan shape.
-   */
+  readonly totalSessions: number;
   readonly sessionScanFailures?: readonly SessionMigrationFailure[];
 }
 
@@ -33,27 +19,18 @@ export interface SessionMigrationFailure {
   readonly reason: string;
 }
 
-/**
- * One workdir bucket (`~/.kimi/sessions/<md5>/`) with reverse-looked-up
- * path from `~/.kimi/kimi.json`. Buckets with kaos != 'local' or no
- * workdir found are excluded from this list (they appear in counters).
- */
 export interface WorkDirEntry {
-  readonly oldHashDir: string; // absolute path to ~/.kimi/sessions/<md5>/
-  readonly workdirPath: string; // resolved absolute filesystem path
+  readonly oldHashDir: string;
+  readonly workdirPath: string;
   readonly sessions: readonly SessionEntry[];
 }
 
 export interface SessionEntry {
   readonly uuid: string;
-  readonly oldDir: string; // absolute path
-  readonly wireMtime: number; // unix-ms, for "recent" sort; 0 if unknown
+  readonly oldDir: string;
+  readonly wireMtime: number;
 }
 
-/**
- * User-driven knobs for what gets migrated. `sessions: true` migrates every
- * real local session; `false` skips the sessions step entirely.
- */
 export interface MigrationScope {
   readonly config: boolean;
   readonly mcp: boolean;
@@ -62,10 +39,6 @@ export interface MigrationScope {
   readonly sessions: boolean;
 }
 
-/**
- * Output of a runMigration() call. Serialized verbatim to
- * `~/.kimi-code/migration-report.json` and surfaced in the terminal summary.
- */
 export interface MigrationReport {
   readonly startedAt: string;
   readonly completedAt: string;
@@ -82,30 +55,14 @@ export interface MigrationSummary {
     readonly tuiExtracted: boolean;
     readonly droppedProviders: readonly string[];
     readonly droppedModels: readonly string[];
-    /** Top-level keys dropped because kimi-code's config schema lacks them. */
     readonly droppedKeys: readonly string[];
-    /**
-     * Keys/sections where the existing target config and the kimi-cli config
-     * both set a different value — the target's value was kept.
-     */
     readonly configConflicts: readonly string[];
-    /** A `config.toml` conflict forced a `config.migrated-from-kimi-cli.toml` sibling. */
     readonly wroteSiblingDueToConflict: boolean;
-    /** A `tui.toml` conflict forced a `tui.migrated-from-kimi-cli.toml` sibling. */
     readonly wroteTuiSibling: boolean;
-    /** Count of kimi-cli hook entries written into the LIVE target config. */
     readonly migratedHooks: number;
-    /** Count of kimi-cli hook entries dropped because kimi-code's schema rejects them. */
     readonly droppedHooks: number;
     readonly sourceUnreadable: boolean;
-    /** Legacy `device_id` was copied because the target had none of its own. */
     readonly deviceIdCopied: boolean;
-    /**
-     * When `wroteSiblingDueToConflict` is true, what landed in
-     * `config.migrated-from-kimi-cli.toml` instead of the live `config.toml`.
-     * The result screen surfaces these so the user knows what needs manual
-     * merging. Empty in `overwrite` / `merge` modes.
-     */
     readonly siblingContents: {
       readonly providers: readonly string[];
       readonly models: readonly string[];
@@ -115,9 +72,7 @@ export interface MigrationSummary {
   readonly mcp: {
     readonly mergedServers: readonly string[];
     readonly keptNewForConflicts: readonly string[];
-    /** Source servers dropped because kimi-code's MCP schema rejects them. */
     readonly droppedServers: readonly string[];
-    /** Target `mcp.json` was unparseable; merged servers went to a sibling. */
     readonly wroteSiblingDueToConflict: boolean;
     readonly sourceUnreadable: boolean;
   };
@@ -134,7 +89,6 @@ export interface SessionsSummary {
   readonly bucketsSkippedNoWorkdirFound: number;
   readonly sessionsAttempted: number;
   readonly sessionsMigrated: number;
-  /** Sessions already imported by a previous run (idempotent re-run). */
   readonly sessionsAlreadyMigrated: number;
   readonly sessionsSkippedPlaceholder: number;
   readonly sessionsSkippedEmpty: number;
@@ -145,21 +99,9 @@ export interface SessionsSummary {
 
 export interface MigrationNotices {
   readonly mcpOauthServersRequiringReauth: readonly string[];
-  /**
-   * Names of kimi-cli OAuth logins requiring re-login, derived from the legacy
-   * config's `oauth` provider refs plus any `~/.kimi/credentials/<name>.json`
-   * found at detection time. OAuth credentials are deliberately NOT migrated:
-   * refresh tokens rotate server-side, so a copied credential breaks login for
-   * whichever install refreshes second. The user must run `/login` in
-   * kimi-code instead. Empty when the legacy install had no OAuth login.
-   */
   readonly oauthLoginsRequiringRelogin: readonly string[];
   readonly detectedPlugins: readonly string[];
   readonly configConflictNotice: string | null;
   readonly tuiConflictNotice: string | null;
-  /**
-   * Tells the user that legacy plan files were copied as plain files (no
-   * plan-mode wiring) and where to find them. Null when nothing was copied.
-   */
   readonly plansCopiedNotice: string | null;
 }

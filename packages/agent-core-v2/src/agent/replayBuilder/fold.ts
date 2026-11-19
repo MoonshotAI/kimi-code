@@ -11,7 +11,7 @@ import type {
   GoalSnapshot,
   GoalStatus,
 } from '#/features/goal/types';
-import { createToolMessage } from '#human/llm/message';
+import { createToolMessage } from '@moonshot-ai/core/llm/message';
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import {
   isNewerWireVersion,
@@ -331,6 +331,7 @@ class WireReplayFoldState {
         openStep.toolCalls.push({
           type: 'function',
           id: event.toolCallId,
+          rawId: event.rawId,
           name: event.name,
           arguments: event.args === undefined ? null : JSON.stringify(event.args),
           extras: event.extras,

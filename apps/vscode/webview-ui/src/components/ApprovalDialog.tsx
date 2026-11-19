@@ -12,7 +12,6 @@ export function ApprovalDialog() {
 
   const req = pending[0];
 
-  // Auto-expand if there's a diff block (code change)
   useEffect(() => {
     if (req) {
       const hasDiff = req.display?.some((b) => b.type === "diff") ?? false;

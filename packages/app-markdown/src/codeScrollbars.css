@@ -1,0 +1,52 @@
+.md-code-scroll-host { position: relative; min-width: 0; }
+.md-code-scroll-viewport { scrollbar-width: none; }
+.md-code-scroll-viewport::-webkit-scrollbar { display: none; }
+.md-code-edges {
+  position: absolute;
+  z-index: var(--markdown-z-edges);
+  pointer-events: none;
+  overflow: hidden;
+  border-end-end-radius: var(--markdown-code-radius);
+  transition: --markdown-edge-top var(--duration-slow) var(--ease-out),
+    --markdown-edge-bottom var(--duration-slow) var(--ease-out),
+    --markdown-edge-left var(--duration-slow) var(--ease-out),
+    --markdown-edge-right var(--duration-slow) var(--ease-out);
+  mask-image:
+    linear-gradient(to bottom, rgb(0 0 0 / var(--markdown-edge-top)), transparent var(--markdown-code-edge-size)),
+    linear-gradient(to top, rgb(0 0 0 / var(--markdown-edge-bottom)), transparent var(--markdown-code-edge-size)),
+    linear-gradient(to right, rgb(0 0 0 / var(--markdown-edge-left)), transparent var(--markdown-code-edge-size)),
+    linear-gradient(to left, rgb(0 0 0 / var(--markdown-edge-right)), transparent var(--markdown-code-edge-size));
+}
+.md-code-edges[hidden] { display: none; }
+.md-code-edges::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow:
+    inset 0 0 calc(var(--markdown-code-edge-size) * 0.35) var(--markdown-code-edge-strong-color),
+    inset 0 0 calc(var(--markdown-code-edge-size) * 0.65) var(--markdown-code-edge-medium-color),
+    inset 0 0 var(--markdown-code-edge-size) var(--markdown-code-edge-soft-color);
+  mask-image:
+    linear-gradient(to bottom, rgb(0 0 0 / var(--markdown-edge-top)), black var(--markdown-code-edge-size)),
+    linear-gradient(to top, rgb(0 0 0 / var(--markdown-edge-bottom)), black var(--markdown-code-edge-size)),
+    linear-gradient(to right, rgb(0 0 0 / var(--markdown-edge-left)), black var(--markdown-code-edge-size)),
+    linear-gradient(to left, rgb(0 0 0 / var(--markdown-edge-right)), black var(--markdown-code-edge-size));
+  mask-composite: intersect;
+}
+.md-code-scrollbar { position: absolute; z-index: var(--markdown-z-scrollbar); touch-action: none; user-select: none; background: transparent; }
+.md-code-scrollbar[hidden] { display: none; }
+.md-code-scrollbar--horizontal { height: var(--markdown-code-scrollbar-size); }
+.md-code-scrollbar--vertical { right: var(--markdown-code-scrollbar-edge-gap); width: var(--markdown-code-scrollbar-size); }
+.md-code-scrollbar-thumb { display: block; position: absolute; border-radius: var(--markdown-code-scrollbar-size); background: var(--markdown-code-scrollbar-thumb); }
+.md-code-scrollbar--horizontal .md-code-scrollbar-thumb { bottom: 0; height: var(--markdown-code-scrollbar-idle-size); transition: height var(--markdown-code-scrollbar-transition-duration) ease-out, background-color var(--markdown-code-scrollbar-transition-duration) ease-out; }
+.md-code-scrollbar--horizontal:hover .md-code-scrollbar-thumb,
+.md-code-scrollbar--horizontal.is-dragging .md-code-scrollbar-thumb { height: 100%; }
+.md-code-scrollbar--vertical .md-code-scrollbar-thumb { right: 0; width: var(--markdown-code-scrollbar-idle-size); transition: width var(--markdown-code-scrollbar-transition-duration) ease-out, background-color var(--markdown-code-scrollbar-transition-duration) ease-out; }
+.md-code-scrollbar--vertical:hover .md-code-scrollbar-thumb,
+.md-code-scrollbar--vertical.is-dragging .md-code-scrollbar-thumb { width: 100%; }
+.md-code-scrollbar:hover .md-code-scrollbar-thumb,
+.md-code-scrollbar.is-dragging .md-code-scrollbar-thumb { background: var(--markdown-code-scrollbar-thumb-hover); }
+@media (prefers-reduced-motion: reduce) {
+  .md-code-scrollbar .md-code-scrollbar-thumb { transition: none; }
+}

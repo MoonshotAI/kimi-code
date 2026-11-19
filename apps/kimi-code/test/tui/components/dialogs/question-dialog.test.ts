@@ -13,8 +13,6 @@ function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 
-// Collapse all whitespace runs so wrapped content can be matched against its
-// original (single-line) form without caring where the line break landed.
 function flatten(text: string): string {
   return strip(text).replaceAll(/\s+/g, ' ').trim();
 }
@@ -409,7 +407,6 @@ describe('QuestionDialogComponent', () => {
     ]);
     const { dialog, collected } = makeDialog(pending);
 
-    // Select Other and commit a custom value.
     dialog.handleInput('3');
     dialog.handleInput('M');
     dialog.handleInput('u');
@@ -421,9 +418,7 @@ describe('QuestionDialogComponent', () => {
     dialog.handleInput('m');
     dialog.handleInput('\r');
 
-    // Toggle it off using the same key.
     dialog.handleInput('3');
-    // Select a preset option to confirm the answer still builds correctly.
     dialog.handleInput('1');
     dialog.handleInput('\t');
 
@@ -503,7 +498,7 @@ describe('QuestionDialogComponent', () => {
       { question: 'Q?', multi_select: false, options: [{ label: 'A' }] },
     ]);
     const { dialog, collected } = makeDialog(pending, () => toggles++);
-    dialog.handleInput('\u000F'); // Ctrl+O
+    dialog.handleInput('\u000F');
     expect(toggles).toBe(1);
     expect(collected).toEqual([]);
   });
@@ -532,9 +527,7 @@ describe('QuestionDialogComponent', () => {
       const flat = flatten(rendered.join('\n'));
 
       expect(joined).not.toContain('…');
-      // Question text should span multiple physical lines.
       expect(joined.split('\n').filter((l) => l.includes('?') || /Please|workspace|side/.test(l)).length).toBeGreaterThan(1);
-      // And the full content should still be reconstructable.
       expect(flat).toContain(longQuestion);
     });
 

@@ -1,6 +1,7 @@
-import type { HistoryMessage, UserEntry } from '#human/agent/turn';
+import type { Message, UserMessage } from '@moonshot-ai/core/llm/message';
 import type { IWireService } from '#/wire/wire';
 import { contextFromHistoryEntry } from '#/agent/loop/history';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentTaskService } from './taskService';
 import { TERMINAL_STATUSES } from './types';
 import { IAgentTaskOutputService } from './taskOutput';
@@ -9,17 +10,24 @@ export async function restoreTaskCompletions(options: {
   readonly wire: IWireService;
   readonly agentId: string;
   readonly taskOutputs: IAgentTaskOutputService;
-  readonly messages: readonly HistoryMessage[];
-  readonly pending?: readonly HistoryMessage[];
+  readonly messages: readonly Message[];
+  readonly pending?: readonly Message[];
   readonly isLive?: (taskId: string) => boolean;
-}): Promise<readonly UserEntry[]> {
+}): Promise<readonly UserMessage[]> {
   const { journal, restorable } = await options.wire.readRestoreChains();
   const history = new AgentTaskService(options.agentId);
   history.restore(journal);
   const delivered = new Set<string>();
-  for (const entry of [...options.messages, ...options.pending ?? []]) {
-    const origin = contextFromHistoryEntry(entry).origin;
+  const recordDelivery = (origin: PromptOrigin | undefined): void => {
     if (origin?.kind === 'task') delivered.add(`${origin.taskId}\0${origin.status}\0${origin.notificationId}`);
+  };
+  for (const entry of [...options.messages, ...options.pending ?? []]) {
+    recordDelivery(contextFromHistoryEntry(entry).origin);
+  }
+  for (const record of journal) {
+    if (record['agentId'] !== undefined && record['agentId'] !== options.agentId) continue;
+    if (record.type !== 'context.append_message') continue;
+    recordDelivery((record['message'] as ContextMessage | undefined)?.origin);
   }
   for (const record of restorable) {
     if (record.type !== 'task.waitDelivered' || record['agentId'] !== options.agentId) continue;
@@ -29,7 +37,7 @@ export async function restoreTaskCompletions(options: {
       if (typeof key === 'string') delivered.add(key);
     }
   }
-  const completions: UserEntry[] = [];
+  const completions: UserMessage[] = [];
   for (const info of history.list(false)) {
     if (!TERMINAL_STATUSES.has(info.status)) continue;
     if (info.status === 'lost' && options.isLive?.(info.taskId) === true) continue;

@@ -1,4 +1,4 @@
-import type { ContentPart, Message, ToolDescription as Tool } from '#human/llm/message';
+import type { ContentPart, Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 
 const messageTokenEstimateCache = new WeakMap<Message, number>();
 

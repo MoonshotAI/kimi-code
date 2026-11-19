@@ -1,6 +1,6 @@
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import type { ToolResult } from '#/tool/toolContract';
 import { isToolDetachAck, legacyToolDurationMs } from '#/tool/executor';
 
@@ -25,6 +25,7 @@ export async function executeLegacyTool(
 ): Promise<LegacyExecutionResult[]> {
   return Promise.all(calls.map(async (call) => {
     const handler = executor.executor.execute(call, {
+      origin: 'loop',
       turnId: options.turnId,
       trace: options.trace,
     });

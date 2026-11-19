@@ -1,4 +1,4 @@
-import { type ContentPart, type ToolCall } from '#human/llm/message';
+import { type ContentPart, type ToolCall } from '@moonshot-ai/core/llm/message';
 import type { WireRecord } from '#/wire/record';
 
 import {
@@ -199,7 +199,8 @@ function recoverFoldedLength(
   const keptHeadUserMessageCount = readNumber(record, 'keptHeadUserMessageCount');
   const compactedCount = readNumber(record, 'compactedCount');
   if (keptUserMessageCount !== undefined) {
-    return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 2 : 3);
+    return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 2 : 3) +
+      (readNumber(record, 'appendedInjectionCount') ?? 0);
   }
   if (compactedCount !== undefined && compactedCount < foldedLength) {
     return 1 + (foldedLength - compactedCount);

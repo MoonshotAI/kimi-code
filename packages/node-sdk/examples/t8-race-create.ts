@@ -1,4 +1,3 @@
-// T8.4 driver: create session with explicit id, twice concurrently in same process.
 import { createKimiHarness, type KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 const workDir = process.argv[2]!;

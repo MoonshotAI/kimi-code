@@ -1,37 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserEntry, type ToolEntry } from '#human/agent/turn';
-import { createAssistantMessage, createUserMessage, extractText, type Message, type ToolCall } from '#human/llm/message';
-import type { LlmRequest } from '#human/llm/request';
-import type { LlmOutcome } from '#human/llm/response';
+import { createUserMessage, extractText, type Message, type ToolCall, type ToolMessage } from '@moonshot-ai/core/llm/message';
 import type {
   Loop,
   LoopEmitted,
   LoopLlmRequester,
   StepStartingEvent,
   ToolBatchStartingEvent,
-} from '#/agent/loop/core/index';
+} from '@moonshot-ai/core/loop/index';
+import { createMockProviderRequester, type MockProviderResponse } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
-import type {
-  ToolExecuteInput,
-  ToolHookRegistration,
-  ToolResult,
-} from '#human/tool/executor';
+import type { LoopToolContext } from '@moonshot-ai/core/loop/create-loop';
+import type { ToolExecuteContext, ToolExecutorHook, ToolReturn } from '#/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
 
-function requester(outcomes: (() => LlmOutcome)[], onGenerate?: () => void): LoopLlmRequester {
-  const self: LoopLlmRequester = {
-    with: () => self,
-    request: (part) => part as unknown as LlmRequest,
-    generate: async (_rest, control) => {
-      if (control.signal.aborted) throw new DOMException('aborted', 'AbortError');
-      onGenerate?.();
-      const next = outcomes.shift();
-      if (next === undefined) throw new Error('boom');
-      return next();
-    },
-  };
-  return self;
+function requester(responses: MockProviderResponse[], onGenerate?: () => void): LoopLlmRequester {
+  return createMockProviderRequester(() => {
+    onGenerate?.();
+    const next = responses.shift();
+    if (next === undefined) throw new Error('boom');
+    return next;
+  });
 }
 
 function once(loop: Loop, match: (event: LoopEmitted) => boolean): Promise<void> {
@@ -44,10 +33,9 @@ function once(loop: Loop, match: (event: LoopEmitted) => boolean): Promise<void>
   });
 }
 
-const prompt = (text: string) => createUserEntry(createUserMessage(text));
-const done = (text: string, toolCalls: ToolCall[] = []): (() => LlmOutcome) => () => ({
-  type: 'done',
-  message: createAssistantMessage([{ type: 'text', text }], toolCalls),
+const prompt = (text: string) => createUserMessage(text);
+const done = (text: string, toolCalls: ToolCall[] = []): MockProviderResponse => ({
+  parts: [{ type: 'text', text }, ...toolCalls],
 });
 const call = (id: string, name: string): ToolCall => ({ type: 'function', id, name, arguments: '{}' });
 
@@ -57,7 +45,7 @@ describe('step.starting', () => {
     const seen: StepStartingEvent[] = [];
     const scripted = requester([done('', [call('c1', 'lookup')]), done('end')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup']),
       input: { profile: { tools: [tool] } },
       hooks: [
@@ -78,7 +66,7 @@ describe('step.starting', () => {
     ]);
     expect(seen[0]?.messages).toEqual([entry]);
     expect(seen[0]?.profile).toEqual({ systemPrompt: 'sp', tools: [tool] });
-    expect(seen[1]?.messages.map((item) => item.message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(seen[1]?.messages.map((item) => item.role)).toEqual(['user', 'assistant', 'tool']);
     await loop.close();
   });
 
@@ -87,7 +75,7 @@ describe('step.starting', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('resumed')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
@@ -115,19 +103,14 @@ describe('step.starting', () => {
 
   it('applies history rewrites during step start and an in-flight request', async () => {
     let sent: Message[] = [];
-    const capturing: LoopLlmRequester = {
-      with: () => capturing,
-      request: (part) => part as unknown as LlmRequest,
-      generate: async (rest, control) => {
-        if (control.signal.aborted) throw new DOMException('aborted', 'AbortError');
-        sent = (rest.content as { messages: Message[] }).messages;
-        return { type: 'done', message: createAssistantMessage([{ type: 'text', text: 'ok' }]) };
-      },
-    };
+    const capturing = createMockProviderRequester((request) => {
+      sent = [...request.content.messages];
+      return done('ok');
+    });
     const rewritten = prompt('rewritten');
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: capturing }),
+      requester: capturing,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
@@ -149,23 +132,19 @@ describe('step.starting', () => {
     const started = new Promise<void>((resolve) => { requestStarted = resolve; });
     let finishRequest!: () => void;
     const finish = new Promise<void>((resolve) => { finishRequest = resolve; });
-    const pending: LoopLlmRequester = {
-      with: () => pending,
-      request: (part) => part as unknown as LlmRequest,
-      generate: async () => {
-        requestStarted();
-        await finish;
-        return { type: 'done', message: createAssistantMessage([{ type: 'text', text: 'late answer' }]) };
-      },
-    };
-    const active = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: pending }), executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], '') });
+    const pending = createMockProviderRequester(async () => {
+      requestStarted();
+      await finish;
+      return done('late answer');
+    });
+    const active = createLoop({ requester: pending, executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], '') });
     const running = active.runTurn(prompt('stale context'));
     await started;
     expect(active.setContext([], 'clear')?.type).toBe('context.settled');
     expect(active.state.messages).toEqual([]);
     finishRequest();
     expect((await running).type).toBe('done');
-    expect(active.state.messages.map((entry) => extractText(entry.message))).toEqual(['late answer']);
+    expect(active.state.messages.map((entry) => extractText(entry))).toEqual(['late answer']);
     await active.close();
   });
 
@@ -176,7 +155,7 @@ describe('step.starting', () => {
     });
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [{ point: 'step.starting', id: 'guard', hook: () => ({ blocked: { reason: 'no' } }) }],
     });
@@ -195,10 +174,10 @@ describe('step.starting', () => {
 });
 
 function createExecutor(
-  registrations: readonly ToolHookRegistration[],
-  execute: (input: ToolExecuteInput) => Promise<ToolResult> = async () => ({ content: [] }),
+  hook: ToolExecutorHook<LoopToolContext>,
+  execute: (context: ToolExecuteContext<unknown, LoopToolContext>) => Promise<ToolReturn> = async () => ({ content: [] }),
 ) {
-  return executorFrom(['alpha', 'beta'], execute, registrations);
+  return executorFrom(['alpha', 'beta'], execute, hook);
 }
 
 describe('tool.batch-starting', () => {
@@ -209,22 +188,19 @@ describe('tool.batch-starting', () => {
     const stopping: number[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.starting',
-          hook: (event) => {
-            perCall.push(event.toolCall.id);
-          },
+      {
+        starting: (context) => {
+          perCall.push(context.call.id);
         },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: tools,
       hooks: [
         {
@@ -267,16 +243,16 @@ describe('tool.batch-starting', () => {
       toolCallId: 'c2',
       outcome: { type: 'blocked', cause: { by: 'swarm', reason: 'denied' } },
     });
-    expect(loop.state.messages.map((entry) => entry.message.role)).toEqual([
+    expect(loop.state.messages.map((entry) => entry.role)).toEqual([
       'user',
       'assistant',
       'tool',
       'tool',
       'assistant',
     ]);
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(entries.map((entry) => extractText(entry.message))).toEqual(['nope', 'nope']);
-    expect(entries.every((entry) => entry.meta?.isError === true)).toBe(true);
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
+    expect(entries.map((entry) => extractText(entry))).toEqual(['nope', 'nope']);
+    expect(entries.every((entry) => entry.attributes?.isError === true)).toBe(true);
     expect(continuing).toEqual([1]);
     expect(stopping).toEqual([1, 2]);
     await loop.close();
@@ -288,22 +264,19 @@ describe('tool.batch-starting', () => {
     const batches: ToolBatchStartingEvent[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.starting',
-          hook: (event) => {
-            perCall.push(event.toolCall.id);
-          },
+      {
+        starting: (context) => {
+          perCall.push(context.call.id);
         },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [{ type: 'text' as const, text: 'ok' }] };
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: tools,
       hooks: [
         {
@@ -335,31 +308,23 @@ describe('tool.permitting', () => {
     const events: LoopEmitted[] = [];
     const rewritten: ToolCall = { type: 'function', id: 'c1', name: 'alpha', arguments: '{"safe":true}' };
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.permitting',
-          id: 'permission',
-          hook: (event) => {
-            order.push('permitting');
-            seen.push(event.toolCall);
-          },
+      {
+        starting: () => {
+          order.push('starting');
+          return { args: { safe: true } };
         },
-        {
-          point: 'tool.starting',
-          id: 'rewrite',
-          hook: () => {
-            order.push('starting');
-            return { toolCall: rewritten };
-          },
+        permitting: (context) => {
+          order.push('permitting');
+          seen.push({ ...context.call, arguments: JSON.stringify(context.args) });
         },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall);
+      },
+      async (context) => {
+        executed.push({ ...context.call, arguments: JSON.stringify(context.args) });
         return { content: [{ type: 'text' as const, text: 'ok' }] };
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(order).toEqual(['starting', 'permitting']);
@@ -381,29 +346,22 @@ describe('tool.permitting', () => {
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.starting',
-          id: 'guard',
-          hook: () => ({
-            blocked: { reason: 'dirty' },
-            result: { content: [{ type: 'text' as const, text: 'nope' }] },
-          }),
+      {
+        starting: () => ({
+          reject: 'dirty',
+          result: { content: [{ type: 'text' as const, text: 'nope' }], outcome: 'failed', reason: 'dirty' },
+        }),
+        permitting: (context) => {
+          permitting.push(context.call.id);
         },
-        {
-          point: 'tool.permitting',
-          hook: (event) => {
-            permitting.push(event.toolCall.id);
-          },
-        },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(permitting).toEqual([]);
@@ -411,7 +369,7 @@ describe('tool.permitting', () => {
     expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
       outcome: {
         type: 'failed',
-        entry: { meta: { isError: true } },
+        message: { attributes: { isError: true } },
       },
     });
     await loop.close();
@@ -423,26 +381,19 @@ describe('tool.permitting', () => {
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.starting',
-          id: 'guard',
-          hook: () => ({ skipPermitting: true }),
+      {
+        starting: () => ({ skipPermitting: true }),
+        permitting: (context) => {
+          permitting.push(context.call.id);
         },
-        {
-          point: 'tool.permitting',
-          hook: (event) => {
-            permitting.push(event.toolCall.id);
-          },
-        },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(permitting).toEqual([]);
@@ -457,69 +408,61 @@ describe('tool.permitting', () => {
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.permitting',
-          id: 'permission',
-          hook: () => ({
-            blocked: { reason: 'denied' },
-            result: { content: [{ type: 'text' as const, text: 'nope' }] },
-          }),
-        },
-      ],
-      async ({ toolCall }) => {
-        executed.push(toolCall.name);
+      {
+        permitting: () => ({
+          reject: 'denied',
+          result: { content: [{ type: 'text' as const, text: 'nope' }], outcome: 'failed', reason: 'denied' },
+        }),
+      },
+      async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(executed).toEqual([]);
     expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
       outcome: { type: 'failed' },
     });
-    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
+    const entries = loop.state.messages.filter((entry): entry is ToolMessage => entry.role === 'tool');
     expect(entries).toHaveLength(1);
-    expect(extractText(entries[0]!.message)).toBe('nope');
-    expect(entries[0]?.meta?.isError).toBe(true);
+    expect(extractText(entries[0]!)).toBe('nope');
+    expect(entries[0]?.attributes?.isError).toBe(true);
     await loop.close();
   });
 
   it('returns hook failures as failed results without native stopTurn', async () => {
     const events: LoopEmitted[] = [];
     const tools = createExecutor(
-      [
-        {
-          point: 'tool.permitting',
-          id: 'flaky-permission',
-          hook: () => {
-            throw new Error('oops');
-          },
+      {
+        permitting: () => {
+          throw new Error('oops');
         },
-      ],
+      },
       async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }),
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: scripted }), executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
-    const entry = loop.state.messages.find((item): item is ToolEntry => item.message.role === 'tool');
-    expect(extractText(entry!.message)).toContain('permitting hook failed for "alpha": oops');
-    expect(entry?.meta?.stopTurn).toBeUndefined();
+    const entry = loop.state.messages.find((item): item is ToolMessage => item.role === 'tool');
+    expect(extractText(entry!)).toContain('permitting hook failed for "alpha": oops');
+    expect(entry?.attributes?.stopTurn).toBeUndefined();
     await loop.close();
 
-    const failedTools = createExecutor([], async () => {
+    const failedTools = createExecutor({}, async () => {
       throw new Error('boom');
     });
     const failedScript = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const failedLoop = createLoop({ createTurnExecution: ({ profile }) => ({ profile, requester: failedScript }), executor: failedTools });
+    const failedLoop = createLoop({ requester: failedScript, executor: failedTools });
     const failedEvents: LoopEmitted[] = [];
     failedLoop.subscribe((event) => failedEvents.push(event));
     expect((await failedLoop.runTurn(prompt('work'))).type).toBe('done');
     expect(failedEvents.find((event) => event.type === 'tool.ended')).toMatchObject({
-      outcome: { type: 'failed', entry: { meta: { isError: true } } },
+      outcome: { type: 'failed', message: { attributes: { isError: true } } },
     });
     await failedLoop.close();
   });
@@ -533,7 +476,7 @@ describe('hook failure policies', () => {
     });
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
@@ -563,7 +506,7 @@ describe('hook failure policies', () => {
     const scripted = requester([done('after')]);
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
+      requester: scripted,
       executor: successfulExecutor(['lookup', 'alpha', 'beta', 'work'], ''),
       hooks: [
         {
@@ -598,9 +541,9 @@ describe('hook failure policies', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: executorFrom(['alpha', 'beta'], async ({ toolCall }: ToolExecuteInput) => {
-        executed.push(toolCall.name);
+      requester: scripted,
+      executor: executorFrom(['alpha', 'beta'], async (context) => {
+        executed.push(context.call.name);
         return { content: [] };
       }),
       hooks: [
@@ -627,8 +570,8 @@ describe('hook failure policies', () => {
     expect(events.findIndex((event) => event.type === 'hook.failed')).toBeGreaterThan(
       events.findLastIndex((event) => event.type === 'tool.ended'),
     );
-    const tools = loop.state.messages.filter((entry) => entry.message.role === 'tool');
-    expect(tools.map((entry) => extractText(entry.message))).toEqual([
+    const tools = loop.state.messages.filter((entry) => entry.role === 'tool');
+    expect(tools.map((entry) => extractText(entry))).toEqual([
       '[hook failed] tool.batch-starting: bang',
       '[hook failed] tool.batch-starting: bang',
     ]);
@@ -641,8 +584,8 @@ describe('notify turn handoff', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('', [call('c1', 'alpha')]), done('notified'), done('after reset')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: createExecutor([]),
+      requester: scripted,
+      executor: createExecutor({}),
       hooks: [
         {
           point: 'step.stopping',
@@ -687,10 +630,10 @@ describe('notify turn handoff', () => {
       [1, 1],
       [2, 1],
     ]);
-    expect(events.filter((event) => event.type === 'turn.started').map((event) => event.entry?.message)).toEqual([
-      prompt('work').message,
-      prompt('new input').message,
-      prompt('after reset').message,
+    expect(events.filter((event) => event.type === 'turn.started').map((event) => event.message)).toEqual([
+      prompt('work'),
+      prompt('new input'),
+      prompt('after reset'),
     ]);
     await loop.close();
   });
@@ -699,11 +642,11 @@ describe('notify turn handoff', () => {
     const events: LoopEmitted[] = [];
     const starting: number[] = [];
     const scripted = requester([done('', [call('c1', 'alpha')]), done('second')]);
-    const first = createUserEntry(createUserMessage('first'), { promptId: 'first' });
-    const second = createUserEntry(createUserMessage('second'), { promptId: 'second' });
+    const first = createUserMessage('first', { promptId: 'first' });
+    const second = createUserMessage('second', { promptId: 'second' });
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: createExecutor([]),
+      requester: scripted,
+      executor: createExecutor({}),
       hooks: [
         {
           point: 'step.starting',
@@ -727,14 +670,14 @@ describe('notify turn handoff', () => {
     const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 2);
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     await followup;
-    expect(starting).toEqual([0, 1, 2]);
+    expect(starting).toEqual([0, 2]);
     expect(events.find((event) => event.type === 'prompt.steered')).toMatchObject({
       promptIds: ['first', 'second'],
-      entries: [first, second],
+      messages: [first, second],
     });
     expect(events.filter((event) => event.type === 'message.appended' && event.source === 'notify')).toMatchObject([
-      { turnId: 1, entry: first },
-      { turnId: 2, entry: second },
+      { turnId: 1, message: first },
+      { turnId: 2, message: second },
     ]);
     expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 1)).toMatchObject({
       outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
@@ -750,8 +693,8 @@ describe('notify turn handoff', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: createExecutor([]),
+      requester: scripted,
+      executor: createExecutor({}),
       hooks: [
         {
           point: 'step.stopping',
@@ -767,35 +710,84 @@ describe('notify turn handoff', () => {
     const reminder = events.findIndex((event) => event.type === 'message.appended' && event.source === 'remind');
     expect(secondStep).toBeGreaterThanOrEqual(0);
     expect(reminder).toBeGreaterThan(secondStep);
-    expect(events[reminder]).toMatchObject({ turnId: 0, step: 2, entry: { message: { role: 'user' } } });
+    expect(events[reminder]).toMatchObject({ turnId: 0, step: 2, message: { role: 'user' } });
     expect(events.filter((event) => event.type === 'turn.ended').map((event) => event.turnId)).toEqual([0]);
     await loop.close();
   });
 
-  it('does not run another step of an interrupted turn when notify is pending', async () => {
+  it('resumes interrupted and queued turns before a prompt-only notification', async () => {
     const events: LoopEmitted[] = [];
-    const scripted = requester([done('new turn')]);
+    const starting: number[] = [];
+    const scripted = requester([done('queued')]);
     const loop = createLoop({
-      createTurnExecution: ({ profile }) => ({ profile, requester: scripted }),
-      executor: createExecutor([]),
+      requester: scripted,
+      executor: createExecutor({}),
+      hooks: [{ point: 'step.starting', hook: (event) => { starting.push(event.turnId) } }],
       input: {
         messages: [prompt('old')],
-        inbox: { notify: [prompt('wake')] },
+        inbox: { normal: [prompt('queued')] },
         nextTurnId: 1,
         unfinished: { turnId: 0, trigger: 'normal', step: 1, stepUnfinished: true, appended: true },
       },
     });
     loop.subscribe((event) => events.push(event));
-    const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 1);
-    loop.continue();
+    loop.recordNotification(prompt('wake'));
+    const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 2);
+    loop.resume();
     await followup;
     expect(events.find((event) => event.type === 'turn.resumed')).toMatchObject({ turnId: 0, step: 1 });
     expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 0)).toMatchObject({
       outcome: { type: 'done', cause: { by: 'loop', reason: 'notify' } },
     });
+    expect(events.filter((event) => event.type === 'turn.started').map((event) => [event.turnId, event.trigger])).toEqual([
+      [1, 'normal'],
+      [2, 'notify'],
+    ]);
     expect(events.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
       [1, 1],
     ]);
+    expect(starting).toEqual([1]);
+    expect(events.find((event) => event.type === 'turn.ended' && event.turnId === 2)).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+    });
     await loop.close();
+
+    const ordinaryEvents: LoopEmitted[] = [];
+    const ordinary = createLoop({
+      requester: requester([done('ordinary')]),
+      executor: createExecutor({}),
+      input: { inbox: { normal: [prompt('queued')] } },
+    });
+    ordinary.subscribe((event) => ordinaryEvents.push(event));
+    ordinary.notify(prompt('ordinary'));
+    const ordinaryEnded = once(ordinary, (event) => event.type === 'turn.ended' && event.turnId === 1);
+    ordinary.start();
+    await ordinaryEnded;
+    expect(ordinaryEvents.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
+      [1, 1],
+    ]);
+    expect(ordinaryEvents.find((event) => event.type === 'turn.ended' && event.turnId === 0)).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+    });
+    await ordinary.close();
+
+    const executableEvents: LoopEmitted[] = [];
+    const executable = createLoop({
+      requester: requester([done('ordinary')]),
+      executor: createExecutor({}),
+      input: { inbox: { notify: [prompt('ordinary')] } },
+    });
+    executable.subscribe((event) => executableEvents.push(event));
+    executable.recordNotification(prompt('restored'));
+    const executableEnded = once(executable, (event) => event.type === 'turn.ended' && event.turnId === 1);
+    executable.start();
+    await executableEnded;
+    expect(executableEvents.filter((event) => event.type === 'step.started').map((event) => [event.turnId, event.step])).toEqual([
+      [0, 1],
+    ]);
+    expect(executableEvents.find((event) => event.type === 'turn.ended' && event.turnId === 1)).toMatchObject({
+      outcome: { type: 'done', cause: { by: 'loop', reason: 'prompt_only' } },
+    });
+    await executable.close();
   });
 });

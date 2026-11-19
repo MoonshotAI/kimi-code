@@ -1,15 +1,3 @@
-/**
- * CustomRegistryImportDialog — blue rounded box that collects a custom
- * registry URL and an optional Bearer token before importing the registry's
- * provider entries.
- *
- * Geometry mirrors `ApiKeyInputDialogComponent` so the chrome stays
- * consistent with the API-key login flow. Two fields, switched with
- * Tab / Shift-Tab / Up / Down; Enter advances to the next field (and submits
- * on the last field), Esc cancels. Only the URL is required — public
- * registries take an empty token.
- */
-
 import {
   Container,
   Input,
@@ -43,7 +31,6 @@ function maskInputLine(raw: string): string {
   const prefix = '> ';
   if (!raw.startsWith(prefix)) return raw;
 
-  // Strip trailing padding spaces so they stay as spaces.
   let end = raw.length;
   while (end > prefix.length && raw[end - 1] === ' ') {
     end--;
@@ -51,12 +38,10 @@ function maskInputLine(raw: string): string {
   const padding = raw.slice(end);
   const content = raw.slice(prefix.length, end);
 
-  // Protect ANSI escape sequences (reverse-video cursor, IME marker, etc.)
-  // while masking every other visible character.
   const parts = content.split(/(\u001B(?:\[[0-9;]*m|_pi:c\u0007))/);
   const maskedContent = parts
     .map((part, index) => {
-      if (index % 2 === 1) return part; // ANSI sequence
+      if (index % 2 === 1) return part;
       return part.replaceAll(/[^ ]/g, '•');
     })
     .join('');
@@ -81,8 +66,6 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     super();
     this.onDone = onDone;
     if (defaultUrl.length > 0) this.urlInput.setValue(defaultUrl);
-    // Enter on the URL field advances to the token field; Enter on the token
-    // (last) field submits.
     this.urlInput.onSubmit = () => {
       this.focusField('token');
     };

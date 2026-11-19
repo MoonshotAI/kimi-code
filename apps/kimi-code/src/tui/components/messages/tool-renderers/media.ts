@@ -1,18 +1,3 @@
-/**
- * ReadMediaFile renderer.
- *
- * The ReadMediaFile tool `output` is the JSON-serialized array of
- * content parts the tool returned — which includes the full base64 of
- * the image/video. Dumping that string into the transcript blasts a
- * multi-screen blob of base64. This renderer parses the envelope and
- * surfaces just the human-readable bits (kind, path, mime, size) via
- * a header chip + a tiny expanded body. It never emits the base64.
- *
- * On error, or when the output isn't the expected media envelope, we
- * fall back to the truncated renderer so the user still sees the raw
- * message.
- */
-
 import type { Component } from '@moonshot-ai/pi-tui';
 import { Text } from '@moonshot-ai/pi-tui';
 

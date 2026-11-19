@@ -7,7 +7,6 @@ import type { AutocompleteItem } from '@moonshot-ai/pi-tui';
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
 
-/** Subcommands offered when autocompleting `/goal <…>`. */
 const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'status', description: 'Show the current goal' },
   { value: 'pause', description: 'Pause the active goal' },
@@ -37,7 +36,6 @@ const ADD_DIR_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'list', description: 'Show configured additional workspace directories' },
 ];
 
-/** Argument autocompletion for the `/goal` command (subcommands). */
 export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   const nextMatch = argumentPrefix.match(/^next\s+(\S*)$/i);
   if (nextMatch !== null) {
@@ -51,17 +49,14 @@ export function goalArgumentCompletions(argumentPrefix: string): AutocompleteIte
   return completeLeadingArg(GOAL_ARG_COMPLETIONS, argumentPrefix);
 }
 
-/** Argument autocompletion for the `/swarm` command (subcommands). */
 export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
 }
 
-/** Argument autocompletion for the `/tower` command (subcommands). */
 export function towerArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   return completeLeadingArg(TOWER_ARG_COMPLETIONS, argumentPrefix);
 }
 
-/** Argument autocompletion for the `/add-dir` command. */
 export function addDirArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
   if (isPathLikeAddDirArgument(argumentPrefix)) {
     return completeAddDirPath(argumentPrefix);
@@ -196,9 +191,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 100,
     argumentHint: '[status|teardown|on|off] | <base-branch>',
     completeArgs: towerArgumentCompletions,
-    // Every form stays available while busy: base selections apply to the next
-    // TowerInit of the running coordinator turn, so /tower commands never wait
-    // for the previous one to finish.
     availability: 'always',
     experimentalFlag: 'tower',
   },
@@ -259,7 +251,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'tasks',
     aliases: ['task'],
-    description: 'Browse background tasks',
+    description: 'Browse background tasks and running foreground agents',
     priority: 80,
     availability: 'always',
   },
@@ -321,8 +313,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 80,
     argumentHint: '[status|pause|resume|cancel|replace|next] | <objective>',
     completeArgs: goalArgumentCompletions,
-    // status / pause / cancel are always available; creation, replacement, and
-    // resume start (or restart) a turn and so are idle-only.
     availability: (args) => {
       const trimmed = args.trim();
       if (trimmed === 'next' || trimmed.startsWith('next ')) return 'always';

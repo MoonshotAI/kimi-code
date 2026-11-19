@@ -13,7 +13,10 @@ import { authedFetch } from './helpers/auth';
 
 interface MetaBody {
   code: number;
-  data: { experimental_flags?: Record<string, boolean> };
+  data: {
+    kimi_agent_protocol_version?: string;
+    experimental_flags?: Record<string, boolean>;
+  };
 }
 
 describe('/api/v1/meta experimental_flags', () => {
@@ -62,6 +65,8 @@ describe('/api/v1/meta experimental_flags', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as MetaBody;
     expect(body.code).toBe(0);
+    expect(body.data.kimi_agent_protocol_version).toBe('1.0.0');
+    expect(body.data).not.toHaveProperty('backend');
     expect(body.data.experimental_flags).toBeDefined();
     return body.data.experimental_flags as Record<string, boolean>;
   }
@@ -210,8 +215,8 @@ describe('/api/v1/meta features', () => {
     const features = await getMetaFeatures(base);
     const expected = getFeatureRecipes()
       .map((recipe) => recipe.name)
-      .sort();
-    expect(features.map((feature) => feature.name).sort()).toEqual(expected);
+      .toSorted();
+    expect(features.map((feature) => feature.name).toSorted()).toEqual(expected);
     for (const feature of features) {
       expect(feature.state).toBe('Active');
       expect(feature.meta).toEqual({});
@@ -228,5 +233,36 @@ describe('/api/v1/meta features', () => {
     const after = await getMetaFeatures(base);
     expect(after.some((feature) => feature.name === 'plan')).toBe(false);
     expect(after).toHaveLength(before.length - 1);
+  });
+
+  it('surfaces hostIdentity.productName as product on /api/v1/meta', async () => {
+    const base = await boot();
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { code: number; data: { product?: string } };
+    expect(body.code).toBe(0);
+    expect(body.data.product).toBe(TEST_HOST_IDENTITY.productName);
+  });
+
+  it('advertises interactions_list and session_wait capabilities and serves authenticated GET /api/v1/kap.md', async () => {
+    const base = await boot();
+    const metaRes = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    const metaBody = (await metaRes.json()) as {
+      code: number;
+      data: { capabilities: Record<string, boolean> };
+    };
+    expect(metaBody.code).toBe(0);
+    expect(metaBody.data.capabilities['interactions_list']).toBe(true);
+    expect(metaBody.data.capabilities['session_wait']).toBe(true);
+
+    const unauthed = await fetch(`${base}/api/v1/kap.md`);
+    expect(unauthed.status).toBe(401);
+
+    const specRes = await authedFetch(server as RunningServer, base, '/api/v1/kap.md');
+    expect(specRes.status).toBe(200);
+    expect(specRes.headers.get('content-type')).toContain('text/markdown');
+    const text = await specRes.text();
+    expect(text.startsWith('# Kimi Agent Protocol (KAP) Runtime Guide')).toBe(true);
+    expect(text).toContain('POST /api/v1/sessions/{session_id}:wait');
   });
 });

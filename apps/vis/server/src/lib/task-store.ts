@@ -1,17 +1,3 @@
-// apps/vis/server/src/lib/task-store.ts
-//
-// Read-only reader for background tasks, persisted by the engine under each
-// spawning agent's homedir at `<agentDir>/tasks/<taskId>.json`
-// (+ `tasks/<taskId>/output.log`). Main-agent reads may also receive the
-// legacy session root as a fallback.
-//
-// The visualizer never writes these files; it mirrors the engine's on-disk
-// layout (`packages/agent-core-v2/src/agent/task/persist.ts`) for reading only:
-//   - the same `VALID_TASK_ID` guard, so a corrupt / hand-edited filename
-//     cannot turn a log path into a traversal primitive;
-//   - the same legacy snake_case → current camelCase normalization, so old
-//     sessions list identically to how the CLI would list them.
-
 import { open, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -20,9 +6,6 @@ import type {
   BackgroundTaskStatus,
 } from './agent-record-types';
 
-/** Task id format: `{prefix}-{8 chars of [0-9a-z]}`. Mirror of the engine's
- *  `VALID_TASK_ID` (`agent/task/persist.ts`). Enforced before deriving any
- *  output path so neither `../` nor a legacy `bg_<hex>` id can escape. */
 const VALID_TASK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
 
 export function isSafeTaskId(id: string): boolean {
@@ -40,14 +23,6 @@ function taskOutputFile(agentDir: string, taskId: string): string {
   return join(tasksDirOf(agentDir), taskId, 'output.log');
 }
 
-/**
- * Enumerate all persisted background tasks for a session, normalized to the
- * current `BackgroundTaskInfo` shape and sorted newest-first by start time.
- *
- * Silently skips: filenames that don't match `VALID_TASK_ID`, files that fail
- * to read/parse, and records that are neither the current nor the legacy
- * task shape — matching the engine's tolerant `listTasks`.
- */
 export async function listBackgroundTasks(
   agentDir: string,
   fallbackDir?: string,
@@ -60,7 +35,6 @@ export async function listBackgroundTasks(
       if (!primary.reservedIds.has(task.keyId)) out.push(task);
     }
   }
-  // Newest first; tasks with no start time sort last.
   out.sort((a, b) => (b.task.startedAt ?? 0) - (a.task.startedAt ?? 0));
   return out.map((entry) => entry.task);
 }
@@ -107,7 +81,6 @@ export interface TaskOutputMetadata {
   size: number;
 }
 
-/** Presence and byte size of a task's `output.log`. */
 export async function taskOutputMetadata(
   agentDir: string,
   taskId: string,
@@ -124,7 +97,6 @@ export async function taskOutputMetadata(
   }
 }
 
-/** Byte size of a task's `output.log` (0 when absent, empty, or unreadable). */
 export async function taskOutputSizeBytes(
   agentDir: string,
   taskId: string,
@@ -134,27 +106,13 @@ export async function taskOutputSizeBytes(
 }
 
 export interface TaskOutputWindow {
-  /** Byte offset this window starts at (clamped to >= 0). */
   offset: number;
-  /** Byte offset immediately after this window — pass it as the next
-   *  `offset` to page forward. Exact (server-computed bytesRead), so paging
-   *  never drifts even if a window boundary splits a multi-byte char. */
   nextOffset: number;
-  /** Total byte size of the log on disk. */
   size: number;
-  /** UTF-8 decoded window content. */
   content: string;
-  /** True when this window reaches EOF. */
   eof: boolean;
 }
 
-/**
- * Read a byte window of a task's `output.log`.
- *
- * Reads at most `maxBytes` bytes starting at byte `offset`. A window past EOF
- * is clamped to whatever remains; an offset at/after EOF yields empty content.
- * Mirrors the engine's `readTaskOutputBytes` so large logs page identically.
- */
 export async function readTaskOutput(
   agentDir: string,
   taskId: string,
@@ -211,8 +169,6 @@ function isMissingPath(error: unknown): boolean {
     (error as NodeJS.ErrnoException).code === 'ENOENT'
   );
 }
-
-// ── normalization (ported from agent-core-v2/agent/task/persist.ts) ────────
 
 type ReadablePersistedTask = Record<string, unknown>;
 

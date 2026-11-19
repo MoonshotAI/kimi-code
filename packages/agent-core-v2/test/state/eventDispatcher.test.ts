@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
@@ -895,5 +895,111 @@ describe('EventDispatcherService', () => {
     expect(agentState.replayableKeys()).not.toContain(removableKey);
     await expect(dispatcher.dispatch(new CounterAdd({ by: 3 }))).resolves.toBeUndefined();
     expect(agentState.get(counterKey).value).toBe(5);
+  });
+
+  it('supports opt-in mutableReplay on durable participants across restore, reruns, failures, and attachLate', async () => {
+    expect(() =>
+      dispatcher.attach({
+        id: 'runtime.test.invalid-mutable',
+        events: [ItemAdd],
+        undoable: true,
+        mutableReplay: true,
+        transition: () => {},
+        getState: () => ({ items: [] }),
+        commit: () => {},
+      }),
+    ).toThrow(/requires custom onUndo for mutable replay/);
+
+    interface MutableParticipantState {
+      count: number;
+      items: string[];
+      lookup: Record<string, number>;
+    }
+    const initial: MutableParticipantState = { count: 0, items: [], lookup: {} };
+    let state: MutableParticipantState = initial;
+    let commits = 0;
+    const frozenReplacement = Object.freeze({
+      count: 0,
+      items: Object.freeze(['reset']) as unknown as string[],
+      lookup: Object.freeze({ reset: 1 }) as Record<string, number>,
+    });
+    dispatcher.attach({
+      id: 'runtime.test.mutable-participant',
+      events: [CounterAdd, ItemAdd, ClearEvent],
+      undoable: true,
+      mutableReplay: true,
+      transition: (draft, event) => {
+        if (event instanceof ClearEvent) return frozenReplacement;
+        if (event instanceof CounterAdd) {
+          draft.count += event.by;
+          return;
+        }
+        if (event instanceof ItemAdd) {
+          draft.items.push(event.item);
+          draft.lookup[event.item] = draft.items.length;
+        }
+        return undefined;
+      },
+      onUndo: (draft, count) => {
+        draft.items.splice(Math.max(0, draft.items.length - count));
+        return draft;
+      },
+      getState: () => state,
+      commit: (next) => {
+        commits += 1;
+        state = next;
+      },
+    });
+
+    journal.push(new CounterAdd({ by: 2 }).serialize());
+    for (let i = 0; i < 200; i += 1) {
+      journal.push(new ItemAdd({ item: `m-${i}` }).serialize());
+    }
+    journal.push(new ClearEvent({}).serialize(), new ItemAdd({ item: 'tail' }).serialize());
+
+    await dispatcher.restore();
+
+    expect(initial).toEqual({ count: 0, items: [], lookup: {} });
+    expect(frozenReplacement.items).toEqual(['reset']);
+    expect(state).toEqual({ count: 0, items: ['reset', 'tail'], lookup: { reset: 1, tail: 2 } });
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Object.isFrozen(state.items)).toBe(true);
+    expect(commits).toBe(1);
+
+    journal.push(new FailingEvent({}).serialize());
+    await expect(dispatcher.restore()).rejects.toThrow('fold failure');
+    expect(state).toBe(initial);
+
+    journal.length = 0;
+    journal.push(new ItemAdd({ item: 'recovered' }).serialize());
+    await dispatcher.restore();
+    expect(state).toEqual({ count: 0, items: ['recovered'], lookup: { recovered: 1 } });
+
+    let lateState: CheckpointedState = { items: ['seed'] };
+    let lateCommits = 0;
+    for (let i = 0; i < 100; i += 1) {
+      journal.push(new ItemAdd({ item: `late-${i}` }).serialize());
+    }
+    await dispatcher.attachLate({
+      id: 'runtime.test.mutable-late',
+      events: [ItemAdd],
+      undoable: false,
+      mutableReplay: true,
+      transition: (draft, event) => {
+        if (event instanceof ItemAdd) draft.items.push(event.item);
+      },
+      getState: () => lateState,
+      commit: (next) => {
+        lateCommits += 1;
+        lateState = next;
+      },
+    });
+
+    expect(lateCommits).toBe(1);
+    expect(lateState.items).toHaveLength(102);
+    expect(Object.isFrozen(lateState)).toBe(true);
+
+    await dispatcher.dispatch(new ItemAdd({ item: 'live' }));
+    expect(lateState.items.at(-1)).toBe('live');
   });
 });

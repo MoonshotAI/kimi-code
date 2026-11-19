@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createControlledPromise } from '@antfu/utils';
+import { basename } from 'pathe';
 
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { summarizeSkill } from '#/features/skill/catalog/types';
 import { IAgentSkillService } from '#/features/skill/skillService';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { LlmRequester } from '#human/llm-requester/requester';
+import { DEFAULT_TOOL_RESULT_MAX_CHARS } from '#/tool/toolContract';
 import {
   ISkillTool,
   MAX_SKILL_QUERY_DEPTH,
@@ -18,12 +21,14 @@ import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from './catalog/stubs';
 import {
   createTestAgent,
+  createMockProvider,
   InMemoryWireRecordPersistence,
   skillServices,
   type TestAgentContext,
+  type TestAgentOptions,
 } from '../../harness';
 
-type GenerateFn = LlmRequester;
+type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
 const COMMIT_SKILL = stubSkill('commit', {
   description: 'commit changes',
@@ -175,6 +180,7 @@ describe('SkillTool', () => {
     expect(text).toContain(sessionId);
     expect(text).not.toContain('${KIMI_SESSION_ID}');
     expect(text).toContain('dir="/skills/rename-session"');
+    expect(text).not.toContain('Tool output exceeded');
   });
 
   it('returns a tool error when the skill is unknown', async () => {
@@ -217,16 +223,21 @@ describe('SkillTool', () => {
     });
   });
 
-  it('loads inline skills through the model-tool wrapper without exposing the body in output', async () => {
+  it('loads inline skills through the model-tool wrapper and truncates oversized content', async () => {
+    const bulk = `${'x'.repeat(99)}\n`.repeat(Math.ceil(DEFAULT_TOOL_RESULT_MAX_CHARS / 100) + 1);
+    const skillContent = `HEAD_MARKER\n${bulk}TAIL_MARKER`;
+    const renderedSkillContent = `${skillContent}\n\nARGUMENTS: src/app.ts`;
+    skills.register(stubSkill('oversized', { content: skillContent }));
+
     const result = await executeTool(
       makeTool(),
-      toolContext({ skill: 'commit', args: 'src/app.ts' }),
+      toolContext({ skill: 'oversized', args: 'src/app.ts' }),
     );
 
     expect(result).toMatchObject({
-      output: 'Skill "commit" loaded inline. Follow its instructions.',
+      output: 'Skill "oversized" loaded inline. Follow its instructions.',
     });
-    expect(result.output).not.toContain('# Commit');
+    expect(result.output).not.toContain('HEAD_MARKER');
     expect(ctx.context.history()).toHaveLength(0);
 
     await ctx.restorePersisted();
@@ -234,19 +245,33 @@ describe('SkillTool', () => {
     const [reminder] = ctx.context.history();
     expect(reminder?.origin).toMatchObject({
       kind: 'skill_activation',
-      skillName: 'commit',
+      skillName: 'oversized',
       trigger: 'model-tool',
     });
-    expect(reminder?.content[0]).toMatchObject({
+    const reminderPart = reminder?.content[0];
+    expect(reminderPart).toMatchObject({
       type: 'text',
       text: expect.stringContaining(
-        '<skill-loaded name="commit" trigger="model-tool" source="user" dir="/skills/commit" args="src/app.ts">',
+        '<skill-loaded name="oversized" trigger="model-tool" source="user" dir="/skills/oversized" args="src/app.ts">',
       ),
     });
-    expect(reminder?.content[0]).toMatchObject({
-      type: 'text',
-      text: expect.stringContaining('ARGUMENTS: src/app.ts'),
-    });
+    const reminderText = reminderPart?.type === 'text' ? reminderPart.text : '';
+    expect(reminderText).toContain('Tool output exceeded 50000 characters');
+    expect(reminderText).toContain('tool_call_id: call_skill');
+    expect(reminderText).toContain('HEAD_MARKER');
+    expect(reminderText).toContain('TAIL_MARKER');
+    expect(reminderText).toContain('ARGUMENTS: src/app.ts');
+    expect(reminderText.length).toBeLessThan(DEFAULT_TOOL_RESULT_MAX_CHARS);
+
+    const outputPath = /^output_path: (.+)$/m.exec(reminderText)?.[1];
+    expect(outputPath).toBeDefined();
+    if (outputPath === undefined) throw new Error('expected a spill output path');
+    const storage = ctx.get(IFileSystemStorageService);
+    const scope = ctx.get(IAgentScopeContext).scope('tool-results');
+    const saved = await storage.read(scope, basename(outputPath));
+    expect(saved).toBeDefined();
+    if (saved === undefined) throw new Error('expected saved skill content');
+    expect(new TextDecoder().decode(saved)).toBe(renderedSkillContent);
   });
 
   it('honors initialQueryDepth as an alias for queryDepth', async () => {
@@ -303,27 +328,19 @@ describe('AgentSkillService busy delivery (harness)', () => {
 
     const gate = createControlledPromise<void>();
     let generateCalls = 0;
-    const generate: GenerateFn = {
-      generate: async (_config, _content, control) => {
-        generateCalls += 1;
-        const n = generateCalls;
-        control.onEvent?.({ type: 'llm.sent' });
-        if (n === 1) await gate;
-        control.signal.throwIfAborted();
-        const text = `response-${String(n)}`;
-        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text } });
-        control.onEvent?.({
-          type: 'llm.streaming.usage',
-          usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
-        });
-        control.onEvent?.({
-          type: 'llm.streaming.finish',
-          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
-        });
-        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: `mock-${String(n)}` });
-        control.onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const generate = createMockProvider(async () => {
+      generateCalls += 1;
+      const n = generateCalls;
+      if (n === 1) await gate;
+      const text = `response-${String(n)}`;
+      return {
+        id: `mock-${String(n)}`,
+        message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    });
 
     const persistence = new InMemoryWireRecordPersistence();
     ctx = createTestAgent(skillServices(catalog), { generate, persistence });
@@ -366,18 +383,17 @@ describe('AgentSkillService busy delivery (harness)', () => {
     catalog.register(stubSkill('tower'));
     const gate = createControlledPromise<void>();
     let generateCalls = 0;
-    const generate: GenerateFn = {
-      generate: async (_config, _content, control) => {
-        generateCalls += 1;
-        control.onEvent?.({ type: 'llm.sent' });
-        await gate;
-        control.signal.throwIfAborted();
-        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
-        control.onEvent?.({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
-        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: 'mock-depth-reset' });
-        control.onEvent?.({ type: 'llm.done' });
-      },
-    };
+    const generate = createMockProvider(async () => {
+      generateCalls += 1;
+      await gate;
+      return {
+        id: 'mock-depth-reset',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: null,
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    });
     ctx = createTestAgent(skillServices(catalog), { generate });
     const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await vi.waitFor(() => { expect(generateCalls).toBe(1); });

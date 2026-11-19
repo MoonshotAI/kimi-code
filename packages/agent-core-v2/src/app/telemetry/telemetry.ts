@@ -3,7 +3,6 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 
 import type {
   TelemetryContextPatch,
-  TelemetryPrimitive,
   TelemetryProperties,
 } from './context';
 import type {

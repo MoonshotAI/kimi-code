@@ -494,7 +494,6 @@ describe('KimiTUI startup', () => {
     await expect(driver.init()).resolves.toBe(false);
     mountFooter(driver.state);
 
-    // Dock = 6 chrome containers + footer wrap, below the transcript viewport.
     expect(driver.state.dockContainer?.children).toHaveLength(7);
     expect(driver.state.activityContainer.render(80).map((line) => line.trim())).toEqual(['']);
   });
@@ -1814,7 +1813,6 @@ describe('KimiTUI startup', () => {
     await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
     expect(driver.state.appState.sessionId).toBe('ses-current');
     driver.state.appState.additionalDirs = ['/tmp/live-extra'];
-    // Contentless current sessions are filtered out of picker rows; fake content so the row exists.
     vi.spyOn(driver as unknown as { hasSessionContent(): boolean }, 'hasSessionContent')
       .mockReturnValue(true);
 
@@ -1823,8 +1821,6 @@ describe('KimiTUI startup', () => {
     picker.handleInput('\u0018');
     picker.handleInput('y');
 
-    // The picker (and its input lock) stays mounted until the replacement
-    // session is ready; the editor must not accept input mid-flight.
     await vi.waitFor(() => {
       expect(deleteSession).toHaveBeenCalledWith('ses-current');
     });
@@ -2152,7 +2148,6 @@ describe('KimiTUI startup', () => {
 
     await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
     expect(driver.state.appState.sessionId).toBe('ses-current');
-    // Contentless current sessions are filtered out of picker rows; fake content so the row exists.
     vi.spyOn(driver as unknown as { hasSessionContent(): boolean }, 'hasSessionContent')
       .mockReturnValue(true);
     harness.createSession.mockRejectedValueOnce(new Error('create boom'));
@@ -2196,7 +2191,6 @@ describe('KimiTUI startup', () => {
 
     await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
     expect(driver.state.appState.sessionId).toBe('ses-current');
-    // Contentless current sessions are filtered out of picker rows; fake content so the row exists.
     vi.spyOn(driver as unknown as { hasSessionContent(): boolean }, 'hasSessionContent')
       .mockReturnValue(true);
     harness.createSession.mockRejectedValueOnce(new Error('create boom'));
@@ -3983,6 +3977,29 @@ function uiContainsFooter(driver: StartupDriver): boolean {
   };
   return visit(driver.state.ui);
 }
+
+describe('animation frame interval wiring', () => {
+  it('runs animation frames at the startup frame rate, and every 120 ms without one', () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const frameGaps = (animationFrameRate?: number): number[] => {
+      const { ui } = makeDriver(makeHarness(), { ...makeStartupInput(), animationFrameRate }).state;
+      const times: number[] = [];
+      const step = (time: number): void => {
+        times.push(time);
+        if (times.length < 4) ui.requestAnimationFrame(step);
+      };
+      ui.requestAnimationFrame(step);
+      vi.advanceTimersByTime(1_000);
+      return times.slice(1).map((time, index) => time - (times[index] ?? 0));
+    };
+
+    expect(frameGaps()).toEqual([120, 120, 120]);
+    expect(frameGaps(20)).toEqual([50, 50, 50]);
+  });
+});
 
 describe('survey telemetry gate wiring', () => {
   function surveyGateTelemetryDisabled(input: KimiTUIStartupInput): boolean {

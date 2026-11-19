@@ -27,7 +27,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import '#/features/reminder/reminderFeature';
 import { BUILTIN_REPLAYABLE_STATE_KEYS } from '../state/builtinReplayableKeys';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, AgentContextData } from '#/agent/contextMemory/types';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -44,26 +44,32 @@ import { ISessionSkillCatalogData } from '#/features/skill/session/skillCatalogD
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
-import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
+import {
+  IAgentProfileService,
+  type AgentConfigData,
+  type ProfileSetModelResult,
+} from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type {
-  LoopNotifyEntry,
+  LoopNotifyMessage,
   PromptLaunchResult,
   PromptPayload,
   SteerResult,
 } from '#/agent/loop/loop';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
-import type { AgentContextData } from '#/agent/contextMemory/types';
 import type { CreateGoalInput, GoalSnapshot, GoalToolResult } from '#/features/goal/types';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { RunShellCommandInput, RunShellCommandResult } from '#/agent/shellCommand/shellCommand';
-import type { ProfileSetModelResult } from '#/agent/profile/profile';
 import type { SwarmModeTrigger } from '#/features/swarm/agent/swarm';
 import type { UserToolRegistration } from '#/agent/userTool/userTool';
 import type { ActivatePluginCommandPayload } from '#/agent/pluginCommand/pluginCommand';
 import { IAgentPluginCommandService } from '#/agent/pluginCommand/pluginCommand';
-import type { ToolInfo } from '#/tool/toolContract';
+import type {
+  ToolInfo,
+  ExecutableToolOutput as ToolOutput,
+  ExecutableToolResult,
+} from '#/tool/toolContract';
 
 type EmptyPayload = {};
 type CreateGoalPayload = CreateGoalInput;
@@ -95,10 +101,6 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { LocalEnvironment } from '#/environment/localEnvironment';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
-import type {
-  ExecutableToolOutput as ToolOutput,
-  ExecutableToolResult,
-} from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -111,7 +113,7 @@ import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
-import { type ModelCapability } from '#/llm-adapter/contract/capability';
+import { type ModelCapability, type ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import {
   isToolCall,
   isToolCallPart,
@@ -119,15 +121,13 @@ import {
   type Message as KosongMessage,
   type StreamedMessagePart,
   type ToolDescription as KosongTool,
-} from '#human/llm/message';
-import { type ThinkingEffort } from '#human/llm-requester/thinking';
-import { type TokenUsage } from '#human/llm-requester/usage';
+} from '@moonshot-ai/core/llm/message';
+import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { type TodoItem } from '#/features/todo/todoItem';
-import type { LlmRequester } from '#human/llm-requester/requester';
 import type { ILogger, LogContext, LogLevel } from '#/_base/log/log';
 import { ILogOptions } from '#/_base/log/logConfig';
 import {
@@ -247,7 +247,12 @@ import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import { guardPromptCachePrefix, PromptCacheGuardedLoopRequester } from './prompt-cache-guard';
-import { coreRequesterFromA, createScriptedGenerate } from './scripted-generate';
+import {
+  createScriptedGenerate,
+  createMockProvider,
+  withMockProvider,
+  type MockProvider,
+} from './scripted-generate';
 import { project as projectContext } from '#/agent/loop/projection';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -298,6 +303,8 @@ interface ProviderConfigForConfig {
   readonly type: ProviderConfig['type'];
   readonly apiKey?: string;
   readonly baseUrl?: string;
+  readonly searchUrl?: string;
+  readonly feedbackUrl?: string;
   readonly oauth?: {
     readonly storage: 'file' | 'keyring';
     readonly key: string;
@@ -452,17 +459,22 @@ interface ResumeStateSnapshot {
   readonly usage: Omit<ReturnType<ISessionUsageService['status']>, 'currentTurn'>;
 }
 
+type TestModelCapabilities = ModelCapability & {
+  readonly maxContextSize?: number;
+  readonly maxInputSize?: number;
+};
+
 interface ConfigureOptions {
   readonly tools?: readonly string[] | undefined;
   readonly provider?: TestProviderConfig | undefined;
-  readonly modelCapabilities?: ModelCapability | undefined;
+  readonly modelCapabilities?: TestModelCapabilities | undefined;
   readonly preserveProfile?: boolean | undefined;
 }
 
 export type TestAgentContext = AgentTestContext;
 
 export interface TestAgentOptions {
-  readonly generate?: LlmRequester | undefined;
+  readonly generate?: MockProvider | undefined;
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
   readonly hookEngine?:
@@ -697,7 +709,7 @@ export function logServices(logger: Logger): TestAgentServiceOverride {
   ];
 }
 
-export function llmGenerateServices(requester: LlmRequester): TestAgentServiceOverride {
+export function llmGenerateServices(requester: MockProvider): TestAgentServiceOverride {
   return appService(IProtocolAdapterRegistry, createGenerateBackedGateway(requester));
 }
 
@@ -1189,7 +1201,7 @@ export class AgentTestContext {
           reg.defineInstance(
             IProtocolAdapterRegistry,
             createGenerateBackedGateway(
-              guardPromptCachePrefix(options.generate ?? this.scriptedGenerate.requester),
+              guardPromptCachePrefix(options.generate ?? this.scriptedGenerate.provider),
             ),
           );
           reg.defineInstance(
@@ -1509,19 +1521,19 @@ export class AgentTestContext {
         return result;
       }) as IAgentLoopService['submit'];
       const notify = loop.notify.bind(loop);
-      loop.notify = ((input: LoopNotifyEntry) => {
+      loop.notify = ((input: LoopNotifyMessage) => {
         const result = notify(input);
         void Promise.resolve().then(restoreAfterWrites);
         return result;
       }) as IAgentLoopService['notify'];
       const sendNow = loop.sendNow.bind(loop);
-      loop.sendNow = ((input: LoopNotifyEntry | readonly string[]) => {
-        const result = sendNow(input as LoopNotifyEntry);
+      loop.sendNow = ((input: LoopNotifyMessage | readonly string[]) => {
+        const result = sendNow(input as LoopNotifyMessage);
         void Promise.resolve().then(restoreAfterWrites);
         return result;
       }) as IAgentLoopService['sendNow'];
       const remind = loop.remind.bind(loop);
-      loop.remind = (...entries: readonly import('#human/agent/turn').HistoryMessage[]) => {
+      loop.remind = (...entries: readonly import('@moonshot-ai/core/llm/message').Message[]) => {
         remind(...entries);
         void Promise.resolve().then(restoreAfterWrites);
       };
@@ -1821,7 +1833,7 @@ export class AgentTestContext {
 
   configureRuntimeModel(
     provider: TestProviderConfig,
-    modelCapabilities?: ModelCapability | undefined,
+    modelCapabilities?: TestModelCapabilities,
     preserveProfile = false,
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
@@ -2334,8 +2346,9 @@ export class AgentTestContext {
       prompt: (payload) => this.get(IAgentLoopService).submit(payload),
       promptWithSkills: (payload) => this.get(IAgentSkillService).promptWithSkills(payload),
       steer: (payload) => this.get(IAgentLoopService).notifyClient({
-        message: { role: 'user', content: [...payload.input] },
-        meta: { origin: { kind: 'user' } },
+        role: 'user',
+        content: [...payload.input],
+        attributes: { origin: { kind: 'user' } },
       }),
       cancel: (payload) =>
         this.get(IAgentLoopService).cancel(
@@ -2520,9 +2533,9 @@ function createPermissionRulesStub(
   };
 }
 
-const failOnResumeRequester: LlmRequester = {
-  generate: () => Promise.reject(new Error('Resume replay unexpectedly called the LLM')),
-};
+const failOnResumeRequester = createMockProvider(() =>
+  Promise.reject(new Error('Resume replay unexpectedly called the LLM')),
+);
 
 function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
   const usage = ctx.usage;
@@ -2561,7 +2574,7 @@ function resumeContextSnapshot(ctx: AgentTestContext) {
 }
 
 function stripMessageId(message: ContextMessage): ContextMessage {
-  const { id: _id, ...rest } = message;
+  const { id: _id, providerMessageId: _providerMessageId, ...rest } = message;
   return { ...rest, content: rest.content.map(stripUndefinedFields) } as ContextMessage;
 }
 
@@ -2838,10 +2851,10 @@ function asMutableRecord(value: unknown): Record<string, unknown> {
 function configWithProvider(
   config: KimiConfig,
   provider: TestProviderConfig,
-  modelCapabilities: ModelCapability | undefined,
+  modelCapabilities: TestModelCapabilities | undefined,
 ): KimiConfig {
   const providerName = 'test-provider';
-  const maxContextSize = modelCapabilities?.max_context_tokens;
+  const maxContextSize = modelCapabilities?.maxContextSize;
   return {
     ...config,
     providers: {
@@ -2932,7 +2945,7 @@ function createLogService(logger: Logger | undefined, bindings: LogContext = {})
   };
 }
 
-function createGenerateBackedGateway(requester: LlmRequester): IProtocolAdapterRegistry {
+function createGenerateBackedGateway(requester: MockProvider): IProtocolAdapterRegistry {
   const real = new ProtocolAdapterRegistry();
   return {
     _serviceBrand: undefined,
@@ -2943,17 +2956,13 @@ function createGenerateBackedGateway(requester: LlmRequester): IProtocolAdapterR
       real.resolveProviderBaseId(protocol, providerType),
     resolveCapability: (protocol, modelName, providerType) =>
       real.resolveCapability(protocol, modelName, providerType),
-    request: (model, params) => {
+    request: (model, params, execution) => {
       const cacheKey = (model as Model & { readonly promptCacheKey?: string }).promptCacheKey;
-      return coreRequesterFromA(real.request(model, { cacheKey, ...params }), {
-        ...requester,
-        generate: (config, content, control) =>
-          requester.generate(
-            { ...config, maxCompletionTokens: params?.maxCompletionTokens },
-            content,
-            control,
-          ),
-      });
+      const initialized = real.request(model, {
+        ...params,
+        model: { ...params?.model, cacheKey: params?.model?.cacheKey ?? cacheKey },
+      }, execution);
+      return withMockProvider(initialized, requester);
     },
   };
 }
@@ -3008,7 +3017,7 @@ function withMetadata(events: readonly WireRecord[]): readonly WireRecord[] {
 function drainPrompts(loop: IAgentLoopService): void {
   const snapshot = loop.snapshot();
   for (const item of snapshot.queue) {
-    if (item.meta?.promptId !== undefined) loop.cancel({ promptId: item.meta.promptId });
+    if (item.attributes?.promptId !== undefined) loop.cancel({ promptId: item.attributes.promptId });
   }
   if (snapshot.activePromptId !== undefined) {
     loop.cancel({ promptId: snapshot.activePromptId });

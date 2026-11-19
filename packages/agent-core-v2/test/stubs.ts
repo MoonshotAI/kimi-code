@@ -1,4 +1,5 @@
 import { Emitter, type Event } from '#/_base/event';
+import { isError2 } from '#/_base/errors/errors';
 import type { IOAuthService } from '#/app/auth/auth';
 import {
   type ConfigChangedEvent,
@@ -10,6 +11,7 @@ import {
 import type { IProviderDiscoveryService, RetiredModel } from '#/app/kosongConfig/discovery';
 import type { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
 import type { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { ErrorCodes } from '#/errors';
 import type { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 
 export class StubConfigService implements IConfigService {
@@ -174,8 +176,22 @@ export function stubSessionRunGate(
   locks: ISessionLockService,
   sessionId = 'test-session',
 ): ISessionRunGate {
+  const begin = () => locks.hold(sessionId);
   return {
     _serviceBrand: undefined,
-    begin: () => locks.hold(sessionId),
+    begin,
+    tryAcquire: () => {
+      try {
+        begin();
+        return locks.lease(sessionId);
+      } catch (error) {
+        if (isError2(error) && error.code === ErrorCodes.SESSION_OCCUPIED) return undefined;
+        throw error;
+      }
+    },
+    acquire: () => {
+      begin();
+      return locks.lease(sessionId);
+    },
   };
 }

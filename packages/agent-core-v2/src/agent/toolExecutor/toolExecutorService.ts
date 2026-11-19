@@ -234,8 +234,13 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     this.announce(event);
     if (!this.announced.has(handler)) return;
     const snapshot = handler.snapshot();
+    if (event.type === 'change' && snapshot.detached) {
+      this.leases.get(handler.taskId)?.();
+      this.leases.delete(handler.taskId);
+    }
     void this.dispatcher.dispatch(new ToolUpdated({
       agentId: this.scopeContext.agentId,
+      origin: event.context.origin,
       turnId: event.context.turnId,
       toolCallId: event.call.id,
       taskId: handler.taskId,
@@ -255,6 +260,7 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     const outcome = snapshot.error?.outcome ?? 'success';
     void this.dispatcher.dispatch(new ToolResultEvent({
       agentId: this.scopeContext.agentId,
+      origin: event.context.origin,
       turnId: event.context.turnId,
       toolCallId: event.call.id,
       output: result?.output ?? this.finalContent(event),
@@ -276,6 +282,7 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     const prepared = snapshot.prepared;
     void this.dispatcher.dispatch(new ToolCallStarted({
       agentId: this.scopeContext.agentId,
+      origin: event.context.origin,
       turnId: event.context.turnId,
       toolCallId: event.call.id,
       name: event.call.name,

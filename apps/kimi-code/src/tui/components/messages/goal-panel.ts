@@ -1,18 +1,3 @@
-/**
- * Builds the line content for the `/goal` status box. The lines are rendered
- * inside a {@link UsagePanelComponent} (the same bordered box as `/usage`), so
- * this module only owns the goal-specific layout:
- *
- *   ▌ <objective> (blockquote left-trail, wrapped)
- *   ▌ ✓ <completion criterion>
- *
- *   Status     complete — <reason>        (terminal goals only)
- *   Running    4m 12s
- *   Turns      7
- *   Tokens     128.4k
- *   Stop       after 20 turns (7/20)      (or a dim "no stop condition" note)
- */
-
 import {
   Text,
   truncateToWidth,
@@ -49,11 +34,6 @@ function renderLifecycleLine(label: string, width: number): string[] {
   ];
 }
 
-/**
- * The "Goal set" confirmation shown after `/goal <objective>`. The objective is
- * rendered as the following user prompt, so this message only marks the state
- * change in the transcript.
- */
 export class GoalSetMessageComponent implements Component {
   invalidate(): void {}
 
@@ -123,7 +103,6 @@ export class GoalStatusMessageComponent implements Component {
   }
 }
 
-/** Box title, e.g. ` Goal · active `. */
 export function goalPanelTitle(goal: GoalSnapshot): string {
   return ` Goal · ${goal.status} `;
 }
@@ -133,17 +112,12 @@ export function buildGoalReportLines(goal: GoalSnapshot, wrapWidth: number = WRA
   const bar = (s: string) => currentTheme.fg(statusColor, s);
   const value = (s: string) => currentTheme.fg('text', s);
   const muted = (s: string) => currentTheme.fg('textDim', s);
-  // `complete` is the terminal outcome (the completion card); everything else
-  // (active / paused / blocked) is a persisted, resumable goal that still shows
-  // its stop condition. A reason is worth surfacing for stopped / complete states.
   const isComplete = goal.status === 'complete';
   const reason = goal.terminalReason;
   const showReason =
     (goal.status === 'paused' && reason !== undefined) || goal.status === 'blocked' || isComplete;
   const lines: string[] = [];
 
-  // Condition as a blockquote left-trail. Reserve the visible "▌ " prefix before
-  // wrapping so the panel doesn't clip rows that exactly fit the panel interior.
   const blockquoteWrapWidth = Math.max(1, wrapWidth - visibleWidth('▌ '));
   for (const line of wrap(goal.objective, blockquoteWrapWidth, MAX_OBJECTIVE_LINES)) {
     lines.push(`${bar('▌')} ${value(line)}`);
@@ -180,7 +154,6 @@ export function buildGoalReportLines(goal: GoalSnapshot, wrapWidth: number = WRA
   return lines;
 }
 
-/** The configured hard stop(s), or null when the goal is unbounded. */
 function formatStopRow(goal: GoalSnapshot): string | null {
   const { budget } = goal;
   const parts: string[] = [];
@@ -209,7 +182,6 @@ function statusToken(status: GoalStatus): ColorToken {
   }
 }
 
-/** Word-wrap to `width`, capped at `maxLines` (last line gets an ellipsis when clipped). */
 function wrap(text: string, width: number, maxLines: number): string[] {
   const safeWidth = Math.max(1, width);
   const lines = wrapTextWithAnsi(text.replaceAll(/\s+/g, ' ').trim(), safeWidth);

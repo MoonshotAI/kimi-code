@@ -97,8 +97,6 @@ function extractFromArgs(
   const newString = stringField(detail, 'new_string');
   if (oldString !== undefined && newString !== undefined) {
     const path = stringField(detail, 'file_path') ?? stringField(detail, 'path') ?? '';
-    // Diff block carries its own `+N -M path` header — no separate
-    // file_op title row needed.
     return {
       blocks: [{ type: 'diff', path, old_text: oldString, new_text: newString }],
       description: '',
@@ -108,8 +106,6 @@ function extractFromArgs(
   const filePath = stringField(detail, 'file_path') ?? stringField(detail, 'path');
   const content = stringField(detail, 'content');
   if (filePath !== undefined && content !== undefined) {
-    // Write is a brand-new file: render the content as a syntax-
-    // highlighted code block, not a diff full of `+` markers.
     return {
       blocks: [{ type: 'file_content', path: filePath, content }],
       description: '',
@@ -266,14 +262,9 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
       ];
     case 'file_io': {
       const path = display.path ?? '';
-      // Write attaches the full file content — render it as a syntax-
-      // highlighted code block so the approval panel can preview (and
-      // ctrl+e expand) what is about to land on disk.
       if (display.operation === 'write' && typeof display.content === 'string') {
         return [{ type: 'file_content', path, content: display.content }];
       }
-      // Edit attaches the old_string/new_string hunk as before/after — render
-      // it as a diff block so ctrl+e expansion works on the change.
       if (
         display.operation === 'edit' &&
         typeof display.before === 'string' &&
@@ -365,9 +356,6 @@ function adaptChoices(toolName: string, display: ToolInputDisplay): ApprovalPane
 function adaptGoalStartChoices(
   display: Extract<ToolInputDisplay, { kind: 'goal_start' }>,
 ): ApprovalPanelChoice[] {
-  // Reuse the exact options the /goal start menu shows. Each mode option starts
-  // the goal under that permission mode (the policy reads selected_label); "Do
-  // not start" declines so no goal is created.
   return goalStartOptions(display.mode).map((option) =>
     option.value === 'cancel'
       ? {

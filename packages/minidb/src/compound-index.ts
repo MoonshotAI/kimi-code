@@ -32,7 +32,7 @@ export interface CompoundIndexInfo {
 interface CompoundEntry {
   def: Required<CompoundIndexDef>;
   cmp: Comparator<unknown>;
-  groups: Map<unknown, SkipList<unknown, string>>; // groupValue -> ordered pks
+  groups: Map<unknown, SkipList<unknown>>; // groupValue -> ordered pks
   byPk: Map<string, { group: unknown; order: unknown }>; // pk -> current placement
 }
 
@@ -116,10 +116,10 @@ export class CompoundIndexManager {
     }));
   }
 
-  private groupOf(entry: CompoundEntry, group: unknown): SkipList<unknown, string> {
+  private groupOf(entry: CompoundEntry, group: unknown): SkipList<unknown> {
     let list = entry.groups.get(group);
     if (!list) {
-      list = new SkipList<unknown, string>({ compareKey: entry.cmp, compareVal: cmpString });
+      list = new SkipList<unknown>({ compareKey: entry.cmp, compareVal: cmpString });
       entry.groups.set(group, list);
     }
     return list;
@@ -279,7 +279,7 @@ export class CompoundIndexManager {
   loadImage(image: CompoundImageIndex): void {
     const entry = this.indexes.get(image.name);
     if (!entry) throw new Error(`no such compound index: ${image.name}`);
-    const groups = new Map<unknown, SkipList<unknown, string>>();
+    const groups = new Map<unknown, SkipList<unknown>>();
     const byPk = new Map<string, { group: unknown; order: unknown }>();
     for (const g of image.groups) {
       const list = SkipList.bulkLoad<unknown, string>(
@@ -303,7 +303,7 @@ export class CompoundIndexManager {
     const sliceEvery = opts.sliceEvery ?? 32768;
     const entry = this.indexes.get(image.name);
     if (!entry) throw new Error(`no such compound index: ${image.name}`);
-    const groups = new Map<unknown, SkipList<unknown, string>>();
+    const groups = new Map<unknown, SkipList<unknown>>();
     const byPk = new Map<string, { group: unknown; order: unknown }>();
     let n = 0;
     for (const g of image.groups) {

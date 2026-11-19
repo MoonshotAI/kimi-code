@@ -1,8 +1,3 @@
-/**
- * Media placeholder expansion and rewrite contracts, including dispatch-time
- * fallback from expiring daemon uploads to bytes retained by the TUI.
- */
-
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,7 +32,6 @@ function storeWith(
   return { store, placeholder: att.placeholder };
 }
 
-/** Point `getCacheDir()` at a fresh temp home for the duration of a test. */
 function setupTempCache(): { cleanup: () => void } {
   const home = mkdtempSync(join(tmpdir(), 'kimi-home-'));
   const prev = process.env[KIMI_CODE_HOME_ENV];
@@ -57,9 +51,6 @@ function makeTempDir(): string {
 
 type VideoUrlPart = { type: 'video_url'; videoUrl: { url: string } };
 
-// Prompt-attached videos are emitted as a `video_url` part whose url is a
-// bare `kimi-file://` daemon reference (the paste was uploaded at paste
-// time); pull the url out for assertions.
 function videoUrlFromParts(parts: unknown[]): string {
   const part = parts.find(
     (p): p is VideoUrlPart => (p as VideoUrlPart).type === 'video_url',
@@ -198,9 +189,6 @@ describe('extractMediaAttachments', () => {
       expect(r.parts).toHaveLength(1);
       const part = r.parts[0] as VideoUrlPart;
       expect(part.type).toBe('video_url');
-      // No cache copy and no `?path=`: the engine's prompt intake
-      // materializes the session copy and rewrites the reference — the part
-      // is self-contained.
       expect(parseDaemonFileUrl(part.videoUrl.url)).toEqual({ fileId: 'file-v1' });
       expect(existsSync(getCacheDir())).toBe(false);
     } finally {
@@ -211,7 +199,7 @@ describe('extractMediaAttachments', () => {
   it('refuses a video whose upload is still in flight', () => {
     const store = new ImageAttachmentStore();
     const att = store.addVideo('video/mp4', '/tmp/sample.mp4');
-    att.pending = new Promise<void>(() => undefined); // never settles
+    att.pending = new Promise<void>(() => undefined);
     expect(() => extractMediaAttachments(att.placeholder, store)).toThrow(
       /still uploading/,
     );
@@ -247,7 +235,6 @@ describe('extractMediaAttachments', () => {
 
     const r = extractMediaAttachments(`look ${att.placeholder}`, store);
 
-    // Extraction stays persistence-free: no caption part, no original path.
     expect(r.parts).toEqual([
       { type: 'text', text: 'look ' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AQID' } },
@@ -270,17 +257,12 @@ describe('extractMediaAttachments', () => {
       const r = extractMediaAttachments(`describe ${att.placeholder} please`, store);
       expect(r.hasMedia).toBe(true);
       expect(r.imageAttachmentIds).toEqual([1]);
-      // No tag text part and no `?path=`: the engine's prompt intake
-      // materializes the session copy and rewrites the reference with its
-      // path — the part is self-contained, no paired tag is authored.
       expect(r.parts).toEqual([
         { type: 'text', text: 'describe ' },
         { type: 'image_url', imageUrl: { url: 'kimi-file://file-1' } },
         { type: 'text', text: ' please' },
       ]);
       expect(parseDaemonFileUrl('kimi-file://file-1')).toEqual({ fileId: 'file-1' });
-      // The edge stages no local copy for an uploaded image — the cache dir
-      // is never even created.
       expect(existsSync(getCacheDir())).toBe(false);
     } finally {
       cleanup();
@@ -351,9 +333,6 @@ describe('extractMediaAttachments', () => {
         },
         'file-1',
       );
-      // The session reset clears the store, so the snapshot is the only place
-      // the original survives — the resend must persist it into the NEW
-      // session's originals dir and author the caption itself.
       const extraction = extractMediaAttachments(att.placeholder, store);
 
       const resend = makeExtractionResendable(extraction, dir);
@@ -379,9 +358,6 @@ describe('extractMediaAttachments', () => {
   it('keeps expanding an uploaded image as a bare reference when the cache dir is broken', () => {
     const { cleanup } = setupTempCache();
     try {
-      // A file at the cache dir path breaks local cache copies, but neither
-      // form stages one: an uploaded image expands to a bare reference and
-      // the inline (no fileId) form embeds its bytes.
       writeFileSync(getCacheDir(), 'occupied');
       const store = new ImageAttachmentStore();
       const uploaded = store.addImage(new Uint8Array([1]), 'image/png', 10, 10, undefined, 'file-1');
@@ -409,9 +385,6 @@ describe('extractMediaAttachments', () => {
       expect(() =>
         extractMediaAttachments(`${first.placeholder} ${missing.placeholder}`, store),
       ).toThrow(/could not be uploaded/);
-      // The prompt path stages no cache copies at all, so the throw leaves
-      // no local cleanup behind — the first video's daemon upload is owned
-      // by its retain, not by a staging path.
       expect(existsSync(getCacheDir())).toBe(false);
     } finally {
       cleanup();
@@ -489,8 +462,6 @@ describe('resolveOriginalCaptions', () => {
       const r = extractMediaAttachments(att.placeholder, store);
       resolveOriginalCaptions(r.parts, r.imageAttachmentIds, store, dir);
 
-      // The on-disk copy is the original from here on; the caption still
-      // renders the original size from the retained metadata.
       expect(att.original?.bytes).toBeUndefined();
       const again = resolveOriginalCaptions(
         r.parts,
@@ -551,7 +522,6 @@ describe('resolveOriginalCaptions', () => {
       expect(twice).toHaveLength(2);
       expect(twice[0]?.type).toBe('text');
       expect(twice[1]?.type).toBe('image_url');
-      // The content-addressed original was persisted exactly once.
       expect(att.original?.path?.startsWith(dir)).toBe(true);
       expect(readdirSync(dir)).toHaveLength(1);
     } finally {
@@ -588,7 +558,6 @@ describe('resolveOriginalCaptions', () => {
   it('notes an unpreserved original when persistence fails, then retries at a later dispatch', () => {
     const dir = makeTempDir();
     try {
-      // A file where the target directory must be created breaks persistence.
       const occupied = join(dir, 'occupied');
       writeFileSync(occupied, 'x');
       const { store, att } = storeWithOriginal({
@@ -610,8 +579,6 @@ describe('resolveOriginalCaptions', () => {
       const caption = failed[0];
       if (caption?.type !== 'text') throw new Error('expected caption text part');
       expect(caption.text).toMatch(/not preserved/i);
-      // The failure is not terminal: the path stays unset and the bytes are
-      // retained, so a later dispatch retries the write.
       expect(att.original?.path).toBeUndefined();
       expect(att.original?.bytes).toBeDefined();
 
@@ -631,12 +598,8 @@ describe('resolveOriginalCaptions', () => {
     try {
       const store = new ImageAttachmentStore();
       const rawBytes = new Uint8Array([1, 2, 3, 4]);
-      // Extraction raced the background ingestion: the part encodes the raw
-      // paste bytes…
       const att = store.addImage(rawBytes, 'image/png', 2600, 2600);
       const r = extractMediaAttachments(att.placeholder, store);
-      // …then ingestion completed, recording the compressed form. Captioning
-      // now would describe an image the model did not receive.
       store.completeImage(att, {
         bytes: new Uint8Array([1, 2, 3]),
         mime: 'image/png',
@@ -669,7 +632,6 @@ describe('persistOriginalImageSync', () => {
     try {
       const first = persistOriginalImageSync(new Uint8Array(6).fill(1), 'image/png', dir);
       expect(first).not.toBeNull();
-      // Pin the first file far into the past so eviction order is deterministic.
       const old = new Date(Date.now() - 60_000);
       utimesSync(first!, old, old);
 
@@ -772,8 +734,6 @@ describe('rewriteMediaPlaceholders', () => {
       const r = rewriteMediaPlaceholders(`look at ${placeholder}`, store, 'plain');
       expect(r.hasMedia).toBe(true);
       expect(r.imageAttachmentIds).toEqual([1]);
-      // Skill args pass through XML escaping, so the reference must not
-      // contain any tag/attribute boundary characters.
       expect(r.text).not.toMatch(/[<>&"]/);
       const m =
         /^look at Attached image file: (\S+) \(open it with ReadMediaFile\)$/.exec(r.text);
@@ -810,9 +770,6 @@ describe('rewriteMediaPlaceholders', () => {
     const { cleanup } = setupTempCache();
     const srcDir = makeTempDir();
     try {
-      // The video label keeps the original filename, and sanitizeVideoLabel
-      // allows `<>&"`; skill args are XML-escaped, so the plain reference
-      // would point at a path that no longer matches the file on disk.
       const srcVideo = join(srcDir, 'clip<1>&.mov');
       writeFileSync(srcVideo, 'video-bytes');
       const store = new ImageAttachmentStore();
@@ -847,8 +804,6 @@ describe('pendingMediaIngestions', () => {
     let finish!: () => void;
     att.pending = new Promise<void>((resolve) => {
       finish = () => {
-        // Complete like the background ingestion would: land the upload id,
-        // then resolve and clear the pending marker.
         att.fileId = 'file-1';
         att.fileExpiresAt = Date.now() + 60 * 60 * 1000;
         att.pending = undefined;
@@ -900,7 +855,7 @@ describe('pendingMediaIngestions', () => {
     const { store, placeholder } = storeWith(new Uint8Array([0xaa, 0xbb]));
     const att = store.get(1);
     if (att?.kind !== 'image') throw new Error('expected image attachment');
-    att.pending = new Promise<void>(() => undefined); // never settles
+    att.pending = new Promise<void>(() => undefined);
 
     const start = Date.now();
     const waited = pendingMediaIngestions(`describe ${placeholder}`, store, 20);

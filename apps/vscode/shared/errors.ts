@@ -1,8 +1,5 @@
 import type { ErrorPhase } from "./types";
 
-// Keep the released Webview's error contract local. The upper-case values are
-// accepted for sessions restored from the legacy extension; the dotted values
-// are emitted by the in-process v1 core.
 const LEGACY = {
   CLI_NOT_FOUND: "CLI_NOT_FOUND",
   SPAWN_FAILED: "SPAWN_FAILED",
@@ -23,7 +20,6 @@ const LEGACY = {
   INTERNAL_ERROR: "INTERNAL_ERROR",
 } as const;
 
-// Pre-flight: task didn't start at all or was blocked by "gatekeeper"
 export const PREFLIGHT_CODES = new Set<string>([
   LEGACY.CLI_NOT_FOUND,
   LEGACY.SPAWN_FAILED,
@@ -46,9 +42,7 @@ export const PREFLIGHT_CODES = new Set<string>([
   "shell.git_bash_not_found",
 ]);
 
-// User-friendly error messages
 export const ERROR_MESSAGES: Record<string, string> = {
-  // Pre-flight
   [LEGACY.CLI_NOT_FOUND]: "Kimi Code CLI not found.",
   [LEGACY.SPAWN_FAILED]: "Failed to start Kimi Code CLI.",
   [LEGACY.ALREADY_STARTED]: "A session is already running.",
@@ -56,18 +50,15 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [LEGACY.HANDSHAKE_TIMEOUT]: "Connection timed out.",
   [LEGACY.PROCESS_CRASHED]: "Process connection lost.",
 
-  // CLI errors
   [LEGACY.LLM_NOT_SET]: "Authentication failed. Please sign in.",
   [LEGACY.LLM_NOT_SUPPORTED]: "This model is not supported.",
   [LEGACY.INVALID_STATE]: "Please wait for the current operation.",
   [LEGACY.CHAT_PROVIDER_ERROR]: "Service temporarily unavailable.",
 
-  // Session errors
   [LEGACY.SESSION_BUSY]: "A message is being sent. Please wait.",
   [LEGACY.SESSION_CLOSED]: "Session was closed.",
   [LEGACY.TURN_INTERRUPTED]: "Stopped by user.",
 
-  // Protocol errors
   [LEGACY.INVALID_JSON]: "Communication format error.",
   [LEGACY.INVALID_REQUEST]: "Invalid request.",
   [LEGACY.INVALID_PARAMS]: "Invalid parameters.",

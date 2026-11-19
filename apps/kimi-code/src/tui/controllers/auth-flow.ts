@@ -58,16 +58,6 @@ export class AuthFlowController {
     this.host.setStartupReady();
   }
 
-  /**
-   * Apply a model pick to the runtime. Returns whether the activation made
-   * the engine emit `model_switch` — it reached an already-live session AND
-   * changed the bound alias (both engines track the event only on an actual
-   * alias change). `false` when no live session existed (session creation is
-   * deferred to the first prompt) or the alias was already bound, so callers
-   * mirroring the engine's telemetry must stay the producer for exactly
-   * those paths. Thinking-effort changes are orthogonal: the engine's
-   * `thinking_toggle` fires from `setThinking` regardless of this flag.
-   */
   async activateModelAfterLogin(model: string, effort?: string): Promise<boolean> {
     const { host } = this;
     if (host.session !== undefined) {
@@ -81,10 +71,6 @@ export class AuthFlowController {
       return modelChanged;
     }
 
-    // Lazy session creation (v2 engine): configure the model only; the
-    // session is created on the first message. The effort is carried as the
-    // first session's thinking override so a session-only choice (Alt+S)
-    // made before any session exists is applied on creation.
     const patch: Partial<AppState> = { model };
     if (effort !== undefined) {
       patch.thinkingEffort = effort as ThinkingEffort;
@@ -95,14 +81,6 @@ export class AuthFlowController {
     return false;
   }
 
-  /**
-   * Re-read config and reactivate the persisted model after login or a
-   * config-refreshing command. `effortOverride` is the caller's picked effort
-   * and wins over the config-derived one when the confirmation gate mounts.
-   * Returns whatever the activation reports (see {@link
-   * activateModelAfterLogin}), 'gated' when a cloud rule handed the switch to
-   * the confirmation dialog instead, and `false` when no activation ran.
-   */
   async refreshConfigAfterLogin(effortOverride?: ThinkingEffort): Promise<boolean | 'gated'> {
     const { host } = this;
     const config = await host.harness.getConfig({ reload: true });
@@ -120,8 +98,6 @@ export class AuthFlowController {
 
     if (defaultModel === undefined || selected === undefined) {
       if (host.session === undefined) {
-        // Session-less v2: hydrate permission/plan defaults even without a
-        // default model.
         await host.hydrateLazyConfigDefaults();
       }
       host.setAppState({ availableModels, availableProviders });
@@ -132,12 +108,6 @@ export class AuthFlowController {
     const slashHost = this.host as unknown as SlashCommandHost;
     host.setAppState({ availableModels, availableProviders });
     if (matchedModelSwitchRule(slashHost, defaultModel) !== undefined) {
-      // A matching cloud rule gates the activation exactly like a picker
-      // switch: the dialog's actions own the session switch ('session' scope —
-      // the persisted default is already in config), so this refresh must not
-      // force the model patch over the user's choice. The catalog refresh must
-      // land BEFORE the match above, or an alias introduced by this login is
-      // invisible to the matcher and the gate never fires.
       if (host.session === undefined) await host.hydrateLazyConfigDefaults(false);
       const targetDefaultEffort =
         host.session === undefined ? lazyModelSelection(config, defaultModel).thinkingEffort : undefined;
@@ -152,8 +122,6 @@ export class AuthFlowController {
 
     const activated = await this.activateModelAfterLogin(defaultModel, configuredEffort);
     if (host.session === undefined) {
-      // Session-less v2: also hydrate permission/plan defaults from the
-      // refreshed config, same as startup.
       await host.hydrateLazyConfigDefaults();
       host.setAppState({ availableModels, availableProviders });
       return activated;
@@ -189,19 +157,10 @@ export class AuthFlowController {
     });
   }
 
-  /**
-   * Re-fetch model lists from every provider whose upstream supports it
-   * (managed OAuth, open platforms, custom registries) and update local
-   * config.  Runs best-effort: individual provider failures are collected
-   * and returned instead of thrown.
-   */
   async refreshProviderModels(
     options?: RefreshProviderModelsOptions,
   ): Promise<RefreshProviderModelsResponse> {
     const result = await this.host.harness.refreshProviderModels(options);
-    // The engine persists provider-only config changes (type, baseUrl, …)
-    // while reporting the provider as unchanged, so reload even when no model
-    // changed.
     await this.refreshAvailableModels();
     return result;
   }

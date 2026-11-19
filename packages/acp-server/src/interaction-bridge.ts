@@ -1,19 +1,3 @@
-/**
- * ACP interaction bridge — forwards the engine's blocking human-in-the-loop
- * requests (approval + ask-user) to the ACP client via
- * `session/request_permission`, and relays the client's decision back to the
- * `interaction` kernel.
- *
- * The engine's `AgentPermissionGate` and `AskUserQuestionTool` park requests on
- * the process-global interaction kernel and block on their response. This
- * bridge is a pure edge observer driven entirely by the klient facade: it
- * subscribes to the session's `interactions.changed` event (which pushes the
- * full pending set on every change), and for every newly-pending `approval` /
- * `question` interaction it calls `conn.requestPermission(...)`, maps the
- * response through the pure mappers in `./approval` / `./question`, and
- * settles the parked request via `session.interactions.respond(id, ...)`.
- */
-
 import type {
   Interaction,
   QuestionAnswers,
@@ -41,7 +25,6 @@ import {
 } from './question';
 
 export class AcpInteractionBridge {
-  /** Ids the bridge has already begun handling — guards against re-entry. */
   private readonly inFlight = new Set<string>();
   private readonly subscription: IDisposable;
   private disposed = false;
@@ -50,18 +33,11 @@ export class AcpInteractionBridge {
     private readonly conn: AcpClient,
     private readonly session: SessionHandle,
     private readonly sessionId: string,
-    /**
-     * Whether the client advertised `elicitation.form` at `initialize`. When
-     * true, ask-user questions go through `elicitation/create` (native
-     * multi-question + multi-select); otherwise they degrade to the
-     * `request_permission` single-select bridge.
-     */
     private readonly elicitationForm = false,
   ) {
     this.subscription = session.events.on('interactions.changed', (pending) => {
       this.onPendingChanged(pending);
-    }); // The event stream only fires on change — sweep anything parked before the
-    // subscription attached (matches the old direct `listPending()` sweep).
+    });
     void this.session.interactions.list().then(
       (pending) => {
         this.onPendingChanged(pending);
@@ -106,10 +82,6 @@ export class AcpInteractionBridge {
         await respond(result);
       }
     } catch (error) {
-      // `respond` itself never throws for a still-pending id, and the handlers
-      // already swallow RPC failures into a safe response — so reaching here
-      // means something unexpected broke. Log and settle with the safest
-      // default so the gate/tool does not park forever.
       log.warn('acp: interaction bridge dispatch failed', {
         sessionId: this.sessionId,
         interactionId: interaction.id,
@@ -130,11 +102,6 @@ export class AcpInteractionBridge {
     }
   }
 
-  /**
-   * Bridge an engine {@link ApprovalRequest} to the ACP client and back. Any
-   * RPC failure resolves with `decision: 'rejected'` — rejecting on failure is
-   * strictly safer than approving when the client cannot confirm intent.
-   */
   private async handleApproval(req: ApprovalRequest): Promise<ApprovalResponse> {
     const toolCall = buildPermissionToolCallUpdate(req);
     const options = approvalRequestToPermissionOptions(req);
@@ -160,22 +127,6 @@ export class AcpInteractionBridge {
     }
   }
 
-  /**
-   * Bridge an engine {@link QuestionRequest} (the AskUserQuestion tool) to the
-   * client. Form-capable clients get the full question set through
-   * `elicitation/create` (native multi-question + multi-select); everyone
-   * else falls back to the `session/request_permission` surface approvals
-   * use, with its degradation rules:
-   *  - `questions.length > 1` → only the first question is asked (logged).
-   *  - `multiSelect === true` → still asked as single-select; the engine's
-   *    ask-user tool tolerates a single-key answer for a multi-select prompt.
-   *
-   * An `elicitation/create` RPC failure (e.g. a client that advertises the
-   * capability but rejects the method) falls back to the permission bridge
-   * for the same request. Any failure of the final attempt resolves with
-   * `null` so the tool takes its canonical "user dismissed" branch —
-   * strictly safer than fabricating an answer.
-   */
   private async handleQuestion(req: QuestionRequest): Promise<QuestionAnswers | null> {
     const questions = req.questions;
     if (questions.length === 0) {

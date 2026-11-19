@@ -1,8 +1,8 @@
 import { freeze, isDraft, original } from 'immer';
 
-import type { FinishReason } from '#human/llm-requester/finish-reason';
-import { createToolMessage, type ContentPart, type ToolCall } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import { createToolMessage, type ContentPart, type ToolCall } from '@moonshot-ai/core/llm/message';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage, ContextMessageTiming } from './types';
@@ -57,6 +57,7 @@ export type LoopRecordedEvent =
       readonly type: 'tool.call';
       readonly stepUuid: string;
       readonly toolCallId: string;
+      readonly rawId?: string;
       readonly name: string;
       readonly args?: unknown;
       readonly extras?: Record<string, unknown>;
@@ -188,7 +189,7 @@ function createLoopEventFoldWithState(
             name: event.name,
             arguments: event.args === undefined ? null : JSON.stringify(event.args),
             extras: event.extras,
-            rawId: undefined,
+            rawId: event.rawId,
           };
           sink.appendOpenToolCall(call, event.display);
           pending.set(event.toolCallId, event.name);

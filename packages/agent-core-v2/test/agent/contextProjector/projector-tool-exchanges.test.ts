@@ -10,9 +10,10 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { SessionRequestAttributionService } from '#/session/requestAttribution/requestAttributionService';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { ContentPart, MediaPart, Message } from '#human/llm/message';
-import { mediaUrlOf } from '#human/llm/protocol/kit/media';
+import type { ContentPart, MediaPart, Message } from '@moonshot-ai/core/llm/message';
+import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import {
   MEDIA_DEGRADE_KEEP_RECENT,
   captureMediaKeys,
@@ -20,7 +21,7 @@ import {
   degradeLeadingMediaParts,
   degradeOlderMediaParts,
   stripMediaParts,
-} from '#human/llm/builtin/policy/media-degrade';
+} from '@moonshot-ai/core/llm/builtin/policy/media-degrade';
 import { buildMediaPathTag, mediaKindOfPart } from '#/agent/media/mediaRef';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -119,6 +120,7 @@ describe('projector tool-exchange normalization', () => {
       {} as ISessionTokenCountingService,
       {} as IAgentScopeContext,
       new AgentStateService(),
+      new SessionRequestAttributionService(),
     );
     projector = new AgentLoopProjector((anomalies) => observer.reportProjectionRepairs(anomalies));
   });

@@ -4,7 +4,7 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ContentPart, Message } from '#human/llm/message';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
 import {
   fromCoreMessage,
   fromCorePart,
@@ -536,7 +536,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     truncation: AppendLogTruncation,
     rewrittenRecords: WireRecord[] | undefined,
   ): Promise<void> {
-    let records: WireRecord[] = rewrittenRecords ?? [];
+    const records: WireRecord[] = rewrittenRecords ?? [];
     if (rewrittenRecords === undefined) {
       const tolerate = { onTruncate: () => {} };
       for await (const record of this.log.read<WireRecord>(

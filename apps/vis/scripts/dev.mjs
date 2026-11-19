@@ -1,8 +1,4 @@
 #!/usr/bin/env node
-// Wraps `concurrently` so the vis-server (API) and vite (web) each pick a
-// free port and agree on each other's, even when the defaults are taken by
-// a previous dev session or another local app.
-
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 

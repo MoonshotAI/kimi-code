@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { Event2 } from '#/app/event/event2';
 
 export interface SessionArchivedPayload {
@@ -28,6 +28,7 @@ export interface SessionRestored {
 export interface SessionDeletedPayload {
   readonly sessionId: string;
   readonly workspaceId: string;
+  readonly session?: unknown;
 }
 
 export class SessionDeleted extends Event2<{ readonly payload: SessionDeletedPayload }> {

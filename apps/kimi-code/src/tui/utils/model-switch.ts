@@ -14,9 +14,6 @@ import { thinkingEffortFromConfig, thinkingEffortToConfig } from './thinking-con
 export const MODEL_SWITCH_CACHE_WARNING =
   'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
 
-/** True once the conversation has at least one user message. Resumed sessions
- * can use their turn count before replay hydration finishes. Shell-command
- * echoes carry an empty `bullet`, so they're excluded. */
 export function hasConversationHistory(host: SlashCommandHost): boolean {
   if (host.state.transcriptEntries.some((entry) => entry.kind === 'user' && entry.bullet !== '')) {
     return true;
@@ -26,24 +23,13 @@ export function hasConversationHistory(host: SlashCommandHost): boolean {
 
 export function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {
   const providerType = host.state.appState.availableProviders[model.provider]?.type;
-  // Flat models (no named provider, e.g. inline base_url served by a v2
-  // backend) have no provider entry to look up; their own protocol declaration
-  // plays the provider-identity role, mirroring the resolver.
   return effectiveModelAlias(model, providerType ?? model.protocol);
 }
 
-/**
- * The model and thinking effort `config` gives the first lazily created
- * session when it binds `alias`, for the session-less footer and the create
- * call alike.
- */
 export function lazyModelSelection(
   config: KimiConfig,
   alias: string | undefined,
 ): Partial<AppState> {
-  // A default that disappeared from config (edited externally) clears the
-  // previously hydrated value instead of passing a stale explicit model to the
-  // first lazy-created session.
   const patch: Partial<AppState> =
     alias === undefined ? { model: '', maxContextTokens: 0 } : { model: alias };
   const raw = alias === undefined ? undefined : config.models?.[alias];
@@ -54,8 +40,6 @@ export function lazyModelSelection(
   if (effort !== undefined) {
     patch.thinkingEffort = effort;
   } else if (raw !== undefined) {
-    // No concrete effort configured: mirror the engine, which resolves the
-    // model's default effort at createSession time.
     const providerType = config.providers?.[raw.provider]?.type;
     patch.thinkingEffort = defaultThinkingEffortFor(
       effectiveModelAlias(raw, providerType ?? raw.protocol),
@@ -66,9 +50,6 @@ export function lazyModelSelection(
 
 export type { ModelSwitchPersistence } from '../types';
 
-// The engine freezes a turn's model on its first request, which the TUI sees
-// as turn.step.started with step >= 1. beginSessionRequest clears the turn id
-// but not the step, and turn.started resets the step to 0.
 function currentTurnSentRequest(host: SlashCommandHost): boolean {
   const { turnId, step } = host.streamingUI.getTurnContext();
   return turnId !== undefined && step > 0;
@@ -83,9 +64,6 @@ export async function performModelSwitch(
 ): Promise<boolean> {
   let session = host.session;
   if (session === undefined) {
-    // A first prompt may still be inside lazy creation: wait it out so the
-    // switch lands on the new session instead of being overwritten by its
-    // assembly.
     await host.waitForSessionAssembly();
     session = host.session;
   }
@@ -197,8 +175,6 @@ async function persistModelSelection(
     effort,
     model === undefined ? undefined : effectiveModelForHost(host, model),
   );
-  // Ordinary /model confirmation preserves the stored effort unless it changed;
-  // migration acceptance explicitly persists the target effort.
   const patch = persistEffort ? full : { enabled: full.enabled };
   if (
     config.defaultModel === alias &&

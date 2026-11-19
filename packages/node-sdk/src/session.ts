@@ -1,3 +1,4 @@
+import type { PromptPredictionCancelReason } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 
 import type { AgentContextData } from '#/context';
@@ -261,6 +262,22 @@ export class Session {
   async startBtw(): Promise<string> {
     this.ensureOpen();
     return this.rpc.startBtw({ sessionId: this.id });
+  }
+
+  async predictNextPrompt(input: {
+    predictionId: string;
+    expectedTurnId: number;
+  }): Promise<string | null> {
+    this.ensureOpen();
+    return this.rpc.predictNextPrompt({ sessionId: this.id, ...input });
+  }
+
+  async cancelPromptPrediction(
+    predictionId: string,
+    reason?: PromptPredictionCancelReason,
+  ): Promise<boolean> {
+    this.ensureOpen();
+    return this.rpc.cancelPromptPrediction({ sessionId: this.id, predictionId, reason });
   }
 
   async cancel(): Promise<void> {
@@ -597,12 +614,6 @@ export class Session {
     return this.rpc.handlePrintMainTurnCompleted({ sessionId: this.id });
   }
 
-  // --- Goal lifecycle ---------------------------------------------------
-  // Deterministic user/host control surface. There is intentionally no
-  // `updateGoal`: the goal's terminal status is decided by the model via the
-  // in-conversation UpdateGoal tool (or the goal driver on budget/error), not
-  // by the host.
-
   async createGoal(input: CreateGoalInput): Promise<GoalSnapshot> {
     this.ensureOpen();
     return this.rpc.createGoal({ sessionId: this.id, ...input });
@@ -744,7 +755,7 @@ export class Session {
 
   async activateSkill(
     name: string,
-    args?: string | undefined,
+    args?: string,
     options?: { readonly path?: string },
   ): Promise<void> {
     this.ensureOpen();
@@ -765,7 +776,7 @@ export class Session {
   async activatePluginCommand(
     pluginId: string,
     commandName: string,
-    args?: string | undefined,
+    args?: string,
   ): Promise<void> {
     this.ensureOpen();
     const normalizedPluginId = pluginId.trim();

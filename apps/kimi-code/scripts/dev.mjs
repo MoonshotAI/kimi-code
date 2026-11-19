@@ -7,8 +7,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const require = createRequire(import.meta.url);
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(SCRIPT_DIR, '..');
-// Monorepo root. Used as the dev CLI's working directory so `make dev` opens
-// the whole repo instead of just apps/kimi-code.
 const REPO_ROOT = resolve(APP_ROOT, '../..');
 const MARKETPLACE_ENV = 'KIMI_CODE_PLUGIN_MARKETPLACE_URL';
 const EXTERNAL_MARKETPLACE_ENV = 'KIMI_CODE_DEV_MARKETPLACE_URL';
@@ -27,9 +25,6 @@ const child = spawn(
   process.execPath,
   [
     tsxCli,
-    // Use the dev tsconfig whose `include` covers packages/*/src, so tsx's
-    // esbuild transform sees `experimentalDecorators: true` for DI parameter
-    // decorators in agent-core-v2. Mirrors `dev:server` in package.json.
     '--tsconfig',
     resolve(APP_ROOT, 'tsconfig.dev.json'),
     '--import',

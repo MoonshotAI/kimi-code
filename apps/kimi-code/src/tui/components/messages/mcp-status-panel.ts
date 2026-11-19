@@ -59,15 +59,6 @@ function formatToolsAvailable(count: number): string {
   return `${count} tool${count === 1 ? '' : 's'} available`;
 }
 
-/**
- * Collapse a (possibly multi-line) MCP error into a single line. The status
- * panel renders each returned string as exactly one boxed row (see
- * `UsagePanelComponent.render`), so an embedded newline — e.g. the
- * `\nstderr: ...` a failed stdio server appends — would drop the trailing
- * text to column 0 and punch through the rounded border. Folding every run
- * of whitespace to a single space keeps the error on one row, which the
- * panel then truncates to the available width.
- */
 function formatErrorLine(error: string): string {
   return error.trim().replaceAll(/\s+/g, ' ');
 }

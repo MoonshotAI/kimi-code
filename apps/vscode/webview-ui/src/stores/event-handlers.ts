@@ -69,7 +69,6 @@ function resolveSubagentTarget(
 ): { steps: UIStep[]; event: { type: string; payload: any }; toolItem: UIStepItem & { type: "tool_use" } } | null {
   const { parent_tool_call_id, event } = payload;
 
-  // Nested SubagentEvent
   if (event.type === "SubagentEvent") {
     return resolveSubagentTarget(steps, event.payload as SubagentEvent);
   }
@@ -245,31 +244,26 @@ function isTaskToolResult(steps: UIStep[] | undefined, toolCallId: string): bool
 }
 
 function handlePreflightError(draft: ChatState, _code: string, _message: string): void {
-  // Pre-flight: 删除未发送成功的消息，恢复输入
   addTokenUsage(draft.tokenUsage, draft.activeTokenUsage);
   draft.activeTokenUsage = createEmptyTokenUsage();
   draft.isStreaming = false;
   draft.isCompacting = false;
   useApprovalStore.getState().clearRequests();
 
-  // 删除空的 assistant 消息
   const lastAssistant = getLastAssistant(draft);
   if (lastAssistant && !hasContent(lastAssistant)) {
     draft.messages.pop();
   }
 
-  // 删除对应的 user 消息
   const lastUser = draft.messages.at(-1);
   if (lastUser?.role === "user") {
     const userContent = lastUser.content;
     draft.messages.pop();
-    // 触发回滚（通过 pendingInput 保存）
     draft.pendingInput = { content: userContent, model: "" };
   }
 }
 
 function handleRuntimeError(draft: ChatState, code: string, message: string, detail?: string): void {
-  // Runtime: 保留现场，添加内嵌错误
   addTokenUsage(draft.tokenUsage, draft.activeTokenUsage);
   draft.activeTokenUsage = createEmptyTokenUsage();
   draft.isStreaming = false;
@@ -278,18 +272,15 @@ function handleRuntimeError(draft: ChatState, code: string, message: string, det
 
   const lastAssistant = getLastAssistant(draft);
   if (lastAssistant) {
-    // 如果完全没有内容，添加一个空的 step 以便显示错误
     if (!lastAssistant.steps) {
       lastAssistant.steps = [];
     }
     finishAllTextItems(lastAssistant.steps);
-    // 设置内嵌错误，保留服务器原始错误信息
     lastAssistant.inlineError = { code, message, detail };
   }
 }
 
 const eventHandlers: Record<string, EventHandler> = {
-  // UI 事件 (Bridge 层)
   session_start: (draft, payload: { sessionId: string; model?: string }) => {
     if (payload.sessionId) {
       draft.sessionId = payload.sessionId;
@@ -315,7 +306,7 @@ const eventHandlers: Record<string, EventHandler> = {
 
     if (code === "UNKNOWN_EVENT_TYPE") {
       return;
-    } // 忽略未知事件类型错误，通常是版本不匹配导致
+    }
 
     if (phase === "preflight") {
       handlePreflightError(draft, code, payload.message);
@@ -336,7 +327,6 @@ const eventHandlers: Record<string, EventHandler> = {
     }
   },
 
-  // Wire 事件
   TurnBegin: (draft, payload: TurnBegin & { forkable?: boolean }) => {
     draft.tokenUsage = createEmptyTokenUsage();
     draft.activeTokenUsage = createEmptyTokenUsage();
@@ -399,9 +389,6 @@ const eventHandlers: Record<string, EventHandler> = {
 
       applyEventToSteps(last.steps, { type: "StepBegin", payload });
 
-      // Tag the newly created step with current plan mode state
-      // Note: only top-level steps get tagged. Subagent steps go through
-      // SubagentEvent -> applyEventToSteps and won't inherit main agent's planMode.
       const newStep = last.steps.at(-1);
       if (newStep && draft.planMode) {
         newStep.planMode = true;
@@ -494,7 +481,6 @@ const eventHandlers: Record<string, EventHandler> = {
       target.steps.push({ n: 1, items: [] });
     }
 
-    // Nested Subagent Task End: accumulate token usage
     if (target.event.type === "ToolResult") {
       const toolResultPayload = target.event.payload as ToolResult;
       if (isTaskToolResult(target.steps, toolResultPayload.tool_call_id)) {
