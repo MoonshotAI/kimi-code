@@ -2,20 +2,9 @@ import { useI18n } from 'vue-i18n';
 import type { AppHostConnectFailure } from '@moonshot-ai/app-core/api';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 
-const HINTED_FAILURES: ReadonlySet<AppHostConnectFailure> = new Set([
-  'executor_not_found',
-  'executor_outdated',
-  'remote_busy',
-  'remote_start_failed',
-]);
-
-export function isKimiHostFailure(failure: AppHostConnectFailure | undefined): boolean {
-  return failure !== undefined && HINTED_FAILURES.has(failure);
-}
-
 export function useHostFailureText(): {
   label: (failure: AppHostConnectFailure | undefined, remoteVersion?: string) => string;
-  hint: (failure: AppHostConnectFailure | undefined) => string;
+  hint: (failure: AppHostConnectFailure | undefined, host?: string, name?: string) => string;
   confirmCopy: (host: string) => Promise<boolean>;
 } {
   const { t } = useI18n();
@@ -28,8 +17,10 @@ export function useHostFailureText(): {
       }
       return t(`workspace.connectFailure.${failure}`);
     },
-    hint(failure) {
-      return failure !== undefined && HINTED_FAILURES.has(failure) ? t(`workspace.connectFailureHint.${failure}`) : '';
+    hint(failure, host, name) {
+      return failure !== undefined && failure !== 'unknown'
+        ? t(`workspace.connectFailureHint.${failure}`, { host, name: name || host })
+        : '';
     },
     confirmCopy(host) {
       return confirm({

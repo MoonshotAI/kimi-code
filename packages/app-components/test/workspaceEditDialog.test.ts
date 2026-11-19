@@ -38,10 +38,10 @@ interface MountOptions {
   initialDirs?: string[];
   initialHostId?: string;
   pick?: () => Promise<string[]>;
-  pickRemote?: (hostId: string, path: string) => Promise<string | undefined>;
+  pickRemote?: (hostId: string, path: string) => Promise<string[]>;
   hosts?: AppHost[];
   manageHosts?: () => void;
-  importProjectConfig?: (primary: string) => Promise<string[] | undefined>;
+  importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
   busy?: boolean;
 }
 
@@ -287,13 +287,35 @@ describe('WorkspaceEditDialog create mode', () => {
 });
 
 describe('WorkspaceEditDialog edit mode', () => {
-  it('offers no directory change for a project that lives on an SSH host', async () => {
-    mountDialog({ mode: 'edit', initialName: 'demo', initialDirs: ['/home/dev/demo'], initialHostId: 'dev', hosts: [sshHost('dev', { name: 'Dev box' })] });
+  it('allows adding and reordering directories for a project that lives on an SSH host', async () => {
+    const pickRemote = vi.fn(async () => ['/home/dev/extra']);
+    const { submit } = mountDialog({
+      mode: 'edit',
+      initialName: 'demo',
+      initialDirs: ['/home/dev/demo'],
+      initialHostId: 'dev',
+      hosts: [sshHost('dev', { name: 'Dev box' })],
+      pickRemote,
+    });
     await nextTick();
     expect(dirRows()).toHaveLength(1);
     expect(dirRows()[0]?.textContent).toContain('Dev box');
     expect(dirRows()[0]?.querySelector('.we-dir-name')?.classList.contains('we-dir-name--with-host')).toBe(true);
-    expect(document.querySelector('.we-add-directory')).toBeNull();
+
+    document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
+    expect(pickRemote).toHaveBeenCalledExactlyOnceWith('dev', '/home/dev/demo');
+
+    dirRows()[1]!.querySelector<HTMLButtonElement>('.we-dir-primary')!.click();
+    await nextTick();
+    submitButton().click();
+    await nextTick();
+    expect(submit).toHaveBeenCalledWith({
+      name: 'demo',
+      dirs: ['/home/dev/extra', '/home/dev/demo'],
+      hostId: 'dev',
+      projectConfigDirs: [],
+    });
   });
 
   it('keeps the primary directory non-removable and allows removing additional ones', async () => {
@@ -441,10 +463,10 @@ describe('WorkspaceEditDialog shared behavior', () => {
 
 
 describe('WorkspaceEditDialog remote directories', () => {
-  it('keeps a remote project to one directory', async () => {
+  it('appends multiple remote directories with dedupe', async () => {
     const pickRemote = vi.fn()
-      .mockResolvedValueOnce('/srv/one')
-      .mockResolvedValueOnce('/srv/two');
+      .mockResolvedValueOnce(['/srv/one', '/srv/two'])
+      .mockResolvedValueOnce(['/srv/two', '/srv/three']);
     const { submit } = mountDialog({
       initialHostId: 'devbox',
       hosts: [sshHost('devbox')],
@@ -453,13 +475,12 @@ describe('WorkspaceEditDialog remote directories', () => {
     await nextTick();
 
     document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
-    await vi.waitFor(() => expect(dirRows()).toHaveLength(1));
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
     expect(document.querySelector<HTMLButtonElement>('button.we-source-select')!.disabled).toBe(false);
 
-    const change = document.querySelector<HTMLButtonElement>('.we-dirs-actions .we-add-directory')!;
-    change.click();
-    await vi.waitFor(() => expect(dirRows()[0]?.querySelector('.we-dir-name')?.textContent).toBe('two'));
-    expect(dirRows()).toHaveLength(1);
+    const addMore = document.querySelector<HTMLButtonElement>('.we-dirs-actions .we-add-directory')!;
+    addMore.click();
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(3));
     expect(pickRemote.mock.calls).toEqual([
       ['devbox', ''],
       ['devbox', '/srv/one'],
@@ -467,8 +488,8 @@ describe('WorkspaceEditDialog remote directories', () => {
 
     submitButton().click();
     expect(submit).toHaveBeenCalledWith({
-      name: 'two',
-      dirs: ['/srv/two'],
+      name: 'one',
+      dirs: ['/srv/one', '/srv/two', '/srv/three'],
       hostId: 'devbox',
       projectConfigDirs: [],
     });
@@ -512,19 +533,60 @@ describe('WorkspaceEditDialog remote directories', () => {
     expect(pickRemote).not.toHaveBeenCalled();
   });
 
-  it('uses the project host and hides local config import for a remote project', async () => {
-    mountDialog({
+  it('imports project config directories from the remote host', async () => {
+    const importProjectConfig = vi.fn(async () => ['/srv/shared']);
+    const { submit } = mountDialog({
       initialDirs: ['/srv/app'],
       initialHostId: 'devbox',
       hosts: [sshHost('other'), sshHost('devbox')],
-      importProjectConfig: vi.fn(),
+      importProjectConfig,
     });
     await nextTick();
 
     expect(document.querySelector('button.we-source-select')?.textContent).toContain('devbox');
     const importButton = [...document.querySelectorAll<HTMLButtonElement>('.we-dirs-actions button')]
-      .find((button) => button.textContent?.includes('Import config'));
-    expect(importButton).toBeUndefined();
+      .find((button) => button.textContent?.includes('Import config'))!;
+    expect(importButton).toBeDefined();
+    importButton.click();
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
+    expect(importProjectConfig).toHaveBeenCalledExactlyOnceWith('/srv/app', 'devbox');
+
+    submitButton().click();
+    expect(submit).toHaveBeenCalledWith({
+      name: 'app',
+      dirs: ['/srv/app', '/srv/shared'],
+      hostId: 'devbox',
+      projectConfigDirs: ['/srv/shared'],
+    });
+  });
+
+  it('keeps the selected host and blocks submit instead of switching to local when the host disconnects mid-dialog', async () => {
+    const devbox = sshHost('devbox', { status: 'ready' });
+    hostsStore().byId = { devbox };
+    const { submit } = mountDialog({
+      initialDirs: ['/srv/app'],
+      initialHostId: 'devbox',
+      hosts: [devbox],
+    });
+    await nextTick();
+    expect(submitButton().disabled).toBe(false);
+
+    hostsStore().byId = {
+      devbox: sshHost('devbox', { status: 'disconnected', connectError: 'Connection reset' }),
+    };
+    app!.unmount();
+    const broken = hostsStore().byId['devbox']!;
+    mountDialog({
+      mode: 'edit',
+      initialName: 'app',
+      initialDirs: ['/srv/app'],
+      initialHostId: 'devbox',
+      hosts: [broken],
+    });
+    await nextTick();
+    expect(submitButton().disabled).toBe(true);
+    submitButton().click();
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it('shows an inline error when the directory picker fails', async () => {

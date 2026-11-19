@@ -6,6 +6,7 @@ const clientState = vi.hoisted(() => ({
   activeSessionId: null as null | { value: string | null },
   activity: null as null | { value: string },
   working: null as null | { value: boolean },
+  visibleWorkspace: null as null | { value: { hostId?: string } | null },
 }));
 
 vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
@@ -14,11 +15,13 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
   clientState.activeSessionId = vue.ref<string | null>('sess-1');
   clientState.activity = vue.ref('idle');
   clientState.working = vue.ref(false);
+  clientState.visibleWorkspace = vue.ref<{ hostId?: string } | null>(null);
   return {
     ...actual,
     useKimiWebClient: () => ({
       activeSessionId: clientState.activeSessionId!,
       activeWorkspaceId: vue.ref('ws-1'),
+      visibleWorkspace: clientState.visibleWorkspace!,
       activity: clientState.activity!,
       working: clientState.working!,
       isStartingFirstPrompt: vue.ref(false),
@@ -335,5 +338,29 @@ describe('Composer running send mode and first-time steer tip', () => {
     });
     expect(submits).toHaveLength(0);
     expect(steers).toHaveLength(0);
+  });
+
+  it('shows the host model setup pill and gates submit when the ready SSH host has no models', async () => {
+    const { hostsStore } = await import('@moonshot-ai/app-client/stores');
+    const { setDraft, submits, dialogs } = await mountFreshComposer('en');
+    hostsStore().loaded = true;
+    hostsStore().byId = { devbox: { id: 'devbox', host: 'dev.example.test', name: 'Build box', status: 'ready' } };
+    hostsStore().accounts = { devbox: { status: 'signedOut', modelsReady: false } };
+    clientState.visibleWorkspace!.value = { hostId: 'devbox' };
+    await nextTick();
+
+    const pill = host.querySelector<HTMLButtonElement>('.model-pill.login-pill');
+    expect(pill?.textContent).toContain('Configure host models');
+
+    const input = host.querySelector('[aria-label="Message input"]')!;
+    setDraft('hello remote');
+    await nextTick();
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+
+    expect(submits).toHaveLength(0);
+    expect(dialogs.showSettings.value).toBe(true);
+    expect(dialogs.settingsInitialTab.value).toBe('hosts');
+    expect(hostsStore().focusHostId).toBe('devbox');
   });
 });
