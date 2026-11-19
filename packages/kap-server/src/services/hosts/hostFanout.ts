@@ -3,6 +3,8 @@ import type { HostSession } from './hostSession';
 
 export type HostQuery = Readonly<Record<string, string | number | boolean | readonly string[] | undefined>>;
 
+const HOST_PROJECTS_TIMEOUT_MS = 5_000;
+
 export interface HostSource {
   readonly id: string;
   readonly session: HostSession | undefined;
@@ -48,11 +50,17 @@ function queryString(query: HostQuery): string {
   return text === '' ? '' : `?${text}`;
 }
 
-export async function hostGet<T>(session: HostSession, path: string, query: HostQuery = {}): Promise<T> {
+export async function hostGet<T>(
+  session: HostSession,
+  path: string,
+  query: HostQuery = {},
+  timeoutMs?: number,
+): Promise<T> {
   const response = await session.request({
     method: 'GET',
     path: `${path}${queryString(query)}`,
     headers: { accept: 'application/json' },
+    timeoutMs,
   });
   let body: { code?: number; msg?: string; data?: T };
   try {
@@ -67,7 +75,7 @@ export async function hostGet<T>(session: HostSession, path: string, query: Host
 }
 
 export async function hostProjects<T extends { readonly kind: string }>(session: HostSession): Promise<T[]> {
-  const data = await hostGet<{ items: T[] }>(session, '/api/v1/workspaces');
+  const data = await hostGet<{ items: T[] }>(session, '/api/v1/workspaces', {}, HOST_PROJECTS_TIMEOUT_MS);
   return data.items.filter((workspace) => workspace.kind === 'managed');
 }
 
