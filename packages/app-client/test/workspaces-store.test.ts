@@ -1165,7 +1165,7 @@ describe('saveWorkspace', () => {
     await expect(store.mkdirFs('/Users/x/fresh')).rejects.toBe(conflict);
   });
 
-  it('routes getFsHome and fetchWorkspaceProjectConfigDirs to the target SSH host and formats offline removal copy without raw host ids', async () => {
+  it('routes home and project config requests to the target SSH host', async () => {
     const remoteApi = {
       getFsHome: vi.fn().mockResolvedValue({ home: '/home/ubuntu', recentRoots: ['/home/ubuntu/app'] }),
       getWorkspaceProjectConfigDirs: vi.fn().mockResolvedValue(['/home/ubuntu/shared']),
@@ -1175,20 +1175,17 @@ describe('saveWorkspace', () => {
 
     await expect(store.getFsHome('devbox')).resolves.toEqual({ home: '/home/ubuntu', recentRoots: ['/home/ubuntu/app'] });
     await expect(store.fetchWorkspaceProjectConfigDirs('/home/ubuntu/app', 'devbox')).resolves.toEqual(['/home/ubuntu/shared']);
+    expect(remoteApi.getWorkspaceProjectConfigDirs).toHaveBeenCalledExactlyOnceWith('/home/ubuntu/app');
     expect(apiMock.deviceApi).toHaveBeenCalledWith('devbox');
     delete apiMock.deviceApi;
+  });
 
+  it('uses offline removal copy for a missing host without exposing its id', () => {
     hostsStore().loaded = true;
     hostsStore().byId = {};
-    store.workspaces = [makeWorkspace('wm_gone', '/srv/app', { name: 'trainer', hostId: 'host-a1b2c3d4' })];
-    const seen: Array<[string, Record<string, unknown> | undefined]> = [];
-    const tr = (key: string, params?: Record<string, unknown>) => {
-      seen.push([key, params]);
-      const device = typeof params?.device === 'string' ? params.device : '';
-      return key === 'workspace.deletedHost' ? 'Removed host' : `${key}:${device}`;
-    };
-    expect(store.removeWorkspaceMessage('wm_gone', tr)).toBe('workspace.removeWorkspaceConfirmHostOffline:Removed host');
-    expect(JSON.stringify(seen)).not.toContain('host-a1b2c3d4');
+    workspacesStore().workspaces = [makeWorkspace('wm_gone', '/srv/app', { name: 'trainer', hostId: 'host-a1b2c3d4' })];
+    const tr = (key: string, params?: Record<string, unknown>) => key === 'workspace.deletedHost' ? 'Removed host' : `${key}:${String(params?.device)}`;
+    expect(workspacesStore().removeWorkspaceMessage('wm_gone', tr)).toBe('workspace.removeWorkspaceConfirmHostOffline:Removed host');
     hostsStore().loaded = false;
   });
 });

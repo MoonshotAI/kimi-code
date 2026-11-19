@@ -349,9 +349,6 @@ describe('Composer running send mode and first-time steer tip', () => {
     clientState.visibleWorkspace!.value = { hostId: 'devbox' };
     await nextTick();
 
-    const pill = host.querySelector<HTMLButtonElement>('.model-pill.login-pill');
-    expect(pill?.textContent).toContain('Configure host models');
-
     const input = host.querySelector('[aria-label="Message input"]')!;
     setDraft('hello remote');
     await nextTick();

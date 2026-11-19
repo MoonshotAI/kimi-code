@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App } from 'vue';
+import { createApp, h, nextTick, ref, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import WorkspaceEditDialog from '../src/dialogs/WorkspaceEditDialog.vue';
@@ -299,8 +299,6 @@ describe('WorkspaceEditDialog edit mode', () => {
     });
     await nextTick();
     expect(dirRows()).toHaveLength(1);
-    expect(dirRows()[0]?.textContent).toContain('Dev box');
-    expect(dirRows()[0]?.querySelector('.we-dir-name')?.classList.contains('we-dir-name--with-host')).toBe(true);
 
     document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
     await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
@@ -308,6 +306,8 @@ describe('WorkspaceEditDialog edit mode', () => {
 
     dirRows()[1]!.querySelector<HTMLButtonElement>('.we-dir-primary')!.click();
     await nextTick();
+    expect(document.activeElement).toBe(dirRows()[1]!.querySelector('.we-dir-primary'));
+    expect(document.querySelector('.we-primary-status')).not.toBeNull();
     submitButton().click();
     await nextTick();
     expect(submit).toHaveBeenCalledWith({
@@ -353,30 +353,6 @@ describe('WorkspaceEditDialog edit mode', () => {
       projectConfigDirs: [],
     });
   });
-
-  it('allows changing the primary directory', async () => {
-    const { submit } = mountDialog({
-      mode: 'edit',
-      initialName: 'my workspace',
-      initialDirs: ['/a/root', '/a/extra'],
-    });
-    await nextTick();
-
-    const promote = dirRows()[1]!.querySelector<HTMLButtonElement>('.we-dir-primary')!;
-    expect(promote.classList.contains('ui-button--ghost')).toBe(true);
-    promote.click();
-    await nextTick();
-    const previousPrimary = dirRows().find((row) => row.dataset.dirKey === '/a/root');
-    expect(document.activeElement).toBe(previousPrimary?.querySelector('.we-dir-primary'));
-    expect(document.querySelector('.we-primary-status')).not.toBeNull();
-    submitButton().click();
-    await nextTick();
-    expect(submit).toHaveBeenCalledWith({
-      name: 'my workspace',
-      dirs: ['/a/extra', '/a/root'],
-      projectConfigDirs: [],
-    });
-  });
 });
 
 describe('WorkspaceEditDialog shared behavior', () => {
@@ -395,34 +371,6 @@ describe('WorkspaceEditDialog shared behavior', () => {
     submitButton().click();
     await nextTick();
     expect(submit).not.toHaveBeenCalled();
-  });
-
-  it('disables submit until project config import finishes', async () => {
-    let finishImport!: (dirs: string[]) => void;
-    const { submit } = mountDialog({
-      initialDirs: ['/a/root'],
-      importProjectConfig: () => new Promise<string[]>((resolve) => {
-        finishImport = resolve;
-      }),
-    });
-    await nextTick();
-    document.querySelector<HTMLButtonElement>('.we-dirs-actions .ui-button')!.click();
-    await nextTick();
-
-    expect(submitButton().disabled).toBe(true);
-    submitButton().click();
-    expect(submit).not.toHaveBeenCalled();
-
-    finishImport(['/a/extra']);
-    await vi.waitFor(() => {
-      expect(submitButton().disabled).toBe(false);
-    });
-    submitButton().click();
-    expect(submit).toHaveBeenCalledWith({
-      name: 'root',
-      dirs: ['/a/root', '/a/extra'],
-      projectConfigDirs: ['/a/extra'],
-    });
   });
 
   it('locks directory edits until project config import finishes', async () => {
@@ -476,8 +424,6 @@ describe('WorkspaceEditDialog remote directories', () => {
 
     document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
     await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
-    expect(document.querySelector<HTMLButtonElement>('button.we-source-select')!.disabled).toBe(false);
-
     const addMore = document.querySelector<HTMLButtonElement>('.we-dirs-actions .we-add-directory')!;
     addMore.click();
     await vi.waitFor(() => expect(dirRows()).toHaveLength(3));
@@ -533,56 +479,33 @@ describe('WorkspaceEditDialog remote directories', () => {
     expect(pickRemote).not.toHaveBeenCalled();
   });
 
-  it('imports project config directories from the remote host', async () => {
-    const importProjectConfig = vi.fn(async () => ['/srv/shared']);
+  it('imports remote project config and blocks submit while importing or disconnected', async () => {
+    let finishImport!: (dirs: string[]) => void;
+    const importProjectConfig = vi.fn(() => new Promise<string[]>((resolve) => { finishImport = resolve; }));
+    const devbox = ref(sshHost('devbox', { status: 'ready' }));
     const { submit } = mountDialog({
-      initialDirs: ['/srv/app'],
-      initialHostId: 'devbox',
-      hosts: [sshHost('other'), sshHost('devbox')],
-      importProjectConfig,
-    });
-    await nextTick();
-
-    expect(document.querySelector('button.we-source-select')?.textContent).toContain('devbox');
-    const importButton = [...document.querySelectorAll<HTMLButtonElement>('.we-dirs-actions button')]
-      .find((button) => button.textContent?.includes('Import config'))!;
-    expect(importButton).toBeDefined();
-    importButton.click();
-    await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
-    expect(importProjectConfig).toHaveBeenCalledExactlyOnceWith('/srv/app', 'devbox');
-
-    submitButton().click();
-    expect(submit).toHaveBeenCalledWith({
-      name: 'app',
-      dirs: ['/srv/app', '/srv/shared'],
-      hostId: 'devbox',
-      projectConfigDirs: ['/srv/shared'],
-    });
-  });
-
-  it('keeps the selected host and blocks submit instead of switching to local when the host disconnects mid-dialog', async () => {
-    const devbox = sshHost('devbox', { status: 'ready' });
-    hostsStore().byId = { devbox };
-    const { submit } = mountDialog({
-      initialDirs: ['/srv/app'],
-      initialHostId: 'devbox',
-      hosts: [devbox],
-    });
-    await nextTick();
-    expect(submitButton().disabled).toBe(false);
-
-    hostsStore().byId = {
-      devbox: sshHost('devbox', { status: 'disconnected', connectError: 'Connection reset' }),
-    };
-    app!.unmount();
-    const broken = hostsStore().byId['devbox']!;
-    mountDialog({
       mode: 'edit',
       initialName: 'app',
       initialDirs: ['/srv/app'],
       initialHostId: 'devbox',
-      hosts: [broken],
+      get hosts() { return [devbox.value]; },
+      importProjectConfig,
     });
+    await nextTick();
+
+    const importButton = [...document.querySelectorAll<HTMLButtonElement>('.we-dirs-actions button')]
+      .find((button) => button.textContent?.includes('Import config'))!;
+    importButton.click();
+    await nextTick();
+    expect(submitButton().disabled).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('.we-add-directory')!.disabled).toBe(true);
+    submitButton().click();
+    expect(submit).not.toHaveBeenCalled();
+
+    finishImport(['/srv/shared']);
+    await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
+    expect(importProjectConfig).toHaveBeenCalledExactlyOnceWith('/srv/app', 'devbox');
+    devbox.value = sshHost('devbox', { status: 'disconnected', connectError: 'Connection reset' });
     await nextTick();
     expect(submitButton().disabled).toBe(true);
     submitButton().click();

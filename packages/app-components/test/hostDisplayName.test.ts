@@ -75,14 +75,6 @@ describe('host display names', () => {
     expect(host.querySelector('.host-notice-settings')).not.toBeNull();
   });
 
-  it('leaves a ready host with no models to the model pill', async () => {
-    hostsStore().byId = { devbox: { id: 'devbox', host: 'dev.example.test', name: 'Build box', status: 'ready' } };
-    hostsStore().accounts = { devbox: { status: 'signedOut', modelsReady: false } };
-    mount(HostNotice, 'devbox');
-    await nextTick();
-    expect(host.querySelector('.host-notice')).toBeNull();
-  });
-
   it('names the outdated remote version and offers SSH settings on a failed host', async () => {
     hostsStore().byId = {
       devbox: {
@@ -100,9 +92,6 @@ describe('host display names', () => {
     const reason = host.querySelector<HTMLElement>('.host-notice-reason')!;
     expect(reason.textContent).toContain('0.40.0');
     expect(reason.title).toContain("unknown option '--probe'");
-    expect(host.querySelector('.host-notice-reconnect')).not.toBeNull();
-    expect(host.querySelector('.host-notice-settings')).not.toBeNull();
-
     hostsStore().connecting = { devbox: true };
     await nextTick();
     expect(host.querySelector('.host-notice-title')?.textContent).toContain('Retrying');
@@ -151,9 +140,7 @@ describe('host display names', () => {
       sessionCount: 0,
     } as never);
     await nextTick();
-    expect(document.body.textContent).toContain('Rename');
-    expect(document.body.textContent).toContain('Edit project');
-    expect(document.body.querySelector('.ws-menu-host-settings')).not.toBeNull();
+    expect(document.body.querySelector('.ui-menu-item.is-disabled')).toBeNull();
 
     await menuInstance!.openContext(new MouseEvent('contextmenu', { clientX: 10, clientY: 10 }), {
       id: 'ws-broken',

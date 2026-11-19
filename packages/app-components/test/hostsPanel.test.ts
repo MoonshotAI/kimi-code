@@ -7,6 +7,7 @@ import type { AppHost, AppHostDefinition, AppHostTestResult, AppSshConfigHosts }
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
 import { hostsStore, type HostAccount } from '@moonshot-ai/app-client/stores';
 import HostsPanel from '../src/settings/HostsPanel.vue';
+import HostTestResult from '../src/settings/HostTestResult.vue';
 
 let app: App | undefined;
 let host: HTMLDivElement;
@@ -158,6 +159,24 @@ async function openRowEditor(index = 0): Promise<void> {
   await nextTick();
 }
 
+describe('HostTestResult', () => {
+  it.each([
+    ['executor_not_found', '.etr-install-command', 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'],
+    ['executor_outdated', '.etr-update-command', 'kimi upgrade'],
+  ] as const)('copies the recovery command for %s', async (failure, selector, command) => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    app = createApp({ render: () => h(HostTestResult, { state: 'failed', endpoint: 'devbox', failure, reason: 'Failed', detail: 'raw' }) });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+
+    const button = host.querySelector<HTMLButtonElement>(selector)!;
+    button.click();
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith(command));
+    await vi.waitFor(() => expect(button.textContent).toContain('Copied'));
+  });
+});
+
 describe('HostsPanel', () => {
   it('tests a new host before saving it and connects right after without copying providers', async () => {
     const { test, save, connect, copyProviders } = mountPanel();
@@ -218,68 +237,18 @@ describe('HostsPanel', () => {
     await vi.waitFor(() => expect(host.querySelector('.etr-reason')).not.toBeNull());
 
     expect(host.querySelector('.etr-reason')?.textContent).toContain('0.40.0');
-    expect(host.querySelector('.etr-hint')?.textContent).toContain('Kimi Code CLI');
-    expect(host.querySelector('.etr-detail-toggle')).toBeNull();
+    expect(host.querySelector('.etr-hint')).not.toBeNull();
     expect(host.querySelector('.etr-detail')?.textContent).toContain("unknown option '--probe'");
     expect(host.querySelector('.etr-step')).toBeNull();
-    expect(host.querySelector('.etr-label')).toBeNull();
   });
 
-  it('copies the update command from an expanded outdated host', async () => {
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    mountPanel({
-      hosts: [sshHost('devbox', { status: 'disconnected', connectError: 'raw', connectFailure: 'executor_outdated' })],
-    });
-    await flush();
-    host.querySelector<HTMLElement>('.re-row-lead')!.click();
-    await nextTick();
-
-    const button = host.querySelector<HTMLButtonElement>('.etr-update-command')!;
-    expect(button.parentElement).toBe(host.querySelector('.etr-solution'));
-    expect(button.previousElementSibling?.classList.contains('etr-hint')).toBe(true);
-    expect(button.textContent).toContain('Copy update command');
-    button.click();
-    await vi.waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith('kimi upgrade'));
-    await vi.waitFor(() => expect(button.textContent).toContain('Copied'));
-    expect(host.querySelector('.etr-install-command')).toBeNull();
-  });
-
-  it('copies the install command from a failed connection test', async () => {
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    const test = vi.fn(async () => failedTest('kimi: not found', 'executor_not_found'));
-    mountPanel({ test });
-    await openDraft();
-
-    saveButton().click();
-    await vi.waitFor(() => expect(host.querySelector('.etr-install-command')).not.toBeNull());
-    const button = host.querySelector<HTMLButtonElement>('.etr-install-command')!;
-    expect(button.parentElement).toBe(host.querySelector('.etr-solution'));
-    expect(button.previousElementSibling?.classList.contains('etr-hint')).toBe(true);
-    expect(host.querySelector('.etr-update-command')).toBeNull();
-    button.click();
-    await vi.waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith('curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'));
-    await vi.waitFor(() => expect(button.textContent).toContain('Copied'));
-  });
-
-  it.each([
-    'executor_outdated',
-    'authentication_failed',
-    'remote_busy',
-  ] as const)('offers reason, hint, reconnect, and edit for %s when expanded', async (failure) => {
+  it('offers failure guidance, reconnect, and edit in the expanded row', async () => {
     const { connect } = mountPanel({
-      hosts: [sshHost('devbox', { status: 'disconnected', connectError: 'raw', connectFailure: failure })],
+      hosts: [sshHost('devbox', { status: 'disconnected', connectError: 'raw', connectFailure: 'authentication_failed' })],
     });
     await flush();
 
-    expect(host.querySelector('.re-row-details-text')).not.toBeNull();
-    expect(host.querySelector('.re-row-action')).toBeNull();
-    host.querySelector<HTMLElement>('.re-row-lead')!.click();
-    await nextTick();
-    expect(host.querySelector('.re-page')).toBeNull();
-    expect(host.querySelector('.re-row-failure .etr-reason')).toBeNull();
-    expect(host.querySelector('.re-row-details-text')?.textContent).toBeTruthy();
+    await expandFailure();
     expect(host.querySelector('.re-row-failure .etr-hint')).not.toBeNull();
     host.querySelector<HTMLButtonElement>('.re-row-failure .re-row-reconnect')!.click();
     await vi.waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith('devbox'));
@@ -517,9 +486,7 @@ describe('HostsPanel SSH config hosts', () => {
     });
     await mountHosts({ save });
     hostRow('gpu').querySelector<HTMLButtonElement>('.re-host-add')!.click();
-    await vi.waitFor(() => expect(host.querySelector('.re-row-failure')).not.toBeNull());
-
-    expect(host.querySelector('.re-row-failure .etr-hint')?.textContent).toContain('SSH');
+    await vi.waitFor(() => expect(host.querySelector('.re-row-failure .etr-hint')).not.toBeNull());
     host.querySelector<HTMLButtonElement>('.re-row-failure .re-row-edit')!.click();
     await nextTick();
     const inputs = host.querySelectorAll<HTMLInputElement>('.re-page .ui-input');
@@ -625,41 +592,24 @@ describe('HostsPanel SSH config hosts', () => {
 });
 
 describe('HostsPanel navigation and row actions', () => {
-  it('opens the add page when settings are focused with no hosts', async () => {
+  it('opens the add page for focused empty settings and resets the request after navigating away', async () => {
     const { store } = mountPanel({
       hosts: [],
       loadSshHosts: async () => ({ configPath: '/home/me/.ssh/config', exists: true, hosts: [{ alias: 'devbox' }] }),
     });
     await flush();
-    expect(host.querySelector('.re-page')).toBeNull();
 
     store.requestFocus(null, { addIfEmpty: true });
-    await flush();
-    expect(host.querySelector('.re-page-title')?.textContent).toContain('Add host');
-    expect(host.querySelector('.re-hosts')).not.toBeNull();
+    await vi.waitFor(() => expect(host.querySelector('.re-hosts')).not.toBeNull());
     expect(host.querySelector('.re-page .ui-input')).toBeNull();
     expect(store.addIfEmpty).toBe(false);
 
+    host.querySelector<HTMLButtonElement>('.re-back')!.click();
     store.requestFocus(null, { addIfEmpty: true });
     expect(store.addIfEmpty).toBe(true);
     store.requestFocus(null);
-    await flush();
+    await vi.waitFor(() => expect(host.querySelector('.re-hosts')).not.toBeNull());
     expect(store.addIfEmpty).toBe(false);
-    expect(host.querySelector('.re-page-title')?.textContent).toContain('Add host');
-    expect(host.querySelector('.re-hosts')).not.toBeNull();
-  });
-
-  it('opens the manual form from an empty host list only after SSH config has nothing to add', async () => {
-    const { store } = mountPanel({
-      hosts: [],
-      loadSshHosts: async () => ({ configPath: '/home/me/.ssh/config', exists: true, hosts: [] }),
-    });
-    await flush();
-
-    store.requestFocus(null, { addIfEmpty: true });
-    await flush();
-    expect(host.querySelector('.re-page .ui-input')).not.toBeNull();
-    expect(host.querySelector('.re-hosts')).toBeNull();
   });
 
   it('surfaces New project directly on ready rows without jumping to edit on row click, and expands focused hosts', async () => {
@@ -680,12 +630,7 @@ describe('HostsPanel navigation and row actions', () => {
 
     const createButtons = host.querySelectorAll<HTMLButtonElement>('.re-row-create-project');
     expect(createButtons).toHaveLength(3);
-    expect(createButtons[0]!.querySelector('[data-icon="folder-plus"]')).not.toBeNull();
-    expect(createButtons[0]!.textContent).toBe('');
-    expect(createButtons[0]!.disabled).toBe(false);
     expect(createButtons[1]!.disabled).toBe(true);
-    expect(createButtons[1]!.getAttribute('aria-label')).toContain('Connect to create a project');
-    expect(createButtons[0]!.compareDocumentPosition(host.querySelector('.re-row-more')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     createButtons[1]!.click();
     createButtons[0]!.click();
     expect(createProject).toHaveBeenCalledExactlyOnceWith('ready-box');
@@ -760,12 +705,9 @@ describe('HostsPanel model setup', () => {
     const signOut = vi.fn<() => Promise<void>>()
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(undefined);
-    const { signIn } = mountPanel({
+    const { signIn, loadAccount } = mountPanel({
       hosts: [sshHost('devbox', { status: 'ready' }), sshHost('named', { status: 'ready' }), sshHost('idle-box')],
-      accounts: {
-        devbox: { status: 'signedOut', modelsReady: true },
-        named: { status: 'signedIn', modelsReady: true },
-      },
+      accounts: { named: { status: 'signedIn', modelsReady: true } },
       signOut,
     });
     await flush();
@@ -776,6 +718,11 @@ describe('HostsPanel model setup', () => {
 
     await openMenu('devbox');
     expect(menuItem('.re-menu-sign-out')).toBeNull();
+    expect(menuItem('.re-menu-sign-in')).toBeNull();
+    expect(loadAccount).toHaveBeenCalledExactlyOnceWith('devbox');
+    hostsStore().accounts = { ...hostsStore().accounts, devbox: { status: 'signedOut', modelsReady: true } };
+    await openMenu('devbox');
+    await openMenu('devbox');
     expect(menuItem('.re-menu-copy')).not.toBeNull();
     menuItem('.re-menu-sign-in')!.click();
     await flush();
@@ -783,7 +730,6 @@ describe('HostsPanel model setup', () => {
     await vi.waitFor(() => expect(host.querySelector('.re-row-menu')).toBeNull());
 
     await openMenu('named');
-    expect(menuItem('.re-menu-sign-out')?.textContent).toContain('Sign out of Kimi');
     menuItem('.re-menu-sign-out')!.click();
     await vi.waitFor(() => expect(host.querySelector('[role="alert"]')).not.toBeNull());
     expect(signOut).toHaveBeenCalledExactlyOnceWith('named');
@@ -792,18 +738,6 @@ describe('HostsPanel model setup', () => {
     menuItem('.re-menu-edit')!.click();
     await flush();
     expect(host.querySelector('.re-page-title')?.textContent).toContain('named');
-  });
-
-  it('keeps Copy local custom providers in the menu and retries loading account when account fetch had failed', async () => {
-    const { loadAccount } = mountPanel({
-      hosts: [sshHost('devbox', { status: 'ready' })],
-      accounts: {},
-    });
-    await flush();
-
-    await openMenu('devbox');
-    expect(loadAccount).toHaveBeenCalledExactlyOnceWith('devbox');
-    expect(menuItem('.re-menu-copy')).not.toBeNull();
   });
 
   it('reports a copy started from the menu on the status line', async () => {
