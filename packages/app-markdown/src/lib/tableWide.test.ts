@@ -53,6 +53,8 @@ class StubElement {
   rectLeft = 0;
   rectRight = 0;
   rectHeight = 0;
+  clientWidth = 0;
+  overflowX = 'visible';
   style: Record<string, string> = {};
   hostContext: unknown = null;
   dispatched: Array<{ type: string; bubbles: boolean }> = [];
@@ -170,8 +172,14 @@ class StubElement {
     }
     return null;
   }
-  getBoundingClientRect(): { top: number; left: number; right: number; height: number } {
-    return { top: this.rectTop, left: this.rectLeft, right: this.rectRight, height: this.rectHeight };
+  getBoundingClientRect(): { top: number; left: number; right: number; width: number; height: number } {
+    return {
+      top: this.rectTop,
+      left: this.rectLeft,
+      right: this.rectRight,
+      width: this.rectRight - this.rectLeft,
+      height: this.rectHeight,
+    };
   }
   querySelector(selector: string): StubElement | null {
     if (selector.startsWith(':scope > .')) {
@@ -256,7 +264,10 @@ beforeEach(() => {
     createElement: () => new StubElement(),
   };
   (globalThis as Record<string, unknown>).ResizeObserver = StubResizeObserver;
-  (globalThis as Record<string, unknown>).getComputedStyle = () => ({ columnGap: '6px' });
+  (globalThis as Record<string, unknown>).getComputedStyle = (el?: StubElement) => ({
+    columnGap: '6px',
+    overflowX: el?.overflowX ?? 'visible',
+  });
   vi.stubGlobal('navigator', { clipboard: { writeText } });
 });
 
@@ -486,6 +497,29 @@ describe('positionTableActions', () => {
     stubOf(wrapper).rectRight = 750;
     positionTableActions(wrapper);
     expect(actionsOf(wrapper).style.left).toBe('756px');
+  });
+
+  it('moves the actions inside the visible right edge when the outside position would be clipped', () => {
+    const wrapper = makeWrapper({ rectRight: 600 });
+    const pane = new StubElement();
+    pane.rectRight = 620;
+    pane.clientWidth = 620;
+    pane.overflowX = 'auto';
+    pane.appendChild(hostOf(wrapper));
+    ensureTableWideToggle(wrapper, LABELS);
+    const actions = actionsOf(wrapper);
+    stubOf(actions).rectRight = 26;
+
+    positionTableActions(wrapper);
+    expect(actions.style.left).toBe('568px');
+
+    stubOf(wrapper).rectRight = 650;
+    positionTableActions(wrapper);
+    expect(actions.style.left).toBe('588px');
+
+    stubOf(wrapper).rectRight = 500;
+    positionTableActions(wrapper);
+    expect(actions.style.left).toBe('506px');
   });
 
   it('no-ops when the wrapper has no actions (not injected)', () => {
