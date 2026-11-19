@@ -124,7 +124,7 @@ function localList(sessions: FakeSession[]): (query: Omit<ListSessionsQuery, 'ho
 }
 
 function sourcesOf(hosts: Array<{ id: string; session: HostSession | undefined }>): HostSources {
-  return { sources: () => hosts };
+  return { sources: () => hosts.map(({ id, session }) => ({ id, getSession: async () => session })) };
 }
 
 function ids(data: unknown): string[] {
@@ -214,8 +214,8 @@ describe('sessions across hosts', () => {
   });
 
   it('reports hosts that are offline or failing and still answers with the rest', async () => {
-    const failing = { ...hosts.sources()[0]!.session!, request: async () => { throw new Error('tunnel closed'); } };
-    const unavailableHosts = sourcesOf([{ id: 'off', session: undefined }, { id: 'broken', session: failing }, ...hosts.sources()]);
+    const failing = { ...session, request: async () => { throw new Error('tunnel closed'); } };
+    const unavailableHosts = sourcesOf([{ id: 'off', session: undefined }, { id: 'broken', session: failing }, { id: 'dev', session }]);
 
     const page = await list({ page_size: 50 }, unavailableHosts, local);
 
