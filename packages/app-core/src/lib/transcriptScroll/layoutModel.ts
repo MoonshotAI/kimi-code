@@ -251,7 +251,7 @@ export class LayoutModel {
     }
     const rows: RenderedRow[] = [];
     let end = 0;
-    for (const index of [...chosen].sort((a, b) => a - b)) {
+    for (const index of [...chosen].toSorted((a, b) => a - b)) {
       rows.push({ index, key: this.keys[index]!, spaceBefore: this.top(index) - this.top(end) });
       end = index + 1;
     }

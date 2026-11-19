@@ -26,6 +26,22 @@ function resolve(s: LayoutSim, path: AnchorPath): HTMLElement {
   return createDomAnchors(s.scroller).resolve(path)!;
 }
 
+type AnchoredMode = Extract<ScrollMode, { kind: 'anchored' }>;
+
+function stepCheck(s: LayoutSim, anchored: { mode: ScrollMode; anchor: AnchorPath } | null): { kind: 'follow' | 'anchored' | 'clamped'; actual: unknown[]; expected: unknown[] } {
+  if (anchored === null) {
+    return { kind: 'follow', actual: [s.controller.state.following, s.distanceFromBottom()], expected: [true, 0] };
+  }
+  const { offset } = anchored.mode as AnchoredMode;
+  const el = resolve(s, anchored.anchor);
+  const desired = s.docTop(el) - offset;
+  const sameMode = s.controller.state.mode === anchored.mode;
+  if (desired >= 0 && desired <= s.maxTop) {
+    return { kind: 'anchored', actual: [sameMode, s.visualTop(el)], expected: [true, offset] };
+  }
+  return { kind: 'clamped', actual: [sameMode, s.scrollTop], expected: [true, Math.min(Math.max(0, desired), s.maxTop)] };
+}
+
 function scrollUserTo(s: LayoutSim, top: number): void {
   s.userScroll(top);
   s.frame();
@@ -581,21 +597,10 @@ describe('randomized invariants', () => {
         s.frame();
         s.frame();
         const where = `sequence ${sequence} step ${step}`;
-        if (follow) {
-          expect(s.controller.state.following, where).toBe(true);
-          expect(s.distanceFromBottom(), where).toBe(0);
-          followChecks++;
-        } else {
-          expect(s.controller.state.mode, where).toBe(mode);
-          const el = resolve(s, anchor!);
-          const desired = s.docTop(el) - (mode as Extract<ScrollMode, { kind: 'anchored' }>).offset;
-          if (desired >= 0 && desired <= s.maxTop) {
-            expect(s.visualTop(el), where).toBe((mode as Extract<ScrollMode, { kind: 'anchored' }>).offset);
-            anchoredChecks++;
-          } else {
-            expect(s.scrollTop, where).toBe(Math.min(Math.max(0, desired), s.maxTop));
-          }
-        }
+        const check = stepCheck(s, follow ? null : { mode, anchor: anchor! });
+        expect(check.actual, where).toStrictEqual(check.expected);
+        if (check.kind === 'follow') followChecks++;
+        if (check.kind === 'anchored') anchoredChecks++;
       }
       expect(Math.max(0, ...s.writesPerCallback)).toBeLessThanOrEqual(1);
       expect(s.assignments).toBe(s.writes.length);
