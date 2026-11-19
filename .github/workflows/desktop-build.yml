@@ -131,30 +131,22 @@ jobs:
             echo "::notice::hotfix 补丁分支：跳过本次 push 的 canary 构建"
           fi
 
+  # nightly 只拦同仓 changeset-release/release/* -> release/* 且确含 Desktop
+  # 版本变化的 PR；CLI-only 不阻断，版本证据不可判读时 fail-closed。
   nightly-guard:
-    name: Skip nightly during release window
+    name: Skip nightly during Desktop release window
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
+      - uses: actions/checkout@v6
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          prs="$(gh pr list --repo "${{ github.repository }}" --state open --limit 100 \
-            --json number,headRefName,baseRefName,isCrossRepository \
-            --jq '[.[] | select((.headRefName | startswith("changeset-release/")) and (.isCrossRepository | not))]')"
-          echo "open desktop version PRs: $(echo "$prs" | jq -c '.[]')"
-          [ "$(echo "$prs" | jq 'length')" -eq 0 ] && skip=false || skip=true
-          echo "nightly skip: $skip"
-          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+        run: node scripts/desktop-nightly-guard.mjs
 
   # 动态矩阵：jobs.<id>.if 在 matrix 展开前求值、拿不到 matrix 上下文
   #（之前 job 级 if 引用 matrix.target 把整个文件判了无效，push 全是 0s
