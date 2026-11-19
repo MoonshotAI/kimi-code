@@ -3,6 +3,8 @@ export default {
   searchingFor: 'Searching for “{query}”…',
   noMatch: 'No matches',
   skills: 'Skills',
+  sessions: 'Sessions',
+  backToMentions: 'Back',
   global: 'Global',
   builtin: 'Built-in',
   openSkill: 'Open skill file',

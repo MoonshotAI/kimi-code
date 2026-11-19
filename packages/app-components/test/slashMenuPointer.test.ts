@@ -148,6 +148,19 @@ describe('skill source labels', () => {
     expect(document.querySelector('.mention-state')).toBeNull();
     expect(document.querySelector('.composer-menu-hints')).toBeNull();
   });
+
+  it('shows the searching row without a Files header in the sessions submenu', async () => {
+    app = createApp({
+      render: () => h(MentionMenu, { items: [], activeIndex: 0, loading: true, query: 'login', submenuTitle: 'Sessions' }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    expect(document.querySelector('.mention-submenu-head')?.textContent).toBe('Sessions');
+    expect(document.querySelector('.mention-section-label')).toBeNull();
+    expect(document.querySelector('.mention-searching')?.textContent).toBe('Searching for “login”…');
+  });
 });
 
 describe('mobile command layout', () => {

@@ -790,4 +790,46 @@ describe('notify turn handoff', () => {
     });
     await executable.close();
   });
+
+  it('interrupts an in-flight text response for sendNow and consumes it in a new turn', async () => {
+    const events: LoopEmitted[] = [];
+    let calls = 0;
+    let firstSignal: AbortSignal | undefined;
+    const scripted = createMockProviderRequester((_request, signal) => {
+      calls += 1;
+      if (calls > 1) return done('notified');
+      firstSignal = signal;
+      return {
+        parts: [{ type: 'text', text: 'partial' }],
+        error: new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason)));
+          }, { once: true });
+        }),
+      };
+    });
+    const loop = createLoop({
+      requester: scripted,
+      executor: createExecutor({}),
+    });
+    loop.subscribe((event) => events.push(event));
+    const firstRequest = once(loop, (event) => event.type === 'llm.delta.part');
+    const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 1);
+    const first = loop.runTurn(prompt('work'));
+    await firstRequest;
+
+    loop.sendNow(prompt('new input'));
+
+    expect(await first).toMatchObject({ type: 'done', cause: { by: 'loop', reason: 'steered' } });
+    await followup;
+    expect(firstSignal?.aborted).toBe(true);
+    expect(calls).toBe(2);
+    expect(events.filter((event) => event.type === 'turn.started').map((event) => event.turnId)).toEqual([0, 1]);
+    expect(events.find((event) => event.type === 'message.appended' && event.source === 'notify')).toMatchObject({
+      turnId: 1,
+      step: 0,
+      message: prompt('new input'),
+    });
+    await loop.close();
+  });
 });

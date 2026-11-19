@@ -141,6 +141,8 @@ export interface ListSessionsInput extends PageRequest {
   updatedBefore?: string;
   archived?: boolean | 'all';
   hasPrompt?: boolean;
+  query?: string;
+  localOnly?: boolean;
   sort?: SessionsSort;
   include?: 'git';
   pageToken?: string;
@@ -1021,7 +1023,7 @@ export interface RemoteControlStatus {
 export interface KimiWebApi {
   dispose(): void;
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
-  getMeta(): Promise<{ protocolVersion: string; serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean; experimentalFlags: Record<string, boolean>; backend: 'v1' | 'v2'; webTitle: string }>;
+  getMeta(): Promise<{ protocolVersion: string; serverVersion: string; serverId: string; startedAt: string; homeDir: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean; experimentalFlags: Record<string, boolean>; backend: 'v1' | 'v2'; webTitle: string }>;
   getRemoteControlStatus(): Promise<RemoteControlStatus>;
   setRemoteControlEnabled(enabled: boolean): Promise<RemoteControlStatus>;
   listRemoteControlDevices(): Promise<RcDeviceList>;
@@ -1178,6 +1180,17 @@ export interface KimiWebApi {
   getUserInfo(): Promise<ManagedUserInfoResult>;
   getOAuthRegion(): Promise<OAuthRegion | null>;
   getClientConfig(name: string, options?: ReadRequestOptions): Promise<unknown>;
+  getSessionContextSummary(sessionId: string, agentId?: string, options?: ReadRequestOptions): Promise<SessionContextSummary>;
+  getSessionContextItems(
+    sessionId: string,
+    query?: { agentId?: string; role?: string; roles?: readonly string[]; offset?: number; limit?: number },
+    options?: ReadRequestOptions,
+  ): Promise<SessionContextItemsResponse>;
+  getSessionContextItem(
+    sessionId: string,
+    itemId: string,
+    agentId?: string,
+  ): Promise<SessionContextItemDetail>;
 }
 
 export type OAuthRegion = 'mainland-cn' | 'global';
@@ -1253,6 +1266,61 @@ export type ManagedUserInfoResult =
   | { kind: 'error'; message: string; status?: number };
 
 export const MANAGED_KIMI_CODE_PROVIDER_ID = 'managed:kimi-code';
+
+export interface SessionContextGroup {
+  role: string;
+  count: number;
+  tokens: number;
+}
+
+export interface SessionContextSummary {
+  session_id: string;
+  agent_id: string;
+  captured_at: number;
+  model?: string;
+  tokens: {
+    used: number;
+    max?: number;
+  };
+  groups: SessionContextGroup[];
+}
+
+export interface SessionContextItemSummary {
+  id: string;
+  role: string;
+  name?: string;
+  sequence?: number;
+  preview: string;
+  tokens: number;
+  has_media: boolean;
+}
+
+export interface SessionContextItemsResponse {
+  summary: SessionContextSummary;
+  tools: SessionContextItemSummary[];
+  items: SessionContextItemSummary[];
+  total: number;
+  has_more: boolean;
+}
+
+export interface SessionContextItemPart {
+  kind: 'text' | 'think' | 'definition' | 'function' | 'media';
+  text?: string;
+  name?: string;
+  tokens?: number;
+  data?: unknown;
+}
+
+export interface SessionContextItemDetail {
+  id: string;
+  role: string;
+  name?: string;
+  sequence?: number;
+  tokens: number;
+  has_media: boolean;
+  parts: SessionContextItemPart[];
+  raw: unknown;
+}
 
 export interface AuthResult {
   modelsReady: boolean;

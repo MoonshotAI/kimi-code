@@ -289,8 +289,10 @@ describe('TowerSpawnTool', () => {
     expect(tool.description).not.toContain('Available models');
 
     secondaryModel = { model: 'cheap/fast' };
-    expect(properties()).not.toHaveProperty('model');
-    expect(tool.description).not.toContain('Available models');
+    expect(properties()['model']?.type).toBe('string');
+    expect(properties()['model']?.enum).toBeUndefined();
+    expect(tool.description).toContain('Available models (pass via model):');
+    expect(tool.description).toContain('- cheap/fast [default]');
   });
 
   it('refuses when tower mode is not active', async () => {
@@ -687,7 +689,7 @@ describe('TowerSpawnTool', () => {
     expect(activityLog).toMatch(/spawn .*model=kimi-code/);
   });
 
-  it('binds reviewers to the configured pool default', async () => {
+  it('binds reviewers to the tower model when a pool is configured', async () => {
     secondaryModel = {
       defaultModel: 'cheap/fast',
       models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
@@ -697,6 +699,43 @@ describe('TowerSpawnTool', () => {
       name: 'reviewer-a',
       kind: 'reviewer',
       review_target: 'feat/build-gemm',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('model: kimi-code');
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      labels: { parentAgentId: 'main' },
+    });
+    const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+    expect(activityLog).toMatch(/spawn .*model=kimi-code/);
+  });
+
+  it('binds reviewers to the tower model by default with a single-model pool', async () => {
+    secondaryModel = { model: 'cheap/fast' };
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/build-gemm',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('model: kimi-code');
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      labels: { parentAgentId: 'main' },
+    });
+  });
+
+  it('lets a reviewer keep a single-model pool via an explicit alias', async () => {
+    secondaryModel = { model: 'cheap/fast' };
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/build-gemm',
+      model: 'cheap/fast',
     });
 
     expect(result.isError).toBeUndefined();

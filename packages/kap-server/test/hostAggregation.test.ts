@@ -213,6 +213,26 @@ describe('sessions across hosts', () => {
     expect(requests.filter((path) => path.startsWith('/api/v1/sessions'))).toEqual([]);
   });
 
+  it('forwards the text query to the local listing and every host', async () => {
+    const requests: string[] = [];
+    const localQueries: Array<Omit<ListSessionsQuery, 'hosts'>> = [];
+    const hosts = sourcesOf([{ id: 'dev', session: fakeHost(projects, remote, requests) }]);
+    const outcome = await listSessionsAcrossHosts(
+      { hosts: 'include', page_size: 50, query: 'login' } as ListSessionsQuery,
+      hosts,
+      (query) => {
+        localQueries.push(query);
+        return localList(local)(query);
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(localQueries.map((query) => query.query)).toEqual(['login']);
+    const hostListings = requests.filter((path) => path.startsWith('/api/v1/sessions'));
+    expect(hostListings).not.toEqual([]);
+    expect(hostListings.map((path) => parseQuery(path).query['query'])).toEqual(hostListings.map(() => 'login'));
+  });
+
   it('reports hosts that are offline or failing and still answers with the rest', async () => {
     const failing = { ...hosts.sources()[0]!.session!, request: async () => { throw new Error('tunnel closed'); } };
     const unavailableHosts = sourcesOf([{ id: 'off', session: undefined }, { id: 'broken', session: failing }, ...hosts.sources()]);

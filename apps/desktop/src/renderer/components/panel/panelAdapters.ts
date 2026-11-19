@@ -230,6 +230,8 @@ export function panelTabProps(tab: PanelTab, ctx: PanelAdapterCtx): Record<strin
     }
     case 'inspector':
       return {};
+    case 'context':
+      return { sessionId: client.activeSessionId.value ?? '' };
     default:
       return null;
   }

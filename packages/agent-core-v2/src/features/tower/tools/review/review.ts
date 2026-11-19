@@ -24,7 +24,7 @@ export const TowerReviewToolInputSchema = z
     acceptance_tip: z
       .string()
       .optional()
-      .describe('Required for tower-recorded artifact acceptance: the completion tip shown in the acceptance-request the human approved'),
+      .describe('Required for tower-recorded artifact acceptance: the completion tip shown in the latest TowerComplete acceptance-request'),
   })
   .strict();
 

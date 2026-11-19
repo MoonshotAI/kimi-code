@@ -4,7 +4,7 @@ import { splitGraphemes, truncateGraphemes } from './graphemes';
 export { unescapeLinkText, unescapeRenderedLinkText, unescapeLinkDest } from './linkCodec';
 
 export type AttachmentKind = 'file' | 'folder' | 'image' | 'video';
-export type MentionKind = 'file' | 'folder' | 'skill';
+export type MentionKind = 'file' | 'folder' | 'skill' | 'session';
 
 export interface MentionAttrs {
   kind: MentionKind;
@@ -15,9 +15,37 @@ export interface MentionAttrs {
 
 export const SKILL_LINK_BASE = 'kimi-code://skill/';
 
+export const SESSION_LINK_BASE = 'kimi-code://session/';
+
+export interface SessionMentionRef {
+  workspaceId: string;
+  sessionId: string;
+}
+
+export function sessionMentionPath(ref: SessionMentionRef): string {
+  return `${ref.workspaceId}/${ref.sessionId}`;
+}
+
+export function parseSessionMentionPath(path: string): SessionMentionRef | null {
+  const segments = path.split('/');
+  if (segments.length !== 2) return null;
+  const [workspaceId, sessionId] = segments as [string, string];
+  if (workspaceId === '' || sessionId === '') return null;
+  return { workspaceId, sessionId };
+}
+
+export function decodeSessionMention(dest: string): SessionMentionRef | null {
+  if (!dest.startsWith(SESSION_LINK_BASE)) return null;
+  const segments = dest.slice(SESSION_LINK_BASE.length).split('/').map(decodeURIComponentOrRaw);
+  if (segments.length !== 2 || segments.some((segment) => segment === '' || segment.includes('/'))) return null;
+  const [workspaceId, sessionId] = segments as [string, string];
+  return { workspaceId, sessionId };
+}
+
 export function classifyMentionHref(href: string): MentionKind | null {
   if (!href) return null;
   if (href.startsWith(SKILL_LINK_BASE) && href.length > SKILL_LINK_BASE.length) return 'skill';
+  if (decodeSessionMention(href) !== null) return 'session';
   if (href.startsWith('#')) return null;
   if (href.startsWith('?')) return null;
   if (href.startsWith('//')) return null;
@@ -71,6 +99,9 @@ export function serializeMention(attrs: MentionAttrs): string {
     if (attrs.path) query.push(`path=${encodeWireComponent(attrs.path)}`);
     const suffix = query.length === 0 ? '' : `?${query.join('&')}`;
     return `[${text}](${SKILL_LINK_BASE}${encodeWireComponent(attrs.name)}${suffix})`;
+  }
+  if (attrs.kind === 'session') {
+    return `[${text}](${SESSION_LINK_BASE}${attrs.path.split('/').map(encodeWireComponent).join('/')})`;
   }
   if (attrs.rawDest !== undefined) return `[${text}](${/\s/.test(attrs.rawDest) ? `<${attrs.rawDest}>` : attrs.rawDest})`;
   const path = attrs.kind === 'folder' && !attrs.path.endsWith('/') && !attrs.path.endsWith('\\') ? `${attrs.path}/` : attrs.path;

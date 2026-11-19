@@ -20,11 +20,13 @@ const props = withDefaults(defineProps<{
   loading: boolean;
   query?: string;
   layout?: 'popup' | 'sheet';
-}>(), { query: '', layout: 'popup' });
+  submenuTitle?: string;
+}>(), { query: '', layout: 'popup', submenuTitle: undefined });
 
 const emit = defineEmits<{
   select: [item: MentionItem];
   hover: [index: number];
+  back: [];
 }>();
 
 const { t } = useI18n();
@@ -32,10 +34,12 @@ const { t } = useI18n();
 function rowKey(item: MentionItem): string {
   if (item.kind === 'browser') return `browser:${item.browser.captureId}`;
   if (item.kind === 'attachment') return `attachment:${item.attachment.entry.attId}`;
+  if (item.kind === 'session-group') return 'session-group';
+  if (item.kind === 'session') return `session:${item.session.id}`;
   return item.kind === 'skill' ? `skill:${skillIdentity(item.skill)}` : item.file.path;
 }
 
-function rowSection(item: MentionItem): 'media' | 'file' | 'skill' | 'browser' {
+function rowSection(item: MentionItem): 'media' | 'file' | 'skill' | 'browser' | 'session' {
   if (item.kind === 'browser') return 'browser';
   if (item.kind === 'attachment') {
     return item.attachment.entry.kind === 'image' || item.attachment.entry.kind === 'video'
@@ -43,13 +47,19 @@ function rowSection(item: MentionItem): 'media' | 'file' | 'skill' | 'browser' {
       : 'file';
   }
   if (item.kind === 'skill') return 'skill';
+  if (item.kind === 'session-group' || item.kind === 'session') return 'session';
   return 'file';
+}
+
+function startsSection(index: number): boolean {
+  return index === 0 || rowSection(props.items[index]!) !== rowSection(props.items[index - 1]!);
 }
 
 function sectionLabel(item: MentionItem): string {
   if (item.kind === 'browser') return t('browserReference.group');
   if (rowSection(item) === 'media') return t('composer.imagesAndVideos');
   if (item.kind === 'skill') return t('mention.skills');
+  if (rowSection(item) === 'session') return '';
   return t('composer.addFiles');
 }
 
@@ -58,6 +68,7 @@ const searchingLabel = computed(() =>
 );
 
 const searchingNeedsHeader = computed(() => {
+  if (props.submenuTitle !== undefined) return false;
   const last = props.items.at(-1);
   return last === undefined || rowSection(last) !== 'file';
 });
@@ -70,7 +81,16 @@ function rowIcon(item: MentionItem): string {
   if (item.kind === 'browser') return iconSvg('browser', 'sm');
   if (item.kind === 'attachment') return attachmentKindIconSvg(item.attachment.entry.kind);
   if (item.kind === 'skill') return mentionIconSvg('skill', '', item.skill.name);
+  if (item.kind === 'session-group' || item.kind === 'session') return mentionIconSvg('session', '', '');
   return fileMentionIconSvg(item.file.path, item.file.name, item.kind === 'folder');
+}
+
+function sessionSpans(item: Extract<MentionItem, { kind: 'session' }>): MentionMatchSpan[] {
+  return mentionMatchSpans(item.session.title, item.matchPositions, 0);
+}
+
+function sessionMeta(item: Extract<MentionItem, { kind: 'session' }>): string {
+  return [item.session.workspaceName, item.session.time].filter((part) => part !== undefined && part !== '').join(' · ');
 }
 
 function rowDir(path: string): string {
@@ -120,6 +140,7 @@ function dirSpans(file: FileItem): MentionMatchSpan[] {
 
 const scrollEl = ref<HTMLElement | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
+const headEl = ref<HTMLElement | null>(null);
 defineExpose({ el: menuEl });
 const scrolledUp = ref(false);
 const canScrollDown = ref(false);
@@ -216,7 +237,7 @@ function clampScrollToViewport(): void {
   const margin = parseFloat(menuStyle.getPropertyValue('--space-2')) || 8;
   const hints = menu.querySelector<HTMLElement>('.composer-menu-hints');
   const hintsHeight = hints ? hints.offsetHeight + (parseFloat(getComputedStyle(hints).marginTop) || 0) : 0;
-  const chrome = (parseFloat(menuStyle.paddingTop) || 0) + (parseFloat(menuStyle.paddingBottom) || 0) + hintsHeight;
+  const chrome = (parseFloat(menuStyle.paddingTop) || 0) + (parseFloat(menuStyle.paddingBottom) || 0) + hintsHeight + (headEl.value?.offsetHeight ?? 0);
   const cap = parseFloat(getComputedStyle(scroll).getPropertyValue('--p-mention-menu-h')) || Number.POSITIVE_INFINITY;
   const viewportTop = window.visualViewport?.offsetTop ?? 0;
   const available = parent.getBoundingClientRect().top - viewportTop - gap - margin - chrome;
@@ -283,6 +304,12 @@ watch(
   },
 );
 watch(
+  () => props.submenuTitle,
+  () => {
+    if (props.layout === 'popup') void nextTick(clampScrollToViewport);
+  },
+);
+watch(
   () => [props.items, props.loading],
   () => {
     void nextTick(() => {
@@ -295,6 +322,18 @@ watch(
 
 <template>
   <div ref="menuEl" class="mention-menu" :class="{ 'is-sheet': layout === 'sheet' }" data-menu-frame @mousedown="onMenuMouseDown">
+    <button
+      v-if="props.submenuTitle !== undefined"
+      ref="headEl"
+      type="button"
+      tabindex="-1"
+      class="mention-submenu-head"
+      :aria-label="t('mention.backToMentions')"
+      @mousedown.prevent="emit('back')"
+    >
+      <span class="mention-icon" aria-hidden="true" v-html="iconSvg('chevron-left', 'sm')" />
+      <span>{{ props.submenuTitle }}</span>
+    </button>
     <div v-if="!props.loading && props.items.length === 0" class="mention-state dim" role="status">{{ t('mention.noMatch') }}</div>
     <div
       id="composer-mention-menu"
@@ -307,7 +346,7 @@ watch(
     >
       <template v-for="(row, i) in props.items" :key="rowKey(row)">
         <div
-          v-if="i === 0 || rowSection(row) !== rowSection(props.items[i - 1]!)"
+          v-if="startsSection(i) && sectionLabel(row) !== ''"
           class="mention-section-label"
           :class="{ 'after-section': i > 0 }"
           role="presentation"
@@ -317,7 +356,10 @@ watch(
         <div
           :id="`composer-mention-option-${i}`"
           class="mention-item"
-          :class="{ active: i === props.activeIndex }"
+          :class="{
+            active: i === props.activeIndex,
+            'section-start': i > 0 && startsSection(i) && sectionLabel(row) === '',
+          }"
           role="option"
           :aria-selected="i === props.activeIndex"
           @pointermove="onRowPointerMove($event, i)"
@@ -368,6 +410,16 @@ watch(
             <span class="mention-name"><template v-for="(span, k) in skillSpans(row)" :key="k"><span v-if="span.hit" class="mention-hit">{{ span.text }}</span><template v-else>{{ span.text }}</template></template></span>
             <span class="mention-meta">{{ row.skill.description }}</span>
             <span v-if="skillWorkspaceLabel(row)" class="mention-dir">{{ skillWorkspaceLabel(row) }}</span>
+          </template>
+          <template v-else-if="row.kind === 'session-group'">
+            <span class="mention-icon" v-html="rowIcon(row)" aria-hidden="true" />
+            <span class="mention-name">{{ t('mention.sessions') }}</span>
+            <span class="mention-icon mention-chevron" v-html="iconSvg('chevron-right', 'sm')" aria-hidden="true" />
+          </template>
+          <template v-else-if="row.kind === 'session'">
+            <span class="mention-icon" v-html="rowIcon(row)" aria-hidden="true" />
+            <span class="mention-name mention-session-title"><template v-for="(span, k) in sessionSpans(row)" :key="k"><span v-if="span.hit" class="mention-hit">{{ span.text }}</span><template v-else>{{ span.text }}</template></template></span>
+            <span v-if="sessionMeta(row)" class="mention-dir">{{ sessionMeta(row) }}</span>
           </template>
           <template v-else>
             <span class="mention-icon" v-html="rowIcon(row)" aria-hidden="true" />
@@ -488,6 +540,34 @@ watch(
   margin-top: var(--space-2);
 }
 
+.mention-submenu-head {
+  display: flex;
+  align-items: center;
+  gap: var(--menu-row-gap-icon);
+  width: calc(100% + 2 * var(--menu-row-hug));
+  margin: 0 calc(-1 * var(--menu-row-hug)) var(--space-1);
+  padding: var(--menu-row-padding-block) var(--space-2);
+  border: none;
+  border-radius: var(--radius-menu-row);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  text-align: left;
+  cursor: pointer;
+}
+.mention-submenu-head:hover {
+  background: var(--color-hover);
+  color: var(--color-text-strong);
+}
+.mention-menu.is-sheet .mention-submenu-head {
+  width: 100%;
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
 .mention-searching {
   padding: var(--menu-row-padding-block) var(--space-2);
   font-family: var(--font-ui);
@@ -576,6 +656,9 @@ watch(
 .mention-item + .mention-item {
   margin-top: var(--menu-rows-seam);
 }
+.mention-item.section-start {
+  margin-top: var(--space-2);
+}
 @media (hover: none) {
   .mention-item {
     min-height: var(--touch-target-min);
@@ -604,6 +687,18 @@ watch(
 .mention-name .mention-hit {
   color: var(--color-text-strong);
   font-weight: var(--weight-semibold);
+}
+
+.mention-session-title {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-chevron {
+  margin-left: auto;
 }
 
 .mention-meta .mention-hit {
