@@ -15,6 +15,8 @@ import type {
   TelemetryProperties,
 } from '#/telemetry';
 
+export type { SessionResumeSelection, SessionResumeTarget } from '@moonshot-ai/agent-core-v2';
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
 export type JsonObject = { readonly [key: string]: JsonValue };
@@ -193,6 +195,7 @@ export interface WorkspaceTrustInstructionSources {
 
 /** Trust state of a workspace directory, plus everything trusting it would activate. */
 export interface WorkspaceTrustInfo {
+  readonly project?: { readonly id: string; readonly defaultCwd: string };
   readonly trusted: boolean;
   /** Project-level MCP servers that trusting would start. */
   readonly gatedMcpServers: readonly WorkspaceTrustMcpServerInfo[];
@@ -204,6 +207,7 @@ export interface WorkspaceTrustInfo {
 }
 
 export interface WorkspaceTrustInfoOptions {
+  readonly projectId?: string;
   readonly additionalDirs?: readonly string[];
   readonly environmentId?: string;
   readonly environmentCwd?: string;

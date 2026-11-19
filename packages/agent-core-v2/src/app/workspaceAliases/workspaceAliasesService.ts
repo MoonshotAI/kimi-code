@@ -5,6 +5,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { encodeWorkDirKey, isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import {
+  hasOriginalImplicitRoot,
   isOriginalImplicitLocation,
   readSessionIndexEntries,
   SESSION_INDEX_KEY,
@@ -89,8 +90,9 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
       const [catalog, index] = await Promise.all([this.catalog(), this.sessionIndex()]);
       if (generation !== this.invalidationGeneration) continue;
       const entry = catalog.byId.get(id);
-      const rootKey =
-        entry !== undefined ? workspaceRootKey(entry.root) : index.rootKeyById.get(id);
+      const rootKey = entry !== undefined && hasOriginalImplicitRoot(entry)
+        ? workspaceRootKey(entry.root)
+        : index.rootKeyById.get(id);
       if (rootKey === undefined) return [id];
       const fromCatalog = catalog.wdIdsByRootKey.get(rootKey);
       const fromIndex = index.idsByRootKey.get(rootKey);
@@ -124,7 +126,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
       const snapshot: CatalogSnapshot = {
         byId: new Map(workspaces.map((ws) => [ws.id, ws] as const)),
         wdIdsByRootKey: rootKeyIndex(
-          workspaces.filter((ws) => isWorkDirKey(ws.id)),
+          workspaces.filter(hasOriginalImplicitRoot),
           (ws) => ws.root,
           (ws) => ws.id,
         ),

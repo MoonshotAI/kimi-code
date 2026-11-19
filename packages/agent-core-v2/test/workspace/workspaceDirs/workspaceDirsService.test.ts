@@ -66,6 +66,7 @@ describe('WorkspaceDirsService (registry source)', () => {
       localConfig,
       noopLog,
       noopEvent,
+      new JsonAtomicDocumentStore(storage),
     );
   });
 

@@ -259,6 +259,20 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     },
     ...overrides,
   };
+  if (!('resolveSessionResumeTarget' in harness)) {
+    Object.assign(harness, {
+      resolveSessionResumeTarget: vi.fn(async (selection: { sessionId?: string; workDir?: string }) => {
+        const list = harness.listSessions as (input: typeof selection) => Promise<{ id: string; workDir?: string }[]>;
+        const [item] = await list(selection);
+        if (item === undefined && selection.sessionId !== undefined) {
+          throw new Error(`Session "${selection.sessionId}" not found.`);
+        }
+        if (item === undefined) return undefined;
+        const workDir = item.workDir ?? selection.workDir ?? '/tmp/proj-a';
+        return { id: item.id, projectId: 'project', workDir, environmentId: 'local', environmentCwd: workDir };
+      }),
+    });
+  }
   if (!('listSessionsPage' in harness)) {
     const listSessions = harness.listSessions as (input?: {
       workDir?: string;
@@ -3529,6 +3543,36 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState.sessionId).toBe('');
   });
 
+  it.each([{ continue: true }, { session: 'imported' }])('resumes imported history after migration with %o', async (flags) => {
+    let imported = false;
+    const target = { id: 'imported', projectId: 'wd_history', workDir: '/tmp/history', environmentId: 'local', environmentCwd: '/tmp/history' };
+    const resolveSessionResumeTarget = vi.fn(async () => {
+      if (imported) return target;
+      if ('session' in flags) throw new Error('Session not found');
+      return undefined;
+    });
+    const harness = makeHarness(makeSession(), { resolveSessionResumeTarget });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput(flags), migrationPlan: MIGRATION_PLAN,
+    }) as unknown as MigrateExitDriver;
+    vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+    vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+    vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+    vi.spyOn(driver, 'runMigrationScreen').mockImplementation(async () => {
+      imported = true;
+      return { decision: 'now', migrated: true };
+    });
+    vi.spyOn(driver, 'initMainTui').mockImplementation(() => driver.init());
+    vi.spyOn(driver as unknown as { finishStartup(): Promise<void> }, 'finishStartup').mockResolvedValue();
+
+    await driver.start();
+
+    expect(harness.getWorkspaceTrustInfo).toHaveBeenCalledWith(target.workDir, expect.objectContaining({ projectId: target.projectId }));
+    expect(harness.resumeSession).toHaveBeenCalledWith(expect.objectContaining({ id: target.id }));
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(resolveSessionResumeTarget).toHaveBeenCalledTimes(1);
+  });
+
   it('disposes terminal focus/theme tracking on the kimi migrate exit', async () => {
     const harness = makeHarness();
     const driver = makeDriver(harness, {
@@ -3627,6 +3671,22 @@ describe('KimiTUI startup', () => {
     expect(onExit).toHaveBeenCalledWith(0);
   });
 
+  it('checks the explicitly resumed project before asking for trust in another directory', async () => {
+    const target = { id: 'selected', projectId: 'wm_selected', workDir: '/tmp/checkout/src', environmentId: 'local', environmentCwd: '/tmp/checkout/src' };
+    const getWorkspaceTrustInfo = vi.fn(async () => ({ trusted: true }));
+    const resolveSessionResumeTarget = vi.fn(async () => target);
+    const harness = makeHarness(makeSession({ id: target.id }), { getWorkspaceTrustInfo, resolveSessionResumeTarget });
+    const driver = makeDriver(harness, makeStartupInput({ session: target.id }));
+    const prompt = driver as unknown as { maybeRunWorkspaceTrustPrompt(): Promise<boolean> };
+    expect(await prompt.maybeRunWorkspaceTrustPrompt()).toBe(false);
+    expect(getWorkspaceTrustInfo).toHaveBeenCalledWith(target.workDir, expect.objectContaining({
+      projectId: target.projectId, environmentId: target.environmentId, environmentCwd: target.environmentCwd,
+    }));
+    await driver.init();
+    expect(resolveSessionResumeTarget).toHaveBeenCalledExactlyOnceWith({ sessionId: target.id });
+    expect(driver.state.appState.workDir).toBe(target.workDir);
+  });
+
   it('prompts for workspace trust before migrating an untrusted workspace', async () => {
     const getWorkspaceTrustInfo = vi.fn(async () => ({
       trusted: false,
@@ -3661,7 +3721,7 @@ describe('KimiTUI startup', () => {
     mountSpy.mock.calls[0]![0].handleInput('\r');
     await startPromise;
 
-    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a', undefined);
     expect(getWorkspaceTrustInfo.mock.invocationCallOrder[0]!).toBeLessThan(
       migrationSpy.mock.invocationCallOrder[0]!,
     );
@@ -3697,7 +3757,7 @@ describe('KimiTUI startup', () => {
     mountSpy.mock.calls[0]![0].handleInput('\r');
     await startPromise;
 
-    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a', undefined);
     expect(onExit).toHaveBeenCalledWith(0);
   });
 
@@ -3737,7 +3797,7 @@ describe('KimiTUI startup', () => {
     mountSpy.mock.calls[0]![0].handleInput('\r');
     await startPromise;
 
-    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(trustWorkspace).toHaveBeenCalledWith('/tmp/proj-a', undefined);
     expect(migrationSpy).toHaveBeenCalled();
     expect(onExit).toHaveBeenCalledWith(0);
   });
@@ -3958,7 +4018,6 @@ describe('KimiTUI startup', () => {
 
     expect(harness.listSessions).toHaveBeenCalledWith({
       sessionId: 'ses-target',
-      workDir: String.raw`C:\Users\kimi\project`,
     });
     expect(harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses-target',

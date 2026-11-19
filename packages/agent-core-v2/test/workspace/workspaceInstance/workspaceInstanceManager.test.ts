@@ -57,8 +57,8 @@ function manager(
     touch: vi.fn(async (id: string) => byId.get(id)),
     update: async () => undefined,
     addDirectory: async () => undefined,
-    implicitDirectories: async (cwd) => [cwd],
     setPrimary: async () => undefined,
+    implicitDirectories: async (cwd) => [cwd],
     readProjectConfigDirs: async () => [],
     delete: async () => {},
   };
@@ -98,7 +98,7 @@ describe('WorkspaceInstanceManager', () => {
   });
 
   it('reuses the instance and program when the workspace primary changes', async () => {
-    const initial = workspace('one') as { -readonly [K in keyof Workspace]: Workspace[K] };
+    const initial = { ...workspace('one') };
     const value = manager([initial]);
     const first = await value.acquire({ workspaceId: 'one' });
     const instance = first.instance;

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -13,13 +14,10 @@ import {
   IConfigService,
   IEventBus,
   IEventDispatcher,
-  IHostFileSystem,
   IOAuthToolkit,
-  ISessionIndex,
   ISessionManager,
   ISessionRunGate,
   ITelemetryService,
-  IWorkspaceInstanceManager,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
@@ -29,6 +27,8 @@ import {
   ErrorCodes,
   isError2,
   resumeSessionById,
+  resolveSessionResumeTarget,
+  type SessionResumeTarget,
   parseAgentFileText,
   resolveAgentPath,
   resolveAgentTaskConfig,
@@ -40,14 +40,9 @@ import {
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type LoopRunResult,
-  type McpServerConfig,
   type PrintBackgroundMode,
   type ServicesAccessor,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  loadMcpServersDetailed,
-  resolveMcpJsonPaths,
-} from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import {
   createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME,
@@ -76,7 +71,6 @@ import type {
   ToolUpdated,
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { resolve } from 'pathe';
 
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
@@ -226,12 +220,28 @@ export async function runV2Print(
       });
     }
 
+    const target = opts.session !== undefined || opts.continue
+      ? await resolveSessionResumeTarget(services, opts.session === undefined
+        ? { workDir, environmentId: opts.environment, environmentCwd: opts.environmentCwd }
+        : { sessionId: opts.session })
+      : undefined;
     try {
-      const gated = await listTrustGatedMcpServers(services, workDir, homeDir);
-      if (gated.length > 0) stderr.write(formatTrustGatedMcpWarning(gated));
+      const trust = await client.getWorkspaceTrustInfo(target?.workDir ?? workDir, {
+        projectId: target?.projectId,
+        environmentId: target?.environmentId ?? opts.environment,
+        environmentCwd: target?.environmentCwd ?? opts.environmentCwd,
+      });
+      if (trust.gatedMcpServers.length > 0) {
+        stderr.write(formatTrustGatedMcpWarning(trust.gatedMcpServers.map((server) => ({
+          name: server.name,
+          target: server.transport === 'stdio'
+            ? `stdio: ${[server.command, ...server.args ?? []].join(' ')}`
+            : `${server.transport}: ${server.url}`,
+        })), opts.session));
+      }
     } catch {}
 
-    let resolved = await resolveNativeSession(services, opts, workDir, defaultModel, stderr);
+    let resolved = await resolveNativeSession(services, opts, workDir, defaultModel, stderr, target);
     const { previousPermissionMode } = resolved;
     if (previousPermissionMode !== undefined) {
       restorePermission = async () => {
@@ -316,9 +326,9 @@ async function resolveNativeSession(
   workDir: string,
   defaultModel: string | undefined,
   stderr: PromptOutput,
+  target: SessionResumeTarget | undefined,
 ): Promise<ResolvedNativeSession> {
   const sessions = services.get(ISessionManager);
-  const index = services.get(ISessionIndex);
 
   let agentProfileName = opts.agent;
   const agentFile = opts.agentFiles[0];
@@ -381,22 +391,11 @@ async function resolveNativeSession(
     return previous;
   };
 
-  if (opts.session !== undefined) {
-    const target = await index.get(opts.session);
-    if (target === undefined) {
-      throw new Error(`Session "${opts.session}" not found.`);
-    }
-    if (target.cwd !== undefined && resolve(target.cwd) !== resolve(workDir)) {
-      stderr.write(
-        `Session "${opts.session}" was created under a different directory.\n` +
-          `  cd "${target.cwd}" && kimi -r ${opts.session}\n\n`,
-      );
-      throw new Error(`Session "${opts.session}" was created under a different directory.`);
-    }
-    const session = await resumeById(opts.session);
+  if (target !== undefined) {
+    const session = await resumeById(target.id);
     const agentContext = await ensureMainAgent(session);
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
-    await notePlanMode(agent, opts.session);
+    await notePlanMode(agent, target.id);
     const profile = agent.accessor.get(IAgentLoopService);
     await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
@@ -411,25 +410,6 @@ async function resolveNativeSession(
   }
 
   if (opts.continue) {
-    const page = await index.listRecent({});
-    const previous = page.items.find((summary) => summary.cwd === workDir);
-    if (previous !== undefined) {
-      const session = await resumeById(previous.id);
-      const agentContext = await ensureMainAgent(session);
-      const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
-      await notePlanMode(agent, previous.id);
-      const profile = agent.accessor.get(IAgentLoopService);
-      await applyModelOverride(profile, opts.model);
-      const currentModel = profile.getModel();
-      const previousPermissionMode = forceAuto(agent);
-      return {
-        session,
-        agent,
-        previousPermissionMode,
-        telemetryModel: configuredModel(opts.model, currentModel, defaultModel),
-        goalModel: configuredModel(opts.model, currentModel),
-      };
-    }
     stderr.write(`No sessions to continue under "${workDir}"; starting a fresh session.\n`);
   }
 
@@ -465,46 +445,14 @@ export interface TrustGatedMcpServer {
   readonly target: string;
 }
 
-export async function listTrustGatedMcpServers(
-  services: ServicesAccessor,
-  workDir: string,
-  homeDir: string,
-): Promise<readonly TrustGatedMcpServer[]> {
-  const lease = await services
-    .get(IWorkspaceInstanceManager)
-    .acquire({ root: workDir });
-  try {
-    if (await lease.instance.program.trust.get()) return [];
-    const fs = services.get(IHostFileSystem);
-    const [paths, loaded] = await Promise.all([
-      resolveMcpJsonPaths({ fs, cwd: workDir, homeDir }),
-      loadMcpServersDetailed({ fs, cwd: workDir, homeDir, includeProject: true }),
-    ]);
-    const projectPaths = new Set([paths.projectRoot, paths.project]);
-    return Object.entries(loaded.servers)
-      .filter(([name]) => projectPaths.has(loaded.origins[name] ?? ''))
-      .map(([name, config]) => ({ name, target: describeMcpTarget(config) }))
-      .toSorted((a, b) => a.name.localeCompare(b.name));
-  } finally {
-    lease.dispose();
-  }
-}
-
-export function formatTrustGatedMcpWarning(servers: readonly TrustGatedMcpServer[]): string {
+export function formatTrustGatedMcpWarning(servers: readonly TrustGatedMcpServer[], sessionId?: string): string {
+  const command = sessionId === undefined ? '`kimi` here' : `\`kimi -r ${sessionId}\``;
   const noun = servers.length === 1 ? 'server' : 'servers';
   const list = servers.map((server) => `${server.name} (${server.target})`).join(', ');
   return (
     `Warning: this folder is not trusted; skipped ${servers.length} project-level MCP ${noun}: ${list}.\n` +
-    '  Run `kimi` here and choose "Trust this folder", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n'
+    `  Run ${command} and choose "Trust and continue", or set KIMI_CODE_TRUST_WORKSPACE=1, to enable them.\n\n`
   );
-}
-
-function describeMcpTarget(config: McpServerConfig): string {
-  if (config.transport === 'stdio') {
-    const args = config.args === undefined ? '' : ` ${config.args.join(' ')}`;
-    return `stdio: ${config.command}${args}`;
-  }
-  return `${config.transport}: ${config.url}`;
 }
 
 async function runNativeTurn(
@@ -532,12 +480,9 @@ async function runNativeTurn(
   });
   try {
     const loop = agent.accessor.get(IAgentLoopService);
-    const { id } = loop.submit({
-      role: 'user',
-      content: [{ type: 'text', text: prompt }],
-      attributes: { origin: { kind: 'user' } },
-    });
-    const handle = loop.promptHandle(id)!;
+    const promptId = randomUUID();
+    await loop.submit({ input: [{ type: 'text', text: prompt }], promptId });
+    const handle = loop.promptHandle(promptId)!;
     const turn = await handle.launched;
     if (turn === undefined) {
       writer.finish();

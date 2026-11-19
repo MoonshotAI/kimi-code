@@ -30,17 +30,17 @@ Do not manually edit files inside the `sessions/` directory — doing so may pre
 
 ## Starting and resuming sessions
 
+A new CLI session works in the directory where you launched `kimi`, including a repository subdirectory. New Git worktrees share a project and its trust with the main checkout. An existing implicit project for the exact directory keeps its own sessions and trust. Independent clones and manually created Desktop projects keep their own project IDs.
+
 Desktop lists sessions from every working directory in the selected project. Creating a session there uses the project's current default directory. Existing sessions retain their recorded directory.
 
-Every time you run `kimi` directly it creates a new session. To resume a previous session, use one of the following:
-
-**Resume the most recent session in the current directory:**
+**Continue the latest unarchived session in the current implicit project, environment, and directory:**
 
 ```sh
 kimi --continue
 ```
 
-**Resume a specific session by ID:**
+**Resume a specific session from any directory, including a session in a Desktop project:**
 
 ```sh
 kimi --session abc123

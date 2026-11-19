@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1654,7 +1655,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-reload-cwd-'));
     const extra = await mkdtemp(join(tmpdir(), 'kimi-reload-extra-'));
-    await mkdir(join(cwd, '.git'));
+    execFileSync('git', ['init', '--quiet', cwd]);
     try {
       const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
       const id = created.body.data.id;
@@ -1679,7 +1680,7 @@ describe('server-v2 /api/v1/sessions', () => {
       const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
         projects: Record<string, { root: string; additional_dirs?: string[] }>;
       };
-      const project = Object.values(projects.projects).find((entry) => entry.root === cwd);
+      const project = projects.projects[created.body.data.workspace_id];
       if (project === undefined) throw new Error('expected the session project');
       project.additional_dirs = [extra];
       await writeFile(projectsPath, JSON.stringify(projects), 'utf8');
@@ -1745,7 +1746,7 @@ describe('server-v2 /api/v1/sessions', () => {
     base = `http://127.0.0.1:${server.port}`;
 
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-reload-pool-cwd-'));
-    await mkdir(join(cwd, '.git'));
+    execFileSync('git', ['init', '--quiet', cwd]);
     try {
       const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
       const id = created.body.data.id;

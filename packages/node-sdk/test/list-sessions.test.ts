@@ -206,18 +206,29 @@ describe('KimiHarness.listSessions', () => {
 });
 
 describe('SDKRpcClientV2.listSessionsPage', () => {
-  it('lists a session by its explicit local working directory and by the owning project directory', async () => {
+  it('continues only the local session in the implicit project and selected directory', async () => {
     const homeDir = await makeTempDir();
-    const root = await makeTempDir();
-    const cwd = await makeTempDir();
+    const workDir = await makeTempDir();
+    const elsewhere = await makeTempDir();
     const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
     try {
       const manager = client.engineAccessor.get(ISessionManager);
-      const project = await client.engineAccessor.get(IWorkspaceService).create({ root });
-      const session = await manager.create({ workspaceId: project.id, environmentId: 'local', environmentCwd: cwd });
-      await manager.close(session.id);
-      expect((await client.listSessions({ workDir: cwd })).map((item) => item.id)).toEqual([session.id]);
-      expect((await client.listSessions({ workDir: root })).map((item) => item.id)).toEqual([session.id]);
+      const projects = client.engineAccessor.get(IWorkspaceService);
+      const implicit = await projects.createOrTouch(workDir);
+      const manual = await projects.create({ root: workDir });
+      const match = await manager.create({ workspaceId: implicit.id, workDir });
+      const otherCwd = await manager.create({ workspaceId: implicit.id, workDir: elsewhere });
+      const explicit = await manager.create({ workspaceId: manual.id, workDir });
+      const archived = await manager.create({ workspaceId: implicit.id, workDir });
+      await manager.archive(archived.id);
+      expect(await client.resolveSessionResumeTarget({ workDir })).toMatchObject({
+        id: match.id, projectId: implicit.id, workDir, environmentId: 'local',
+      });
+      expect(await client.resolveSessionResumeTarget({ sessionId: explicit.id })).toMatchObject({
+        id: explicit.id, projectId: manual.id, workDir,
+      });
+      expect((await client.listSessions({ workDir: elsewhere })).map((session) => session.id))
+        .toEqual([otherCwd.id]);
     } finally {
       await client.close();
     }

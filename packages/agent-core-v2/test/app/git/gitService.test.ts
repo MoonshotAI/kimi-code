@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
 
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
+import { discoverRepository } from '#/app/git/repository';
 import { GitService } from '#/app/git/gitService';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { ErrorCodes } from '#/errors';
@@ -76,6 +77,111 @@ describe('GitService', () => {
     git(repo, 'add', '-A');
     git(repo, 'commit', '-m', message);
   }
+
+  describe('discoverRepository', () => {
+    function outside(): string {
+      const path = realpathSync(mkdtempSync(join(tmpdir(), 'git-discovery-')));
+      onTestFinished(() => rmSync(path, { recursive: true, force: true }));
+      return path;
+    }
+
+    it('identifies a repository before its first commit, including subdirectories', async () => {
+      const root = realpathSync(repo);
+      const child = join(root, 'child');
+      mkdirSync(child);
+      expect(await discoverRepository(child)).toEqual({
+        vcs: { type: 'git', store: join(root, '.git') },
+        checkoutRoot: root,
+        defaultDirectory: { kind: 'checkout', cwd: root },
+      });
+    });
+
+    it('uses the bare store as the default from the store and from a linked checkout', async () => {
+      const parent = outside();
+      const bare = join(parent, 'bare');
+      const tree = join(parent, 'linked tree');
+      git(repo, 'commit', '--allow-empty', '-m', 'initial');
+      git(repo, 'clone', '--bare', repo, bare);
+      git(bare, 'worktree', 'add', '--detach', tree);
+      const marker = join(tree, '.git');
+      writeFileSync(marker, readFileSync(marker, 'utf8').replace(/\r?\n$/, '\r\n'));
+      const store = { vcs: { type: 'git', store: bare }, defaultDirectory: { kind: 'bare', cwd: bare } };
+      expect(await discoverRepository(tree)).toEqual({ ...store, checkoutRoot: tree });
+      expect(await discoverRepository(bare)).toEqual({ ...store, checkoutRoot: null });
+    });
+
+    it('uses the submodule checkout as the default for its linked trees', async () => {
+      const parent = outside();
+      const module = join(parent, 'module');
+      const tree = join(parent, 'linked');
+      git(repo, 'commit', '--allow-empty', '-m', 'initial');
+      git(parent, 'init');
+      git(parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', repo, 'module');
+      git(module, 'worktree', 'add', '--detach', tree);
+      const store = { vcs: { type: 'git', store: join(parent, '.git', 'modules', 'module') }, defaultDirectory: { kind: 'checkout', cwd: module } };
+      expect(await discoverRepository(tree)).toEqual({ ...store, checkoutRoot: tree });
+      expect(await discoverRepository(module)).toEqual({ ...store, checkoutRoot: module });
+      expect(await discoverRepository(parent)).toMatchObject({ vcs: { store: join(parent, '.git') } });
+    });
+
+    it('reports a worktree moved outside Git until its registration is repaired', async () => {
+      const parent = outside();
+      const tree = join(parent, 'original');
+      const moved = join(parent, 'moved');
+      git(repo, 'commit', '--allow-empty', '-m', 'initial');
+      git(repo, 'worktree', 'add', '--detach', tree);
+      renameSync(tree, moved);
+      await expect(discoverRepository(moved)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
+      git(repo, 'worktree', 'repair', moved);
+      expect(await discoverRepository(moved)).toMatchObject({ checkoutRoot: moved, defaultDirectory: { cwd: realpathSync(repo) } });
+    });
+
+    it('treats ordinary HEAD and refs files as contents of the opened directory', async () => {
+      const child = join(repo, 'data');
+      mkdirSync(child);
+      const plain = outside();
+      for (const folder of [child, plain]) {
+        writeFileSync(join(folder, 'HEAD'), 'title');
+        writeFileSync(join(folder, 'refs'), 'references');
+        writeFileSync(join(folder, 'objects'), 'objects');
+      }
+      expect(await discoverRepository(child)).toMatchObject({ checkoutRoot: realpathSync(repo) });
+      expect(await discoverRepository(plain)).toBeNull();
+    });
+
+    it('reports broken markers even in a parent repository', async () => {
+      const nested = join(repo, 'nested');
+      mkdirSync(nested);
+      writeFileSync(join(nested, '.git'), 'gitdir: missing\n');
+      await expect(discoverRepository(nested)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
+      rmSync(join(nested, '.git'));
+      mkdirSync(join(nested, '.git'));
+      await expect(discoverRepository(nested)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
+    });
+
+    it('allows plain directories without Git and reports its absence for a repository', async () => {
+      const plain = outside();
+      vi.stubEnv('PATH', '');
+      try {
+        expect(await discoverRepository(plain)).toBeNull();
+        await expect(discoverRepository(repo)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it('uses the opened directory even when the parent process has selected a different repository', async () => {
+      const other = outside();
+      git(other, 'init');
+      vi.stubEnv('GIT_DIR', join(other, '.git'));
+      vi.stubEnv('GIT_WORK_TREE', other);
+      try {
+        expect(await discoverRepository(repo)).toMatchObject({ vcs: { store: join(realpathSync(repo), '.git') } });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+  });
 
   describe('status', () => {
     it('reports a clean tree', async () => {

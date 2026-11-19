@@ -2877,6 +2877,7 @@ describe('SDKRpcClientV2 workspace trust', () => {
       const info = await harness.getWorkspaceTrustInfo(workDir);
       expect(info).toEqual({
         trusted: false,
+        project: { id: expect.stringMatching(/^wd_/), defaultCwd: workDir },
         gatedMcpServers: [],
         gatedAdditionalDirs: [],
         additionalDirSources: [],

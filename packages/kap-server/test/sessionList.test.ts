@@ -177,9 +177,11 @@ const workspaceStub: IWorkspaceService = {
   update: async () => {
     throw new Error('not used in these tests');
   },
+  addDirectory: async () => undefined,
   setPrimary: async () => {
     throw new Error('not used in these tests');
   },
+  implicitDirectories: async (cwd) => [cwd],
   readProjectConfigDirs: async () => [],
   delete: async () => {},
 };

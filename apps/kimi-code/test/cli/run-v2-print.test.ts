@@ -554,10 +554,15 @@ describe('createPrintTurnEndings', () => {
 });
 
 describe('formatTrustGatedMcpWarning', () => {
+  it('points an explicit resume back to the selected session for trust', () => {
+    const text = formatTrustGatedMcpWarning([{ name: 'fs', target: 'stdio: node server.js' }], 'target');
+    expect(text).toContain('Run `kimi -r target` and choose "Trust and continue"');
+  });
+
   it('singularizes the noun for one skipped server', () => {
     const text = formatTrustGatedMcpWarning([{ name: 'fs', target: 'stdio: node server.js' }]);
     expect(text).toContain('skipped 1 project-level MCP server: fs (stdio: node server.js).');
-    expect(text).toContain('"Trust this folder"');
+    expect(text).toContain('"Trust and continue"');
     expect(text).toContain('KIMI_CODE_TRUST_WORKSPACE=1');
   });
 

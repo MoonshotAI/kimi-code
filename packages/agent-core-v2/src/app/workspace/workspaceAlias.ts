@@ -1,11 +1,12 @@
 import { isAbsolute, join } from 'pathe';
 
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+
 import { encodeWorkDirKey, isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import type { Workspace } from './workspace';
+import type { Project } from '#/app/project/project';
 
 export const SESSION_INDEX_SCOPE = '';
 export const SESSION_INDEX_KEY = 'session_index.jsonl';
@@ -176,50 +177,57 @@ export function sessionIndexBucket(line: SessionIndexLine): string | undefined {
   return segments.at(-1) === line.sessionId && bucket !== '.' && bucket !== '..' ? bucket : undefined;
 }
 
+export function isImplicitBucketSessionLine(line: SessionIndexLine): boolean {
+  const bucket = sessionIndexBucket(line);
+  return bucket !== undefined && isWorkDirKey(bucket);
+}
+
 export function isOriginalImplicitLocation(line: SessionIndexLine): boolean {
   return isAbsolute(line.workDir) && sessionIndexBucket(line) === encodeWorkDirKey(line.workDir);
 }
 
-export function collectAliasIds(
-  workspaces: readonly Workspace[],
-  sessionIndexEntries: readonly SessionIndexLine[],
-  root: string,
-): string[] {
-  const rootKey = workspaceRootKey(root);
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  const add = (alias: string): void => {
-    if (seen.has(alias)) return;
-    seen.add(alias);
-    ids.push(alias);
-  };
-  for (const ws of workspaces) {
-    if (isWorkDirKey(ws.id) && workspaceRootKey(ws.root) === rootKey) add(ws.id);
-  }
-  for (const line of sessionIndexEntries) {
-    if (isOriginalImplicitLocation(line) && workspaceRootKey(line.workDir) === rootKey) add(encodeWorkDirKey(line.workDir));
-  }
-  return ids;
+export function hasOriginalImplicitRoot(ws: Project): boolean {
+  return ws.kind === 'implicit' && ws.id === encodeWorkDirKey(ws.root);
 }
 
-export function dedupeByRoot(byId: ReadonlyMap<string, Workspace>): Workspace[] {
-  const byRoot = new Map<string, Workspace>();
-  const rest: Workspace[] = [];
+export function implicitRoots(workspaces: readonly Project[], entries: readonly SessionIndexLine[]): Map<string, string> {
+  const roots = new Map<string, string>();
+  for (const entry of entries) {
+    if (isOriginalImplicitLocation(entry)) roots.set(encodeWorkDirKey(entry.workDir), entry.workDir);
+  }
+  for (const ws of workspaces) {
+    if (hasOriginalImplicitRoot(ws)) roots.set(ws.id, ws.root);
+    else if (ws.kind === 'managed') roots.delete(ws.id);
+  }
+  return roots;
+}
+
+export function collectAliasIds(
+  workspaces: readonly Project[],
+  entries: readonly SessionIndexLine[],
+  root: string,
+): string[] {
+  const roots = implicitRoots(workspaces, entries);
+  const key = workspaceRootKey(root);
+  return [...roots].filter(([, original]) => workspaceRootKey(original) === key).map(([id]) => id);
+}
+
+export function dedupeByRoot(
+  byId: ReadonlyMap<string, Project>,
+  roots: ReadonlyMap<string, string> = implicitRoots([...byId.values()], []),
+): Project[] {
+  const byRoot = new Map<string, Project>();
+  const rest: Project[] = [];
   for (const ws of byId.values()) {
-    if (!isWorkDirKey(ws.id)) {
+    const original = roots.get(ws.id);
+    if (original === undefined || !isWorkDirKey(ws.id)) {
       rest.push(ws);
       continue;
     }
-    const rootKey = workspaceRootKey(ws.root);
-    const existing = byRoot.get(rootKey);
-    if (existing === undefined) {
-      byRoot.set(rootKey, ws);
-      continue;
-    }
-    const canonicalId = encodeWorkDirKey(ws.root);
-    if (existing.id !== canonicalId && ws.id === canonicalId) {
-      byRoot.set(rootKey, ws);
-    }
+    const key = workspaceRootKey(original);
+    const existing = byRoot.get(key);
+    if (existing === undefined || (existing.vcs === undefined &&
+      (ws.vcs !== undefined || ws.id === encodeWorkDirKey(key)))) byRoot.set(key, ws);
   }
   return [...byRoot.values(), ...rest];
 }
