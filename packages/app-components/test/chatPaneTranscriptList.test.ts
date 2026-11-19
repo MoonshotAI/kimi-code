@@ -134,6 +134,25 @@ describe('ChatPane with the transcript list', () => {
     expect(hold).toHaveBeenCalledTimes(1);
   });
 
+  it('waits for web fonts before the scroll controller first measures', async () => {
+    let fontsReady!: () => void;
+    const ready = new Promise<void>((resolve) => { fontsReady = resolve; });
+    const fonts = { status: 'loading', ready };
+    Object.defineProperty(document, 'fonts', { configurable: true, value: fonts });
+    try {
+      mount(true);
+      await nextTick();
+      expect(scroll.host.controller.value).toBeNull();
+      fonts.status = 'loaded';
+      fontsReady();
+      await ready;
+      await nextTick();
+      expect(scroll.host.controller.value).not.toBeNull();
+    } finally {
+      delete (document as { fonts?: unknown }).fonts;
+    }
+  });
+
   it('keeps the virtualized history windows without a transcript host', async () => {
     mount(false);
     await nextTick();

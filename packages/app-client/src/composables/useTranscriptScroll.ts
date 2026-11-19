@@ -153,6 +153,13 @@ export function useTranscriptScroll(options: TranscriptScrollOptions): Transcrip
     controller.value = null;
     adapter = null;
     if (!el) return;
+    const fonts = typeof document === 'undefined' ? undefined : document.fonts;
+    if (fonts?.status === 'loading') {
+      void fonts.ready.then(() => {
+        if (scroller.value === el && controller.value === null) connect(el);
+      });
+      return;
+    }
     adapter = createDomScrollAdapter({ scroller: el, model, list: () => list?.root ?? null, applyLayout });
     const next = createScrollController(adapter, { ...options.controller, onChange });
     controller.value = next;
