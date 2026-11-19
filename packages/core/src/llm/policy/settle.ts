@@ -243,11 +243,9 @@ export async function settleLlmRequest(
         const toolCall = inner.toolCallEnd(index);
         if (toolCall !== undefined) {
           const error = invalidToolArgumentsError(toolCall, request.profile?.tools ?? []);
-          if (error !== null) {
-            failure = { error };
-            return;
+          if (error === null) {
+            onEvent?.({ type: 'llm.delta.tool_call_end', index, toolCall });
           }
-          onEvent?.({ type: 'llm.delta.tool_call_end', index, toolCall });
         }
       },
     });

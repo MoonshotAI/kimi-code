@@ -11,7 +11,8 @@ export type ToolArgumentsIssueReason =
   | 'invalid_json'
   | 'not_an_object'
   | 'unknown_tool'
-  | 'schema';
+  | 'schema'
+  | 'schema_config';
 
 export interface ToolArgumentsIssue {
   readonly reason: ToolArgumentsIssueReason;
@@ -36,7 +37,7 @@ type CachedValidator =
 
 const validators = new WeakMap<ToolDescription, CachedValidator>();
 
-function schemaError(tool: ToolDescription, value: Record<string, unknown>): string | null {
+function schemaIssue(tool: ToolDescription, value: Record<string, unknown>): ToolArgumentsIssue | null {
   let cached = validators.get(tool);
   if (cached === undefined || cached.parameters !== tool.parameters) {
     try {
@@ -49,8 +50,9 @@ function schemaError(tool: ToolDescription, value: Record<string, unknown>): str
     }
     validators.set(tool, cached);
   }
-  if (cached.error !== undefined) return cached.error;
-  return validateToolArgs(cached.validator, value as JsonType);
+  if (cached.error !== undefined) return { reason: 'schema_config', message: cached.error };
+  const message = validateToolArgs(cached.validator, value as JsonType);
+  return message === null ? null : { reason: 'schema', message };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -93,10 +95,8 @@ export function parseLlmToolArguments(
     };
   }
   if (tool !== undefined) {
-    const error = schemaError(tool, value);
-    if (error !== null) {
-      return { issue: { reason: 'schema', message: error } };
-    }
+    const issue = schemaIssue(tool, value);
+    if (issue !== null) return { issue };
   }
   return { value };
 }
@@ -113,10 +113,17 @@ export function invalidToolCallText(name: string, issue: string): string {
 export function invalidToolArgumentsError(
   call: ToolCall,
   tools: readonly ToolDescription[],
-): LlmErrorMessage<'invalid_tool_arguments'> | null {
+): LlmErrorMessage | null {
   const tool = tools.find((entry) => entry.name === call.name);
   const result = parseLlmToolArguments(call.arguments, tool);
   if (result.issue === undefined) return null;
+  if (result.issue.reason === 'schema_config') {
+    return {
+      kind: 'syntax',
+      code: 'request_format',
+      message: `Tool "${call.name}" has an invalid parameter schema: ${result.issue.message}`,
+    };
+  }
   return {
     kind: 'invalid_tool_arguments',
     message: `${invalidToolCallText(call.name, result.issue.message)} Generate a new tool call with valid arguments.`,
@@ -134,6 +141,20 @@ export interface ToolCallHistoryCleanup {
   readonly invalid: readonly InvalidToolCall[];
 }
 
+function historicalTool(
+  messages: readonly Message[],
+  call: ToolCall,
+  currentTools: readonly ToolDescription[],
+): ToolDescription | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.role !== 'system') continue;
+    const tool = message.tools?.find((entry) => entry.name === call.name);
+    if (tool !== undefined) return tool;
+  }
+  return currentTools.find((entry) => entry.name === call.name);
+}
+
 export function cleanToolCallHistory(
   messages: readonly Message[],
   tools: readonly ToolDescription[],
@@ -142,40 +163,48 @@ export function cleanToolCallHistory(
   for (const message of messages) {
     if (message.role !== 'assistant') continue;
     for (const call of message.toolCalls) {
-      const tool = tools.find((entry) => entry.name === call.name);
-      const issue = parseLlmToolArguments(call.arguments, tool).issue;
-      if (issue !== undefined) invalid.push({ call, issue });
+      const issue = parseLlmToolArguments(call.arguments, historicalTool(messages, call, tools)).issue;
+      if (issue !== undefined && issue.reason !== 'schema_config') invalid.push({ call, issue });
     }
   }
   if (invalid.length === 0) return { messages, invalid };
 
-  const invalidIds = new Set(invalid.map(({ call }) => call.id));
+  const invalidCalls = new Set(invalid.map(({ call }) => call));
+  const pending = new Map<string, ToolCall[]>();
   const cleaned: Message[] = [];
   for (const message of messages) {
+    if (message.role === 'assistant') {
+      for (const call of message.toolCalls) {
+        const queue = pending.get(call.id) ?? [];
+        queue.push(call);
+        pending.set(call.id, queue);
+      }
+      const rejected = invalid.filter(({ call }) => message.toolCalls.includes(call));
+      if (rejected.length === 0) {
+        cleaned.push(message);
+        continue;
+      }
+      cleaned.push({
+        ...message,
+        content: [
+          ...message.content,
+          ...rejected.map(({ call, issue }) => ({
+            type: 'text' as const,
+            text: `A previous call to "${call.name}" was removed from this request because its arguments were invalid: ${issue.message}`,
+          })),
+        ],
+        toolCalls: message.toolCalls.filter((call) => !invalidCalls.has(call)),
+      });
+      continue;
+    }
     if (message.role === 'tool') {
-      if (!invalidIds.has(message.toolCallId)) cleaned.push(message);
+      const queue = pending.get(message.toolCallId);
+      const call = queue?.shift();
+      if (queue !== undefined && queue.length === 0) pending.delete(message.toolCallId);
+      if (call === undefined || !invalidCalls.has(call)) cleaned.push(message);
       continue;
     }
-    if (message.role !== 'assistant') {
-      cleaned.push(message);
-      continue;
-    }
-    const rejected = invalid.filter(({ call }) => message.toolCalls.includes(call));
-    if (rejected.length === 0) {
-      cleaned.push(message);
-      continue;
-    }
-    cleaned.push({
-      ...message,
-      content: [
-        ...message.content,
-        ...rejected.map(({ call, issue }) => ({
-          type: 'text' as const,
-          text: `A previous call to "${call.name}" was removed from this request because its arguments were invalid: ${issue.message}`,
-        })),
-      ],
-      toolCalls: message.toolCalls.filter((call) => !invalidIds.has(call.id)),
-    });
+    cleaned.push(message);
   }
   return { messages: cleaned, invalid };
 }

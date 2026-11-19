@@ -4,6 +4,7 @@ import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
 import type { LlmOutcome, LlmRunEvent, LlmRunRequested, LlmRunStarted } from '#/llm/response';
 import { cleanToolCallHistory } from '#/llm/tool-arguments';
+import { addUsage, type TokenUsage } from '#/llm/usage';
 import { sha256Hex } from '#/utils/hash';
 import { log } from '#/utils/log';
 
@@ -198,6 +199,14 @@ async function runAttempts(
   let attempt = 1;
   let retryMessage: AssistantMessage | undefined;
   const maxAttempts = resolveMaxAttempts(policy.retry);
+  let rejectedUsage: TokenUsage | undefined;
+  const withRejectedUsage = (outcome: LlmOutcome): LlmOutcome => {
+    if (rejectedUsage === undefined) return outcome;
+    return {
+      ...outcome,
+      usage: outcome.usage === undefined ? rejectedUsage : addUsage(rejectedUsage, outcome.usage),
+    };
+  };
 
   while (!signal.aborted) {
     const requestForAttempt = retryMessage === undefined
@@ -227,6 +236,27 @@ async function runAttempts(
           onEvent?.(event);
         },
       });
+      const cleaned = cleanToolCallHistory(
+        resolvedRequest.content.messages,
+        resolvedRequest.profile?.tools ?? [],
+      );
+      if (cleaned.messages !== resolvedRequest.content.messages) {
+        resolvedRequest = {
+          ...resolvedRequest,
+          content: { ...resolvedRequest.content, messages: cleaned.messages },
+        };
+      }
+      for (const { call, issue } of cleaned.invalid) {
+        onEvent?.({
+          type: 'llm.notice',
+          notice: {
+            source: 'tool-call-arguments',
+            code: 'invalid_tool_call_dropped',
+            message: `Removed invalid historical tool call "${call.name}" and its paired result.`,
+            data: { toolCallId: call.id, toolName: call.name, reason: issue.reason },
+          },
+        });
+      }
       if (resolver.recoveryRequest === 'resolved') {
         recoveryRequest = resolvedRequest;
         recoveryUsesResolved = true;
@@ -287,12 +317,17 @@ async function runAttempts(
     );
     const result = await settleLlmRequest(resolvedRequest, { signal, onEvent });
     if (result.type === 'done' || result.type === 'aborted') {
-      return result;
+      return withRejectedUsage(result);
     }
     if (result.error.kind === 'invalid_tool_arguments') {
+      if (result.usage !== undefined) {
+        rejectedUsage = rejectedUsage === undefined ? result.usage : addUsage(rejectedUsage, result.usage);
+      }
       retryMessage = result.message ?? createAssistantMessage([
         { type: 'text', text: result.error.message },
       ]);
+    } else if (result.message !== undefined) {
+      retryMessage = undefined;
     }
 
     const proposal = proposeFirst(listOf(policy.recoveries), {
@@ -349,7 +384,7 @@ async function runAttempts(
       log.info({ ...retry }, 'llm event');
       onEvent?.(retry);
       if (!(await delay(delayMs, signal))) {
-        return abortedOf(result, signal.reason);
+        return withRejectedUsage(abortedOf(result, signal.reason));
       }
       attempt += 1;
       continue;
@@ -367,7 +402,7 @@ async function runAttempts(
       },
       'llm request failed',
     );
-    return result;
+    return withRejectedUsage(result);
   }
 
   return { type: 'aborted', message: null, usage: undefined };
