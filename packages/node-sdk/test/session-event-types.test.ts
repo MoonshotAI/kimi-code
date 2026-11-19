@@ -137,6 +137,7 @@ describe('Event public types', () => {
         case 'prompt.completed':
         case 'prompt.aborted':
         case 'prompt.steered':
+        case 'prompt.queued':
           return;
         default:
           assertNever(event);

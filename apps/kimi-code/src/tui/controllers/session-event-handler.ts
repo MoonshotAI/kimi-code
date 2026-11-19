@@ -129,6 +129,7 @@ export interface SessionEventHost {
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   steerQueuedMessagesIntoRunningTurn(): void;
+  acknowledgePromptQueued?(promptId: string): void;
   acknowledgeSteerDelivery?(input: unknown, promptIds?: readonly string[]): void;
   acknowledgeSteerTurnPrompt?(promptId: string | undefined, input: unknown, origin: unknown): void;
   acknowledgeSteerTurnStarted?(promptId?: string): void;
@@ -313,6 +314,7 @@ export class SessionEventHandler {
     }
 
     switch (event.type) {
+      case 'prompt.queued': this.host.acknowledgePromptQueued?.(event.promptId); break;
       case 'turn.started': this.handleTurnBegin(event); break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
       case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
