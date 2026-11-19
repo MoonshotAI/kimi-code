@@ -19,3 +19,6 @@ packages/acp-server/src/replay.ts
 packages/acp-server/src/session.ts
 packages/klient/src/contract/agent/schemas.ts
 packages/klient/test/facade.test.ts
+
+# Core tool tests document their issue/PR provenance at the user's request.
+packages/core/test/tool/*.test.ts
