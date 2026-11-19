@@ -88,7 +88,7 @@ const HOST_READ_MAX_BYTES = 10_485_760;
 const OAUTH_REGION_PROBE_TIMEOUT_MS = 5_000;
 
 const AGENT_TURNS_TIMEOUT_MS = 2 * 60_000;
-const FEEDBACK_UPLOAD_TIMEOUT_MS = 5 * 60_000;
+const FEEDBACK_UPLOAD_TIMEOUT_MS = Infinity;
 
 const VALIDATION_FAILED_CODE = 40001;
 import {
@@ -707,8 +707,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
     });
   }
 
-  async uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal): Promise<{ upload_id: number }> {
-    return this.http.post(`/feedback/${feedbackId}/attachments/session`, { session_id: sessionId }, {
+  async uploadFeedbackSession(feedbackId: number, sessionId: string, signal?: AbortSignal, globalFeedback?: { hostId?: string }): Promise<{ upload_id: number }> {
+    return this.http.post(`/feedback/${feedbackId}/attachments/session`, { session_id: sessionId, host_id: globalFeedback?.hostId }, {
       timeoutMs: FEEDBACK_UPLOAD_TIMEOUT_MS,
       signal,
       sensitive: true,

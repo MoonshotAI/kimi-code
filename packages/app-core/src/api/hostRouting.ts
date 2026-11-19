@@ -576,7 +576,8 @@ export class HostRouter implements HostRoutingControls {
     return api.updateFeedback(feedbackId, input);
   }
 
-  protected async route_uploadFeedbackSession(...[feedbackId, sessionId, signal]: Parameters<KimiWebApi['uploadFeedbackSession']>): ReturnType<KimiWebApi['uploadFeedbackSession']> {
+  protected async route_uploadFeedbackSession(...[feedbackId, sessionId, signal, globalFeedback]: Parameters<KimiWebApi['uploadFeedbackSession']>): ReturnType<KimiWebApi['uploadFeedbackSession']> {
+    if (globalFeedback !== undefined) return this.local.uploadFeedbackSession(feedbackId, sessionId, signal, globalFeedback);
     return this.deviceApi(await this.ownerOf(sessionId)).uploadFeedbackSession(feedbackId, sessionId, signal);
   }
 

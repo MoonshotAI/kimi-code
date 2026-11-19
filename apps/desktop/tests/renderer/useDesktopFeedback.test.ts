@@ -106,7 +106,7 @@ describe('feedback account ownership', () => {
     expect(notice).toMatchObject({ kind: 'upload', failed: [{ kind: 'session', sessionId: 'first' }] });
     userIds['first'] = 'user';
     notice.retry();
-    await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal)));
+    await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal), { hostId: 'first' }));
     expect(api.uploadFeedbackAttachment).toHaveBeenCalledOnce();
     feedback.clearHostAccount('first');
     expect(api.uploadFeedbackSession.mock.calls[0]?.[2]).toHaveProperty('aborted', true);
@@ -127,7 +127,7 @@ describe('feedback account ownership', () => {
     expect(notice).toMatchObject({ kind: 'upload', failed: [{ kind: 'media', file }, { kind: 'session', sessionId: 'first' }] });
     api.getUserInfo.mockResolvedValue({ kind: 'ok', userInfo: { userId: 'user' } });
     notice.retry();
-    await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal)));
+    await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal), { hostId: 'first' }));
     expect(api.uploadFeedbackAttachment).toHaveBeenCalledTimes(2);
     expect(api.createFeedback).toHaveBeenCalledOnce();
   });

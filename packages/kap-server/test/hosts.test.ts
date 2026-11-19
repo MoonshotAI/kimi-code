@@ -1,7 +1,8 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { Duplex } from 'node:stream';
+import { Duplex, duplexPair, PassThrough } from 'node:stream';
 import type { OutgoingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +10,7 @@ import { createInterface } from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import Fastify from 'fastify';
-import { FileTokenStorage, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
+import { FileTokenStorage, KIMI_CODE_PROVIDER_NAME, KIMI_REGION_MARKER_FILENAME } from '@moonshot-ai/kimi-code-oauth';
 import { IConfigService, IOAuthService, hostIdSchema, hostsSectionSchema } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocketClient, { WebSocketServer, type WebSocket as NodeWebSocket } from 'ws';
@@ -708,6 +709,37 @@ void serve();
 });
 
 describe('host HTTP proxy', () => {
+  it.each([
+    ['POST', '/feedback/42/attachments/session', 360_000, 200],
+    ['POST', '/feedback/42/attachments?kind=media', 360_000, 200],
+    ['GET', '/feedback/42/attachments/session', 30_001, 504],
+    ['POST', '/feedback/42/attachments/session/other', 30_001, 504],
+    ['POST', '/feedback', 30_001, 504],
+    ['GET', '/sessions/example/export', 30_001, 200],
+    ['GET', '/sessions/example/export', 300_001, 504],
+  ] as const)('applies the deadline for %s %s after %i ms', async (method, path, elapsedMs, expectedStatus) => {
+    const stream = new PassThrough();
+    const session = new StdioHostSession(stream);
+    const app = Fastify();
+    registerHostProxyRoutes(app, { session: () => session, connect: async () => session });
+    await app.ready();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const sent = once(stream, 'data');
+      const response = app.inject({ method, url: `/api/v1/hosts/example/proxy/api/v1${path}` }).then(res => res.statusCode);
+      const [frame] = await sent;
+      const { id } = JSON.parse(String(frame)) as { id: string };
+      await vi.advanceTimersByTimeAsync(elapsedMs);
+      stream.write(`${JSON.stringify({ type: 'http.res', id, status: 200, headers: {} })}\n`);
+      await expect(response).resolves.toBe(expectedStatus);
+    } finally {
+      vi.useRealTimers();
+      session.close();
+      stream.destroy();
+      await app.close();
+    }
+  });
+
   it('enforces request limits and maps timeouts to gateway responses', async () => {
     const app = Fastify();
     registerHostProxyRoutes(app, {
@@ -729,30 +761,29 @@ describe('host HTTP proxy', () => {
     await app.close();
   });
 
-  it('cancels the remote request when the client disconnects', async () => {
+  it.each(['/sessions/s1/messages', '/feedback/42/attachments/session', '/feedback/42/attachments?kind=media'])('cancels the remote %s request when the client disconnects', async (path) => {
     const app = Fastify();
-    let sessionRequest!: { signal?: AbortSignal };
-    registerHostProxyRoutes(app, {
-      session: () => ({
-        request: (input: typeof sessionRequest) => {
-          sessionRequest = input;
-          return new Promise(() => {});
-        },
-        openWebSocket: () => { throw new Error('unexpected websocket'); },
-      }),
-    } as never);
+    const stream = new PassThrough();
+    const session = new StdioHostSession(stream);
+    registerHostProxyRoutes(app, { session: () => session, connect: async () => session });
     await app.listen({ host: '127.0.0.1', port: 0 });
     const address = app.server.address();
     if (address === null || typeof address === 'string') throw new Error('missing test server address');
     const socket = createConnection({ host: '127.0.0.1', port: address.port });
     try {
-      await new Promise<void>((resolve) => socket.once('connect', resolve));
-      socket.write('POST /api/v1/hosts/dev/proxy/api/v1/sessions/s1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx');
-      await vi.waitFor(() => expect(sessionRequest).toBeDefined());
+      await once(socket, 'connect');
+      const sent = once(stream, 'data');
+      socket.write(`POST /api/v1/hosts/dev/proxy/api/v1${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx`);
+      const [frame] = await sent;
+      const { id } = JSON.parse(String(frame)) as { id: string };
+      const cancelled = once(stream, 'data');
       socket.destroy();
-      await vi.waitFor(() => expect(sessionRequest.signal?.aborted).toBe(true));
+      const [cancel] = await cancelled;
+      expect(JSON.parse(String(cancel))).toEqual({ type: 'http.cancel', id });
     } finally {
       socket.destroy();
+      session.close();
+      stream.destroy();
       await app.close();
     }
   });
@@ -846,6 +877,7 @@ describe('host account', () => {
       async ({ local, remote, localHome, remoteHome, session, paths }) => {
         const localStorage = new FileTokenStorage(join(localHome, 'credentials'));
         const remoteStorage = new FileTokenStorage(join(remoteHome, 'credentials'));
+        writeFileSync(join(remoteHome, KIMI_REGION_MARKER_FILENAME), 'mainland-cn');
         await localStorage.save('kimi-code', {
           accessToken: 'local-access', refreshToken: 'local-refresh', expiresAt: now + 3600, expiresIn: 3600, scope: '', tokenType: 'Bearer',
         });
@@ -936,8 +968,8 @@ describe('host model providers', () => {
   }, 30_000);
 });
 
-function rpcClient(socketPath: string) {
-  const socket = createConnection(socketPath);
+function rpcClient(connection: string | Duplex) {
+  const socket = typeof connection === 'string' ? createConnection(connection) : connection;
   const frames: Array<Record<string, unknown>> = [];
   createInterface({ input: socket, crlfDelay: Infinity }).on('line', (line) => {
     if (line.trim().length > 0) frames.push(JSON.parse(line.trim()) as Record<string, unknown>);
@@ -958,6 +990,94 @@ function rpcClient(socketPath: string) {
 }
 
 describe('stdio rpc transport', () => {
+  it('skips a cancelled HTTP request while the server is starting', async () => {
+    const app = Fastify();
+    const [caller, stream] = duplexPair();
+    const client = rpcClient(caller);
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { release = resolve; });
+    const upload = vi.fn(() => ({ done: true }));
+    void app.register(async (scope) => {
+      await ready;
+      scope.post('/upload', upload);
+      scope.get('/next', async () => ({ done: true }));
+    });
+    attachRpcStream(stream, { app, wssV1: new WebSocketServer({ noServer: true }) });
+    try {
+      client.send({ type: 'http.req', id: 'upload', method: 'POST', path: '/upload', headers: {} });
+      client.send({ type: 'http.cancel', id: 'upload' });
+      client.send({ type: 'http.req', id: 'next', method: 'GET', path: '/next', headers: {} });
+      release();
+      expect(await client.next()).toMatchObject({ id: 'next', status: 200 });
+      expect(upload).not.toHaveBeenCalled();
+    } finally {
+      caller.destroy();
+      stream.destroy();
+      await app.close();
+    }
+  });
+
+  it('closes a streamed response after its headers without sending a late RPC reply', async () => {
+    const app = Fastify();
+    const [caller, stream] = duplexPair();
+    const client = rpcClient(caller);
+    const body = new PassThrough();
+    const reading = once(body, 'resume');
+    const closed = vi.fn();
+    body.once('close', closed);
+    app.get('/stream', (_req, reply) => reply.send(body));
+    app.get('/ping', async () => ({ ok: true }));
+    attachRpcStream(stream, { app, wssV1: new WebSocketServer({ noServer: true }) });
+    try {
+      client.send({ type: 'http.req', id: 'stream', method: 'GET', path: '/stream', headers: {} });
+      await reading;
+      body.write('first chunk');
+      client.send({ type: 'http.req', id: 'ping', method: 'GET', path: '/ping', headers: {} });
+      expect(await client.next()).toMatchObject({ id: 'ping', status: 200 });
+      client.send({ type: 'http.cancel', id: 'stream' });
+      await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
+      client.send({ type: 'http.req', id: 'next', method: 'GET', path: '/ping', headers: {} });
+      expect(await client.next()).toMatchObject({ id: 'next', status: 200 });
+      expect(client.frames).toHaveLength(0);
+    } finally {
+      body.destroy();
+      caller.destroy();
+      stream.destroy();
+      await app.close();
+    }
+  });
+
+  it.each(['cancel frame', 'transport disconnect'])('closes a pending HTTP response on %s', async (action) => {
+    const app = Fastify();
+    const stream = new PassThrough();
+    const closed = vi.fn();
+    let started!: () => void;
+    let release!: () => void;
+    const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    app.post('/held', async (_req, reply) => {
+      reply.raw.once('close', closed);
+      started();
+      await held;
+      return { done: true };
+    });
+    attachRpcStream(stream, { app, wssV1: new WebSocketServer({ noServer: true }) });
+    try {
+      stream.write(`${JSON.stringify({
+        type: 'http.req', id: 'held', method: 'POST', path: '/held',
+        headers: { 'content-type': 'application/json' }, body: Buffer.from('{}').toString('base64'),
+      })}\n`);
+      await requestStarted;
+      if (action === 'cancel frame') stream.write(`${JSON.stringify({ type: 'http.cancel', id: 'held' })}\n`);
+      else stream.destroy();
+      await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
+    } finally {
+      release();
+      stream.destroy();
+      await app.close();
+    }
+  });
+
   it.skipIf(process.platform === 'win32')('routes HTTP requests and WebSocket frames over a unix domain socket', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-sock-'));
     const socketPath = join(dir, 'daemon.sock');

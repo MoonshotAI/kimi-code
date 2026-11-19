@@ -278,7 +278,9 @@ async function openSshConversation(app: DesktopApp, model: StubModel, flags: { l
   await page.route('**/api/v1/auth', route => route.fulfill({ json: envelope({
     models_ready: true, providers_count: 1, managed_provider: { status: 'authenticated' },
   }) }));
-  await page.route('**/api/v1/oauth/userinfo*', route => route.fulfill({ json: envelope({ kind: 'error' }) }));
+  await page.route('**/api/v1/oauth/userinfo*', route => route.fulfill({ json: envelope({
+    kind: 'ok', userInfo: { userId: 'example-user', nickname: 'Example user' },
+  }) }));
   await page.route('**/api/v1/feedback**', route => {
     requests.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
     return route.fulfill({ json: envelope({ feedback_id: 31, upload_id: 32 }) });
@@ -323,4 +325,18 @@ test('the SSH conversation accepts reply feedback when local feedback is disable
   await expect(page.getByRole('button', { name: 'Remove like' })).toBeVisible();
   await app.snapshot('ssh-reply-feedback-without-local-feedback');
   expect(requests).toEqual([{ path: `${hostProxy}/api/v1/feedback`, body: expect.objectContaining({ kind: 'turn', session_id: sessionId, rating: 'up' }) }]);
+});
+
+test('attaches an SSH conversation to the locally submitted feedback', async ({ app, model }) => {
+  const { sessionId, requests } = await openSshConversation(app, model, { local: true, remote: true });
+  const page = app.window;
+  await page.getByRole('button', { name: 'Send feedback' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Send feedback' });
+  await dialog.getByRole('textbox', { name: 'Description' }).fill('Include this conversation');
+  await dialog.getByText('Include this conversation', { exact: true }).click();
+  await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
+  await expect.poll(() => requests).toEqual([
+    { path: '/api/v1/feedback', body: expect.objectContaining({ kind: 'global', session_id: sessionId, upload_session: true, upload_logs: false }) },
+    { path: '/api/v1/feedback/31/attachments/session', body: { session_id: sessionId, host_id: hostId } },
+  ]);
 });

@@ -14,6 +14,8 @@ General feedback includes the category, your description, where you opened the f
 
 Conversation history and diagnostic logs are both unchecked by default. You can select either before submitting.
 
+If you attach an SSH conversation to general feedback, your local host retrieves a temporary archive from the remote host and uploads it to the service that issued your feedback ID. The remote copy is deleted after the transfer. If the connection drops before deletion, the copy expires after 24 hours.
+
 | Option | What gets uploaded |
 | --- | --- |
 | Conversation history | Messages, tool calls and their results, and attachments stored in the conversation associated with this feedback. These may contain code snippets and file paths. |

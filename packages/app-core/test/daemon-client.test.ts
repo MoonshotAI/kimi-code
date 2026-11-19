@@ -831,6 +831,42 @@ describe('DaemonKimiWebApi request timeout budgets', () => {
   const timeoutRejection = () =>
     Promise.reject(new DOMException('signal timed out', 'TimeoutError'));
 
+  it.each(['session', 'media'] as const)('keeps a slow %s feedback upload open until it completes or the caller cancels', async (kind) => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException('signal timed out', 'TimeoutError')), ms);
+      return controller.signal;
+    });
+    const remote = deferredResponse();
+    vi.mocked(fetch).mockImplementation(async (_url, init) => {
+      const response = await remote.promise;
+      init?.signal?.throwIfAborted();
+      return response.clone();
+    });
+    try {
+      const api = createApi();
+      const upload = (signal?: AbortSignal) => kind === 'session'
+        ? api.uploadFeedbackSession(42, 'example-session', signal)
+        : api.uploadFeedbackAttachment(42, { kind, file: new Blob(['example']), fileName: 'example.png' }, signal);
+      const caller = new AbortController();
+      const results = Promise.allSettled([upload(), upload(caller.signal)]);
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+      const callerRequest = vi.mocked(fetch).mock.calls[1]?.[1]?.signal;
+      expect(callerRequest?.aborted).toBe(false);
+      caller.abort();
+      expect(callerRequest?.aborted).toBe(true);
+      remote.resolve(envelope({ upload_id: 9 }));
+      const [completed, cancelled] = await results;
+      expect(completed).toEqual({ status: 'fulfilled', value: { upload_id: 9 } });
+      expect(cancelled.status).toBe('rejected');
+    } finally {
+      remote.resolve(envelope({ upload_id: 9 }));
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('forkSession passes the turn and waits five minutes before aborting', async () => {
     vi.mocked(fetch).mockImplementation(timeoutRejection);
 

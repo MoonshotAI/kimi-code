@@ -102,9 +102,11 @@ describe('HostRouter', () => {
     await api.updateFeedback(1, { kind: 'cancel' }, 'remote-session');
     await api.uploadFeedbackAttachment(1, media);
     await api.uploadFeedbackSession(1, 'remote-session', signal);
+    await api.uploadFeedbackSession(1, 'remote-session', signal, { hostId: 'dev' });
 
     expect(local.api.createFeedback).toHaveBeenCalledExactlyOnceWith(global);
     expect(local.api.uploadFeedbackAttachment).toHaveBeenCalledExactlyOnceWith(1, media);
+    expect(local.api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'remote-session', signal, { hostId: 'dev' });
     expect(remote.api.createFeedback).toHaveBeenCalledExactlyOnceWith(turn);
     expect(remote.api.updateFeedback).toHaveBeenCalledExactlyOnceWith(1, { kind: 'cancel' });
     expect(remote.api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'remote-session', signal);
