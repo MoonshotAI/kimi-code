@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, IconButton, Spinner } from '@moonshot-ai/app-ui';
-import { useFollowScroll, usePanelScroll, useTranscriptEngine } from '@moonshot-ai/app-client/composables';
+import { usePanelScroll } from '@moonshot-ai/app-client/composables';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import type { AgentMember } from '@moonshot-ai/app-core/client/types';
 import JumpToBottomPill from './JumpToBottomPill.vue';
@@ -50,17 +50,14 @@ const showStatus = computed(
     cancelled.value,
 );
 
-const transcriptV2 = useTranscriptEngine().transcriptEngine.value === 'v2';
 const identity = computed(() => props.member?.id ?? null);
-const followScroll = transcriptV2 ? null : useFollowScroll(identity);
-const panelScroll = transcriptV2 ? usePanelScroll({ identity: () => identity.value }) : null;
-const { scroller, showJump, onScroll } = panelScroll ?? followScroll!;
+const panelScroll = usePanelScroll({ identity: () => identity.value });
+const { scroller, showJump, onScroll } = panelScroll;
 function setScroller(el: unknown): void {
   scroller.value = el instanceof HTMLElement ? el : null;
 }
 function jumpToBottom(): void {
-  if (panelScroll) panelScroll.follow();
-  else followScroll!.jumpToBottom();
+  panelScroll.follow();
 }
 
 const copiedFor = ref<'cmd' | 'out' | null>(null);

@@ -1,9 +1,27 @@
-import { computed, nextTick, watch, type ComponentPublicInstance } from 'vue';
+import { computed, nextTick, watch, type ComponentPublicInstance, type Ref } from 'vue';
 import { isEditableTarget, scrollKeyDirection } from '@moonshot-ai/app-core/lib';
 import { TRANSCRIPT_DOCK_FADE_PX, useTranscriptScroll } from '@moonshot-ai/app-client/composables';
-import { toHtmlEl, type LegacyTranscriptScrollOptions, type TranscriptScrollBinding } from './useLegacyTranscriptScroll';
+import type { ChatTurn } from '../types';
 
-export function useTranscriptScrollBinding(options: LegacyTranscriptScrollOptions): TranscriptScrollBinding {
+export interface TranscriptScrollBindingOptions {
+  sessionId: () => string | undefined;
+  mobile: () => boolean | undefined;
+  turns: Readonly<Ref<readonly ChatTurn[]>>;
+  hasMoreMessages: Readonly<Ref<boolean>>;
+  loadingMore: Readonly<Ref<boolean>>;
+  conversationTocItems: Readonly<Ref<readonly { id: string }[]>>;
+  loadOlderMessages: (sessionId: string) => Promise<unknown>;
+  syncWideTableToc: () => void;
+  keyScrollBlocked: (event: KeyboardEvent) => boolean;
+}
+
+export function toHtmlEl(el: Element | ComponentPublicInstance | null): HTMLElement | null {
+  if (el instanceof HTMLElement) return el;
+  if (el && '$el' in el && el.$el instanceof HTMLElement) return el.$el;
+  return null;
+}
+
+export function useTranscriptScrollBinding(options: TranscriptScrollBindingOptions) {
   const {
     sessionId,
     mobile,
@@ -21,7 +39,6 @@ export function useTranscriptScrollBinding(options: LegacyTranscriptScrollOption
 
   const contentWrapStyle = computed(() => ({ paddingBottom: `${scroll.dockHeight.value + TRANSCRIPT_DOCK_FADE_PX}px` }));
   const chatDockStyle = computed(() => ({ '--panes-scrollbar-width': `${scroll.scrollbarWidth.value}px` }));
-  const sessionSettling = computed(() => false);
 
   const turnQuestionIds = computed(() => {
     const result = new Map<string, string>();
@@ -96,7 +113,6 @@ export function useTranscriptScrollBinding(options: LegacyTranscriptScrollOption
     following: scroll.following,
     showPill: scroll.showJump,
     panesScrolling: scroll.scrolling,
-    sessionSettling,
     dockHeight: scroll.dockHeight,
     contentWrapStyle,
     chatDockStyle,
@@ -111,7 +127,6 @@ export function useTranscriptScrollBinding(options: LegacyTranscriptScrollOption
     scrollToTurn: scroll.navigateToTurn,
     revealTranscriptRange,
     followAfterUserAction,
-    lockFollowForUserAction: followAfterUserAction,
     handleLoadOlderMessages,
   };
 }

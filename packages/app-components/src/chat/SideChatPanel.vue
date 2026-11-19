@@ -7,7 +7,7 @@ const sideChatScrollSnapshots = new Map<string, ScrollSnapshot>();
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { computed, onMounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
 import Composer from '../composer/Composer.vue';
@@ -15,7 +15,7 @@ import JumpToBottomPill from './JumpToBottomPill.vue';
 import { EmptyState, Icon } from '@moonshot-ai/app-ui';
 import { sideChatDrafts } from '@moonshot-ai/app-client/client';
 import { persistComposerDraftSnapshot } from '@moonshot-ai/app-client/lib';
-import { useFollowScroll, usePanelScroll, useTranscriptEngine } from '@moonshot-ai/app-client/composables';
+import { usePanelScroll } from '@moonshot-ai/app-client/composables';
 import { draftAttachmentsStorageKey, draftStorageKey, safeGetJson, safeGetString, type TranscriptLayout } from '@moonshot-ai/app-core/lib';
 import { FetchTurnFileChangesKey, PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import type { ChatTurn, OpenMediaRequest } from '@moonshot-ai/app-core/client/types';
@@ -44,25 +44,14 @@ const SCROLL_FADE_PX = 48;
 
 const composerRef = ref<InstanceType<typeof Composer> | null>(null);
 
-const transcriptV2 = useTranscriptEngine().transcriptEngine.value === 'v2';
-const identity = computed(() => props.agentId);
 const composerH = ref(0);
-const followScroll = transcriptV2 ? null : useFollowScroll(identity);
-const panelScroll = transcriptV2
-  ? usePanelScroll({ identity: () => props.agentId, snapshots: sideChatScrollSnapshots, applyLayout: applyDockLayout })
-  : null;
-const bodyRef = (panelScroll ?? followScroll!).scroller;
-const showJump = (panelScroll ?? followScroll!).showJump;
-const onBodyScroll = (panelScroll ?? followScroll!).onScroll;
-const bodyStyle = computed(() =>
-  transcriptV2 || composerH.value <= 0
-    ? undefined
-    : { '--sc-composer-h': `${composerH.value}px`, paddingBottom: `${composerH.value + SCROLL_FADE_PX}px` },
-);
+const panelScroll = usePanelScroll({ identity: () => props.agentId, snapshots: sideChatScrollSnapshots, applyLayout: applyDockLayout });
+const bodyRef = panelScroll.scroller;
+const showJump = panelScroll.showJump;
+const onBodyScroll = panelScroll.onScroll;
 
 function jumpToBottom(): void {
-  if (panelScroll) panelScroll.follow();
-  else followScroll!.jumpToBottom();
+  panelScroll.follow();
 }
 
 function applyDockLayout(layout: TranscriptLayout): void {
@@ -74,22 +63,7 @@ function applyDockLayout(layout: TranscriptLayout): void {
   el.style.setProperty('--sc-dock-space', `${layout.dockHeight > 0 ? layout.dockHeight + SCROLL_FADE_PX : 0}px`);
 }
 
-const composerEl = panelScroll?.dock ?? ref<HTMLElement | null>(null);
-if (!panelScroll) {
-  let composerRO: ResizeObserver | null = null;
-  watch(composerEl, (el) => {
-    composerRO?.disconnect();
-    composerRO = null;
-    if (el !== null && typeof ResizeObserver !== 'undefined') {
-      composerRO = new ResizeObserver(() => {
-        composerH.value = el.offsetHeight;
-      });
-      composerRO.observe(el);
-    }
-    composerH.value = el?.offsetHeight ?? 0;
-  });
-  onUnmounted(() => composerRO?.disconnect());
-}
+const composerEl = panelScroll.dock;
 
 const submitting = computed(() => sideChatInflight.has(props.agentId));
 
@@ -160,17 +134,7 @@ watch(() => props.agentId, (agentId) => {
   seedDraftFromHandoff(agentId);
 });
 
-function pinScrollAnchor(el: HTMLElement): void {
-  const scroller = bodyRef.value;
-  if (!scroller) return;
-  followScroll!.pinScroll();
-  const top = el.getBoundingClientRect().top;
-  requestAnimationFrame(() => {
-    scroller.scrollTop += el.getBoundingClientRect().top - top;
-  });
-}
-
-provide(PinScrollKey, panelScroll ? (el: HTMLElement) => panelScroll.hold(el) : pinScrollAnchor);
+provide(PinScrollKey, (el: HTMLElement) => panelScroll.hold(el));
 
 provide(FetchTurnFileChangesKey, undefined);
 
@@ -183,7 +147,7 @@ defineExpose({ focusInput });
 
 <template>
   <div class="sc">
-    <div ref="bodyRef" class="sc-body" :class="{ 'sc-body-v2': transcriptV2 }" :style="bodyStyle" @scroll.passive="onBodyScroll">
+    <div ref="bodyRef" class="sc-body" @scroll.passive="onBodyScroll">
       <EmptyState v-if="turns.length === 0" class="sc-empty" :title="t('sideChat.title')" :hint="t('sideChat.empty')">
         <template #icon>
           <Icon name="side-chat" size="lg" />
@@ -204,7 +168,7 @@ defineExpose({ focusInput });
         @open-media="emit('openMedia', $event)"
         @resume-turn="onResumeTurn"
       />
-      <div v-if="transcriptV2 && turns.length > 0" class="sc-dock-space" aria-hidden="true" />
+      <div v-if="turns.length > 0" class="sc-dock-space" aria-hidden="true" />
     </div>
 
     <div ref="composerEl" class="sc-composer">
@@ -250,9 +214,6 @@ defineExpose({ focusInput });
   );
 }
 .sc-empty {
-  min-height: 100%;
-}
-.sc-body-v2 .sc-empty {
   min-height: calc(100% - var(--sc-dock-space, 0px));
 }
 .sc-dock-space {

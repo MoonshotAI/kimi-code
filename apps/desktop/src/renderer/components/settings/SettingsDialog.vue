@@ -34,7 +34,7 @@ import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
-import { useActivityRunFolding, useCanaryChannel, usePasteImageAutoMention, useRunningSendMode, useTranscriptEngine, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
+import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { usePreventSystemSleep } from '../../composables/usePreventSystemSleep';
 import { useTerminalScreenReader } from '../../composables/useTerminalScreenReader';
@@ -67,8 +67,6 @@ const { sidebarTabs, setSidebarTabs } = useSidebarTabs();
 
 const { turnFolding, setTurnFolding } = useTurnFolding();
 const { activityRunFolding, setActivityRunFolding } = useActivityRunFolding();
-const canary = useCanaryChannel();
-const { transcriptEngine, setTranscriptEngine } = useTranscriptEngine();
 const { pasteImageAutoMention, setPasteImageAutoMention } = usePasteImageAutoMention();
 const { runningSendMode, setRunningSendMode } = useRunningSendMode();
 const { terminalScreenReader, setTerminalScreenReader } = useTerminalScreenReader();
@@ -1433,17 +1431,6 @@ function archiveTime(iso: string): string {
                 :model-value="notifyUserEnabled"
                 :label="t('settings.lab.notifyUser')"
                 @update:model-value="onNotifyUserChange"
-              />
-            </div>
-            <div v-if="canary.isCanaryBuild.value" class="row">
-              <span class="rlabel">
-                {{ t('settings.lab.transcriptEngine') }}
-                <span class="hint">{{ t('settings.lab.transcriptEngineHint') }}</span>
-              </span>
-              <Switch
-                :model-value="transcriptEngine === 'v2'"
-                :label="t('settings.lab.transcriptEngine')"
-                @update:model-value="(on: boolean) => setTranscriptEngine(on ? 'v2' : 'legacy')"
               />
             </div>
             </div>

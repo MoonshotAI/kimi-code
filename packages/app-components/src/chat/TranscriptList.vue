@@ -1,8 +1,8 @@
 <script setup lang="ts" generic="T">
-import { inject, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue';
+import { inject, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button } from '@moonshot-ai/app-ui';
-import { TranscriptFlatKey, TranscriptScrollKey, type TranscriptListHandle, type TranscriptRefreshSource } from '@moonshot-ai/app-core/contracts';
+import { TranscriptScrollKey, type TranscriptListHandle, type TranscriptRefreshSource } from '@moonshot-ai/app-core/contracts';
 import type { AnchorPath } from '@moonshot-ai/app-core/lib';
 import HistoryRow from './HistoryRow.vue';
 
@@ -28,7 +28,6 @@ const MAX_CASCADE = 8;
 
 const { t } = useI18n();
 const host = inject(TranscriptScrollKey, null);
-provide(TranscriptFlatKey, true);
 
 const stateKey = `transcript:${props.scope}`;
 const rowStates = (props.state?.get(stateKey) as Map<string, Map<string, unknown>> | undefined) ?? new Map<string, Map<string, unknown>>();

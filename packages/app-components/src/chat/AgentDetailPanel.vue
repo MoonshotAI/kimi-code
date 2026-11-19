@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onActivated, onBeforeUnmount, onDeactivated, provide, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
 
-import { useFollowScroll, usePanelScroll, useTranscriptEngine } from '@moonshot-ai/app-client/composables';
+import { usePanelScroll } from '@moonshot-ai/app-client/composables';
 import { ModelDisplayKey, PinScrollKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { ComposerText } from '@moonshot-ai/app-composer/transcript';
@@ -81,21 +81,8 @@ watch(promptText, () => {
 });
 
 function togglePrompt(event: MouseEvent): void {
-  if (panelScroll) {
-    const anchor = promptExpanded.value ? event.currentTarget : promptTextEl.value;
-    if (anchor instanceof HTMLElement) panelScroll.hold(anchor);
-  } else if (!promptExpanded.value) {
-    pinScroll();
-  } else {
-    const btn = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-    const scrollerEl = scroller.value;
-    if (btn !== null && scrollerEl !== null) {
-      const top = btn.getBoundingClientRect().top;
-      requestAnimationFrame(() => {
-        scrollerEl.scrollTop += btn.getBoundingClientRect().top - top;
-      });
-    }
-  }
+  const anchor = promptExpanded.value ? event.currentTarget : promptTextEl.value;
+  if (anchor instanceof HTMLElement) panelScroll.hold(anchor);
   promptExpanded.value = !promptExpanded.value;
 }
 
@@ -119,19 +106,12 @@ const promptAttachments = computed(() => {
   return props.turns.find((turn) => turn.role === 'user' && turn.text === prompt)?.inlineAttachments;
 });
 
-const transcriptV2 = useTranscriptEngine().transcriptEngine.value === 'v2';
 const identity = computed(() => props.member.id);
-const followScroll = transcriptV2 ? null : useFollowScroll(identity);
-const panelScroll = transcriptV2 ? usePanelScroll({ identity: () => props.member.id }) : null;
-const { scroller, following, showJump } = panelScroll ?? followScroll!;
-
-function pinScroll(): void {
-  followScroll?.pinScroll();
-}
+const panelScroll = usePanelScroll({ identity: () => props.member.id });
+const { scroller, following, showJump } = panelScroll;
 
 function jumpToBottom(): void {
-  if (panelScroll) panelScroll.follow();
-  else followScroll!.jumpToBottom();
+  panelScroll.follow();
 }
 
 const working = computed(
@@ -150,27 +130,8 @@ watch(identity, () => {
   promptExpanded.value = false;
 });
 
-let lastScrollTop = 0;
-let parkedScrollTop: number | null = null;
 function onTranscriptScroll(): void {
-  if (panelScroll) {
-    panelScroll.onScroll();
-    return;
-  }
-  lastScrollTop = scroller.value?.scrollTop ?? 0;
-  followScroll!.onScroll();
-}
-if (followScroll) {
-  onDeactivated(() => {
-    parkedScrollTop = following.value ? null : lastScrollTop;
-  });
-  onActivated(() => {
-    const element = scroller.value;
-    if (parkedScrollTop === null || !element) return;
-    pinScroll();
-    element.scrollTop = parkedScrollTop;
-    parkedScrollTop = null;
-  });
+  panelScroll.onScroll();
 }
 
 const contentReady = ref(false);
@@ -235,9 +196,7 @@ const showEmptyOutput = computed(
 );
 const showOutputState = computed(() => outputLoading.value || showEmptyOutput.value);
 
-provide(PinScrollKey, panelScroll ? (el: HTMLElement) => panelScroll.hold(el) : () => {
-  if (scroller.value) pinScroll();
-});
+provide(PinScrollKey, (el: HTMLElement) => panelScroll.hold(el));
 
 const modelDisplay = inject(ModelDisplayKey);
 const subagentEffort = inject(SubagentEffortKey);

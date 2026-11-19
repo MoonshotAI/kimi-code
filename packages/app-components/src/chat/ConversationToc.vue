@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, useId, watch, type Component } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Card } from '@moonshot-ai/app-ui';
-import HistoryWindow from './HistoryWindow.vue';
 import VirtualList from './VirtualList.vue';
-import { useTranscriptEngine } from '@moonshot-ai/app-client/composables';
 import type { ChatTurn } from '@moonshot-ai/app-core/client/types';
 
 export interface ConversationTocItem {
@@ -58,17 +56,9 @@ const listHistoryRef = ref<{ reveal: (id: string) => Promise<unknown>; release: 
 const railHistoryRef = ref<{ reveal: (id: string) => Promise<unknown>; release: () => void } | null>(null);
 const directoryEntries = new Map<string, HTMLElement>();
 const virtualDirectory = computed(() => props.items.length > 80);
-const transcriptV2 = useTranscriptEngine().transcriptEngine.value === 'v2';
-const directorySemantics = computed(() => transcriptV2 || !virtualDirectory.value);
 function tocItemKey(item: ConversationTocItem): string {
   return item.id;
 }
-const railList = computed<{ is: Component; props: Record<string, unknown> }>(() => transcriptV2
-  ? { is: VirtualList, props: { items: props.items, itemKey: tocItemKey, enabled: props.windowHistory === true, itemSize: RAIL_ROW_HEIGHT, scrollRoot: '.toc-scroll' } }
-  : { is: HistoryWindow, props: { scope: 'toc-rail', items: props.items, itemKey: tocItemKey, enabled: props.windowHistory, scrollRoot: '.toc-scroll', estimate: () => RAIL_ROW_HEIGHT, gap: () => 0 } });
-const directoryList = computed<{ is: Component; props: Record<string, unknown> }>(() => transcriptV2
-  ? { is: VirtualList, props: { items: props.items, itemKey: tocItemKey, enabled: virtualDirectory.value, itemSize: DIRECTORY_ROW_HEIGHT, gap: DIRECTORY_ROW_GAP, scrollRoot: '.toc-list' } }
-  : { is: HistoryWindow, props: { scope: 'toc-directory', items: props.items, itemKey: tocItemKey, enabled: virtualDirectory.value, scrollRoot: '.toc-list', estimate: () => 40, gap: (_: ConversationTocItem, index: number) => index ? 4 : 0 } });
 let alignmentVersion = 0;
 let manualBrowse = false;
 let hoverPositioning = false;
@@ -289,7 +279,7 @@ onBeforeUnmount(() => {
     @keydown.esc.stop="closeDirectory"
   >
     <div ref="railRef" class="toc-scroll" @wheel="scrollFromRail" @mouseleave="leaveRail">
-      <component :is="railList.is" ref="railHistoryRef" :key="String(windowHistory)" v-bind="railList.props">
+      <VirtualList ref="railHistoryRef" :key="String(windowHistory)" :items="items" :item-key="tocItemKey" :enabled="windowHistory === true" :item-size="RAIL_ROW_HEIGHT" scroll-root=".toc-scroll">
         <template #default="{ item }: { item: ConversationTocItem }">
           <button
             type="button"
@@ -311,17 +301,17 @@ onBeforeUnmount(() => {
             <span class="toc-bar" />
           </button>
         </template>
-      </component>
+      </VirtualList>
     </div>
     <Card v-if="panelVisible" :id="listDomId" class="toc-directory" :class="{ 'can-scroll-up': canScrollUp, 'can-scroll-down': canScrollDown }" size="sm">
-      <div ref="listRef" class="toc-list" :role="directorySemantics ? 'list' : undefined" @scroll="syncRail" @wheel="beginDirectoryBrowse" @pointerdown="beginDirectoryBrowse" @keydown="beginDirectoryBrowse">
-        <component :is="directoryList.is" ref="listHistoryRef" v-bind="directoryList.props">
+      <div ref="listRef" class="toc-list" role="list" @scroll="syncRail" @wheel="beginDirectoryBrowse" @pointerdown="beginDirectoryBrowse" @keydown="beginDirectoryBrowse">
+        <VirtualList ref="listHistoryRef" :items="items" :item-key="tocItemKey" :enabled="virtualDirectory" :item-size="DIRECTORY_ROW_HEIGHT" :gap="DIRECTORY_ROW_GAP" scroll-root=".toc-list">
           <template #default="{ item, index }: { item: ConversationTocItem; index: number }">
         <div
           :ref="element => registerEntry(item.id, element)"
-          :role="directorySemantics ? 'listitem' : undefined"
-          :aria-posinset="directorySemantics ? index + 1 : undefined"
-          :aria-setsize="directorySemantics ? items.length : undefined"
+          role="listitem"
+          :aria-posinset="index + 1"
+          :aria-setsize="items.length"
           class="toc-entry"
           :class="{ active: activeTurnId === item.id, hovered: hoveredId === item.id }"
           @mouseenter="hoveredId = item.id"
@@ -337,7 +327,7 @@ onBeforeUnmount(() => {
           ><span class="toc-title">{{ item.title }}</span></button>
         </div>
           </template>
-        </component>
+        </VirtualList>
       </div>
     </Card>
   </nav>
