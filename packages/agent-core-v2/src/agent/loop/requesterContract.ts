@@ -69,6 +69,11 @@ export interface CoreLoopRequesterOptions {
   ) => void;
 }
 
+export interface BoundCoreLoopRequesterOptions extends CoreLoopRequesterOptions {
+  readonly config: RequestConfigSnapshot;
+  readonly binding: RequesterBinding;
+}
+
 export type OperationLoopRequesterOptions = Omit<CoreLoopRequesterOptions, 'runtime'>;
 
 export type CoreLoopRequester = LoopLlmRequester;

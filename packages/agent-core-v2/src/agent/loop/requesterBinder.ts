@@ -1,7 +1,7 @@
 import type { LlmRequestModel } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmRequesterExecution } from '@moonshot-ai/core/llm/policy/policy';
-import type { Loop, LoopLlmRequester } from '@moonshot-ai/core/loop/index';
+import type { FullLoopLlmRequester, Loop, LoopLlmRequester } from '@moonshot-ai/core/loop/index';
 import { Disposable } from '#/_base/di/lifecycle';
 import type { IConfigService } from '#/app/config/config';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
@@ -28,6 +28,11 @@ const REQUEST_CONFIG_SECTIONS: ReadonlySet<string> = new Set([
 interface RequesterAttachment {
   readonly loop: Loop;
   readonly legacyRequester: LoopLlmRequester;
+  current?: {
+    readonly requester: FullLoopLlmRequester;
+    readonly config: RequestConfigSnapshot;
+    readonly binding: RequesterBinding;
+  };
 }
 
 export interface AgentRequesterBinderOptions {
@@ -58,6 +63,17 @@ export class AgentRequesterBinder extends Disposable {
   attach(loop: Loop, legacyRequester: LoopLlmRequester): void {
     this.attachment = { loop, legacyRequester };
     this.refresh();
+  }
+
+  turnSnapshot(requester: FullLoopLlmRequester): {
+    readonly config: RequestConfigSnapshot;
+    readonly binding: RequesterBinding;
+  } {
+    const current = this.attachment?.current;
+    if (current?.requester !== requester) {
+      throw new Error('Turn requester is not the current binder snapshot');
+    }
+    return current;
   }
 
   requestConfigSnapshot(profile: ProfileBindingSnapshot): RequestConfigSnapshot {
@@ -120,10 +136,12 @@ export class AgentRequesterBinder extends Disposable {
     const profile = this.options.profileSnapshot();
     if (!this.options.profile.hasProvider(profile)) return;
     const config = this.requestConfigSnapshot(profile);
-    const base = this.bindRequester({}, config).request;
-    attachment.loop.setRequester({
-      ...base,
+    const binding = this.bindRequester({}, config);
+    const requester: FullLoopLlmRequester & LoopLlmRequester = {
+      ...binding.request,
       snapshot: () => attachment.legacyRequester.snapshot?.() ?? attachment.legacyRequester,
-    });
+    };
+    attachment.current = { requester, config, binding };
+    attachment.loop.setRequester(requester);
   }
 }

@@ -1,8 +1,10 @@
 import { getMaxListeners } from 'node:events';
 
-import { type ToolCall } from '@moonshot-ai/core/llm/message';
+import { createUserMessage, type ToolCall } from '@moonshot-ai/core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
-import type { Loop } from '@moonshot-ai/core/loop/index';
+import type { LlmOutcome, LlmRunEvent } from '@moonshot-ai/core/llm/response';
+import { contentsOf, requesterContents } from '@moonshot-ai/core/llm/requester';
+import type { FullLoopLlmRequester, Loop } from '@moonshot-ai/core/loop/index';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { call, held, reply, say, think, thinkSigned } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,8 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { Event } from '#/_base/event';
-import type { LoopRequester } from '#/agent/loop/requesterContract';
-import type { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
+import type { BoundCoreLoopRequesterOptions, LoopRequester } from '#/agent/loop/requesterContract';
+import type { AgentLoopRequestObserver, AgentRequestObservation } from '#/agent/loop/requestObservation';
+import type { AgentRequesterBinder } from '#/agent/loop/requesterBinder';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -168,7 +171,10 @@ describe('Agent loop', () => {
           ],
         };
       }
-      return { parts: [{ type: 'text', text: 'done' }] };
+      return {
+        ...(requests.length > 3 ? { id: 'comparison' } : {}),
+        parts: [{ type: 'text', text: 'done' }],
+      };
     });
     const firstProvider: ProviderConfig & { readonly type: string } = {
       type: 'kimi',
@@ -208,6 +214,7 @@ describe('Agent loop', () => {
           },
         },
         modelOverrides: overrides,
+        loopControl: { maxAttemptsPerStep: 2 },
       })),
       permissionModeServices('yolo'),
     );
@@ -229,7 +236,16 @@ describe('Agent loop', () => {
           execute: async () => ({ output: 'work-result' }),
         }),
       });
-      const coreLoop = (localLoop as unknown as { loop?: Loop }).loop;
+      const internals = localLoop as unknown as {
+        readonly loop?: Loop;
+        readonly requesterBinder: AgentRequesterBinder;
+        readonly observer: AgentLoopRequestObserver;
+        decorateRequester(
+          requester: FullLoopLlmRequester,
+          options: BoundCoreLoopRequesterOptions,
+        ): FullLoopLlmRequester;
+      };
+      const coreLoop = internals.loop;
       if (coreLoop === undefined) throw new Error('Loop is not started');
       const setRequester = vi.spyOn(coreLoop, 'setRequester');
 
@@ -294,6 +310,110 @@ describe('Agent loop', () => {
         'structure',
         'agent-media',
       ]);
+
+      const raw = coreLoop.baseRequester;
+      if (raw === undefined || !('with' in raw)) throw new Error('Expected a full raw requester');
+      const { config, binding } = internals.requesterBinder.turnSnapshot(raw);
+      const observations: AgentRequestObservation[] = [];
+      const startObservation = internals.observer.start.bind(internals.observer);
+      vi.spyOn(internals.observer, 'start').mockImplementation((source, snapshot, onTrace) => {
+        const observation = startObservation(source, snapshot, onTrace);
+        observations.push(observation);
+        return observation;
+      });
+      const outcomeSources: unknown[] = [];
+      const options: BoundCoreLoopRequesterOptions = {
+        config,
+        binding,
+        source: () => ({ type: 'turn', turnId: 90, step: 1 }),
+        runtime: { historyRevision: () => coreLoop.historyRevision },
+        dynamicTools: true,
+        onOutcome: (_outcome, source) => outcomeSources.push(source),
+      };
+      const legacy = localLoop.requester.coreRequester(options);
+      const legacySnapshot = legacy.snapshot?.() ?? legacy;
+      const decorated = internals.decorateRequester(raw, options);
+      expect(decorated[requesterContents]).toEqual(contentsOf(raw));
+      const derived = decorated.with({ model: { sampling: { temperature: 0.5 } } });
+      expect(contentsOf(derived).model?.sampling).toMatchObject({ temperature: 0.5 });
+      expect(decorated.request({
+        content: { messages: [createUserMessage('preview')] },
+        profile: { systemPrompt: 'preview-system', tools: [] },
+      }).profile?.systemPrompt).toBe('preview-system');
+
+      const events: LlmRunEvent[][] = [[], []];
+      const outcomes: LlmOutcome[] = [];
+      const loopResolver = { id: 'loop-policy', resolve: async (request: LlmRequest) => request };
+      const rest = {
+        content: { messages: requests[2]!.content.messages },
+        profile: requests[2]!.profile,
+        policy: { resolvers: [loopResolver] },
+      };
+      for (const [index, requester] of [legacySnapshot, decorated].entries()) {
+        outcomes.push(await requester.generate(rest, {
+          signal: new AbortController().signal,
+          onEvent: (event) => events[index]?.push(event),
+        }));
+      }
+
+      const outcomeValue = (outcome: LlmOutcome) => {
+        const { timing: _timing, ...value } = outcome;
+        return value;
+      };
+      expect(outcomeValue(outcomes[1]!)).toEqual(outcomeValue(outcomes[0]!));
+      const eventValues = events.map((list) => list.map((event) => {
+        if (event.type === 'llm.delta.timing') return { type: event.type };
+        return event.type === 'llm.ended'
+          ? { ...event, outcome: outcomeValue(event.outcome) }
+          : event;
+      }));
+      expect(eventValues[1]).toEqual(eventValues[0]);
+      expect(outcomeSources).toEqual([options.source(), options.source()]);
+      expect(requests).toHaveLength(5);
+      expect(requests[4]?.protocol).toMatchObject(requests[3]!.protocol);
+      const endpointValues = requests.slice(3).map((request) => ({
+        baseUrl: request.endpoint?.baseUrl,
+        defaultBaseUrl: request.endpoint?.defaultBaseUrl,
+        headers: request.endpoint?.headers,
+        files: request.endpoint?.files,
+        hasCredentials: request.endpoint?.credentials !== undefined,
+        hasClientFactory: request.endpoint?.clientFactory !== undefined,
+        hasFetch: request.endpoint?.fetch !== undefined,
+      }));
+      expect(endpointValues[1]).toEqual(endpointValues[0]);
+      expect(requests[4]?.model).toMatchObject(requests[3]!.model);
+      expect(requests[4]?.content).toMatchObject(requests[3]!.content);
+      expect(requests[4]?.profile).toEqual(requests[3]!.profile);
+      expect(requests[4]?.policy?.retry).toEqual(requests[3]?.policy?.retry);
+      expect(requests[4]?.policy?.retry).toEqual({ maxAttemptsPerStep: 2, infiniteRetry: false });
+      const resolverIds = requests.slice(3).map((request) => {
+        const resolvers = request.policy?.resolvers;
+        return (typeof resolvers === 'function' ? resolvers() : resolvers)?.map((resolver) => resolver.id);
+      });
+      expect(resolverIds).toEqual([
+        ['tool-select', 'agent-media-tools', 'structure', 'agent-media', 'loop-policy'],
+        ['tool-select', 'agent-media-tools', 'structure', 'agent-media', 'loop-policy'],
+      ]);
+      const observed = observations.map((observation) => ({
+        source: observation.source,
+        config: observation.config,
+        context: {
+          model: observation.context?.model,
+          modelAlias: observation.context?.modelAlias,
+          thinkingEffort: observation.context?.thinkingEffort,
+          systemPrompt: observation.context?.systemPrompt,
+          tools: observation.context?.tools,
+          messages: observation.context?.messages,
+          contextRevision: observation.context?.contextRevision,
+          source: observation.context?.source,
+          logFields: observation.context?.logFields,
+          dynamicTools: observation.context?.dynamicTools,
+        },
+        recorded: observation.recorded,
+        media: observation.media,
+      }));
+      expect(observed).toHaveLength(2);
+      expect(observed[1]).toEqual(observed[0]);
     } finally {
       await local.dispose();
     }

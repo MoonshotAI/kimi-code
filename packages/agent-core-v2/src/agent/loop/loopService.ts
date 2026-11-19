@@ -13,6 +13,7 @@ import { AgentLoopRequestObserver } from './requestObservation';
 import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
 import {
   agentLLMRequestLogFields,
+  type BoundCoreLoopRequesterOptions,
   type CoreLoopRequester,
   type CoreLoopRequesterOptions,
   type LoopRequester,
@@ -80,8 +81,12 @@ import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import {
   contentsOf,
   mergeFields,
+  requesterContents,
   type InitializedLlmRequestPart,
+  type InitializedLlmRequester,
   type LlmDimension,
+  type LlmRequester,
+  type LlmRequestPart,
   type LlmRequestRest,
 } from '@moonshot-ai/core/llm/requester';
 import { createLlmRequesterExecution, type LlmPolicy, type LlmRunControl } from '@moonshot-ai/core/llm/policy/policy';
@@ -133,6 +138,7 @@ import {
   createMaxStepsHook,
   type Loop,
   type LoopEmitted,
+  type FullLoopLlmRequester,
   type LoopLlmRequester,
   type LoopHooks,
   type MessageAppendingEvent,
@@ -672,6 +678,55 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }));
   }
 
+  private decorateTurnRequester(
+    loop: Loop,
+    requester: FullLoopLlmRequester,
+  ): FullLoopLlmRequester {
+    const { config, binding } = this.requesterBinder.turnSnapshot(requester);
+    this.turns.thinkingEffort = config.resolved.thinkingLevel;
+    return loop.operation((runtime) => this.decorateRequester(requester, {
+      config,
+      binding,
+      source: () => {
+        const turn = loop.state.turn;
+        if (turn === undefined) throw new BugIndicatingError('Turn request requires an active turn');
+        return { type: 'turn', turnId: turn.id, step: turn.step };
+      },
+      runtime,
+      onTrace: (trace) => {
+        this.turns.requestTrace = trace;
+      },
+      onOutcome: (outcome, source) => this.turns.recordOutcome(outcome, source),
+    }));
+  }
+
+  private decorateRequester(
+    requester: FullLoopLlmRequester,
+    options: BoundCoreLoopRequesterOptions,
+  ): FullLoopLlmRequester {
+    const wrap = (current: FullLoopLlmRequester): FullLoopLlmRequester => ({
+      [requesterContents]: contentsOf(current),
+      with: ((next: LlmRequestPart | LlmRequester<LlmDimension>) =>
+        wrap(current.with(contentsOf(next)))) as FullLoopLlmRequester['with'],
+      request: (rest) => this.prepareCoreRequest(
+        options,
+        rest,
+        options.source(),
+        options.config,
+        current,
+      ).request,
+      generate: async (rest, control) => this.generateDecoratedRequest(
+        options,
+        rest,
+        options.source(),
+        options.config,
+        control,
+        current,
+      ),
+    });
+    return wrap(requester);
+  }
+
 
   private coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
     return {
@@ -692,8 +747,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     rest: CoreRequestRest,
     source: ResolvedRequestContext['source'],
     config: RequestConfigSnapshot,
+    requester?: InitializedLlmRequester,
   ): PreparedCoreRequest {
-    const resolved = this.resolveRequest(options, rest, source, config);
+    const resolved = this.resolveRequest(options, rest, source, config, requester);
     const mediaPolicy = this.mediaPolicyFactory(resolved.model, resolved.request);
     const hostPolicy = this.corePolicy(resolved, mediaPolicy);
     const base = mergeFields(contentsOf(resolved.request) as Fields, {
@@ -743,9 +799,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const config = options.config ?? this.requesterBinder.requestConfigSnapshot(
       this.profileAdapter.snapshot(),
     );
+    return this.generateDecoratedRequest(options, rest, source, config, control);
+  }
+
+  private async generateDecoratedRequest(
+    options: CoreLoopRequesterOptions,
+    rest: CoreRequestRest,
+    source: ResolvedRequestContext['source'],
+    config: RequestConfigSnapshot,
+    control: LlmRunControl,
+    requester?: InitializedLlmRequester,
+  ): Promise<LlmOutcome> {
     const observation = this.observer.start(source, config, options.onTrace);
     try {
-      const prepared = this.prepareCoreRequest(options, rest, source, config);
+      const prepared = this.prepareCoreRequest(options, rest, source, config, requester);
       const { resolved, request } = prepared;
       observation.prepare(resolved);
       const outcome = await resolved.request.with({
@@ -787,6 +854,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     rest: CoreRequestRest,
     source: ResolvedRequestContext['source'],
     config: RequestConfigSnapshot,
+    requester?: InitializedLlmRequester,
   ): ResolvedRequestContext {
     const resolved = config.resolved;
     const binding = options.binding ?? this.requesterBinder.bindRequester(options, config);
@@ -797,12 +865,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         : undefined);
     const messages = rest.content?.messages ?? this.rawHistory();
     const tools = rest.profile?.tools ?? options.tools;
+    const baseRequest = requester ?? binding.request;
     return {
       request: binding.requestMetadata
-        ? binding.request.with({
+        ? baseRequest.with({
             endpoint: { headers: requestMetadataHeaders(this.requestMetadata.resolve(source)) },
           })
-        : binding.request,
+        : baseRequest,
       model: binding.model,
       modelAlias: resolved.modelAlias,
       thinkingEffort: resolved.thinkingLevel,
