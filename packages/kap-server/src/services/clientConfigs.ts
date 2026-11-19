@@ -4,6 +4,7 @@ import {
   clientUpgradePolicySchema,
 } from '@moonshot-ai/kimi-code-product/client-configs/node';
 import { z } from 'zod';
+import { FEEDBACK_REASONS_CONFIG, feedbackReasonsSchema } from '../protocol/rest-feedback';
 
 const CLIENT_CONFIGS_PATH = '/client_configs';
 const FETCH_TIMEOUT_MS = 5000;
@@ -100,6 +101,7 @@ const effortSwitchConfigSchema = z.unknown().transform((raw): EffortSwitchConfig
 });
 
 const registry = new Map<string, z.ZodTypeAny>([
+  [FEEDBACK_REASONS_CONFIG, feedbackReasonsSchema],
   [MODEL_SWITCH_CONFIRM_CONFIG_NAME, modelSwitchConfirmConfigSchema],
   [EFFORT_SWITCH_CONFIG_NAME, effortSwitchConfigSchema],
   [CLIENT_UPGRADE_POLICY_CONFIG_NAME, clientUpgradePolicySchema],

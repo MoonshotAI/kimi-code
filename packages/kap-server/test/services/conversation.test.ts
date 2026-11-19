@@ -1035,6 +1035,31 @@ async function runningTurn(h: FeedHarness): Promise<void> {
 }
 
 describe('conversation feed', () => {
+  it('only reuses the historical request ID when its step produced the rated reply', async () => {
+    const h = feedHarness([
+      turnPrompt(0, 'p0'), userMessage('p0', 'First question'),
+      stepBegin(0, 1, 'answer'), contentPart(0, 1, 'answer', { type: 'text', text: 'First answer' }),
+      stepEnd(0, 1, 'answer', { finishReason: 'end_turn' }), turnEnded(0, 'completed', { requestId: 'first-request' }),
+      turnPrompt(1, 'p1'), userMessage('p1', 'Second question'),
+      stepBegin(1, 1, 'explain'), contentPart(1, 1, 'explain', { type: 'text', text: 'I will read the file.' }),
+      toolCall(1, 1, 'explain', 'read', 'Read', { path: 'example.txt' }), toolResult('read', 'file content'),
+      stepEnd(1, 1, 'explain', { finishReason: 'tool_use' }), stepBegin(1, 2, 'failed'),
+      stepEnd(1, 2, 'failed', { finishReason: 'error' }), turnEnded(1, 'failed', { requestId: 'failed-request' }),
+      turnPrompt(2, 'p2'), userMessage('p2', 'Third question'), message('assistant', 'Plain answer'),
+      turnEnded(2, 'completed', { requestId: 'text-request' }),
+      turnPrompt(3, 'p3'), userMessage('p3', 'Fourth question'), message('assistant', 'A previous reply'),
+      turnEnded(3, 'failed', { requestId: 'unproven-request' }),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+    const [first, second, third, fourth] = h.feed.turns();
+    expect(h.feed.feedbackTurn(first!.turn_id, 'answer:0')).toMatchObject({ requestId: 'first-request' });
+    expect(h.feed.feedbackTurn(second!.turn_id, 'explain:0')).toEqual({});
+    expect(h.feed.feedbackTurn(third!.turn_id)).toMatchObject({ requestId: 'text-request' });
+    expect(h.feed.feedbackTurn(fourth!.turn_id)).toEqual({});
+    h.dispatcher.dispose();
+  });
+
   it('rejects ready when the first replay fails', async () => {
     const h = feedHarness([prompt(0, 'p1').serialize()]);
     h.failNextReplay();
