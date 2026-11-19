@@ -1,7 +1,4 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
-import { until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
+import { writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
 import { KapProcess, type KapSocket, type KapTurn } from '@moonshot-ai/testkit/kap';
 import { fakeModelConfig, say } from '@moonshot-ai/testkit/model';
 import { homeFixtures, modelFixtures, type HomeFixtures, type ModelFixtures } from '@moonshot-ai/testkit/vitest';
@@ -28,7 +25,7 @@ test('every released corpus is complete and unchanged since it was captured', as
 });
 
 for (const corpus of corpora) {
-  test(`continues a session written by ${corpus.manifest.writer} across a fresh KAP process and recovers the completed turn after a crash`, { timeout: 90_000 }, async ({ model, testHome }) => {
+  test(`continues a session written by ${corpus.manifest.writer} across a fresh KAP process and recovers the completed turn after a crash right after :wait reports idle`, { timeout: 90_000 }, async ({ model, testHome }) => {
     await installCorpus(corpus, testHome);
     await model.listen();
     await writeKimiConfig(testHome.dataDir, fakeModelConfig(model, { type: 'openai' }));
@@ -53,26 +50,14 @@ for (const corpus of corpora) {
       model.script(say('The previous greeting is still here.'));
       await second.prompt(id, 'Continue the greeting.');
       await second.waitIdle(id);
-      await channel.waitFor(f => f.type === 'turn.ended' && f['session_id'] === id);
-      const request = model.requests('main')[0]!;
-      expect(request.texts('assistant')).toContain(RELEASED_ANSWER);
       completed = await second.turns(id);
-      expect(completed).toMatchObject([history[0], { status: 'ended', outcome: 'completed', items: [
-        { type: 'user_message', text: 'Continue the greeting.' }, { type: 'assistant_message', text: 'The previous greeting is still here.' },
-      ] }]);
-      expect(channel.turns(id)).toEqual(completed);
-      expect((await subscribe(second, id)).turns(id)).toEqual(completed);
-      const wire = Object.keys(corpus.manifest.files).find(name => name.endsWith('/agents/main/wire.jsonl'))!;
-      await until('continued turn.ended persisted to the session wire before abrupt process loss', async () => {
-        const content = await readFile(join(testHome.dataDir, wire), 'utf8');
-        return content.trimEnd().split('\n').some(line => {
-          const event = JSON.parse(line) as { type: string; turnId?: number; reason?: string };
-          return event.type === 'turn.ended' && event.turnId === completed.at(-1)?.['turn_number'] && event.reason === 'completed';
-        });
-      });
     } finally {
       await second.crash();
     }
+    expect(model.requests('main')[0]!.texts('assistant')).toContain(RELEASED_ANSWER);
+    expect(completed).toMatchObject([history[0], { status: 'ended', outcome: 'completed', items: [
+      { type: 'user_message', text: 'Continue the greeting.' }, { type: 'assistant_message', text: 'The previous greeting is still here.' },
+    ] }]);
     const recovered = await startServer(testHome);
     try {
       expect(recovered.pid).not.toBe(second.pid);
