@@ -3,7 +3,6 @@ import { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { HostEntry } from '@moonshot-ai/agent-core-v2';
-import { powerShellCommand } from '@moonshot-ai/agent-core-v2/remote';
 
 import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './hostProtocol';
 import type { HostSession } from './hostSession';
@@ -81,6 +80,10 @@ const ENSURE_DAEMON_FAILURES: Readonly<Record<string, HostConnectFailure>> = {
 
 function shQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function powerShellCommand(script: string): string {
+  return `powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}`;
 }
 
 export function remoteBinCommand(remoteBin: string | undefined): string {
