@@ -1,8 +1,6 @@
 
 import type { InjectionKey, Ref, ShallowRef } from 'vue';
 import type { AnchorPath, AuxKind, LayoutModel, NavigateOptions, ScrollController } from './lib/transcriptScroll';
-export const HistoryScrollKey: InjectionKey<(container: HTMLElement, delta: number) => void> = Symbol('history-scroll');
-export const HistoryAllKey: InjectionKey<Readonly<Ref<boolean>>> = Symbol('history-all');
 export const HistoryStateKey: InjectionKey<Map<string, unknown>> = Symbol('history-state');
 
 export type TranscriptRefreshSource = 'scroll' | 'model';
@@ -27,7 +25,6 @@ export interface TranscriptScrollHost {
 }
 
 export const TranscriptScrollKey: InjectionKey<TranscriptScrollHost> = Symbol('transcript-scroll');
-export const TranscriptFlatKey: InjectionKey<boolean> = Symbol('transcript-flat');
 export interface ClientIdentity {
   readonly clientId: string;
   readonly clientName: string;

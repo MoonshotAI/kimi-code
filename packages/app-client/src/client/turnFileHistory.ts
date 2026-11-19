@@ -8,6 +8,7 @@ const cache = new Map<
   string,
   Promise<readonly TurnFileHistoryChange[] | 'unrecorded' | undefined>
 >();
+const settled = new Map<string, readonly TurnFileHistoryChange[]>();
 const contentCache = new Map<string, Promise<TurnFileHistoryContent | undefined>>();
 const contentBytes = new Map<string, number>();
 let contentBudget = 0;
@@ -63,6 +64,9 @@ export function clearTurnFileHistorySession(sessionId: string): void {
   for (const key of [...cache.keys()]) {
     if (key.startsWith(prefix)) cache.delete(key);
   }
+  for (const key of settled.keys()) {
+    if (key.startsWith(prefix)) settled.delete(key);
+  }
   for (const key of [...contentCache.keys()]) {
     if (!key.startsWith(prefix)) continue;
     contentCache.delete(key);
@@ -98,10 +102,19 @@ export function turnFileChangesFetcher(
           if (cache.get(key) === pending) cache.delete(key);
           return;
         }
+        if (value !== undefined) {
+          settled.delete(key);
+          settled.set(key, value);
+        }
         while (cache.size > CACHE_CAP) {
           const oldest = cache.keys().next().value;
           if (oldest === undefined) break;
           cache.delete(oldest);
+        }
+        while (settled.size > CACHE_CAP) {
+          const oldest = settled.keys().next().value;
+          if (oldest === undefined) break;
+          settled.delete(oldest);
         }
       },
       options?.signal,
@@ -113,7 +126,11 @@ export function turnFileChangesFetcher(
       },
     );
   };
-  return Object.assign(fetchChanges, { getSignal: () => getReadOptions?.()?.signal });
+  const peek = (turnId: number): TurnFileChangesResult => {
+    const sessionId = getSessionId();
+    return sessionId ? settled.get(`${sessionId}:${turnId}`) : undefined;
+  };
+  return Object.assign(fetchChanges, { getSignal: () => getReadOptions?.()?.signal, peek });
 }
 
 export function turnFileContentFetcher(

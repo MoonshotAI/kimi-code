@@ -311,7 +311,10 @@ describe('ConversationToc adaptive layout', () => {
     HTMLElement.prototype.getBoundingClientRect = function(this: HTMLElement): DOMRect {
       const rect = rectFor(this);
       const list = this.closest<HTMLElement>('.toc-list');
-      return list && this.classList.contains('history-window') ? new DOMRect(rect.x, -list.scrollTop, rect.width, rect.height) : rect;
+      if (!list) return rect;
+      if (this.classList.contains('virtual-list')) return new DOMRect(rect.x, -list.scrollTop, rect.width, rect.height);
+      const position = Number(this.getAttribute('aria-posinset'));
+      return this.classList.contains('toc-entry') && position > 0 ? new DOMRect(rect.x, (position - 1) * 40 - list.scrollTop, rect.width, 36) : rect;
     };
     await mountToc(() => ({
       items: Array.from({ length: 1000 }, (_, i) => turn(i + 1)),

@@ -334,7 +334,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
 
   function correct(reason: ScrollWriteReason): void {
     if (disposed) return;
-    if (isUnexpectedScroll(scroller.scrollTop, expectedTop) && !adoptClamp()) handleScroll();
+    if (isUnexpectedScroll(scroller.scrollTop, expectedTop) && !adoptClamp()) handleScroll(true);
     if (!animation && !dragging && !touching) {
       const wasRestoring = restoring;
       restoring = false;
@@ -375,12 +375,16 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     return target === null ? 0 : target - expectedTop;
   }
 
-  function handleScroll(): void {
+  function followClamp(top: number): boolean {
+    return state.mode.kind === 'follow' && !scrollInput && !touching && expectedTop - top <= options.followThreshold;
+  }
+
+  function handleScroll(layout = false): void {
     const top = scroller.scrollTop;
     if (!isUnexpectedScroll(top, expectedTop) || adoptClamp()) return;
     if (touching) touchScrolled = true;
     const max = maxTop();
-    if (top < expectedTop && top >= max - 1 && !dragging) {
+    if (top < expectedTop && !dragging && (top >= max - 1 || (layout && followClamp(top)))) {
       expectedTop = top;
       return;
     }

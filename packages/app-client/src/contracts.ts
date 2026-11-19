@@ -57,6 +57,7 @@ export type TurnFileChangesResult = readonly TurnFileHistoryChange[] | undefined
 export interface FetchTurnFileChanges {
   (turnId: number): Promise<TurnFileChangesResult>;
   getSignal(): AbortSignal | undefined;
+  peek?(turnId: number): TurnFileChangesResult;
 }
 
 export const FetchTurnFileChangesKey: InjectionKey<FetchTurnFileChanges | undefined> =

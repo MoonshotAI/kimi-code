@@ -234,3 +234,17 @@ describe('turn file stats queue', () => {
     expect(getTurnFileChanges).toHaveBeenCalledExactlyOnceWith('same', 1);
   });
 });
+
+describe('turn file stats session cache', () => {
+  it('restores settled results synchronously when a session view mounts again', async () => {
+    getTurnFileChanges.mockResolvedValue(changes('a.ts'));
+    const first = queue(ref([3]), turnFileChangesFetcher(() => 'same'));
+    await vi.waitFor(() => expect(first.stats.value.get(3)).toEqual(changes('a.ts')));
+    first.scope.stop();
+
+    const second = queue(ref([3]), turnFileChangesFetcher(() => 'same'));
+    expect(second.stats.value.get(3)).toEqual(changes('a.ts'));
+    await flush();
+    expect(getTurnFileChanges).toHaveBeenCalledTimes(1);
+  });
+});

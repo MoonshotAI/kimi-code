@@ -1,8 +1,8 @@
 <script setup lang="ts" generic="T">
-import { inject, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue';
+import { inject, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button } from '@moonshot-ai/app-ui';
-import { TranscriptFlatKey, TranscriptScrollKey, type TranscriptListHandle, type TranscriptRefreshSource } from '@moonshot-ai/app-core/contracts';
+import { TranscriptScrollKey, type TranscriptListHandle, type TranscriptRefreshSource } from '@moonshot-ai/app-core/contracts';
 import type { AnchorPath } from '@moonshot-ai/app-core/lib';
 import HistoryRow from './HistoryRow.vue';
 
@@ -13,7 +13,6 @@ const props = withDefaults(defineProps<{
   state?: Map<string, unknown>;
   estimate?: (item: T, index: number) => number;
   kind?: (item: T, index: number) => string;
-  gap?: (item: T, index: number) => number;
   tail?: number;
   overscan?: number;
   renderAll?: boolean;
@@ -29,7 +28,6 @@ const MAX_CASCADE = 8;
 
 const { t } = useI18n();
 const host = inject(TranscriptScrollKey, null);
-provide(TranscriptFlatKey, true);
 
 const stateKey = `transcript:${props.scope}`;
 const rowStates = (props.state?.get(stateKey) as Map<string, Map<string, unknown>> | undefined) ?? new Map<string, Map<string, unknown>>();
@@ -60,10 +58,6 @@ function rowState(key: string): Map<string, unknown> {
   return state;
 }
 
-function gapOf(index: number): number {
-  return props.gap?.(props.items[index]!, index) ?? 0;
-}
-
 function syncModel(): boolean {
   const next = props.items.map(props.itemKey);
   if (host) host.model.setScope(props.scope);
@@ -73,7 +67,7 @@ function syncModel(): boolean {
   for (const key of rowStates.keys()) if (!present.has(key)) rowStates.delete(key);
   host?.model.setRows(props.items.map((item, index) => ({
     key: next[index]!,
-    estimate: Math.max(1, (props.estimate?.(item, index) ?? 100) + gapOf(index)),
+    estimate: Math.max(1, props.estimate?.(item, index) ?? 100),
     kind: props.kind?.(item, index),
   })));
   modelRevision.value++;
@@ -388,7 +382,7 @@ defineExpose({ reveal, release });
     <div ref="measure" class="transcript-measure" aria-hidden="true" />
     <template v-for="slot in view.slots" :key="slot.key">
       <div v-if="slot.gapBefore" :ref="el => registerSpacer(slot.key, el)" class="transcript-space" aria-hidden="true" />
-      <HistoryRow :ref="el => registerRow(slot.key, el)" :state="rowState(slot.key)" :data-row-key="slot.key" role="listitem" :aria-posinset="slot.index + 1" :aria-setsize="items.length" tabindex="-1" :style="`padding-top: ${gapOf(slot.index)}px`">
+      <HistoryRow :ref="el => registerRow(slot.key, el)" :state="rowState(slot.key)" :data-row-key="slot.key" role="listitem" :aria-posinset="slot.index + 1" :aria-setsize="items.length" tabindex="-1">
         <Button v-if="!renderAll && slot.index > 0" class="history-navigation history-previous" variant="secondary" size="xs" @click="navigateTo(slot.index - 1)">{{ t('conversation.historyPrevious') }}</Button>
         <slot :item="items[slot.index]!" :index="slot.index" />
         <Button v-if="!renderAll && slot.index < items.length - 1" class="history-navigation history-next" variant="secondary" size="xs" @click="navigateTo(slot.index + 1)">{{ t('conversation.historyNext') }}</Button>

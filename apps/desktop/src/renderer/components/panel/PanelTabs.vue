@@ -53,6 +53,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const isMobile = useIsMobile();
+const client = useKimiWebClient();
 const rootEl = ref<HTMLElement | null>(null);
 const shellEl = ref<HTMLElement | null>(null);
 const slideEnabled = computed(() => !isMobile.value && !props.panel.panelExpanded.value && !props.panel.panelDragging.value);
@@ -61,6 +62,7 @@ const { contentVisible, sliding, onTransitionEnd } = usePanelSlide({
   enabled: slideEnabled,
   element: rootEl,
   onGeometryChange: syncActiveBrowserBounds,
+  context: () => client.activeSessionId.value ?? client.activeWorkspaceId.value,
 });
 const { sliding: sidebarSliding } = usePanelSlide({
   visible: computed(() => !props.sidebarCollapsed),
@@ -68,7 +70,6 @@ const { sliding: sidebarSliding } = usePanelSlide({
   element: rootEl,
   onGeometryChange: syncActiveBrowserBounds,
 });
-const client = useKimiWebClient();
 const terminalStore = useNativeTerminal();
 const desktopBridge = hasDesktopBridge();
 const presentedTabs = computed(() => props.panel.panelTabs.value.filter(tab => {

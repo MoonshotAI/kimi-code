@@ -4,7 +4,7 @@ import { browserReferenceAnchor, useComposerBrowserReferenceHost } from '../comp
 import BrowserReferenceDetails from '../composer/BrowserReferenceDetails.vue';
 import { useBrowserReferenceDetails } from '../composer/browserReferenceDetails';
 import { composerSnapshotFromMetadata, rebindComposerSnapshotMedia } from '@moonshot-ai/app-client/lib';
-import { computed, inject, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch, watchSyncEffect, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, OpenMediaRequest, ToolMedia, QueuedPromptView, TurnAttachment, UIQuestion } from '@moonshot-ai/app-core/client/types';
 import type { AppSessionRatingResponse } from '@moonshot-ai/app-core/api';
@@ -13,10 +13,10 @@ import ToolCall from './ToolCall.vue';
 import { BrowserToolContextKey } from './tool-calls/browserToolContext';
 import { browserToolContexts } from './tool-calls/browserToolPresentation';
 import { CronToolContextKey, cronToolContexts } from './tool-calls/cronToolContext';
-import HistoryWindow from './HistoryWindow.vue';
+import BlockList from './BlockList.vue';
 import TranscriptList from './TranscriptList.vue';
 import { settledSteerTurnIdsFor, syncSettledSteerTurnIds } from './steerContinuationState';
-import { HistoryAllKey, TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
+import { TranscriptScrollKey } from '@moonshot-ai/app-core/contracts';
 import ActivityRun from './ActivityRun.vue';
 import TurnFold from './TurnFold.vue';
 import RequestDebugRow from './RequestDebugRow.vue';
@@ -27,6 +27,7 @@ import { createHistoryImageCache, HistoryImageCacheKey, Markdown, tableSelection
 import { FetchTurnFileChangesKey, LatestNotifyToolCallIdKey, NotifyUserEnabledKey, PinScrollKey, SelectionContextMenuKey, SessionRatingKey } from '@moonshot-ai/app-client/contracts';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { useTurnFileStats } from './useTurnFileStats';
+import { editedFileCount } from '../lib/fileStaleness';
 import type { TurnFileChange } from '@moonshot-ai/app-core/client/types';
 import ThinkingBlock from './ThinkingBlock.vue';
 import SessionRatingRow from './SessionRatingRow.vue';
@@ -267,13 +268,27 @@ function forkAssistantRun(turn: ChatTurn): void {
   emit('forkTurn', { turnIndex: turn.forkTurnIndex });
 }
 
+const liveTurnIds = new Set<number>();
+watchSyncEffect(() => {
+  for (const group of assistantTurnGroups.value.values()) {
+    const turnId = group[0]!.daemonTurnId;
+    if (turnId !== undefined && !groupSettled(group)) liveTurnIds.add(turnId);
+  }
+});
+
 const turnFileChangesById = computed(() => {
-  const map = new Map<string, { changes: TurnFileChange[]; daemonTurnId: number }>();
+  const map = new Map<string, { changes: TurnFileChange[]; daemonTurnId: number; expected?: number }>();
   if (props.inspector) return map;
   for (const group of assistantTurnGroups.value.values()) {
     const turnId = group[0]!.daemonTurnId;
     if (turnId === undefined || !groupSettled(group)) continue;
     const fetched = fetchedFileStats.value.get(turnId);
+    if (fetched === 'pending') {
+      if (!liveTurnIds.has(turnId)) continue;
+      const expected = editedFileCount(group, props.cwd);
+      if (expected > 0) map.set(group[group.length - 1]!.id, { changes: [], daemonTurnId: turnId, expected });
+      continue;
+    }
     if (!Array.isArray(fetched) || fetched.length === 0) continue;
     map.set(group[group.length - 1]!.id, {
       changes: fetched.map((change) => ({
@@ -985,7 +1000,6 @@ function copyFinalSummary(onCopied?: (ok: boolean) => void): void {
   });
 }
 
-provide(HistoryAllKey, computed(() => props.renderAllHistory));
 if (props.windowHistory) provide(HistoryImageCacheKey, createHistoryImageCache());
 const historyState = props.historyState ?? new Map<string, unknown>();
 const transcriptHost = inject(TranscriptScrollKey, null);
@@ -1009,19 +1023,19 @@ function historyTurnKey(turn: ChatTurn): string {
 function historyTurnKind(turn: ChatTurn): string {
   return turn.role;
 }
-function historyTurnGap(turn: ChatTurn, index: number): number {
-  return index === 0 && !props.hasMoreMessages && !props.loadingMore ? 0 : turn.role === 'assistant' ? 10 : 16;
+function historyTurnEstimate(turn: ChatTurn): number {
+  return estimateTurnHeight(turn) + (turn.role === 'assistant' ? 10 : 16);
 }
-const historyList = computed(() => transcriptList
+const historyList = computed<{ is: Component; key: string; props: Record<string, unknown> }>(() => transcriptList
   ? {
       is: TranscriptList,
       key: `v2:${props.sessionId ?? 'empty'}`,
-      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, estimate: estimateTurnHeight, kind: historyTurnKind, gap: historyTurnGap, renderAll: props.renderAllHistory },
+      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, estimate: historyTurnEstimate, kind: historyTurnKind, renderAll: props.renderAllHistory },
     }
   : {
-      is: HistoryWindow,
-      key: `${props.windowHistory}:${props.sessionId ?? 'empty'}`,
-      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, enabled: props.windowHistory, tail: 4, overscan: 3, estimate: estimateTurnHeight, gap: historyTurnGap },
+      is: BlockList,
+      key: `blocks:${props.sessionId ?? 'empty'}`,
+      props: { items: props.turns, itemKey: historyTurnKey },
     });
 const historyRef = ref<{ reveal: (key: string) => Promise<HTMLElement | null>; release: () => void } | null>(null);
 async function revealTurn(id: string): Promise<HTMLElement | null> {
@@ -1307,7 +1321,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 </script>
 
 <template>
-  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
+  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" :data-first-kind="turns[0]?.role" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
     <BrowserReferenceDetails :state="browserDetails.state.value" @resolve="browserDetails.finish" />
     <div v-if="sessionLoadingVisible" :ref="transcriptAux('loading')" class="chat-loading">
       <Spinner size="sm" />
@@ -1337,6 +1351,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 
     <component :is="historyList.is" ref="historyRef" :key="historyList.key" v-bind="historyList.props">
       <template #default="{ item: turn, index: ti }: { item: ChatTurn; index: number }">
+      <div class="chat-row" :data-row-kind="turn.role" :data-row-key="windowHistory ? undefined : turn.id">
       <template v-if="turn.role === 'user'">
         <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
@@ -1458,7 +1473,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
            compaction lookup: where the API is blanked (an embedded subagent
            transcript, whose turns the root lookup cannot resolve) the label
            stays a plain inert divider. -->
-      <div v-else-if="turn.role === 'compaction'" class="compact-divider turn-anchor" :class="{ 'compact-divider-windowed': windowHistory }" :data-turn-id="turn.id" role="separator">
+      <div v-else-if="turn.role === 'compaction'" class="compact-divider turn-anchor" :data-turn-id="turn.id" role="separator">
         <span class="cd-line" aria-hidden="true" />
         <button
           v-if="turn.text && panelApi?.openCompaction !== undefined"
@@ -1501,7 +1516,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           @open-media="onOpenMedia"
           @detach="onDetach"
         />
-        <HistoryWindow :items="assistantVisibleBlocks(turn)" :item-key="renderBlockKey" :enabled="windowHistory" scope="visible-blocks"><template #default="{ item: blk, index: bi }">
+        <BlockList :items="assistantVisibleBlocks(turn)" :item-key="renderBlockKey" :enabled="windowHistory" scope="visible-blocks"><template #default="{ item: blk, index: bi }">
           <ThinkingBlock v-if="blk.kind === 'thinking'" :data-block-key="renderBlockKey(blk, bi)" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" :instant-reveal="inspector" />
           <div v-else-if="blk.kind === 'text' && blk.text" class="msg" :data-block-key="renderBlockKey(blk, bi)"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :state-key="renderBlockKey(blk, bi)" :open-file="panelApi?.openFile" :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" /></div>
           <ActivityRun
@@ -1520,7 +1535,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <ToolCall v-else-if="blk.kind === 'tool'" :data-block-key="renderBlockKey(blk, bi)" :tool="blk.tool" mobile :resolve-file-path="turnFilePathResolver(turn)" :resolve-image="turnImageResolver(turn)" @open-media="onOpenMedia" @detach="onDetach" />
           <NotificationCard v-else-if="blk.kind === 'notification'" :data-block-key="renderBlockKey(blk, bi)" :items="blk.items" />
           <template v-if="blk.kind === 'thinking' || blk.kind === 'text' || blk.kind === 'tool'"><RequestDebugRow v-for="(debug, di) in blk.debug ?? []" :key="di" :debug="debug" /></template>
-        </template></HistoryWindow>
+        </template></BlockList>
         <BrowserSources
           v-if="!inspector && turn.id !== streamingTurnId && isAssistantRunEnd(ti)"
           :turns="stableAssistantRun(ti)"
@@ -1533,6 +1548,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           :changes="turnFileChangesById.get(turn.id)!.changes"
           :turn-id="turn.id"
           :daemon-turn-id="turnFileChangesById.get(turn.id)!.daemonTurnId"
+          :expected="turnFileChangesById.get(turn.id)!.expected"
           :session-id="turn.sessionId"
           :cwd="props.cwd"
           :interactive="turnFilesInteractive"
@@ -1584,6 +1600,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         <span class="cd-line" aria-hidden="true" />
         <span class="cd-label" role="status">{{ t('conversation.turnInterrupted') }}</span>
         <span class="cd-line" aria-hidden="true" />
+      </div>
       </div>
       </template>
     </component>
@@ -1804,11 +1821,11 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .chat {
   text-autospace: normal;
   --chat-turn-gap: 16px;
+  --chat-assistant-gap: 10px;
   --chat-block-gap: 10px;
   --chat-strip-gap: 12px;
   --chat-group-gap: 6px;
   --chat-strip-tight: 4px;
-  --chat-section-gap: 18px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -1821,21 +1838,29 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .chat :deep(code) { text-autospace: no-autospace; }
 .chat .chat-empty { align-self: stretch; }
 
-.chat > .u-turn,
-.chat > .a-msg,
-.chat > .compact-divider,
-.chat > .cron-notice,
+.chat-row {
+  padding-top: var(--chat-turn-gap);
+}
+.chat-row[data-row-kind='assistant'] {
+  padding-top: var(--chat-assistant-gap);
+}
+.chat > .chat-row:first-child {
+  padding-top: 0;
+}
+.chat[data-first-kind] > :is(.history-window, .transcript-list) {
+  margin-top: calc(-1 * var(--chat-turn-gap));
+}
+.chat[data-first-kind='assistant'] > :is(.history-window, .transcript-list) {
+  margin-top: calc(-1 * var(--chat-assistant-gap));
+}
+.chat > .top-sentinel + :is(.history-window, .transcript-list) {
+  margin-top: 0;
+}
+
 .chat > .sending-placeholder,
 .chat > :deep(.activity-notice) {
   margin-top: var(--chat-turn-gap);
 }
-.chat > .a-msg {
-  margin-top: 10px;
-}
-.chat > .u-turn:first-child,
-.chat > .a-msg:first-child,
-.chat > .compact-divider:first-child,
-.chat > .cron-notice:first-child,
 .chat > .sending-placeholder:first-child,
 .chat > :deep(.activity-notice:first-child) {
   margin-top: 0;
@@ -2009,8 +2034,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .u-copy svg { display: block; flex: none; }
 .u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
 .u-edit-wrap { display: flex; justify-content: flex-end; }
-.chat > .u-edit-wrap { margin-top: 4px; }
-.chat > .u-edit-wrap + .a-msg { margin-top: 8px; }
 
 .compact-divider {
   display: flex;
@@ -2018,16 +2041,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 10px;
   align-self: stretch;
   width: 100%;
-  margin: var(--chat-section-gap) 0 0;
-}
-.compact-divider-windowed {
-  margin-top: 0;
+  margin: 0;
 }
 .compact-divider-interrupted {
   margin-top: var(--chat-turn-gap);
-}
-.chat > .compact-divider:first-child {
-  margin-top: 0;
 }
 .cd-line {
   flex: 1;

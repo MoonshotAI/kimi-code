@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App } from 'vue';
+import { createApp, h, nextTick, ref, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const clipboard = vi.hoisted(() => ({ copy: vi.fn<(text: string) => Promise<boolean>>() }));
@@ -108,7 +108,7 @@ describe('ChatPane with the transcript list', () => {
     await nextTick();
     await nextTick();
     expect(host.querySelectorAll('.transcript-list')).toHaveLength(1);
-    const nested = [...host.querySelectorAll<HTMLElement>('.history-window')];
+    const nested = [...host.querySelectorAll<HTMLElement>('.block-list')];
     expect(nested.length).toBeGreaterThan(0);
     for (const list of nested) {
       expect(list.getAttribute('role')).toBe('list');
@@ -134,11 +134,47 @@ describe('ChatPane with the transcript list', () => {
     expect(hold).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the virtualized history windows without a transcript host', async () => {
-    mount(false);
+  it('waits for web fonts before the scroll controller first measures', async () => {
+    let fontsReady!: () => void;
+    const ready = new Promise<void>((resolve) => { fontsReady = resolve; });
+    const fonts = { status: 'loading', ready };
+    Object.defineProperty(document, 'fonts', { configurable: true, value: fonts });
+    try {
+      mount(true);
+      await nextTick();
+      expect(scroll.host.controller.value).toBeNull();
+      fonts.status = 'loaded';
+      fontsReady();
+      await ready;
+      await nextTick();
+      expect(scroll.host.controller.value).not.toBeNull();
+    } finally {
+      delete (document as { fonts?: unknown }).fonts;
+    }
+  });
+
+  it.each([true, false])('keeps row spacing independent of older-message loading (windowed: %s)', async (windowed) => {
+    const loading = ref({ hasMoreMessages: true, loadingMore: true });
+    app = createApp({
+      setup() {
+        if (windowed) scroll = useTranscriptScroll({ sessionId: () => 's1' });
+        return () => h('div', { ref: (el: unknown) => windowed && scroll.bindScroller(el as HTMLElement | null) }, [
+          h('div', [h(ChatPane, { turns, sessionId: 's1', windowHistory: windowed, historyState: new Map(), ...loading.value })]),
+        ]);
+      },
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
     await nextTick();
-    expect(host.querySelector('.transcript-list')).toBeNull();
-    expect(host.querySelectorAll('.history-window').length).toBeGreaterThan(1);
-    expect(host.querySelector('.history-window [data-history-key][tabindex="-1"]')).not.toBeNull();
+    await nextTick();
+    const rowMarkup = () => [...host.querySelectorAll<HTMLElement>('[data-row-key]')]
+      .map(el => [el.getAttribute('style'), ...[...el.firstElementChild!.attributes].map(attr => `${attr.name}=${attr.value}`)]);
+    const before = rowMarkup();
+    expect(before).toHaveLength(2);
+    loading.value = { hasMoreMessages: false, loadingMore: false };
+    await nextTick();
+    await nextTick();
+    expect(host.querySelector('.top-sentinel')).toBeNull();
+    expect(rowMarkup()).toEqual(before);
   });
 });
