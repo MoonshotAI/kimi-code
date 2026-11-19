@@ -415,6 +415,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
     input?: ListSessionsInput,
     options?: ReadRequestOptions,
   ): Promise<SessionsPage> {
+    const hasWorkspaceCursor =
+      input?.workspaceId !== undefined &&
+      input.workspaceIds === undefined &&
+      (input.beforeId !== undefined || input.afterId !== undefined);
     const query: RestQuery = {
       before_id: input?.beforeId,
       after_id: input?.afterId,
@@ -430,7 +434,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       updated_before: input?.updatedBefore,
       sort: input?.sort,
       include: input?.include,
-      hosts: this.hostsQuery(),
+      hosts: hasWorkspaceCursor ? undefined : this.hostsQuery(),
     };
     const data = await this.http.get<WireSessionsPage>('/sessions', query, options);
     return {
