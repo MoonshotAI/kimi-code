@@ -89,7 +89,7 @@ function sepTouchesQuote(index: number): boolean {
 }
 
 function interactiveAttrs(attrs: MentionAttrs): { tabindex?: number; role?: string } {
-  if (!props.interactive || attrs.kind === 'folder') return {};
+  if (!props.interactive || attrs.kind === 'folder' || attrs.kind === 'session') return {};
   if (attrs.kind === 'skill') return { tabindex: 0, role: 'button' };
   return props.openFile ? { tabindex: 0, role: 'button' } : {};
 }
@@ -128,7 +128,7 @@ function snapshotFileAction(attrs: MentionAttrs): { path: string; line: number }
 }
 
 function actionPathFor(segment: InlineSegment): string | undefined {
-  if (segment.type !== 'mention' || segment.attrs.kind === 'skill') return undefined;
+  if (segment.type !== 'mention' || (segment.attrs.kind !== 'file' && segment.attrs.kind !== 'folder')) return undefined;
   if (segment.rawDest === '') return snapshotFileAction(segment.attrs)?.path;
   const action = unescapeLinkDest(mentionActionPath(segment.rawDest), false);
   return action !== segment.attrs.path ? action : undefined;
