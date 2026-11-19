@@ -27,6 +27,8 @@ export interface ConversationStep {
   readonly ended_at?: string;
   readonly finish_reason?: string;
   readonly usage?: ConversationUsage;
+  readonly first_token_ms?: number;
+  readonly stream_ms?: number;
 }
 
 export interface ConversationRetry {

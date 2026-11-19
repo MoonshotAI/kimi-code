@@ -484,6 +484,10 @@ describe('conversation contract e2e', () => {
     expect(turn).not.toHaveProperty('end_reason');
     expect(typeof turn.ended_at).toBe('string');
     expect(turn.steps).toEqual([expect.objectContaining({ index: 1, outcome: 'completed', usage: expect.objectContaining({ input_other: expect.any(Number), output: 4 }) })]);
+    const liveStep = channel.conversation.find((frame) => frame.type === 'turn.updated')?.step;
+    expect(liveStep).toMatchObject({ first_token_ms: expect.any(Number), stream_ms: expect.any(Number) });
+    expect(channel.conversation.find((frame) => frame.type === 'turn.ended')?.turn.steps).toEqual([liveStep]);
+    expect(turn.steps).toEqual([liveStep]);
     expect(turn.usage).toEqual(turn.steps[0].usage);
     expect(turn.items[0]).toMatchObject({ type: 'user_message', placement: 'opener', prompt_ids: [prompt_id], origin: { kind: 'user' }, text: 'say hello', attachments: [], skills: [] });
     const answer = turn.items.find((item: any) => item.type === 'assistant_message');
@@ -506,6 +510,10 @@ describe('conversation contract e2e', () => {
     expect(turnEndedAt).toBeGreaterThanOrEqual(0);
     expect(idleAt).toBeGreaterThan(turnEndedAt);
     channel.close();
+
+    const historical = await subscribeConversation(server!, sid);
+    expect(historical.snapshot().turns[0].steps).toEqual([liveStep]);
+    historical.close();
   });
 
   it('S2: a prompt submitted mid-turn runs as its own turn after the first', async () => {

@@ -56,6 +56,8 @@ export const stepSummarySchema = z.object({
   ended_at: isoDateTimeSchema.optional(),
   finish_reason: z.string().optional(),
   usage: usageSchema.optional(),
+  first_token_ms: z.number().nonnegative().optional(),
+  stream_ms: z.number().nonnegative().optional(),
 });
 export type StepSummary = z.infer<typeof stepSummarySchema>;
 
