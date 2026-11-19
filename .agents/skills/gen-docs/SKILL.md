@@ -7,13 +7,13 @@ description: Update Kimi Code CLI user documentation after meaningful code chang
 
 ## Overview
 
-This repository maintains bilingual user documentation under `docs/`. `docs/en/` and `docs/zh/` are mirrored pairs for most pages; update both in the same change. **Changelog is the exception** — English is the source, and Chinese is translated from English.
+Update affected user documentation in both `docs/en/` and `docs/zh/` in the same change.
 
 Use this skill to update the corresponding documentation whenever the codebase has changes that affect product behavior or user experience.
 
 Read `docs/AGENTS.md` for the locale rules and terminology. Use the [writing guide](references/writing-guide.md) for page structure, examples, and the review checklist.
 
-After a release succeeds, [sync-changelog](../sync-changelog/SKILL.md) copies the published CLI entries from `apps/kimi-code/CHANGELOG.md` to the English documentation changelog and translates the new entries into Chinese.
+For the CLI documentation changelog or the desktop update dialog, follow [sync-changelog](../sync-changelog/SKILL.md).
 
 ## Workflow
 
@@ -51,7 +51,6 @@ After a release succeeds, [sync-changelog](../sync-changelog/SKILL.md) copies th
 
 ## Rules and conventions
 
-- **Locale sync**: Non-changelog pages stay mirrored between `docs/en/` and `docs/zh/`. Changelog flows English → Chinese.
 - **Terminology**: Use the term table in `docs/AGENTS.md` exactly. Do not invent new translations or use synonyms.
 - **Scope discipline**: Only update sections affected by the recent changes. Do not opportunistically rewrite unrelated docs.
 - **Public examples**: Never write real internal endpoints, key names, account names, or service names into docs. Use neutral placeholders such as `https://api.example.com/v1`, `https://registry.example.com/v1/models/api.json`, `example.test`, and `YOUR_API_KEY`.

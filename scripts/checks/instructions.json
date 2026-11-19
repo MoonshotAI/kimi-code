@@ -20,8 +20,13 @@
     },
     {
       "file": "apps/kimi-code/AGENTS.md",
-      "reference": "apps/web",
-      "why": "A path in the code-app repository, where the web UI source lives."
+      "reference": "apps/desktop/web-dist",
+      "why": "The desktop renderer's web build output, ignored by Git."
+    },
+    {
+      "file": "apps/kimi-code/AGENTS.md",
+      "reference": "apps/kimi-code/dist-web",
+      "why": "The web bundle copied into the CLI during prebuild, ignored by Git."
     }
   ]
 }

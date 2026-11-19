@@ -15,7 +15,7 @@
 ## 项目地图
 
 - `apps/kimi-code`：CLI / TUI 应用，TUI 主路径通过 `@moonshot-ai/kimi-code-sdk` 使用核心能力。
-- 浏览器 Web UI：源码在 code-app 仓库，本仓库只提交它的预构建产物 `apps/kimi-code/dist-web`。
+- `apps/desktop`：Electron 桌面应用，与浏览器 Web UI 共用 `apps/desktop/src/renderer`；Web 产物在 CLI 构建时同步，见 `apps/kimi-code/AGENTS.md`。
 - `apps/vis`、`apps/vis/server`、`apps/vis/web`：会话和回放的可视化调试工具。
 - `apps/vscode`：VS Code 扩展。
 - `docs`：用户文档站（VitePress），中文和英文页面分别在 `docs/zh/` 和 `docs/en/`。
@@ -30,6 +30,14 @@
 - `packages/klient`：客户端 SDK，以契约驱动的 agent-core-v2 门面，按子路径（`@moonshot-ai/klient/ipc|memory`）选择传输方式；e2e 测试套件也放在这里。
 - `packages/tree-sitter-bash`：纯 TypeScript 的 bash 解析器，只负责解析，不做安全判断；调用方必须把中止或 `hasError` 的语法树当作「无法分析」并降级处理，和 tree-sitter-bash 原版的差异见该包 README 的「Known differences from tree-sitter-bash」一节。
 - `packages/minidb`：kap-server 搜索索引背后的嵌入式 JSON 文档库（`MiniDb`）。
+- `packages/app-core`：桌面端和 Web 端共用的 KAP 客户端与会话逻辑。
+- `packages/app-client`：渲染端的状态、面板与 Vue 组合式函数。
+- `packages/app-components`：聊天、设置等产品界面组件。
+- `packages/app-composer`：消息编辑器及其输入与发送逻辑。
+- `packages/app-i18n`：渲染端的本地化资源。
+- `packages/app-markdown`：Markdown 渲染。
+- `packages/app-ui`：基础界面组件与样式。
+- `packages/vite-preset`：共享的 Vite 构建配置。
 - `packages/acp-server`：Agent Client Protocol（ACP）宿主，直接基于 agent-core-v2。
 - `packages/product`：客户端和宿主共用的 Kimi Code 产品逻辑。
 - `packages/migration-legacy`：把 kimi-cli 的数据（`~/.kimi/`）迁移到 kimi-code（`~/.kimi-code/`）。
@@ -42,13 +50,13 @@
 | 检查 | 命令 | 说明 |
 |---|---|---|
 | lint 和仓库检查 | `pnpm lint` | 必须以 0 退出。它会运行注释检查、oxlint、agent-core-v2 的导入边界检查，以及 `scripts/checks/` 里的守卫、棘轮和说明文件检查。如果报错出现在你没碰过的代码里，先运行 `pnpm install` 再试：安装的依赖比 lockfile 旧时，类型感知规则会报出并不存在的错误 |
-| 单个项目的类型检查 | `pnpm exec tsc -p <目录>/tsconfig.json --noEmit` | CI 对 `packages/*` 和 `apps/kimi-code` 就是这样跑的，不需要先构建。`pnpm typecheck` 会先构建所有包 |
+| 单个项目的类型检查 | `pnpm exec tsc -p <目录>/tsconfig.json --noEmit` | CI 单独检查 CLI 和各包，`packages/app-*` 随桌面端由 `pnpm --filter kimi-code-app run typecheck` 检查。`pnpm typecheck` 会先构建各库 |
 | 受影响的测试 | `pnpm exec vitest run --reporter=agent <文件或目录>` | 只输出失败。不要默认跑全量 |
 | minidb | `pnpm --filter @moonshot-ai/minidb test` | 不在根目录的测试里，CI 也不跑 |
 | pi-tui | `pnpm --filter @moonshot-ai/pi-tui test` | 用的是 `node --test` |
 
 - 修 bug 要带修复前会失败的回归测试。选择能稳定复现故障、观察到对应契约的最小边界。模块公开接口能复现时就测该接口。跨层故障从真实入口验证，例如 kap-server、klient 一致性测试（`packages/klient/test/helpers/conformance.ts`）或 TUI 虚拟终端（`packages/pi-tui/test/virtual-terminal.ts`）。覆盖同一 bug 的其他触发方式。
-- PR 的 CI 不在 Windows 和 macOS 上跑测试。改动涉及路径、子进程、shell 或终端输入时，在 PR 里写明在哪些平台核对过、怎么核对的。
+- 常规 PR 测试运行在 Linux。涉及桌面端等特定路径时还跑 Windows 专项测试。改动涉及路径、子进程、shell 或终端输入时，在 PR 里写明在哪些平台核对过、怎么核对的。
 - 只汇报你实际运行过的命令和结果。某项检查没法运行，就写「未验证」和原因；不要把已有的失败写成通过。
 
 ## 环境要求
@@ -64,7 +72,7 @@
   - `pnpm-workspace.yaml` 用通配符（`packages/*`、`apps/*`），大多数包会自动加入；`flake.nix` 完全是手写的，遗漏都出在这里。
   - `flake.nix` 的 `workspacePaths` 漏了路径，Nix 构建的 `src` 文件集会静默丢掉这些文件。
   - `flake.nix` 的 `workspaceNames` 漏了名字，`pnpmConfigHook` 会失败，因为这个工作区的依赖不会被拉取。
-- 自动检查「Check flake.nix workspace sync」（`scripts/check-nix-workspace.mjs`）只校验 **`@moonshot-ai/kimi-code` 的传递依赖闭包**。闭包之外的叶子包（例如没人导入的 e2e 包），即使没写进 `flake.nix` 也不会被发现。所以检查通过**不能**证明 `flake.nix` 完全同步。每次增删包都要手动更新，不要指望检查替你发现遗漏。
+- `scripts/check-nix-workspace.mjs` 只校验 `@moonshot-ai/kimi-code` 的传递依赖闭包。即使检查通过，也要手动核对闭包外的包。
 
 ## 通用编码规则
 
@@ -125,8 +133,8 @@
 | `gen-docs` | 代码改动影响了产品行为或用户体验，需要更新用户文档时 |
 | `translate-docs` | 在 `docs/zh/` 和 `docs/en/` 之间翻译、同步双语文档 |
 | `review-pr` | 评审 PR；只在用户明确要求时使用 |
-| `pre-changelog` | 合并发版 PR 之前，预览中文的 CLI 更新日志 |
-| `sync-changelog` | 发版成功后，把 `apps/kimi-code/CHANGELOG.md` 同步到文档站的更新日志 |
+| `pre-changelog` | 合并发版 PR 前预览 CLI 和桌面端的中文更新日志 |
+| `sync-changelog` | 同步 CLI 发布日志到文档站，或为桌面端更新对话框准备双语日志 |
 
 ## 说明文件怎么维护
 
@@ -141,8 +149,8 @@
 
 ## 发布流程
 
-- `main` 上累积 changeset；`release/*` 分支维护 `ci: release packages` PR。合并对应的版本 PR 即授权发布，发布在它的合并提交 CI 成功后进行。普通推送不会发布。
-- npm 发布和原生产物沿用现有的 Changesets 流程。CDN 上传和路由仍需另行审批。迁移以及与 main 同步的说明见 `.changeset/README.md`。
+- `main` 上累积 changeset；`release/*` 分支维护 `ci: release packages` PR。合并版本 PR 即授权正式发布，在合并提交的 CI 通过后发布对应版本。普通推送不会发布正式版。
+- CLI 发布到 npm 和 GitHub，桌面安装包发布到 GitHub Release，VS Code 扩展发布到扩展市场。CDN 上传和路由需另行审批。迁移和回同步见 `.changeset/README.md`。
 
 ## 工作流要求
 
@@ -156,7 +164,7 @@
 - AI agent 创建或更新 PR 时，要填写 `.github/pull_request_template.md`：关联相关 issue 或说明问题，再描述改了什么。不要留下占位文字，也不要只给出泛泛的 diff 摘要。
 - 不要提交含糊的、AI 生成的 PR 文字。提交 PR 的人类作者必须足够理解这个改动，能讲清代码、边界情况，以及为什么这个做法适合这个仓库。
 - 完成任务后、提交 PR 之前，必须运行 `gen-changesets` 技能（见 `.agents/skills/gen-changesets/SKILL.md`），按它的规则在 `.changeset/` 下生成 changeset。
-- changeset 必须严格遵守 `.agents/skills/gen-changesets/SKILL.md` 的规则：只写一句简短的、面向用户的话，只说明改了什么；用户感知不到的改动不写 changeset。
+- CLI、桌面端或 VS Code 扩展有用户可感知的变化时，按产品各写一句简短的英文 changeset。库源码改动按技能规则写技术条目，纯文档、测试和忽略包的处理见该技能。
 - 生成 changeset 时，**绝不**自行决定 `major` 版本升级：先停下来说明理由，得到用户明确确认后再做；默认用 `minor`，其次用 `patch`。见 `.agents/skills/gen-changesets/SKILL.md`。
 - 导入优先用 `import ... from '#/...'`，它和 `import ... from '@/...'` 的作用相同。
 - 不要提交临时的草稿或探索性文件。永远不要暂存：
@@ -191,7 +199,7 @@
 
 ### 契约文件是绊线
 
-这些文件会被仓库之外的使用方消费：`packages/agent-core-v2/docs/` 下的清单文件（`config-manifest.toml`、`wire-manifest.d.ts`、`state-manifest.d.ts`）、`packages/kap-server/test/__snapshots__/apiSurface.snapshot.test.ts.snap`、`packages/kap-server/docs/kap.md`、`packages/node-sdk/src/index.ts`、`packages/agent-core-v2/src/features/externalHooks/`、`packages/acp-server/` 和 `apps/kimi-code/src/cli/`。使用方包括 code-app 里的桌面端和 Web 端、通过 KAP 驱动核心会话和对话流程的外部 agent 和机器人、VS Code 扩展、Zed 等 ACP 客户端、SDK 用户、hook 脚本，以及解析无界面输出的程序。这些文件变化时，要求 PR 写明有哪些使用方，以及上一个版本的数据和客户端怎样继续正常工作。
+以下文件定义跨组件或对外契约：`packages/agent-core-v2/docs/` 下的清单文件（`config-manifest.toml`、`wire-manifest.d.ts`、`state-manifest.d.ts`）、`packages/kap-server/test/__snapshots__/apiSurface.snapshot.test.ts.snap`、`packages/kap-server/docs/kap.md`、`packages/node-sdk/src/index.ts`、`packages/agent-core-v2/src/features/externalHooks/`、`packages/acp-server/` 和 `apps/kimi-code/src/cli/`。使用方包括本仓库的桌面端和 Web 端、通过 KAP 驱动核心会话和对话流程的外部 agent 和机器人、VS Code 扩展、Zed 等 ACP 客户端、SDK 用户、hook 脚本，以及解析无界面输出的程序。这些文件变化时，要求 PR 写明有哪些使用方，以及上一个版本的数据和客户端怎样继续正常工作。
 
 ### 移植和重构要带上旧路径的功能清单
 

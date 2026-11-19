@@ -1,0 +1,14 @@
+export default {
+  aheadTitle: '领先远程',
+  behindTitle: '落后远程',
+  fileCountOne: '{number} 个文件',
+  fileCountOther: '{number} 个文件',
+  empty: '无 git 改动',
+  clean: '工作区干净，无改动',
+  back: '返回',
+  loading: '正在加载 diff…',
+  noDiff: '该文件没有行级改动',
+  emptyFile: '空文件',
+  list: '列表',
+  tree: '树形',
+} as const;
