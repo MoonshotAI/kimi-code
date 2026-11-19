@@ -14,14 +14,12 @@ outline: 2
 - `/settings` 新增 Follow-up 行为设置，选择 Steer 后 Enter 可将消息即时送入当前运行回合。
 - 可在 `/tasks` 查看前台运行中的 Agent 及其活动。
 - 新增 `kimi web --json`、`GET /api/v1/sessions/{session_id}/interactions`、`POST /api/v1/sessions/{session_id}:wait` 与 `GET /api/v1/kap.md`，支持 KAP HTTP 自动化。
-- 新增 `kimi server`，默认不打开浏览器，`--open` 可打开 Web UI。
 - `Bash` 子进程新增 `KIMI_CODE_SESSION_ID` 与 `KIMI_CODE_WORKSPACE_ID` 环境变量。
 - 支持为项目配置 SSH 主机，各主机独立登录，并可复制自定义模型提供商。
 
 ### 优化
 
 - 允许恢复已在其他客户端打开的会话。
-- KAP MCP 与会话接口统一至 `/api/v1`，旧 v2 接口、MCP 重启接口及旧会话筛选参数已移除，筛选改用 `archived` 与 `has_prompt`。
 
 ### 修复
 
