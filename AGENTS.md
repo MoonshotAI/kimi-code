@@ -135,6 +135,7 @@
 | `gen-docs` | 代码改动影响了产品行为或用户体验，需要更新用户文档时 |
 | `translate-docs` | 在 `docs/zh/` 和 `docs/en/` 之间翻译、同步双语文档 |
 | `review-pr` | 评审 PR；只在用户明确要求时使用 |
+| `review-duplication` | 实现前查找可复用的能力，提 PR 前自查或评审时核对平行实现 |
 | `pre-changelog` | 合并发版 PR 前预览 CLI 和桌面端的中文更新日志 |
 | `sync-changelog` | 同步 CLI 发布日志到文档站，或为桌面端更新对话框准备双语日志 |
 

@@ -14,6 +14,7 @@
     "vis": "pnpm -C apps/vis run dev",
     "dev:docs": "pnpm -C docs install --ignore-workspace && pnpm -C docs run dev",
     "build:icons": "node scripts/icon-tools/build-brand-icons.mjs",
+    "check:duplication": "pnpm dlx jscpd@5.1.2 --config .jscpd.json --fail-on-new-clones=0 --baseline-from-ref",
     "dev:desktop": "pnpm --filter kimi-code-app run dev",
     "dev:desktop:debug": "pnpm --filter kimi-code-app run dev -- --remote-debugging-port=9222",
     "dev:desktop-canary": "KIMI_DESKTOP_CANARY=true pnpm --filter kimi-code-app run dev",

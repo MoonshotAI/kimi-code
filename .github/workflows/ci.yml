@@ -129,6 +129,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: pnpm/action-setup@v6
 
@@ -143,6 +145,18 @@ jobs:
       - run: node --test scripts/check-comments.test.mjs
       - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs
       - run: pnpm run sherif
+      - name: Check new code duplication
+        id: duplication
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: pnpm run check:duplication "$BASE_SHA"
+      - name: Show new duplicate locations
+        if: failure() && steps.duplication.outcome == 'failure' && hashFiles('.tmp/jscpd/jscpd-report.json') != ''
+        run: |
+          jq -r '.duplicates[] | select(.isNew) |
+            "\(.firstFile.name):\(.firstFile.start) and \(.secondFile.name):\(.secondFile.start) (\(.lines) lines, \(.tokens) tokens)"
+          ' .tmp/jscpd/jscpd-report.json
 
   typecheck:
     runs-on: ubuntu-latest
