@@ -44,6 +44,8 @@ import {
   getSessionResponseSchema,
   sessionCancelResponseSchema,
   takeoverSessionResponseSchema,
+  waitSessionBodySchema,
+  waitSessionResponseSchema,
 } from '../protocol/rest-session';
 
 const binarySchema = {
@@ -107,6 +109,7 @@ export function transformOpenApiDocument(
 
   patchFileUpload(paths);
   patchFileDownload(paths);
+  patchKapSpec(paths);
   patchSessionExport(paths);
   patchSessionAction(paths);
   patchFsAction(paths);
@@ -114,6 +117,19 @@ export function transformOpenApiDocument(
   patchWorkspaceFsContent(paths);
 
   return document;
+}
+
+function patchKapSpec(paths: Record<string, unknown>): void {
+  const operation = getOperation(paths, '/api/v1/kap.md', 'get');
+  if (operation === undefined) return;
+  setResponse(operation, '200', {
+    description: 'Built-in Kimi Agent Protocol (KAP) Markdown specification',
+    content: {
+      'text/markdown': {
+        schema: { type: 'string' },
+      },
+    },
+  });
 }
 
 function patchSessionExport(paths: Record<string, unknown>): void {
@@ -186,6 +202,14 @@ function patchSessionAction(paths: Record<string, unknown>): void {
     'runSessionCancelAction',
     sessionCancelResponseSchema,
     cancelSessionBodySchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'wait',
+    'runSessionWaitAction',
+    waitSessionResponseSchema,
+    waitSessionBodySchema,
   );
   projectSessionAction(
     paths,

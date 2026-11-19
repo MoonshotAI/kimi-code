@@ -25,7 +25,7 @@
 - `packages/oauth`：Kimi OAuth 和托管认证工具。
 - `packages/telemetry`：共享的客户端遥测基础设施。
 - `packages/session-import`：把外部会话转换成一条用户消息的独立 Node.js 模块，不依赖引擎或 UI；调用方提供目标会话的附件目录和上下文预算。
-- `packages/kap-server`：Kimi Code 服务端，基于 `@moonshot-ai/agent-core-v2`，通过 REST + WebSocket（`/api/v1` + `/api/v1/ws`）提供会话；`/api/v1/debug/*` 反射 RPC 接口只在 `--debug-endpoints` 打开且服务绑定回环地址时启用，并要求 bearer 认证。
+- `packages/kap-server`：Kimi Code 服务端，基于 `@moonshot-ai/agent-core-v2`，通过 REST（`/api/v1`）和 WebSocket（`/api/v1/ws`）对外提供 Kimi Agent Protocol（KAP），详见 `packages/kap-server/AGENTS.md` 和 `packages/kap-server/docs/kap.md`。内部反射 RPC 接口 `/api/v1/debug/*` 只在打开 `--debug-endpoints` 且服务绑定回环地址时启用，并要求 bearer 认证。
 - `packages/remote-control`：Kimi Remote Control 隧道客户端，把本机注册到中继并转发本地服务的流量，带全机范围的单实例锁；由 kap-server（`/api/v1/remote-control` 开关）和 CLI（`kimi web --remote-control`）使用。
 - `packages/klient`：客户端 SDK，以契约驱动的 agent-core-v2 门面，按子路径（`@moonshot-ai/klient/ipc|memory`）选择传输方式；e2e 测试套件也放在这里。
 - `packages/tree-sitter-bash`：纯 TypeScript 的 bash 解析器，只负责解析，不做安全判断；调用方必须把中止或 `hasError` 的语法树当作「无法分析」并降级处理，和 tree-sitter-bash 原版的差异见该包 README 的「Known differences from tree-sitter-bash」一节。
@@ -191,7 +191,7 @@
 
 ### 契约文件是绊线
 
-这些文件会被仓库之外的使用方消费：`packages/agent-core-v2/docs/` 下的清单文件（`config-manifest.toml`、`wire-manifest.d.ts`、`state-manifest.d.ts`）、`packages/kap-server/test/__snapshots__/apiSurface.snapshot.test.ts.snap`、`packages/node-sdk/src/index.ts`、`packages/agent-core-v2/src/features/externalHooks/`、`packages/acp-server/` 和 `apps/kimi-code/src/cli/`。使用方包括 code-app 里的桌面端和 Web 端、VS Code 扩展、Zed 等 ACP 客户端、SDK 用户、hook 脚本，以及解析无界面输出的程序。这些文件变化时，要求 PR 写明有哪些使用方，以及上一个版本的数据和客户端怎样继续正常工作。
+这些文件会被仓库之外的使用方消费：`packages/agent-core-v2/docs/` 下的清单文件（`config-manifest.toml`、`wire-manifest.d.ts`、`state-manifest.d.ts`）、`packages/kap-server/test/__snapshots__/apiSurface.snapshot.test.ts.snap`、`packages/kap-server/docs/kap.md`、`packages/node-sdk/src/index.ts`、`packages/agent-core-v2/src/features/externalHooks/`、`packages/acp-server/` 和 `apps/kimi-code/src/cli/`。使用方包括 code-app 里的桌面端和 Web 端、通过 KAP 驱动核心会话和对话流程的外部 agent 和机器人、VS Code 扩展、Zed 等 ACP 客户端、SDK 用户、hook 脚本，以及解析无界面输出的程序。这些文件变化时，要求 PR 写明有哪些使用方，以及上一个版本的数据和客户端怎样继续正常工作。
 
 ### 移植和重构要带上旧路径的功能清单
 

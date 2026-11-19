@@ -91,3 +91,43 @@ export const interactionRespondResultSchema = z.object({
   ended_at: isoDateTimeSchema,
 });
 export type InteractionRespondResult = z.infer<typeof interactionRespondResultSchema>;
+
+const pendingInteractionBaseSchema = z.object({
+  interaction_id: z.string().min(1),
+  session_id: z.string().min(1),
+  agent_id: z.string().min(1),
+  created_at: isoDateTimeSchema,
+  tool_call_id: z.string().min(1).optional(),
+});
+
+export const pendingApprovalInteractionSchema = pendingInteractionBaseSchema.extend({
+  kind: z.literal('approval'),
+  request: z.object({
+    tool_name: z.string().min(1),
+    action: z.string(),
+    tool_input_display: z.unknown().optional(),
+    expires_at: isoDateTimeSchema,
+  }),
+});
+
+export const pendingQuestionInteractionSchema = pendingInteractionBaseSchema.extend({
+  kind: z.literal('question'),
+  request: z.object({
+    questions: z.array(questionItemSchema).min(1).max(4),
+  }),
+});
+
+export const pendingInteractionSchema = z.discriminatedUnion('kind', [
+  pendingApprovalInteractionSchema,
+  pendingQuestionInteractionSchema,
+]);
+export type PendingInteraction = z.infer<typeof pendingInteractionSchema>;
+
+export const listInteractionsParamsSchema = z.object({
+  session_id: z.string().min(1),
+});
+
+export const listInteractionsResponseSchema = z.object({
+  items: z.array(pendingInteractionSchema),
+});
+export type ListInteractionsResponse = z.infer<typeof listInteractionsResponseSchema>;
