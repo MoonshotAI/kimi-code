@@ -67,6 +67,7 @@ withDefaults(
     colWidth?: number;
     collapsed?: boolean;
     dragging?: boolean;
+    feedbackEnabled?: boolean;
   }>(),
   {
     colWidth: 220,
@@ -85,6 +86,7 @@ const emit = defineEmits<{
   generateTitle: [id: string, done: (title: string | null) => void];
   deleteWorkspace: [id: string];
   openSettings: [];
+  openFeedback: [];
   login: [];
   collapse: [];
 }>();
@@ -452,6 +454,17 @@ function onLogoClick(): void {
           <UserMenu @login="emit('login')" @open-settings="emit('openSettings')" />
         </div>
         <IconButton
+          v-if="feedbackEnabled"
+          class="side-feedback"
+          size="sm"
+          :label="t('feedback.send')"
+          :tooltip="t('feedback.send')"
+          tooltip-arrow
+          @click.stop="emit('openFeedback')"
+        >
+          <span class="side-feedback-icon" aria-hidden="true" />
+        </IconButton>
+        <IconButton
           class="side-footer-settings"
           size="sm"
           :label="t('settings.title')"
@@ -778,6 +791,12 @@ function onLogoClick(): void {
 }
 .side-footer-settings {
   flex: none;
+}
+.side-feedback { width: 24px; height: 24px; color: var(--color-send-bg); }
+.side-feedback-icon {
+  width: 16px; height: 16px;
+  background: currentColor;
+  mask: url('./feedback/assets/sidebar-feedback.svg') center / contain no-repeat;
 }
 .side-footer::before {
   content: '';

@@ -8,6 +8,7 @@ withDefaults(defineProps<{
   pressed?: boolean;
   label?: string;
   tooltip?: string;
+  tooltipArrow?: boolean;
   keys?: string[];
   type?: 'button' | 'submit' | 'reset';
 }>(), {
@@ -32,7 +33,7 @@ defineExpose({ el });
     :aria-label="label"
   >
     <slot />
-    <TooltipBubble v-if="tooltip" :target="el ?? null" :text="tooltip" :keys="keys" />
+    <TooltipBubble v-if="tooltip" :target="el ?? null" :text="tooltip" :keys="keys" :arrow="tooltipArrow" />
   </button>
 </template>
 

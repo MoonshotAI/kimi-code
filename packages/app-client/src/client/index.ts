@@ -9,6 +9,7 @@ export {
   setKimiClientDeps,
   resetKimiClientDeps,
   getKimiWebApi,
+  getDeviceApi,
   t,
   type KimiClientDeps,
   type SessionCreatedSource,

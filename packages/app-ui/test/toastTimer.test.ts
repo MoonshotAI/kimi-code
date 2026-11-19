@@ -58,6 +58,21 @@ describe('useToastTimer', () => {
     expect(onExpire).not.toHaveBeenCalled();
   });
 
+  it('gives an updated receipt its full duration and still pauses on hover', () => {
+    vi.useFakeTimers();
+    const onExpire = vi.fn();
+    const timer = createTimer(6000, onExpire);
+    vi.advanceTimersByTime(5900);
+    timer.restart();
+    timer.pause();
+    vi.advanceTimersByTime(6000);
+    timer.resume();
+    vi.advanceTimersByTime(5999);
+    expect(onExpire).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onExpire).toHaveBeenCalledOnce();
+  });
+
   it('expires immediately when resumed after the deadline', () => {
     vi.useFakeTimers();
     const onExpire = vi.fn();
