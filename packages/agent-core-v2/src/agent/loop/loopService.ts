@@ -537,10 +537,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
       this.notifications.project(event);
-      if (event.type === 'llm.retrying') this.journal.append(enriched);
+      if (event.type === 'llm.retry') this.journal.append(enriched);
       this.turns.project(enriched, loop);
       this.projectTaskEvent(enriched);
-      if (event.type !== 'llm.retrying') this.journal.append(enriched);
+      if (event.type !== 'llm.retry') this.journal.append(enriched);
       if ((event.type === 'tool.async_ended' || (event.type === 'tool.ended' && !event.detached)) && event.taskId !== undefined) {
         this.toolExecutor.release(event.taskId);
       }

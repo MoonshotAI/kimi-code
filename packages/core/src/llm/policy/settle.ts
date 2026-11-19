@@ -1,4 +1,4 @@
-import { generate, type LlmAttemptEvent } from '#/llm/generate';
+import { generate, type LlmGenerateEvent, type LlmGenerateFailure } from '#/llm/generate';
 import {
   createAssistantMessage,
   createMessageAccumulator,
@@ -16,8 +16,8 @@ import {
   type FinishInfo,
   type LlmErrorMessage,
   type LlmOutcome,
-  type LlmSentEvent,
-  type LlmStreamEvent,
+  type LlmNoticeEvent,
+  type LlmDeltaEvent,
   type LlmTiming,
 } from '#/llm/response';
 import { emptyUsage, mergeUsagePatch, type TokenUsage } from '#/llm/usage';
@@ -88,7 +88,7 @@ export function emptyResponseError(
 
 export interface LlmSettleControl {
   readonly signal: AbortSignal;
-  readonly onEvent?: (event: LlmStreamEvent | LlmSentEvent) => void;
+  readonly onEvent?: (event: LlmDeltaEvent | LlmNoticeEvent) => void;
 }
 
 export async function settleLlmRequest(
@@ -114,19 +114,33 @@ export async function settleLlmRequest(
   let timing: LlmTiming | undefined;
   let failure: { error: LlmErrorMessage; rawError?: unknown } | undefined;
 
-  const handle = (event: LlmAttemptEvent): void => {
+  const captureFailure = (result: LlmGenerateFailure): void => {
+    const statusError = llmStatusErrorMessage(result.error);
+    const error =
+      statusError === null
+        ? result.error
+        : withoutUndefinedStatusCode({
+            ...statusError,
+            requestId: statusError.requestId ?? requestId ?? null,
+            retryAfterMs: statusError.retryAfterMs ?? parseRetryAfterMs(headers),
+            headers:
+              statusError.headers === null
+                ? (headers ?? null)
+                : { ...headers, ...statusError.headers },
+          });
+    failure = { error, rawError: result.rawError };
+  };
+
+  const handle = (event: LlmGenerateEvent): void => {
     switch (event.type) {
       case 'llm.notice':
         onEvent?.(event);
         return;
-      case 'attempt.sending':
-        onEvent?.({ type: 'llm.sent' });
-        return;
-      case 'llm.streaming.request_id':
+      case 'llm.delta.request_id':
         requestId = event.requestId;
         onEvent?.(event);
         return;
-      case 'llm.timing':
+      case 'llm.delta.timing':
         timing = {
           firstTokenLatencyMs: event.firstTokenLatencyMs,
           streamDurationMs: event.streamDurationMs,
@@ -138,56 +152,32 @@ export async function settleLlmRequest(
         };
         onEvent?.(event);
         return;
-      case 'attempt.tool_call_end': {
-        const toolCall = inner.toolCallEnd(event.index);
-        if (toolCall !== undefined) {
-          onEvent?.({ type: 'llm.streaming.tool_call_end', index: event.index, toolCall });
-        }
-        return;
-      }
-      case 'llm.streaming.headers':
+      case 'llm.delta.response_header':
         headers = event.headers;
         requestId = request.protocol.base.requestId?.(event.headers);
         onEvent?.(event);
         return;
-      case 'llm.streaming.part': {
+      case 'llm.delta.part': {
         const normalized = toolCallIds.normalizePart(event.part);
         const accumulated = inner.push(normalized);
         const part = normalized.type === 'think' && accumulated.part.type === 'think'
           ? { ...normalized, hidden: accumulated.part.hidden }
           : normalized;
-        onEvent?.({ type: 'llm.streaming.part', part, block: accumulated.block });
+        onEvent?.({ type: 'llm.delta.part', part, block: accumulated.block });
         return;
       }
-      case 'llm.streaming.usage':
+      case 'llm.delta.usage':
         usage = mergeUsagePatch(usage, event.usage);
         onEvent?.(event);
         return;
-      case 'llm.streaming.finish':
+      case 'llm.delta.finish':
         finish = event.finish;
         onEvent?.(event);
         return;
-      case 'llm.streaming.message_id':
+      case 'llm.delta.message_id':
         messageId = event.messageId;
         onEvent?.(event);
         return;
-      case 'attempt.failed': {
-        const statusError = llmStatusErrorMessage(event.error);
-        const error =
-          statusError === null
-            ? event.error
-            : withoutUndefinedStatusCode({
-                ...statusError,
-                requestId: statusError.requestId ?? requestId ?? null,
-                retryAfterMs: statusError.retryAfterMs ?? parseRetryAfterMs(headers),
-                headers:
-                  statusError.headers === null
-                    ? (headers ?? null)
-                    : { ...headers, ...statusError.headers },
-              });
-        failure = { error, rawError: event.rawError };
-        return;
-      }
     }
   };
 
@@ -242,7 +232,17 @@ export async function settleLlmRequest(
   };
 
   try {
-    await generate(request, { signal, onEvent: handle });
+    const result = await generate(request, {
+      signal,
+      onEvent: handle,
+      onToolCallEnd: (index) => {
+        const toolCall = inner.toolCallEnd(index);
+        if (toolCall !== undefined) {
+          onEvent?.({ type: 'llm.delta.tool_call_end', index, toolCall });
+        }
+      },
+    });
+    if (result !== undefined) captureFailure(result);
   } catch (error) {
     if (isAbortError(error) || signal.aborted) {
       return aborted();

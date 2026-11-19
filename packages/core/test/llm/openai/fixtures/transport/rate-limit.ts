@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { OpenAITransportFixture } from '../types';
 
 export default {
-  name: 'rate-limit',
+  name: 'as an OpenAI user, I want rate-limit errors to preserve retry metadata',
   module: testModule(),
   endpoint: { baseUrl: 'https://example.test/v1', apiKey: 'test-key' },
   stream: false,

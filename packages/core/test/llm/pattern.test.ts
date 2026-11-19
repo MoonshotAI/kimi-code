@@ -37,7 +37,7 @@ function splitEven(): Pattern<number> {
 }
 
 describe('applyPatterns', () => {
-  it('applies ordered run rewrites without mutating the input', () => {
+  it('as a protocol maintainer, I want ordered rewrites applied without mutating the input', () => {
     const input = [2, 4, 6];
     const unchanged = applyPatterns(input, [dropOdd()]);
     expect(unchanged).toEqual(input);

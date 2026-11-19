@@ -813,7 +813,7 @@ describe('notify turn handoff', () => {
       executor: createExecutor({}),
     });
     loop.subscribe((event) => events.push(event));
-    const firstRequest = once(loop, (event) => event.type === 'llm.streaming.part');
+    const firstRequest = once(loop, (event) => event.type === 'llm.delta.part');
     const followup = once(loop, (event) => event.type === 'turn.ended' && event.turnId === 1);
     const first = loop.runTurn(prompt('work'));
     await firstRequest;
