@@ -49,3 +49,8 @@ it('gives the pending fallback pre the highlighted code metrics', () => {
   expect(pre.fontSize).toBe('var(--markdown-code-font-size)');
   expect(pre.lineHeight).toBe('var(--markdown-code-line-height)');
 });
+
+it('hides the native scrollbar on the pending fallback pre so overflowing lines keep its height', () => {
+  const root = render(`<div class="code-block-container"><div class="code-block-shell-content"><pre class="code-pre-fallback"></pre></div></div>`);
+  expect(getComputedStyle(root.querySelector('pre')!).getPropertyValue('scrollbar-width')).toBe('none');
+});

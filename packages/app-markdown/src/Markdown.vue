@@ -1205,6 +1205,10 @@ watch([() => numberedDiffs.size, segments], async () => {
   font-family: var(--markdown-code-font-family) !important;
   font-size: var(--markdown-code-font-size) !important;
   line-height: var(--markdown-code-line-height) !important;
+  scrollbar-width: none;
+}
+.md :deep(.code-block-container .code-pre-fallback::-webkit-scrollbar) {
+  display: none;
 }
 .md :deep(.code-block-container pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)),
 .md :deep(pre[data-markstream-pre]:not(.code-pre-fallback):not(.markstream-pre--line-numbers)) {
