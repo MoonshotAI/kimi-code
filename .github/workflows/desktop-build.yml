@@ -451,7 +451,7 @@ jobs:
           ls -la dist-desktop-canary
           gh release create "$tag" \
             --target "${GITHUB_SHA}" \
-            --title "Kimi Code Canary ${version}" \
+            --title "Kimi Code Desktop" \
             --notes "目标版本：${version%%-canary.*}；来源：${GITHUB_REF_NAME} @ ${GITHUB_SHA}。CDN 需手动发布。" \
             --prerelease
           gh release upload "$tag" dist-desktop-canary/*
