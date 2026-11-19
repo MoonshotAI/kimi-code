@@ -8,14 +8,12 @@ import {
   effectiveNewSessionEnvironment,
   groupWorktreesByProject,
   isSessionWorktreeInvalid,
-  isSessionWorktreeScriptPaused,
   isSessionWorktreeSettingUp,
   isWorktreeSession,
   resolveWorktreeSource,
   sessionDirectoryRoots,
   sessionEnvironmentTag,
   sessionMainDirectory,
-  sessionWorktreeAvailableActions,
   sessionWorktreeBlocksSend,
   sessionWorktreeCard,
   sessionWorktreeHoldsPrompts,
@@ -171,54 +169,6 @@ describe('sessionWorktreeCard', () => {
     expect(
       sessionWorktreeCard(worktree('failed', { missing: true }, { purpose: 'recreate', failure: { kind: 'disk_full' } })),
     ).toBe('diskFull');
-  });
-});
-
-describe('sessionWorktreeAvailableActions', () => {
-  it('offers nothing for local, ready or fallen-back sessions', () => {
-    expect(sessionWorktreeAvailableActions(undefined)).toEqual([]);
-    expect(sessionWorktreeAvailableActions(worktree('ready'))).toEqual([]);
-    expect(sessionWorktreeAvailableActions(worktree('local', { path: undefined }))).toEqual([]);
-  });
-
-  it('only allows cancelling while the setup runs', () => {
-    expect(sessionWorktreeAvailableActions(worktree('running', { path: undefined }))).toEqual(['cancel']);
-    expect(sessionWorktreeAvailableActions(worktree('running'))).toEqual(['cancel']);
-  });
-
-  it('allows only running or skipping the script at a script pause', () => {
-    const paused = [
-      worktree('awaiting_script_confirmation'),
-      worktree('failed', {}, { stoppedStep: 'script', failure: { kind: 'script_failed' } }),
-      worktree('failed', {}, { stoppedStep: 'script', failure: { kind: 'script_timeout' } }),
-      worktree('stopped', {}, { stoppedStep: 'script' }),
-    ];
-    for (const state of paused) {
-      expect(sessionWorktreeAvailableActions(state)).toEqual(['runScript', 'skipScript']);
-      expect(isSessionWorktreeScriptPaused(state)).toBe(true);
-    }
-  });
-
-  it('allows retrying or falling back when creation failed or was stopped, also for a recreate', () => {
-    const states = [
-      worktree('failed', { path: undefined }, { stoppedStep: 'fetch', failure: { kind: 'fetch_failed' } }),
-      worktree('failed', { path: undefined }, { stoppedStep: 'create', failure: { kind: 'create_failed' } }),
-      worktree('stopped', { path: undefined }, { stoppedStep: 'create' }),
-      worktree('failed', { missing: true }, { purpose: 'recreate', stoppedStep: 'create', failure: { kind: 'disk_full' } }),
-    ];
-    for (const state of states) {
-      expect(sessionWorktreeAvailableActions(state)).toEqual(['retry', 'useLocal']);
-      expect(isSessionWorktreeScriptPaused(state)).toBe(false);
-    }
-  });
-
-  it('allows recreating or falling back when the worktree directory is gone', () => {
-    expect(sessionWorktreeAvailableActions(worktree('ready', { missing: true }))).toEqual(['recreate', 'useLocal']);
-    expect(sessionWorktreeAvailableActions(worktree('ready', { missing: true, branchMissing: true }))).toEqual([
-      'recreate',
-      'useLocal',
-    ]);
-    expect(sessionWorktreeAvailableActions(worktree('ready', { missing: true, branch: undefined }))).toEqual(['useLocal']);
   });
 });
 

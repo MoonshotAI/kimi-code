@@ -4,7 +4,6 @@ import type {
   AppSessionWorktree,
   AppWorktree,
   AppWorktreeSetupRequest,
-  SessionWorktreeAction,
   WorkspaceGitBranches,
 } from '../api/types';
 import { basename } from './pathBasename';
@@ -92,32 +91,6 @@ export function sessionWorktreeCard(worktree: AppSessionWorktree | null | undefi
     default:
       return null;
   }
-}
-
-const SCRIPT_CARDS: ReadonlySet<SessionWorktreeCard> = new Set([
-  'scriptFailed',
-  'scriptTimeout',
-  'scriptStopped',
-  'scriptConfirm',
-]);
-
-export function isSessionWorktreeScriptPaused(worktree: AppSessionWorktree | null | undefined): boolean {
-  const card = sessionWorktreeCard(worktree);
-  return card !== null && SCRIPT_CARDS.has(card);
-}
-
-export function sessionWorktreeAvailableActions(
-  worktree: AppSessionWorktree | null | undefined,
-): SessionWorktreeAction[] {
-  if (worktree === null || worktree === undefined) return [];
-  if (worktree.setup.status === 'running') return ['cancel'];
-  const card = sessionWorktreeCard(worktree);
-  if (card === null) return [];
-  if (SCRIPT_CARDS.has(card)) return ['runScript', 'skipScript'];
-  if (card === 'missing' || card === 'missingBranchGone') {
-    return worktree.branch === undefined ? ['useLocal'] : ['recreate', 'useLocal'];
-  }
-  return ['retry', 'useLocal'];
 }
 
 export function sessionMainDirectory(
