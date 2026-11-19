@@ -2118,6 +2118,10 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         v-if="sessionInfoPanelVisible"
         :session-id="sessionInfoSessionId"
         :mode="sessionInfoMode"
+        :ctx-used="status.ctxUsed"
+        :ctx-max="status.ctxMax"
+        :model-id="status.modelId"
+        :running="client.activity.value !== 'idle'"
         :tabs="panelTabs ?? []"
         :available="availableTabs ?? []"
         @open-pr="(url) => emit('openPr', url)"
@@ -2125,6 +2129,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @activate="(id) => emit('activateTab', id)"
         @open="(type) => emit('openTab', type)"
         @show-tabs="emit('showTabs')"
+        @compact="client.compact()"
       />
     </div>
 

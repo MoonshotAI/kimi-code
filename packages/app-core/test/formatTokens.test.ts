@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatTokens } from '../src/lib/formatTokens';
+import { formatTokenEstimate, formatTokens, formatTokenShare } from '../src/lib/formatTokens';
 
 describe('formatTokens', () => {
   it('renders sub-k counts as-is', () => {
@@ -29,5 +29,27 @@ describe('formatTokens', () => {
     expect(formatTokens(1048576)).toBe('1M');
     expect(formatTokens(1572864)).toBe('1.5M');
     expect(formatTokens(10485760)).toBe('10M');
+  });
+});
+
+describe('formatTokenEstimate', () => {
+  it('marks the formatted count as approximate', () => {
+    expect(formatTokenEstimate(2)).toBe('~2');
+    expect(formatTokenEstimate(55_808)).toBe('~54.5k');
+  });
+});
+
+describe('formatTokenShare', () => {
+  it('renders the share with one decimal', () => {
+    expect(formatTokenShare(497_100, 1_000_000)).toBe('49.7%');
+    expect(formatTokenShare(0, 1_000_000)).toBe('0.0%');
+  });
+
+  it('marks shares that would round to zero', () => {
+    expect(formatTokenShare(400, 1_000_000)).toBe('<0.1%');
+  });
+
+  it('treats an unknown total as an empty share', () => {
+    expect(formatTokenShare(100, 0)).toBe('0.0%');
   });
 });

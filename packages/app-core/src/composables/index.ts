@@ -1,4 +1,5 @@
 export * from './useAppearance';
+export * from './useContextInspector';
 export * from './defaultFontFamilies';
 export * from './loadBundledFonts';
 export * from './useFontPrefs';

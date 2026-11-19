@@ -13,6 +13,7 @@ import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
+import { registerContextRoutes } from './context';
 import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
@@ -138,6 +139,10 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionListAndBatchRoutes>[0],
         core,
         hostSources(opts.hostBridges),
+      );
+      registerContextRoutes(
+        apiV1 as unknown as Parameters<typeof registerContextRoutes>[0],
+        core,
       );
       registerEnvironmentRoutes(apiV1 as unknown as Parameters<typeof registerEnvironmentRoutes>[0], core);
       registerHostsRoutes(apiV1 as unknown as Parameters<typeof registerHostsRoutes>[0], core, opts.hostBridges);
