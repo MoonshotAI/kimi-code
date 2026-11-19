@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<style>html{background:#fff;color:#111}</style>
+<title>Draft editor</title>
+<h1>Draft editor</h1>
+<label for="draft">Draft</label>
+<textarea id="draft"></textarea>
+<script>
+  window.addEventListener('beforeunload', (event) => {
+    if (document.getElementById('draft').value !== '') event.preventDefault();
+  });
+</script>
+</html>
