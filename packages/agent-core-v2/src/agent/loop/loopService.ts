@@ -13,10 +13,7 @@ import { AgentLoopRequestObserver } from './requestObservation';
 import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
 import {
   agentLLMRequestLogFields,
-  type BoundCoreLoopRequesterOptions,
-  type CoreLoopRequester,
-  type CoreLoopRequesterOptions,
-  type LoopRequester,
+  type BoundRequesterOptions,
   type OperationRequesterOptions,
   type RequestConfigSnapshot,
   type ResolvedRequestContext,
@@ -151,7 +148,6 @@ import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
 import { AgentNotificationProjection } from './notificationProjection';
 import { AgentLoopProfileAdapter } from './profileAdapter';
 import { AgentRequesterBinder } from './requesterBinder';
-import { isFullLoopRequester } from '@moonshot-ai/core/loop/request';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error' | 'steered';
 
@@ -171,7 +167,6 @@ export const loopDisposingKey = defineState<boolean>('loop.disposing', () => fal
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 
-  readonly requester: LoopRequester;
   private readonly requesterExecution = createLlmRequesterExecution();
   private readonly observer: AgentLoopRequestObserver;
   private readonly projector: AgentLoopProjector;
@@ -251,30 +246,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       runtime: providerCatalogRuntime,
     });
     this._register(this.requesterBinder);
-    const rawRequester = (): FullLoopLlmRequester => {
-      const loop = this.loop;
-      if (loop === undefined) throw new BugIndicatingError('Agent loop is not started');
-      return loop.requester;
-    };
-    this.requester = {
-      get llm() {
-        return rawRequester();
-      },
-      coreRequester: (options) => this.coreRequester(options),
-      operationRequester: (requester, options) => this.operationRequester(requester, options),
-      prepareOperation: async (options, _signal) => {
-        await this.start();
-        const loop = this.loop!;
-        const config = this.requesterBinder.requestConfigSnapshot(
-          this.profileAdapter.snapshot(),
-        );
-        const tools = options.tools ?? this.baselineTools();
-        return loop.operation((runtime) => {
-          const requester = this.coreRequester({ ...options, runtime, tools, config });
-          return requester.snapshot?.() ?? requester;
-        });
-      },
-    };
+
     this.journal = new LoopJournal(wire, scopeContext.agentId, dispatcher);
     this.prompts = new AgentPromptProjection(
       dispatcher,
@@ -342,6 +314,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       if (this.profileAdapter.snapshot().modelAlias === from) void this.profileAdapter.setModel(to).catch(() => {});
     }));
     this._register(toDisposable(() => this.turns.close(abortError('Agent loop disposed'))));
+  }
+
+  get requester(): FullLoopLlmRequester {
+    const loop = this.loop;
+    if (loop === undefined) throw new BugIndicatingError('Agent loop is not started');
+    return loop.requester;
   }
 
   private get disposing(): boolean {
@@ -677,7 +655,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (loop === undefined) throw new BugIndicatingError('Agent loop is not started');
     return loop.operation((runtime) => {
       const base = loop.baseRequester;
-      if (!isFullLoopRequester(base)) throw new Error('loop has no full core requester');
+      if (base === undefined) throw new Error('loop has no full core requester');
       const { config, binding } = this.requesterBinder.operationSnapshot(base, options.maxOutputSize);
       const tools = options.tools ?? this.baselineTools();
       return this.decorateRequester(requester.with({ model: contentsOf(binding.request).model }), {
@@ -716,7 +694,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private decorateRequester(
     requester: FullLoopLlmRequester,
-    options: BoundCoreLoopRequesterOptions,
+    options: BoundRequesterOptions,
   ): FullLoopLlmRequester {
     const wrap = (current: FullLoopLlmRequester): FullLoopLlmRequester => ({
       [requesterContents]: contentsOf(current),
@@ -745,22 +723,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
 
-  private coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
-    return {
-      generate: (rest, control) => this.generateCoreRequest(options, rest, control),
-      snapshot: () => {
-        const config = options.config ?? this.requesterBinder.requestConfigSnapshot(
-          this.profileAdapter.snapshot(),
-        );
-        const binding = options.binding ?? this.requesterBinder.bindRequester(options, config);
-        options.onSnapshot?.(config);
-        return this.coreRequester({ ...options, config, binding });
-      },
-    };
-  }
 
   private prepareCoreRequest(
-    options: CoreLoopRequesterOptions,
+    options: BoundRequesterOptions,
     rest: CoreRequestRest,
     source: ResolvedRequestContext['source'],
     config: RequestConfigSnapshot,
@@ -827,20 +792,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
-  private async generateCoreRequest(
-    options: CoreLoopRequesterOptions,
-    rest: CoreRequestRest,
-    control: LlmRunControl,
-  ): Promise<LlmOutcome> {
-    const source = options.source();
-    const config = options.config ?? this.requesterBinder.requestConfigSnapshot(
-      this.profileAdapter.snapshot(),
-    );
-    return this.generateDecoratedRequest(options, rest, source, config, control);
-  }
-
   private async generateDecoratedRequest(
-    options: CoreLoopRequesterOptions,
+    options: BoundRequesterOptions,
     rest: CoreRequestRest,
     source: ResolvedRequestContext['source'],
     config: RequestConfigSnapshot,
@@ -881,14 +834,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
 
   private resolveRequest(
-    options: CoreLoopRequesterOptions,
+    options: BoundRequesterOptions,
     rest: CoreRequestRest,
     source: ResolvedRequestContext['source'],
     config: RequestConfigSnapshot,
     requester?: InitializedLlmRequester,
   ): ResolvedRequestContext {
     const resolved = config.resolved;
-    const binding = options.binding ?? this.requesterBinder.bindRequester(options, config);
+    const binding = options.binding;
     const supplied = mergeFields(
       requester === undefined ? undefined : contentsOf(requester) as Fields,
       rest as Fields,

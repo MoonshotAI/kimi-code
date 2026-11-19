@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
-import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
-import type { UsageStatus } from '#/agent/usage/usage';
+import type { AgentLLMRequestSource, UsageStatus } from '#/agent/usage/usage';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import {
   copyUsage,

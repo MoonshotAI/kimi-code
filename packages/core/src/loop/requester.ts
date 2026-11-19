@@ -6,7 +6,7 @@ import { requestProfileOf, type FullLoopLlmRequester } from './request';
 
 type Fields = Readonly<Record<string, unknown>>;
 
-export function createLoopRequester(
+export function createRawLoopRequester(
   requester: () => FullLoopLlmRequester,
   messages: () => readonly Message[],
   profile: () => LoopProfile,

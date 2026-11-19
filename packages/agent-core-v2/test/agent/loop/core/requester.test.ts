@@ -27,21 +27,19 @@ function listOf<T>(value: readonly T[] | (() => readonly T[]) | undefined): read
 }
 
 describe('loop.requester', () => {
-  it('creates one requester snapshot per turn and fills live history and policies', async () => {
+  it('decorates one requester per turn and fills live history and policies', async () => {
     const seen: LlmRequest[] = [];
-    let snapshotCount = 0;
+    let decorationCount = 0;
     const tools = [{ name: 'baseline', description: 'baseline tool', parameters: { type: 'object', properties: {} } }];
     const requester = fakeRequester((request) => {
       seen.push(request);
       return done('reply');
     }).with({ model: { spec } });
     const loop = createLoop({
-      requester: {
-        ...requester,
-        snapshot: () => {
-          snapshotCount += 1;
-          return requester;
-        },
+      requester,
+      decorateTurnRequester: (current) => {
+        decorationCount += 1;
+        return current;
       },
       executor: noopExecutor,
       input: { profile: { tools } },
@@ -54,7 +52,7 @@ describe('loop.requester', () => {
     const removeRecovery = loop.policy.addRecovery(recovery);
     const removeRetryable = loop.policy.addRetryable(retryable);
     expect((await loop.runTurn(createUserMessage('hello'))).type).toBe('done');
-    expect(snapshotCount).toBe(1);
+    expect(decorationCount).toBe(1);
     expect(seen).toHaveLength(1);
     expect(seen[0]?.model.spec).toEqual(spec);
     expect(seen[0]?.profile?.tools).toEqual(tools);
@@ -69,7 +67,7 @@ describe('loop.requester', () => {
     expect(loop.policy.resolvers).toEqual([]);
 
     expect((await loop.runTurn(createUserMessage('again'))).type).toBe('done');
-    expect(snapshotCount).toBe(2);
+    expect(decorationCount).toBe(2);
     expect(seen[1]?.content.messages.map((message) => extractText(message))).toEqual(['hello', 'reply', 'again']);
     expect(listOf(seen[1]?.policy?.resolvers)).toEqual([]);
     expect('setTools' in loop).toBe(false);

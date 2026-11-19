@@ -4,7 +4,7 @@ import { createUserMessage, extractText, type ToolCall, type ToolMessage } from 
 import type {
   Loop,
   LoopEmitted,
-  LoopLlmRequester,
+  FullLoopLlmRequester,
   StepStartingEvent,
   ToolBatchStartingEvent,
   TurnHooks,
@@ -16,7 +16,7 @@ import type { LoopToolContext } from '@moonshot-ai/core/loop/create-loop';
 import type { ToolExecuteContext, ToolExecutorHook, ToolReturn } from '#/tool/executor';
 import { executorFrom, successfulExecutor } from './executor';
 
-function requester(responses: MockProviderResponse[], onGenerate?: () => void): LoopLlmRequester {
+function requester(responses: MockProviderResponse[], onGenerate?: () => void): FullLoopLlmRequester {
   return createMockProviderRequester(() => {
     onGenerate?.();
     const next = responses.shift();

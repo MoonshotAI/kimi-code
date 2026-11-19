@@ -1,6 +1,6 @@
 import { registerEvent2Class } from '#/app/event/event2';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
+import type { AgentLLMRequestSource } from '#/agent/usage/usage';
 import { TurnStepCompleted } from '#/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '#/agent/loop/turnOps';
 import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';

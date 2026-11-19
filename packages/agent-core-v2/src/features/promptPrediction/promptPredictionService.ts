@@ -143,7 +143,7 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
         requestKind: 'prompt_prediction',
       } as const;
       let trace: LLMRequestTrace | undefined;
-      const requester = scope.loop.requester.operationRequester(scope.loop.requester.llm, {
+      const requester = scope.loop.operationRequester(scope.loop.requester, {
         maxOutputSize: PROMPT_PREDICTION_MAX_OUTPUT_TOKENS,
         source: () => source,
         onTrace: (value) => {

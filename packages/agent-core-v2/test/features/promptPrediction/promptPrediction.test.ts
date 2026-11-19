@@ -76,31 +76,27 @@ describe('SessionPromptPredictionService', () => {
       input?: LlmRequestPart;
       signal?: AbortSignal;
     }> = [];
-    const requester = {
-      llm: createRequester() as FullLoopLlmRequester,
-      operationRequester: (raw: FullLoopLlmRequester, options: OperationRequesterOptions) => {
-        const request: (typeof requests)[number] = { options, raw };
-        requests.push(request);
-        options.onTrace?.({ requestId: 'request-1' });
-        const wrap = (current: FullLoopLlmRequester): FullLoopLlmRequester => ({
-          [requesterContents]: contentsOf(current),
-          with: ((next: LlmRequestPart | LlmRequester<LlmDimension>) =>
-            wrap(current.with(contentsOf(next)))) as FullLoopLlmRequester['with'],
-          request: (rest) => current.request(rest),
-          generate: (rest, control) => {
-            request.input = contentsOf(current.with(rest));
-            request.signal = control.signal;
-            return nextResult();
-          },
-        });
-        return wrap(raw);
-      },
-      prepareOperation: async () => {
-        throw new Error('prompt prediction must not use prepareOperation');
-      },
+    const requester = createRequester() as FullLoopLlmRequester;
+    const operationRequester = (raw: FullLoopLlmRequester, options: OperationRequesterOptions) => {
+      const request: (typeof requests)[number] = { options, raw };
+      requests.push(request);
+      options.onTrace?.({ requestId: 'request-1' });
+      const wrap = (current: FullLoopLlmRequester): FullLoopLlmRequester => ({
+        [requesterContents]: contentsOf(current),
+        with: ((next: LlmRequestPart | LlmRequester<LlmDimension>) =>
+          wrap(current.with(contentsOf(next)))) as FullLoopLlmRequester['with'],
+        request: (rest) => current.request(rest),
+        generate: (rest, control) => {
+          request.input = contentsOf(current.with(rest));
+          request.signal = control.signal;
+          return nextResult();
+        },
+      });
+      return wrap(raw);
     };
     const loop = {
       requester,
+      operationRequester,
       history: () => contextSnapshot,
       rawHistory: () => contextSnapshot,
       snapshot: () => ({
@@ -173,7 +169,7 @@ describe('SessionPromptPredictionService', () => {
       request_id: 'request-1',
     }));
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.raw).toBe(requester.llm);
+    expect(requests[0]?.raw).toBe(requester);
     expect(requests[0]?.options.source()).toEqual({
       type: 'operation',
       turnId: 0,

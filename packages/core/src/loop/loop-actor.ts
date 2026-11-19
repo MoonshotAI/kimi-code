@@ -31,13 +31,8 @@ import {
   runTurnStarting,
   type TurnStartingRun,
 } from '#/hook/loop/run';
-import {
-  isFullLoopRequester,
-  type FullLoopLlmRequester,
-  type LoopRequester,
-  type LoopRequestRuntime,
-} from './request';
-import { createLoopRequester } from './requester';
+import type { FullLoopLlmRequester, LoopRequestRuntime } from './request';
+import { createRawLoopRequester } from './requester';
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
 import {
   canContinue,
@@ -312,7 +307,7 @@ class LoopActor implements Loop {
   private readonly tools = new Map<string, LiveTool>();
   private toolBatch: ActiveToolBatch | undefined;
   private completedToolBatch: { readonly turnId: number; readonly step: number; readonly result: TurnToolBatchResult } | undefined;
-  private requesterTemplate: LoopRequester | undefined;
+  private requesterTemplate: FullLoopLlmRequester | undefined;
   private revision = 0;
   private seq = 0;
   private readonly completionWaiters = new Set<() => void>();
@@ -351,10 +346,10 @@ class LoopActor implements Loop {
     this.abortGraceMs = options.abortGraceMs ?? 2_500;
     this.hook = options.hook ?? {};
     this.policy = createPolicyRegistry();
-    this.requester = createLoopRequester(
+    this.requester = createRawLoopRequester(
       () => {
         const base = this.requesterTemplate;
-        if (!isFullLoopRequester(base)) throw new Error('loop has no full core requester');
+        if (base === undefined) throw new Error('loop has no full core requester');
         return base;
       },
       () => this.durable.messages,
@@ -477,7 +472,7 @@ class LoopActor implements Loop {
     return this.revision;
   }
 
-  get baseRequester(): LoopRequester | undefined {
+  get baseRequester(): FullLoopLlmRequester | undefined {
     return this.requesterTemplate;
   }
 
@@ -847,7 +842,7 @@ class LoopActor implements Loop {
     }
   }
 
-  setRequester(requester: LoopRequester | undefined): void {
+  setRequester(requester: FullLoopLlmRequester | undefined): void {
     if (!this.open()) return;
     this.actor.act(() => {
       if (!this.open()) return;

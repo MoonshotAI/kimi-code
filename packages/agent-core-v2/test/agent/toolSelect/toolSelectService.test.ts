@@ -227,6 +227,10 @@ class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopSe
   readonly started = false;
   readonly hasPersistedState = false;
 
+  operationRequester(): never {
+    throw new Error('operationRequester is not implemented by this stub');
+  }
+
   async start(): Promise<void> {}
 
   baselineTools(): readonly Tool[] {

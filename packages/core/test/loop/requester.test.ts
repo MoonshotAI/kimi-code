@@ -19,7 +19,7 @@ import {
 } from '#/llm/requester';
 import type { LlmOutcome, LlmRemoteErrorMessage } from '#/llm/response';
 import { ToolExecutor } from '#/tool/tool-executor';
-import type { FullLoopLlmRequester, LoopLlmRequester } from '#/loop/request';
+import type { FullLoopLlmRequester } from '#/loop/request';
 
 type Fields = Readonly<Record<string, unknown>>;
 type Generate = (request: LlmRequest, control: LlmRunControl) => LlmOutcome | Promise<LlmOutcome>;
@@ -69,32 +69,28 @@ describe('loop requester compatibility', () => {
     await loop.close();
   });
 
-  it('keeps legacy snapshot requesters on the existing per-turn path', async () => {
-    const seen: string[][] = [];
-    let snapshots = 0;
-    const base: LoopLlmRequester = {
-      snapshot: () => {
-        snapshots += 1;
-        return {
-          generate: (rest) => {
-            seen.push(rest.content?.messages?.map((message) => extractText(message)) ?? []);
-            return Promise.resolve(done(`legacy ${String(snapshots)}`));
-          },
-        };
-      },
-      generate: () => Promise.reject(new Error('unsnapshotted requester must not run')),
-    };
-    const loop = createLoop({ requester: base, executor });
+  it('uses the current full base for each turn', async () => {
+    const seen: { readonly base: string; readonly messages: string[] }[] = [];
+    const makeBase = (name: string): FullLoopLlmRequester => fullRequester((request) => {
+      seen.push({
+        base: name,
+        messages: request.content.messages.map((message) => extractText(message)),
+      });
+      return done(`${name} response`);
+    });
+    const first = makeBase('first');
+    const second = makeBase('second');
+    const loop = createLoop({ requester: first, executor });
 
-    expect(loop.baseRequester).toBe(base);
+    expect(loop.baseRequester).toBe(first);
     expect((await loop.runTurn(createUserMessage('first'))).type).toBe('done');
+    loop.setRequester(second);
     expect((await loop.runTurn(createUserMessage('second'))).type).toBe('done');
-    expect(snapshots).toBe(2);
     expect(seen).toEqual([
-      ['first'],
-      ['first', 'legacy 1', 'second'],
+      { base: 'first', messages: ['first'] },
+      { base: 'second', messages: ['first', 'first response', 'second'] },
     ]);
-    expect(loop.baseRequester).toBe(base);
+    expect(loop.baseRequester).toBe(second);
     await loop.close();
   });
 });
@@ -238,17 +234,20 @@ describe('loop side requester', () => {
     await loop.close();
   });
 
-  it('reports missing full bases without affecting legacy normal turns', async () => {
+  it('reports missing full bases and recovers after installing one', async () => {
     const loop = createLoop({ executor });
     const control = { signal: new AbortController().signal };
 
     expect(() => loop.requester.request({})).toThrow('loop has no full core requester');
     expect(() => loop.requester.generate({}, control)).toThrow('loop has no full core requester');
-    const legacy: LoopLlmRequester = { generate: () => Promise.resolve(done('legacy response')) };
-    loop.setRequester(legacy);
-    expect(() => loop.requester.request({})).toThrow('loop has no full core requester');
-    expect((await loop.runTurn(createUserMessage('legacy'))).type).toBe('done');
-    expect(loop.state.messages.map((message) => extractText(message))).toEqual(['legacy', 'legacy response']);
+    const base = fullRequester(() => done('full response'));
+    loop.setRequester(base);
+    expect((await loop.runTurn(createUserMessage('full'))).type).toBe('done');
+    expect(loop.state.messages.map((message) => extractText(message))).toEqual(['full', 'full response']);
+    expect(loop.requester.request({}).content.messages.map((message) => extractText(message))).toEqual([
+      'full',
+      'full response',
+    ]);
     await loop.close();
   });
 });

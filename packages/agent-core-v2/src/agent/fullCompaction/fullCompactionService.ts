@@ -714,7 +714,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             requestKind: 'full_compaction',
             logFields: { droppedCount },
           } as const;
-          const requester = this.loopService.requester.operationRequester(this.loopService.requester.llm, {
+          const requester = this.loopService.operationRequester(this.loopService.requester, {
             maxOutputSize: compactionMaxOutputSize,
             promptCacheProbe: cacheProbePending ? 'compaction' : undefined,
             source: () => source,

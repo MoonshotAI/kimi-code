@@ -1,29 +1,13 @@
 import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { LogContext } from '#/_base/log/log';
+import type { AgentLLMRequestLogFields, AgentLLMRequestSource } from '#/agent/usage/usage';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import type { LlmPolicy } from '@moonshot-ai/core/llm/policy/policy';
 import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
-import type { FullLoopLlmRequester, LoopLlmRequester, LoopRequestRuntime } from '@moonshot-ai/core/loop/request';
-
-export type AgentLLMRequestLogFields = Readonly<LogContext>;
-
-export type AgentLLMRequestSource =
-  | {
-      readonly type: 'turn';
-      readonly turnId: number;
-      readonly step?: number;
-      readonly logFields?: AgentLLMRequestLogFields;
-    }
-  | {
-      readonly type: 'operation';
-      readonly turnId?: number;
-      readonly requestKind?: string;
-      readonly logFields?: AgentLLMRequestLogFields;
-    };
+import type { LoopRequestRuntime } from '@moonshot-ai/core/loop/request';
 
 export interface RequestConfigSnapshot {
   readonly resolved: ProfileModelContext;
@@ -54,13 +38,11 @@ export interface ResolvedRequestContext {
   readonly runtime: LoopRequestRuntime;
 }
 
-export interface CoreLoopRequesterOptions {
+export interface RequesterOptions {
   readonly source: () => AgentLLMRequestSource;
   readonly runtime: LoopRequestRuntime;
-  readonly config?: RequestConfigSnapshot;
-  readonly binding?: RequesterBinding;
   readonly baseContents?: InitializedLlmRequestPart;
-  readonly onSnapshot?: (config: RequestConfigSnapshot) => void;
+
   readonly inheritedPolicy?: LlmPolicy;
   readonly maxOutputSize?: number;
   readonly promptCacheProbe?: 'compaction';
@@ -72,29 +54,15 @@ export interface CoreLoopRequesterOptions {
   ) => void;
 }
 
-export interface BoundCoreLoopRequesterOptions extends CoreLoopRequesterOptions {
+export interface BoundRequesterOptions extends RequesterOptions {
   readonly config: RequestConfigSnapshot;
   readonly binding: RequesterBinding;
 }
 
-export type OperationLoopRequesterOptions = Omit<CoreLoopRequesterOptions, 'runtime'>;
-
 export type OperationRequesterOptions = Omit<
-  CoreLoopRequesterOptions,
-  'runtime' | 'config' | 'binding' | 'baseContents' | 'onSnapshot' | 'inheritedPolicy'
+  RequesterOptions,
+  'runtime' | 'baseContents' | 'inheritedPolicy'
 >;
-
-export type CoreLoopRequester = LoopLlmRequester;
-
-export interface LoopRequester {
-  readonly llm: FullLoopLlmRequester;
-  coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester;
-  operationRequester(
-    requester: FullLoopLlmRequester,
-    options: OperationRequesterOptions,
-  ): FullLoopLlmRequester;
-  prepareOperation(options: OperationLoopRequesterOptions, signal: AbortSignal): Promise<CoreLoopRequester>;
-}
 
 export function agentLLMRequestLogFields(source: AgentLLMRequestSource | undefined): AgentLLMRequestLogFields {
   switch (source?.type) {

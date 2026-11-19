@@ -4,7 +4,6 @@ import { contentsOf } from '@moonshot-ai/core/llm/requester';
 import type { Loop } from '@moonshot-ai/core/loop/index';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { LoopRequester } from '#/agent/loop/requesterContract';
 import type { AgentRequesterBinder } from '#/agent/loop/requesterBinder';
 import { IConfigService } from '#/app/config/config';
 import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
@@ -37,7 +36,7 @@ function defaultGenerate(): GenerateFn {
 describe('ConfigState model capabilities', () => {
   let ctx: TestAgentContext;
   let profile: IAgentLoopService;
-  let requester: LoopRequester;
+  let requester: IAgentLoopService;
   let kimiConfig: TestKimiConfig;
   let generate: GenerateFn;
   let records: TelemetryRecord[];
@@ -57,7 +56,7 @@ describe('ConfigState model capabilities', () => {
       telemetryServices(recordingTelemetry(records)),
     );
     profile = ctx.get(IAgentLoopService);
-    requester = ctx.get(IAgentLoopService).requester;
+    requester = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {
@@ -398,9 +397,10 @@ describe('ConfigState model capabilities', () => {
       thinkingLevel: 'off',
     });
     const signal = new AbortController().signal;
-    const operation = await requester.prepareOperation({
+    await requester.start();
+    const operation = requester.operationRequester(requester.requester, {
       source: () => ({ type: 'operation' }),
-    }, signal);
+    });
     profile.update({
       modelAlias: 'deepseek/deepseek-v4-mini',
       systemPrompt: 'changed-system',
@@ -472,7 +472,7 @@ describe('ConfigState prompt cache hint', () => {
 describe('ConfigState thinking clamp for always-thinking models', () => {
   let ctx: TestAgentContext;
   let profile: IAgentLoopService;
-  let requester: LoopRequester;
+  let requester: IAgentLoopService;
   let kimiConfig: TestKimiConfig;
   let capturedThinking: unknown;
 
@@ -544,7 +544,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
       })),
     );
     profile = ctx.get(IAgentLoopService);
-    requester = ctx.get(IAgentLoopService).requester;
+    requester = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {
@@ -665,7 +665,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   let ctx: TestAgentContext | undefined;
   let profile: IAgentLoopService;
-  let requester: LoopRequester;
+  let requester: IAgentLoopService;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
   let capturedRequest: LlmRequest | undefined;
@@ -720,7 +720,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       })),
     );
     profile = ctx.get(IAgentLoopService);
-    requester = ctx.get(IAgentLoopService).requester;
+    requester = ctx.get(IAgentLoopService);
   }
 
   it('injects KIMI_MODEL_TEMPERATURE into the per-turn sampling intent (the compaction request also uses)', async () => {
@@ -780,10 +780,11 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   });
 });
 
-async function generateOperation(requester: LoopRequester, signal: AbortSignal): Promise<void> {
-  const operation = await requester.prepareOperation({
+async function generateOperation(requester: IAgentLoopService, signal: AbortSignal): Promise<void> {
+  await requester.start();
+  const operation = requester.operationRequester(requester.requester, {
     source: () => ({ type: 'operation' }),
-  }, signal);
+  });
   const outcome = await operation.generate(
     { content: {}, profile: {}, policy: { retry: { maxAttemptsPerStep: 1 } } },
     { signal },

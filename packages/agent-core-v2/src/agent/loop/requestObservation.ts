@@ -33,10 +33,9 @@ import { defineState } from '#/state/state';
 import { summarizeProjectionRepairs, type ProjectionAnomaly } from './projection';
 import { hasStrictStructureRecovery } from './projectionPolicy';
 import { llmRequestTraceKey, LlmToolsSnapshot, llmToolsSnapshotPayload } from './llmRequestOps';
+import type { AgentLLMRequestLogFields, AgentLLMRequestSource } from '#/agent/usage/usage';
 import {
   agentLLMRequestLogFields,
-  type AgentLLMRequestLogFields,
-  type AgentLLMRequestSource,
   type RequestConfigSnapshot,
   type ResolvedRequestContext,
 } from './requesterContract';

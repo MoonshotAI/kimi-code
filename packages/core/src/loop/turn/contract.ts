@@ -8,7 +8,7 @@ import type { Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from '../contra
 import type { LoopProfile } from '../contract/profile';
 import type { HookFailure, HookFailureReport } from '#/hook/loop/failure';
 import type { StepEndingRun } from '#/hook/loop/run';
-import type { FullLoopLlmRequester, LoopRequester } from '../request';
+import type { FullLoopLlmRequester } from '../request';
 
 export type TurnMessage = Pick<QueuedItem, 'kind'> & {
   readonly message: Message;
@@ -92,7 +92,7 @@ export interface TurnToolBatchResult {
 }
 
 export interface TurnRuntime {
-  requester(): LoopRequester | undefined;
+  requester(): FullLoopLlmRequester | undefined;
   readonly decorateTurnRequester?: (requester: FullLoopLlmRequester) => FullLoopLlmRequester;
   readonly policy: PolicyRegistry;
   executeBatch(batch: TurnToolBatch): TurnToolBatchResult | Promise<TurnToolBatchResult>;

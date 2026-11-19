@@ -94,7 +94,7 @@ interface SetThinkingPayload { readonly level: string }
 interface StopTaskPayload { readonly taskId: string; readonly reason?: string }
 interface UndoHistoryPayload { readonly count: number }
 interface UnregisterToolPayload { readonly name: string }
-import { type UsageStatus } from '#/agent/usage/usage';
+import { type AgentLLMRequestSource, type UsageStatus } from '#/agent/usage/usage';
 import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
 import { IAgentSkillService } from '#/features/skill/skillService';
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
@@ -124,7 +124,6 @@ import {
   type ToolDescription as KosongTool,
 } from '@moonshot-ai/core/llm/message';
 import { type TokenUsage } from '@moonshot-ai/core/llm/usage';
-import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentTodoService } from '#/features/todo/todoService';
@@ -247,6 +246,7 @@ import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
+
 import {
   createScriptedGenerate,
   createMockProvider,
@@ -1526,13 +1526,16 @@ export class AgentTestContext {
       await start();
       this.runtimeStarted = true;
     };
-    const requester = loop.requester;
-    (loop as { requester: IAgentLoopService['requester'] }).requester = {
-      coreRequester: (requesterOptions) => requester.coreRequester(requesterOptions),
-      prepareOperation: async (operationOptions, signal) => {
-        await this.restorePersisted();
-        return requester.prepareOperation(operationOptions, signal);
-      },
+    const operationRequester = loop.operationRequester.bind(loop);
+    loop.operationRequester = (requester, options) => {
+      const wrapped = operationRequester(requester, options);
+      return {
+        ...wrapped,
+        generate: async (rest, control) => {
+          await this.restorePersisted();
+          return wrapped.generate(rest, control);
+        },
+      };
     };
     adoptAgent!();
     this.installInteractionBridge();

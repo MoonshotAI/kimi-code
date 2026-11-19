@@ -135,6 +135,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const stub: StubLoop = {
     _serviceBrand: undefined, hooks, launches, cancels, startTurn, batchStartingHooks,
     requester: {} as IAgentLoopService['requester'],
+    operationRequester: () => { throw new Error('operationRequester is not implemented by this stub'); },
     registerToolBatchStarting(hook) {
       batchStartingHooks.push(hook);
       return toDisposable(() => {

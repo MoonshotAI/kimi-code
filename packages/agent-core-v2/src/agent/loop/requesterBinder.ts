@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import type { LlmRequestModel } from '@moonshot-ai/core/llm/request';
-import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
+import { requesterContents, type InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmRequesterExecution } from '@moonshot-ai/core/llm/policy/policy';
-import type { FullLoopLlmRequester, Loop, LoopLlmRequester } from '@moonshot-ai/core/loop/index';
+import type { FullLoopLlmRequester, Loop } from '@moonshot-ai/core/loop/index';
 import { Disposable } from '#/_base/di/lifecycle';
 import type { IConfigService } from '#/app/config/config';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
@@ -16,7 +16,7 @@ import { getProviderDefinition } from '#/llm-adapter/provider/provider-definitio
 import type { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import { LOOP_CONTROL_SECTION } from './configSection';
 import type {
-  CoreLoopRequesterOptions,
+  RequesterOptions,
   RequestConfigSnapshot,
   RequesterBinding,
 } from './requesterContract';
@@ -36,6 +36,10 @@ interface RequesterSnapshot {
 interface RequesterAttachment {
   readonly loop: Loop;
   current?: RequesterSnapshot;
+  failure?: {
+    readonly requester: FullLoopLlmRequester;
+    readonly error: unknown;
+  };
 }
 
 export interface AgentRequesterBinderOptions {
@@ -71,6 +75,7 @@ export class AgentRequesterBinder extends Disposable {
   turnSnapshot(requester: FullLoopLlmRequester): RequesterSnapshot {
     const attachment = this.attachment;
     const current = attachment?.current;
+    if (attachment?.failure?.requester === requester) throw attachment.failure.error;
     if (attachment === undefined || current?.requester !== requester) {
       throw new Error('Turn requester is not the current binder snapshot');
     }
@@ -108,7 +113,7 @@ export class AgentRequesterBinder extends Disposable {
   }
 
   bindRequester(
-    options: Pick<CoreLoopRequesterOptions, 'maxOutputSize'>,
+    options: Pick<RequesterOptions, 'maxOutputSize'>,
     config: RequestConfigSnapshot,
   ): RequesterBinding {
     const resolved = config.resolved;
@@ -161,6 +166,7 @@ export class AgentRequesterBinder extends Disposable {
     const requester = binding.request as FullLoopLlmRequester;
     const current = { requester, config, binding };
     attachment.current = current;
+    attachment.failure = undefined;
     attachment.loop.setRequester(requester);
     return current;
   }
@@ -174,14 +180,17 @@ export class AgentRequesterBinder extends Disposable {
       this.bindCurrent(attachment, config);
     } catch (error) {
       attachment.current = undefined;
-      const requester: LoopLlmRequester = {
-        snapshot: () => {
+      const requester: FullLoopLlmRequester = {
+        [requesterContents]: {},
+        with: (() => requester) as FullLoopLlmRequester['with'],
+        request: () => {
           throw error;
         },
         generate: async () => {
           throw error;
         },
       };
+      attachment.failure = { requester, error };
       attachment.loop.setRequester(requester);
     }
   }

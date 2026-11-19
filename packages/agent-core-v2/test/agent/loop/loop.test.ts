@@ -15,8 +15,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { Event } from '#/_base/event';
 import type {
-  BoundCoreLoopRequesterOptions,
-  LoopRequester,
+  BoundRequesterOptions,
   OperationRequesterOptions,
 } from '#/agent/loop/requesterContract';
 import type { AgentLoopRequestObserver, AgentRequestObservation } from '#/agent/loop/requestObservation';
@@ -62,7 +61,6 @@ import {
   InMemoryWireRecordPersistence,
   permissionModeServices,
   createMockProvider,
-  createMockProviderRequester,
   providerHttpError,
   sessionService,
   testkitAgentFixtures,
@@ -270,7 +268,7 @@ describe('Agent loop', () => {
         readonly observer: AgentLoopRequestObserver;
         decorateRequester(
           requester: FullLoopLlmRequester,
-          options: BoundCoreLoopRequesterOptions,
+          options: BoundRequesterOptions,
         ): FullLoopLlmRequester;
       };
       const coreLoop = internals.loop;
@@ -359,7 +357,7 @@ describe('Agent loop', () => {
         recordAttempt(observation, request, appliedRecoveries);
       });
       const outcomeSources: unknown[] = [];
-      const options: BoundCoreLoopRequesterOptions = {
+      const options: BoundRequesterOptions = {
         config,
         binding,
         source: () => ({ type: 'turn', turnId: 90, step: 1 }),
@@ -367,8 +365,6 @@ describe('Agent loop', () => {
         dynamicTools: true,
         onOutcome: (_outcome, source) => outcomeSources.push(source),
       };
-      const legacy = localLoop.requester.coreRequester(options);
-      const legacySnapshot = legacy.snapshot?.() ?? legacy;
       const decorated = internals.decorateRequester(raw, options);
       expect(decorated[requesterContents]).toEqual(contentsOf(raw));
       expect(decorated.request({
@@ -429,7 +425,7 @@ describe('Agent loop', () => {
       expect(preview.content).toMatchObject({ messages: derivedMessages, usedTokens: 456 });
       expect(preview.profile).toEqual({ systemPrompt: 'rest-system', tools: derivedTools });
 
-      const legacyRest = {
+      const directRest = {
         model: { sampling: { temperature: 0.5 } },
         content: { messages: derivedMessages, usedTokens: 456 },
         profile: { systemPrompt: 'turn-system', tools: derivedTools },
@@ -443,7 +439,7 @@ describe('Agent loop', () => {
       const callerAttempts: [LlmRequest, readonly LlmRecoveryRecord[]][][] = [[], []];
       const callerRecoverySnapshots: (readonly LlmRecoveryRecord[])[][] = [[], []];
       const runs = [
-        () => legacySnapshot.generate(legacyRest, {
+        () => decorated.generate(directRest, {
           signal: new AbortController().signal,
           onAttempt: (request, { appliedRecoveries }) => {
             attemptOrder.push('caller');
@@ -575,14 +571,10 @@ describe('Agent loop', () => {
         onOutcome: (_outcome, source) => operationOutcomeSources.push(source),
       };
       const registryRequest = vi.spyOn(local.get(IProtocolAdapterRegistry), 'request');
-      const legacyOperation = await localLoop.requester.prepareOperation(
-        operationOptions,
-        new AbortController().signal,
-      );
-      expect(registryRequest).toHaveBeenCalledTimes(1);
-      expect(localLoop.requester.llm).toBe(coreLoop.requester);
-      const operation = localLoop.requester.operationRequester(localLoop.requester.llm, operationOptions);
-      expect(registryRequest).toHaveBeenCalledTimes(1);
+      expect(registryRequest).toHaveBeenCalledTimes(0);
+      expect(localLoop.requester).toBe(coreLoop.requester);
+      const operation = localLoop.operationRequester(localLoop.requester, operationOptions);
+      expect(registryRequest).toHaveBeenCalledTimes(0);
       expect(contentsOf(operation).model?.maxOutputTokens).toBe(512);
       const operationMessages = [createUserMessage('operation-derived')];
       const operationDerived = operation.with({
@@ -616,20 +608,20 @@ describe('Agent loop', () => {
       const operationAttempts: [LlmRequest, readonly LlmRecoveryRecord[]][][] = [[], []];
       const operationRecoverySnapshots: (readonly LlmRecoveryRecord[])[][] = [[], []];
       const operationUsage: unknown[][] = [[], []];
-      const legacyOperationRest = {
+      const operationDirectRest = {
         content: { messages: operationMessages, usedTokens: 457 },
         profile: { systemPrompt: 'operation-system', tools: derivedTools },
         policy: {
           retry: { ...derivedPolicy.retry, ...restPolicy.retry },
-          recoveries: [liveRecovery, loopRecovery],
-          resolvers: [liveResolver, loopResolver, restResolver],
-          retryables: [liveRetryable, derivedRetryable, restRetryable],
+          recoveries: [loopRecovery],
+          resolvers: [loopResolver, restResolver],
+          retryables: [derivedRetryable, restRetryable],
         },
       };
       const operationRuns = [
         async () => {
           const before = local.allEvents.length;
-          const outcome = await legacyOperation.generate(legacyOperationRest, {
+          const outcome = await operation.generate(operationDirectRest, {
             signal: new AbortController().signal,
             onAttempt: (request, { appliedRecoveries }) => {
               attemptOrder.push('caller');
@@ -668,7 +660,7 @@ describe('Agent loop', () => {
         internals.requesterExecution.recoveries.clear();
         operationOutcomes.push(await run());
       }
-      expect(registryRequest).toHaveBeenCalledTimes(1);
+      expect(registryRequest).toHaveBeenCalledTimes(0);
       registryRequest.mockRestore();
       expect(outcomeValue(operationOutcomes[1]!)).toEqual(outcomeValue(operationOutcomes[0]!));
       const operationEventValues = operationEvents.map((list) => list.map((event) => {
@@ -781,18 +773,14 @@ describe('Agent loop', () => {
       const defaultOptions: OperationRequesterOptions = {
         source: () => ({ type: 'operation', requestKind: 'operation_default' }),
       };
-      const legacyDefault = await localLoop.requester.prepareOperation(
-        defaultOptions,
-        new AbortController().signal,
-      );
-      const currentDefault = localLoop.requester.operationRequester(coreLoop.requester, defaultOptions);
+      const currentDefault = localLoop.operationRequester(coreLoop.requester, defaultOptions);
       const defaultRest = {
         content: { messages: [createUserMessage('default-operation')] },
         profile: {},
       };
       const defaultOutcomes = [
-        await legacyDefault.generate(defaultRest, { signal: new AbortController().signal }),
         await currentDefault.generate(defaultRest, { signal: new AbortController().signal }),
+        await currentDefault.with(defaultRest).generate({}, { signal: new AbortController().signal }),
       ];
       expect(defaultOutcomes.map((outcome) => outcome.type)).toEqual(['done', 'done']);
       const defaultRequests = requests.slice(operationRequestStart + 4);
@@ -805,15 +793,11 @@ describe('Agent loop', () => {
       const errorOptions: OperationRequesterOptions = {
         source: () => ({ type: 'operation', requestKind: 'operation_error' }),
       };
-      const legacyError = await localLoop.requester.prepareOperation(
-        errorOptions,
-        new AbortController().signal,
-      );
-      const currentError = localLoop.requester.operationRequester(coreLoop.requester, errorOptions);
+      const currentError = localLoop.operationRequester(coreLoop.requester, errorOptions);
       const errorRest = { content: { messages: [createUserMessage('operation-error')] } };
       const errorOutcomes = [
-        await legacyError.generate(errorRest, { signal: new AbortController().signal }),
         await currentError.generate(errorRest, { signal: new AbortController().signal }),
+        await currentError.with(errorRest).generate({}, { signal: new AbortController().signal }),
       ];
       const errorValue = (outcome: LlmOutcome) => outcome.type === 'failed'
         ? { type: outcome.type, error: outcome.error, requestId: outcome.requestId }
@@ -827,15 +811,11 @@ describe('Agent loop', () => {
 
       const cancelReason = new Error('cancel operation comparison');
       const cancelControllers = [new AbortController(), new AbortController()];
-      const legacyCancelled = await localLoop.requester.prepareOperation(
-        defaultOptions,
-        cancelControllers[0]!.signal,
-      );
-      const currentCancelled = localLoop.requester.operationRequester(coreLoop.requester, defaultOptions);
+      const currentCancelled = localLoop.operationRequester(coreLoop.requester, defaultOptions);
       cancelControllers.forEach((controller) => controller.abort(cancelReason));
       const cancelledOutcomes = [
-        await legacyCancelled.generate(defaultRest, { signal: cancelControllers[0]!.signal }),
-        await currentCancelled.generate(defaultRest, { signal: cancelControllers[1]!.signal }),
+        await currentCancelled.generate(defaultRest, { signal: cancelControllers[0]!.signal }),
+        await currentCancelled.with(defaultRest).generate({}, { signal: cancelControllers[1]!.signal }),
       ];
       expect(cancelledOutcomes).toEqual([
         { type: 'aborted', message: null, usage: undefined },
@@ -849,7 +829,12 @@ describe('Agent loop', () => {
       await local.get(IConfigService).replace('providers', { kimi: firstProvider });
       local.get(IProviderCatalogRuntime).resync();
       expect(coreLoop.baseRequester).not.toBe(frozenBase);
-      expect(coreLoop.baseRequester).not.toHaveProperty('with');
+      expect(coreLoop.baseRequester).toHaveProperty('with');
+      const invalidProviderMessage = 'Provider "other" referenced by model "second-model" is not configured.';
+      expect(() => coreLoop.requester.request({})).toThrow(invalidProviderMessage);
+      await expect(coreLoop.requester.generate({}, { signal: new AbortController().signal })).rejects.toMatchObject({
+        message: expect.stringContaining(invalidProviderMessage),
+      });
 
       await local.rpc.prompt({ input: [{ type: 'text', text: 'must fail explicitly' }] });
       await local.untilTurnEnd();
@@ -857,7 +842,7 @@ describe('Agent loop', () => {
       expect(failure?.type).toBe('failed');
       if (failure?.type !== 'failed') throw new Error('Expected the next turn to fail');
       expect(failure.error).toMatchObject({
-        message: expect.stringContaining('Provider "other" referenced by model "second-model" is not configured.'),
+        message: expect.stringContaining(invalidProviderMessage),
       });
       expect(requests).toHaveLength(settledRequestCount);
     } finally {
@@ -3612,27 +3597,14 @@ describe('aborted step tool execution', () => {
   });
 
   it('settles a message-less notification without creating an LLM request', async () => {
-    const requester: LoopRequester = {
-      llm: createMockProviderRequester(async () => {
-        throw new Error('request must not run');
-      }),
-      coreRequester: () => createMockProviderRequester(async () => {
-        throw new Error('request must not run');
-      }),
-      operationRequester: () => createMockProviderRequester(async () => {
-        throw new Error('request must not run');
-      }),
-      prepareOperation: async () => createMockProviderRequester(async () => {
-        throw new Error('request must not run');
-      }),
-    };
     const ctx = createTestAgent();
-    await replaceLoopRequester(ctx, requester);
     try {
       const loopService = ctx.get(IAgentLoopService);
+      await loopService.initializeHistory([]);
       const handle = loopService.notify();
       await loopService.settled();
       expect(handle.dropped).toBe(false);
+      expect(ctx.llmCalls).toHaveLength(0);
     } finally {
       await ctx.dispose();
     }
@@ -3645,12 +3617,6 @@ function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Tur
     content: [{ type: 'text', text }],
     attributes: { origin: { kind: 'user' } },
   });
-}
-
-async function replaceLoopRequester(ctx: TestAgentContext, requester: LoopRequester): Promise<void> {
-  const loop = ctx.get(IAgentLoopService) as { requester: LoopRequester } & IAgentLoopService;
-  loop.requester = requester;
-  await loop.initializeHistory([]);
 }
 
 function parkedLifecycleStub(): IAgentLifecycleService {
