@@ -80,6 +80,22 @@ export class AgentRequesterBinder extends Disposable {
       : this.bindCurrent(attachment, config);
   }
 
+  operationSnapshot(
+    requester: FullLoopLlmRequester,
+    maxOutputSize: number | undefined,
+  ): RequesterSnapshot {
+    const snapshot = this.turnSnapshot(requester);
+    return {
+      ...snapshot,
+      binding: {
+        ...snapshot.binding,
+        request: snapshot.binding.request.with({
+          model: { maxOutputTokens: this.maxOutputTokens(maxOutputSize, snapshot.config) },
+        }),
+      },
+    };
+  }
+
   requestConfigSnapshot(profile: ProfileBindingSnapshot): RequestConfigSnapshot {
     return {
       resolved: this.options.profile.resolveModelContext(profile),
@@ -97,17 +113,7 @@ export class AgentRequesterBinder extends Disposable {
   ): RequesterBinding {
     const resolved = config.resolved;
     const model = this.options.modelCatalog.get(resolved.modelAlias);
-    const budget = resolveCompletionBudget({
-      maxOutputSize: options.maxOutputSize ?? resolved.maxOutputSize,
-      maxCompletionTokensCap: config.maxCompletionTokensCap,
-    });
-    const maxCompletionTokensCap = config.maxCompletionTokensCap;
-    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
-    const maxOutputTokens: LlmRequestModel['maxOutputTokens'] = optedOut
-      ? 'none'
-      : budget === undefined
-        ? undefined
-        : Math.max(1, budget);
+    const maxOutputTokens = this.maxOutputTokens(options.maxOutputSize, config);
     const params: InitializedLlmRequestPart = {
       ...config.params,
       model: {
@@ -132,6 +138,19 @@ export class AgentRequesterBinder extends Disposable {
       model,
       requestMetadata: provider?.requestMetadata === true,
     };
+  }
+
+  private maxOutputTokens(
+    maxOutputSize: number | undefined,
+    config: RequestConfigSnapshot,
+  ): LlmRequestModel['maxOutputTokens'] {
+    const budget = resolveCompletionBudget({
+      maxOutputSize: maxOutputSize ?? config.resolved.maxOutputSize,
+      maxCompletionTokensCap: config.maxCompletionTokensCap,
+    });
+    const cap = config.maxCompletionTokensCap;
+    if (cap !== undefined && cap <= 0) return 'none';
+    return budget === undefined ? undefined : Math.max(1, budget);
   }
 
   private bindCurrent(

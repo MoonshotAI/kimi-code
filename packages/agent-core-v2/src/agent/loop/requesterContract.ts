@@ -2,11 +2,12 @@ import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/mes
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { LogContext } from '#/_base/log/log';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
+import type { LlmPolicy } from '@moonshot-ai/core/llm/policy/policy';
 import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
-import type { LoopLlmRequester, LoopRequestRuntime } from '@moonshot-ai/core/loop/request';
+import type { FullLoopLlmRequester, LoopLlmRequester, LoopRequestRuntime } from '@moonshot-ai/core/loop/request';
 
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
 
@@ -59,6 +60,7 @@ export interface CoreLoopRequesterOptions {
   readonly config?: RequestConfigSnapshot;
   readonly binding?: RequesterBinding;
   readonly onSnapshot?: (config: RequestConfigSnapshot) => void;
+  readonly inheritedPolicy?: LlmPolicy;
   readonly maxOutputSize?: number;
   readonly promptCacheProbe?: 'compaction';
   readonly tools?: readonly Tool[];
@@ -76,10 +78,19 @@ export interface BoundCoreLoopRequesterOptions extends CoreLoopRequesterOptions 
 
 export type OperationLoopRequesterOptions = Omit<CoreLoopRequesterOptions, 'runtime'>;
 
+export type OperationRequesterOptions = Omit<
+  CoreLoopRequesterOptions,
+  'runtime' | 'config' | 'binding' | 'onSnapshot' | 'inheritedPolicy'
+>;
+
 export type CoreLoopRequester = LoopLlmRequester;
 
 export interface LoopRequester {
   coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester;
+  operationRequester(
+    requester: FullLoopLlmRequester,
+    options: OperationRequesterOptions,
+  ): FullLoopLlmRequester;
   prepareOperation(options: OperationLoopRequesterOptions, signal: AbortSignal): Promise<CoreLoopRequester>;
 }
 

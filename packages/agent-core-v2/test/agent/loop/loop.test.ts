@@ -14,7 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { Event } from '#/_base/event';
-import type { BoundCoreLoopRequesterOptions, LoopRequester } from '#/agent/loop/requesterContract';
+import type {
+  BoundCoreLoopRequesterOptions,
+  LoopRequester,
+  OperationRequesterOptions,
+} from '#/agent/loop/requesterContract';
 import type { AgentLoopRequestObserver, AgentRequestObservation } from '#/agent/loop/requestObservation';
 import type { AgentRequesterBinder } from '#/agent/loop/requesterBinder';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
@@ -181,8 +185,21 @@ describe('Agent loop', () => {
       ) {
         return providerHttpError(503, 'recover comparison');
       }
+      if (
+        request.content.usedTokens === 457 &&
+        !request.content.messages.some((message) => message.content.some((part) =>
+          part.type === 'text' && part.text === 'recovered-message'
+        ))
+      ) {
+        return providerHttpError(503, 'recover comparison');
+      }
+      if (request.content.messages.some((message) => message.content.some((part) =>
+        part.type === 'text' && part.text === 'operation-error'
+      ))) {
+        throw new Error('operation comparison failure');
+      }
       return {
-        ...(requests.length > 3 ? { id: 'comparison' } : {}),
+        ...(requests.length > 3 ? { id: 'comparison', requestId: 'comparison' } : {}),
         parts: [{ type: 'text', text: 'done' }],
       };
     });
@@ -542,6 +559,291 @@ describe('Agent loop', () => {
       expect(observed).toHaveLength(2);
       expect(observed[1]).toEqual(observed[0]);
 
+      const operationRequestStart = requests.length;
+      const operationSource = {
+        type: 'operation',
+        turnId: 90,
+        requestKind: 'operation_comparison',
+      } as const;
+      const operationTraces: { requestId?: string }[] = [];
+      const operationOutcomeSources: unknown[] = [];
+      const operationOptions: OperationRequesterOptions = {
+        maxOutputSize: 512,
+        promptCacheProbe: 'compaction',
+        source: () => operationSource,
+        onTrace: (trace) => operationTraces.push(trace),
+        onOutcome: (_outcome, source) => operationOutcomeSources.push(source),
+      };
+      const registryRequest = vi.spyOn(local.get(IProtocolAdapterRegistry), 'request');
+      const legacyOperation = await localLoop.requester.prepareOperation(
+        operationOptions,
+        new AbortController().signal,
+      );
+      expect(registryRequest).toHaveBeenCalledTimes(1);
+      const operation = localLoop.requester.operationRequester(coreLoop.requester, operationOptions);
+      expect(registryRequest).toHaveBeenCalledTimes(1);
+      expect(contentsOf(operation).model?.maxOutputTokens).toBe(512);
+      const operationMessages = [createUserMessage('operation-derived')];
+      const operationDerived = operation.with({
+        content: { messages: operationMessages, usedTokens: 457 },
+        profile: { systemPrompt: 'operation-system', tools: derivedTools },
+        policy: derivedPolicy,
+      });
+      expect(contentsOf(operation).content).toBeUndefined();
+      expect(contentsOf(operationDerived).content).toMatchObject({
+        messages: operationMessages,
+        usedTokens: 457,
+      });
+      const operationPreview = operationDerived.request(derivedRest);
+      expect(operationPreview.content).toMatchObject({ messages: operationMessages, usedTokens: 457 });
+      expect(operationPreview.profile).toEqual({ systemPrompt: 'operation-system', tools: derivedTools });
+      expect(operationPreview.model.maxOutputTokens).toBe(512);
+      expect(operationPreview.protocol.recoveryKey).toBe(requests[2]?.protocol.recoveryKey);
+      expect(operationPreview.endpoint?.baseUrl).toBe('https://second.example.test/v1');
+      const liveResolver = { id: 'live-loop-policy', resolve: async (request: LlmRequest) => request };
+      const liveRecovery: LlmRecovery = { propose: () => undefined };
+      const liveRetryable = () => false;
+      const removeLiveResolver = coreLoop.policy.addResolver(liveResolver);
+      const removeLiveRecovery = coreLoop.policy.addRecovery(liveRecovery);
+      const removeLiveRetryable = coreLoop.policy.addRetryable(liveRetryable);
+
+      attemptOrder.length = 0;
+      observedAttempts.length = 0;
+      const operationObservationStart = observations.length;
+      const operationEvents: LlmRunEvent[][] = [[], []];
+      const operationOutcomes: LlmOutcome[] = [];
+      const operationAttempts: [LlmRequest, readonly LlmRecoveryRecord[]][][] = [[], []];
+      const operationRecoverySnapshots: (readonly LlmRecoveryRecord[])[][] = [[], []];
+      const operationUsage: unknown[][] = [[], []];
+      const legacyOperationRest = {
+        content: { messages: operationMessages, usedTokens: 457 },
+        profile: { systemPrompt: 'operation-system', tools: derivedTools },
+        policy: {
+          retry: { ...derivedPolicy.retry, ...restPolicy.retry },
+          recoveries: [liveRecovery, loopRecovery],
+          resolvers: [liveResolver, loopResolver, restResolver],
+          retryables: [liveRetryable, derivedRetryable, restRetryable],
+        },
+      };
+      const operationRuns = [
+        async () => {
+          const before = local.allEvents.length;
+          const outcome = await legacyOperation.generate(legacyOperationRest, {
+            signal: new AbortController().signal,
+            onAttempt: (request, { appliedRecoveries }) => {
+              attemptOrder.push('caller');
+              operationAttempts[0]?.push([request, appliedRecoveries]);
+              operationRecoverySnapshots[0]?.push([...appliedRecoveries]);
+            },
+            onEvent: (event) => operationEvents[0]?.push(event),
+          });
+          operationUsage[0] = local.allEvents.slice(before).flatMap((event) => {
+            if (event.type !== '[wire]' || event.event !== 'usage.record') return [];
+            const args = event.args as { model: unknown; usage: unknown; usageScope: unknown };
+            return [{ model: args.model, usage: args.usage, usageScope: args.usageScope }];
+          });
+          return outcome;
+        },
+        async () => {
+          const before = local.allEvents.length;
+          const outcome = await operationDerived.generate(derivedRest, {
+            signal: new AbortController().signal,
+            onAttempt: (request, { appliedRecoveries }) => {
+              attemptOrder.push('caller');
+              operationAttempts[1]?.push([request, appliedRecoveries]);
+              operationRecoverySnapshots[1]?.push([...appliedRecoveries]);
+            },
+            onEvent: (event) => operationEvents[1]?.push(event),
+          });
+          operationUsage[1] = local.allEvents.slice(before).flatMap((event) => {
+            if (event.type !== '[wire]' || event.event !== 'usage.record') return [];
+            const args = event.args as { model: unknown; usage: unknown; usageScope: unknown };
+            return [{ model: args.model, usage: args.usage, usageScope: args.usageScope }];
+          });
+          return outcome;
+        },
+      ];
+      for (const run of operationRuns) {
+        internals.requesterExecution.recoveries.clear();
+        operationOutcomes.push(await run());
+      }
+      expect(registryRequest).toHaveBeenCalledTimes(1);
+      registryRequest.mockRestore();
+      expect(outcomeValue(operationOutcomes[1]!)).toEqual(outcomeValue(operationOutcomes[0]!));
+      const operationEventValues = operationEvents.map((list) => list.map((event) => {
+        if (event.type === 'llm.delta.timing') return { type: event.type };
+        return event.type === 'llm.ended'
+          ? { ...event, outcome: outcomeValue(event.outcome) }
+          : event;
+      }));
+      expect(operationEventValues[1]).toEqual(operationEventValues[0]);
+      expect(operationOutcomeSources).toEqual([operationSource, operationSource]);
+      expect(operationTraces.map((trace) => trace.requestId)).toEqual(['comparison', 'comparison']);
+      expect(operationUsage[1]).toEqual(operationUsage[0]);
+      expect(operationUsage[0]).toEqual([
+        expect.objectContaining({ usageScope: 'session' }),
+      ]);
+      expect(attemptOrder).toEqual([
+        'observer', 'caller', 'observer', 'caller',
+        'observer', 'caller', 'observer', 'caller',
+      ]);
+      for (const [index, [request, appliedRecoveries]] of operationAttempts.flat().entries()) {
+        expect(observedAttempts[index]?.[0]).toBe(request);
+        expect(observedAttempts[index]?.[1]).toBe(appliedRecoveries);
+        expect(requests[index + operationRequestStart]).toBe(request);
+      }
+      expect(operationRecoverySnapshots).toEqual([
+        [[], [{ strategy: 'loop-policy', action: 'append-message' }]],
+        [[], [{ strategy: 'loop-policy', action: 'append-message' }]],
+      ]);
+      expect(requests).toHaveLength(operationRequestStart + 4);
+      for (const offset of [0, 1]) {
+        const legacyRequest = requests[operationRequestStart + offset]!;
+        const currentRequest = requests[operationRequestStart + offset + 2]!;
+        expect(currentRequest.protocol.recoveryKey).toBe(legacyRequest.protocol.recoveryKey);
+        const protocolOptions = (request: LlmRequest) => Object.fromEntries(
+          Object.entries(request.protocol.options ?? {}).filter(([, value]) => typeof value !== 'function'),
+        );
+        expect(protocolOptions(currentRequest)).toEqual(protocolOptions(legacyRequest));
+        const endpointValue = (request: LlmRequest) => ({
+          baseUrl: request.endpoint?.baseUrl,
+          defaultBaseUrl: request.endpoint?.defaultBaseUrl,
+          headers: request.endpoint?.headers,
+          files: request.endpoint?.files,
+          hasCredentials: request.endpoint?.credentials !== undefined,
+          hasClientFactory: request.endpoint?.clientFactory !== undefined,
+          hasFetch: request.endpoint?.fetch !== undefined,
+        });
+        expect(endpointValue(currentRequest)).toEqual(endpointValue(legacyRequest));
+        expect(currentRequest.model).toMatchObject(legacyRequest.model);
+        expect(currentRequest.content).toMatchObject(legacyRequest.content);
+        expect(currentRequest.profile).toEqual(legacyRequest.profile);
+        expect(currentRequest.model.maxOutputTokens).toBe(512);
+      }
+      expect(requests[operationRequestStart]?.content).toMatchObject({
+        messages: operationMessages,
+        usedTokens: 457,
+      });
+      expect(requests[operationRequestStart + 1]?.content).toMatchObject({
+        messages: [...operationMessages, createUserMessage('recovered-message')],
+        usedTokens: 457,
+      });
+      const operationResolverIds = requests.slice(operationRequestStart, operationRequestStart + 4).map((request) => {
+        const resolvers = request.policy?.resolvers;
+        return (typeof resolvers === 'function' ? resolvers() : resolvers)?.map((resolver) => resolver.id);
+      });
+      expect(operationResolverIds).toEqual(Array.from({ length: 4 }, () => [
+        'tool-select', 'agent-media-tools', 'structure', 'agent-media',
+        'live-loop-policy', 'loop-policy', 'rest-policy',
+      ]));
+      for (const request of requests.slice(operationRequestStart, operationRequestStart + 4)) {
+        const recoveries = request.policy?.recoveries;
+        const resolvedRecoveries = typeof recoveries === 'function' ? recoveries() : recoveries;
+        expect(resolvedRecoveries?.[3]).toBe(liveRecovery);
+        expect(resolvedRecoveries?.[4]).toBe(loopRecovery);
+        const retryables = request.policy?.retryables;
+        expect(typeof retryables === 'function' ? retryables() : retryables).toEqual([
+          liveRetryable,
+          derivedRetryable,
+          restRetryable,
+        ]);
+      }
+      const operationObserved = observations.slice(operationObservationStart, operationObservationStart + 2).map((observation) => ({
+        source: observation.source,
+        config: observation.config,
+        context: {
+          model: observation.context?.model,
+          modelAlias: observation.context?.modelAlias,
+          thinkingEffort: observation.context?.thinkingEffort,
+          systemPrompt: observation.context?.systemPrompt,
+          tools: observation.context?.tools,
+          messages: observation.context?.messages,
+          contextRevision: observation.context?.contextRevision,
+          promptCacheProbe: observation.context?.promptCacheProbe,
+          source: observation.context?.source,
+          logFields: observation.context?.logFields,
+          dynamicTools: observation.context?.dynamicTools,
+        },
+        recorded: observation.recorded,
+        media: observation.media,
+      }));
+      expect(operationObserved[1]).toEqual(operationObserved[0]);
+      expect(operationObserved[0]?.context).toMatchObject({
+        promptCacheProbe: 'compaction',
+        dynamicTools: false,
+        source: operationSource,
+      });
+      removeLiveResolver();
+      removeLiveRecovery();
+      removeLiveRetryable();
+
+      const defaultOptions: OperationRequesterOptions = {
+        source: () => ({ type: 'operation', requestKind: 'operation_default' }),
+      };
+      const legacyDefault = await localLoop.requester.prepareOperation(
+        defaultOptions,
+        new AbortController().signal,
+      );
+      const currentDefault = localLoop.requester.operationRequester(coreLoop.requester, defaultOptions);
+      const defaultRest = {
+        content: { messages: [createUserMessage('default-operation')] },
+        profile: {},
+      };
+      const defaultOutcomes = [
+        await legacyDefault.generate(defaultRest, { signal: new AbortController().signal }),
+        await currentDefault.generate(defaultRest, { signal: new AbortController().signal }),
+      ];
+      expect(defaultOutcomes.map((outcome) => outcome.type)).toEqual(['done', 'done']);
+      const defaultRequests = requests.slice(operationRequestStart + 4);
+      expect(defaultRequests).toHaveLength(2);
+      expect(defaultRequests[1]?.profile).toEqual(defaultRequests[0]?.profile);
+      expect(defaultRequests[1]?.content).toEqual(defaultRequests[0]?.content);
+      expect(defaultRequests[0]?.policy?.retry).toEqual({ maxAttemptsPerStep: 1, infiniteRetry: false });
+      expect(defaultRequests[1]?.policy?.retry).toEqual({ maxAttemptsPerStep: 1, infiniteRetry: false });
+
+      const errorOptions: OperationRequesterOptions = {
+        source: () => ({ type: 'operation', requestKind: 'operation_error' }),
+      };
+      const legacyError = await localLoop.requester.prepareOperation(
+        errorOptions,
+        new AbortController().signal,
+      );
+      const currentError = localLoop.requester.operationRequester(coreLoop.requester, errorOptions);
+      const errorRest = { content: { messages: [createUserMessage('operation-error')] } };
+      const errorOutcomes = [
+        await legacyError.generate(errorRest, { signal: new AbortController().signal }),
+        await currentError.generate(errorRest, { signal: new AbortController().signal }),
+      ];
+      const errorValue = (outcome: LlmOutcome) => outcome.type === 'failed'
+        ? { type: outcome.type, error: outcome.error, requestId: outcome.requestId }
+        : outcome;
+      expect(errorOutcomes.map(errorValue)).toEqual([
+        { type: 'failed', error: expect.objectContaining({ message: 'operation comparison failure' }) },
+        { type: 'failed', error: expect.objectContaining({ message: 'operation comparison failure' }) },
+      ]);
+      expect(errorValue(errorOutcomes[1]!)).toEqual(errorValue(errorOutcomes[0]!));
+      expect(requests).toHaveLength(operationRequestStart + 8);
+
+      const cancelReason = new Error('cancel operation comparison');
+      const cancelControllers = [new AbortController(), new AbortController()];
+      const legacyCancelled = await localLoop.requester.prepareOperation(
+        defaultOptions,
+        cancelControllers[0]!.signal,
+      );
+      const currentCancelled = localLoop.requester.operationRequester(coreLoop.requester, defaultOptions);
+      cancelControllers.forEach((controller) => controller.abort(cancelReason));
+      const cancelledOutcomes = [
+        await legacyCancelled.generate(defaultRest, { signal: cancelControllers[0]!.signal }),
+        await currentCancelled.generate(defaultRest, { signal: cancelControllers[1]!.signal }),
+      ];
+      expect(cancelledOutcomes).toEqual([
+        { type: 'aborted', message: null, usage: undefined },
+        { type: 'aborted', message: null, usage: undefined },
+      ]);
+      expect(cancelledOutcomes[1]).toEqual(cancelledOutcomes[0]);
+      expect(requests).toHaveLength(operationRequestStart + 8);
+      const settledRequestCount = requests.length;
+
       const frozenBase = coreLoop.baseRequester;
       await local.get(IConfigService).replace('providers', { kimi: firstProvider });
       local.get(IProviderCatalogRuntime).resync();
@@ -556,7 +858,7 @@ describe('Agent loop', () => {
       expect(failure.error).toMatchObject({
         message: expect.stringContaining('Provider "other" referenced by model "second-model" is not configured.'),
       });
-      expect(requests).toHaveLength(7);
+      expect(requests).toHaveLength(settledRequestCount);
     } finally {
       await local.dispose();
     }
@@ -3311,6 +3613,9 @@ describe('aborted step tool execution', () => {
   it('settles a message-less notification without creating an LLM request', async () => {
     const requester: LoopRequester = {
       coreRequester: () => createMockProviderRequester(async () => {
+        throw new Error('request must not run');
+      }),
+      operationRequester: () => createMockProviderRequester(async () => {
         throw new Error('request must not run');
       }),
       prepareOperation: async () => createMockProviderRequester(async () => {
