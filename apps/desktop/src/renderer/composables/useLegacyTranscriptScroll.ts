@@ -809,7 +809,7 @@ export function useLegacyTranscriptScroll(options: LegacyTranscriptScrollOptions
     if (gen !== restoreGeneration || sessionId() !== sessionKey) return;
     updateDockHeight();
     const el2 = panesRef.value;
-    const saved = sessionKey ? scrollStateBySession.get(String(sessionKey)) : undefined;
+    const saved = sessionKey ? scrollStateBySession.get(sessionKey) : undefined;
     if (saved && el2) {
       following.value = saved.following;
       const pendingRestore = pendingHistoryRestoreBySession.get(String(sessionKey));
@@ -833,7 +833,7 @@ export function useLegacyTranscriptScroll(options: LegacyTranscriptScrollOptions
           top = scrollAnchorTop(el2, anchor) - saved.anchor.top;
         }
       }
-      if (pendingRestore && sessionKey) pendingHistoryRestoreBySession.delete(String(sessionKey));
+      if (pendingRestore && sessionKey) pendingHistoryRestoreBySession.delete(sessionKey);
       following.value = saved.following;
       el2.scrollTop = top;
       lastScrollTop = el2.scrollTop;
@@ -860,7 +860,7 @@ export function useLegacyTranscriptScroll(options: LegacyTranscriptScrollOptions
       const el = panesRef.value;
       if (oldKey && el) {
         const anchor = findTopAnchors(el, el.scrollTop)[0];
-        scrollStateBySession.set(String(oldKey), {
+        scrollStateBySession.set(oldKey, {
           top: el.scrollTop,
           following: following.value,
           anchor: anchor ? { ...anchor, top: anchor.top - el.scrollTop } : undefined,
@@ -869,7 +869,7 @@ export function useLegacyTranscriptScroll(options: LegacyTranscriptScrollOptions
       cancelActiveScrollWrites();
       pillFar.value = false;
       if (sessionLoading.value) {
-        following.value = (newKey ? scrollStateBySession.get(String(newKey))?.following : undefined) ?? true;
+        following.value = (newKey ? scrollStateBySession.get(newKey)?.following : undefined) ?? true;
         beginSessionSettle();
         return;
       }
