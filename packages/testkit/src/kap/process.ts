@@ -15,86 +15,115 @@ export interface StartKapProcessOptions {
   readonly onFrame?: (frame: KapFrame) => void;
 }
 
+export type KapStopMode = 'close' | 'crash';
+
 interface ReadyLine {
   readonly origin: string;
   readonly token: string;
 }
 
-export class KapProcess extends KapClient {
-  readonly pid: number;
-  private readonly child: TestProcess;
-  private stopping: Promise<void> | undefined;
+interface Running {
+  child: TestProcess;
+  ready: ReadyLine;
+  stopping: Promise<void> | undefined;
+}
 
-  private constructor(child: TestProcess, ready: ReadyLine, options: StartKapProcessOptions) {
-    super({ origin: () => ready.origin, token: () => ready.token }, { workspace: options.home.workspace, onFrame: options.onFrame });
-    this.child = child;
-    this.pid = child.pid;
+export class KapProcess extends KapClient {
+  private readonly running: Running;
+  private readonly options: StartKapProcessOptions;
+
+  private constructor(running: Running, options: StartKapProcessOptions) {
+    super({ origin: () => running.ready.origin, token: () => running.ready.token }, { workspace: options.home.workspace, onFrame: options.onFrame });
+    this.running = running;
+    this.options = options;
   }
 
   static async start(options: StartKapProcessOptions): Promise<KapProcess> {
-    const child = TestProcess.start({
-      label: 'KAP server',
-      command: options.command ?? kimiCliCommand(),
-      args: ['web', '--port', '0', '--json'],
-      cwd: options.home.workspace,
-      env: kimiCliEnv(options.home, options.env),
-      logDir: options.home.root,
-      fetchStubs: [...kimiServiceStubs(), ...(options.fetchStubs ?? [])],
-    });
-    try {
-      const line = await child.waitForLine((text) => text.trimStart().startsWith('{'), { description: 'the KAP ready line' });
-      return new KapProcess(child, readyLineOf(line), options);
-    } catch (cause) {
-      await child.forceKill();
-      throw new TestkitError(`The KAP server failed to start\n${child.describe()}`, { cause });
-    }
+    const { child, ready } = await launch(options, '0');
+    return new KapProcess({ child, ready, stopping: undefined }, options);
+  }
+
+  get pid(): number {
+    return this.running.child.pid;
   }
 
   describe(): string {
-    return this.child.describe();
+    return this.running.child.describe();
   }
 
   close(): Promise<void> {
-    this.stopping ??= this.stop('close');
-    return this.stopping;
+    this.running.stopping ??= this.stop('close');
+    return this.running.stopping;
   }
 
   crash(): Promise<void> {
-    this.stopping ??= this.stop('crash');
-    return this.stopping;
+    this.running.stopping ??= this.stop('crash');
+    return this.running.stopping;
   }
 
-  private async stop(mode: 'close' | 'crash'): Promise<void> {
-    const exitedEarly = this.child.exited;
+  async restart(mode: KapStopMode = 'close'): Promise<void> {
+    if (this.running.stopping !== undefined) throw new TestkitError('The KAP server was already stopped; start a new KapProcess instead of restarting this one');
+    const previous = this.running.ready;
+    await (mode === 'crash' ? this.crash() : this.close());
+    const { child, ready } = await launch(this.options, new URL(previous.origin).port);
+    if (ready.origin !== previous.origin) {
+      await child.forceKill();
+      throw new TestkitError(`The restarted KAP server listens on ${ready.origin} instead of ${previous.origin}`);
+    }
+    Object.assign(this.running, { child, ready, stopping: undefined });
+  }
+
+  private async stop(mode: KapStopMode): Promise<void> {
+    const child = this.running.child;
+    const exitedEarly = child.exited;
     try {
-      const exit = mode === 'crash' ? await this.child.forceKill() : await this.shutdown();
+      const exit = mode === 'crash' ? await child.forceKill() : await this.shutdown(child);
       await this.closeSockets();
-      const blocked = await this.child.networkViolations();
+      const blocked = await child.networkViolations();
       if (blocked.length > 0) throw new TestkitError(`The KAP server tried to reach non-loopback addresses: ${blocked.join(', ')}`);
       const expected = mode === 'crash' ? killedByTest(exit) : exit.code === 0;
       if (exitedEarly || !expected) throw new TestkitError(`The KAP server ended unexpectedly while the test asked it to ${mode}`);
     } catch (cause) {
-      await this.child.forceKill();
+      await child.forceKill();
       await this.closeSockets();
-      throw new TestkitError(`Could not ${mode} the KAP server\n${this.child.describe()}`, { cause });
+      throw new TestkitError(`Could not ${mode} the KAP server\n${child.describe()}`, { cause });
     }
   }
 
-  private async shutdown(): Promise<ProcessExit> {
+  private async shutdown(child: TestProcess): Promise<ProcessExit> {
     await this.closeSockets();
     await this.rest.request('/api/v1/shutdown', { method: 'POST', body: {}, signal: AbortSignal.timeout(TIMEOUTS.wait) });
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      void this.child.forceKill();
+      void child.forceKill();
     }, TIMEOUTS.server);
     try {
-      const exit = await this.child.closed;
+      const exit = await child.closed;
       if (timedOut) throw new TestkitError(`The KAP server did not exit within ${TIMEOUTS.server} ms after the shutdown request`);
       return exit;
     } finally {
       clearTimeout(timer);
     }
+  }
+}
+
+async function launch(options: StartKapProcessOptions, port: string): Promise<{ child: TestProcess; ready: ReadyLine }> {
+  const child = TestProcess.start({
+    label: 'KAP server',
+    command: options.command ?? kimiCliCommand(),
+    args: ['web', '--port', port, '--json'],
+    cwd: options.home.workspace,
+    env: kimiCliEnv(options.home, options.env),
+    logDir: options.home.root,
+    fetchStubs: [...kimiServiceStubs(), ...(options.fetchStubs ?? [])],
+  });
+  try {
+    const line = await child.waitForLine((text) => text.trimStart().startsWith('{'), { description: 'the KAP ready line' });
+    return { child, ready: readyLineOf(line) };
+  } catch (cause) {
+    await child.forceKill();
+    throw new TestkitError(`The KAP server failed to start\n${child.describe()}`, { cause });
   }
 }
 

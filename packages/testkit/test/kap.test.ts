@@ -327,7 +327,7 @@ if (mode === 'remote-ready') {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ code: 0, msg: 'ok', data: {} }), () => process.exit(0));
   });
-  server.listen(0, '127.0.0.1', async () => {
+  server.listen(Number(process.argv[process.argv.indexOf('--port') + 1]), '127.0.0.1', async () => {
     if (mode === 'leaky') {
       await new Promise((resolve) => {
         connect({ host: 'blocked.example.test', port: 443, lookup: (_host, _options, callback) => callback(new Error('lookup disabled')) }).once('error', resolve);
@@ -367,6 +367,20 @@ describe('KapProcess', () => {
     const server = await startStub('normal');
     await expect(server.crash()).resolves.toBeUndefined();
   }, 20_000);
+
+  it('restarts on the same port, after a clean exit or a crash, until the test closes it', async () => {
+    const server = await startStub('normal');
+    const origin = server.origin;
+    const pids = [server.pid];
+    await server.restart();
+    pids.push(server.pid);
+    await server.restart('crash');
+    pids.push(server.pid);
+    expect(server.origin).toBe(origin);
+    expect(new Set(pids).size).toBe(3);
+    await server.close();
+    await expect(server.restart()).rejects.toThrow('The KAP server was already stopped');
+  }, 30_000);
 
   it('fails the shutdown when the server reached a non-loopback address', async () => {
     const server = await startStub('leaky');

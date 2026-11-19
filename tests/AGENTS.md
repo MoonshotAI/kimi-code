@@ -98,7 +98,7 @@ pnpm --filter kimi-code-app run e2e:headless --quarantine --retries=0
 
 ## KAP 录制与客户端回放
 
-[首轮录制](scenarios/replay.test.ts)用真实服务分别捕获初始 REST 页、订阅基线、模型挂起时及回合结束时的 WS 帧和最终 REST 页。[客户端回放](../packages/app-core/test/replay/first-turn.test.ts)离线调用生产 reducer，业务期望由消费者独立维护。录制、读取和回放都用 testkit 的 `KapRecorder`、`readKapRecording` 和 `replayKapRecording`，见 [KAP 场景指南](../packages/testkit/docs/kap-scenarios.md#录制协议帧给客户端回放)。运行 `pnpm exec vitest run tests/scenarios/replay.test.ts packages/app-core/test/replay` 验证两端。只有显式运行 `pnpm qa:refresh replay` 才会刷新录制，随后评审数据差异。CI 始终只读。
+[首轮录制](scenarios/replay.test.ts)用真实服务分别捕获初始 REST 页、订阅基线、模型挂起时及回合结束时的 WS 帧和最终 REST 页。[客户端回放](../packages/app-core/test/replay/first-turn.test.ts)离线调用生产 reducer，业务期望由消费者独立维护。录制、读取和回放都用 testkit 的 `KapRecorder`、`readKapRecording` 和 `replayKapRecording`，见 [KAP 场景指南](../packages/testkit/docs/kap-scenarios.md#录制协议帧给客户端回放)。运行 `pnpm exec vitest run tests/scenarios/replay.test.ts packages/app-core/test/replay` 验证两端。只有显式运行 `pnpm qa:refresh replay` 才会刷新录制，随后评审数据差异。CI 始终只读。[重启后自动重连](../packages/app-core/test/reconnect/server-restart.test.ts)让生产客户端连着 CLI 子进程，强杀服务端并在同一端口重启后，检查客户端自行重连、读回同一份历史并跟上下一轮。
 
 ## 冷恢复、协议和规模门禁
 

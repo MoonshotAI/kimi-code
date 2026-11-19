@@ -8,6 +8,7 @@ on:
     paths:
       - 'packages/acp-server/test/kap-parity.test.ts'
       - 'packages/app-core/test/replay/**'
+      - 'packages/app-core/test/reconnect/**'
       - 'packages/app-client/test/conversation-events.test.ts'
       - 'packages/kap-server/schema/**'
       - 'packages/kap-server/test/apiSurface.test.ts'
