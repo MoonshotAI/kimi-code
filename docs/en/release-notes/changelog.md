@@ -10,7 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Add support for Amazon Bedrock providers, configured with `type = "bedrock"` and `AWS_REGION`.
+- Use Amazon Bedrock models by setting `type = "bedrock"`.
 - Add experimental next-prompt predictions in the TUI after completed turns. Enable with `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` and press Tab or Right Arrow to accept.
 - Add a Follow-up behavior setting under `/settings`; choose Steer to make Enter steer your message into the running turn instead of queueing it.
 - View running foreground agents and their activity in `/tasks`.

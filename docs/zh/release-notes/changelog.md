@@ -10,7 +10,7 @@ outline: 2
 
 ### 新功能
 
-- 新增 Amazon Bedrock 提供商，使用 `type = "bedrock"` 与 `AWS_REGION` 配置。
+- 支持通过配置 `type = "bedrock"` 使用 Amazon Bedrock 提供的模型。
 - TUI 新增实验性下一提示词预测，设置 `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` 后按 Tab 或右方向键采纳。
 - `/settings` 新增 Follow-up 行为设置，选择 Steer 后 Enter 可将消息即时送入当前运行回合。
 - 可在 `/tasks` 查看前台运行中的 Agent 及其活动。
