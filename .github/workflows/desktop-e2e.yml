@@ -1,0 +1,111 @@
+name: Desktop E2E
+
+# Optional: this workflow reports on the full Electron journeys but is not a
+# required check. The protected first turn runs in the required L0 smoke gate.
+on:
+  workflow_dispatch:
+    inputs:
+      quarantine:
+        description: Also run the journeys tagged @quarantine
+        type: boolean
+        default: false
+  schedule:
+    - cron: '43 18 * * *'
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/app-*/**'
+      - 'packages/kap-server/src/**'
+      - 'packages/agent-core-v2/src/**'
+      - 'packages/testkit/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/desktop-e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-e2e-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+
+jobs:
+  journeys:
+    name: Desktop E2E journeys (optional)
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Choose the journeys to run
+        id: select
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git diff --name-only "$BASE_SHA" HEAD | node apps/desktop/scripts/ci/select-e2e-specs.mjs
+          else
+            node apps/desktop/scripts/ci/select-e2e-specs.mjs < /dev/null
+          fi
+      - uses: pnpm/action-setup@v6
+        if: steps.select.outputs.mode != 'none'
+      - uses: actions/setup-node@v6
+        if: steps.select.outputs.mode != 'none'
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - if: steps.select.outputs.mode != 'none'
+        run: pnpm install --frozen-lockfile
+      - name: Run the selected journeys
+        if: steps.select.outputs.mode != 'none'
+        shell: bash
+        env:
+          MODE: ${{ steps.select.outputs.mode }}
+          SPECS: ${{ steps.select.outputs.specs }}
+        run: |
+          set -o pipefail
+          args=()
+          if [[ "$MODE" == "specs" ]]; then read -r -a args <<< "$SPECS"; fi
+          pnpm --filter kimi-code-app run e2e:headless "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/desktop-e2e.log"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: desktop-e2e-failure
+          path: |
+            ${{ runner.temp }}/desktop-e2e.log
+            apps/desktop/test-results/e2e/
+            apps/desktop/playwright-report/
+          retention-days: 7
+
+  quarantine:
+    name: Quarantined desktop journeys (informational)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.quarantine)
+    runs-on: macos-15
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run the quarantined journeys without retries
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm --filter kimi-code-app run e2e:headless --quarantine --retries=0 2>&1 | tee "$RUNNER_TEMP/desktop-quarantine.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-quarantine
+          path: |
+            ${{ runner.temp }}/desktop-quarantine.log
+            apps/desktop/test-results/e2e/
+            apps/desktop/playwright-report/
+          retention-days: 14

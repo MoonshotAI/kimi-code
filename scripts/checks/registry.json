@@ -26,9 +26,19 @@
       "why": "It freezes rules that already have findings at their current count per file and reports suppressions that no longer suppress anything; without it new code could add to that debt unnoticed."
     },
     {
+      "run": "node scripts/checks/test-doubles.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "New tests must script models through the shared testkit; this check freezes the legacy model doubles at their current use per file so new cases cannot add to them."
+    },
+    {
       "run": "node scripts/checks/instructions.mjs",
       "in": "package.json#scripts.lint",
       "why": "Agents follow the paths and links in AGENTS.md files, and every session loads the root one; this check fails on a dead reference and keeps the root file within its byte budget."
+    },
+    {
+      "run": "pnpm exec vitest --mergeReports=.vitest-reports --reporter=./scripts/vitest-l0-gate-reporter.mjs",
+      "in": ".github/workflows/ci.yml#jobs.l0-gate",
+      "why": "This is where every L0 test in tests/protected.yaml must pass on its first attempt; without it regression and contract IDs are listed but never enforced."
     },
     {
       "run": "pnpm run lint",
