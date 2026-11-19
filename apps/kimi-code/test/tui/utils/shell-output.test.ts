@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { capStoredShellOutput, formatBashOutputForDisplay, sanitizeShellOutput } from '#/tui/utils/shell-output';
+import { readEnvInt } from '#/tui/utils/transcript-window';
 
 const ESC = '\u001B';
 const BEL = '\u0007';
@@ -107,6 +108,39 @@ describe('formatBashOutputForDisplay', () => {
   });
 });
 
+describe('KIMI_CODE_TUI_MAX_STORED_CHARS parsing', () => {
+  const KEY = 'KIMI_CODE_TUI_MAX_STORED_CHARS';
+  const DEFAULT = 64 * 1024;
+  const original = process.env[KEY];
+
+  afterEach(() => {
+    if (original === undefined) delete process.env[KEY];
+    else process.env[KEY] = original;
+  });
+
+  it('falls back to the default when unset', () => {
+    delete process.env[KEY];
+    expect(readEnvInt(KEY, DEFAULT)).toBe(DEFAULT);
+  });
+
+  it('treats 0 as disabled rather than as unset', () => {
+    process.env[KEY] = '0';
+    expect(readEnvInt(KEY, DEFAULT)).toBe(0);
+  });
+
+  it('accepts a positive custom cap', () => {
+    process.env[KEY] = '4096';
+    expect(readEnvInt(KEY, DEFAULT)).toBe(4096);
+  });
+
+  it('falls back for empty, negative and non-integer values', () => {
+    for (const raw of ['', '   ', '-1', '1.5', 'abc']) {
+      process.env[KEY] = raw;
+      expect(readEnvInt(KEY, DEFAULT)).toBe(DEFAULT);
+    }
+  });
+});
+
 describe('capStoredShellOutput', () => {
   it('keeps short output untouched', () => {
     expect(capStoredShellOutput('hello\nworld')).toBe('hello\nworld');
@@ -122,6 +156,24 @@ describe('capStoredShellOutput', () => {
     const capped = capStoredShellOutput(long, 80);
     expect(capped).toMatch(/^… \(80 earlier chars truncated\)\n/);
     expect(capped.endsWith('b'.repeat(80))).toBe(true);
+  });
+
+  it('keeps the whole output when the cap is disabled with 0', () => {
+    // Escape hatch for the removed behavior: KIMI_CODE_TUI_MAX_STORED_CHARS=0
+    // must restore the pre-cap full-output view, including Ctrl-O expansion.
+    const long = 'a'.repeat(200_000);
+    expect(capStoredShellOutput(long, 0)).toBe(long);
+  });
+
+  it('keeps the whole output for a negative cap', () => {
+    const long = 'a'.repeat(1000);
+    expect(capStoredShellOutput(long, -1)).toBe(long);
+  });
+
+  it('honours a positive cap other than the default', () => {
+    const long = `${'a'.repeat(50)}${'b'.repeat(50)}`;
+    const capped = capStoredShellOutput(long, 10);
+    expect(capped).toBe(`… (90 earlier chars truncated)\n${'b'.repeat(10)}`);
   });
 
   it('never starts the tail on a lone low surrogate', () => {
