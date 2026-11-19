@@ -192,6 +192,11 @@ describe('request gateway routes', () => {
     expect(options.detectedReasoningKey?.()).toBeUndefined();
     options.onReasoningKey?.('reasoning_content');
     expect(options.detectedReasoningKey?.()).toBe('reasoning_content');
+    const next = registry.request(modelWith({ protocol: 'openai' }));
+    const nextOptions = contentsOf(next).protocol?.options as {
+      detectedReasoningKey?: () => string | undefined;
+    };
+    expect(nextOptions.detectedReasoningKey?.()).toBe('reasoning_content');
   });
 
   it('keeps stream business codes out of the real HTTP status at the registry boundary', () => {

@@ -12,6 +12,13 @@ import {
   openAIEndpoint,
   vertexEndpoint,
 } from '@moonshot-ai/core/llm/builtin/provider/endpoints';
+import {
+  anthropicRequester,
+  googleGenAIRequester,
+  googleVertexRequester,
+  openAIRequester,
+  openAIResponsesRequester,
+} from '@moonshot-ai/core/llm/builtin/provider/index';
 import { bedrockAnthropicRequester } from '@moonshot-ai/core/llm/builtin/provider/bedrock/anthropic';
 import { bedrockModelCapability } from '@moonshot-ai/core/llm/builtin/provider/bedrock/routing';
 import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/index';
@@ -34,6 +41,14 @@ export interface ProviderDefinition<N extends Protocol = Protocol> {
   readonly requestMetadata?: boolean;
   readonly modelSource?: ModelSource;
 }
+
+export const coreProviderRequesters = {
+  openAI: openAIRequester,
+  openAIResponses: openAIResponsesRequester,
+  anthropic: anthropicRequester,
+  googleGenAI: googleGenAIRequester,
+  googleVertex: googleVertexRequester,
+};
 
 const providerDefinitions = new Map<string, Map<Protocol, ProviderDefinition>>();
 
