@@ -118,6 +118,18 @@ describe('createStabilityProbe', () => {
     instance.stop();
   });
 
+  it('releases a held pointer when the window loses focus', () => {
+    const instance = probe();
+    scheduler.step();
+    window.dispatchEvent(new Event('pointerdown'));
+    window.dispatchEvent(new Event('blur'));
+    scheduler.step(200);
+    targetDocTop += 10;
+    scheduler.step();
+    expect(instance.report().shifts).toBe(1);
+    instance.stop();
+  });
+
   it('treats a follow that lands a frame late as a lag followed by a shift', () => {
     const instance = probe();
     scroller.scrollTop = scrollHeight - 400;

@@ -289,6 +289,7 @@ export function createStabilityProbe(scroller: HTMLElement, options: StabilityPr
   }
   window.addEventListener('pointerup', onPointerUp, { capture: true, passive: true });
   window.addEventListener('pointercancel', onPointerUp, { capture: true, passive: true });
+  window.addEventListener('blur', onPointerUp);
   window.addEventListener('error', onError);
   scroller.addEventListener('scroll', onScroll, { passive: true });
   frameId = scheduler.frame(tick);
@@ -323,6 +324,7 @@ export function createStabilityProbe(scroller: HTMLElement, options: StabilityPr
       }
       window.removeEventListener('pointerup', onPointerUp, { capture: true });
       window.removeEventListener('pointercancel', onPointerUp, { capture: true });
+      window.removeEventListener('blur', onPointerUp);
       window.removeEventListener('error', onError);
       scroller.removeEventListener('scroll', onScroll);
       Reflect.deleteProperty(scroller, 'scrollTop');
