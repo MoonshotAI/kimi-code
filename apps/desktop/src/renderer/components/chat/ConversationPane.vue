@@ -18,8 +18,7 @@ import { WorkspaceTrustDialog } from '@moonshot-ai/app-components';
 import ChatDock from './ChatDock.vue';
 import SessionInfoPanel from './SessionInfoPanel.vue';
 import { useSessionInfoLayout } from '../../composables/useSessionInfoLayout';
-import { toHtmlEl, useLegacyTranscriptScroll } from '../../composables/useLegacyTranscriptScroll';
-import { useTranscriptScrollBinding } from '../../composables/useTranscriptScroll';
+import { toHtmlEl, useTranscriptScrollBinding } from '../../composables/useTranscriptScroll';
 import WorkspaceHome from './WorkspaceHome.vue';
 import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
@@ -38,7 +37,7 @@ import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachm
 import { FetchTurnFileChangesKey, ModelDisplayKey, ResolveAgentModelKey, ResolveAgentTaskIdKey, ResolveAgentTaskStateKey, ResolveDetachableTaskKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { sessionObservationOptions, toast, turnFileChangesFetcher } from '@moonshot-ai/app-client/client';
 import { track } from '../../lib/track';
-import { useComposerAutoFocus, useEscInterrupt, useTranscriptEngine, useWorkspaceTrust } from '@moonshot-ai/app-client/composables';
+import { useComposerAutoFocus, useEscInterrupt, useWorkspaceTrust } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { workspacesStore, sessionRuntimeStore } from '@moonshot-ai/app-client/stores';
 import { useAppDialogs } from '@moonshot-ai/app-client/composables';
@@ -46,7 +45,7 @@ import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
 import type { PanelLauncherItem } from '../../lib/panelLauncher';
-import { historyRenderAllAffordable, turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
+import { turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
 import type { TurnFileChange } from '@moonshot-ai/app-components';
 
 const { t } = useI18n();
@@ -446,23 +445,10 @@ const approvalBusy = computed<boolean>(() => {
   return !!props.pendingApprovalActions?.[a.approvalId];
 });
 
-const transcriptV2 = useTranscriptEngine().transcriptEngine.value === 'v2';
 const transcriptSearchOpen = ref(false);
 const historySelection = ref(false);
-const activeSessionPaged = ref(false);
 const historyState = new Map<string, unknown>();
 
-watch(
-  () => props.sessionId,
-  () => {
-    activeSessionPaged.value = hasMoreMessages.value;
-  },
-  { immediate: true },
-);
-
-watch(hasMoreMessages, (hasMore) => {
-  if (hasMore) activeSessionPaged.value = true;
-});
 const transcriptSearchRef = ref<InstanceType<typeof TranscriptSearch> | null>(null);
 let searchPreFocus: Element | null = null;
 
@@ -499,7 +485,6 @@ const {
   following,
   showPill,
   panesScrolling,
-  sessionSettling,
   dockHeight,
   contentWrapStyle,
   chatDockStyle,
@@ -514,19 +499,14 @@ const {
   scrollToTurn,
   revealTranscriptRange,
   followAfterUserAction,
-  lockFollowForUserAction,
   handleLoadOlderMessages,
-} = (transcriptV2 ? useTranscriptScrollBinding : useLegacyTranscriptScroll)({
+} = useTranscriptScrollBinding({
   sessionId: () => props.sessionId,
   mobile: () => props.mobile,
   turns,
-  approvals,
-  sessionLoading,
   hasMoreMessages,
   loadingMore,
-  turnActive,
   conversationTocItems,
-  chatPaneRef,
   loadOlderMessages: (sessionId) => client.loadOlderMessages(sessionId),
   syncWideTableToc,
   keyScrollBlocked: (event) => isComposingKeyEvent(event) || anyOverlayOpen.value || composerPopupOpen(),
@@ -618,7 +598,7 @@ function handleEditMessage(payload: {
   snapshot?: ComposerDocumentSnapshot;
   turnId: string;
 }): void {
-  lockFollowForUserAction();
+  followAfterUserAction();
   emit('editMessage', { ...payload, text: reviveQuoteBlockLinks(payload.text) });
 }
 
@@ -829,7 +809,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :class="{
           'is-following': following,
           scrolling: panesScrolling,
-          'session-settling': sessionSettling,
         }"
         @scroll.passive="onPanesScroll"
         @wheel.passive="onPanesWheel"
@@ -976,7 +955,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :turns="turns"
               :window-history="true"
               :history-state="historyState"
-              :render-all-history="(!transcriptV2 && !mobile && !hasMoreMessages && !activeSessionPaged && historyRenderAllAffordable(turns)) || transcriptSearchOpen || historySelection"
+              :render-all-history="transcriptSearchOpen || historySelection"
               :cwd="status.cwd"
               :approvals="approvals"
               :questions="questions"
@@ -1153,10 +1132,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 .panes::-webkit-scrollbar-thumb:hover,
 .panes::-webkit-scrollbar-thumb:active {
   background-color: var(--color-chat-scrollbar-hover);
-}
-
-.panes.session-settling :deep(.chat > *:not(.chat-loading)) {
-  visibility: hidden;
 }
 
 .chat-layout {

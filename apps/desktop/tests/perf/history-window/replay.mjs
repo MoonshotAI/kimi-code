@@ -11,7 +11,6 @@ import ConversationPane from '../../../src/renderer/components/chat/Conversation
 import { turns, sessionId, active, status, setOlder } from './client.mjs';
 import '../../../src/renderer/style.css';
 import { verifySpacing } from './spacing.mjs';
-import { verifyHistoryState } from './state.mjs';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
@@ -33,7 +32,6 @@ app.use(i18n);
 app.mount('#app');
 
 window.verifySpacing = verifySpacing;
-window.verifyHistoryState = verifyHistoryState;
 
 function history(start = 0, count = 240) {
   return Array.from({ length: count }, (_, offset) => {

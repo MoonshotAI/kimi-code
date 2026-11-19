@@ -3,7 +3,7 @@ import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/app-ui';
 import { HistoryStateKey } from '@moonshot-ai/app-core/contracts';
-import HistoryWindow from './HistoryWindow.vue';
+import BlockList from './BlockList.vue';
 import { PinScrollKey } from '@moonshot-ai/app-client/contracts';
 import { Markdown } from '@moonshot-ai/app-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
@@ -196,7 +196,7 @@ function isRunLive(block: { items: { sourceIndex: number }[] }): boolean {
     </button>
     <div v-if="bodyMounted" class="tf-body" :class="{ open: bodyOpen }" :inert="!effectiveOpen">
       <div class="tf-body-inner">
-        <HistoryWindow :items="visibleItems" :item-key="renderBlockKey" :enabled="!!historyState" scope="turn-fold" :tail="1"><template #default="{ item: blk }">
+        <BlockList :items="visibleItems" :item-key="renderBlockKey" :enabled="!!historyState" scope="turn-fold"><template #default="{ item: blk }">
           <ThinkingBlock
             v-if="blk.kind === 'thinking'"
             :text="blk.thinking"
@@ -236,7 +236,7 @@ function isRunLive(block: { items: { sourceIndex: number }[] }): boolean {
           />
           <NotificationCard v-else-if="blk.kind === 'notification'" :items="blk.items" />
           <template v-if="blk.kind === 'thinking' || blk.kind === 'text' || blk.kind === 'tool'"><RequestDebugRow v-for="(debug, di) in blk.debug ?? []" :key="di" :debug="debug" /></template>
-        </template></HistoryWindow>
+        </template></BlockList>
       </div>
     </div>
   </div>

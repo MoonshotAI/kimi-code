@@ -9,6 +9,13 @@ vi.mock('../../../../packages/app-components/src/chat/WorkingIndicator.vue', () 
 vi.mock('../../../../packages/app-components/src/composer/Composer.vue', () => ({ default: {} }));
 vi.mock('@moonshot-ai/app-client/client', () => ({ sideChatDrafts: new Map() }));
 vi.mock('@moonshot-ai/app-client/lib', () => ({ persistComposerDraftSnapshot: persist }));
+const panelScroll = vi.hoisted(() => ({ follow: vi.fn(), hold: vi.fn() }));
+vi.mock('@moonshot-ai/app-client/composables', async () => {
+  const { ref } = await import('vue');
+  return {
+    usePanelScroll: () => ({ scroller: ref(null), dock: ref(null), showJump: ref(false), following: ref(true), onScroll: vi.fn(), follow: panelScroll.follow, hold: panelScroll.hold }),
+  };
+});
 const renderer = createRenderer<any, any>({ patchProp() {}, insert() {}, remove() {}, createElement: () => ({}), createText: () => ({}), createComment: () => ({}), setText() {}, setElementText() {}, parentNode: () => null, nextSibling: () => null });
 
 it.each([true, false])('preserves the submitted snapshot when the editor remains mounted: %s', async mounted => {
@@ -64,134 +71,33 @@ function mountPanel(flags: { running: boolean; sending: boolean }, onSend = vi.f
   return { state: state as any, app };
 }
 
-async function bindScroller(state: any, el: { scrollTop: number; scrollHeight: number; clientHeight: number }) {
-  state.bodyRef.value = el;
-  await nextTick();
-  await nextTick();
-}
-
-it('shows the back-to-bottom pill when scrolled far up and hides it after jumping back', async () => {
-  const { state, app } = mountPanel({ running: true, sending: false });
-  const el = { scrollTop: 800, scrollHeight: 1000, clientHeight: 200 };
-  await bindScroller(state, el);
-  expect(el.scrollTop).toBe(1000);
-
-  el.scrollTop = 400;
-  state.onBodyScroll();
-  expect(state.showJump.value).toBe(true);
-
-  state.jumpToBottom();
-  expect(el.scrollTop).toBe(1000);
-  expect(state.showJump.value).toBe(false);
-  app.unmount();
-});
-
-it('hides the pill on a small departure and re-follows at the bottom', async () => {
-  const { state, app } = mountPanel({ running: true, sending: false });
-  const el = { scrollTop: 800, scrollHeight: 1000, clientHeight: 200 };
-  await bindScroller(state, el);
-
-  el.scrollTop = 700;
-  state.onBodyScroll();
-  expect(state.showJump.value).toBe(false);
-
-  el.scrollTop = 400;
-  state.onBodyScroll();
-  expect(state.showJump.value).toBe(true);
-
-  el.scrollTop = 800;
-  state.onBodyScroll();
-  expect(state.showJump.value).toBe(false);
-  app.unmount();
-});
-
-it('re-pins to the bottom immediately when the user sends a message', async () => {
+it('follows to the bottom once when the user sends a message and leaves a later scroll-up alone', async () => {
   const { state, app } = mountPanel({ running: false, sending: false });
-  const el = { scrollTop: 800, scrollHeight: 1000, clientHeight: 200 };
-  await bindScroller(state, el);
-  el.scrollTop = 400;
-  state.onBodyScroll();
-  expect(state.showJump.value).toBe(true);
-
+  panelScroll.follow.mockClear();
   const payload = { text: 'hi', restoreText: 'hi', attachments: [], restoreEntries: [] };
   const promise = state.onComposerSubmit(payload);
-  expect(el.scrollTop).toBe(1000);
-  expect(state.showJump.value).toBe(false);
-  await promise;
-  app.unmount();
-});
-
-it('does not override a scroll-up that happens while a send is in flight', async () => {
-  const { state, app } = mountPanel({ running: false, sending: false });
-  const el = { scrollTop: 800, scrollHeight: 1000, clientHeight: 200 };
-  await bindScroller(state, el);
-  el.scrollTop = 400;
-  state.onBodyScroll();
-
-  const payload = { text: 'hi', restoreText: 'hi', attachments: [], restoreEntries: [] };
-  const promise = state.onComposerSubmit(payload);
-  expect(el.scrollTop).toBe(1000);
-
-  el.scrollTop = 400;
-  state.onBodyScroll();
-  expect(state.showJump.value).toBe(true);
-
+  expect(panelScroll.follow).toHaveBeenCalledTimes(1);
   await promise;
   await nextTick();
-  expect(el.scrollTop).toBe(400);
-  expect(state.showJump.value).toBe(true);
+  expect(panelScroll.follow).toHaveBeenCalledTimes(1);
   app.unmount();
 });
 
-it('re-pins to the bottom immediately when resuming a failed turn', async () => {
+it('follows to the bottom once when resuming a failed turn and leaves a later scroll-up alone', async () => {
   const { state, app } = mountPanel({ running: false, sending: false });
-  const el = { scrollTop: 800, scrollHeight: 1000, clientHeight: 200 };
-  await bindScroller(state, el);
-  el.scrollTop = 400;
-  state.onBodyScroll();
-  expect(state.showJump.value).toBe(true);
-
+  panelScroll.follow.mockClear();
   state.onResumeTurn();
-  expect(el.scrollTop).toBe(1000);
-  expect(state.showJump.value).toBe(false);
-  app.unmount();
-});
-
-it('does not override a scroll-up that happens while the resume request is in flight', async () => {
-  const { state, app } = mountPanel({ running: false, sending: false });
-  const el = { scrollTop: 800, scrollHeight: 1000, clientHeight: 200 };
-  await bindScroller(state, el);
-  el.scrollTop = 400;
-  state.onBodyScroll();
-
-  state.onResumeTurn();
-  expect(el.scrollTop).toBe(1000);
-
-  el.scrollTop = 400;
-  state.onBodyScroll();
-  expect(state.showJump.value).toBe(true);
-
+  expect(panelScroll.follow).toHaveBeenCalledTimes(1);
   await new Promise((resolve) => setTimeout(resolve, 0));
   await nextTick();
-  expect(el.scrollTop).toBe(400);
-  expect(state.showJump.value).toBe(true);
+  expect(panelScroll.follow).toHaveBeenCalledTimes(1);
   app.unmount();
 });
 
-it('keeps the pinned anchor element stationary when disclosures toggle', () => {
-  const { state, app } = mountPanel({ running: true, sending: false });
-  const el = { scrollTop: 500, scrollHeight: 1000, clientHeight: 200 };
-  state.bodyRef.value = el;
-  let anchorTop = 300;
-  const anchor = { getBoundingClientRect: () => ({ top: anchorTop }) };
-  let rafCallback: FrameRequestCallback | null = null;
-  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { rafCallback = cb; return 1; });
-
-  state.pinScrollAnchor(anchor);
-  anchorTop = 180;
-  rafCallback!(0);
-  expect(el.scrollTop).toBe(380);
-
-  vi.unstubAllGlobals();
+it('jumps back to the bottom from the pill through the panel scroll controller', () => {
+  const { state, app } = mountPanel({ running: false, sending: false });
+  panelScroll.follow.mockClear();
+  state.jumpToBottom();
+  expect(panelScroll.follow).toHaveBeenCalledTimes(1);
   app.unmount();
 });
