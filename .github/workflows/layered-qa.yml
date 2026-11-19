@@ -14,6 +14,9 @@ on:
       - 'packages/kap-server/test/apiSurface.test.ts'
       - 'packages/testkit/**'
       - 'apps/desktop/tests/perf/history-window/**'
+      - 'apps/desktop/src/renderer/components/chat/**'
+      - 'packages/app-components/src/chat/**'
+      - 'packages/app-client/src/composables/**'
       - 'tests/scenarios/**'
       - 'scripts/measure-history.mjs'
       - 'scripts/refresh-qa-fixtures.mjs'
@@ -67,4 +70,4 @@ jobs:
           path: |
             ${{ runner.temp }}/history-perf/run-*/*.json
             ${{ runner.temp }}/history-perf/run-*/*.png
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'schedule' && 90 || 14 }}

@@ -33,6 +33,7 @@
     "qa:history-perf": "node scripts/measure-history.mjs",
     "qa:refresh": "node scripts/refresh-qa-fixtures.mjs",
     "qa:mutation": "node scripts/mutation-diff.mjs",
+    "qa:capture-released": "tsx tests/scenarios/capture-released.ts",
     "test:smoke": "vitest run --reporter=verbose --reporter=./scripts/vitest-smoke-reporter.mjs --tagsFilter=smoke packages/agent-core-v2/test/integration tests/scenarios apps/kimi-code/test/e2e/tui && pnpm --filter kimi-code-app run e2e:headless --protected --project=smoke --retries=0",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
