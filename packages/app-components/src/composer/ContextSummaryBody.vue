@@ -198,7 +198,7 @@ const rows = computed(() => {
 
 .ctx-composition-bar {
   display: flex;
-  gap: var(--space-05);
+  gap: 1px;
   height: var(--space-1-5);
   overflow: hidden;
 }
@@ -206,11 +206,11 @@ const rows = computed(() => {
 .ctx-composition-free {
   display: block;
   height: 100%;
-  border-radius: var(--radius-context-segment);
+  border-radius: var(--radius-full);
 }
 .ctx-composition-seg {
   flex: none;
-  min-width: var(--space-1);
+  min-width: var(--space-1-5);
   background: var(--context-color, var(--color-text-faint));
 }
 .ctx-composition-free {
