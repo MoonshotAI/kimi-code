@@ -16,7 +16,7 @@
     "build:icons": "node scripts/icon-tools/build-brand-icons.mjs",
     "dev:desktop": "pnpm --filter kimi-code-app run dev",
     "dev:desktop:debug": "pnpm --filter kimi-code-app run dev -- --remote-debugging-port=9222",
-    "dev:desktop:canary": "KIMI_DESKTOP_CANARY=true pnpm --filter kimi-code-app run dev",
+    "dev:desktop-canary": "KIMI_DESKTOP_CANARY=true pnpm --filter kimi-code-app run dev",
     "dev:web": "pnpm --filter kimi-code-app run dev:web",
     "build:web": "pnpm --filter kimi-code-app run build:web",
     "sync:web": "node apps/kimi-code/scripts/sync-web-dist.mjs",
