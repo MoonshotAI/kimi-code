@@ -371,10 +371,12 @@ describe('conversation events in the client', () => {
     h.agentStatus('s1', 'running');
     expect(h.client.working.value).toBe(true);
 
+    expect(h.client.promptPredictionHasTurn.value).toBe(false);
     predict.mockResolvedValueOnce('next step');
     h.startTurn('s1', 0, 'msg_remote', 'work');
     h.endTurn('s1', 0);
     await vi.waitFor(() => expect(h.client.promptPrediction.value?.text).toBe('next step'));
+    expect(h.client.promptPredictionHasTurn.value).toBe(true);
     expect(predict).toHaveBeenCalledWith('s1', {
       predictionId: expect.any(String),
       expectedTurnId: 0,
@@ -402,11 +404,9 @@ describe('conversation events in the client', () => {
     await vi.waitFor(() => expect(predict).toHaveBeenCalledTimes(2));
     const predictionId = predict.mock.calls[1]![1].predictionId as string;
     h.client.handlePromptPredictionInput();
-    expect(cancel).toHaveBeenCalledWith('s1', predictionId, 'input');
+    expect(cancel).not.toHaveBeenCalledWith('s1', predictionId, 'input');
     resolvePrediction('late result');
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(h.client.promptPrediction.value).toBeNull();
+    await vi.waitFor(() => expect(h.client.promptPrediction.value?.text).toBe('late result'));
     h.endTurn('s1', 1);
     expect(predict).toHaveBeenCalledTimes(2);
 
@@ -439,15 +439,21 @@ describe('conversation events in the client', () => {
     const directPredict = vi.fn((sessionId: string) => sessionId === 's1'
       ? new Promise<string>((resolve) => { resolveFirstSession = resolve; })
       : Promise.resolve(`${sessionId} result`));
+    const directCancel = vi.fn(async () => true);
     const directController = createPromptPrediction({
       api: () => ({
         predictNextPrompt: directPredict,
-        cancelPromptPrediction: vi.fn(async () => true),
+        cancelPromptPrediction: directCancel,
       }),
       canPredict: (sessionId) => sessionId === activeSession,
       hasEmptyInput: () => emptyInput,
     });
+    emptyInput = false;
     directController.handleTurnEnded('s1', 'first', 0, true);
+    expect(directPredict).not.toHaveBeenCalled();
+    emptyInput = true;
+    expect(directController.accept('tab')).toBeNull();
+    expect(directController.active.value).toBeDefined();
     resolveFirstSession('first result');
     await Promise.resolve();
     await Promise.resolve();
@@ -460,24 +466,50 @@ describe('conversation events in the client', () => {
     expect(directController.suggestion.value).not.toBe(parked);
     expect(directController.suggestion.value).toMatchObject({ text: 'first result', parked: true });
     expect(directController.accept('right')).toBe('first result');
+    expect(directController.suggestion.value).toMatchObject({ acceptedRevision: 1 });
+    expect(directController.accept('tab')).toBe('first result');
+    expect(directController.suggestion.value).toMatchObject({ acceptedRevision: 2 });
+    expect(directPredict).toHaveBeenCalledTimes(1);
     directController.dismiss('submit', 's1');
     expect(directController.suggestion.value).toBeNull();
+
+    directController.handleTurnEnded('s1', 'pending', 1, true);
+    emptyInput = false;
+    directController.handleInput();
+    expect(directController.active.value).toMatchObject({ parked: true });
+    expect(directCancel).not.toHaveBeenCalledWith('s1', expect.any(String), 'input');
+    emptyInput = true;
+    directController.handleInput();
+    expect(directController.accept('tab')).toBeNull();
+    expect(directController.active.value).toMatchObject({ parked: true, acceptKey: 'tab' });
+    resolveFirstSession('pending result');
+    await vi.waitFor(() => expect(directController.suggestion.value).toMatchObject({ text: 'pending result', accepted: true }));
+    expect(directPredict).toHaveBeenCalledTimes(2);
+    directController.dismiss('submit', 's1');
 
     directController.handleTurnEnded('s2', 'second', 0, true);
     directController.dismiss('session', 's1');
     activeSession = 's2';
     directController.refresh();
-    await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(2));
-    expect(directPredict).toHaveBeenNthCalledWith(2, 's2', {
-      predictionId: expect.any(String),
-      expectedTurnId: 0,
-    });
-    directController.handleTurnEnded('s2', 'replacement', 0, true);
     await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(3));
     expect(directPredict).toHaveBeenNthCalledWith(3, 's2', {
       predictionId: expect.any(String),
       expectedTurnId: 0,
     });
+    directController.handleTurnEnded('s2', 'replacement', 0, true);
+    await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(4));
+    expect(directPredict).toHaveBeenNthCalledWith(4, 's2', {
+      predictionId: expect.any(String),
+      expectedTurnId: 0,
+    });
+    directPredict.mockResolvedValueOnce(null);
+    directController.handleTurnEnded('s2', 'empty', 1, true);
+    await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(5));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(directController.active.value).toBeUndefined();
+    expect(directController.suggestion.value).toBeNull();
+    expect(directController.canAttemptPrediction()).toBe(false);
     hasFocus.mockRestore();
   });
 
