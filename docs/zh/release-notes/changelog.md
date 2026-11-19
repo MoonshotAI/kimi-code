@@ -12,7 +12,7 @@ outline: 2
 
 - `/settings` 新增 Follow-up 行为设置，选择 Steer 后 Enter 可将消息即时送入当前运行回合。
 - 可在 `/tasks` 查看前台运行中的 Agent 及其活动。
-- web：支持浏览器标签页标题显示项目与会话标题。
+- **Web 端**：支持浏览器标签页标题显示项目与会话标题。
 - 支持为项目配置 SSH 主机，各主机独立登录，并可复制自定义模型提供商。
 - 支持通过配置 `type = "bedrock"` 使用 Amazon Bedrock 提供的模型。
 - TUI 新增实验性下一提示词预测，设置 `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` 后按 Tab 或右方向键采纳。
