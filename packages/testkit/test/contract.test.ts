@@ -78,6 +78,14 @@ describe('contract summary', () => {
     ]);
     expect(lines.join('\n')).not.toContain('Create a session');
   });
+
+  it('names a shared shape by its fields, whatever its wording', () => {
+    const document = openapi() as { paths: Record<string, Record<string, { responses: Record<string, { content: Record<string, { schema: Record<string, unknown> }> }> }>> };
+    document.paths['/api/v1/meta']!['get']!.responses['200']!.content['application/json']!.schema = { ...envelope, description: 'Meta envelope', title: 'Meta' };
+    const references = summarizeContract(document, asyncapi()).lines.filter((line) => / shape [0-9a-f]{8}$/.test(line));
+    expect(references).toHaveLength(3);
+    expect(new Set(references.map((line) => line.split(' shape ')[1])).size).toBe(1);
+  });
 });
 
 describe('contract digest', () => {
@@ -90,7 +98,7 @@ describe('contract digest', () => {
   it('ignores wording and follows every field, operation and message', () => {
     const digest = contractDigest(openapi(), asyncapi());
     expect(digest).toMatch(/^[0-9a-f]{64}$/);
-    const reworded = JSON.parse(JSON.stringify(openapi()).replace('"description":"Create a session"', '"description":"Creates a session","summary":"Create","title":"Create session","examples":["x"]')) as unknown;
+    const reworded = JSON.parse(JSON.stringify(openapi()).replace('"description":"Create a session"', '"description":"Creates a session","summary":"Create","title":"Create session","example":"x","examples":["x"]')) as unknown;
     expect(JSON.stringify(reworded)).toContain('"title":"Create session"');
     expect(contractDigest(reworded, asyncapi())).toBe(digest);
     const retitled = JSON.parse(JSON.stringify(asyncapi()).replace('"subscribe":{', '"subscribe":{"title":"Subscribe to a session",')) as unknown;
@@ -99,6 +107,9 @@ describe('contract digest', () => {
     expect(contractDigest(openapi({ response: { status: { enum: ['idle', 'running'] }, title: { type: 'number' } } }), asyncapi())).not.toBe(digest);
     expect(contractDigest(openapi({ extraPath: true }), asyncapi())).not.toBe(digest);
     expect(contractDigest(openapi(), asyncapi(true))).not.toBe(digest);
+    const ws = asyncapi() as { operations: Record<string, unknown>; components: { messages: Record<string, unknown> } };
+    expect(contractDigest(openapi(), { ...ws, operations: { ...ws.operations, sendNotices: { action: 'send', messages: [] } } })).not.toBe(digest);
+    expect(contractDigest(openapi(), { ...ws, components: { messages: { ...ws.components.messages, notice: { payload: { type: 'object' } } } } })).not.toBe(digest);
   });
 
   it('keeps pattern property names that look like annotations', () => {

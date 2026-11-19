@@ -1,0 +1,45 @@
+name: Mutation testing
+
+# Informational: lists mutants on the changed lines that no related test
+# noticed, as review input. It is not a required check.
+on:
+  pull_request:
+    paths:
+      - 'packages/*/src/**'
+      - 'apps/*/src/**'
+      - 'apps/*/*/src/**'
+      - 'scripts/mutation-diff.mjs'
+      - '.github/workflows/mutation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changed-lines:
+    name: Mutation testing on changed lines (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The checkout is the merge commit, so its first parent is the base
+      # branch and the diff against it is exactly this pull request.
+      - run: node scripts/mutation-diff.mjs --base HEAD^1
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: mutation-report
+          path: .tmp/mutation/
+          if-no-files-found: ignore
+          retention-days: 7

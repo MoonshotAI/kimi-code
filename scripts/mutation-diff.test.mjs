@@ -1,0 +1,127 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { baselineFailures, changedLines, mutationTargets, strykerConfig, summarize } from './mutation-diff.mjs';
+
+const diff = [
+  'diff --git a/packages/kit/src/a.ts b/packages/kit/src/a.ts',
+  '--- a/packages/kit/src/a.ts',
+  '+++ b/packages/kit/src/a.ts',
+  '@@ -3 +3 @@ export const a = 1;',
+  '-old',
+  '+new',
+  '@@ -10,0 +11,2 @@',
+  '+one',
+  '+two',
+  '@@ -20,2 +22,0 @@',
+  '-gone',
+  '-gone',
+  '@@ -30 +31,3 @@',
+  '+x',
+  'diff --git a/packages/kit/src/removed.ts b/packages/kit/src/removed.ts',
+  '--- a/packages/kit/src/removed.ts',
+  '+++ /dev/null',
+  '@@ -1,2 +0,0 @@',
+  '-gone',
+  'diff --git a/packages/kit/src/b.ts b/packages/kit/src/b.ts',
+  '--- /dev/null',
+  '+++ b/packages/kit/src/b.ts',
+  '@@ -0,0 +1,4 @@',
+  '+export const b = 2;',
+  '@@ -0,0 +5 @@',
+  '+export const c = 3;',
+].join('\n');
+
+await test('reads the added lines of each file from a zero-context diff', () => {
+  assert.deepEqual([...changedLines(diff)], [
+    ['packages/kit/src/a.ts', [[3, 3], [11, 12], [31, 33]]],
+    ['packages/kit/src/b.ts', [[1, 5]]],
+  ]);
+});
+
+await test('mutates source files of packages with a Vitest config and reports the rest', () => {
+  const files = new Set([
+    'packages/kit/package.json', 'packages/kit/vitest.config.ts',
+    'packages/bare/package.json',
+    'apps/vis/server/package.json', 'apps/vis/server/vitest.config.mts',
+  ]);
+  const changes = new Map([
+    ['packages/kit/src/a.ts', [[3, 3], [11, 12]]],
+    ['packages/kit/src/types.d.ts', [[1, 2]]],
+    ['packages/kit/test/a.test.ts', [[1, 9]]],
+    ['packages/kit/README.md', [[1, 1]]],
+    ['packages/kit/vitest.config.ts', [[1, 1]]],
+    ['packages/bare/src/index.ts', [[4, 4]]],
+    ['apps/vis/server/src/nested/b.mts', [[7, 8]]],
+    ['scripts/tool.mjs', [[1, 1]]],
+  ]);
+  const { packages, skipped } = mutationTargets(changes, path => files.has(path));
+  assert.deepEqual([...packages], [
+    ['packages/kit', { config: 'vitest.config.ts', mutate: ['src/a.ts:3-3', 'src/a.ts:11-12'] }],
+    ['apps/vis/server', { config: 'vitest.config.mts', mutate: ['src/nested/b.mts:7-8'] }],
+  ]);
+  assert.deepEqual(skipped.map(entry => entry.subject), ['packages/bare/src/index.ts']);
+  assert.match(skipped[0].reason, /packages\/bare has no Vitest config/);
+});
+
+await test('runs each package in place with its own config and only the related tests', () => {
+  const config = strykerConfig({ config: 'vitest.config.ts', mutate: ['src/a.ts:1-2'] }, '/reports/packages-kit', { vitestRunner: '/runner.js' });
+  assert.equal(config.inPlace, true);
+  assert.equal(config.ignoreStatic, true);
+  assert.deepEqual(config.vitest, { configFile: 'vitest.config.ts', related: true });
+  assert.deepEqual(config.plugins, ['/runner.js']);
+  assert.equal(config.thresholds.break, null);
+  assert.equal(config.jsonReporter.fileName, '/reports/packages-kit.json');
+  assert.equal(strykerConfig({ config: 'vitest.config.ts', mutate: [] }, '/r', { vitestRunner: '/runner.js', includeStatic: true }).ignoreStatic, false);
+});
+
+await test('reads the tests that failed before any mutation from the Stryker log', () => {
+  const log = [
+    '\u001b[31m10:48:54 (78665) ERROR DryRunExecutor\u001b[39m One or more tests failed in the initial test run:',
+    '\tplugins expands tilde paths',
+    '\t\texpected 50001 to be +0 // Object.is equality',
+    '\tsessions archives a session',
+    '10:48:54 (78665) ERROR Stryker There were failed tests in the initial test run.',
+    '\tnot a failure',
+  ].join('\n');
+  assert.deepEqual(baselineFailures(log), [
+    { test: 'plugins expands tilde paths', details: ['expected 50001 to be +0 // Object.is equality'] },
+    { test: 'sessions archives a session', details: [] },
+  ]);
+  assert.deepEqual(baselineFailures('INFO Done'), []);
+});
+
+await test('lists surviving and uncovered mutants with their code, and every package it could not mutate', () => {
+  const location = (line, startColumn, endColumn) => ({ start: { line, column: startColumn }, end: { line, column: endColumn } });
+  const report = {
+    files: {
+      'src/a.ts': {
+        source: 'const keys = [\'a\', \'b\'];\nif (count > limit) stop();\n',
+        mutants: [
+          { mutatorName: 'ConditionalExpression', replacement: 'false', status: 'Killed', location: location(2, 5, 18) },
+          { mutatorName: 'EqualityOperator', replacement: 'count >= limit', status: 'Survived', location: location(2, 5, 18) },
+          { mutatorName: 'ArrayDeclaration', replacement: '[]', status: 'Ignored', location: location(1, 14, 24) },
+          { mutatorName: 'BlockStatement', replacement: '{}', status: 'NoCoverage', location: location(2, 20, 26) },
+        ],
+      },
+    },
+  };
+  const summary = summarize({
+    base: 'abc123',
+    results: [
+      { packageDir: 'packages/kit', report },
+      { packageDir: 'packages/server', baseline: [{ test: 'expands tilde paths', details: ['expected 50001 to be +0'] }] },
+      { packageDir: 'packages/broken', error: 'Stryker exited with code 1 before writing a report; see .tmp/mutation/packages-broken.log' },
+    ],
+    skipped: [{ subject: 'packages/bare/src/index.ts', reason: 'packages/bare has no Vitest config, so nothing runs its tests under Stryker' }],
+  });
+  assert.match(summary, /Compared with `abc123`/);
+  assert.match(summary, /\| packages\/kit \| 1 \| 1 \| 1 \| 0 \| 0 \| 0 \| 1 \|/);
+  assert.match(summary, /- `packages\/kit\/src\/a.ts:2` EqualityOperator, survived: `count > limit` → `count >= limit`/);
+  assert.match(summary, /- `packages\/kit\/src\/a.ts:2` BlockStatement, no related test runs this line: `stop\(\)` → `\{\}`/);
+  assert.doesNotMatch(summary, /ConditionalExpression|ArrayDeclaration/);
+  assert.match(summary, /- packages\/server: these related tests fail under Stryker before any mutation[^\n]*\n {2}- expands tilde paths \(expected 50001 to be \+0\)/);
+  assert.match(summary, /- packages\/broken: Stryker exited with code 1/);
+  assert.match(summary, /- packages\/bare\/src\/index.ts: packages\/bare has no Vitest config/);
+  assert.match(summarize({ base: 'abc', results: [], skipped: [] }), /No changed lines under a package `src` directory/);
+});

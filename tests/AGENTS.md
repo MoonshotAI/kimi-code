@@ -107,3 +107,9 @@ pnpm --filter kimi-code-app run e2e:headless --quarantine --retries=0
 - [协议字段检查](../packages/kap-server/test/apiSurface.test.ts)重新读取真实服务的 OpenAPI 和 AsyncAPI，与[入库文档](../packages/kap-server/schema/)比较。评审时看 [contract.txt](../packages/kap-server/schema/contract.txt)：一行一个字段，多处共用的结构只列一次。有差异时，检查会列出每个变化，并按方向分成破坏、非破坏和未分类三类，例如请求新增必填字段属于破坏，响应新增字段属于非破坏。测试宿主版本固定以隔离包版本变更，KAP 协议版本取实际值。显式更新用 `pnpm qa:refresh schema`，它同时重写两份文档和摘要。同一文件还用契约哈希钉住 `HOST_API_LEVEL`：字段、操作或消息变化后哈希改变，测试失败，由人判断新客户端连接旧版远程宿主是否会出错，需要时升级级别，再更新文件里的哈希；只改描述不影响哈希。内部调试路由不属于契约，单独列出。[契约工具](../packages/testkit/src/contract/)
 - [能力表](scenarios/capabilities/conversation.json)登记 KAP 与 ACP 实际公布的字段。共有首轮用真实协议对照相同提问和回答，再核对各自的结束信号。其他单侧字段仍由各自协议维护；能力表的两个传输字段集合可以不同。[对照入口](../packages/acp-server/test/kap-parity.test.ts)
 - PR 中客户端分页用 240 个会话回合，验证并发加载每个旧页只读一次。另用 `pnpm qa:history-perf` 在 Electron 测 240 条界面消息（120 轮问答），以 1280×900 窗口比较全量渲染和窗口化渲染。全量基线应挂载 240 条，窗口化初始和滚动挂载均以 32 条为上限。同一工作流在 macos-15 上对交替顺序的三对样本比较打开耗时和 JS 堆增长中位数，并保留环境与原始数据。同一提交的相对预算可以检出窗口化失效；跨版本共同变慢需要对照留存的历史产物。
+
+## 改动行的变异测试
+
+`pnpm qa:mutation` 检验「这次改动的代码出错时，有没有测试会发现」。它只看与 `origin/main` 分叉点之后、已经提交的改动（`--base` 可换比较对象），并且只看各包 `src` 下、所在包有 Vitest 配置的 TS/JS 文件。脚本在系统临时目录另建一个 git worktree，离线安装依赖后逐个包运行 Stryker，只跑引用了被改文件的测试，当前工作区不会被改动。存活的变异体、没有相关测试覆盖的行，以及没能运行的包和原因，写进 `.tmp/mutation/summary.md`，同目录还有每个包的 HTML 报告。模块级常量这类静态变异体要重跑整包测试，默认跳过，加 `--include-static` 才会测。
+
+结果是评审信息，不是门禁。[变异测试工作流](../.github/workflows/mutation.yml)在改动包源码的 PR 上运行，把摘要写进任务摘要，不是必过检查。Stryker 在单个 worker 线程里跑 Vitest，改 `HOME`、工作目录这类进程级状态的测试在那里会失败；这样的包在变异前就停下，摘要里列出失败的用例。
