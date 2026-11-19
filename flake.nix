@@ -154,6 +154,7 @@
               fileset = lib.fileset.unions (
                 [
                   ./build
+                  ./patches
                   ./.npmrc
                   ./.nvmrc
                   ./package.json
