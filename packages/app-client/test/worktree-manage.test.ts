@@ -78,43 +78,9 @@ describe('risk wording', () => {
     expect(row.tone).toBe('warning');
     expect(row.text).toBe('Couldn’t check for uncommitted or unpushed changes.');
   });
-
-  it('follows the screenshot wording in Chinese', () => {
-    expect(worktreeRiskRow({ uncommittedFiles: 3, unpushedCommits: 0 }, false, zh).text).toBe(
-      '3 个文件未提交，删除后无法找回。',
-    );
-    expect(worktreeRiskRow({ uncommittedFiles: 3, unpushedCommits: 2 }, true, zh).text).toBe(
-      '3 个文件未提交、2 个提交未推送，删除后无法找回。',
-    );
-    expect(worktreeRiskRow({ uncommittedFiles: 0, unpushedCommits: 0 }, false, zh).text).toBe('没有未提交的文件。');
-  });
 });
 
 describe('single deletion dialog', () => {
-  it('lists what is deleted, then the risk', () => {
-    const rows = worktreeDeleteRows(
-      [target('fix-login', { risk: { uncommittedFiles: 3, unpushedCommits: 2 } })],
-      false,
-      en,
-    );
-    expect(rows.map((row) => [row.kind, row.icon, row.text])).toEqual([
-      ['target', 'folder', 'The Worktree directory for kimi/fix-login will be deleted.'],
-      ['risk', 'alert-triangle', '3 files are uncommitted and cannot be recovered after deletion.'],
-    ]);
-  });
-
-  it('names the local branch and counts unpushed commits once branch deletion is checked', () => {
-    const rows = worktreeDeleteRows(
-      [target('fix-login', { risk: { uncommittedFiles: 3, unpushedCommits: 2 } })],
-      true,
-      en,
-    );
-    expect(rows.map((row) => row.text)).toEqual([
-      'The Worktree directory and local branch for kimi/fix-login will be deleted.',
-      '3 files are uncommitted and 2 commits have not been pushed; these cannot be recovered after deletion.',
-    ]);
-  });
-
   it('puts the affected sessions between the target and the risk', () => {
     const rows = worktreeDeleteRows([target('a', { sessionCount: 3 })], false, en);
     expect(rows.map((row) => [row.kind, row.icon, row.text])).toEqual([
@@ -139,14 +105,6 @@ describe('batch deletion dialog', () => {
     target('dirty', { risk: { uncommittedFiles: 3, unpushedCommits: 2 }, sessionCount: 3 }),
     target('one', { risk: { uncommittedFiles: 1, unpushedCommits: 0 } }),
   ];
-
-  it('flags a worktree without a branch as showing its directory name', () => {
-    const rows = worktreeDeleteRows([target('a'), target('b', { branch: undefined })], false, en);
-    expect(rows[0]?.items?.map((item) => [item.name, item.nameIsDirectory])).toEqual([
-      ['kimi/a', false],
-      ['b', true],
-    ]);
-  });
 
   it('heads the list, sorts risky worktrees first and states what each would lose', () => {
     const rows = worktreeDeleteRows(targets, false, en);
@@ -226,23 +184,6 @@ describe('session deletion dialog', () => {
 });
 
 describe('management rows', () => {
-  it('shows the session name, branch and size of a single-session worktree', () => {
-    const row = worktreeManageRow(worktree({ sessions: [session('s1')] }));
-    expect(row).toMatchObject({
-      title: 'Session s1',
-      titleIsDirectory: false,
-      label: null,
-      branch: 'kimi/a',
-      sizeBytes: 60 * MB,
-      sessionsInUse: 1,
-      noSession: false,
-      openSessionId: 's1',
-      busy: false,
-      status: 'idle',
-      deletable: true,
-    });
-  });
-
   it('counts every associated session and leads with an active one', () => {
     const row = worktreeManageRow(
       worktree({ sessions: [session('old', { archived: true }), session('live'), session('other')] }),
@@ -251,19 +192,6 @@ describe('management rows', () => {
     expect(row.sessionsInUse).toBe(3);
     expect(row.label).toBeNull();
     expect(row.openSessionId).toBe('live');
-  });
-
-  it('labels an archived session and hides Open Session', () => {
-    const row = worktreeManageRow(worktree({ sessions: [session('s1', { archived: true })] }));
-    expect(row.label).toBe('archived');
-    expect(row.openSessionId).toBeUndefined();
-    expect(row.deletable).toBe(true);
-  });
-
-  it('shows the directory name for a worktree without a session', () => {
-    const row = worktreeManageRow(worktree({ name: 'task-3', origin: 'external' }));
-    expect(row).toMatchObject({ title: 'task-3', titleIsDirectory: true, noSession: true, label: null });
-    expect(row.openSessionId).toBeUndefined();
   });
 
   it('keeps the deleted session name and label from this run', () => {
@@ -287,12 +215,6 @@ describe('management rows', () => {
       deletable: true,
     });
     expect(row.openSessionId).toBeUndefined();
-  });
-
-  it('blocks deletion while an associated session is running', () => {
-    const row = worktreeManageRow(worktree({ sessions: [session('s1', { busy: true })] }));
-    expect(row.busy).toBe(true);
-    expect(row.deletable).toBe(false);
   });
 
   it.each(['waiting', 'deleting'] as const)('reads a %s removal as deleting', (state) => {

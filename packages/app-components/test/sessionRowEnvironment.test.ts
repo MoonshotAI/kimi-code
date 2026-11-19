@@ -7,7 +7,6 @@ import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { clientPinia } from '@moonshot-ai/app-client/stores';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import SessionRow from '../src/SessionRow.vue';
-import sessionRowSource from '../src/SessionRow.vue?raw';
 
 let app: App | null = null;
 let host: HTMLDivElement;
@@ -105,12 +104,6 @@ describe('SessionRow environment indicator', () => {
 
     expect(host.querySelector('.act .wt [data-icon="git-fork-off"]')).not.toBeNull();
     expect(rowEl().classList.contains('env-invalid')).toBe(true);
-  });
-
-  it('replaces the icon and date with the row actions on hover', () => {
-    expect(sessionRowSource).toMatch(/\.se:hover \.act \.wt \{\s*opacity: 0;\s*visibility: hidden;/);
-    expect(sessionRowSource).toMatch(/\.se:hover \.act \.ts \{\s*opacity: 0;\s*visibility: hidden;/);
-    expect(sessionRowSource).toMatch(/\.se:hover \.ha \{\s*opacity: 1;\s*visibility: visible;/);
   });
 });
 

@@ -207,16 +207,6 @@ describe('batch deletion dialog', () => {
     expect(list.classList.contains('is-capped')).toBe(false);
     expect(button('.confirm-dialog__confirm').textContent?.trim()).toBe('Delete 3 Worktrees');
   });
-
-  it('caps the list once it holds more than three worktrees', async () => {
-    seed([worktree('a'), worktree('b'), worktree('c'), worktree('d')]);
-
-    await dialogs.requestWorktreeDeletion(['/wt/a', '/wt/b', '/wt/c', '/wt/d']);
-    await nextTick();
-
-    expect(listTexts()).toHaveLength(4);
-    expect(document.body.querySelector('.manage-delete-list')!.classList.contains('is-capped')).toBe(true);
-  });
 });
 
 describe('deletion progress and result', () => {

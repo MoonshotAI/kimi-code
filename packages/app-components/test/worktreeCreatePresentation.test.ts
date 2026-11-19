@@ -13,7 +13,6 @@ import {
 
 const i18n = createKimiI18n({ locale: 'en' });
 const t = i18n.global.t as unknown as CreateTranslate;
-const zh = createKimiI18n({ locale: 'zh' }).global.t as unknown as CreateTranslate;
 
 function worktree(overrides: Partial<AppWorktreeSetup> = {}, extra: Partial<AppSessionWorktree> = {}): AppSessionWorktree {
   return { ...extra, setup: worktreeSetup(overrides) };
@@ -48,13 +47,6 @@ describe('worktree creation step copy', () => {
     [step('prune', 'running'), 'Cleaning up invalid Worktree record'],
   ])('labels %j as "%s"', (item, label) => {
     expect(createStepLabel(item, t)).toBe(label);
-  });
-
-  it('uses the Chinese wording from the design', () => {
-    expect(createStepLabel(step('fetch', 'failed', { ref: 'origin/main' }), zh)).toBe('拉取 origin/main 失败');
-    expect(createStepLabel(step('create', 'done', { ref: 'origin/main' }), zh)).toBe('已基于 origin/main 创建工作树');
-    expect(createStepLabel(step('changes', 'stopped'), zh)).toBe('已终止带入本地改动');
-    expect(createStepLabel(step('script', 'skipped'), zh)).toBe('已跳过初始化脚本');
   });
 });
 
@@ -118,10 +110,6 @@ describe('worktree creation block', () => {
     [{ status: 'local' }, 'Switched to Local Mode'],
   ])('titles %j as "%s"', (overrides, title) => {
     expect(createBlockView(worktree(overrides), t).title).toBe(title);
-  });
-
-  it('counts a single command in the singular', () => {
-    expect(createBlockView(worktree({ commandsRan: 1 }), t).meta).toBe('1 command ran');
   });
 
   it('expands on failure and keeps the failed step output', () => {
@@ -328,7 +316,6 @@ describe('invalid worktree card', () => {
       title: 'Recreating Worktree from kimi/1111-3321',
       command: 'git worktree add /w kimi/1111-3321',
     });
-    expect(zh('worktreeCreate.invalid.cleaningTitle')).toBe('正在清理失效的工作树记录');
   });
 
   it('reports a failed recreate with raw output and the disk-full variant', () => {

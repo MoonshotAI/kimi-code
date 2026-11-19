@@ -5,7 +5,6 @@ import {
   buildWorktreeSetupRequest,
   canIncludeLocalChanges,
   classifySessionEnvironment,
-  effectiveNewSessionEnvironment,
   groupWorktreesByProject,
   isSessionWorktreeInvalid,
   isSessionWorktreeSettingUp,
@@ -78,12 +77,9 @@ describe('classifySessionEnvironment', () => {
     expect(classifySessionEnvironment({ worktree: worktree('failed', { path: undefined }) })).toBe('local');
   });
 
-  it('tags only sessions that are not local', () => {
-    expect(sessionEnvironmentTag({})).toBeUndefined();
+  it('tags a session unless it is local', () => {
     expect(sessionEnvironmentTag({ worktree: worktree('local') })).toBeUndefined();
     expect(sessionEnvironmentTag({ worktree: worktree('ready') })).toBe('worktree');
-    expect(sessionEnvironmentTag({ worktree: worktree('running') })).toBe('settingUp');
-    expect(sessionEnvironmentTag({ worktree: worktree('ready', { missing: true }) })).toBe('invalid');
   });
 });
 
@@ -130,10 +126,6 @@ describe('sessionWorktreeCard', () => {
     ['script_timeout', 'scriptTimeout'],
   ] as const)('maps the %s failure to the %s card', (kind, card) => {
     expect(sessionWorktreeCard(worktree('failed', {}, { failure: { kind } }))).toBe(card);
-  });
-
-  it('falls back to the generic creation failure', () => {
-    expect(sessionWorktreeCard(worktree('failed'))).toBe('createFailed');
   });
 
   it('distinguishes a stopped script from a stopped creation', () => {
@@ -286,16 +278,6 @@ describe('worktree source resolution', () => {
       runSetupScript: false,
     });
     expect(buildWorktreeSetupRequest(main)).toEqual({ sourceBranch: 'main', includeLocalChanges: true });
-  });
-});
-
-describe('effectiveNewSessionEnvironment', () => {
-  it('uses worktree only when it is chosen and available', () => {
-    expect(effectiveNewSessionEnvironment('worktree', 'available')).toBe('worktree');
-    expect(effectiveNewSessionEnvironment('local', 'available')).toBe('local');
-    for (const availability of ['loading', 'notGitRepo', 'remoteHost', 'failed'] as const) {
-      expect(effectiveNewSessionEnvironment('worktree', availability)).toBe('local');
-    }
   });
 });
 

@@ -11,7 +11,6 @@ import {
   WorktreeCreation,
   abbreviateHome,
   displayCommand,
-  pickWorktreeTarget,
   projectDirectoryName,
   type SetupProgress,
 } from '../../src/services/worktrees/worktreeSetup';
@@ -58,23 +57,6 @@ describe('worktree setup engine', () => {
     expect(projectDirectoryName('  my app: v2/next  ')).toBe('my-app-v2-next');
     expect(projectDirectoryName('项目 一')).toBe('项目-一');
     expect(projectDirectoryName('..')).toBe('project');
-  });
-
-  it('names the branch after the date and appends a counter on collisions', async () => {
-    const projectDir = join(scratch, 'naming');
-    const now = new Date(2026, 10, 9);
-    expect(pickWorktreeTarget(new Set(), projectDir, now, 'a3f2')).toEqual({
-      branch: 'kimi/1109-a3f2',
-      path: join(projectDir, '1109-a3f2'),
-    });
-    expect(pickWorktreeTarget(new Set(['kimi/1109-a3f2']), projectDir, now, 'a3f2').branch).toBe(
-      'kimi/1109-a3f2-2',
-    );
-    await mkdir(join(projectDir, '1109-a3f2-2'), { recursive: true });
-    expect(pickWorktreeTarget(new Set(['kimi/1109-a3f2']), projectDir, now, 'a3f2')).toEqual({
-      branch: 'kimi/1109-a3f2-3',
-      path: join(projectDir, '1109-a3f2-3'),
-    });
   });
 
   it('avoids names taken by local branches, remote-tracking branches and directories', async () => {

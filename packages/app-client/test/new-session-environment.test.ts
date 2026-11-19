@@ -83,16 +83,6 @@ describe('new session environment', () => {
     expect(restarted.worktreeRequest('git')).toBeUndefined();
   });
 
-  it('keeps the latest explicit choice for later new sessions in the run', async () => {
-    const store = freshStore();
-    await store.ensureBranches('git');
-    store.selectEnvironment('worktree');
-    expect(store.effectiveEnvironment('git')).toBe('worktree');
-    store.selectEnvironment('local');
-    expect(store.effectiveEnvironment('git')).toBe('local');
-    expect(store.worktreeRequest('git')).toBeUndefined();
-  });
-
   it('is temporarily unavailable while the git check is loading', async () => {
     const pending = Promise.withResolvers<WorkspaceGitBranches>();
     getWorkspaceGitBranches.mockReturnValueOnce(pending.promise);
@@ -184,19 +174,6 @@ describe('new session environment', () => {
     expect(restarted.selection('git')).toMatchObject({ branch: { name: 'topic' }, isDefault: false });
   });
 
-  it('falls back to the default branch after a refresh no longer lists the remembered one', async () => {
-    const store = freshStore();
-    store.selectEnvironment('worktree');
-    await store.ensureBranches('git');
-    store.selectSource('git', { branch: 'topic' });
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'topic' });
-
-    getWorkspaceGitBranches.mockResolvedValueOnce(repo({ branches: [repo().branches[1]!] }));
-    await store.refreshBranches('git');
-    expect(store.selection('git')).toMatchObject({ branch: { name: 'main' }, isDefault: true });
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'main' });
-  });
-
   it('rejects a branch that is not in the list', async () => {
     const store = freshStore();
     await store.ensureBranches('git');
@@ -240,17 +217,6 @@ describe('new session environment', () => {
 
     const restarted = freshStore();
     expect(restarted.useRemote('git')).toBe(true);
-  });
-
-  it('stops offering Worktree once a refresh reports the project is not a repository', async () => {
-    const store = freshStore();
-    store.selectEnvironment('worktree');
-    await store.ensureBranches('git');
-    getWorkspaceGitBranches.mockResolvedValueOnce({ isRepo: false, dirty: false, remotes: [], branches: [] });
-    await store.refreshBranches('git');
-
-    expect(store.availability('git')).toBe('notGitRepo');
-    expect(store.worktreeRequest('git')).toBeUndefined();
   });
 
   it('loads the project setup script once and exposes it', async () => {

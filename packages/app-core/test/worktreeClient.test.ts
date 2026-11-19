@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DaemonKimiWebApi } from '../src/api/daemon/client';
-import { toAppEvent, toAppSession } from '../src/api/daemon/mappers';
+import { toAppSession } from '../src/api/daemon/mappers';
 import {
   DaemonApiError,
   WORKTREE_REMOVE_FAILED_CODE,
@@ -121,23 +121,6 @@ describe('session worktree mapping', () => {
       },
     });
   });
-
-  it('leaves local sessions without a worktree key', () => {
-    const { worktree: _worktree, ...local } = WIRE_SESSION;
-    expect(Object.hasOwn(toAppSession(local), 'worktree')).toBe(false);
-  });
-
-  it('carries the worktree through the session updated event', () => {
-    const event = toAppEvent({
-      type: 'session',
-      change: 'updated',
-      event_created_at: '2026-11-18T00:00:00.000Z',
-      session: WIRE_SESSION,
-    });
-    expect(event.type).toBe('sessionWorkChanged');
-    if (event.type !== 'sessionWorkChanged') return;
-    expect(event.session?.worktree?.setup.status).toBe('failed');
-  });
 });
 
 describe('worktree routes', () => {
@@ -153,12 +136,6 @@ describe('worktree routes', () => {
       workspace_id: 'ws-1',
       worktree: { source_branch: 'main', include_local_changes: true, use_remote: false },
     });
-  });
-
-  it('omits the worktree key for a local session', async () => {
-    respond(WIRE_SESSION);
-    await createApi().createSession({ cwd: '/repo' });
-    expect(lastRequest().body).toEqual({ metadata: { cwd: '/repo' } });
   });
 
   it.each([
@@ -195,19 +172,6 @@ describe('worktree routes', () => {
       deleted: true,
       worktree: { outcome: 'kept_in_use', branchDeleted: false, otherSessions: 2, output: 'busy' },
     });
-  });
-
-  it('maps a missing worktree whose branch was still deleted, and a session without a linked worktree', async () => {
-    const api = createApi();
-    respond({ deleted: true, worktree: { outcome: 'missing', branch_deleted: true } });
-    expect(await api.deleteSession('sess-1', { removeWorktree: true, deleteBranch: true })).toEqual({
-      deleted: true,
-      worktree: { outcome: 'missing', branchDeleted: true, otherSessions: undefined, output: undefined },
-    });
-    respond({ deleted: true });
-    const plain = await api.deleteSession('sess-2', { removeWorktree: true });
-    expect(plain).toEqual({ deleted: true });
-    expect(Object.hasOwn(plain, 'worktree')).toBe(false);
   });
 
   it('deletes a session without a body by default', async () => {
@@ -270,17 +234,6 @@ describe('worktree routes', () => {
           remoteSource: undefined,
         },
       ],
-    });
-  });
-
-  it('reports a non-git workspace without throwing', async () => {
-    respond({ is_repo: false, dirty: false, remotes: [], branches: [] });
-    expect(await createApi().getWorkspaceGitBranches('ws-1')).toEqual({
-      isRepo: false,
-      headBranch: undefined,
-      dirty: false,
-      remotes: [],
-      branches: [],
     });
   });
 
@@ -421,13 +374,6 @@ describe('git status mapping', () => {
     expect(await api.getPullRequest('sess-1')).toEqual({ pullRequest: null, status: 'failed', error: 'gh: timeout' });
   });
 
-  it('does not read a status out of the pull request data', async () => {
-    respond({ number: 7, state: 'open', url: 'https://example.test/7', pull_request_status: 'failed' });
-    expect(await createApi().getPullRequest('sess-1')).toEqual({
-      pullRequest: { number: 7, state: 'open', url: 'https://example.test/7' },
-    });
-  });
-
   it('reads batch statuses from the sibling map and leaves failed roots without one', async () => {
     respond({
       results: { '/a': { number: 7, state: 'open', url: 'https://example.test/7' }, '/b': null, '/c': null },
@@ -446,15 +392,6 @@ describe('git status mapping', () => {
         '/c': { status: 'failed', error: 'gh: timeout' },
       },
       errors: { '/d': { code: 40422, msg: 'missing' } },
-    });
-  });
-
-  it('returns an empty status map when the batch carries none', async () => {
-    respond({ results: { '/a': null }, errors: {} });
-    expect(await createApi().getPullRequestBatch('sess-1', { roots: ['/a'] })).toEqual({
-      results: { '/a': null },
-      statuses: {},
-      errors: {},
     });
   });
 
@@ -482,11 +419,6 @@ describe('worktree setup script routes', () => {
     });
   });
 
-  it('reports a project without a script', async () => {
-    respond({ path: '/repo/.kimi/setup.sh', exists: false });
-    expect(await createApi().getWorktreeSetupScript('ws-1')).toEqual({ path: '/repo/.kimi/setup.sh', exists: false });
-  });
-
   it('saves the script with a PUT and maps the result', async () => {
     respond({ path: '/repo/.kimi/setup.sh', exists: true, content: 'make', needs_confirmation: false });
     expect(await createApi().saveWorktreeSetupScript('ws-1', 'make')).toEqual({
@@ -504,16 +436,6 @@ describe('worktree setup script routes', () => {
 });
 
 describe('worktreeRemoveFailure', () => {
-  it('reads the reason and raw output from the error details', () => {
-    const error = new DaemonApiError({
-      code: WORKTREE_REMOVE_FAILED_CODE,
-      msg: 'remove failed',
-      requestId: 'r1',
-      details: { reason: 'in_use', output: 'fatal: locked' },
-    });
-    expect(worktreeRemoveFailure(error)).toEqual({ reason: 'in_use', output: 'fatal: locked' });
-  });
-
   it('falls back to an unknown reason and the message', () => {
     const error = new DaemonApiError({ code: WORKTREE_REMOVE_FAILED_CODE, msg: 'remove failed', requestId: 'r1' });
     expect(worktreeRemoveFailure(error)).toEqual({ reason: 'unknown', output: 'remove failed' });

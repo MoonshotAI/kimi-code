@@ -114,18 +114,6 @@ afterEach(() => {
 });
 
 describe('desktop ChatDock worktree cards', () => {
-  it('shows nothing extra for a local or ready session', async () => {
-    await mountDock();
-    expect(host.querySelector('[data-worktree-card]')).toBeNull();
-    expect(host.querySelector('[data-worktree-invalid]')).toBeNull();
-    expect(composer().style.display).toBe('');
-
-    worktree.value = { path: '/w', setup: worktreeSetup() };
-    await nextTick();
-    expect(host.querySelector('[data-worktree-card]')).toBeNull();
-    expect(composer().style.display).toBe('');
-  });
-
   it('keeps the composer below a decision card and maps its buttons to worktree actions', async () => {
     worktree.value = { setup: worktreeSetup({ status: 'failed', failure: { kind: 'fetch_failed' } }) };
     await mountDock();

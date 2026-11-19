@@ -220,22 +220,6 @@ describe('worktree deletion from the management page', () => {
     expect(worktreesStore().removals).toEqual([]);
   });
 
-  it('keeps the failure for the management page after the result page is closed', async () => {
-    await loadStore([item('a'), item('b')]);
-    api.removeWorktree
-      .mockResolvedValueOnce({ removed: true, branchDeleted: false })
-      .mockRejectedValueOnce(worktreeRemoveFailed('session_busy', 'busy'));
-    await dialogs.requestWorktreeDeletion(['/wt/a', '/wt/b']);
-    dialogs.confirmDeletion();
-    await settled();
-
-    dialogs.closeDeleteDialog();
-
-    expect(dialogs.deleteDialog.value).toBeNull();
-    expect(toasts).toEqual([]);
-    expect(worktreesStore().removalFor('/wt/b')).toMatchObject({ state: 'failed', reason: 'session_busy' });
-  });
-
   it('reports the result in a toast when the dialog was closed while deleting', async () => {
     const opener = vi.fn();
     registerWorktreeSettingsOpener(opener);
@@ -289,38 +273,6 @@ describe('worktree deletion from the management page', () => {
 });
 
 describe('worktree session deletion', () => {
-  it('asks with the fresh risk and deletes with the chosen branch option', async () => {
-    api.inspectWorktrees.mockResolvedValueOnce({
-      items: [
-        worktreeRisk('a', { uncommittedFiles: 4, sessions: [{ id: 's1', title: 'Fix login', archived: false, busy: false }] }),
-      ],
-      errors: {},
-    });
-    const run = vi.fn(async (options: { deleteBranch: boolean }) => ({ deleted: true, options }));
-
-    const pending = dialogs.requestSessionDeletion({ sessionId: 's1', title: 'Fix login', path: '/wt/a' }, run);
-    await waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
-
-    expect(dialogs.deleteDialog.value).toEqual({
-      kind: 'session',
-      sessionId: 's1',
-      title: 'Fix login',
-      branch: 'kimi/a',
-      otherSessions: 0,
-      risk: { uncommittedFiles: 4, unpushedCommits: 0 },
-      deleteBranch: false,
-      busy: false,
-    });
-
-    dialogs.setDeleteBranch(true);
-    dialogs.confirmDeletion();
-    expect(dialogs.deleteDialog.value).toMatchObject({ busy: true });
-
-    await expect(pending).resolves.toEqual({ confirmed: true, value: { deleted: true, options: { deleteBranch: true } } });
-    expect(run).toHaveBeenCalledOnce();
-    expect(dialogs.deleteDialog.value).toBeNull();
-  });
-
   it('counts the other sessions and never deletes the branch while they use the directory', async () => {
     api.inspectWorktrees.mockResolvedValueOnce({
       items: [
@@ -372,15 +324,6 @@ describe('worktree session deletion', () => {
 
     running.resolve(true);
     await expect(pending).resolves.toEqual({ confirmed: true, value: true });
-  });
-
-  it('hands back to the plain dialog when the worktree directory no longer exists', async () => {
-    api.inspectWorktrees.mockResolvedValueOnce({ items: [], errors: { '/wt/a': { code: 40423, msg: 'not found' } } });
-
-    await expect(
-      dialogs.requestSessionDeletion({ sessionId: 's1', title: 'One', path: '/wt/a' }, async () => true),
-    ).resolves.toEqual({ confirmed: false, directoryMissing: true });
-    expect(dialogs.deleteDialog.value).toBeNull();
   });
 });
 

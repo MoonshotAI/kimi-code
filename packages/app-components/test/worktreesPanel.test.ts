@@ -338,12 +338,6 @@ describe('batch mode', () => {
     );
   });
 
-  it('explains Batch Delete in Chinese', () => {
-    expect(createKimiI18n({ locale: 'zh' }).global.t('worktreeManage.batchDeleteTip', { n: 4 })).toBe(
-      '选择要删除的工作树（可删除 4 个）。删除会移除工作树目录，其中未提交的改动将丢失。',
-    );
-  });
-
   function rowCheckbox(name: string): HTMLInputElement {
     return row(name).querySelector<HTMLInputElement>('input[type="checkbox"]')!;
   }

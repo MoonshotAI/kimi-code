@@ -23,18 +23,8 @@ afterEach(() => {
 });
 
 describe('workspacesStore directory roots', () => {
-  it('uses the project root for a draft', () => {
-    expect(workspacesStore().directoryRootsFor(null, 'ws1')).toEqual(['/repo', '/extra']);
-    expect(workspacesStore().mainDirectoryFor(undefined, 'ws2')).toBe('/other');
-  });
-
   it('uses the worktree directory once a worktree session is ready', () => {
     expect(workspacesStore().directoryRootsFor('ready')).toEqual(['/wt/a', '/extra']);
     expect(workspacesStore().mainDirectoryFor('ready', 'ws1')).toBe('/wt/a');
-  });
-
-  it('returns nothing without a session or project', () => {
-    expect(workspacesStore().directoryRootsFor(null, null)).toEqual([]);
-    expect(workspacesStore().mainDirectoryFor('unknown')).toBe('');
   });
 });

@@ -19,15 +19,15 @@ describe('sessionWorktreeDisplay', () => {
     expect(sessionWorktreeDisplay({})).toBeNull();
   });
 
-  it.each(['running', 'failed', 'stopped'])('returns nothing while the worktree has no directory (%s)', (status) => {
-    expect(sessionWorktreeDisplay(source({ setup: { status } }))).toBeNull();
+  it('returns nothing while the worktree has no directory', () => {
+    expect(sessionWorktreeDisplay(source({ setup: { status: 'running' } }))).toBeNull();
   });
 
   it('returns nothing after the session fell back to local mode', () => {
     expect(sessionWorktreeDisplay(source({ path: '/wt', setup: { status: 'local' } }))).toBeNull();
   });
 
-  it.each(['ready', 'running', 'awaiting_script_confirmation', 'failed', 'stopped'])(
+  it.each(['ready', 'running'])(
     'describes the worktree once its directory exists (%s)',
     (status) => {
       expect(

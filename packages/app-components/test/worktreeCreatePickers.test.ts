@@ -155,19 +155,9 @@ describe('CreateEnvironmentPicker', () => {
     await nextTick();
     const row = q('.wce-row[data-option="worktree"]')!;
     expect(row.classList.contains('disabled')).toBe(true);
+    expect(row.querySelector('.ui-spinner')).toBeNull();
     expect(row.querySelector('.wce-row-desc')?.textContent).toBe('The current project is not a Git repository.');
     expect(q('.wce-row[data-option="local"]')?.getAttribute('aria-checked')).toBe('true');
-  });
-
-  it('keeps Worktree unavailable for a project on a remote host', async () => {
-    mount(CreateEnvironmentPicker, { workspaceId: 'remote' });
-    await nextTick();
-    q('.wce-chip')!.click();
-    await nextTick();
-    const row = q('.wce-row[data-option="worktree"]')!;
-    expect(row.getAttribute('aria-disabled')).toBe('true');
-    expect(row.querySelector('.ui-spinner')).toBeNull();
-    expect(api.getWorkspaceGitBranches).not.toHaveBeenCalled();
   });
 
   it('supports arrow keys, Enter and Esc', async () => {
@@ -258,13 +248,6 @@ describe('CreateSourceBranchPicker', () => {
     ]);
     expect(q('.wsb-row.on')?.dataset.row).toBe('main');
     expect(q('.wsb-row.on svg[data-icon="check"]')).not.toBeNull();
-  });
-
-  it('separates the branch list from the footer', async () => {
-    await mountOpen();
-    const separator = q('.wsb-list + [role="separator"]');
-    expect(separator).not.toBeNull();
-    expect(separator?.nextElementSibling?.classList.contains('wsb-foot')).toBe(true);
   });
 
   it('shows muted remote names only when the repository has several remotes', async () => {

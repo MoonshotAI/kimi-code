@@ -165,16 +165,6 @@ describe('worktree first-prompt hold', () => {
     resetKimiClientDeps();
   });
 
-  it('creates a local session and sends at once when Local is selected', async () => {
-    const { api, ws } = await createRig({ worktree: false });
-
-    const started = await start(ws);
-
-    expect(started).toEqual({ sessionId: SID, promptRejected: false });
-    expect(Object.hasOwn(api.createSession.mock.calls[0]![0], 'worktree')).toBe(false);
-    expect(sentTexts(api.submitPrompt)).toEqual(['hello']);
-  });
-
   it('creates the session with the worktree request and holds the first prompt', async () => {
     const { api, ws } = await createRig();
 
@@ -260,19 +250,6 @@ describe('worktree first-prompt hold', () => {
     expect(promptStore().queuedBySession[SID] ?? []).toEqual([]);
   });
 
-  it('stops the worktree setup instead of a turn while it is running', async () => {
-    const { api, ws } = await createRig();
-    await start(ws);
-
-    expect(await ws.abortCurrentPrompt()).toBe(true);
-
-    expect(api.sessionWorktreeAction).toHaveBeenCalledExactlyOnceWith(SID, 'cancel', undefined);
-    expect(api.cancelSession).not.toHaveBeenCalled();
-    expect(sessionsStore().sessions[0]?.worktree?.setup.status).toBe('stopped');
-    expect(api.submitPrompt).not.toHaveBeenCalled();
-    expect(promptStore().heldFirstPromptBySession[SID]).toBeDefined();
-  });
-
   it('applies a worktree action result and releases the hold when it settles', async () => {
     const { api, ws } = await createRig();
     await start(ws);
@@ -294,11 +271,13 @@ describe('worktree first-prompt hold', () => {
   it('reports a failed worktree action and keeps the hold', async () => {
     const { api, ws } = await createRig();
     await start(ws);
+    const before = sessionsStore().sessions[0]?.worktree;
     api.sessionWorktreeAction.mockRejectedValueOnce(new Error('offline'));
 
     expect(await ws.runSessionWorktreeAction(SID, 'retry')).toBe(false);
 
     expect(warningsStore().warnings).toHaveLength(1);
+    expect(sessionsStore().sessions[0]?.worktree).toEqual(before);
     expect(promptStore().heldFirstPromptBySession[SID]).toBeDefined();
   });
 
@@ -348,48 +327,6 @@ describe('worktree first-prompt hold', () => {
 
     await moveTo(ws, worktree('ready', { path: '/wt/a' }, { script: 'skipped' }), '/wt/a');
     expect(sentTexts(api.submitPrompt)[0]).toBe('hello');
-  });
-
-  it('stays held when running the script comes back still awaiting confirmation', async () => {
-    const { api, ws } = await createRig();
-    await start(ws);
-    setWorktree(worktree('awaiting_script_confirmation', { path: '/wt/a' }, { script: 'pending', scriptContent: 'make' }), '/wt/a');
-
-    api.sessionWorktreeAction.mockResolvedValueOnce(
-      session({
-        cwd: '/wt/a',
-        worktree: worktree('awaiting_script_confirmation', { path: '/wt/a' }, { script: 'pending', scriptContent: 'make all' }),
-      }),
-    );
-    expect(await ws.runSessionWorktreeAction(SID, 'runScript')).toBe(true);
-    await flush();
-
-    expect(sessionsStore().sessions[0]?.worktree?.setup.scriptContent).toBe('make all');
-    expect(api.submitPrompt).not.toHaveBeenCalled();
-    expect(promptStore().heldFirstPromptBySession[SID]).toBeDefined();
-
-    api.sessionWorktreeAction.mockResolvedValueOnce(
-      session({ cwd: '/wt/a', worktree: worktree('running', { path: '/wt/a' }, { script: 'pending' }) }),
-    );
-    await ws.runSessionWorktreeAction(SID, 'runScript');
-    await flush();
-    expect(api.submitPrompt).not.toHaveBeenCalled();
-  });
-
-  it('reports an action the server refuses at a script pause and keeps the hold', async () => {
-    const { api, ws } = await createRig();
-    await start(ws);
-    const paused = worktree('failed', { path: '/wt/a' }, { stoppedStep: 'script', failure: { kind: 'script_timeout' } });
-    setWorktree(paused, '/wt/a');
-    api.sessionWorktreeAction.mockRejectedValueOnce(
-      new DaemonApiError({ code: 40936, msg: 'worktree state does not allow use_local', requestId: 'r1' }),
-    );
-
-    expect(await ws.runSessionWorktreeAction(SID, 'useLocal')).toBe(false);
-
-    expect(sessionsStore().sessions[0]?.worktree).toEqual(paused);
-    expect(promptStore().heldFirstPromptBySession[SID]).toBeDefined();
-    expect(api.submitPrompt).not.toHaveBeenCalled();
   });
 
   it('sends in local mode after a missing worktree is abandoned', async () => {

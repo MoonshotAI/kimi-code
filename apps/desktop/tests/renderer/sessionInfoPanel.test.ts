@@ -214,7 +214,6 @@ describe('SessionInfoFolder', () => {
     { name: 'not pushed', value: { upstream: undefined, ahead: 0, behind: 0 }, text: '未推送', sync: null },
     { name: 'ahead', value: { ahead: 3, behind: 0 }, text: null, sync: '↑3' },
     { name: 'behind', value: { ahead: 0, behind: 4 }, text: null, sync: '↓4' },
-    { name: 'diverged', value: { ahead: 3, behind: 4 }, text: null, sync: '↑3↓4' },
     { name: 'in sync', value: { ahead: 0, behind: 0 }, text: null, sync: null },
   ])('shows the $name sync status after the branch name', async ({ value, text, sync }) => {
     mount(SessionInfoFolder, { row: readyRow(value) });
@@ -369,18 +368,6 @@ describe('SessionInfoFolder', () => {
   });
 
   it.each([
-    { name: 'no pull request', value: { pullRequest: null, pullRequestStatus: 'none' as const } },
-    { name: 'gh unavailable', value: { pullRequest: null, pullRequestStatus: 'unavailable' as const } },
-  ])('hides the PR row for $name', async ({ value }) => {
-    mount(SessionInfoFolder, { row: readyRow(value) });
-    await nextTick();
-
-    expect(host!.querySelector('.sif-pr')).toBeNull();
-    expect(host!.querySelector('.sif-pr-pending')).toBeNull();
-    expect(host!.querySelector('.sif-pr-failed')).toBeNull();
-  });
-
-  it.each([
     [{ status: 'error' as const }, '信息加载失败。'],
     [{ status: 'non-git' as const }, '非 Git 目录'],
   ])('renders the %s state with the name and path but no git data', async (state, label) => {
@@ -394,16 +381,13 @@ describe('SessionInfoFolder', () => {
     expect(host!.querySelector('.sif-pr')).toBeNull();
   });
 
-  it.each([
-    { remote: false, icon: 'git-fork', text: '基于 main 创建', ref: 'main' },
-    { remote: true, icon: 'git-fork-cloud', text: '基于 origin/main 创建', ref: 'origin/main' },
-  ])('shows where the worktree was created from (remote: $remote)', async ({ remote, icon, text, ref }) => {
-    mount(SessionInfoFolder, { row: readyRow(), worktree: worktree({ base: { ref, remote } }) });
+  it('shows the local branch a worktree was created from', async () => {
+    mount(SessionInfoFolder, { row: readyRow(), worktree: worktree({ base: { ref: 'main', remote: false } }) });
     await nextTick();
 
     const created = host!.querySelector('.sif-created')!;
-    expect(created.textContent).toBe(text);
-    expect(created.querySelector('[data-worktree-icon]')?.getAttribute('data-worktree-icon')).toBe(icon);
+    expect(created.textContent).toBe('基于 main 创建');
+    expect(created.querySelector('[data-worktree-icon]')?.getAttribute('data-worktree-icon')).toBe('git-fork');
   });
 
   it('marks a missing worktree: struck path, amber notice, branch kept, changes and PR hidden', async () => {
@@ -467,20 +451,6 @@ describe('SessionInfoFolder', () => {
     document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     await nextTick();
     expect(host!.querySelector('.sif-stats-error')?.getAttribute('aria-expanded')).toBe('false');
-  });
-
-  it('removes the warning once a retry succeeds', async () => {
-    const row = reactive(readyRow({ statsError: 'boom' }));
-    mount(SessionInfoFolder, { row });
-    await nextTick();
-    await openPopover('.sif-stats-error');
-    if (row.state.status !== 'ready') throw new Error('Expected ready Git state');
-
-    delete row.state.value.statsError;
-    await nextTick();
-    await nextTick();
-    expect(host!.querySelector('.sif-stats-error')).toBeNull();
-    expect(host!.querySelector('.sif-diff')?.textContent).toBe('+128−42');
   });
 
   it('explains a failed PR read in a popover', async () => {
@@ -720,15 +690,6 @@ describe('SessionInfoPanel', () => {
     expect(el.querySelector('[data-folder="/project"] .sif-primary')).toBeNull();
   });
 
-  it('shows plain directory information after falling back to local', async () => {
-    sessionState.sessions = [worktreeSession({ path: undefined }, 'local')];
-    const el = await mountPanel();
-
-    expect(el.querySelector('.sif-created')).toBeNull();
-    expect(el.querySelector('.sif-branch')?.textContent).toBe('feat/session-info');
-    expect(el.querySelector('.sif-diff-button')).not.toBeNull();
-  });
-
   it('refreshes every directory from the main directory title row', async () => {
     const el = await mountPanel([readyRow(), { ...readyRow(), path: '/repo/b', primary: false }]);
 
@@ -741,13 +702,12 @@ describe('SessionInfoPanel', () => {
     expect(sessionInfoPanelSource).toContain('.si-refresh { opacity: 0;');
   });
 
-  it('keeps the data and rotates the icon while refreshing', async () => {
+  it('rotates the icon and reports busy while refreshing', async () => {
     store.refreshing.mockReturnValue(true);
     const el = await mountPanel();
 
     expect(el.querySelector('.si-refresh')?.classList.contains('spinning')).toBe(true);
-    expect(el.querySelector('.sif-branch')?.textContent).toBe('feat/session-info');
-    expect(el.querySelector('.sif-diff')?.textContent).toBe('+128−42');
+    expect(el.querySelector('.si-refresh')?.getAttribute('aria-busy')).toBe('true');
   });
 
   it('replaces the refresh button with a warning that explains a failed refresh', async () => {

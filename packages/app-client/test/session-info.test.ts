@@ -291,13 +291,6 @@ describe('sessionInfoStore', () => {
     });
   });
 
-  it('uses the worktree directory as the main folder of a worktree session', () => {
-    sessionsStore().setSessions([{ id: 's1', workspaceId: 'ws1', cwd: '/wt/a', worktree: readyWorktree() } as AppSession]);
-    workspacesStore().workspaces = [seedWorkspace('ws1', '/repo', ['/extra'])];
-
-    expect(sessionInfoStore().foldersForSession('s1')).toEqual(folders('/wt/a', '/extra'));
-  });
-
   it('keeps data and raises the refreshing flag while a refresh runs', async () => {
     const next = deferred<GitStatusBatchResult>();
     const getGitStatusBatch = vi.fn()

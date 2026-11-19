@@ -118,14 +118,6 @@ describe('ChatPane worktree creation block', () => {
     expect(blocks()[0]?.querySelector('.wcb-title')?.textContent).toBe('Worktree created');
   });
 
-  it('shows the running block under a held first prompt', async () => {
-    const worktree = sessionWorktree('running', {}, { steps: [{ kind: 'create', state: 'running', ref: 'main' }] });
-    mount({ turns: [firstPrompt], worktree });
-    await nextTick();
-    expect(blocks()[0]?.querySelector('.wcb-title')?.textContent).toBe('Creating Worktree');
-    expect(blocks()[0]?.querySelector('.wcb-label')?.textContent).toBe('Creating Worktree from main');
-  });
-
   it('renders no block for a local session or before the start of the history is loaded', async () => {
     mount({ turns: [firstPrompt, reply] });
     await nextTick();

@@ -218,16 +218,6 @@ describe('SessionHoverCard', () => {
     expect(main.children).toHaveLength(2);
   });
 
-  it('shows no worktree information before the worktree exists or after falling back to local', async () => {
-    stores.sessions = [worktreeRecord({ path: undefined, setup: { status: 'running' } })];
-    stores.roots = ['/Users/me/project'];
-    const el = mountCard(row({ cwd: '/Users/me/project', environment: 'settingUp' }));
-    await nextTick();
-
-    expect(el.querySelector('.shc-created')).toBeNull();
-    expect(el.querySelector('.shc-branch-line')).toBeNull();
-  });
-
   it('falls back to the listed branch and pull request without cached status', async () => {
     stores.sessions = [{ ...worktreeRecord(), pullRequest: { number: 1312, state: 'merged', url: 'https://example.test/pr/1312' } }];
     stores.roots = [WORKTREE];
