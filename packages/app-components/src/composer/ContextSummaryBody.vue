@@ -3,9 +3,12 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import type { SessionContextGroup, SessionContextSummary } from '@moonshot-ai/app-core/api';
+import { formatTokens, formatTokenShare } from '@moonshot-ai/app-core/lib';
 
 const props = withDefaults(defineProps<{
   snapshot: SessionContextSummary | null;
+  ctxUsed?: number;
+  ctxMax?: number;
   loading?: boolean;
   error?: string;
   canCompact?: boolean;
@@ -26,15 +29,19 @@ const emit = defineEmits<{
 
 const { t, te } = useI18n();
 
-const capacityRatio = computed(() => {
-  const used = props.snapshot?.tokens.used ?? 0;
-  const max = props.snapshot?.tokens.max ?? 0;
-  return max > 0 ? Math.min(1, Math.max(0, used / max)) : 1;
-});
+const usedTokens = computed(() => props.snapshot?.tokens.used ?? props.ctxUsed ?? 0);
+const maxTokens = computed(() => props.snapshot?.tokens.max ?? props.ctxMax ?? 0);
 
-const segments = computed(() =>
-  (props.snapshot?.groups ?? []).filter((group) => group.chars > 0),
-);
+const usage = computed(() => {
+  if (!props.snapshot && props.ctxUsed === undefined) return null;
+  const used = formatTokens(usedTokens.value);
+  if (maxTokens.value <= 0) return { headline: `${t('inspector.usedLabel')} ${used}`, total: '' };
+  const pct = Math.min(100, Math.ceil((usedTokens.value / maxTokens.value) * 100));
+  return {
+    headline: t('inspector.usedPercent', { pct }),
+    total: `${used} / ${formatTokens(maxTokens.value)}`,
+  };
+});
 
 function groupCountLabel(group: SessionContextGroup): string {
   const countKey = `inspector.compositionCount.${group.role}`;
@@ -43,48 +50,51 @@ function groupCountLabel(group: SessionContextGroup): string {
   });
 }
 
-function groupPct(group: SessionContextGroup): number {
-  const total = props.snapshot?.total_chars ?? 0;
-  if (total <= 0) return 0;
-  return Math.round((group.chars / total) * 100);
-}
-
-function groupTooltip(group: SessionContextGroup): string {
-  const chars = t('inspector.characters', { n: group.chars.toLocaleString() });
-  return `${groupCountLabel(group)} · ${chars} · ${groupPct(group)}%`;
-}
+const rows = computed(() => {
+  const groups = (props.snapshot?.groups ?? []).filter((group) => group.tokens > 0);
+  const scale = maxTokens.value > 0
+    ? maxTokens.value
+    : groups.reduce((sum, group) => sum + group.tokens, 0);
+  return groups
+    .toSorted((a, b) => b.tokens - a.tokens)
+    .map((group) => ({
+      role: group.role,
+      name: t(`inspector.role.${group.role}`, group.role),
+      count: groupCountLabel(group),
+      tokens: formatTokens(group.tokens),
+      share: maxTokens.value > 0 ? formatTokenShare(group.tokens, maxTokens.value) : '',
+      width: `${(group.tokens / scale) * 100}%`,
+    }));
+});
 </script>
 
 <template>
   <div class="ctx-summary">
     <div class="ctx-summary-body" :class="{ 'is-refreshing': loading && snapshot }">
+      <div v-if="usage" class="ctx-usage">
+        <span class="ctx-usage-headline">{{ usage.headline }}</span>
+        <span v-if="usage.total" class="ctx-usage-total">{{ usage.total }}</span>
+      </div>
       <div v-if="loading && !snapshot" class="ctx-summary-loading">
         <Spinner size="sm" />
       </div>
       <div v-else-if="error && !snapshot" class="ctx-summary-error" role="alert">
         {{ error }}
       </div>
-      <template v-else-if="snapshot && snapshot.total_chars > 0">
+      <template v-else-if="rows.length > 0">
         <div class="ctx-composition-bar" :aria-label="t('inspector.composition')">
-          <Tooltip v-for="group in segments" :key="group.role" :text="groupTooltip(group)">
-            <span
-              class="ctx-composition-seg"
-              :data-role="group.role"
-              :style="{ width: `${(group.chars / snapshot.total_chars) * capacityRatio * 100}%` }"
-            />
+          <Tooltip v-for="row in rows" :key="row.role" :text="`${row.name} · ${row.tokens}`">
+            <span class="ctx-composition-seg" :data-role="row.role" :style="{ width: row.width }" />
           </Tooltip>
         </div>
         <div class="ctx-role-list">
-          <div
-            v-for="group in snapshot.groups"
-            :key="group.role"
-            class="ctx-role-row"
-            :data-role="group.role"
-          >
+          <div v-for="row in rows" :key="row.role" class="ctx-role-row" :data-role="row.role">
             <span class="ctx-role-marker" />
-            <span class="ctx-role-name">{{ t(`inspector.role.${group.role}`, group.role) }}</span>
-            <span class="ctx-role-count">{{ groupCountLabel(group) }}</span>
-            <span class="ctx-role-pct">{{ groupPct(group) }}%</span>
+            <Tooltip :text="row.count">
+              <span class="ctx-role-name" tabindex="0">{{ row.name }}</span>
+            </Tooltip>
+            <span class="ctx-role-tokens">{{ row.tokens }}</span>
+            <span v-if="row.share" class="ctx-role-share">{{ row.share }}</span>
           </div>
         </div>
       </template>
@@ -143,6 +153,23 @@ function groupTooltip(group: SessionContextGroup): string {
 .ctx-summary-body.is-refreshing {
   opacity: 0.5;
 }
+.ctx-usage {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ctx-usage-headline {
+  font-size: var(--ui-font-size);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+}
+.ctx-usage-total {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
 .ctx-summary-loading {
   display: flex;
   align-items: center;
@@ -170,7 +197,7 @@ function groupTooltip(group: SessionContextGroup): string {
 
 .ctx-composition-bar {
   display: flex;
-  height: var(--space-2);
+  height: var(--space-1-5);
   overflow: hidden;
   border-radius: var(--radius-context-segment);
   background: var(--color-fill-2);
@@ -193,8 +220,8 @@ function groupTooltip(group: SessionContextGroup): string {
   align-items: center;
   gap: var(--space-1-5);
   font-size: var(--text-xs);
-  color: var(--color-text-muted);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .ctx-role-marker {
   width: var(--space-2);
@@ -205,21 +232,24 @@ function groupTooltip(group: SessionContextGroup): string {
 }
 .ctx-role-name {
   color: var(--color-text);
-  flex: none;
+  text-decoration: underline dotted var(--color-text-faint);
+  text-underline-offset: 3px;
+  cursor: default;
+  border-radius: var(--radius-xs);
 }
-.ctx-role-count {
+.ctx-role-name:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.ctx-role-tokens {
   margin-left: auto;
-  color: var(--color-text-faint);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ctx-role-pct {
-  width: 32px;
-  text-align: right;
   color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
+}
+.ctx-role-share {
+  width: 40px;
   flex: none;
+  text-align: right;
+  color: var(--color-text);
 }
 
 .ctx-summary-divider {

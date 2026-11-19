@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Badge, Icon, IconButton } from '@moonshot-ai/app-ui';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, formatTokens } from '@moonshot-ai/app-core/lib';
 import type { SessionContextItemPart } from '@moonshot-ai/app-core/api';
 import JsonTree from './JsonTree.vue';
 import { contextPartText } from './contextCopy';
@@ -75,7 +75,7 @@ onBeforeUnmount(() => clearTimeout(resetTimer));
     <div v-else-if="part.kind === 'text'" class="part-box">
       <div class="part-head">
         <span>{{ part.name || t(role === 'system' ? 'inspector.promptText' : 'inspector.messageText') }}</span>
-        <span v-if="role === 'system' && part.text" class="part-note">{{ t('inspector.characters', { n: part.text.length.toLocaleString() }) }}</span>
+        <span v-if="part.tokens !== undefined" class="part-note">{{ t('inspector.tokens', { n: formatTokens(part.tokens) }) }}</span>
       </div>
       <div class="prose">{{ part.text }}</div>
     </div>

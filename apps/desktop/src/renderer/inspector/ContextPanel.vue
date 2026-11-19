@@ -3,7 +3,7 @@ import { computed, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, EmptyState, Icon, IconButton, ScrollArea, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import { getKimiWebApi, sessionObservationOptions, useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { formatTokens } from '@moonshot-ai/app-core/lib';
+import { formatTokens, formatTokenShare } from '@moonshot-ai/app-core/lib';
 import type {
   ReadRequestOptions,
   SessionContextGroup,
@@ -44,10 +44,6 @@ const contextUsageLabel = computed(() => {
     remaining: formatTokens(Math.max(0, maxTokens.value - usedTokens.value)),
   });
 });
-const capacityRatio = computed(() =>
-  maxTokens.value > 0 ? Math.min(1, Math.max(0, usedTokens.value / maxTokens.value)) : 1,
-);
-
 const selectedRoles = computed(() => selectedFilterRoles.value);
 const filtering = computed(() => selectedFilterRoles.value.length > 0);
 const definitionOnly = computed(() =>
@@ -151,7 +147,10 @@ function selectAllRoles(): void {
 }
 
 const segments = computed(() =>
-  (summary.value?.groups ?? []).filter((g) => g.chars > 0),
+  (summary.value?.groups ?? []).filter((g) => g.tokens > 0),
+);
+const barScale = computed(() =>
+  maxTokens.value > 0 ? maxTokens.value : segments.value.reduce((sum, g) => sum + g.tokens, 0),
 );
 
 function groupLabel(group: SessionContextGroup): string {
@@ -159,18 +158,17 @@ function groupLabel(group: SessionContextGroup): string {
   const count = t(te(countKey) ? countKey : 'inspector.compositionCount.unknown', {
     n: group.count.toLocaleString(),
   });
-  return `${count} · ${t('inspector.characters', { n: group.chars.toLocaleString() })}`;
+  return `${count} · ${t('inspector.tokens', { n: formatTokens(group.tokens) })}`;
 }
 
-function groupPct(group: SessionContextGroup): number {
-  const totalChars = summary.value?.total_chars ?? 0;
-  if (totalChars <= 0) return 0;
-  return Math.round((group.chars / totalChars) * 100);
+function groupTooltip(group: SessionContextGroup): string {
+  if (maxTokens.value <= 0) return groupLabel(group);
+  return `${groupLabel(group)} · ${formatTokenShare(group.tokens, maxTokens.value)}`;
 }
 
 const showGroupedTools = computed(() => !filtering.value && tools.value.length > 0);
 const definitionSize = computed(() =>
-  tools.value.reduce((acc, item) => acc + item.chars, 0),
+  tools.value.reduce((acc, item) => acc + item.tokens, 0),
 );
 
 const navigableItems = computed<SessionContextItemSummary[]>(() => {
@@ -233,12 +231,12 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
             <Icon name="refresh" size="sm" />
           </IconButton>
         </div>
-        <div v-if="summary.total_chars > 0" class="composition-bar" :aria-label="t('inspector.composition')">
-          <Tooltip v-for="group in segments" :key="group.role" :text="groupLabel(group)">
+        <div v-if="segments.length > 0" class="composition-bar" :aria-label="t('inspector.composition')">
+          <Tooltip v-for="group in segments" :key="group.role" :text="groupTooltip(group)">
             <button
               type="button"
               :data-role="group.role"
-              :style="{ width: `${(group.chars / summary.total_chars) * capacityRatio * 100}%` }"
+              :style="{ width: `${(group.tokens / barScale) * 100}%` }"
               :class="{ dimmed: filtering && !selectedFilterRoles.includes(group.role) }"
               :aria-label="groupLabel(group)"
               :aria-pressed="filtering && selectedFilterRoles.includes(group.role)"
@@ -250,7 +248,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
           <Tooltip
             v-for="group in summary.groups"
             :key="group.role"
-            :text="`${groupLabel(group)} · ${groupPct(group)}%`"
+            :text="groupTooltip(group)"
           >
             <button
               class="legend-button"
@@ -263,7 +261,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
             >
               <span class="legend-marker" />
               <span>{{ t(`inspector.role.${group.role}`, group.role) }}</span>
-              <span class="legend-value">{{ groupPct(group) }}%</span>
+              <span class="legend-value">{{ formatTokens(group.tokens) }}</span>
             </button>
           </Tooltip>
           <Button v-if="filtering" size="sm" variant="text" @click="selectAllRoles">{{ t('inspector.clearFilter') }}</Button>
@@ -272,7 +270,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
 
       <div class="context-columns">
         <span>{{ t('inspector.messageOrder') }}</span>
-        <span>{{ t('inspector.characterCount') }}</span>
+        <span>{{ t('inspector.tokenCount') }}</span>
       </div>
 
       <div class="context-blocks">
@@ -289,7 +287,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
             <span class="role-marker" />
             <span class="block-role">{{ t('inspector.role.system') }}</span>
             <span class="block-preview">{{ items[0].preview }}</span>
-            <span class="block-size">{{ items[0].chars.toLocaleString() }}</span>
+            <span class="block-size">{{ formatTokens(items[0].tokens) }}</span>
           </button>
 
           <details
@@ -302,7 +300,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
               <span class="role-marker" />
               <span class="block-role">{{ t('inspector.role.definition') }} · {{ tools.length }}</span>
               <span class="block-preview">{{ tools.map((item) => item.name).join(', ') }}</span>
-              <span class="block-size">{{ definitionSize.toLocaleString() }}</span>
+              <span class="block-size">{{ formatTokens(definitionSize) }}</span>
             </summary>
             <div v-if="toolsOpen" class="nested-tools">
               <button
@@ -321,7 +319,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
                   <span v-if="tool.name" class="block-name">{{ tool.name }}</span>
                   <template v-if="tool.name && tool.preview"> · </template>{{ tool.preview }}
                 </span>
-                <span class="block-size">{{ tool.chars.toLocaleString() }}</span>
+                <span class="block-size">{{ formatTokens(tool.tokens) }}</span>
               </button>
             </div>
           </details>
@@ -343,7 +341,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
               <span v-if="item.name" class="block-name">{{ item.name }}</span>
               <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
             </span>
-            <span class="block-size">{{ item.chars.toLocaleString() }}</span>
+            <span class="block-size">{{ formatTokens(item.tokens) }}</span>
           </button>
         </template>
 
@@ -365,7 +363,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
               <span v-if="item.name" class="block-name">{{ item.name }}</span>
               <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
             </span>
-            <span class="block-size">{{ item.chars.toLocaleString() }}</span>
+            <span class="block-size">{{ formatTokens(item.tokens) }}</span>
           </button>
         </template>
 

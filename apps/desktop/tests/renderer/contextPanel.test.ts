@@ -34,8 +34,7 @@ function itemsResponse(query: { offset: number; limit: number }): SessionContext
       agent_id: 'main',
       captured_at: 1000,
       tokens: { used: 1000, max: 10000 },
-      total_chars: TOTAL_ITEMS * 10,
-      groups: [{ role: 'user', count: TOTAL_ITEMS, chars: TOTAL_ITEMS * 10 }],
+      groups: [{ role: 'user', count: TOTAL_ITEMS, tokens: 1000 }],
     },
     tools: [],
     items: Array.from({ length: count }, (_, index) => ({
@@ -43,7 +42,7 @@ function itemsResponse(query: { offset: number; limit: number }): SessionContext
       role: 'user',
       sequence: query.offset + index,
       preview: `item ${query.offset + index}`,
-      chars: 10,
+      tokens: 10,
       has_media: false,
     })),
     total: TOTAL_ITEMS,
@@ -66,7 +65,7 @@ beforeEach(() => {
     itemsResponse(query),
   );
   mocks.getSessionContextItem.mockReset();
-  mocks.getSessionContextItem.mockResolvedValue({ id: 'message-150', role: 'user', chars: 10, parts: [] });
+  mocks.getSessionContextItem.mockResolvedValue({ id: 'message-150', role: 'user', tokens: 10, parts: [] });
 });
 
 afterEach(() => {
@@ -133,9 +132,10 @@ describe('ContextPanel live refresh', () => {
   });
 
   it.each([
-    { change: 'a different size', edit: (item: SessionContextItemSummary) => ({ ...item, chars: item.chars + 5 }) },
-    { change: 'the same size', edit: (item: SessionContextItemSummary) => ({ ...item, preview: `${item.preview} edited` }) },
-  ])('reloads the open item when its slot holds different content of $change', async ({ edit }) => {
+    { change: 'reloads the open item when its slot holds a different tool', edit: (item: SessionContextItemSummary) => ({ ...item, name: 'Read' }), reads: 2 },
+    { change: 'reloads the open item when its slot holds edited content', edit: (item: SessionContextItemSummary) => ({ ...item, preview: `${item.preview} edited` }), reads: 2 },
+    { change: 'keeps the open item when only its share of the measured total moves', edit: (item: SessionContextItemSummary) => ({ ...item, tokens: item.tokens + 5 }), reads: 1 },
+  ])('$change', async ({ edit, reads }) => {
     const root = await mountPanel();
     root.querySelectorAll<HTMLButtonElement>('.context-row')[20]!.click();
     await settle();
@@ -149,7 +149,7 @@ describe('ContextPanel live refresh', () => {
     await settle();
 
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(mocks.getSessionContextItem).toHaveBeenCalledTimes(2);
+    expect(mocks.getSessionContextItem).toHaveBeenCalledTimes(reads);
   });
 
   it('loads the next page when the item dialog steps past the loaded range', async () => {

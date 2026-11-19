@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  agentContextOf,
   closeSessionById,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
   getLiveSessionById,
@@ -10,11 +11,14 @@ import {
   IAgentLoopService,
   IEventDispatcher,
   IModelCatalog,
+  ISessionTokenCountingService,
   IWireService,
   type ContextMessage,
+  type IAgentScopeHandle,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
+import { estimateTokens } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
 import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -35,7 +39,7 @@ function item(id: string, role: string) {
     id,
     role,
     preview: id,
-    chars: id.length,
+    tokens: id.length,
     has_media: false,
   };
 }
@@ -185,6 +189,36 @@ describe('context routes on restored sessions and dynamic tools', () => {
     return created.data.id;
   }
 
+  async function seedMainAgent(sid: string): Promise<IAgentScopeHandle> {
+    const lifecycle = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
+    await lifecycle.create({ agentId: 'main' });
+    const main = lifecycle.handleOf('main')!;
+    const loop = main.accessor.get(IAgentLoopService);
+    await loop.setProfile({
+      modelAlias: 'kimi-code/k3',
+      profileName: 'agent',
+      thinkingLevel: 'high',
+      systemPrompt: 'You are Kimi Code.',
+    });
+    loop.replaceHistory(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'summarize the repository layout' }] },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'It is a TypeScript monorepo with apps and packages.' }],
+          toolCalls: [],
+        },
+      ],
+      'fork',
+    );
+    await main.accessor.get(IEventDispatcher).flush();
+    return main;
+  }
+
+  function sumTokens(entries: readonly { tokens: number }[]): number {
+    return entries.reduce((sum, entry) => sum + entry.tokens, 0);
+  }
+
   it('rejects item ids that the listing never produces', async () => {
     const sid = await createSession();
     const toolDetail = await getJson<ContextItemDetail>(`/api/v1/sessions/${sid}/context/items/tool-0`);
@@ -243,7 +277,9 @@ describe('context routes on restored sessions and dynamic tools', () => {
     const systemGroup = summary.groups.find((g) => g.role === 'system');
     expect(systemGroup).toBeDefined();
     expect(systemGroup!.count).toBeGreaterThanOrEqual(1);
-    expect(systemGroup!.chars).toBeGreaterThan(50);
+    expect(systemGroup!.tokens).toBe(
+      estimateTokens('You are Kimi Code.\n\n# Skills\n\nAvailable skill: demo-skill'),
+    );
 
     const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
     expect(page.items[0]).toMatchObject({
@@ -256,14 +292,19 @@ describe('context routes on restored sessions and dynamic tools', () => {
       `/api/v1/sessions/${sid}/context/items/system`,
     );
     expect(systemDetail.parts).toEqual([
-      { kind: 'text', text: 'You are Kimi Code.' },
-      { kind: 'text', name: 'Skills', text: 'Available skill: demo-skill' },
+      { kind: 'text', text: 'You are Kimi Code.', tokens: estimateTokens('You are Kimi Code.') },
+      {
+        kind: 'text',
+        name: 'Skills',
+        text: 'Available skill: demo-skill',
+        tokens: estimateTokens('Available skill: demo-skill'),
+      },
     ]);
 
     const dynamicMsgItem = page.items.find((entry) => entry.name === 'mcp__demo__search');
     expect(dynamicMsgItem).toBeDefined();
     expect(dynamicMsgItem!.role).toBe('definition');
-    expect(dynamicMsgItem!.chars).toBeGreaterThan(0);
+    expect(dynamicMsgItem!.tokens).toBeGreaterThan(0);
     expect(dynamicMsgItem!.preview).toContain('Search demo records');
     expect(summary.groups.find((g) => g.role === 'definition')?.count).toBe(page.tools.length + 1);
 
@@ -412,5 +453,37 @@ describe('context routes on restored sessions and dynamic tools', () => {
       '<system>ERROR: Tool execution failed.</system>\nmissing file',
       'Tool result is not available in the current context. Do not assume the tool completed successfully.',
     ]);
+  });
+
+  it('reports the estimated total before any model call is measured', async () => {
+    const sid = await createSession();
+    await seedMainAgent(sid);
+
+    const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
+    expect(page.summary.tokens.used).toBeGreaterThan(0);
+    expect(sumTokens(page.summary.groups)).toBe(page.summary.tokens.used);
+    expect(sumTokens(page.tools) + sumTokens(page.items)).toBe(page.summary.tokens.used);
+  });
+
+  it('splits the measured context size across items in proportion to their estimates', async () => {
+    const sid = await createSession();
+    const main = await seedMainAgent(sid);
+    const before = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
+    const measured = before.summary.tokens.used * 3;
+    main.accessor.get(ISessionTokenCountingService).rebase(agentContextOf(main), {
+      length: main.accessor.get(IAgentLoopService).history().length,
+      tokens: measured,
+      measured: true,
+    });
+    await main.accessor.get(IEventDispatcher).flush();
+
+    const after = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
+    const itemCount = after.tools.length + after.items.length;
+    expect(after.summary.tokens.used).toBe(measured);
+    expect(Math.abs(sumTokens(after.summary.groups) - measured)).toBeLessThanOrEqual(itemCount);
+    expect(Math.abs(sumTokens(after.tools) + sumTokens(after.items) - measured)).toBeLessThanOrEqual(itemCount);
+    expect(after.items.find((entry) => entry.id === 'system')?.tokens).toBe(
+      3 * before.items.find((entry) => entry.id === 'system')!.tokens,
+    );
   });
 });

@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const contextGroupSchema = z.object({
   role: z.string().min(1),
   count: z.number().int().nonnegative(),
-  chars: z.number().int().nonnegative(),
+  tokens: z.number().int().nonnegative(),
 });
 export type ContextGroup = z.infer<typeof contextGroupSchema>;
 
@@ -19,7 +19,6 @@ export const contextSummarySchema = z.object({
   captured_at: z.number().int().nonnegative(),
   model: z.string().optional(),
   tokens: contextTokensSchema,
-  total_chars: z.number().int().nonnegative(),
   groups: z.array(contextGroupSchema),
 });
 export type ContextSummary = z.infer<typeof contextSummarySchema>;
@@ -30,7 +29,7 @@ export const contextItemSummarySchema = z.object({
   name: z.string().optional(),
   sequence: z.number().int().positive().optional(),
   preview: z.string(),
-  chars: z.number().int().nonnegative(),
+  tokens: z.number().int().nonnegative(),
   has_media: z.boolean(),
 });
 export type ContextItemSummary = z.infer<typeof contextItemSummarySchema>;
@@ -48,6 +47,7 @@ export const contextItemPartSchema = z.object({
   kind: z.enum(['text', 'think', 'definition', 'function', 'media']),
   text: z.string().optional(),
   name: z.string().optional(),
+  tokens: z.number().int().nonnegative().optional(),
   data: z.unknown().optional(),
 });
 export type ContextItemPart = z.infer<typeof contextItemPartSchema>;
@@ -57,7 +57,7 @@ export const contextItemDetailSchema = z.object({
   role: z.string().min(1),
   name: z.string().optional(),
   sequence: z.number().int().positive().optional(),
-  chars: z.number().int().nonnegative(),
+  tokens: z.number().int().nonnegative(),
   has_media: z.boolean(),
   parts: z.array(contextItemPartSchema),
   raw: z.unknown(),

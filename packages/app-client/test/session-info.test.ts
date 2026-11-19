@@ -263,8 +263,7 @@ describe('sessionInfoStore', () => {
       agent_id: 'main',
       captured_at: 1,
       tokens: { used: 1200, max: 10000 },
-      total_chars: 400,
-      groups: [{ role: 'user', count: 1, chars: 400 }],
+      groups: [{ role: 'user', count: 1, tokens: 1200 }],
     };
     const summary2 = { ...summary1, tokens: { used: 2400, max: 10000 } };
     const nextSummary = deferred<typeof summary1>();
@@ -294,8 +293,7 @@ describe('sessionInfoStore', () => {
       agent_id: 'main',
       captured_at: 1,
       tokens: { used: 1200, max: 10000 },
-      total_chars: 400,
-      groups: [{ role: 'user', count: 1, chars: 400 }],
+      groups: [{ role: 'user', count: 1, tokens: 1200 }],
     };
     const getSessionContextSummary = vi.fn()
       .mockResolvedValueOnce(summary)

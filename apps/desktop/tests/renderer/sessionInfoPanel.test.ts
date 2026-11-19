@@ -448,11 +448,10 @@ describe('SessionInfoPanel', () => {
         agent_id: 'main',
         captured_at: 1000,
         tokens: { used: 640000, max: 1048576 },
-        total_chars: 1000,
         groups: [
-          { role: 'system', count: 1, chars: 200 },
-          { role: 'definition', count: 10, chars: 300 },
-          { role: 'user', count: 4, chars: 500 },
+          { role: 'system', count: 1, tokens: 128000 },
+          { role: 'definition', count: 10, tokens: 192000 },
+          { role: 'user', count: 4, tokens: 320000 },
         ],
       },
     });
@@ -474,17 +473,29 @@ describe('SessionInfoPanel', () => {
     const section = host.querySelector<HTMLElement>('.si-context')!;
     expect(section).not.toBeNull();
     expect(section.querySelector('.sic-title')?.textContent).toBe('上下文');
-    expect(section.querySelector('.sic-usage')?.textContent).toBe('已用 625k · 剩余 399k');
-    const usedRatio = 640000 / 1048576;
+    expect(section.querySelector('.sic-usage')).toBeNull();
+    expect(section.querySelector('.ctx-usage-headline')?.textContent).toBe('62% 已用');
+    expect(section.querySelector('.ctx-usage-total')?.textContent).toBe('625k / 1M');
     const segWidths = Array.from(section.querySelectorAll<HTMLElement>('.ctx-composition-seg'))
       .map((seg) => Number.parseFloat(seg.style.width));
     expect(segWidths).toHaveLength(3);
-    expect(segWidths[0]).toBeCloseTo(20 * usedRatio, 5);
-    expect(segWidths[1]).toBeCloseTo(30 * usedRatio, 5);
-    expect(segWidths[2]).toBeCloseTo(50 * usedRatio, 5);
-    expect([...section.querySelectorAll('.ctx-role-pct')].map((el) => el.textContent)).toEqual(['20%', '30%', '50%']);
-    expect(section.querySelectorAll('.ctx-role-row')).toHaveLength(3);
-    expect(section.textContent).toContain('10 个工具');
+    expect(segWidths[0]).toBeCloseTo((320000 / 1048576) * 100, 5);
+    expect(segWidths[1]).toBeCloseTo((192000 / 1048576) * 100, 5);
+    expect(segWidths[2]).toBeCloseTo((128000 / 1048576) * 100, 5);
+    const rowText = (selector: string) => [...section.querySelectorAll(selector)].map((el) => el.textContent);
+    expect(rowText('.ctx-role-name')).toEqual(['用户', '工具', '系统']);
+    expect(rowText('.ctx-role-tokens')).toEqual(['313k', '188k', '125k']);
+    expect(rowText('.ctx-role-share')).toEqual(['30.5%', '18.3%', '12.2%']);
+
+    vi.useFakeTimers();
+    try {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+      section.querySelectorAll<HTMLElement>('.ctx-role-name')[1]!.focus();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(document.querySelector('[role="tooltip"]')?.textContent?.trim()).toBe('10 个工具');
+    } finally {
+      vi.useRealTimers();
+    }
 
     const actionButtons = section.querySelectorAll<HTMLButtonElement>('.ctx-summary-btn');
     expect(actionButtons).toHaveLength(2);
@@ -541,8 +552,7 @@ describe('SessionInfoPanel', () => {
         agent_id: 'main',
         captured_at: 1000,
         tokens: { used: 1000, max: 10000 },
-        total_chars: 100,
-        groups: [{ role: 'user', count: 1, chars: 100 }],
+        groups: [{ role: 'user', count: 1, tokens: 1000 }],
       },
     });
     const el = mount(SessionInfoPanel, {
@@ -578,8 +588,7 @@ describe('SessionInfoPanel', () => {
           agent_id: 'main',
           captured_at: 1000,
           tokens: { used: 1000, max: 10000 },
-          total_chars: 100,
-          groups: [{ role: 'user', count: 1, chars: 100 }],
+          groups: [{ role: 'user', count: 1, tokens: 1000 }],
         },
       },
     });
@@ -599,8 +608,7 @@ describe('SessionInfoPanel', () => {
           agent_id: 'main',
           captured_at: 1000,
           tokens: { used: 1000, max: 10000 },
-          total_chars: 100,
-          groups: [{ role: 'user', count: 1, chars: 100 }],
+          groups: [{ role: 'user', count: 1, tokens: 1000 }],
         },
       },
     });
@@ -608,6 +616,33 @@ describe('SessionInfoPanel', () => {
     const buttons = host!.querySelectorAll<HTMLButtonElement>('.ctx-summary-btn');
     expect(buttons).toHaveLength(1);
     expect(buttons[0]!.textContent).toContain('压缩上下文');
+  });
+
+  it('shows token counts without window shares when the context limit is unknown', async () => {
+    mount(SessionInfoContext, {
+      state: {
+        status: 'ready',
+        value: {
+          session_id: 's1',
+          agent_id: 'main',
+          captured_at: 1000,
+          tokens: { used: 3000 },
+          groups: [
+            { role: 'user', count: 2, tokens: 1000 },
+            { role: 'tool', count: 1, tokens: 2000 },
+          ],
+        },
+      },
+    });
+    await nextTick();
+    expect(host!.querySelector('.ctx-usage-headline')?.textContent).toBe('已用 2.9k');
+    expect(host!.querySelector('.ctx-usage-total')).toBeNull();
+    expect([...host!.querySelectorAll('.ctx-role-tokens')].map((el) => el.textContent)).toEqual(['2k', '1000']);
+    expect(host!.querySelector('.ctx-role-share')).toBeNull();
+    const widths = [...host!.querySelectorAll<HTMLElement>('.ctx-composition-seg')]
+      .map((seg) => Number.parseFloat(seg.style.width));
+    expect(widths[0]).toBeCloseTo(200 / 3, 5);
+    expect(widths[1]).toBeCloseTo(100 / 3, 5);
   });
 });
 

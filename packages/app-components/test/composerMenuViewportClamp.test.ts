@@ -89,8 +89,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
         agent_id: 'main',
         captured_at: 0,
         tokens: { used: 76200, max: 262144 },
-        total_chars: 1200,
-        groups: [{ role: 'user', count: 1, chars: 1200 }],
+        groups: [{ role: 'user', count: 1, tokens: 76200 }],
       })),
     }),
   };

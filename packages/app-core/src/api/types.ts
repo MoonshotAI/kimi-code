@@ -1268,7 +1268,7 @@ export const MANAGED_KIMI_CODE_PROVIDER_ID = 'managed:kimi-code';
 export interface SessionContextGroup {
   role: string;
   count: number;
-  chars: number;
+  tokens: number;
 }
 
 export interface SessionContextSummary {
@@ -1280,7 +1280,6 @@ export interface SessionContextSummary {
     used: number;
     max?: number;
   };
-  total_chars: number;
   groups: SessionContextGroup[];
 }
 
@@ -1290,7 +1289,7 @@ export interface SessionContextItemSummary {
   name?: string;
   sequence?: number;
   preview: string;
-  chars: number;
+  tokens: number;
   has_media: boolean;
 }
 
@@ -1306,6 +1305,7 @@ export interface SessionContextItemPart {
   kind: 'text' | 'think' | 'definition' | 'function' | 'media';
   text?: string;
   name?: string;
+  tokens?: number;
   data?: unknown;
 }
 
@@ -1314,7 +1314,7 @@ export interface SessionContextItemDetail {
   role: string;
   name?: string;
   sequence?: number;
-  chars: number;
+  tokens: number;
   has_media: boolean;
   parts: SessionContextItemPart[];
   raw: unknown;

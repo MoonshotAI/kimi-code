@@ -2455,14 +2455,6 @@ const ctxTooltip = computed(() => {
   return t('status.ctxTooltip', { used, max, pct: pct.value });
 });
 
-const ctxUsageLabel = computed(() => {
-  const usedRaw = status.value?.ctxUsed ?? 0;
-  const maxRaw = status.value?.ctxMax ?? 0;
-  const used = formatTokens(usedRaw);
-  if (maxRaw <= 0) return `${t('inspector.usedLabel')} ${used}`;
-  return t('inspector.usageSummary', { used, remaining: formatTokens(Math.max(0, maxRaw - usedRaw)) });
-});
-
 const canOpenContextDetail = computed(() => Boolean(panelApi?.openContext));
 
 async function refreshCtxSnapshot(options?: ReadRequestOptions): Promise<void> {
@@ -3590,11 +3582,12 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           >
             <div class="ctx-card-head">
               <span class="ctx-card-title">{{ t('inspector.title') }}</span>
-              <span class="ctx-card-usage">{{ ctxUsageLabel }}</span>
             </div>
 
             <ContextSummaryBody
               :snapshot="ctxSnapshot"
+              :ctx-used="status.ctxUsed"
+              :ctx-max="status.ctxMax"
               :loading="ctxLoading"
               :error="ctxError"
               :can-compact="Boolean(sessionId) && !running"
@@ -4608,11 +4601,6 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   font-size: var(--ui-font-size);
   font-weight: var(--weight-medium);
   color: var(--color-text);
-}
-.ctx-card-usage {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
 }
 
 .model-pill {

@@ -1,9 +1,11 @@
 import {
+  agentContextOf,
   Error2,
   ErrorCodes,
   getOrRestoreAgent,
   IAgentLoopService,
   IAgentProfileService,
+  ISessionTokenCountingService,
   resumeSessionById,
   type IAgentScopeHandle,
   type Scope,
@@ -69,14 +71,10 @@ const MEDIA_PAYLOAD_MIN_CHARS = 512;
 interface MessageOutline {
   readonly role: string;
   readonly name: string | undefined;
-  readonly chars: number;
+  readonly tokens: number;
   readonly count: number;
   readonly hasMedia: boolean;
   readonly preview: string;
-}
-
-function jsonChars(value: unknown): number {
-  return JSON.stringify(value)?.length ?? 0;
 }
 
 function previewOf(chunks: readonly string[]): string {
@@ -92,35 +90,28 @@ function isMediaPart(part: ContentPart): boolean {
   return part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url';
 }
 
-function partChars(part: ContentPart): number {
-  if (part.type === 'text') return part.text.length;
-  if (part.type === 'think') return part.think.length;
-  return jsonChars(part);
-}
-
 function partPreview(part: ContentPart): string {
   if (part.type === 'text') return part.text;
   if (part.type === 'think') return part.think;
   return `[${part.type}]`;
 }
 
-function outlineMessages(messages: readonly Message[]): MessageOutline[] {
+function outlineMessages(
+  messages: readonly Message[],
+  estimator: Pick<ISessionTokenCountingService, 'estimateMessage' | 'estimateTools'>,
+): MessageOutline[] {
   const toolNames = new Map<string, string>();
   return messages.map((message) => {
     const declared = message.role === 'system' ? (message.tools ?? []) : [];
     const calls = message.role === 'assistant' ? message.toolCalls : [];
     for (const call of calls) toolNames.set(call.id, call.name);
-    const chars =
-      message.content.reduce((sum, part) => sum + partChars(part), 0) +
-      calls.reduce((sum, call) => sum + call.name.length + 12 + (call.arguments?.length ?? 0), 0) +
-      declared.reduce((sum, tool) => sum + jsonChars(tool), 0);
     return {
       role: declared.length > 0 ? 'definition' : message.role,
       name:
         message.role === 'tool'
           ? (toolNames.get(message.toolCallId) ?? message.toolCallId)
           : (calls.length > 0 ? calls : declared).map((entry) => entry.name).join(', ') || undefined,
-      chars,
+      tokens: estimator.estimateMessage(message) + estimator.estimateTools(declared),
       count: Math.max(1, declared.length),
       hasMedia: message.content.some(isMediaPart),
       preview: previewOf([...message.content.map(partPreview), ...declared.map((tool) => tool.description)]),
@@ -242,20 +233,32 @@ export function splitSystemPromptParts(systemPrompt: string): ContextItemPart[] 
 function readAgentContextSources(agent: IAgentScopeHandle) {
   const loop = agent.accessor.get(IAgentLoopService);
   const profile = agent.accessor.get(IAgentProfileService);
+  const tokenCounting = agent.accessor.get(ISessionTokenCountingService);
   const legacyStatus = readLegacyStatus(agent);
   const request = loop.previewRequestContent();
-  const modelAlias =
-    loop.data().modelAlias || profile.data().modelAlias || legacyStatus?.model || undefined;
+  const systemPrompt = request.systemPrompt || profile.getSystemPrompt();
+  const tools = request.tools.filter((tool) => tool.deferred !== true);
+  const outlines = outlineMessages(request.messages, tokenCounting);
+  const systemTokens = tokenCounting.estimateText(systemPrompt);
+  const toolTokens = tools.map((tool) => tokenCounting.estimateTools([tool]));
+  const estimatedTotal = [systemTokens, ...toolTokens, ...outlines.map((outline) => outline.tokens)]
+    .reduce((sum, tokens) => sum + tokens, 0);
+  const measuredTotal =
+    tokenCounting.latestMeasured(agentContextOf(agent)) > 0 ? legacyStatus?.contextTokens : undefined;
+  const used = measuredTotal ?? estimatedTotal;
+  const scale = estimatedTotal > 0 ? used / estimatedTotal : 0;
+  const allocate = (estimate: number): number => Math.round(estimate * scale);
   return {
-    systemPrompt: request.systemPrompt || profile.getSystemPrompt(),
-    tools: request.tools.filter((tool) => tool.deferred !== true),
+    systemPrompt,
+    tools,
     messages: request.messages,
-    outlines: outlineMessages(request.messages),
-    modelAlias,
-    tokens: {
-      used: legacyStatus?.contextTokens ?? 0,
-      max: legacyStatus?.maxContextTokens,
-    },
+    outlines: outlines.map((outline) => ({ ...outline, tokens: allocate(outline.tokens) })),
+    systemTokens: allocate(systemTokens),
+    toolTokens: toolTokens.map(allocate),
+    textTokens: (text: string): number => allocate(tokenCounting.estimateText(text)),
+    modelAlias:
+      loop.data().modelAlias || profile.data().modelAlias || legacyStatus?.model || undefined,
+    tokens: { used, max: legacyStatus?.maxContextTokens },
   };
 }
 
@@ -263,18 +266,16 @@ type ContextSources = ReturnType<typeof readAgentContextSources>;
 
 function buildContextSummary(sessionId: string, agentId: string, sources: ContextSources): ContextSummary {
   const groups = new Map<string, ContextGroup>();
-  let totalChars = 0;
-  const addGroup = (role: string, chars: number, count: number): void => {
-    totalChars += chars;
-    const group = groups.get(role) ?? { role, count: 0, chars: 0 };
+  const addGroup = (role: string, tokens: number, count: number): void => {
+    const group = groups.get(role) ?? { role, count: 0, tokens: 0 };
     group.count += count;
-    group.chars += chars;
+    group.tokens += tokens;
     groups.set(role, group);
   };
 
-  if (sources.systemPrompt.length > 0) addGroup('system', sources.systemPrompt.length, 1);
-  for (const tool of sources.tools) addGroup('definition', jsonChars(tool), 1);
-  for (const outline of sources.outlines) addGroup(outline.role, outline.chars, outline.count);
+  if (sources.systemPrompt.length > 0) addGroup('system', sources.systemTokens, 1);
+  for (const tokens of sources.toolTokens) addGroup('definition', tokens, 1);
+  for (const outline of sources.outlines) addGroup(outline.role, outline.tokens, outline.count);
 
   return {
     session_id: sessionId,
@@ -282,7 +283,6 @@ function buildContextSummary(sessionId: string, agentId: string, sources: Contex
     captured_at: Date.now(),
     model: sources.modelAlias,
     tokens: sources.tokens,
-    total_chars: totalChars,
     groups: [...groups.values()],
   };
 }
@@ -297,7 +297,7 @@ function listContextItems(sources: ContextSources): {
     name: tool.name,
     sequence: undefined,
     preview: previewOf([tool.description]),
-    chars: jsonChars(tool),
+    tokens: sources.toolTokens[index] ?? 0,
     has_media: false,
   }));
   const systemItems: ContextItemSummary[] =
@@ -309,7 +309,7 @@ function listContextItems(sources: ContextSources): {
             name: undefined,
             sequence: undefined,
             preview: previewOf([sources.systemPrompt]),
-            chars: sources.systemPrompt.length,
+            tokens: sources.systemTokens,
             has_media: false,
           },
         ]
@@ -320,7 +320,7 @@ function listContextItems(sources: ContextSources): {
     name: outline.name,
     sequence: index + 1,
     preview: outline.preview,
-    chars: outline.chars,
+    tokens: outline.tokens,
     has_media: outline.hasMedia,
   }));
   return { toolItems, otherItems: [...systemItems, ...messageItems] };
@@ -333,22 +333,25 @@ function readContextItem(sources: ContextSources, itemId: string): ContextItemDe
       role: 'system',
       name: undefined,
       sequence: undefined,
-      chars: sources.systemPrompt.length,
+      tokens: sources.systemTokens,
       has_media: false,
-      parts: splitSystemPromptParts(sources.systemPrompt),
+      parts: splitSystemPromptParts(sources.systemPrompt).map((part) => ({
+        ...part,
+        tokens: sources.textTokens(part.text ?? ''),
+      })),
       raw: sources.systemPrompt,
     };
   }
   if (itemId.startsWith('tool-')) {
     const index = contextItemIndex(itemId, 'tool-');
     const tool = index === undefined ? undefined : sources.tools[index];
-    if (tool === undefined) return undefined;
+    if (index === undefined || tool === undefined) return undefined;
     return {
       id: itemId,
       role: 'definition',
       name: tool.name,
       sequence: undefined,
-      chars: jsonChars(tool),
+      tokens: sources.toolTokens[index] ?? 0,
       has_media: false,
       parts: [{ kind: 'definition', name: tool.name, data: tool }],
       raw: tool,
@@ -364,7 +367,7 @@ function readContextItem(sources: ContextSources, itemId: string): ContextItemDe
       role: outline.role,
       name: outline.name,
       sequence: index + 1,
-      chars: outline.chars,
+      tokens: outline.tokens,
       has_media: outline.hasMedia,
       parts: messageParts(message),
       raw: redactMessageMedia(message),

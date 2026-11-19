@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Badge, Button, Dialog, EmptyState, Icon, IconButton, ScrollArea, SegmentedControl, Spinner } from '@moonshot-ai/app-ui';
 import { getKimiWebApi } from '@moonshot-ai/app-client/client';
-import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
+import { copyTextToClipboard, formatTokens } from '@moonshot-ai/app-core/lib';
 import type { SessionContextItemDetail, SessionContextItemSummary } from '@moonshot-ai/app-core/api';
 import ContextPartView from './ContextPartView.vue';
 import JsonTree from './JsonTree.vue';
@@ -56,8 +56,9 @@ watch([
   () => props.sessionId,
   () => props.item.id,
   () => props.item.role,
-  () => props.item.chars,
+  () => props.item.name,
   () => props.item.preview,
+  () => props.item.has_media,
 ], () => {
   detail.value = null;
   resetCopyState();
@@ -172,7 +173,7 @@ function onKeydown(event: KeyboardEvent): void {
       <div class="message-toolbar">
         <SegmentedControl v-model="mode" :options="modeOptions" size="xs" :aria-label="title" />
         <div class="message-actions">
-          <span class="message-chars">{{ t('inspector.characters', { n: item.chars.toLocaleString() }) }}</span>
+          <span class="message-tokens">{{ t('inspector.tokens', { n: formatTokens(item.tokens) }) }}</span>
           <Button size="xs" variant="text" :disabled="!detail" @click="copyCurrentView">
             <Icon :name="copyState === 'copied' ? 'check' : copyState === 'failed' ? 'close' : 'copy'" size="sm" />
             {{ copyLabel }}
@@ -226,7 +227,7 @@ function onKeydown(event: KeyboardEvent): void {
 .message-position { color: var(--color-text-faint); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .message-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) var(--space-3); border-bottom: var(--p-hairline) solid var(--color-line); }
 .message-actions { display: flex; align-items: center; gap: var(--space-1); }
-.message-chars { color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
+.message-tokens { color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
 .message-loading { display: flex; align-items: center; justify-content: center; flex: 1; }
 .message-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3); color: var(--color-danger); }
 .message-body { flex: 1; min-height: 0; }

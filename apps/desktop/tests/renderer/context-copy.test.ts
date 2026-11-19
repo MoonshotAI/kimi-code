@@ -6,7 +6,7 @@ function detail(parts: SessionContextItemDetail['parts']): SessionContextItemDet
   return {
     id: 'message-0',
     role: 'assistant',
-    chars: 0,
+    tokens: 0,
     has_media: false,
     parts,
     raw: null,
@@ -42,7 +42,7 @@ describe('context copy text', () => {
     expect(contextItemText({
       id: 'system',
       role: 'system',
-      chars: 25,
+      tokens: 25,
       has_media: false,
       parts: [
         { kind: 'text', text: 'Intro' },

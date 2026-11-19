@@ -47,7 +47,7 @@ const usageLabel = computed(() => {
   <section class="si-context" :class="{ 'is-collapsed': !expanded }">
     <button class="sic-heading" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
       <span class="sic-title">{{ t('inspector.title') }}</span>
-      <span v-if="usageLabel" class="sic-usage">{{ usageLabel }}</span>
+      <span v-if="usageLabel && !expanded" class="sic-usage">{{ usageLabel }}</span>
       <Icon class="sic-chevron" :class="{ collapsed: !expanded }" name="chevron-down" size="sm" />
     </button>
 
@@ -55,6 +55,8 @@ const usageLabel = computed(() => {
       v-if="expanded"
       class="sic-body"
       :snapshot="snapshot"
+      :ctx-used="ctxUsed"
+      :ctx-max="ctxMax"
       :loading="loading"
       :error="error"
       :can-compact="canCompact"
