@@ -689,8 +689,7 @@ describe('workspaces store session orchestration', () => {
     hostsStore().loaded = false;
   });
 
-  it('exits the active session and switches away when its host is disabled or removed, but stays on connection failure', async () => {
-    const { nextTick } = await import('vue');
+  it('exits the active session and clears host state when a host is disabled or removed, but stays on connection failure', async () => {
     const store = workspacesStore();
     store.workspaces = [
       makeWorkspace('wd_remote', '/srv/a', { hostId: 'devbox' }),
@@ -700,19 +699,60 @@ describe('workspaces store session orchestration', () => {
     sessionsStore().setSessions([makeSession('s_remote', '2026-01-02T00:00:00.000Z', { workspaceId: 'wd_remote' })]);
     sessionsStore().setActiveSessionId('s_remote');
     hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'ready' }]);
-    await nextTick();
 
     hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'disconnected', connectError: 'Connection refused' }]);
-    await nextTick();
     expect(sessionsStore().activeSessionId).toBe('s_remote');
     expect(store.storedActiveWorkspaceId).toBe('wd_remote');
 
     hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'disconnected', enabled: false }]);
-    await nextTick();
+    store.handleUnavailableHosts(['devbox']);
     expect(sessionsStore().activeSessionId).toBeUndefined();
     expect(store.storedActiveWorkspaceId).toBe('wd_local');
+    expect(store.workspaces.map((w) => w.id)).toEqual(['wd_remote', 'wd_local']);
+    await expect(store.ensureWorkspaceTrust('wd_remote')).resolves.toEqual({ status: 'aborted' });
     expect(hooks.setSessionLoading).toHaveBeenCalledWith(false);
     expect(hooks.writeSessionUrl).toHaveBeenCalledWith(undefined, 'replace');
+
+    sessionsStore().setSessions([]);
+    store.workspaces = [makeWorkspace('wd_remote', '/srv/a', { hostId: 'devbox' })];
+    store.storedActiveWorkspaceId = 'wd_remote';
+    store.trustByWorkspaceId = { wd_remote: true };
+    store.trustErrorByWorkspaceId = {
+      wd_remote: { operation: 'read', message: 'not configured', originalError: new Error('not configured') },
+    };
+    store.setSessionCursor('wd_remote', 's_remote');
+    store.setSessionHasMore('wd_remote', true);
+    hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'ready' }]);
+    expect(store.activeWorkspaceId).toBe('wd_remote');
+
+    hostsStore().applySnapshot([]);
+    expect(store.removeHostWorkspaces(['devbox'])).toEqual(['wd_remote']);
+    expect(store.workspaces).toEqual([]);
+    expect(store.storedActiveWorkspaceId).toBeNull();
+    expect(store.activeWorkspaceId).toBeNull();
+    expect(store.trustByWorkspaceId.wd_remote).toBeUndefined();
+    expect(store.trustErrorByWorkspaceId.wd_remote).toBeUndefined();
+    expect(store.sessionsCursorByWorkspace.wd_remote).toBeUndefined();
+    expect(store.sessionsHasMoreByWorkspace.wd_remote).toBeUndefined();
+
+    store.workspaces = [
+      makeWorkspace('wd_local', '/local'),
+      makeWorkspace('wd_other', '/srv/b', { hostId: 'otherbox' }),
+    ];
+    store.storedActiveWorkspaceId = 'wd_local';
+    store.trustErrorByWorkspaceId = {
+      wd_other: { operation: 'read', message: 'not configured', originalError: new Error('not configured') },
+    };
+    store.trustLoadingByWorkspaceId = { wd_other: true };
+    hostsStore().applySnapshot([{ id: 'otherbox', host: 'other.test', status: 'ready' }]);
+    expect(store.activeWorkspaceId).toBe('wd_local');
+
+    hostsStore().applySnapshot([]);
+    expect(store.removeHostWorkspaces(['otherbox'])).toEqual(['wd_other']);
+    expect(store.workspaces.map((w) => w.id)).toEqual(['wd_local']);
+    expect(store.activeWorkspaceId).toBe('wd_local');
+    expect(store.trustErrorByWorkspaceId.wd_other).toBeUndefined();
+    expect(store.trustLoadingByWorkspaceId.wd_other).toBe(false);
     hostsStore().byId = {};
     hostsStore().loaded = false;
   });
