@@ -9,18 +9,49 @@ import { expect, type TestContext } from 'vitest';
 
 import { getFdAssetName } from '#/utils/process/fd-detect';
 
-function unavailableDownloads(): FetchStub[] {
+export function cliFetchStubs(): FetchStub[] {
   const asset = getFdAssetName();
-  if (asset === null) return [];
-  return Object.values(KIMI_REGION_PROFILES).map(({ cdnBase }) => ({ method: 'GET', url: `${cdnBase}/fd/${asset}`, status: 404 }));
+  const downloads = asset === null ? [] : Object.values(KIMI_REGION_PROFILES).map(({ cdnBase }) => ({ method: 'GET', url: `${cdnBase}/fd/${asset}`, status: 404 }));
+  return [...kimiServiceStubs(), ...downloads];
 }
 
-async function startTerminal(model: FakeModel, home: TestHome) {
+export interface TerminalOptions {
+  readonly columns?: number;
+  readonly rows?: number;
+}
+
+const KEYS = {
+  Enter: '\r',
+  Escape: '\x1b',
+  Tab: '\t',
+  'Shift+Tab': '\x1b[Z',
+  Backspace: '\x7f',
+  Up: '\x1b[A',
+  Down: '\x1b[B',
+  Right: '\x1b[C',
+  Left: '\x1b[D',
+  Home: '\x1b[H',
+  End: '\x1b[F',
+  PageUp: '\x1b[5~',
+  PageDown: '\x1b[6~',
+  'Ctrl+C': '\x03',
+  'Ctrl+D': '\x04',
+} as const;
+
+export type TerminalKey = keyof typeof KEYS;
+
+const ECHO_TAIL = 16;
+
+function occurrences(text: string, part: string): number {
+  return text.split(part).length - 1;
+}
+
+async function startTerminal(model: FakeModel, home: TestHome, options: TerminalOptions) {
   await model.listen();
   const modelName = 'terminal-smoke-model';
   await writeKimiConfig(home.dataDir, fakeModelConfig(model, { modelName }));
-  const columns = 100;
-  const rows = 36;
+  const columns = options.columns ?? 100;
+  const rows = options.rows ?? 36;
   const screen = new VirtualTerminal(columns, rows);
   const cli = TestProcess.start({
     label: 'CLI',
@@ -29,7 +60,10 @@ async function startTerminal(model: FakeModel, home: TestHome) {
     env: kimiCliEnv(home, { KIMI_CODE_TUI_FULL_SCREEN: '0', COLUMNS: String(columns), LINES: String(rows) }),
     logDir: home.root,
     stdin: true,
-    fetchStubs: [...kimiServiceStubs(), ...unavailableDownloads()],
+    fetchStubs: cliFetchStubs(),
+  });
+  screen.onReply((reply) => {
+    if (!cli.exited) cli.stdin.write(reply);
   });
   cli.onOutput((data) => screen.write(data));
   const inputs: string[] = [];
@@ -45,27 +79,30 @@ async function startTerminal(model: FakeModel, home: TestHome) {
     if (inputs.length > 12) inputs.shift();
     cli.stdin.write(input);
   };
-  const waitText = async (value: string, visible = true, timeout = TIMEOUTS.frame) => {
+  const waitFor = async (description: string, ready: (screen: string) => boolean, timeout = TIMEOUTS.frame) => {
     try {
-      await expect.poll(async () => cli.exited || (await viewport()).includes(value) === visible, { timeout }).toBe(true);
+      await expect.poll(async () => cli.exited || ready(await viewport()), { timeout }).toBe(true);
       if (cli.exited) throw new Error('CLI exited');
     } catch (cause) {
-      throw new Error(`Waiting for ${JSON.stringify(value)} to ${visible ? 'appear' : 'disappear'}\n${await diagnostics()}`, { cause });
+      throw new Error(`Waiting for ${description}\n${await diagnostics()}`, { cause });
     }
   };
   return {
     modelName, diagnostics, viewport,
-    waitForText: (text: string, timeout?: number) => waitText(text, true, timeout),
-    waitForTextGone: (text: string, timeout?: number) => waitText(text, false, timeout),
+    waitForText: (text: string, timeout?: number) => waitFor(`${JSON.stringify(text)} to appear`, (screen) => screen.includes(text), timeout),
+    waitForTextGone: (text: string, timeout?: number) => waitFor(`${JSON.stringify(text)} to disappear`, (screen) => !screen.includes(text), timeout),
     scrollback: async () => { await screen.flush(); return screen.getScrollBuffer().join('\n'); },
     type: async (text: string) => {
+      const echo = text.length <= columns - 4 ? text : text.slice(-ECHO_TAIL);
+      const before = occurrences(await viewport(), echo);
       for (const char of text) {
         send(char);
         await delayBetweenKeystrokes(20);
       }
+      await waitFor(`the typed text ${JSON.stringify(echo)} to appear`, (screen) => occurrences(screen, echo) > before);
     },
     paste: (text: string) => send(`\x1b[200~${text}\x1b[201~`),
-    press: (key: 'Enter' | 'Escape' | 'Ctrl+C') => send({ Enter: '\r', Escape: '\x1b', 'Ctrl+C': '\x03' }[key]),
+    press: (key: TerminalKey) => send(KEYS[key]),
     close: async () => {
       const early = cli.exited;
       if (!early) cli.stdin.write('\x03\x1b[200~/exit\x1b[201~\r');
@@ -94,17 +131,21 @@ export interface TerminalFixtures extends HomeFixtures, ModelFixtures {
   terminal: TerminalSession;
 }
 
-export const terminalFixtures = {
-  ...homeFixtures(),
-  ...modelFixtures(),
-  terminal: async ({ model, testHome, onTestFailed }: HomeFixtures & ModelFixtures & TestContext, use: Use<TerminalSession>) => {
-    const terminal = await startTerminal(model, testHome);
-    onTestFailed(async () => { process.stderr.write((await terminal.diagnostics()) + '\n'); });
-    try {
-      await terminal.waitForText(terminal.modelName, TIMEOUTS.server);
-      await use(terminal);
-    } finally {
-      await terminal.close();
-    }
-  },
-};
+export function terminalFixturesWith(options: TerminalOptions) {
+  return {
+    ...homeFixtures(),
+    ...modelFixtures(),
+    terminal: async ({ model, testHome, onTestFailed }: HomeFixtures & ModelFixtures & TestContext, use: Use<TerminalSession>) => {
+      const terminal = await startTerminal(model, testHome, options);
+      onTestFailed(async () => { process.stderr.write((await terminal.diagnostics()) + '\n'); });
+      try {
+        await terminal.waitForText(terminal.modelName, TIMEOUTS.server);
+        await use(terminal);
+      } finally {
+        await terminal.close();
+      }
+    },
+  };
+}
+
+export const terminalFixtures = terminalFixturesWith({});
