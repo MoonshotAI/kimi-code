@@ -2,7 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, join, normalize, resolve } from 'node:path';
+import { join, posix, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const CHECK_FILE = 'scripts/checks/instructions.mjs';
@@ -62,19 +62,19 @@ function ancestorsOf(directory) {
   const ancestors = [directory];
   let current = directory;
   while (current !== '.') {
-    current = dirname(current);
+    current = posix.dirname(current);
     ancestors.push(current);
   }
   return ancestors;
 }
 
 export function resolveReference(file, reference, exists) {
-  const directory = dirname(file);
-  if (reference.kind === 'link') return exists(normalize(join(directory, reference.value))) ? 'found' : 'missing';
+  const directory = posix.dirname(file);
+  if (reference.kind === 'link') return exists(posix.join(directory, reference.value)) ? 'found' : 'missing';
   const first = reference.value.split('/')[0];
-  const bases = ancestorsOf(directory).filter((base) => exists(join(base, first)));
+  const bases = ancestorsOf(directory).filter((base) => exists(posix.join(base, first)));
   if (bases.length === 0) return 'skipped';
-  return bases.some((base) => exists(join(base, reference.value))) ? 'found' : 'missing';
+  return bases.some((base) => exists(posix.join(base, reference.value))) ? 'found' : 'missing';
 }
 
 export function invalidEntries(entries) {
@@ -107,7 +107,7 @@ export function entriesOf(files) {
     let current = file;
     while (current !== '.' && !entries.has(current)) {
       entries.add(current);
-      current = dirname(current);
+      current = posix.dirname(current);
     }
   }
   return entries;
@@ -191,8 +191,8 @@ export function main(args) {
     return 1;
   }
   const entries = entriesOf(repoFiles);
-  const exists = (path) => entries.has(normalize(path));
-  const files = repoFiles.filter((file) => basename(file) === 'AGENTS.md').toSorted();
+  const exists = (path) => entries.has(path);
+  const files = repoFiles.filter((file) => posix.basename(file) === 'AGENTS.md').toSorted();
   const unresolved = config.unresolved ?? [];
   const missing = [];
   let resolved = 0;
@@ -219,6 +219,6 @@ export function main(args) {
   return 0;
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === import.meta.filename) {
+if (import.meta.main) {
   process.exitCode = main(process.argv.slice(2));
 }

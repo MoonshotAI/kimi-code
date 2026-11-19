@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
@@ -9,6 +13,32 @@ import {
   referencesIn,
   resolveReference,
 } from './instructions.mjs';
+
+await test('CLI resolves nested Git paths and reports broken links through a linked checkout', (t) => {
+  const temp = mkdtempSync(join(tmpdir(), 'instruction-check-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const repo = join(temp, 'repo');
+  const checks = join(repo, 'scripts', 'checks');
+  const docs = join(repo, 'packages', 'example', 'docs');
+  mkdirSync(checks, { recursive: true });
+  mkdirSync(docs, { recursive: true });
+  execFileSync('git', ['init', '--quiet'], { cwd: repo });
+  copyFileSync(new URL('./instructions.mjs', import.meta.url), join(checks, 'instructions.mjs'));
+  writeFileSync(join(checks, 'instructions.json'), '{}');
+  writeFileSync(join(docs, 'guide.md'), '');
+  const guide = join(docs, 'AGENTS.md');
+  writeFileSync(guide, '[guide](./guide.md) `docs/guide.md` `packages/example/docs/`');
+  const success = spawnSync(process.execPath, ['scripts/checks/instructions.mjs'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(success.status, 0, success.stderr);
+  assert.match(success.stdout, /3 references resolve/);
+
+  writeFileSync(guide, '[missing](./missing.md)');
+  const linked = join(temp, 'linked');
+  symlinkSync(repo, linked, 'junction');
+  const failure = spawnSync(process.execPath, [join(linked, 'scripts', 'checks', 'instructions.mjs')], { encoding: 'utf8' });
+  assert.equal(failure.status, 1, failure.stderr);
+  assert.match(failure.stderr, /packages\/example\/docs\/AGENTS\.md:1 {2}\.\/missing\.md/);
+});
 
 await test('referencesIn collects links and path-like code spans outside code fences', () => {
   const text = [

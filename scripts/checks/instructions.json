@@ -15,11 +15,6 @@
     },
     {
       "file": "docs/AGENTS.md",
-      "reference": "./config.md",
-      "why": "The example link in the spacing rule for mixed Chinese and English text; it is not meant to resolve."
-    },
-    {
-      "file": "docs/AGENTS.md",
       "reference": "docs/.vitepress/dist",
       "why": "The VitePress build output; it exists only after the docs site is built."
     },
