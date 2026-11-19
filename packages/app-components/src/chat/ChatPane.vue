@@ -1024,19 +1024,19 @@ function historyTurnKey(turn: ChatTurn): string {
 function historyTurnKind(turn: ChatTurn): string {
   return turn.role;
 }
-function historyTurnGap(turn: ChatTurn, index: number): number {
-  return index === 0 && !props.hasMoreMessages && !props.loadingMore ? 0 : turn.role === 'assistant' ? 10 : 16;
+function historyTurnEstimate(turn: ChatTurn): number {
+  return estimateTurnHeight(turn) + (turn.role === 'assistant' ? 10 : 16);
 }
 const historyList = computed(() => transcriptList
   ? {
       is: TranscriptList,
       key: `v2:${props.sessionId ?? 'empty'}`,
-      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, estimate: estimateTurnHeight, kind: historyTurnKind, gap: historyTurnGap, renderAll: props.renderAllHistory },
+      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, estimate: historyTurnEstimate, kind: historyTurnKind, renderAll: props.renderAllHistory },
     }
   : {
       is: HistoryWindow,
       key: `${props.windowHistory}:${props.sessionId ?? 'empty'}`,
-      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, enabled: props.windowHistory, tail: 4, overscan: 3, estimate: estimateTurnHeight, gap: historyTurnGap },
+      props: { scope: props.sessionId ?? 'empty', state: historyState, items: props.turns, itemKey: historyTurnKey, enabled: props.windowHistory, tail: 4, overscan: 3, estimate: estimateTurnHeight },
     });
 const historyRef = ref<{ reveal: (key: string) => Promise<HTMLElement | null>; release: () => void } | null>(null);
 async function revealTurn(id: string): Promise<HTMLElement | null> {
@@ -1322,7 +1322,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 </script>
 
 <template>
-  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
+  <div class="chat" :class="{ 'chat-unwindowed': !windowHistory }" :data-first-kind="turns[0]?.role" ref="chatRootRef" tabindex="-1" @mouseup="onChatMouseup" @keyup="onChatKeyup" @pointerdown="onChatPointerdown" @contextmenu="onChatContextMenu">
     <BrowserReferenceDetails :state="browserDetails.state.value" @resolve="browserDetails.finish" />
     <div v-if="sessionLoadingVisible" :ref="transcriptAux('loading')" class="chat-loading">
       <Spinner size="sm" />
@@ -1352,6 +1352,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 
     <component :is="historyList.is" ref="historyRef" :key="historyList.key" v-bind="historyList.props">
       <template #default="{ item: turn, index: ti }: { item: ChatTurn; index: number }">
+      <div class="chat-row" :data-row-kind="turn.role">
       <template v-if="turn.role === 'user'">
         <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
@@ -1473,7 +1474,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
            compaction lookup: where the API is blanked (an embedded subagent
            transcript, whose turns the root lookup cannot resolve) the label
            stays a plain inert divider. -->
-      <div v-else-if="turn.role === 'compaction'" class="compact-divider turn-anchor" :class="{ 'compact-divider-windowed': windowHistory }" :data-turn-id="turn.id" role="separator">
+      <div v-else-if="turn.role === 'compaction'" class="compact-divider turn-anchor" :data-turn-id="turn.id" role="separator">
         <span class="cd-line" aria-hidden="true" />
         <button
           v-if="turn.text && panelApi?.openCompaction !== undefined"
@@ -1600,6 +1601,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
         <span class="cd-line" aria-hidden="true" />
         <span class="cd-label" role="status">{{ t('conversation.turnInterrupted') }}</span>
         <span class="cd-line" aria-hidden="true" />
+      </div>
       </div>
       </template>
     </component>
@@ -1820,11 +1822,11 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .chat {
   text-autospace: normal;
   --chat-turn-gap: 16px;
+  --chat-assistant-gap: 10px;
   --chat-block-gap: 10px;
   --chat-strip-gap: 12px;
   --chat-group-gap: 6px;
   --chat-strip-tight: 4px;
-  --chat-section-gap: 18px;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -1837,21 +1839,29 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .chat :deep(code) { text-autospace: no-autospace; }
 .chat .chat-empty { align-self: stretch; }
 
-.chat > .u-turn,
-.chat > .a-msg,
-.chat > .compact-divider,
-.chat > .cron-notice,
+.chat-row {
+  padding-top: var(--chat-turn-gap);
+}
+.chat-row[data-row-kind='assistant'] {
+  padding-top: var(--chat-assistant-gap);
+}
+.chat > .chat-row:first-child {
+  padding-top: 0;
+}
+.chat[data-first-kind] > :is(.history-window, .transcript-list) {
+  margin-top: calc(-1 * var(--chat-turn-gap));
+}
+.chat[data-first-kind='assistant'] > :is(.history-window, .transcript-list) {
+  margin-top: calc(-1 * var(--chat-assistant-gap));
+}
+.chat > .top-sentinel + :is(.history-window, .transcript-list) {
+  margin-top: 0;
+}
+
 .chat > .sending-placeholder,
 .chat > :deep(.activity-notice) {
   margin-top: var(--chat-turn-gap);
 }
-.chat > .a-msg {
-  margin-top: 10px;
-}
-.chat > .u-turn:first-child,
-.chat > .a-msg:first-child,
-.chat > .compact-divider:first-child,
-.chat > .cron-notice:first-child,
 .chat > .sending-placeholder:first-child,
 .chat > :deep(.activity-notice:first-child) {
   margin-top: 0;
@@ -2025,8 +2035,6 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .u-copy svg { display: block; flex: none; }
 .u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
 .u-edit-wrap { display: flex; justify-content: flex-end; }
-.chat > .u-edit-wrap { margin-top: 4px; }
-.chat > .u-edit-wrap + .a-msg { margin-top: 8px; }
 
 .compact-divider {
   display: flex;
@@ -2034,16 +2042,10 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   gap: 10px;
   align-self: stretch;
   width: 100%;
-  margin: var(--chat-section-gap) 0 0;
-}
-.compact-divider-windowed {
-  margin-top: 0;
+  margin: 0;
 }
 .compact-divider-interrupted {
   margin-top: var(--chat-turn-gap);
-}
-.chat > .compact-divider:first-child {
-  margin-top: 0;
 }
 .cd-line {
   flex: 1;
