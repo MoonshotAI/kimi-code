@@ -44,27 +44,13 @@ export const contextItemsResponseSchema = z.object({
 });
 export type ContextItemsResponse = z.infer<typeof contextItemsResponseSchema>;
 
-export interface ContextItemPart {
-  kind: string;
-  text?: string;
-  name?: string;
-  id?: string;
-  failed?: boolean;
-  data?: unknown;
-  children?: ContextItemPart[];
-}
-
-export const contextItemPartSchema: z.ZodType<ContextItemPart> = z.lazy(() =>
-  z.object({
-    kind: z.string().min(1),
-    text: z.string().optional(),
-    name: z.string().optional(),
-    id: z.string().optional(),
-    failed: z.boolean().optional(),
-    data: z.unknown().optional(),
-    children: z.array(contextItemPartSchema).optional(),
-  }),
-);
+export const contextItemPartSchema = z.object({
+  kind: z.enum(['text', 'think', 'definition', 'function', 'media']),
+  text: z.string().optional(),
+  name: z.string().optional(),
+  data: z.unknown().optional(),
+});
+export type ContextItemPart = z.infer<typeof contextItemPartSchema>;
 
 export const contextItemDetailSchema = z.object({
   id: z.string().min(1),

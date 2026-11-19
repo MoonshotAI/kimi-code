@@ -19,9 +19,8 @@ function asObj(val: unknown): Record<string, unknown> {
 
 const toolDefinition = computed(() => {
   if (props.part.kind !== 'definition') return null;
-  const raw = asObj(props.part.data);
-  const fn = Object.keys(asObj(raw['function'])).length ? asObj(raw['function']) : raw;
-  const schema = asObj(fn['parameters'] ?? fn['input_schema'] ?? fn['inputSchema']);
+  const tool = asObj(props.part.data);
+  const schema = asObj(tool['parameters']);
   const properties = asObj(schema['properties']);
   const required = new Set(Array.isArray(schema['required']) ? schema['required'].map(String) : []);
   const parameters = Object.entries(properties).map(([name, value]) => {
@@ -37,8 +36,8 @@ const toolDefinition = computed(() => {
   });
   const extraSchema = Object.fromEntries(Object.entries(schema).filter(([k]) => !['type', 'properties', 'required'].includes(k)));
   return {
-    name: props.part.name || (typeof fn['name'] === 'string' ? fn['name'] : ''),
-    description: typeof fn['description'] === 'string' ? fn['description'] : '',
+    name: props.part.name || (typeof tool['name'] === 'string' ? tool['name'] : ''),
+    description: typeof tool['description'] === 'string' ? tool['description'] : '',
     parameters,
     extraSchema,
   };
@@ -103,17 +102,8 @@ onBeforeUnmount(() => clearTimeout(resetTimer));
       <div class="part-head"><span>{{ t('inspector.toolCall') }}</span><code>{{ part.name || '—' }}</code></div>
       <div class="part-tree"><JsonTree :value="part.data" root /></div>
     </div>
-    <div v-else-if="part.kind === 'result'" class="part-box" :class="{ failed: part.failed }">
-      <div class="part-head"><span>{{ t('inspector.toolOutput') }}</span><code v-if="part.name || part.id">{{ part.name || part.id }}</code></div>
-      <div v-if="part.children?.length" class="part-children"><ContextPartView v-for="(child, index) in part.children" :key="index" :part="child" /></div>
-      <div v-else class="part-tree"><JsonTree :value="part.data" root /></div>
-    </div>
     <div v-else-if="part.kind === 'media'" class="part-box">
       <div class="part-head"><span>{{ t('inspector.attachmentData') }}</span><code>{{ part.name }}</code><span class="part-note">{{ t('inspector.mediaHint') }}</span></div>
-      <div class="part-tree"><JsonTree :value="part.data" root /></div>
-    </div>
-    <div v-else class="part-box">
-      <div class="part-head"><span>{{ part.name || t('inspector.structuredContent') }}</span></div>
       <div class="part-tree"><JsonTree :value="part.data" root /></div>
     </div>
   </section>
@@ -124,13 +114,11 @@ onBeforeUnmount(() => clearTimeout(resetTimer));
 .part-copy { position: absolute; z-index: 1; top: 0; right: var(--space-1); display: flex; align-items: center; height: var(--space-6); opacity: .55; }
 .context-part:hover > .part-copy, .part-copy:focus-within { opacity: 1; }
 .part-box { border: var(--p-hairline) solid var(--color-line); border-radius: var(--radius-sm); overflow: hidden; background: var(--color-bg); }
-.part-box.failed { border-color: var(--color-danger-bd); }
 .part-head { display: flex; align-items: center; gap: var(--space-2); min-height: var(--space-6); padding: var(--space-1) var(--space-8) var(--space-1) var(--space-3); border-bottom: var(--p-hairline) solid var(--color-line); color: var(--color-text-muted); font-size: var(--text-xs); }
 .part-head code { color: var(--color-text); font-family: var(--font-mono); }
 .part-note { margin-left: auto; color: var(--color-text-faint); }
 .prose { padding: var(--space-3); color: var(--color-text); font: var(--text-xs) var(--font-ui); line-height: var(--leading-relaxed); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .part-tree { padding: var(--space-2); user-select: text; }
-.part-children { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2); }
 .definition-section { border-top: var(--p-hairline) solid var(--color-line); }
 .section-title { padding: var(--space-1) var(--space-3); border-bottom: var(--p-hairline) solid var(--color-line); color: var(--color-text-muted); font-size: var(--text-xs); }
 .parameter-row { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); border-bottom: var(--p-hairline) solid var(--color-line); user-select: text; }

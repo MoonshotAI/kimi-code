@@ -1303,13 +1303,10 @@ export interface SessionContextItemsResponse {
 }
 
 export interface SessionContextItemPart {
-  kind: string;
+  kind: 'text' | 'think' | 'definition' | 'function' | 'media';
   text?: string;
   name?: string;
-  id?: string;
-  failed?: boolean;
   data?: unknown;
-  children?: SessionContextItemPart[];
 }
 
 export interface SessionContextItemDetail {

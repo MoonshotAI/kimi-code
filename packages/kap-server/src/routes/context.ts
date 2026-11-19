@@ -8,7 +8,7 @@ import {
   type IAgentScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { Message } from '@moonshot-ai/core/llm/message';
+import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
@@ -65,129 +65,118 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 const DEFAULT_ITEMS_LIMIT = 100;
 const PREVIEW_MAX_CHARS = 240;
 const MEDIA_PAYLOAD_MIN_CHARS = 512;
-const MEDIA_TYPES = new Set([
-  'image',
-  'image_url',
-  'input_image',
-  'audio',
-  'audio_url',
-  'input_audio',
-  'video',
-  'video_url',
-  'document',
-  'file',
-  'input_file',
-]);
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+interface MessageOutline {
+  readonly role: string;
+  readonly name: string | undefined;
+  readonly chars: number;
+  readonly count: number;
+  readonly hasMedia: boolean;
+  readonly preview: string;
 }
 
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
+function jsonChars(value: unknown): number {
+  return JSON.stringify(value)?.length ?? 0;
 }
 
-function contextMessageRole(message: unknown): string {
-  const data = asRecord(message);
-  const role = typeof data['role'] === 'string' ? data['role'] : 'unknown';
-  return role === 'system' && asArray(data['tools']).length > 0 ? 'definition' : role;
+function previewOf(chunks: readonly string[]): string {
+  return chunks
+    .map((chunk) => chunk.slice(0, PREVIEW_MAX_CHARS))
+    .join(' ')
+    .replaceAll(/\s+/g, ' ')
+    .trim()
+    .slice(0, PREVIEW_MAX_CHARS);
+}
+
+function isMediaPart(part: ContentPart): boolean {
+  return part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url';
+}
+
+function partChars(part: ContentPart): number {
+  if (part.type === 'text') return part.text.length;
+  if (part.type === 'think') return part.think.length;
+  return jsonChars(part);
+}
+
+function partPreview(part: ContentPart): string {
+  if (part.type === 'text') return part.text;
+  if (part.type === 'think') return part.think;
+  return `[${part.type}]`;
+}
+
+function outlineMessages(messages: readonly Message[]): MessageOutline[] {
+  const toolNames = new Map<string, string>();
+  return messages.map((message) => {
+    const declared = message.role === 'system' ? (message.tools ?? []) : [];
+    const calls = message.role === 'assistant' ? message.toolCalls : [];
+    for (const call of calls) toolNames.set(call.id, call.name);
+    const chars =
+      message.content.reduce((sum, part) => sum + partChars(part), 0) +
+      calls.reduce((sum, call) => sum + call.name.length + 12 + (call.arguments?.length ?? 0), 0) +
+      declared.reduce((sum, tool) => sum + jsonChars(tool), 0);
+    return {
+      role: declared.length > 0 ? 'definition' : message.role,
+      name:
+        message.role === 'tool'
+          ? (toolNames.get(message.toolCallId) ?? message.toolCallId)
+          : (calls.length > 0 ? calls : declared).map((entry) => entry.name).join(', ') || undefined,
+      chars,
+      count: Math.max(1, declared.length),
+      hasMedia: message.content.some(isMediaPart),
+      preview: previewOf([...message.content.map(partPreview), ...declared.map((tool) => tool.description)]),
+    };
+  });
+}
+
+function redactMediaPayload(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.length > MEDIA_PAYLOAD_MIN_CHARS ? `[encoded media · ${value.length} chars]` : value;
+  }
+  if (Array.isArray(value)) return value.map(redactMediaPayload);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, redactMediaPayload(entry)]),
+    );
+  }
+  return value;
+}
+
+function parseToolArguments(args: string | null): unknown {
+  if (args === null) return null;
+  try {
+    return JSON.parse(args) as unknown;
+  } catch {
+    return args;
+  }
+}
+
+function messageParts(message: Message): ContextItemPart[] {
+  const parts = message.content.map((part): ContextItemPart => {
+    if (part.type === 'text') return { kind: 'text', text: part.text };
+    if (part.type === 'think') return { kind: 'think', text: part.think };
+    return { kind: 'media', name: part.type, data: redactMediaPayload(part) };
+  });
+  if (message.role === 'system') {
+    for (const tool of message.tools ?? []) parts.push({ kind: 'definition', name: tool.name, data: tool });
+  }
+  if (message.role === 'assistant') {
+    for (const call of message.toolCalls) {
+      parts.push({ kind: 'function', name: call.name, data: parseToolArguments(call.arguments) });
+    }
+  }
+  return parts;
+}
+
+function redactMessageMedia(message: Message): unknown {
+  return {
+    ...message,
+    content: message.content.map((part) => (isMediaPart(part) ? redactMediaPayload(part) : part)),
+  };
 }
 
 function contextItemIndex(itemId: string, prefix: string): number | undefined {
   const suffix = itemId.slice(prefix.length);
   return /^(0|[1-9]\d*)$/.test(suffix) ? Number(suffix) : undefined;
-}
-
-function isMediaPart(value: Record<string, unknown>): boolean {
-  return (
-    MEDIA_TYPES.has(String(value['type'])) ||
-    value['inlineData'] !== undefined ||
-    value['fileData'] !== undefined
-  );
-}
-
-function estimateValueChars(value: unknown): number {
-  if (typeof value === 'string') return value.length;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value).length;
-  if (value === null || value === undefined) return 0;
-  if (Array.isArray(value)) {
-    let sum = 2;
-    for (const item of value) sum += estimateValueChars(item) + 2;
-    return sum;
-  }
-  const obj = asRecord(value);
-  let sum = 2;
-  for (const [k, v] of Object.entries(obj)) {
-    sum += k.length + 4 + estimateValueChars(v);
-  }
-  return sum;
-}
-
-function measureMessage(
-  message: Message,
-  includePreview: boolean,
-): { chars: number; hasMedia: boolean; preview: string } {
-  const data = asRecord(message);
-  const content = data['content'];
-  const toolCalls = asArray(data['toolCalls']);
-  const messageTools = asArray(data['tools']);
-  let chars = 0;
-  let hasMedia = false;
-  let preview = '';
-
-  const appendPreview = (chunk: string): void => {
-    if (!includePreview || preview.length >= PREVIEW_MAX_CHARS || !chunk) return;
-    const needed = PREVIEW_MAX_CHARS - preview.length + 32;
-    const slice = chunk.slice(0, needed).replaceAll(/\s+/g, ' ').trim();
-    if (!slice) return;
-    preview = preview ? `${preview} ${slice}` : slice;
-    if (preview.length > PREVIEW_MAX_CHARS) {
-      preview = preview.slice(0, PREVIEW_MAX_CHARS);
-    }
-  };
-
-  if (typeof content === 'string') {
-    chars += content.length;
-    appendPreview(content);
-  } else {
-    for (const part of asArray(content)) {
-      const item = asRecord(part);
-      if (isMediaPart(item)) {
-        hasMedia = true;
-      }
-      if (typeof item['text'] === 'string') {
-        chars += item['text'].length;
-        appendPreview(item['text']);
-      } else if (typeof item['think'] === 'string') {
-        chars += item['think'].length;
-        appendPreview(item['think']);
-      } else {
-        chars += estimateValueChars(part);
-        if (typeof item['type'] === 'string') {
-          appendPreview(`[${item['type']}]`);
-        }
-      }
-    }
-  }
-
-  for (const tool of toolCalls) {
-    const call = asRecord(tool);
-    if (typeof call['name'] === 'string') chars += call['name'].length + 12;
-    if (typeof call['arguments'] === 'string') chars += call['arguments'].length;
-    else if (call['arguments'] !== undefined) chars += estimateValueChars(call['arguments']);
-  }
-
-  for (const tool of messageTools) {
-    chars += estimateValueChars(tool);
-    const desc = asRecord(tool)['description'];
-    if (typeof desc === 'string') {
-      appendPreview(desc);
-    }
-  }
-
-  return { chars, hasMedia, preview };
 }
 
 async function resolveAgent(
@@ -254,14 +243,14 @@ function readAgentContextSources(agent: IAgentScopeHandle) {
   const loop = agent.accessor.get(IAgentLoopService);
   const profile = agent.accessor.get(IAgentProfileService);
   const legacyStatus = readLegacyStatus(agent);
-  const loopData = loop.data();
-  const profileData = profile.data();
   const request = loop.previewRequestContent();
-  const modelAlias = loopData.modelAlias || profileData.modelAlias || legacyStatus?.model || undefined;
+  const modelAlias =
+    loop.data().modelAlias || profile.data().modelAlias || legacyStatus?.model || undefined;
   return {
     systemPrompt: request.systemPrompt || profile.getSystemPrompt(),
     tools: request.tools.filter((tool) => tool.deferred !== true),
     messages: request.messages,
+    outlines: outlineMessages(request.messages),
     modelAlias,
     tokens: {
       used: legacyStatus?.contextTokens ?? 0,
@@ -270,33 +259,22 @@ function readAgentContextSources(agent: IAgentScopeHandle) {
   };
 }
 
-function buildContextSummary(
-  sessionId: string,
-  agentId: string,
-  sources: ReturnType<typeof readAgentContextSources>,
-): ContextSummary {
-  const groupMap = new Map<string, ContextGroup>();
-  let totalChars = 0;
+type ContextSources = ReturnType<typeof readAgentContextSources>;
 
-  const addGroup = (role: string, chars: number, count = 1): void => {
+function buildContextSummary(sessionId: string, agentId: string, sources: ContextSources): ContextSummary {
+  const groups = new Map<string, ContextGroup>();
+  let totalChars = 0;
+  const addGroup = (role: string, chars: number, count: number): void => {
     totalChars += chars;
-    const existing = groupMap.get(role) ?? { role, count: 0, chars: 0 };
-    existing.count += count;
-    existing.chars += chars;
-    groupMap.set(role, existing);
+    const group = groups.get(role) ?? { role, count: 0, chars: 0 };
+    group.count += count;
+    group.chars += chars;
+    groups.set(role, group);
   };
 
-  if (sources.systemPrompt.length > 0) {
-    addGroup('system', sources.systemPrompt.length);
-  }
-  for (const tool of sources.tools) {
-    addGroup('definition', estimateValueChars(tool));
-  }
-  for (const message of sources.messages) {
-    const role = contextMessageRole(message);
-    const { chars } = measureMessage(message, false);
-    addGroup(role, chars, role === 'definition' ? asArray(asRecord(message)['tools']).length : 1);
-  }
+  if (sources.systemPrompt.length > 0) addGroup('system', sources.systemPrompt.length, 1);
+  for (const tool of sources.tools) addGroup('definition', jsonChars(tool), 1);
+  for (const outline of sources.outlines) addGroup(outline.role, outline.chars, outline.count);
 
   return {
     session_id: sessionId,
@@ -305,93 +283,94 @@ function buildContextSummary(
     model: sources.modelAlias,
     tokens: sources.tokens,
     total_chars: totalChars,
-    groups: [...groupMap.values()],
+    groups: [...groups.values()],
   };
 }
 
-function redactMediaPayload(value: unknown): unknown {
-  if (typeof value === 'string') {
-    return value.length > MEDIA_PAYLOAD_MIN_CHARS ? `[encoded media · ${value.length} chars]` : value;
-  }
-  if (Array.isArray(value)) return value.map(redactMediaPayload);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, redactMediaPayload(entry)]),
-    );
-  }
-  return value;
+function listContextItems(sources: ContextSources): {
+  toolItems: ContextItemSummary[];
+  otherItems: ContextItemSummary[];
+} {
+  const toolItems = sources.tools.map((tool, index): ContextItemSummary => ({
+    id: `tool-${index}`,
+    role: 'definition',
+    name: tool.name,
+    sequence: undefined,
+    preview: previewOf([tool.description]),
+    chars: jsonChars(tool),
+    has_media: false,
+  }));
+  const systemItems: ContextItemSummary[] =
+    sources.systemPrompt.length > 0
+      ? [
+          {
+            id: 'system',
+            role: 'system',
+            name: undefined,
+            sequence: undefined,
+            preview: previewOf([sources.systemPrompt]),
+            chars: sources.systemPrompt.length,
+            has_media: false,
+          },
+        ]
+      : [];
+  const messageItems = sources.outlines.map((outline, index): ContextItemSummary => ({
+    id: `message-${index}`,
+    role: outline.role,
+    name: outline.name,
+    sequence: index + 1,
+    preview: outline.preview,
+    chars: outline.chars,
+    has_media: outline.hasMedia,
+  }));
+  return { toolItems, otherItems: [...systemItems, ...messageItems] };
 }
 
-function sanitizeMediaValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sanitizeMediaValue);
-  if (value === null || typeof value !== 'object') return value;
-  const record = value as Record<string, unknown>;
-  if (isMediaPart(record)) return redactMediaPayload(record);
-  return Object.fromEntries(
-    Object.entries(record).map(([key, entry]) => [key, sanitizeMediaValue(entry)]),
-  );
-}
-
-function inspectContentParts(part: unknown): ContextItemPart[] {
-  if (typeof part === 'string') return [{ kind: 'text', text: part }];
-  if (Array.isArray(part)) return part.flatMap(inspectContentParts);
-  const value = asRecord(part);
-  if (typeof value['text'] === 'string') {
-    return [{ kind: value['thought'] === true ? 'think' : 'text', text: value['text'] }];
+function readContextItem(sources: ContextSources, itemId: string): ContextItemDetail | undefined {
+  if (itemId === 'system') {
+    return {
+      id: 'system',
+      role: 'system',
+      name: undefined,
+      sequence: undefined,
+      chars: sources.systemPrompt.length,
+      has_media: false,
+      parts: splitSystemPromptParts(sources.systemPrompt),
+      raw: sources.systemPrompt,
+    };
   }
-  const thinking = value['thinking'] ?? value['think'];
-  if (typeof thinking === 'string') return [{ kind: 'think', text: thinking }];
-  if (
-    ['function', 'function_call', 'tool_use'].includes(String(value['type'])) ||
-    value['functionCall'] !== undefined
-  ) {
-    const call = asRecord(value['function'] ?? value['functionCall'] ?? value);
-    let args = call['arguments'] ?? call['args'] ?? call['input'];
-    if (typeof args === 'string') {
-      try {
-        args = JSON.parse(args);
-      } catch {
-        args = call['arguments'];
-      }
-    }
-    return [
-      {
-        kind: 'function',
-        name: typeof call['name'] === 'string' ? call['name'] : undefined,
-        data: args,
-      },
-    ];
+  if (itemId.startsWith('tool-')) {
+    const index = contextItemIndex(itemId, 'tool-');
+    const tool = index === undefined ? undefined : sources.tools[index];
+    if (tool === undefined) return undefined;
+    return {
+      id: itemId,
+      role: 'definition',
+      name: tool.name,
+      sequence: undefined,
+      chars: jsonChars(tool),
+      has_media: false,
+      parts: [{ kind: 'definition', name: tool.name, data: tool }],
+      raw: tool,
+    };
   }
-  if (value['type'] === 'tool_result' || value['functionResponse'] !== undefined) {
-    const result = asRecord(value['functionResponse'] ?? value);
-    const content = result['response'] ?? result['content'];
-    return [
-      {
-        kind: 'result',
-        name: typeof result['name'] === 'string' ? result['name'] : undefined,
-        id: typeof value['tool_use_id'] === 'string' ? value['tool_use_id'] : undefined,
-        failed: value['is_error'] === true,
-        data: sanitizeMediaValue(content),
-        children: inspectContentParts(content),
-      },
-    ];
+  if (itemId.startsWith('message-')) {
+    const index = contextItemIndex(itemId, 'message-');
+    const message = index === undefined ? undefined : sources.messages[index];
+    const outline = index === undefined ? undefined : sources.outlines[index];
+    if (index === undefined || message === undefined || outline === undefined) return undefined;
+    return {
+      id: itemId,
+      role: outline.role,
+      name: outline.name,
+      sequence: index + 1,
+      chars: outline.chars,
+      has_media: outline.hasMedia,
+      parts: messageParts(message),
+      raw: redactMessageMedia(message),
+    };
   }
-  if (isMediaPart(value)) {
-    return [
-      {
-        kind: 'media',
-        name: typeof value['type'] === 'string' ? value['type'] : 'media',
-        data: sanitizeMediaValue(part),
-      },
-    ];
-  }
-  return [
-    {
-      kind: 'data',
-      name: typeof value['type'] === 'string' ? value['type'] : undefined,
-      data: sanitizeMediaValue(part),
-    },
-  ];
+  return undefined;
 }
 
 export function registerContextRoutes(app: ContextRouteHost, core: Scope): void {
@@ -415,8 +394,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
         const { session_id } = req.params;
         const { agent, resolvedAgentId } = await resolveAgent(core, session_id, req.query.agent_id);
         const sources = readAgentContextSources(agent);
-        const summary = buildContextSummary(session_id, resolvedAgentId, sources);
-        reply.send(okEnvelope(summary, req.id));
+        reply.send(okEnvelope(buildContextSummary(session_id, resolvedAgentId, sources), req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
       }
@@ -448,89 +426,23 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
         const { session_id } = req.params;
         const { agent, resolvedAgentId } = await resolveAgent(core, session_id, req.query.agent_id);
         const sources = readAgentContextSources(agent);
-        const summary = buildContextSummary(session_id, resolvedAgentId, sources);
+        const requestedRoles = req.query.role === undefined
+          ? []
+          : Array.isArray(req.query.role)
+            ? req.query.role
+            : [req.query.role];
         const filterRoles = [
-          ...new Set(
-            (req.query.role === undefined
-              ? []
-              : Array.isArray(req.query.role)
-                ? req.query.role
-                : [req.query.role]
-            )
-              .map((role) => role.trim())
-              .filter((role) => role.length > 0),
-          ),
+          ...new Set(requestedRoles.map((role) => role.trim()).filter((role) => role.length > 0)),
         ];
         const offset = req.query.offset ?? 0;
         const limit = req.query.limit ?? DEFAULT_ITEMS_LIMIT;
-
-        const toolItems: ContextItemSummary[] = sources.tools.map((tool, index) => {
-          const data = asRecord(tool);
-          const desc = typeof data['description'] === 'string' ? data['description'] : '';
-          return {
-            id: `tool-${index}`,
-            role: 'definition',
-            name: typeof data['name'] === 'string' ? data['name'] : undefined,
-            sequence: undefined,
-            preview: desc.slice(0, PREVIEW_MAX_CHARS).replaceAll(/\s+/g, ' ').trim(),
-            chars: estimateValueChars(tool),
-            has_media: false,
-          };
-        });
-
-        const allNonToolItems: ContextItemSummary[] = [];
-        if (sources.systemPrompt.length > 0) {
-          allNonToolItems.push({
-            id: 'system',
-            role: 'system',
-            name: undefined,
-            sequence: undefined,
-            preview: sources.systemPrompt.slice(0, PREVIEW_MAX_CHARS).replaceAll(/\s+/g, ' ').trim(),
-            chars: sources.systemPrompt.length,
-            has_media: false,
-          });
-        }
-
-        const toolNames = new Map<string, string>();
-        sources.messages.forEach((message, index) => {
-          const data = asRecord(message);
-          const calls = asArray(data['toolCalls']);
-          const messageTools = asArray(data['tools']);
-          for (const tool of calls) {
-            const call = asRecord(tool);
-            if (typeof call['id'] === 'string' && typeof call['name'] === 'string') {
-              toolNames.set(call['id'], call['name']);
-            }
-          }
-          const callNames = calls
-            .map((tool) => asRecord(tool)['name'])
-            .filter((name): name is string => typeof name === 'string');
-          const declaredToolNames = messageTools
-            .map((tool) => asRecord(tool)['name'])
-            .filter((name): name is string => typeof name === 'string');
-          const role = contextMessageRole(message);
-          const name =
-            typeof data['toolCallId'] === 'string'
-              ? (toolNames.get(data['toolCallId']) ?? data['toolCallId'])
-              : callNames.join(', ') || declaredToolNames.join(', ') || undefined;
-          const measured = measureMessage(message, true);
-          allNonToolItems.push({
-            id: `message-${index}`,
-            role,
-            name,
-            sequence: index + 1,
-            preview: measured.preview,
-            chars: measured.chars,
-            has_media: measured.hasMedia,
-          });
-        });
-
-        const selection = selectContextItems(allNonToolItems, toolItems, filterRoles);
+        const { toolItems, otherItems } = listContextItems(sources);
+        const selection = selectContextItems(otherItems, toolItems, filterRoles);
         const pagedItems = selection.items.slice(offset, offset + limit);
         reply.send(
           okEnvelope(
             {
-              summary,
+              summary: buildContextSummary(session_id, resolvedAgentId, sources),
               tools: selection.tools,
               items: pagedItems,
               total: selection.items.length,
@@ -570,109 +482,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
       try {
         const { session_id, item_id } = req.params;
         const { agent } = await resolveAgent(core, session_id, req.query.agent_id);
-        const sources = readAgentContextSources(agent);
-
-        let detail: ContextItemDetail | undefined;
-
-        if (item_id === 'system') {
-          detail = {
-            id: 'system',
-            role: 'system',
-            name: undefined,
-            sequence: undefined,
-            chars: sources.systemPrompt.length,
-            has_media: false,
-            parts: splitSystemPromptParts(sources.systemPrompt),
-            raw: sources.systemPrompt,
-          };
-        } else if (item_id.startsWith('tool-')) {
-          const index = contextItemIndex(item_id, 'tool-');
-          const tool = index === undefined ? undefined : sources.tools[index];
-          if (tool !== undefined) {
-            const data = asRecord(tool);
-            detail = {
-              id: item_id,
-              role: 'definition',
-              name: typeof data['name'] === 'string' ? data['name'] : undefined,
-              sequence: undefined,
-              chars: estimateValueChars(tool),
-              has_media: false,
-              parts: [{ kind: 'definition', name: typeof data['name'] === 'string' ? data['name'] : undefined, data: tool }],
-              raw: tool,
-            };
-          }
-        } else if (item_id.startsWith('message-')) {
-          const index = contextItemIndex(item_id, 'message-');
-          const message = index === undefined ? undefined : sources.messages[index];
-          if (index !== undefined && message !== undefined) {
-            const data = asRecord(message);
-            const calls = asArray(data['toolCalls']);
-            const messageTools = asArray(data['tools']);
-            const callNames = calls
-              .map((tool) => asRecord(tool)['name'])
-              .filter((name): name is string => typeof name === 'string');
-            const declaredToolNames = messageTools
-              .map((tool) => asRecord(tool)['name'])
-              .filter((name): name is string => typeof name === 'string');
-            let resolvedToolName: string | undefined;
-            if (typeof data['toolCallId'] === 'string') {
-              const targetId = data['toolCallId'];
-              for (let i = index - 1; i >= 0; i--) {
-                const prevCalls = asArray(asRecord(sources.messages[i])['toolCalls']);
-                const match = prevCalls.find((c) => asRecord(c)['id'] === targetId);
-                if (match && typeof asRecord(match)['name'] === 'string') {
-                  resolvedToolName = asRecord(match)['name'] as string;
-                  break;
-                }
-              }
-              resolvedToolName = resolvedToolName ?? targetId;
-            } else if (callNames.length > 0) {
-              resolvedToolName = callNames.join(', ');
-            } else if (declaredToolNames.length > 0) {
-              resolvedToolName = declaredToolNames.join(', ');
-            }
-
-            const measured = measureMessage(message, false);
-            const parts: ContextItemPart[] = [
-              ...inspectContentParts(data['content'] ?? []),
-              ...messageTools.map((tool) => {
-                const toolObj = asRecord(tool);
-                return {
-                  kind: 'definition',
-                  name: typeof toolObj['name'] === 'string' ? toolObj['name'] : undefined,
-                  data: sanitizeMediaValue(tool),
-                };
-              }),
-              ...calls.map((tool) => {
-                const call = asRecord(tool);
-                let args = call['arguments'];
-                if (typeof args === 'string') {
-                  try {
-                    args = JSON.parse(args);
-                  } catch {
-                    args = call['arguments'];
-                  }
-                }
-                return {
-                  kind: 'function',
-                  name: typeof call['name'] === 'string' ? call['name'] : undefined,
-                  data: args,
-                };
-              }),
-            ];
-            detail = {
-              id: item_id,
-              role: contextMessageRole(message),
-              name: resolvedToolName,
-              sequence: index + 1,
-              chars: measured.chars,
-              has_media: measured.hasMedia,
-              parts,
-              raw: sanitizeMediaValue(message),
-            };
-          }
-        }
-
+        const detail = readContextItem(readAgentContextSources(agent), item_id);
         if (detail === undefined) {
           reply.send({
             code: ErrorCode.MESSAGE_NOT_FOUND,
@@ -682,7 +492,6 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
           });
           return;
         }
-
         reply.send(okEnvelope(detail, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);

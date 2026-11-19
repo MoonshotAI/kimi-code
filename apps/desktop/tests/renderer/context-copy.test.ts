@@ -27,20 +27,10 @@ describe('context copy text', () => {
     ].join('\n\n'));
   });
 
-  it('uses nested result text once and preserves the tool name', () => {
-    const part = {
-      kind: 'result',
-      name: 'Read',
-      data: { content: 'file contents' },
-      children: [{ kind: 'text', text: 'file contents' }],
-    };
-    expect(contextPartText(part)).toBe('Read\nfile contents');
-  });
-
   it('falls back to structured data and skips empty parts', () => {
     expect(contextItemText(detail([
-      { kind: 'data' },
-      { kind: 'data', data: { ok: true } },
+      { kind: 'media' },
+      { kind: 'media', data: { ok: true } },
     ]))).toBe('{\n  "ok": true\n}');
     expect(contextItemText(detail([]))).toBe('');
   });
