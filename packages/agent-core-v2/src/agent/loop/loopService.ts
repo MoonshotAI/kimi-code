@@ -16,7 +16,6 @@ import {
   type CoreLoopRequester,
   type CoreLoopRequesterOptions,
   type LoopRequester,
-  type RequesterBinding,
   type RequestConfigSnapshot,
   type ResolvedRequestContext,
 } from './requesterContract';
@@ -28,10 +27,8 @@ import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import type { ModelOverrides } from '#/llm-adapter/model/model.types';
-import { resolveMaxOutputTokens } from '#/llm-adapter/model/completion-budget';
+
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
-import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
@@ -76,6 +73,7 @@ import {
 } from '#/agent/profile/profile';
 import type {
   LlmRequest as CoreLlmRequest,
+
   ThinkingEffort,
 } from '@moonshot-ai/core/llm/request';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
@@ -146,6 +144,7 @@ import { AgentPromptProjection } from './promptProjection';
 import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
 import { AgentNotificationProjection } from './notificationProjection';
 import { AgentLoopProfileAdapter } from './profileAdapter';
+import { AgentRequesterBinder } from './requesterBinder';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error' | 'steered';
 
@@ -197,6 +196,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly turns: AgentTurnProjection;
   private readonly notifications = new AgentNotificationProjection();
   private readonly profileAdapter: AgentLoopProfileAdapter;
+  private readonly requesterBinder: AgentRequesterBinder;
 
   constructor(
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
@@ -213,8 +213,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IWireService private readonly wire: IWireService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
-    @IProtocolAdapterRegistry private readonly protocolRegistry: IProtocolAdapterRegistry,
+    @IModelCatalog modelCatalog: IModelCatalog,
+    @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionRequestAttributionService attribution: ISessionRequestAttributionService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -233,12 +233,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.projector = new AgentLoopProjector((anomalies) => this.observer.reportProjectionRepairs(anomalies));
     this.requestMetadata = new RequestMetadataTracker(scopeContext, dispatcher, attribution);
     this.mediaPolicyFactory = (model, request) => createAgentMediaPolicy(mediaResolver, model, request);
+    this.requesterBinder = new AgentRequesterBinder({
+      config,
+      profile,
+      modelCatalog,
+      requesterFactory: protocolRegistry,
+      requesterExecution: this.requesterExecution,
+    });
     this.requester = {
       coreRequester: (options) => this.coreRequester(options),
       prepareOperation: async (options, _signal) => {
         await this.start();
         const loop = this.loop!;
-        const config = this.requestConfigSnapshot();
+        const config = this.requesterBinder.requestConfigSnapshot(
+          this.profileAdapter.snapshot(),
+        );
         const tools = options.tools ?? this.baselineTools();
         return loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
@@ -656,21 +665,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }));
   }
 
-  private requestConfigSnapshot(): RequestConfigSnapshot {
-    return {
-      resolved: this.resolveModelContext(),
-      params: this.resolveRequestParams(),
-      systemPrompt: this.getSystemPrompt(),
-      maxCompletionTokensCap: this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
-    };
-  }
 
   private coreRequester(options: CoreLoopRequesterOptions): CoreLoopRequester {
     return {
       generate: (rest, control) => this.generateCoreRequest(options, rest, control),
       snapshot: () => {
-        const config = options.config ?? this.requestConfigSnapshot();
-        const binding = options.binding ?? this.bindRequester(options, config);
+        const config = options.config ?? this.requesterBinder.requestConfigSnapshot(
+          this.profileAdapter.snapshot(),
+        );
+        const binding = options.binding ?? this.requesterBinder.bindRequester(options, config);
         options.onSnapshot?.(config);
         return this.coreRequester({ ...options, config, binding });
       },
@@ -730,7 +733,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     control: LlmRunControl,
   ): Promise<LlmOutcome> {
     const source = options.source();
-    const config = options.config ?? this.requestConfigSnapshot();
+    const config = options.config ?? this.requesterBinder.requestConfigSnapshot(
+      this.profileAdapter.snapshot(),
+    );
     const observation = this.observer.start(source, config, options.onTrace);
     try {
       const prepared = this.prepareCoreRequest(options, rest, source, config);
@@ -769,37 +774,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  private bindRequester(
-    options: CoreLoopRequesterOptions,
-    config: RequestConfigSnapshot,
-  ): RequesterBinding {
-    const resolved = config.resolved;
-    const model = this.modelCatalog.get(resolved.modelAlias);
-    const maxOutputTokens = resolveMaxOutputTokens({
-      maxOutputSize: options.maxOutputSize ?? resolved.maxOutputSize,
-      maxCompletionTokensCap: config.maxCompletionTokensCap,
-    });
-    const params: InitializedLlmRequestPart = {
-      ...config.params,
-      model: {
-        ...config.params.model,
-        spec: {
-          ...model.spec,
-          maxContextSize: resolved.model.maxContextSize,
-          maxInputSize: resolved.model.maxInputSize,
-        },
-        maxOutputTokens,
-      },
-    };
-    const provider = model.providerType === undefined
-      ? undefined
-      : getProviderDefinition(model.providerType, model.protocol);
-    return {
-      request: this.protocolRegistry.request(model, params, this.requesterExecution),
-      model,
-      requestMetadata: provider?.requestMetadata === true,
-    };
-  }
 
   private resolveRequest(
     options: CoreLoopRequesterOptions,
@@ -808,7 +782,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     config: RequestConfigSnapshot,
   ): ResolvedRequestContext {
     const resolved = config.resolved;
-    const binding = options.binding ?? this.bindRequester(options, config);
+    const binding = options.binding ?? this.requesterBinder.bindRequester(options, config);
     const usedContextTokens =
       rest.content?.usedTokens ??
       (rest.content?.messages === undefined
