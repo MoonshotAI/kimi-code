@@ -63,7 +63,7 @@ if (args[0] === 'api') {
     done(state.releases[tag]);
   } else throw new Error('Unexpected API: ' + endpoint);
 } else if (args[0] === 'release' && args[1] === 'create') {
-  state.releases[args[2]] = { draft: true, notes: fs.readFileSync(0, 'utf8') };
+  state.releases[args[2]] = { draft: true, title: args[args.indexOf('--title') + 1], notes: fs.readFileSync(0, 'utf8') };
   done({});
 } else if (args[0] === 'release' && args[1] === 'edit') {
   state.releases[args[2]].draft = false;
@@ -141,6 +141,7 @@ test('prepares a draft and retries an interrupted release from the same SHA', ()
   assert.equal(run(f, 'prepare').status, 0);
   assert.equal(f.state().tags[tag], sha);
   assert.equal(f.state().releases[tag].draft, true);
+  assert.equal(f.state().releases[tag].title, 'Kimi Code Desktop 1.0.1');
   assert.match(f.state().releases[tag].notes, /Fix a bug/);
   assert.doesNotMatch(f.state().releases[tag].notes, /Old notes/);
   assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=true/);
@@ -151,6 +152,19 @@ test('prepares a draft and retries an interrupted release from the same SHA', ()
   writeFileSync(join(f.dir, 'output'), '');
   assert.equal(run(f, 'prepare').status, 0);
   assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
+});
+
+test('workflow release titles use product names and full versions', () => {
+  const workflow = (name) => readFileSync(fileURLToPath(new URL(`../.github/workflows/${name}`, import.meta.url)), 'utf8');
+  const stable = workflow('release.yml');
+  assert.match(stable, /RELEASE_VERSION: \$\{\{ steps\.kimi-release\.outputs\.version \}\}/);
+  assert.match(stable, /gh release edit "\$RELEASE_TAG" --title "Kimi Code CLI \$\{RELEASE_VERSION\}"/);
+  const canary = workflow('canary-release.yml');
+  assert.equal(canary.split('--title "Kimi Code CLI ${CANARY_VERSION}"').length - 1, 2);
+  assert.doesNotMatch(canary, /--title "\$CANARY_TAG"/);
+  const desktop = workflow('desktop-build.yml');
+  assert.match(desktop, /--title "Kimi Code Desktop \$\{version\}"/);
+  assert.doesNotMatch(desktop, /--title "Kimi Code Canary/);
 });
 
 test('version command records the consumed changesets and changed package versions', () => {

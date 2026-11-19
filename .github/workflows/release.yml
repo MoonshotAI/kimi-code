@@ -236,6 +236,14 @@ jobs:
         env:
           CHANGESETS_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
 
+      - name: Set Kimi Code release title
+        if: steps.kimi-release.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.kimi-release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.kimi-release.outputs.version }}
+        run: gh release edit "$RELEASE_TAG" --title "Kimi Code CLI ${RELEASE_VERSION}"
+
   native-artifacts:
     name: Native release artifact
     needs: release
