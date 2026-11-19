@@ -151,6 +151,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     this._register(
       eventBus.subscribe(AgentStatusUpdated, () => {
         if (this.agentCtx.agentId !== 'main') return;
+        if (this.loop.started) return;
         if (!this.isActive) return;
         const active = this.loop.getActiveToolNames();
         if (active === undefined) return;
@@ -432,6 +433,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (this.agentCtx.agentId !== 'main') return { entered: false, reason: 'not-main-agent' };
     if (!this.flags.enabled(TOWER_FLAG_ID)) return { entered: false, reason: 'experiment-off' };
     if (!isTowerFeatureAssembled(this.flags)) return { entered: false, reason: 'feature-not-assembled' };
+    if (!this.isActive && this.loop.started) return { entered: false, reason: 'loop-already-started' };
     const owner = await this.resolveTowerOwner();
     if (owner !== undefined && owner !== this.sessionCtx.sessionId) {
       const ownerHandle = this.sessions.get(owner);
@@ -455,8 +457,8 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       return { entered: true };
     }
     await this.adoptTowerRoster();
-    // Entering Tower expands the runtime policy only; it does not rebuild the
-    // tool-schema baseline captured when the loop started.
+    // Entering Tower is allowed only before the loop starts, so this overlay is
+    // included in the initial tool-schema baseline.
     for (const name of TOWER_MODE_TOOLS) this.loop.addActiveTool(name);
     this.lastPublished = true;
     this.dispatchEnter();
@@ -909,6 +911,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (!this.isActive) return;
     if (this.agentCtx.agentId !== 'main') return;
+    if (this.loop.started) return;
     for (const name of TOWER_MODE_TOOLS) this.loop.addActiveTool(name);
     this.lastPublished = true;
     void this.dispatcher.dispatch(new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: true }));

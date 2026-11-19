@@ -1972,8 +1972,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     onWarning?: (message: string) => void,
   ): Promise<IAgentScopeHandle> {
     await this.modelReady;
-    // A fresh local agent starts before the default profile is bound below, so
-    // its initial tool baseline is computed without a profile allowlist.
+    // A fresh local agent starts on its first submission or operation, after the
+    // default profile is bound below and after any initial mode selection.
     const context = await ensureMainAgent(session);
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(context.agentId);
     if (agent === undefined) {
@@ -2329,6 +2329,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       capability.max_input_tokens ?? capability.max_context_tokens,
     );
     const loop = agent.accessor.get(IAgentLoopService);
+    await loop.start();
     loop.remind(historyEntryFromContext(message));
     loop.flushReminders();
   }

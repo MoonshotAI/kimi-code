@@ -159,6 +159,7 @@ describe('FullCompaction', () => {
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'old user two', 'old assistant two', 40);
     ctx.appendExchange(3, 'recent user three', 'recent assistant three', 120);
+    expect(ctx.context.started).toBe(false);
     const compacted = new Promise<void>((resolve) => {
       ctx.emitter.once('full_compaction.complete', () => {
         resolve();
