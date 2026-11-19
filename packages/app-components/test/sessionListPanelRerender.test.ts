@@ -530,10 +530,11 @@ describe('SessionListPanel re-render scope', () => {
 
     pinnedRoot.querySelector<HTMLButtonElement>('.pinned-options')!.click();
     await vi.waitFor(() => expect(openPinnedMenu()).not.toBeNull());
-    const showProjectItem = [...openPinnedMenu()!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
-      (item) => item.textContent?.includes('Show project'),
-    );
-    expect(showProjectItem).not.toBeUndefined();
+    const menuItems = [...openPinnedMenu()!.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
+    const initialCompactItem = menuItems.find((item) => item.textContent?.includes('Compact'));
+    const showProjectItem = menuItems.find((item) => item.textContent?.includes('Show project'));
+    expect(initialCompactItem?.getAttribute('aria-checked')).toBe('true');
+    expect(showProjectItem?.getAttribute('aria-checked')).toBe('false');
     showProjectItem!.click();
     await nextTick();
 
@@ -546,15 +547,30 @@ describe('SessionListPanel re-render scope', () => {
     expect(pinnedRow().querySelector('.compact-pr')).toBeNull();
     expect(openPinnedMenu()).toBeNull();
 
+    const pinRowWrapper = pinnedRow().closest<HTMLElement>('.pin-row')!;
+    const pinWsWrapper = pinnedRoot.querySelector<HTMLElement>('.pin-workspace')!;
+    const wsHeader = pinWsWrapper.querySelector<HTMLElement>('.gh')!;
+    pinWsWrapper.style.paddingTop = '6px';
+    vi.spyOn(pinRowWrapper, 'getBoundingClientRect').mockReturnValue({ height: 45 } as DOMRect);
+    vi.spyOn(wsHeader, 'getBoundingClientRect').mockReturnValue({ height: 32 } as DOMRect);
+    fakes.views.pinnedWorkspaceGroups = [group(0, 3)];
+    fakes.views.pinnedEntries = [
+      { key: `session:${pinnedSingle.id}`, kind: 'session', session: pinnedSingle },
+      { key: 'ws:ws-0', kind: 'workspace', group: fakes.views.pinnedWorkspaceGroups[0] },
+    ];
+    await nextTick();
+    expect(pinnedRoot.querySelector('.pinned-resize')?.getAttribute('aria-valuemin')).toBe('83');
+
     pinnedRoot.querySelector('.pinned-label')!.dispatchEvent(
       new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 80, clientY: 20 }),
     );
     await vi.waitFor(() => expect(openPinnedMenu()).not.toBeNull());
     expect(pinnedRoot.querySelector('.pinned-options')?.classList.contains('open')).toBe(false);
-    const compactItem = [...openPinnedMenu()!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
-      (item) => item.textContent?.includes('Compact'),
-    );
-    expect(compactItem).not.toBeUndefined();
+    const reopenedItems = [...openPinnedMenu()!.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
+    const compactItem = reopenedItems.find((item) => item.textContent?.includes('Compact'));
+    const checkedProjectItem = reopenedItems.find((item) => item.textContent?.includes('Show project'));
+    expect(compactItem?.getAttribute('aria-checked')).toBe('false');
+    expect(checkedProjectItem?.getAttribute('aria-checked')).toBe('true');
     compactItem!.click();
     await nextTick();
 

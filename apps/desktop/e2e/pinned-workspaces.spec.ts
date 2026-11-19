@@ -109,7 +109,7 @@ test('pinned workspaces share the pinned section, support manual reordering, sur
   await test.step('switch pinned sessions to show project subtitles via the pinned options menu', async () => {
     await sidebar.locator('.pinned .pinned-label').hover();
     await sidebar.locator('.pinned').getByRole('button', { name: 'Pinned options', exact: true }).click();
-    await app.window.getByRole('menuitem', { name: 'Show project', exact: true }).click();
+    await app.window.getByRole('menuitemradio', { name: 'Show project', exact: true }).click();
     const pinnedFirstRow = sidebar.locator('.pinned [data-session-id]').filter({ hasText: FIRST });
     await expect(pinnedFirstRow.locator('.sub')).toHaveCount(1);
     await expect(pinnedFirstRow.locator('.sub-icon')).toHaveCount(0);
@@ -146,7 +146,7 @@ test('pinned workspaces share the pinned section, support manual reordering, sur
 
   await test.step('switch back to compact pinned rows via right-clicking the pinned header', async () => {
     await sidebar.locator('.pinned .pinned-label').click({ button: 'right' });
-    await app.window.getByRole('menuitem', { name: 'Compact', exact: true }).click();
+    await app.window.getByRole('menuitemradio', { name: 'Compact', exact: true }).click();
     const pinnedFirstRow = sidebar.locator('.pinned [data-session-id]').filter({ hasText: FIRST });
     await expect(pinnedFirstRow.locator('.sub')).toHaveCount(0);
   });

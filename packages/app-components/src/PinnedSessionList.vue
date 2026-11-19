@@ -355,26 +355,32 @@ const {
 function updateRowsScrollState(el = pinnedRowsEl.value): void {
   if (!el) return;
   contentHeight.value = el.scrollHeight;
-  const rows: HTMLElement[] = [];
+  const rows: Array<{ el: HTMLElement; wrapper?: HTMLElement }> = [];
   for (const child of Array.from(el.children)) {
     if (rows.length >= 2) break;
     const row = child as HTMLElement;
     if (!row.classList.contains('pin-workspace')) {
-      rows.push(row);
+      rows.push({ el: row });
       continue;
     }
     const header = row.querySelector<HTMLElement>(':scope > .group > .gh');
-    if (header) rows.push(header);
+    if (header) rows.push({ el: header, wrapper: row });
     if (rows.length >= 2) break;
     const sessions = row.querySelector<HTMLElement>(':scope > .group > .group-sessions');
     if (!sessions || sessions.classList.contains('collapsed')) continue;
     const content = sessions.querySelectorAll<HTMLElement>(':scope > .se, :scope > .show-more-row, :scope > .group-empty');
     for (const session of Array.from(content)) {
-      rows.push(session);
+      rows.push({ el: session });
       if (rows.length >= 2) break;
     }
   }
-  const next = [rows[0], rows[1]].map((row) => row?.getBoundingClientRect().height ?? null);
+  const next = [rows[0], rows[1]].map((entry) => {
+    if (!entry) return null;
+    const height = entry.el.getBoundingClientRect().height;
+    if (!entry.wrapper) return height;
+    const padTop = Number.parseFloat(globalThis.getComputedStyle(entry.wrapper).paddingTop);
+    return Number.isFinite(padTop) ? height + padTop : height;
+  });
   if (
     next.length !== firstRowHeights.value.length ||
     next.some((height, index) => height !== firstRowHeights.value[index])
@@ -623,14 +629,22 @@ const {
           @contextmenu.prevent.stop
         >
           <div class="pinned-menu-label">{{ t('sidebar.pinnedSessionsGroup') }}</div>
-          <MenuItem @click="chooseDisplayMode('compact')">
+          <MenuItem
+            role="menuitemradio"
+            :aria-checked="displayMode === 'compact'"
+            @click="chooseDisplayMode('compact')"
+          >
             <Icon name="list" size="sm" />
             {{ t('sidebar.pinnedDisplayCompact') }}
             <span class="pinned-menu-check">
               <Icon v-if="displayMode === 'compact'" name="check" size="sm" />
             </span>
           </MenuItem>
-          <MenuItem @click="chooseDisplayMode('workspace')">
+          <MenuItem
+            role="menuitemradio"
+            :aria-checked="displayMode === 'workspace'"
+            @click="chooseDisplayMode('workspace')"
+          >
             <Icon name="folder-closed" size="sm" />
             {{ t('sidebar.pinnedDisplayWorkspace') }}
             <span class="pinned-menu-check">

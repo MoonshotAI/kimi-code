@@ -206,4 +206,29 @@ describe('SessionRow workspace label', () => {
 
     expect(host.querySelector('.sub--pinned .sub-text')?.textContent).toBe('After');
   });
+
+  it('hides the subtitle PR badge while renaming a compact-pinned row and keeps a tooltip on the subtitle', async () => {
+    mountRows(
+      [
+        session({
+          id: 'pinned-rename',
+          pinned: true,
+          workspaceName: 'long-project-name',
+          cwdLabel: 'long-project-name',
+          pullRequest: { number: 99, state: 'open', url: 'https://example.com/pull/99' },
+        }),
+      ],
+      { compactPinned: true, showPinnedWorkspace: true },
+    );
+
+    const row = host.querySelector('.se')!;
+    expect(row.querySelector('.sub-text')?.parentElement?.classList.contains('ui-tip')).toBe(true);
+    expect(row.querySelector('.sub .pr')).not.toBeNull();
+
+    row.querySelector('.t')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await nextTick();
+
+    expect(row.querySelector('.rename-input')).not.toBeNull();
+    expect(row.querySelector('.sub .pr')).toBeNull();
+  });
 });
