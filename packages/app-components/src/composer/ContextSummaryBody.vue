@@ -177,10 +177,9 @@ function groupTooltip(group: SessionContextGroup): string {
 }
 .ctx-composition-seg {
   display: block;
+  flex: none;
   height: 100%;
-  min-width: var(--space-2);
-  border-right: var(--p-hairline) solid var(--color-bg);
-  border-radius: var(--radius-context-segment);
+  min-width: var(--space-1);
   background: var(--context-color, var(--color-text-faint));
 }
 
