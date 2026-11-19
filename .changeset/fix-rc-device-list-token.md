@@ -1,4 +1,5 @@
 ---
+"kimi-code-app": patch
 "@moonshot-ai/kimi-code": patch
 ---
 
