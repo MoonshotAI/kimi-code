@@ -23,6 +23,7 @@ interface ActivePrediction {
 interface PredictionSuggestion extends ActivePrediction {
   readonly prediction: string;
   accepted: boolean;
+  parked: boolean;
 }
 
 type DismissReason =
@@ -75,7 +76,7 @@ export class PromptPredictionController {
         if (this.active !== active) return;
         this.active = undefined;
         if (prediction === null || this.host.session !== session || !this.canUseEditor()) return;
-        this.suggestion = { ...active, prediction, accepted: false };
+        this.suggestion = { ...active, prediction, accepted: false, parked: false };
         this.host.state.editor.setPromptPrediction(prediction);
         this.host.state.ui.requestRender();
         this.host.track('prediction_shown', {
@@ -108,13 +109,18 @@ export class PromptPredictionController {
     return false;
   }
 
-  handleEditorChange(_text: string): void {
+  handleEditorChange(text: string): void {
     if (this.suppressNextChange) {
       this.suppressNextChange = false;
       return;
     }
     if (this.active !== undefined) this.cancelActive('input');
-    if (this.suggestion?.accepted === false) this.dismiss('input');
+    const suggestion = this.suggestion;
+    if (suggestion?.accepted === false && !suggestion.parked && text.length > 0) {
+      suggestion.parked = true;
+      this.host.state.editor.parkPromptPrediction();
+      this.host.state.ui.requestRender();
+    }
   }
 
   handleSubmit(text: string): void {

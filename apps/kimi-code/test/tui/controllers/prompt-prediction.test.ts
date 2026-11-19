@@ -85,18 +85,39 @@ describe('PromptPredictionController', () => {
     editor.handleInput('\r');
     expect(track).toHaveBeenCalledWith('prediction_submitted', expect.objectContaining({ edited: true }));
 
-    nextPrediction = () => Promise.resolve('this suggestion is dismissed');
+    nextPrediction = () => Promise.resolve('this suggestion is recalled');
     controller.handleTurnStarted();
     editor.setText('');
     controller.handleTurnEnded(turnEnded(10));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     editor.handleInput('x');
+    expect(editor.getPromptPrediction()).toBe('this suggestion is recalled');
+    expect(editor.render(80).join('\n')).not.toContain('this suggestion is recalled');
+    expect(track).not.toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({ reason: 'input' }));
+    editor.setText('');
+    expect(editor.render(80).join('\n')).toContain('Next prompt');
+    expect(editor.render(80).join('\n')).toContain('this suggestion is recalled');
+    expect(controller.handlePreInput('\t')).toBe(true);
+    expect(editor.getText()).toBe('this suggestion is recalled');
     expect(editor.getPromptPrediction()).toBeUndefined();
-    expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({ reason: 'input' }));
+    editor.setText('');
+    expect(editor.render(80).join('\n')).not.toContain('Next prompt');
+
+    nextPrediction = () => Promise.resolve('dismiss this parked suggestion');
+    controller.handleTurnEnded(turnEnded(11));
+    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
+    editor.handleInput('y');
+    expect(controller.handlePreInput(String.fromCodePoint(0x1b))).toBe(true);
+    expect(editor.getText()).toBe('y');
+    expect(editor.getPromptPrediction()).toBeUndefined();
+    expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({
+      reason: 'escape',
+      accepted: false,
+    }));
 
     nextPrediction = () => Promise.resolve('do not show this in plan mode');
     editor.setText('');
-    controller.handleTurnEnded(turnEnded(11));
+    controller.handleTurnEnded(turnEnded(12));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     state.appState.planMode = true;
     controller.handlePlanModeChanged(true);
@@ -105,7 +126,7 @@ describe('PromptPredictionController', () => {
 
     state.appState.planMode = false;
     nextPrediction = () => Promise.resolve('clear this accepted suggestion');
-    controller.handleTurnEnded(turnEnded(12));
+    controller.handleTurnEnded(turnEnded(13));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     expect(controller.handlePreInput('\t')).toBe(true);
     editor.setText('');
@@ -118,7 +139,7 @@ describe('PromptPredictionController', () => {
 
     nextPrediction = () => Promise.resolve('git push');
     editor.terminalFocused = false;
-    controller.handleTurnEnded(turnEnded(13));
+    controller.handleTurnEnded(turnEnded(14));
     await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
     expect(editor.render(80).join('\n')).toContain('git push');
     editor.terminalFocused = true;
