@@ -118,6 +118,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     return host.app.accessor.get(IWorkspaceAliases);
   }
 
+  function originalSession(sessionId: string, workDir: string): SessionIndexLine {
+    return { sessionId, sessionDir: join(homeDir, 'sessions', encodeWorkDirKey(workDir), sessionId), workDir };
+  }
+
   async function seedSessionIndex(entries: SessionIndexLine[]): Promise<void> {
     const text = `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`;
     await fsp.writeFile(join(homeDir, 'session_index.jsonl'), text, 'utf8');
@@ -183,9 +187,9 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       },
     });
     await seedSessionIndex([
-      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: typedRoot },
-      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: 'c:\\Users\\Foo\\Proj' },
-      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: join(homeDir, 'unrelated') },
+      originalSession('s1', typedRoot),
+      originalSession('s2', 'c:\\Users\\Foo\\Proj'),
+      originalSession('s3', join(homeDir, 'unrelated')),
     ]);
     await fsp.appendFile(join(homeDir, 'session_index.jsonl'), 'not-json\n{}\n', 'utf8');
 
@@ -252,7 +256,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
     });
-    await seedSessionIndex([{ sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: root }]);
+    await seedSessionIndex([originalSession('s1', root)]);
     const storage = new CountingStorage(homeDir);
     const aliases = build(undefined, storage);
 
@@ -275,7 +279,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
     });
-    await seedSessionIndex([{ sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: root }]);
+    await seedSessionIndex([originalSession('s1', root)]);
     const storage = new CountingStorage(homeDir);
     const aliases = build(undefined, storage);
 
@@ -422,11 +426,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     });
 
     await aliases.resolveAliasIds(typedId);
-    appendLogs.append('', 'session_index.jsonl', {
-      sessionId: 's9',
-      sessionDir: 'sessions/s/s9',
-      workDir: join(homeDir, 'unrelated'),
-    });
+    appendLogs.append('', 'session_index.jsonl', originalSession('s9', join(homeDir, 'unrelated')));
     await appendLogs.flush();
 
     let release: (() => void) | undefined;
@@ -461,11 +461,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
 
     const appendLogs = currentHost!.app.accessor.get(IAppendLogStore);
-    appendLogs.append('', 'session_index.jsonl', {
-      sessionId: 's9',
-      sessionDir: 'sessions/s/s9',
-      workDir: 'c:\\Users\\Foo\\Proj',
-    });
+    appendLogs.append('', 'session_index.jsonl', originalSession('s9', 'c:\\Users\\Foo\\Proj'));
     await appendLogs.flush();
     const indexOnlyId = encodeWorkDirKey('c:\\Users\\Foo\\Proj');
     expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
@@ -502,7 +498,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
 
     const indexOnlyId = encodeWorkDirKey('c:\\Users\\Foo\\Proj');
     await seedSessionIndex([
-      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: 'c:\\Users\\Foo\\Proj' },
+      originalSession('s1', 'c:\\Users\\Foo\\Proj'),
     ]);
     await vi.waitFor(
       async () => {

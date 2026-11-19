@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { basename, isAbsolute } from 'pathe';
+import { basename } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
@@ -27,7 +27,7 @@ import {
   collectAliasIds,
   compactSessionIndexIfStale,
   dedupeByRoot,
-  isImplicitBucketSessionLine,
+  isOriginalImplicitLocation,
   readSessionIndexEntries,
 } from './workspaceAlias';
 import { IWorkspacePersistence, type WorkspaceCatalog } from './workspacePersistence';
@@ -195,10 +195,9 @@ export class WorkspaceService implements IWorkspaceService {
     return this.runExclusive(async () => {
       await this.ensureMerged();
       let touched: Workspace | undefined;
-      await this.store.update(async (catalog) => {
+      await this.store.update((catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
-        await this.requireDirectory(existing.root);
         touched = { ...existing, lastOpenedAt: Date.now() };
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? touched! : ws)),
@@ -299,7 +298,7 @@ export class WorkspaceService implements IWorkspaceService {
         let root = deletedWorkspace?.root;
         if (root === undefined) {
           root = (await readSessionIndexEntries(this.storage)).find(
-            (line) => encodeWorkDirKey(line.workDir) === id,
+            (line) => isOriginalImplicitLocation(line) && encodeWorkDirKey(line.workDir) === id,
           )?.workDir;
         }
         if (root === undefined) {
@@ -398,8 +397,7 @@ export class WorkspaceService implements IWorkspaceService {
     let changed = false;
     const now = Date.now();
     for (const entry of await readSessionIndexEntries(this.storage)) {
-      if (!isAbsolute(entry.workDir)) continue;
-      if (!isImplicitBucketSessionLine(entry)) continue;
+      if (!isOriginalImplicitLocation(entry)) continue;
       const id = encodeWorkDirKey(entry.workDir);
       if (byId.has(id) || deletedIds.has(id)) continue;
       byId.set(id, {
@@ -421,8 +419,7 @@ export class WorkspaceService implements IWorkspaceService {
     const now = Date.now();
     const seenRootKeys = new Set<string>();
     for (const entry of await readSessionIndexEntries(this.storage)) {
-      if (!isAbsolute(entry.workDir)) continue;
-      if (!isImplicitBucketSessionLine(entry)) continue;
+      if (!isOriginalImplicitLocation(entry)) continue;
       const rootKey = workspaceRootKey(entry.workDir);
       if (seenRootKeys.has(rootKey)) continue;
       seenRootKeys.add(rootKey);

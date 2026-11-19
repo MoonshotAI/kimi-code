@@ -21,16 +21,18 @@ export async function setColdSessionArchived(
   sessionId: string,
   archived: boolean,
 ): Promise<ColdSessionArchiveOutcome> {
-  const summary = await accessor.get(ISessionIndex).get(sessionId);
+  const index = accessor.get(ISessionIndex);
+  const locks = accessor.get(ISessionLockService);
+  const docs = accessor.get(IAtomicDocumentStore);
+  const sessionsScope = accessor.get(IBootstrapService).scope('sessions');
+  const mirror = accessor.get(ISessionIndexMirror);
+  const events = accessor.get(IEventService);
+  const summary = await index.get(sessionId);
   if (summary === undefined) return 'not_found';
-  const lease = accessor.get(ISessionLockService).lease(sessionId);
+  const lease = locks.lease(sessionId);
   try {
-    const docs = accessor.get(IAtomicDocumentStore);
     const metaScope = sessionScopeOf(
-      workspacePersistenceScope(
-        accessor.get(IBootstrapService).scope('sessions'),
-        summary.workspaceId,
-      ),
+      workspacePersistenceScope(sessionsScope, summary.workspaceId),
       sessionId,
     );
     let raw = await docs.get<SessionMeta>(metaScope, 'state.json');
@@ -45,7 +47,7 @@ export async function setColdSessionArchived(
     const nextMeta: SessionMeta = { ...persisted, archived, archivedAt };
     await docs.set(metaScope, 'state.json', encodeSessionMeta(nextMeta));
     if (legacyMetaScope !== undefined) await docs.delete(legacyMetaScope, 'state.json');
-    accessor.get(ISessionIndexMirror).record(
+    mirror.record(
       buildSessionSummary({
         id: sessionId,
         workspaceId: summary.workspaceId,
@@ -64,9 +66,9 @@ export async function setColdSessionArchived(
     );
     const payload = { sessionId, workspaceId: summary.workspaceId };
     if (archived) {
-      accessor.get(IEventService).publish(new SessionArchived({ payload }));
+      events.publish(new SessionArchived({ payload }));
     } else if (persisted.archived) {
-      accessor.get(IEventService).publish(new SessionRestored({ payload }));
+      events.publish(new SessionRestored({ payload }));
     }
     return 'updated';
   } finally {

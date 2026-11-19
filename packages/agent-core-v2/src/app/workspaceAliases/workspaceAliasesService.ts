@@ -5,6 +5,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { encodeWorkDirKey, isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import {
+  isOriginalImplicitLocation,
   readSessionIndexEntries,
   SESSION_INDEX_KEY,
   SESSION_INDEX_SCOPE,
@@ -154,7 +155,7 @@ export class WorkspaceAliasesService extends Disposable implements IWorkspaceAli
   private async loadSessionIndex(): Promise<{ snapshot: SessionIndexSnapshot; generation: number }> {
     try {
       const generation = this.invalidationGeneration;
-      const entries = await readSessionIndexEntries(this.storage);
+      const entries = (await readSessionIndexEntries(this.storage)).filter(isOriginalImplicitLocation);
       const rootKeyById = new Map<string, string>();
       for (const entry of entries) {
         rootKeyById.set(encodeWorkDirKey(entry.workDir), workspaceRootKey(entry.workDir));

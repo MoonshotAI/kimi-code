@@ -1,3 +1,6 @@
+import { isAbsolute, join } from 'pathe';
+
+import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import { encodeWorkDirKey, isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -35,7 +38,8 @@ export interface SessionIndexCompactionOutcome {
 }
 
 type ClassifiedSessionIndexLine =
-  | { readonly kind: 'entry'; readonly record: unknown; readonly sessionDir: string }
+  | { readonly kind: 'entry'; readonly record: unknown; readonly entry: SessionIndexLine }
+  | { readonly kind: 'deleted'; readonly record: unknown; readonly sessionId: string }
   | { readonly kind: 'other'; readonly record: unknown }
   | { readonly kind: 'garbage' };
 
@@ -47,25 +51,51 @@ function classifySessionIndexLine(line: string): ClassifiedSessionIndexLine {
     return { kind: 'garbage' };
   }
   if (typeof parsed !== 'object' || parsed === null) return { kind: 'other', record: parsed };
-  const entry = parsed as Partial<SessionIndexLine>;
-  if (
-    typeof entry.sessionId === 'string' &&
-    typeof entry.sessionDir === 'string' &&
-    typeof entry.workDir === 'string'
-  ) {
-    return { kind: 'entry', record: parsed, sessionDir: entry.sessionDir };
+  if ('sessionId' in parsed && typeof parsed.sessionId === 'string') {
+    if ('deleted' in parsed && parsed.deleted === true) {
+      return { kind: 'deleted', record: parsed, sessionId: parsed.sessionId };
+    }
+    if ('sessionDir' in parsed && typeof parsed.sessionDir === 'string') {
+      const location = 'workDir' in parsed ? parsed.workDir : 'cwd' in parsed ? parsed.cwd : undefined;
+      if (typeof location === 'string') {
+        const entry = { sessionId: parsed.sessionId, sessionDir: parsed.sessionDir, workDir: location };
+        return { kind: 'entry', record: parsed, entry };
+      }
+    }
   }
   return { kind: 'other', record: parsed };
 }
 
-function classifySessionIndexLines(bytes: Uint8Array): ClassifiedSessionIndexLine[] {
+function classifySessionIndexLines(
+  bytes: Uint8Array,
+  storage: IFileSystemStorageService,
+  sessionsScope = 'sessions',
+): ClassifiedSessionIndexLine[] {
+  const sessionsRoot = storage.pathFor(sessionsScope, '');
   const lines: ClassifiedSessionIndexLine[] = [];
   for (const raw of textDecoder.decode(bytes).split(/\r?\n/)) {
     const trimmed = raw.trim();
     if (trimmed === '') continue;
-    lines.push(classifySessionIndexLine(trimmed));
+    const line = classifySessionIndexLine(trimmed);
+    if (line.kind !== 'entry') {
+      lines.push(line);
+      continue;
+    }
+    const sessionDir = resolveSessionDir(line.entry, sessionsScope, sessionsRoot);
+    lines.push(sessionDir === undefined
+      ? { kind: 'other', record: line.record }
+      : { ...line, entry: { ...line.entry, sessionDir } });
   }
   return lines;
+}
+
+function resolveSessionDir(entry: SessionIndexLine, scope: string, root: string | undefined): string | undefined {
+  const bucket = sessionIndexBucket(entry);
+  if (!bucket || !entry.sessionId || entry.sessionId === '.' || entry.sessionId === '..') return undefined;
+  const relative = join(scope, bucket, entry.sessionId);
+  const path = root === undefined ? entry.sessionDir : join(root, bucket, entry.sessionId);
+  const expected = isAbsolute(entry.sessionDir) ? path : relative;
+  return canonicalWorkspaceRoot(entry.sessionDir) === canonicalWorkspaceRoot(expected) ? path : undefined;
 }
 
 async function findStaleSessionDirs(
@@ -90,16 +120,16 @@ export async function compactSessionIndexIfStale(
   deps: SessionIndexCompactionDeps,
 ): Promise<SessionIndexCompactionOutcome | undefined> {
   const initial = await deps.storage.read(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
-  if (initial === undefined) return undefined;
-  const survey = classifySessionIndexLines(initial);
+  if (initial === undefined || deps.storage.pathFor('sessions', '') === undefined) return undefined;
+  const survey = classifySessionIndexLines(initial, deps.storage);
   const entryDirs: string[] = [];
   for (const line of survey) {
-    if (line.kind === 'entry') entryDirs.push(line.sessionDir);
+    if (line.kind === 'entry') entryDirs.push(line.entry.sessionDir);
   }
   if (entryDirs.length === 0) return undefined;
   const staleDirs = await findStaleSessionDirs(entryDirs, deps.sessionDirExists);
   const staleLines = survey.filter(
-    (line) => line.kind === 'entry' && staleDirs.has(line.sessionDir),
+    (line) => line.kind === 'entry' && staleDirs.has(line.entry.sessionDir),
   ).length;
   if (
     staleLines < SESSION_INDEX_COMPACTION_MIN_STALE ||
@@ -113,7 +143,7 @@ export async function compactSessionIndexIfStale(
     if (bytes === undefined) return undefined;
     const size = await deps.storage.size(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
     if (size !== bytes.length) continue;
-    const lines = classifySessionIndexLines(bytes);
+    const lines = classifySessionIndexLines(bytes, deps.storage);
     const records: unknown[] = [];
     let droppedStale = 0;
     let droppedGarbage = 0;
@@ -122,7 +152,7 @@ export async function compactSessionIndexIfStale(
         droppedGarbage++;
         continue;
       }
-      if (line.kind === 'entry' && staleDirs.has(line.sessionDir)) {
+      if (line.kind === 'entry' && staleDirs.has(line.entry.sessionDir)) {
         droppedStale++;
         continue;
       }
@@ -138,6 +168,16 @@ export async function compactSessionIndexIfStale(
     return { lines: lines.length, kept: records.length, droppedStale, droppedGarbage };
   }
   return undefined;
+}
+
+export function sessionIndexBucket(line: SessionIndexLine): string | undefined {
+  const segments = line.sessionDir.replaceAll('\\', '/').replace(/\/+$/, '').split('/');
+  const bucket = segments.at(-2);
+  return segments.at(-1) === line.sessionId && bucket !== '.' && bucket !== '..' ? bucket : undefined;
+}
+
+export function isOriginalImplicitLocation(line: SessionIndexLine): boolean {
+  return isAbsolute(line.workDir) && sessionIndexBucket(line) === encodeWorkDirKey(line.workDir);
 }
 
 export function collectAliasIds(
@@ -157,7 +197,7 @@ export function collectAliasIds(
     if (isWorkDirKey(ws.id) && workspaceRootKey(ws.root) === rootKey) add(ws.id);
   }
   for (const line of sessionIndexEntries) {
-    if (workspaceRootKey(line.workDir) === rootKey) add(encodeWorkDirKey(line.workDir));
+    if (isOriginalImplicitLocation(line) && workspaceRootKey(line.workDir) === rootKey) add(encodeWorkDirKey(line.workDir));
   }
   return ids;
 }
@@ -184,46 +224,24 @@ export function dedupeByRoot(byId: ReadonlyMap<string, Workspace>): Workspace[] 
   return [...byRoot.values(), ...rest];
 }
 
-export function isImplicitBucketSessionLine(line: SessionIndexLine): boolean {
-  const segments = line.sessionDir.replaceAll('\\', '/').replace(/\/+$/, '').split('/');
-  const bucket = segments.at(-2) ?? '';
-  return !bucket.startsWith('wm_');
-}
-
 export async function readSessionIndexEntries(
   storage: IFileSystemStorageService,
+  sessionsScope = 'sessions',
 ): Promise<SessionIndexLine[]> {
   const bytes = await storage.read(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
   if (bytes === undefined) return [];
   const entries: SessionIndexLine[] = [];
-  for (const line of textDecoder.decode(bytes).split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    const entry = parseSessionIndexLine(trimmed);
-    if (entry === undefined) continue;
-    entries.push(entry);
+  const deleted = new Set<string>();
+  const lines = classifySessionIndexLines(bytes, storage, sessionsScope);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    if (line.kind === 'deleted') deleted.add(line.sessionId);
+    else if (line.kind === 'entry' && !deleted.has(line.entry.sessionId)) entries.push(line.entry);
   }
-  return entries;
+  return entries.toReversed();
 }
 
 export function parseSessionIndexLine(line: string): SessionIndexLine | undefined {
-  try {
-    const parsed = JSON.parse(line) as unknown;
-    if (typeof parsed !== 'object' || parsed === null) return undefined;
-    const entry = parsed as Partial<SessionIndexLine>;
-    if (
-      typeof entry.sessionId !== 'string' ||
-      typeof entry.sessionDir !== 'string' ||
-      typeof entry.workDir !== 'string'
-    ) {
-      return undefined;
-    }
-    return {
-      sessionId: entry.sessionId,
-      sessionDir: entry.sessionDir,
-      workDir: entry.workDir,
-    };
-  } catch {
-    return undefined;
-  }
+  const classified = classifySessionIndexLine(line);
+  return classified.kind === 'entry' ? classified.entry : undefined;
 }

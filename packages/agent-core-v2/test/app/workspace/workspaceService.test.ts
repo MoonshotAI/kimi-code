@@ -126,6 +126,10 @@ describe('WorkspaceService (file-backed)', () => {
     } as unknown as IHostFileSystem;
   }
 
+  function originalSession(sessionId: string, workDir: string): SessionIndexLine {
+    return { sessionId, sessionDir: join(homeDir, 'sessions', encodeWorkDirKey(workDir), sessionId), workDir };
+  }
+
   async function seedSessionIndex(entries: SessionIndexLine[]): Promise<void> {
     const text = `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`;
     await fsp.writeFile(join(homeDir, 'session_index.jsonl'), text, 'utf8');
@@ -520,9 +524,9 @@ describe('WorkspaceService (file-backed)', () => {
   it('rebuild folds session-index workDir variants into one workspace', async () => {
     const firstSeen = '//Host/Share/Proj';
     await seedSessionIndex([
-      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: firstSeen },
-      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: '//host/share/Proj/' },
-      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: '//HOST/SHARE/PROJ' },
+      originalSession('s1', firstSeen),
+      originalSession('s2', '//host/share/Proj/'),
+      originalSession('s3', '//HOST/SHARE/PROJ'),
     ]);
 
     const list = await build().list();
@@ -868,9 +872,9 @@ describe('WorkspaceService (file-backed)', () => {
       },
     });
     await seedSessionIndex([
-      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: typedRoot },
-      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: indexOnlyRoot },
-      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: join(homeDir, 'unrelated') },
+      originalSession('s1', typedRoot),
+      originalSession('s2', indexOnlyRoot),
+      originalSession('s3', join(homeDir, 'unrelated')),
     ]);
 
     const registry = build();
@@ -897,11 +901,7 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
   function staleEntry(i: number): SessionIndexLine {
-    return {
-      sessionId: `s_stale_${i}`,
-      sessionDir: join(homeDir, 'sessions', `wd_stale_${i}`, `s_stale_${i}`),
-      workDir: join(homeDir, `stale-${i}`),
-    };
+    return originalSession(`s_stale_${i}`, join(homeDir, `stale-${i}`));
   }
 
   async function writeSessionIndexLines(lines: readonly unknown[]): Promise<void> {
@@ -934,13 +934,8 @@ describe('WorkspaceService (file-backed)', () => {
     const lines: unknown[] = [];
     for (let i = 0; i < 20; i++) lines.push(staleEntry(i));
     for (let i = 0; i < 8; i++) {
-      const sessionDir = join(homeDir, 'sessions', `wd_fresh_${i}`, `s_fresh_${i}`);
-      await fsp.mkdir(sessionDir, { recursive: true });
-      const entry: SessionIndexLine = {
-        sessionId: `s_fresh_${i}`,
-        sessionDir,
-        workDir: join(homeDir, `fresh-${i}`),
-      };
+      const entry = originalSession(`s_fresh_${i}`, join(homeDir, `fresh-${i}`));
+      await fsp.mkdir(entry.sessionDir, { recursive: true });
       fresh.push(entry);
       lines.push(entry);
     }
@@ -961,6 +956,15 @@ describe('WorkspaceService (file-backed)', () => {
     expect(afterRestart).toHaveLength(28);
   });
 
+  it('keeps relative session directories under the data home when compacting stale rows', async () => {
+    const id = encodeWorkDirKey(homeDir);
+    const live = { sessionId: 'relative', sessionDir: join('sessions', id, 'relative'), cwd: join(homeDir, 'checkout') };
+    await fsp.mkdir(join(homeDir, live.sessionDir), { recursive: true });
+    await writeSessionIndexLines([live, ...Array.from({ length: 16 }, (_, index) => staleEntry(index))]);
+    await build().list();
+    expect((await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8')).trimEnd()).toBe(JSON.stringify(live));
+  });
+
   it('leaves a mostly-fresh session index byte-identical', async () => {
     await seedSessionIndex([staleEntry(0), staleEntry(1), staleEntry(2), staleEntry(3)]);
     const before = await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8');
@@ -973,7 +977,7 @@ describe('WorkspaceService (file-backed)', () => {
   it('keeps entries appended while the compaction scans session dirs', async () => {
     const lines: unknown[] = [];
     for (let i = 0; i < 20; i++) lines.push(staleEntry(i));
-    const gateDir = join(homeDir, 'sessions', 'wd_gate', 's_gate');
+    const gateDir = originalSession('s_gate', join(homeDir, 'gate')).sessionDir;
     await fsp.mkdir(gateDir, { recursive: true });
     lines.push({ sessionId: 's_gate', sessionDir: gateDir, workDir: join(homeDir, 'gate') });
     await writeSessionIndexLines(lines);
@@ -1000,7 +1004,7 @@ describe('WorkspaceService (file-backed)', () => {
 
     const listPromise = build(gated).list();
     await entered;
-    const appendedDir = join(homeDir, 'sessions', 'wd_new', 's_new');
+    const appendedDir = originalSession('s_new', join(homeDir, 'new')).sessionDir;
     await fsp.mkdir(appendedDir, { recursive: true });
     appendLogs.append('', 'session_index.jsonl', {
       sessionId: 's_new',
@@ -1020,7 +1024,7 @@ describe('WorkspaceService (file-backed)', () => {
   it('keeps the original file when the compaction rewrite fails and compacts on the next startup', async () => {
     const lines: unknown[] = [];
     for (let i = 0; i < 20; i++) lines.push(staleEntry(i));
-    const liveDir = join(homeDir, 'sessions', 'wd_live', 's_live');
+    const liveDir = originalSession('s_live', join(homeDir, 'live')).sessionDir;
     await fsp.mkdir(liveDir, { recursive: true });
     lines.push({ sessionId: 's_live', sessionDir: liveDir, workDir: join(homeDir, 'live') });
     await writeSessionIndexLines(lines);

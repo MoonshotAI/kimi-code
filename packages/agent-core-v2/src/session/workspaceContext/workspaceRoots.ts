@@ -8,32 +8,30 @@ export interface EffectiveWorkspaceRoots {
   readonly workDir: string;
   readonly primaryDir?: string;
   readonly additionalDirs: readonly string[];
-  readonly followsPrimary: boolean;
 }
 
 export function resolveEffectiveWorkspaceRoots(
   session: Pick<ISessionContext, 'workspaceId' | 'cwd'>,
   binding: EnvironmentBinding | undefined,
-  workspace: Pick<ISessionWorkspaceInfo, 'primaryByWorkspace' | 'additionalDirs'>,
+  workspace: Pick<ISessionWorkspaceInfo, 'primaryByWorkspace' | 'additionalDirs' | 'environmentId'>,
   host?: Pick<HostEnvironmentInfo, 'cwd' | 'homeDir'>,
 ): EffectiveWorkspaceRoots {
   const environmentId = binding?.environmentId ?? LOCAL_ENVIRONMENT_ID;
   const local = environmentId === LOCAL_ENVIRONMENT_ID;
   const primaryDir = local ? workspace.primaryByWorkspace[session.workspaceId] : undefined;
-  const followsPrimary = local && binding?.cwd === undefined && primaryDir !== undefined;
   const workDir = binding?.cwd ??
     (local
-      ? primaryDir ?? session.cwd
+      ? session.cwd
       : host?.cwd ?? host?.homeDir ?? session.cwd);
   const workDirKey = workspaceRootKey(workDir);
   const seen = new Set([workDirKey]);
   const additionalDirs: string[] = [];
-  for (const dir of [primaryDir, ...workspace.additionalDirs]) {
-    if (dir === undefined) continue;
+  const dirs = environmentId === (workspace.environmentId ?? LOCAL_ENVIRONMENT_ID) ? workspace.additionalDirs : [];
+  for (const dir of dirs) {
     const key = workspaceRootKey(dir);
     if (seen.has(key)) continue;
     seen.add(key);
     additionalDirs.push(dir);
   }
-  return { workDir, primaryDir, additionalDirs, followsPrimary };
+  return { workDir, primaryDir, additionalDirs };
 }

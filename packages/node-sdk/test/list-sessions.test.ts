@@ -206,6 +206,23 @@ describe('KimiHarness.listSessions', () => {
 });
 
 describe('SDKRpcClientV2.listSessionsPage', () => {
+  it('lists a session by its explicit local working directory and by the owning project directory', async () => {
+    const homeDir = await makeTempDir();
+    const root = await makeTempDir();
+    const cwd = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const manager = client.engineAccessor.get(ISessionManager);
+      const project = await client.engineAccessor.get(IWorkspaceService).create({ root });
+      const session = await manager.create({ workspaceId: project.id, environmentId: 'local', environmentCwd: cwd });
+      await manager.close(session.id);
+      expect((await client.listSessions({ workDir: cwd })).map((item) => item.id)).toEqual([session.id]);
+      expect((await client.listSessions({ workDir: root })).map((item) => item.id)).toEqual([session.id]);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('pages through the listing with keyset cursors (read model off)', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_PERSISTENCE_MINIDB_READMODEL', '0');

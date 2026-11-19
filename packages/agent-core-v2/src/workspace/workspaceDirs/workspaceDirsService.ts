@@ -169,6 +169,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     const currentPrimary = (): Readonly<Record<string, string>> => this.primaryByWorkspace;
     return {
       _serviceBrand: undefined,
+      environmentId: this.environmentId,
       ready: this.ready,
       onDidChange: this.onDidChange,
       get additionalDirs() {
@@ -255,11 +256,9 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     const dirs: string[] = [];
     const primary: Record<string, string> = {};
     for (const entry of entries) {
-      const set = [entry.root, ...entry.additionalDirs];
-      const currentEntry =
-        this.followsPrimary &&
-        this.environmentId === LOCAL_ENVIRONMENT_ID &&
-        entry.id === this.workspace.workspaceId;
+      const currentEntry = this.environmentId === LOCAL_ENVIRONMENT_ID && entry.id === this.workspace.workspaceId;
+      if (!this.followsPrimary && !currentEntry) continue;
+      const set = this.followsPrimary ? [entry.root, ...entry.additionalDirs] : entry.additionalDirs;
       if (!currentEntry && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
       primary[entry.id] = entry.root;
       const primaryKey = workspaceRootKey(entry.root);

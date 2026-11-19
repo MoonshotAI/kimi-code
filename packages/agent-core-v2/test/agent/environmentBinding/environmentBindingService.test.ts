@@ -442,16 +442,15 @@ describe('AgentEnvironmentService workspaceRoots', () => {
     expect(uninspectable.agentEnvironment.workspaceRoots().workDir).toBe('/workspace');
   });
 
-  it('follows the current primary only for a default local binding', () => {
+  it('keeps default and explicit local bindings fixed after a primary change', () => {
     const local = setup({
       sessionCwd: '/old',
       primaryByWorkspace: { workspace: '/new' },
     });
     expect(local.agentEnvironment.workspaceRoots()).toEqual({
-      workDir: '/new',
+      workDir: '/old',
       primaryDir: '/new',
       additionalDirs: [],
-      followsPrimary: true,
     });
 
     const explicit = setup({
@@ -461,8 +460,7 @@ describe('AgentEnvironmentService workspaceRoots', () => {
     expect(explicit.agentEnvironment.workspaceRoots()).toEqual({
       workDir: '/explicit',
       primaryDir: '/new',
-      additionalDirs: ['/new'],
-      followsPrimary: false,
+      additionalDirs: [],
     });
   });
 
@@ -479,7 +477,6 @@ describe('AgentEnvironmentService workspaceRoots', () => {
       workDir: '/remote/initial',
       primaryDir: undefined,
       additionalDirs: [],
-      followsPrimary: false,
     });
   });
 });

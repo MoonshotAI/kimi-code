@@ -13,6 +13,17 @@ describe('workspaceFolders', () => {
     ]);
   });
 
+  it('keeps the first spelling of Windows folders and distinguishes POSIX case', () => {
+    expect(workspaceFolders({
+      root: 'C:\\Repo', additionalDirs: ['c:/repo/', '\\\\Host\\Share\\Docs', '//host/share/docs/', '/Data', '/data'],
+    })).toEqual([
+      { path: 'C:\\Repo', primary: true },
+      { path: '\\\\Host\\Share\\Docs', primary: false },
+      { path: '/Data', primary: false },
+      { path: '/data', primary: false },
+    ]);
+  });
+
   it('returns only the primary root when there are no additional directories', () => {
     expect(workspaceFolders({ root: '/repo' })).toEqual([{ path: '/repo', primary: true }]);
     expect(workspaceFolders({ root: '', additionalDirs: ['/docs'] })).toEqual([]);

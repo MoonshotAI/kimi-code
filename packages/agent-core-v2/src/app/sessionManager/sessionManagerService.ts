@@ -1,5 +1,9 @@
+import { isAbsolute, resolve } from 'node:path';
+
 
 import { IEnvironmentService } from '#/app/environment/environment';
+import { IInstantiationService } from '#/_base/di/instantiation';
+import { setColdSessionArchived } from '#/workspace/sessionLifecycle/coldSessionArchive';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
 import { normalizeRemoteCwd } from '#/environment/environmentDefaults';
@@ -78,6 +82,7 @@ export class SessionManager implements ISessionManager {
     @IEnvironmentService private readonly environments: IEnvironmentService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {}
 
   async resolveCreationEnvironment(options: CreateManagedSessionOptions) {
@@ -93,15 +98,16 @@ export class SessionManager implements ISessionManager {
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
     const opened = await this.openCreation(options);
     try {
-      const effective = opened.environmentId === undefined && opened.environmentCwd === undefined
-        ? options
-        : { ...options, environmentId: opened.environmentId, environmentCwd: opened.environmentCwd };
       const create = async () => {
-        const entry = await this.controllerForWorkspace({
-          workspaceId: opened.workspaceId,
-          root: options.workDir,
-        });
-        return this.runControllerOperation(entry, (controller) => controller.create(effective));
+        const entry = await this.controllerForWorkspace({ workspaceId: opened.workspaceId });
+        return this.runControllerOperation(entry, (controller) => controller.create({
+          ...options,
+          workDir: opened.workDir,
+          environmentId: opened.environmentId,
+          environmentCwd: opened.environmentId === LOCAL_ENVIRONMENT_ID && options.environmentCwd === undefined
+            ? undefined
+            : opened.environmentCwd,
+        }));
       };
       if (options.sessionId === undefined) return await create();
       return await this.serializeLifecycle(options.sessionId, create);
@@ -115,22 +121,23 @@ export class SessionManager implements ISessionManager {
     const declarations = options.environmentId === LOCAL_ENVIRONMENT_ID
       ? undefined
       : await this.environmentDeclarations.declarations();
-    const environmentId = options.environmentId ?? declarations?.defaultId;
-    const remote = environmentId !== undefined && environmentId !== LOCAL_ENVIRONMENT_ID;
-    if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
-    const lease = await this.workspaces.acquire(
-      options.workspaceId === undefined
-        ? { root: options.workDir }
-        : { workspaceId: options.workspaceId, root: options.workDir },
-    );
+    const environmentId = options.environmentId ?? declarations?.defaultId ?? LOCAL_ENVIRONMENT_ID;
+    const remote = environmentId !== LOCAL_ENVIRONMENT_ID;
+    let lease: WorkspaceInstanceLease;
+    if (options.workspaceId !== undefined) {
+      lease = await this.workspaces.acquire({ workspaceId: options.workspaceId });
+    } else {
+      if (options.workDir === undefined) throw new Error2(ErrorCodes.CONFIG_INVALID, 'workspace ID or working directory is required');
+      if (!remote) await this.assertUsableWorkDir(options.workDir);
+      lease = await this.workspaces.acquire({ root: options.workDir });
+    }
     try {
+      const workDir = options.workDir ?? lease.instance.root;
       if (!remote) {
-        return {
-          workspaceId: lease.instance.id,
-          environmentId,
-          environmentCwd: options.environmentCwd,
-          lease,
-        };
+        const cwd = options.environmentCwd ?? workDir;
+        if (options.workspaceId !== undefined || cwd !== options.workDir) await this.assertUsableWorkDir(cwd);
+        const absoluteCwd = resolve(cwd);
+        return { workspaceId: lease.instance.id, workDir: absoluteCwd, environmentId, environmentCwd: absoluteCwd, lease };
       }
       const registrationError = this.environmentDeclarations.registrationError(environmentId);
       if (registrationError !== undefined) throw registrationError;
@@ -153,6 +160,7 @@ export class SessionManager implements ISessionManager {
       return {
         workspaceId: lease.instance.id,
         environmentId,
+        workDir,
         environmentCwd: declared === undefined ? cwd : normalizeRemoteCwd(cwd),
         lease,
       };
@@ -163,6 +171,9 @@ export class SessionManager implements ISessionManager {
   }
 
   private async assertUsableWorkDir(workDir: string): Promise<void> {
+    if (!isAbsolute(workDir)) {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, `session cwd must be absolute: ${workDir}`);
+    }
     let stat;
     try {
       stat = await this.hostFs.stat(workDir);
@@ -307,9 +318,11 @@ export class SessionManager implements ISessionManager {
   }
 
   private async archiveInner(sessionId: string): Promise<void> {
-    const entry = await this.controllerForSession(sessionId);
-    if (entry !== undefined) {
-      await this.runControllerOperation(entry, (controller) => controller.archive(sessionId));
+    const live = this.owners.get(sessionId);
+    if (live === undefined) {
+      await this.instantiation.invokeFunction(setColdSessionArchived, sessionId, true);
+    } else {
+      await this.runControllerOperation(this.retainController(live), (controller) => controller.archive(sessionId));
     }
     this.reclaimed.delete(sessionId);
   }
@@ -507,7 +520,7 @@ export class SessionManager implements ISessionManager {
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     await this.environments.ready;
-    return this.controllerForWorkspace({ workspaceId: summary.workspaceId, root: summary.cwd });
+    return this.controllerForWorkspace({ workspaceId: summary.workspaceId });
   }
 }
 

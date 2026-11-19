@@ -7,6 +7,8 @@ export const sessionSummarySchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   cwd: z.string().optional(),
+  environmentId: z.string().optional(),
+  environmentCwd: z.string().optional(),
   title: z.string().optional(),
   lastPrompt: z.string().optional(),
   createdAt: z.number(),
@@ -19,6 +21,8 @@ export const sessionSummarySchema = z.object({
 
 export const sessionListQuerySchema = z.object({
   workspaceIds: z.array(z.string()).optional(),
+  workdir: z.object({ environmentId: z.string(), cwd: z.string() }).optional(),
+  directory: z.object({ cwd: z.string(), workspaceIds: z.array(z.string()) }).optional(),
   sessionId: z.string().optional(),
   includeArchived: z.boolean().optional(),
   limit: z.number().optional(),

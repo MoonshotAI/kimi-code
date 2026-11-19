@@ -153,7 +153,9 @@ export class ProgramWorkdirs {
   }
 
   async reload(): Promise<void> {
-    for (const { view } of this.entries.values()) await reloadView(view);
+    const results = await Promise.allSettled([...this.entries.values()].map(({ view }) => reloadView(view)));
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed !== undefined) throw failed.reason;
   }
 
   dispose(): void {

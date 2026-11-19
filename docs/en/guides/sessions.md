@@ -4,14 +4,14 @@ Kimi Code CLI persists every conversation as a "session" — storing message his
 
 ## Session storage
 
-All sessions are saved under `$KIMI_CODE_HOME/sessions/` (default: `~/.kimi-code/sessions/`), grouped by working directory:
+All sessions are saved under `$KIMI_CODE_HOME/sessions/` (default: `~/.kimi-code/sessions/`), grouped by project ID:
 
 ```text
 ~/.kimi-code/
 ├── config.toml
 ├── session_index.jsonl
 └── sessions/
-    └── <workDirKey>/
+    └── <projectId>/
         └── <sessionId>/
             ├── state.json
             └── agents/
@@ -21,7 +21,7 @@ All sessions are saved under `$KIMI_CODE_HOME/sessions/` (default: `~/.kimi-code
                     └── wire.jsonl
 ```
 
-- `state.json`: session metadata such as title and creation time.
+- `state.json`: session metadata, including its working directory, title, and creation time.
 - `agents/*/wire.jsonl`: the agent event stream, used for session recovery and replay. It also carries a request trace — the tool schemas, request parameters, and MCP tool listings sent to the model — for debugging.
 
 ::: warning
@@ -29,6 +29,8 @@ Do not manually edit files inside the `sessions/` directory — doing so may pre
 :::
 
 ## Starting and resuming sessions
+
+Desktop lists sessions from every working directory in the selected project. Creating a session there uses the project's current default directory. Existing sessions retain their recorded directory.
 
 Every time you run `kimi` directly it creates a new session. To resume a previous session, use one of the following:
 

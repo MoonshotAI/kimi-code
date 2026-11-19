@@ -226,6 +226,55 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     trustLoadingByWorkspaceId.value = { ...trustLoadingByWorkspaceId.value, [workspaceId]: loading };
   }
 
+  const sessionWorkspaceAliases = ref(new Map<string, string>());
+  const registeredWorkspaceIds = computed(() => new Set(workspaces.value.map((workspace) => workspace.id)));
+
+  function registeredSessionWorkspace(id: string, hostId?: string): string {
+    if (registeredWorkspaceIds.value.has(id)) return id;
+    const known = sessionWorkspaceAliases.value.get(JSON.stringify([hostId, id]));
+    return known !== undefined && registeredWorkspaceIds.value.has(known) ? known : id;
+  }
+
+  function projectSessionWorkspace(session: AppSession, groupId?: string): AppSession {
+    const id = session.workspaceId;
+    if (groupId !== undefined && id !== undefined && id !== groupId &&
+        registeredWorkspaceIds.value.has(groupId) && !registeredWorkspaceIds.value.has(id)) {
+      sessionWorkspaceAliases.value.set(JSON.stringify([session.hostId, id]), groupId);
+    }
+    const owner = id === undefined ? groupId : registeredSessionWorkspace(id, session.hostId);
+    return owner === undefined || owner === id ? session : { ...session, workspaceId: owner };
+  }
+
+  async function findUnlistedSessionWorkspace(id: string, hostId?: string): Promise<void> {
+    const aliases = sessionWorkspaceAliases.value;
+    const key = JSON.stringify([hostId, id]);
+    if (aliases.has(key)) return;
+    aliases.set(key, id);
+    try {
+      const page = await getDeviceApi(hostId).listSessionGroups(
+        { workspaceIds: [id], groupPageSize: 1, pageSize: 1, archived: 'all' },
+        { background: true },
+      );
+      const group = page.groups.find((candidate) => {
+        const host = candidate.sessions[0]?.hostId;
+        return host === undefined || host === hostId;
+      });
+      if (group !== undefined && aliases.get(key) === id) aliases.set(key, group.workspaceId);
+    } catch (error) {
+      if (aliases.get(key) === id) aliases.delete(key);
+      logWarn('[kimi-code] failed to identify the workspace for a session', error);
+    }
+  }
+
+  function identifySessionWorkspaces(sessions: readonly AppSession[]): void {
+    for (const session of sessions) {
+      const id = session.workspaceId;
+      if (id?.startsWith('wd_') && !registeredWorkspaceIds.value.has(id)) {
+        void findUnlistedSessionWorkspace(id, session.hostId);
+      }
+    }
+  }
+
   const workspaceIdByRoot = computed(() => {
     const map = new Map<string, string>();
     for (const w of workspaces.value) {
@@ -235,16 +284,18 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     return map;
   });
 
-  function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string {
-    return s.workspaceId ?? workspaceIdByRoot.value.get(workspaceRootKey(s.cwd)) ?? s.cwd;
+  function workspaceIdForSession(s: { workspaceId?: string; cwd: string; hostId?: string }): string {
+    return s.workspaceId === undefined
+      ? workspaceIdByRoot.value.get(workspaceRootKey(s.cwd)) ?? s.cwd
+      : registeredSessionWorkspace(s.workspaceId, s.hostId);
   }
 
   function sessionBelongsToWorkspace(
-    session: { workspaceId?: string; cwd?: string },
+    session: { workspaceId?: string; cwd?: string; hostId?: string },
     workspaceId: string,
   ): boolean {
     return (
-      session.workspaceId === workspaceId ||
+      (session.workspaceId !== undefined && registeredSessionWorkspace(session.workspaceId, session.hostId) === workspaceId) ||
       (session.workspaceId === undefined &&
         session.cwd !== undefined &&
         workspaceIdForSession({ cwd: session.cwd }) === workspaceId)
@@ -254,7 +305,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   const mergedWorkspaces = computed<AppWorkspace[]>(() =>
     mergeWorkspaces({
       workspaces: workspaces.value,
-      sessions: sessionsStore().sessions,
+      sessions: sessionsStore().sessions.map((session) => projectSessionWorkspace(session)),
       hiddenWorkspaceIds: hiddenWorkspaceIds.value,
       sessionsHasMoreByWorkspace: sessionsHasMoreByWorkspace.value,
     }),
@@ -996,6 +1047,9 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     sessionsCursorByWorkspace,
     sessionsInitialCountByWorkspace,
     workspaceIdByRoot,
+    sessionWorkspaceAliases,
+    projectSessionWorkspace,
+    identifySessionWorkspaces,
     workspaceIdForSession,
     sessionBelongsToWorkspace,
     mergedWorkspaces,

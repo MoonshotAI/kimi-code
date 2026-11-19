@@ -4,14 +4,14 @@ Kimi Code CLI 把每次对话持久化为一个「会话」，保留消息历史
 
 ## 会话存储
 
-所有会话保存在 `$KIMI_CODE_HOME/sessions/` 下（默认 `~/.kimi-code/sessions/`），按工作目录分组存放：
+所有会话保存在 `$KIMI_CODE_HOME/sessions/` 下（默认 `~/.kimi-code/sessions/`），按项目 ID 分组存放：
 
 ```text
 ~/.kimi-code/
 ├── config.toml
 ├── session_index.jsonl
 └── sessions/
-    └── <workDirKey>/
+    └── <projectId>/
         └── <sessionId>/
             ├── state.json
             └── agents/
@@ -21,7 +21,7 @@ Kimi Code CLI 把每次对话持久化为一个「会话」，保留消息历史
                     └── wire.jsonl
 ```
 
-- `state.json`：会话标题、创建时间等元数据。
+- `state.json`：会话实际工作的目录、标题、创建时间等元数据。
 - `agents/*/wire.jsonl`：Agent 事件流，用于会话恢复和回放；同时记录发给模型的请求轨迹（工具 schema、请求参数、MCP 工具清单），便于调试。
 
 ::: warning 注意
@@ -29,6 +29,8 @@ Kimi Code CLI 把每次对话持久化为一个「会话」，保留消息历史
 :::
 
 ## 启动与恢复会话
+
+桌面会在一个项目下列出各个工作目录的会话。在桌面新建会话时，会话从项目当前的默认目录开始。已有会话继续使用各自记录的目录。
 
 每次直接运行 `kimi` 都会创建新会话。以下方式可以恢复历史会话：
 

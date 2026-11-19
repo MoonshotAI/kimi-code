@@ -1333,6 +1333,7 @@ export class AgentTestContext {
               environmentId: 'local',
               cwd: this.cwd,
               fs: undefined as never,
+              dirs: undefined as never,
             });
             reg.definePartialInstance(IWorkspaceTrust, {
               get: async () => false,

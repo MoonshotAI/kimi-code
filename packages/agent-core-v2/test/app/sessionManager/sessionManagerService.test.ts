@@ -1,7 +1,12 @@
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { IEnvironmentService } from '#/app/environment/environment';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
+import { stubClientIdentity } from '../bootstrap/stubs';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
@@ -84,6 +89,7 @@ function makeSessionManager(
         realpath: async (path: string) => path,
       } as unknown as IHostFileSystem),
     overrides.locks ?? new InMemorySessionLockService(),
+    undefined as never,
   );
 }
 
@@ -432,6 +438,7 @@ describe('SessionManager', () => {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
     const manager = makeSessionManager(workspaces, index);
+    await manager.create({ workDir: '/workspace' });
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -834,6 +841,7 @@ describe('SessionManager controller retirement', () => {
       };
       return {
         id,
+        workdirs: { currentRoot: undefined },
         state: behavior,
         dirs: behavior,
         fs: behavior,
@@ -1023,12 +1031,21 @@ describe('SessionManager creation environment', () => {
     });
   });
 
+  it('uses the chosen local directory and resolves a known project without a caller directory', async () => {
+    setup(configWith(undefined));
+    await expect(manager.resolveCreationEnvironment({ workDir: '/checkout/src' })).resolves.toEqual({
+      workspaceId: 'workspace-1', environmentId: 'local', environmentCwd: '/checkout/src',
+    });
+    await expect(manager.resolveCreationEnvironment({ workspaceId: 'workspace-1' })).resolves.toEqual({
+      workspaceId: 'workspace-1', environmentId: 'local', environmentCwd: '/workspace',
+    });
+  });
+
   it('keeps new sessions local when no default is configured', async () => {
     const { options } = setup(configWith(undefined));
 
     await manager.create({ workDir: '/workspace' });
-    expect(options[0]).toMatchObject({ workDir: '/workspace' });
-    expect((options[0] as { environmentId?: string }).environmentId).toBeUndefined();
+    expect(options[0]).toMatchObject({ workDir: '/workspace', environmentId: 'local' });
   });
 
   it('rejects creation when declaration resolution fails and allows explicit local', async () => {
@@ -1049,7 +1066,7 @@ describe('SessionManager creation environment', () => {
     await manager.create({ workDir: '/workspace', environmentId: 'local', environmentCwd: '/tmp/proj-a' });
     expect(options[0]).toMatchObject({ workDir: '/workspace', environmentId: 'local' });
     expect(options[1]).toMatchObject({
-      workDir: '/workspace',
+      workDir: '/tmp/proj-a',
       environmentId: 'local',
       environmentCwd: '/tmp/proj-a',
     });
@@ -1169,5 +1186,151 @@ describe('reloadOnStale', () => {
     ).rejects.toBe(occupied);
 
     expect(order).toEqual([]);
+  });
+});
+
+describe('persisted session workdirs', () => {
+  let home: string;
+  let app: import('#/_base/di/scope').Scope;
+  let engine: typeof import('#/index');
+  const hosts: import('#/_base/di/scope').Scope[] = [];
+  let sessions: ISessionManager;
+
+  function startHost() {
+    const host = engine.bootstrap(
+      { homeDir: home, osHomeDir: home, env: {}, clientIdentity: stubClientIdentity },
+      engine.logSeed(engine.resolveLoggingConfig({ homeDir: home, env: {} })),
+    ).app;
+    hosts.push(host);
+    return host;
+  }
+
+  beforeEach(async () => {
+    engine = await import('#/index');
+    home = await mkdtemp(join(tmpdir(), 'session-workdir-'));
+    app = startHost();
+    sessions = app.accessor.get(ISessionManager);
+  });
+
+  afterEach(async () => {
+    for (const host of hosts.splice(0)) {
+      const manager = host.accessor.get(ISessionManager);
+      for (const live of manager.list()) await manager.close(live.id);
+      await host.accessor.get(engine.ISessionIndex).prepare();
+      await host.accessor.get(engine.ISessionIndexMirror).drain();
+      host.dispose();
+      await host.instantiation.disposeAsync();
+    }
+    await engine.drainSessionIndexMirror();
+    await engine.drainQueryStoreDisposals();
+    await engine.drainSessionMetadataWrites();
+    await engine.drainLogCloses();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('reads the original file live, after cold resume, and from a fork after promoting another directory', async () => {
+    const first = join(home, 'first');
+    const second = join(home, 'second');
+    await Promise.all([first, second].map(async (cwd) => {
+      await mkdir(cwd);
+      await writeFile(join(cwd, 'marker'), cwd);
+    }));
+    const projects = app.accessor.get(engine.IWorkspaceService);
+    const project = await projects.create({ root: first, additionalDirs: [second] });
+    const original = await sessions.create({ workspaceId: project.id });
+    const readMarker = (session: ISessionScopeHandle) =>
+      session.accessor.get(engine.ISessionWorkdir).fs.read({ path: 'marker', offset: 0, length: 4096, encoding: 'utf-8' });
+    await projects.setPrimary(project.id, second);
+    expect((await readMarker(original)).content).toBe(first);
+    await sessions.close(original.id);
+
+    const fork = await sessions.fork({ sourceSessionId: original.id });
+    for (const id of [original.id, fork.id]) {
+      const state = JSON.parse(await readFile(join(home, 'sessions', project.id, id, 'state.json'), 'utf8'));
+      expect(state).toMatchObject({ id, cwd: first, environmentCwd: first });
+      const resumed = await sessions.resume(id);
+      expect((await readMarker(resumed!)).content).toBe(first);
+    }
+    expect((await readMarker(await sessions.create({ workspaceId: project.id }))).content).toBe(second);
+  });
+
+  it('writes a grouped implicit session and fork in a format original v2 readers can browse', async () => {
+    const checkout = join(home, 'checkout');
+    await mkdir(checkout);
+    const project = await app.accessor.get(engine.IWorkspaceService).createOrTouch(home);
+    const original = await sessions.create({ workspaceId: project.id, environmentCwd: checkout });
+    const fork = await sessions.fork({ sourceSessionId: original.id });
+    const ordinary = await sessions.create({ workspaceId: project.id });
+    const log = await readFile(join(home, 'session_index.jsonl'), 'utf8');
+    const entries: unknown[] = log.trimEnd().split('\n').map((line) => JSON.parse(line) as unknown);
+    for (const id of [original.id, fork.id]) {
+      expect(entries).toContainEqual({ sessionId: id, sessionDir: join(home, 'sessions', project.id, id).replaceAll('\\', '/'), cwd: checkout });
+    }
+    expect(entries).toContainEqual({ sessionId: ordinary.id, sessionDir: join(home, 'sessions', project.id, ordinary.id).replaceAll('\\', '/'), workDir: home });
+  });
+
+  it('recovers old nested metadata and a matching index row, and keeps unavailable histories readable', async () => {
+    const cwd = join(home, 'original');
+    await mkdir(cwd);
+    const project = await app.accessor.get(engine.IWorkspaceService).create({ root: home });
+    const sessionDir = join(home, 'sessions', project.id, 'legacy');
+    const state = { id: 'legacy', version: 2, title: 'saved title', updatedAt: 12, createdAt: 10, agents: {}, custom: {} };
+    await mkdir(join(sessionDir, 'session-meta'), { recursive: true });
+    await writeFile(join(sessionDir, 'session-meta', 'state.json'), JSON.stringify(state));
+    await appendFile(join(home, 'session_index.jsonl'), JSON.stringify({ sessionId: 'legacy', sessionDir, workDir: cwd }) + '\n');
+    const live = await sessions.resume('legacy');
+    expect((await live!.accessor.get(engine.ISessionMetadata).read()).title).toBe('saved title');
+    expect(live!.accessor.get(engine.ISessionWorkdir).cwd).toBe(cwd);
+    const fork = await sessions.fork({ sourceSessionId: 'legacy' });
+    expect(fork).toMatchObject({ cwd, environmentCwd: cwd });
+    await sessions.close('legacy');
+    await rm(cwd, { recursive: true });
+
+    await expect(sessions.resume('legacy')).rejects.toThrow(cwd);
+    await expect(engine.setSessionArchived(app.accessor, 'legacy', true)).resolves.toBe('updated');
+    expect(await sessions.status('legacy')).toMatchObject({ title: 'saved title', cwd, archived: true });
+
+    const unknown = join(home, 'sessions', project.id, 'lost');
+    await mkdir(unknown, { recursive: true });
+    await writeFile(join(unknown, 'state.json'), JSON.stringify({ ...state, id: 'lost' }));
+    await expect(sessions.resume('lost')).rejects.toThrow(/no recorded working directory/);
+    expect(await sessions.status('lost')).toMatchObject({ id: 'lost', title: 'saved title' });
+  });
+
+  it('can archive a cold session after its project is deleted without recreating the project', async () => {
+    const projects = app.accessor.get(engine.IWorkspaceService);
+    const project = await projects.createOrTouch(home);
+    const session = await sessions.create({ workspaceId: project.id });
+    await sessions.close(session.id);
+    await projects.delete(project.id);
+    await sessions.archive(session.id);
+    expect(await sessions.status(session.id)).toMatchObject({ workspaceId: project.id, cwd: home, archived: true });
+    expect(await projects.list()).toEqual([]);
+  });
+
+  it('creates an explicit session ID in at most one project and preserves its original state', async () => {
+    const projects = app.accessor.get(engine.IWorkspaceService);
+    const first = await projects.create({ root: home });
+    const second = await projects.create({ root: home });
+    const id = 'explicit-session';
+    const otherManager = startHost().accessor.get(ISessionManager);
+    const results = await Promise.allSettled([
+      sessions.create({ workspaceId: first.id, sessionId: id }),
+      otherManager.create({ workspaceId: second.id, sessionId: id }),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find((result) => result.status === 'rejected')?.reason).toMatchObject({
+      code: expect.stringMatching(/^session\.(occupied|already_exists)$/),
+    });
+    await otherManager.close(id);
+    const child = await sessions.create({ workspaceId: second.id });
+    await expect(sessions.fork({ sourceSessionId: child.id, newSessionId: id })).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_ALREADY_EXISTS,
+    });
+    const buckets = await readdir(join(home, 'sessions'));
+    const owners = await Promise.all(buckets.filter((bucket) => bucket.startsWith('wm_')).map(async (bucket) =>
+      (await readdir(join(home, 'sessions', bucket))).includes(id) ? bucket : undefined,
+    ));
+    expect(owners.filter((owner) => owner !== undefined)).toEqual([(await sessions.status(id))?.workspaceId]);
   });
 });

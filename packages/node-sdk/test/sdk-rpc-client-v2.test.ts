@@ -367,7 +367,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     try {
       await client.engineAccessor.get(IConfigService).set('environments', { default: 'fake-box' });
       expect(await harness.resolveSessionEnvironment({ workDir })).toEqual({ environmentId: 'fake-box', cwd: remoteDir });
-      expect(await harness.resolveSessionEnvironment({ workDir, environmentId: 'local' })).toEqual({ environmentId: 'local', cwd: undefined });
+      expect(await harness.resolveSessionEnvironment({ workDir, environmentId: 'local' })).toEqual({ environmentId: 'local', cwd: workDir });
       expect(await harness.resolveSessionEnvironment({
         workDir,
         environmentId: 'local',

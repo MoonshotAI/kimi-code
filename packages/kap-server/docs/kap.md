@@ -34,6 +34,7 @@ All `/api/v1/*`, `/openapi.json`, and `/asyncapi.json` endpoints require `Author
   - On `POST /api/v1/sessions`, passing only `cwd` always routes to an `implicit` (`wd_*`) bucket and will **not** attach to a Desktop `managed` (`wm_*`) workspace. Resolve `workspace_id` first:
     1. **Inside a Kimi Code session** (`$KIMI_CODE_WORKSPACE_ID` is injected in `Bash` tool child processes): pass `{ "workspace_id": "$KIMI_CODE_WORKSPACE_ID" }` directly when staying in the current workspace (omit `cwd`, or keep it equal to the workspace root).
     2. **From an external agent** (`$KIMI_CODE_WORKSPACE_ID` unset): query `GET /api/v1/workspaces` and match `data.items[]` where `root` equals your target directory (preferring `kind == "managed"` if multiple match); pass `{ "workspace_id": "<id>" }` when found, or `{ "cwd": "<target_dir>" }` only when no workspace exists for that directory yet.
+  - With only `workspace_id`, creation uses that project's current primary directory. A local session keeps its chosen working directory across project updates, resume, and fork. To choose another local directory in the same project, send `workspace_id`, `environment_id: "local"`, and the absolute `environment_cwd`. GET and list report that directory.
 - **Shell variable bracing (`zsh` / `bash`)**: Always brace variables before `:action` suffixes -- write `"${ORIGIN}/api/v1/sessions/${SID}:wait"`, not `"$SID:wait"` (`zsh` treats `:w`, `:a`, `:r`, `:c`, `:t` as modifiers).
 
 ---

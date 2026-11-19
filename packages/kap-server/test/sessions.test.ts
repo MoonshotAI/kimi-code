@@ -521,6 +521,13 @@ describe('server-v2 /api/v1/sessions', () => {
           `/api/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}`,
         );
         expect(sessions.body.data.items).toEqual([]);
+
+        const checkout = await mkdtemp(join(home as string, 'checkout-'));
+        const override = await postJson<SessionWire>('/api/v1/sessions', {
+          workspace_id: workspaceId, environment_id: 'local', environment_cwd: checkout,
+        });
+        expect(override.body.code, override.body.msg).toBe(0);
+        expect(override.body.data).toMatchObject({ workspace_id: workspaceId, cwd: checkout });
       } finally {
         if (workspaceId !== undefined) {
           await deleteJson<{ deleted: boolean }>(`/api/v1/workspaces/${workspaceId}`);
@@ -584,6 +591,27 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(body.code).toBe(40001);
     expect(body.details?.[0]?.path).toBe('metadata.cwd');
+  });
+
+  it('reports the selected local working directory on creation and cold lookup', async () => {
+    const root = home as string;
+    const cwd = await mkdtemp(join(root, 'nested-'));
+    const project = await postJson<SessionWire>('/api/v1/sessions', { cwd: root });
+    const workspaceId = project.body.data.workspace_id;
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      workspace_id: workspaceId,
+      environment_id: 'local',
+      environment_cwd: cwd,
+    });
+    expect(created.body.data).toMatchObject({ workspace_id: workspaceId, cwd });
+    const sessionId = created.body.data.id;
+    await restartWithModels();
+    const fetched = await getJson<SessionWire>(`/api/v1/sessions/${sessionId}`);
+    expect(fetched.body.data).toMatchObject({ workspace_id: workspaceId, cwd });
+    const listed = await getJson<PageWire>('/api/v1/sessions');
+    expect(listed.body.data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: sessionId, workspace_id: workspaceId, cwd }),
+    ]));
   });
 
   it('lists created sessions', async () => {
@@ -1491,19 +1519,18 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   }, 30_000);
 
-  it('resumes a session whose workspace root is gone (root validity deferred to binding) and still archives it', async () => {
-    const cwd = join(home as string, 'gone-ws');
-    await mkdir(cwd);
+  it.each([false, true])('keeps history and archive available for a missing directory (project deleted: %s)', async (deleted) => {
+    const cwd = await mkdtemp(join(home as string, 'gone-ws-'));
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
     await closeSessionById((server as RunningServer).core.accessor, id);
-    await (server as RunningServer).core.accessor
-      .get(IWorkspaceService)
-      .delete(encodeWorkDirKey(cwd));
+    if (deleted) await (server as RunningServer).core.accessor.get(IWorkspaceService).delete(encodeWorkDirKey(cwd));
     await rm(cwd, { recursive: true, force: true });
 
-    const resumed = await resumeSessionById((server as RunningServer).core.accessor, id);
-    expect(resumed?.id).toBe(id);
+    await expect(resumeSessionById((server as RunningServer).core.accessor, id))
+      .rejects.toMatchObject({ code: deleted ? ErrorCodes.WORKSPACE_NOT_FOUND : 'environment.invalid_cwd' });
+    const history = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+    expect(history.body.data).toMatchObject({ id, cwd });
 
     const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     expect(archived.body.code).toBe(0);

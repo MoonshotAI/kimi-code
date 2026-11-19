@@ -5,14 +5,14 @@ import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
-import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
+import { buildSessionSummary, recoverCwd } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
-import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
-import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
-import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
+import { legacySessionMetaScopeOf } from '#/workspace/sessionLifecycle/internal/addressing';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 
 import {
   ISessionMetadata,
@@ -59,7 +59,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     @ILogService private readonly log: ILogService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
-    @ISessionWorkspaceInfo private readonly workspaceInfo: ISessionWorkspaceInfo,
+    @ISessionWorkdir private readonly workdir: ISessionWorkdir,
   ) {
     super();
     this._register({
@@ -73,11 +73,6 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       }),
     );
     this.states.contributeState(sessionMetadataDataKey);
-    this._register(
-      this.workspaceInfo.onDidChange(() => {
-        if (this.states.get(sessionMetadataDataKey) !== undefined) this.mirrorToReadModel();
-      }),
-    );
     this.scope = ctx.metaScope;
     this.onDidChangeMetadata = this._onDidChangeMetadata.event;
     this.ready = this.load();
@@ -112,7 +107,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     this.sessionLocks.hold(this.ctx.sessionId);
     if (this.refreshBeforeWrite) {
       this.refreshBeforeWrite = false;
-      const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
+      const existing = await this.readPersisted();
       if (existing !== undefined) {
         this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
       }
@@ -210,11 +205,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     if (this.data.environmentId !== undefined && this.data.environmentId !== LOCAL_ENVIRONMENT_ID) {
       return this.ctx.cwd;
     }
-    const binding: EnvironmentBinding = {
-      environmentId: this.data.environmentId ?? LOCAL_ENVIRONMENT_ID,
-      cwd: this.data.environmentCwd,
-    };
-    return resolveEffectiveWorkspaceRoots(this.ctx, binding, this.workspaceInfo).workDir;
+    return this.data.environmentCwd ?? this.data.cwd ?? this.ctx.cwd;
   }
 
   private mirrorToReadModel(): void {
@@ -244,8 +235,13 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     }
   }
 
+  private async readPersisted(): Promise<SessionMeta | undefined> {
+    return await this.store.get<SessionMeta>(this.scope, META_KEY) ??
+      this.store.get<SessionMeta>(legacySessionMetaScopeOf(this.scope), META_KEY);
+  }
+
   private async load(): Promise<void> {
-    const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
+    const existing = await this.readPersisted();
     if (existing !== undefined) {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
       if (
@@ -269,6 +265,8 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       id: this.ctx.sessionId,
       version: SESSION_META_VERSION,
       cwd: this.ctx.cwd,
+      environmentId: this.workdir.environmentId === LOCAL_ENVIRONMENT_ID ? undefined : this.workdir.environmentId,
+      environmentCwd: this.workdir.cwd,
       createdAt: now,
       updatedAt: now,
       archived: false,
@@ -308,22 +306,18 @@ export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): Sessi
   const {
     createdAt: legacyCreatedAt,
     updatedAt: legacyUpdatedAt,
-    workDir: legacyWorkDir,
+    workDir: _legacyWorkDir,
     titleSource: _legacyTitleSource,
     isCustomTitle: _legacyIsCustomTitle,
     customTitle: _legacyCustomTitle,
     ...clean
   } = legacy;
-  const cwd =
-    clean.cwd ?? (typeof legacyWorkDir === 'string' && legacyWorkDir.length > 0
-      ? legacyWorkDir
-      : undefined);
   const { title, titleKind } = normalizedTitle;
   return {
     ...clean,
     id: clean.version === SESSION_META_VERSION ? clean.id : sessionId,
     version: SESSION_META_VERSION,
-    cwd,
+    cwd: recoverCwd(legacy),
     title,
     titleKind,
     createdAt: toEpochMs(legacyCreatedAt),

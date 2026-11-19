@@ -41,7 +41,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 │   └── mcp/
 │       └── <key>-<suffix>.json
 ├── sessions/               # 会话数据（详见下文）
-│   └── <workDirKey>/<sessionId>/
+│   └── <projectId>/<sessionId>/
 ├── locks/
 │   └── sessions/           # 客户端写会话期间持有的跨进程占用锁
 ├── bin/
@@ -72,7 +72,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 
 ## 会话数据
 
-每个会话的数据存在 `sessions/<workspaceId>/<sessionId>/` 下，同时在顶层 `session_index.jsonl` 里维护一份索引（每行一条记录，含 `sessionId`、`sessionDir`、`workDir` 三个字段）。隐式工作区的 `workspaceId` 是从工作目录路径生成的桶名，格式为 `wd_<slug>_<sha256前12位>`；显式创建的项目工作区使用生成的 `wm_<uuid>`。
+每个会话存放在 `sessions/<projectId>/<sessionId>/`。父目录标识所属项目，会话的状态文件记录实际工作目录。顶层的 `session_index.jsonl` 记录 `sessionId`、`sessionDir`，以及名为 `workDir` 或 `cwd` 的目录字段。隐式项目 ID 使用 `wd_<slug>_<12 位十六进制数>`，手动项目使用 `wm_<uuid>`。
 
 会话目录内部包含：
 

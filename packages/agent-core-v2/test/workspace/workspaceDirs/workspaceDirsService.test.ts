@@ -397,15 +397,15 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(fired).toBe(1);
   });
 
-  it('pins explicit local roots without expanding directory access', async () => {
+  it('keeps the explicit working directory and exposes its project’s registered additional directories', async () => {
     const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
     const pinned = createDirs(dirC, project.id, 'managed', 'local', false);
     const following = createDirs(dirC, project.id, 'managed', 'local', true);
     await Promise.all([pinned.ready, following.ready]);
 
     expect(pinned.primary).toBe(dirC);
-    expect(pinned.additionalDirs).toEqual([]);
-    expect(pinned.sessionInfo().primaryByWorkspace).toEqual({});
+    expect(pinned.additionalDirs).toEqual([dirB]);
+    expect(pinned.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirA });
     expect(following.primary).toBe(dirA);
     expect(following.additionalDirs).toEqual([dirB]);
 
@@ -414,8 +414,8 @@ describe('WorkspaceDirsService (registry source)', () => {
       expect(following.primary).toBe(dirB);
     });
     expect(pinned.primary).toBe(dirC);
-    expect(pinned.additionalDirs).toEqual([]);
-    expect(pinned.sessionInfo().primaryByWorkspace).toEqual({});
+    expect(pinned.additionalDirs).toEqual([dirA]);
+    expect(pinned.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirB });
     expect(following.additionalDirs).toEqual([dirA]);
   });
 

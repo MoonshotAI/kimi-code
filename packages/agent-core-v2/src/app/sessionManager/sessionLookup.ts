@@ -19,14 +19,12 @@ export async function programForSession(
     const context = live.accessor.get(ISessionContext);
     return accessor.get(IWorkspaceInstanceManager).acquire({
       workspaceId: context.workspaceId,
-      root: context.cwd,
     });
   }
   const summary = await accessor.get(ISessionIndex).get(sessionId);
   if (summary === undefined) return undefined;
   return accessor.get(IWorkspaceInstanceManager).acquire({
     workspaceId: summary.workspaceId,
-    root: summary.cwd,
   });
 }
 

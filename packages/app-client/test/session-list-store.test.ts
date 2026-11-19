@@ -433,7 +433,90 @@ describe('sessionListStore cancellable background reads', () => {
     expect(workspacesStore().sessionsCursorByWorkspace).toMatchObject({ ws1: 'first', ws2: undefined });
   });
 
-  it('keeps the root fallback for a uniquely registered workspace alias', async () => {
+  it('keeps verified Windows aliases in the selected group across pages and restore events', async () => {
+    const workspace = workspacesStore();
+    const list = sessionListStore();
+    const primary = 'wd_c.repo_current';
+    const alias = 'wd_c.repo_legacy';
+    const other = 'wm_independent';
+    const root = 'C:\\Repo';
+    workspace.workspaces = [
+      { id: primary, root, name: 'project', sessionCount: 3 },
+      { id: other, root, name: 'independent', sessionCount: 1 },
+    ];
+    const item = (id: string, workspaceId: string) => ({ ...row(id), cwd: 'c:/repo', workspaceId });
+    listSessionGroups.mockResolvedValueOnce({
+      groups: [
+        { workspaceId: primary, sessions: [item('first', primary)], total: 3 },
+        { workspaceId: other, sessions: [item('separate', other)], total: 1 },
+      ],
+      hasMore: false, nextPageToken: null, total: 2,
+    });
+    const initial = await list.loadInitialSessionsByWorkspace(list.fireFirstSessionGroupPage());
+    list.setSessionsPreservingLiveUsage(initial!.sessions);
+    listSessions.mockResolvedValueOnce({ items: [item('second', alias)], hasMore: true, nextPageToken: null, total: 3 });
+    await list.loadMoreSessions(primary);
+    expect(listSessions).toHaveBeenLastCalledWith(expect.objectContaining({ workspaceId: primary, beforeId: 'first' }));
+    expect(list.loadedInWorkspace(primary).map((session) => session.id)).toEqual(['first', 'second']);
+    listSessions.mockResolvedValueOnce({ items: [item('first', primary), item('second', alias), item('third', alias)], hasMore: false, nextPageToken: null, total: 3 });
+    await list.loadFirstWorkspacePage(primary);
+    expect(list.loadedInWorkspace(primary).map((session) => session.id)).toEqual(['first', 'second', 'third']);
+
+    getSession.mockResolvedValueOnce(item('restored', alias));
+    await list.applyRemoteSessionRestored('restored');
+    expect(list.loadedInWorkspace(primary).map((session) => session.id)).toContain('restored');
+    expect(list.loadedInWorkspace(other).map((session) => session.id)).toEqual(['separate']);
+    expect(workspace.mergedWorkspaces.map((project) => project.id)).toEqual([primary, other]);
+    expect(workspace.sessionBelongsToWorkspace(item('live', alias), primary)).toBe(true);
+    expect(workspace.sessionBelongsToWorkspace(item('live', alias), other)).toBe(false);
+    expect(workspace.sessionBelongsToWorkspace({ ...item('foreign', alias), hostId: 'another-host' }, primary)).toBe(false);
+
+    setSessionListHooks({
+      pushOperationFailure: failure,
+      onSessionsArchivedLocally: async (ids) => {
+        for (const id of ids) sessionsStore().removeSession(id);
+      },
+    });
+    workspace.setSessionHasMore(primary, true);
+    listSessions.mockResolvedValueOnce({ items: [item('backfill', alias)], hasMore: false, nextPageToken: null, total: 3 });
+    await list.applyRemoteSessionArchived('second', alias);
+    await vi.waitFor(() => expect(list.loadedInWorkspace(primary).map((session) => session.id)).toContain('backfill'));
+    expect(listSessions).toHaveBeenLastCalledWith(expect.objectContaining({ workspaceId: primary, beforeId: 'third' }));
+    expect(list.loadedInWorkspace(other).map((session) => session.id)).toEqual(['separate']);
+  });
+
+  it.each(['restore', 'archived page'])('asks the session host for an unobserved legacy bucket on its first %s', async (source) => {
+    const workspace = workspacesStore();
+    const list = sessionListStore();
+    const cwd = 'D:\\repo';
+    const owner = 'wd_d.repo_current';
+    const alias = 'wd_d.repo_legacy';
+    workspace.workspaces = [
+      { id: owner, root: cwd, name: 'current', sessionCount: 2 },
+      { id: 'wm_other', root: cwd, name: 'other', sessionCount: 1 },
+    ];
+    const old = { ...row('old'), cwd, workspaceId: alias };
+    listSessionGroups.mockResolvedValueOnce({
+      groups: [{ workspaceId: owner, sessions: [{ ...row('recent'), cwd, workspaceId: owner }], total: 2 }],
+      hasMore: false, nextPageToken: null, total: 1,
+    });
+    if (source === 'restore') {
+      getSession.mockResolvedValueOnce(old);
+      await list.applyRemoteSessionRestored('old');
+    } else {
+      listSessions.mockResolvedValueOnce({ ...page('old'), items: [{ ...old, archived: true }] });
+      await list.ensureDoneSessions();
+    }
+    await vi.waitFor(() => expect(workspace.workspaceIdForSession(old)).toBe(owner));
+    expect(listSessionGroups).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ workspaceIds: [alias] }),
+      expect.objectContaining({ background: true }),
+    );
+    expect(list.loadedInWorkspace('wm_other')).toEqual([]);
+    expect(workspace.mergedWorkspaces.map((project) => project.id)).toEqual([owner, 'wm_other']);
+  });
+
+  it('does not assign a different project’s sessions by matching their working directory', async () => {
     listSessionGroups.mockResolvedValueOnce({
       groups: [{
         workspaceId: 'wd_alias',
@@ -449,9 +532,9 @@ describe('sessionListStore cancellable background reads', () => {
       sessionListStore().fireFirstSessionGroupPage(),
     );
 
-    expect(initial!.sessions[0]).toMatchObject({ id: 'aliased', workspaceId: 'ws1' });
-    expect(workspacesStore().sessionsHasMoreByWorkspace).toMatchObject({ ws1: true });
-    expect(workspacesStore().sessionsCursorByWorkspace).toMatchObject({ ws1: 'aliased' });
+    expect(initial!.sessions).toEqual([]);
+    expect(workspacesStore().sessionsHasMoreByWorkspace).toMatchObject({ ws1: false });
+    expect(workspacesStore().sessionsCursorByWorkspace).toMatchObject({ ws1: undefined });
   });
 
   it('keeps the first grouped page critical and cancels later background pages on a new generation', async () => {

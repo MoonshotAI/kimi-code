@@ -16,9 +16,10 @@ import type {
   SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 
-export interface CreateManagedSessionOptions extends CreateSessionOptions {
-  readonly workspaceId?: string;
-}
+export type CreateManagedSessionOptions = Omit<CreateSessionOptions, 'workDir'> & (
+  | { readonly workDir: string; readonly workspaceId?: string }
+  | { readonly workspaceId: string; readonly workDir?: string }
+);
 
 export interface UnguardedSessionLifecycle {
   archive(): Promise<void>;
@@ -36,8 +37,8 @@ export interface ISessionManager {
   readonly onDidForkSession?: Event<SessionForkedEvent>;
   resolveCreationEnvironment(options: CreateManagedSessionOptions): Promise<{
     readonly workspaceId: string;
-    readonly environmentId?: string;
-    readonly environmentCwd?: string;
+    readonly environmentId: string;
+    readonly environmentCwd: string;
   }>;
   create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle>;
   resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
