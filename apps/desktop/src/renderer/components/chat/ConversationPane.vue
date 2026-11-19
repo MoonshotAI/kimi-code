@@ -1980,6 +1980,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
                 <Icon name="folder-plus" />
                 <span>{{ t('conversation.addWorkspace') }}</span>
               </button>
+              <HostNotice class="empty-host-notice" :host-id="activeHostId" />
               <KimiMascotPeek ref="mascotRef" class="ws-mascot" />
             </div>
             <Composer
@@ -2003,7 +2004,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @login="emit('login')"
               @configure-model="emit('configureModel')"
             />
-            <HostNotice class="empty-host-notice" :host-id="activeHostId" />
             <!-- Backdrop must live outside the composer card (container-type
                  captures position:fixed). -->
             <div v-if="wsPickOpen" class="ws-backdrop" @click="wsPickOpen = false" />
@@ -2295,7 +2295,9 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 }
 .empty-composer { padding-top: 0; }
 .empty-host-notice {
-  margin: var(--space-1) calc(var(--dock-inline-right, 16px) + var(--space-2)) 0 calc(var(--dock-inline-left, 16px) + var(--space-4));
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0 var(--space-3) 4px var(--space-2);
 }
 .dock-host-notice {
   margin: 0 calc(var(--dock-inline-right, 16px) + var(--space-2)) var(--space-1) calc(var(--dock-inline-left, 16px) + var(--space-4));
@@ -2320,6 +2322,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 .ws-anchor {
   position: relative;
   display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .ws-chip {

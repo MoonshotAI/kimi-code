@@ -1360,6 +1360,7 @@ const {
   openModelPicker,
   openLogin,
   openProviderSettings,
+  openHostSettings,
   dropPendingWorkspaceSubmit,
   completeWorkspaceCreation,
   addWorkspace,
@@ -1585,7 +1586,7 @@ async function handleGetOAuthRegion() {
 const hostLoginId = computed(() => hostsStore().loginHostId);
 const hostLoginTitle = computed(() => {
   const hostId = hostLoginId.value;
-  return hostId === null ? undefined : t('login.hostTitle', { name: hostsStore().displayName(hostId) || hostId });
+  return hostId === null ? undefined : t('login.hostTitle', { name: hostsStore().hostLabel(hostId, t) });
 });
 
 async function handleWizardLoginSuccess(): Promise<void> {
@@ -2141,7 +2142,7 @@ const remoteHosts = computed(() => hostsStore().hosts);
 const {
   folderPickerRequest,
   pickWorkspaceFolders,
-  pickRemoteWorkspaceDir,
+  pickRemoteWorkspaceDirs,
   completeWorkspaceFolderPicker,
   cancelWorkspaceFolderPicker,
 } = useWorkspaceFolderPicker();
@@ -2161,8 +2162,8 @@ function openWorkspaceEditor(ws: WorkspaceView): void {
   };
 }
 
-async function importProjectConfigDirs(primary: string): Promise<string[] | undefined> {
-  return workspaces.fetchWorkspaceProjectConfigDirs(primary);
+async function importProjectConfigDirs(primary: string, hostId?: string): Promise<string[] | undefined> {
+  return workspaces.fetchWorkspaceProjectConfigDirs(primary, hostId);
 }
 
 async function pickMoreWorkspaceDirs(): Promise<string[]> {
@@ -2599,9 +2600,9 @@ function openPr(url: string): void {
       :initial-dirs="workspaceDialog.dirs"
       :initial-host-id="workspaceDialog.hostId"
       :pick="pickMoreWorkspaceDirs"
-      :pick-remote="pickRemoteWorkspaceDir"
+      :pick-remote="pickRemoteWorkspaceDirs"
       :hosts="remoteHosts"
-      :manage-hosts="() => { settingsInitialTab = 'hosts'; showSettings = true; }"
+      :manage-hosts="() => openHostSettings(undefined, { addIfEmpty: true })"
       :import-project-config="importProjectConfigDirs"
       :busy="workspaceDialogBusy"
       @submit="onWorkspaceDialogSubmit"
@@ -2613,7 +2614,7 @@ function openPr(url: string): void {
       :multiple="folderPickerRequest.multiple"
       :browse-fs="(path, signal) => browseFs(path, signal, folderPickerRequest?.hostId)"
       :search-fs="(root, query, signal) => workspaces.searchFs(root, query, signal, folderPickerRequest?.hostId)"
-      :get-fs-home="getFsHome"
+      :get-fs-home="() => getFsHome(folderPickerRequest?.hostId)"
       :default-path="folderPickerRequest.defaultPath"
       :host-id="folderPickerRequest.hostId"
       :mkdir-fs="(path) => workspaces.mkdirFs(path, folderPickerRequest?.hostId)"
@@ -2731,6 +2732,7 @@ function openPr(url: string): void {
       v-if="showLogin || hostLoginId !== null"
       :key="hostLoginId ?? 'local'"
       :title="hostLoginTitle"
+      :remote-host="hostLoginId !== null"
       :on-start-o-auth-login="hostLoginId !== null ? (region) => hostsStore().startLogin(region) : handleStartOAuthLogin"
       :on-poll-o-auth-login="hostLoginId !== null ? () => hostsStore().pollLogin() : handlePollOAuthLogin"
       :on-cancel-o-auth-login="hostLoginId !== null ? () => hostsStore().cancelLogin() : handleCancelOAuthLogin"
