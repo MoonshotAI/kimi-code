@@ -1,4 +1,5 @@
-import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,6 +35,11 @@ import { darkColors } from '#/tui/theme/colors';
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, spawn: vi.fn() };
+});
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, open: vi.fn(actual.open), readFile: vi.fn(actual.readFile) };
 });
 
 function stripAnsi(text: string): string {
@@ -1169,6 +1175,57 @@ describe('`kimi server ensure-daemon`', () => {
     expect(token).toMatch(/^[A-Za-z0-9_-]{40,50}$/);
     expect(await loadWindowsIpcToken(homeDir)).toBe(token);
     expect(readFileSync(join(homeDir, 'server', 'ensure-daemon.token'), 'utf8')).toBe(token);
+  });
+
+  it('publishes one complete IPC token across concurrent first-time loads', async () => {
+    const open = vi.mocked(fsPromises.open);
+    const readFile = vi.mocked(fsPromises.readFile);
+    const originalOpen = open.getMockImplementation()!;
+    const originalReadFile = readFile.getMockImplementation()!;
+    let notifyFirstWrite = () => {};
+    const firstWriteStarted = new Promise<void>((resolve) => { notifyFirstWrite = resolve; });
+    let releaseFirstWrite = () => {};
+    const firstWriteGate = new Promise<void>((resolve) => { releaseFirstWrite = resolve; });
+    let notifySecondRead = () => {};
+    const secondReadStarted = new Promise<void>((resolve) => { notifySecondRead = resolve; });
+    let returnEmpty = true;
+    open.mockImplementationOnce(async (...args) => {
+      const handle = await originalOpen(...args);
+      return new Proxy(handle, {
+        get(target, property, receiver) {
+          if (property === 'writeFile') {
+            return async (...writeArgs: Parameters<typeof target.writeFile>) => {
+              notifyFirstWrite();
+              await firstWriteGate;
+              return target.writeFile(...writeArgs);
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    });
+    readFile.mockImplementationOnce(async (...args) => {
+      notifySecondRead();
+      return returnEmpty ? '' : originalReadFile(...args);
+    });
+    try {
+      const first = loadWindowsIpcToken(homeDir);
+      await firstWriteStarted;
+      const second = loadWindowsIpcToken(homeDir);
+      const all = Promise.all([first, second]);
+      await Promise.race([secondReadStarted, second.catch(() => {})]);
+      returnEmpty = false;
+      releaseFirstWrite();
+      const tokens = await all;
+      expect(new Set(tokens).size).toBe(1);
+      expect(tokens[0]).toMatch(/^[A-Za-z0-9_-]{40,50}$/);
+      expect(readFileSync(join(homeDir, 'server', 'ensure-daemon.token'), 'utf8')).toBe(tokens[0]);
+      expect(readdirSync(join(homeDir, 'server')).filter((name) => name.startsWith('ensure-daemon.token.') && name.endsWith('.tmp'))).toEqual([]);
+    } finally {
+      releaseFirstWrite();
+      open.mockImplementation(originalOpen);
+      readFile.mockImplementation(originalReadFile);
+    }
   });
 
   it('builds a hidden CIM launch that escapes the SSH job and preserves environment', () => {

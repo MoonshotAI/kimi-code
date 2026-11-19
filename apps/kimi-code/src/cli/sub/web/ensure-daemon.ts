@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
-import { mkdir, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, win32 } from 'node:path';
@@ -81,21 +81,25 @@ export function daemonSocketPath(homeDir: string, platform: NodeJS.Platform = pr
 export async function loadWindowsIpcToken(homeDir: string): Promise<string> {
   const tokenPath = join(homeDir, 'server', IPC_TOKEN_FILE);
   await mkdir(dirname(tokenPath), { recursive: true });
+  const token = randomBytes(32).toString('base64url');
+  const tempPath = `${tokenPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
   try {
-    const handle = await open(tokenPath, 'wx', 0o600);
+    const handle = await open(tempPath, 'wx', 0o600);
     try {
-      const token = randomBytes(32).toString('base64url');
       await handle.writeFile(token);
-      return token;
     } finally {
       await handle.close();
     }
+    await link(tempPath, tokenPath);
+    return token;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  } finally {
+    await rm(tempPath, { force: true });
   }
-  const token = (await readFile(tokenPath, 'utf8')).trim();
-  if (token.length === 0) throw new Error(`empty IPC token in ${tokenPath}`);
-  return token;
+  const existing = (await readFile(tokenPath, 'utf8')).trim();
+  if (existing.length === 0) throw new Error(`empty IPC token in ${tokenPath}`);
+  return existing;
 }
 
 function pidAlive(pid: number): boolean {
