@@ -347,6 +347,60 @@ describe('applyPrintBackgroundPolicy', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('bounds a future cron wait by the print wait ceiling', async () => {
+    let now = 0;
+    const waits: number[] = [];
+    const warn = vi.fn();
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 5,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      turnEndings: {
+        next: async (remainingMs) => {
+          waits.push(remainingMs);
+          now += remainingMs;
+          return null;
+        },
+      },
+      skipTurnId: 1,
+      warn,
+      now: () => now,
+      cronNextFireAt: () => 600_000,
+    });
+    expect(waits).toEqual([5_000]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('cron wait ceiling');
+  });
+
+  it('still waits for a cron fire that falls within the ceiling', async () => {
+    let now = 0;
+    const waits: number[] = [];
+    let fired = false;
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 60,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      turnEndings: {
+        next: async (remainingMs) => {
+          waits.push(remainingMs);
+          now += remainingMs;
+          if (fired) return null;
+          fired = true;
+          return ending(2);
+        },
+      },
+      skipTurnId: 1,
+      warn: () => {},
+      now: () => now,
+      cronNextFireAt: () => (fired ? null : 10_000),
+    });
+    expect(waits).toEqual([15_000]);
+  });
+
   it('warns and stops cron waiting when the next fire time is stuck in the past', async () => {
     const warn = vi.fn();
     await applyPrintBackgroundPolicy({
