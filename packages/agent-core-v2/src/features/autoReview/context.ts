@@ -1,4 +1,4 @@
-import { createUserMessage, type ContentPart } from '#human/llm/message';
+import { createUserMessage, type ContentPart } from '@moonshot-ai/core/llm/message';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';

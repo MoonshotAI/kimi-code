@@ -666,30 +666,40 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it.each(['auto', 'yolo'] as const)(
-    'evaluates what Always Ask would decide without the %s mode approval',
-    async (nextMode) => {
-      mode = nextMode;
-      rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm build/*)' });
-      const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
+  it('evaluates what Always Ask would decide without the auto mode approval', async () => {
+    mode = 'auto';
+    rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm build/*)' });
+    const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
 
-      autoReviewEnabled = true;
-      await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
-        policyName: `${nextMode}-mode-approve`,
-        underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
-      });
-      await expect(evaluate({ toolName: 'SetTodoList', args: {} })).resolves.toMatchObject({
-        policyName: `${nextMode}-mode-approve`,
-        underlying: { policyName: 'default-tool-approve', result: { kind: 'approve' } },
-      });
-      if (nextMode === 'auto') {
-        await expect(evaluate(bash('rm build/out'))).resolves.toMatchObject({
-          policyName: 'auto-mode-approve',
-          underlying: { policyName: 'user-configured-allow', result: { kind: 'approve' } },
-        });
-      }
-    },
-  );
+    autoReviewEnabled = true;
+    await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
+    });
+    await expect(evaluate({ toolName: 'SetTodoList', args: {} })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      underlying: { policyName: 'default-tool-approve', result: { kind: 'approve' } },
+    });
+    await expect(evaluate(bash('rm build/out'))).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      underlying: { policyName: 'user-configured-allow', result: { kind: 'approve' } },
+    });
+  });
+
+  it('evaluates what Always Ask would decide without the yolo mode approval', async () => {
+    mode = 'yolo';
+    const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
+
+    autoReviewEnabled = true;
+    await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
+    });
+    await expect(evaluate({ toolName: 'SetTodoList', args: {} })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      underlying: { policyName: 'default-tool-approve', result: { kind: 'approve' } },
+    });
+  });
 
   it.each(['AgentSwarm', 'ExitPlanMode', 'CreateGoal'] as const)(
     'approves %s through the default tool allowlist in manual mode',

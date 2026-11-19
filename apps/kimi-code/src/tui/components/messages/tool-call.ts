@@ -1124,8 +1124,6 @@ export class ToolCallComponent extends Container {
     this.stopStreamingProgressTimer();
     this.stopSubagentElapsedTimer();
     this.stopDetachHintTimer();
-    // A cancelled review ends without a decision or result, so the card would
-    // otherwise stay frozen on "in progress" in the transcript.
     this.setAutoReviewing(false);
   }
 

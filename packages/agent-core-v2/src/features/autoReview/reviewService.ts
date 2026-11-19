@@ -12,27 +12,34 @@ import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { Error2 } from '#/errors';
+import {
+  resolveThinkingEffortForModel,
+  resolveThinkingKeep,
+} from '@moonshot-ai/core/llm/thinking';
+import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
+import type { AssistantMessage, Message } from '@moonshot-ai/core/llm/message';
+import type { LlmRequestModel } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
+import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
+import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type { TokenUsage } from '#human/llm-requester/usage';
-import type { AssistantMessage, Message } from '#human/llm/message';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { resolveCompletionBudgetParams } from '#/llm-adapter/model/completion-budget';
-import { generateModel, type ModelRequestParams } from '#/llm-adapter/model/generate';
+import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import {
   requiresStrictThinkingValidation,
-  resolveThinkingEffortForModel,
-  resolveThinkingKeep,
   type ThinkingConfig,
 } from '#/llm-adapter/model/thinking';
 import {
-  PROVIDER_API_ERROR_CODE,
+  errorFromLlmMessage,
+  llmMessageFromError,
+  withErrorDiagnostics,
   classifyApiError,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
+import { translateProviderError } from '#/llm-adapter/protocol/errors';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -283,7 +290,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   }
 
   private acquireReview(signal: AbortSignal): Promise<void> {
-    if (signal.aborted) return Promise.reject(signal.reason);
+    if (signal.aborted) return Promise.reject(signal.reason as Error);
     if (this.activeReviews < MAX_CONCURRENT_REVIEWS) {
       this.activeReviews += 1;
       return Promise.resolve();
@@ -296,7 +303,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       const onAbort = () => {
         const index = this.reviewSlots.indexOf(grant);
         if (index >= 0) this.reviewSlots.splice(index, 1);
-        reject(signal.reason);
+        reject(signal.reason as Error);
       };
       signal.addEventListener('abort', onAbort, { once: true });
       this.reviewSlots.push(grant);
@@ -409,49 +416,49 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       model.protocol,
       model.providerType,
     );
-    const thinkingEffort = resolveThinkingEffortForModel('off', undefined, model, strict);
-    const budget = resolveCompletionBudgetParams({
+    const thinkingEffort = resolveThinkingEffortForModel('off', undefined, model.spec, strict);
+    const budget = resolveCompletionBudget({
       maxOutputSize: model.maxOutputSize,
       maxCompletionTokensCap: overrides?.maxCompletionTokens,
-      capability: model.capabilities,
     });
+    const maxOutputTokens: LlmRequestModel['maxOutputTokens'] =
+      overrides?.maxCompletionTokens !== undefined && overrides.maxCompletionTokens <= 0
+        ? 'none'
+        : budget === undefined
+          ? undefined
+          : Math.max(1, budget);
     const sampling =
       overrides?.temperature === undefined && overrides?.topP === undefined
         ? undefined
         : { temperature: overrides.temperature, topP: overrides.topP };
-    const params: ModelRequestParams = {
-      cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
-      sampling,
-      thinkingEffort,
-      thinkingKeep: resolveThinkingKeep(
-        overrides?.thinkingKeep,
-        thinkingConfig?.keep,
-        thinkingEffort,
-      ),
-      maxCompletionTokens: budget?.maxCompletionTokens,
-      maxContextTokens: budget?.maxContextTokens,
-    };
-    let message: AssistantMessage | undefined;
-    let usage: TokenUsage | undefined;
-    for await (const event of generateModel(
-      this.protocols.request(model, params),
-      {
-        systemPrompt: REVIEW_POLICY,
-        messages,
-        responseFormat: RESPONSE_FORMAT,
+    const params: InitializedLlmRequestPart = {
+      model: {
+        cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
+        sampling,
+        thinking: {
+          effort: thinkingEffort,
+          keep: resolveThinkingKeep(
+            overrides?.thinkingKeep,
+            thinkingConfig?.keep,
+            thinkingEffort,
+          ),
+        },
+        maxOutputTokens,
       },
-      signal,
-      params,
-    )) {
-      if (event.type === 'usage') usage = event.usage;
-      if (event.type === 'finish') message = event.message;
-    }
-    if (message === undefined) {
-      throw new Error2(
-        PROVIDER_API_ERROR_CODE,
-        'LLM request stream ended without a finish event.',
-      );
-    }
+    };
+    const outcome = await this.protocols.request(model, params).with({
+      model: { responseFormat: RESPONSE_FORMAT },
+      profile: { systemPrompt: REVIEW_POLICY, tools: [] },
+      content: { messages },
+      policy: {
+        retry: { maxAttemptsPerStep: 1 },
+        recoveries: [credentialRecovery],
+      },
+    }).generate({}, { signal });
+    if (outcome.type === 'aborted') throw signal.reason;
+    if (outcome.type === 'failed') throw reviewRequestError(outcome);
+    const message: AssistantMessage = outcome.message;
+    const usage: TokenUsage | undefined = outcome.usage;
     void this.usage.record(this.scopeContext.agentContext, modelAlias, usage, {
       type: 'operation',
       turnId,
@@ -459,6 +466,25 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     });
     return message;
   }
+}
+
+function reviewRequestError(outcome: Exclude<LlmOutcome, { readonly type: 'done' }>): Error {
+  if (outcome.type === 'aborted') {
+    const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
+    return new DOMException(message, 'AbortError');
+  }
+  const classified =
+    outcome.error.kind === 'unknown' && outcome.rawError !== undefined
+      ? llmMessageFromError(outcome.rawError)
+      : undefined;
+  if (outcome.error.kind === 'unknown' && classified === undefined && outcome.rawError instanceof Error) {
+    return withErrorDiagnostics(translateProviderError(outcome.rawError), outcome.diagnostics);
+  }
+  const error = classified ?? outcome.error;
+  return errorFromLlmMessage(
+    error.kind === 'auth' ? { ...error, kind: 'status' as const } : error,
+    outcome.diagnostics,
+  );
 }
 
 function reviewResult(outcome: AutoReviewResult | ReviewFailure): AutoReviewResult {

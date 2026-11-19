@@ -22,16 +22,17 @@ import { AutoReviewCompleted, AutoReviewStarted } from '#/features/autoReview/au
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
 import type { AutoReviewResult } from '#/features/autoReview/review';
 import { AutoReviewService } from '#/features/autoReview/reviewService';
-import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
-import type { AssistantMessage } from '#human/llm/message';
-import type { ToolCall } from '#human/message';
+import { emptyUsage, type TokenUsage } from '@moonshot-ai/core/llm/usage';
+import type { AssistantMessage, ToolCall } from '@moonshot-ai/core/llm/message';
+import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import {
   APIContextOverflowError,
   APIProviderQuotaExhaustedError,
-  APIStatusError,
+  ChatProviderError,
 } from '#/llm-adapter/contract/errors';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import type { ModelRequestInput, ModelRequestParams } from '#/llm-adapter/model/generate';
+
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -47,7 +48,7 @@ import { stubLog } from '../../_base/log/stubs';
 import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
 import { stubFlag } from '../../app/flag/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { aRequesterFromModelEvents, coreRequesterFromA } from '../../harness/scripted-generate';
+import { createMockProvider, withMockProvider, type MockProviderResponse } from '../../harness/scripted-generate';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
 
 const defaultSignal = new AbortController().signal;
@@ -55,8 +56,13 @@ const defaultSignal = new AbortController().signal;
 describe('AutoReviewService', () => {
   interface ReviewCall {
     readonly modelAlias: string;
-    readonly input: ModelRequestInput;
-    readonly params: ModelRequestParams | undefined;
+    readonly input: {
+      readonly systemPrompt: string;
+      readonly tools: NonNullable<LlmRequest['profile']>['tools'];
+      readonly messages: LlmRequest['content']['messages'];
+      readonly responseFormat: LlmRequest['model']['responseFormat'];
+    };
+    readonly params: InitializedLlmRequestPart['model'];
   }
 
   interface ReviewResponse {
@@ -66,22 +72,23 @@ describe('AutoReviewService', () => {
 
   const baseModel: Model = {
     id: 'm',
-    name: 'wire-model',
     aliases: [],
     protocol: 'anthropic',
-    baseUrl: 'https://example.test',
-    headers: {},
-    capabilities: {
-      image_in: false,
-      video_in: false,
-      audio_in: false,
-      thinking: true,
-      tool_use: true,
-      max_context_tokens: 100000,
+    endpoint: { baseUrl: 'https://example.test' },
+    spec: {
+      provider: 'p',
+      name: 'wire-model',
+      capability: {
+        image_in: false,
+        video_in: false,
+        audio_in: false,
+        thinking: true,
+        tool_use: true,
+      },
+      maxContextSize: 100000,
+      thinking: { alwaysThinking: false },
     },
-    maxContextSize: 100000,
     maxOutputSize: 8192,
-    alwaysThinking: false,
     providerName: 'p',
   };
 
@@ -129,7 +136,7 @@ describe('AutoReviewService', () => {
   });
 
   function service(
-    request: (request: ModelRequestInput, signal: AbortSignal | undefined) => Promise<ReviewResponse> = async () => response,
+    request: (request: ReviewCall['input'], signal: AbortSignal | undefined) => Promise<MockProviderResponse> = async () => response,
     model?: string,
     configured = true,
     secondaryModel?: SecondaryModelConfig,
@@ -164,19 +171,27 @@ describe('AutoReviewService', () => {
         reg.definePartialInstance(IProtocolAdapterRegistry, {
           resolveAdapterIdentity: (protocol, providerType) =>
             registry.resolveAdapterIdentity(protocol, providerType),
-          request: (target, params) =>
-            coreRequesterFromA(
-              registry.request(target, params),
-              aRequesterFromModelEvents({
-                model: target,
-                request: async function* (input, reqSignal) {
-                  requests.push({ modelAlias: selectedAlias, input, params });
-                  const current = await request(input, reqSignal);
-                  yield { type: 'usage', usage: current.usage };
-                  yield { type: 'finish', message: current.message };
+          request: (target, params?: InitializedLlmRequestPart) => {
+            const base = registry.request(target, params);
+            return withMockProvider(base, createMockProvider(async (req, signal) => {
+              requests.push({
+                modelAlias: selectedAlias,
+                params: params?.model,
+                input: {
+                  systemPrompt: req.profile?.systemPrompt ?? '',
+                  tools: req.profile?.tools,
+                  messages: req.content.messages,
+                  responseFormat: req.model.responseFormat,
                 },
-              }),
-            ),
+              });
+              return request({
+                systemPrompt: req.profile?.systemPrompt ?? '',
+                tools: req.profile?.tools,
+                messages: req.content.messages,
+                responseFormat: req.model.responseFormat,
+              }, signal);
+            }));
+          },
         });
         reg.definePartialInstance(ISessionUsageService, {
           record: async (...args) => {
@@ -264,11 +279,9 @@ describe('AutoReviewService', () => {
       modelAlias: 'main-model',
       params: {
         cacheKey: 'session-1:auto_review',
+        maxOutputTokens: 8192,
         sampling: undefined,
-        thinkingEffort: 'off',
-        thinkingKeep: undefined,
-        maxCompletionTokens: 8192,
-        maxContextTokens: 100000,
+        thinking: { effort: 'off', keep: undefined },
       },
       input: {
         systemPrompt: REVIEW_POLICY,
@@ -387,14 +400,14 @@ describe('AutoReviewService', () => {
       modelAlias: 'review-model',
       params: {
         cacheKey: 'session-1:auto_review',
-        thinkingEffort: 'off',
-        maxCompletionTokens: 4096,
+        thinking: { effort: 'off', keep: undefined },
+        maxOutputTokens: 4096,
       },
     });
     expect(usage).toEqual([[
       expect.objectContaining({ agentId: 'main' }),
       'review-model',
-      response.usage,
+      { ...response.usage, inputCacheRead: 0 },
       { type: 'operation', turnId: 0, requestKind: 'auto_review' },
     ]]);
     expect(telemetry).toEqual([expect.objectContaining({
@@ -441,7 +454,7 @@ describe('AutoReviewService', () => {
 
   it('persists the failure reason when review cannot complete', async () => {
     await review(service(async () => {
-      throw new Error('provider rejected the review request');
+      throw new ChatProviderError('provider rejected the review request');
     }));
 
     expect(reviewEvents).toEqual([expect.objectContaining({
@@ -630,7 +643,7 @@ describe('AutoReviewService', () => {
     let calls = 0;
     const result = await review(service(async () => {
       calls += 1;
-      if (calls < 3) throw new APIStatusError(429, 'Slow down', true, null, 1);
+      if (calls < 3) return { httpError: { statusCode: 429, message: 'Slow down', retryAfterMs: 1 } };
       return response;
     }));
 
@@ -640,7 +653,7 @@ describe('AutoReviewService', () => {
 
   it('does not retry an authentication failure', async () => {
     await expect(review(service(async () => {
-      throw new APIStatusError(401, 'Unauthorized', false);
+      return { httpError: { statusCode: 401, message: 'Unauthorized' } };
     }))).resolves.toMatchObject({ kind: 'failed' });
     expect(requests).toHaveLength(1);
   });
@@ -701,7 +714,7 @@ describe('AutoReviewService', () => {
       await new Promise((resolve) => {
         setTimeout(resolve, 1100);
       });
-      throw new APIStatusError(503, 'still unavailable', true);
+      return { httpError: { statusCode: 503, message: 'still unavailable' } };
     }, undefined, true, undefined, 1000));
     expect(result).toMatchObject({ kind: 'failed', reason: 'Review timed out.' });
     expect(requests).toHaveLength(1);
@@ -743,7 +756,7 @@ describe('AutoReviewService', () => {
     const context = reviewContext({ toolName: 'Bash', args: { command: 'rm generated/file' }, signal: controller.signal });
     const result = service((_request, reqSignal) => new Promise<ReviewResponse>((_resolve, reject) => {
       reqSignal?.addEventListener('abort', () => {
-        reject(reqSignal.reason);
+        reject(reqSignal.reason as Error);
       });
     })).review(context, 'fallback-ask');
     controller.abort();

@@ -1,9 +1,3 @@
-import type { ModelCapability } from '../contract/capability';
-
-import type { CompletionBudgetParams } from './model.types';
-
-const MIN_FLOOR = 1;
-
 export function resolveCompletionBudget(args: {
   readonly maxOutputSize?: number;
   readonly maxCompletionTokensCap?: number;
@@ -16,41 +10,4 @@ export function resolveCompletionBudget(args: {
     return args.maxOutputSize;
   }
   return undefined;
-}
-
-export function completionBudgetParams(args: {
-  readonly budget: number | undefined;
-  readonly capability: ModelCapability | undefined;
-  readonly usedContextTokens?: number;
-}): CompletionBudgetParams | undefined {
-  if (args.budget === undefined) return undefined;
-  return {
-    maxCompletionTokens: Math.max(MIN_FLOOR, args.budget),
-    usedContextTokens: args.usedContextTokens,
-    maxContextTokens: args.capability?.max_context_tokens,
-  };
-}
-
-export function resolveCompletionBudgetParams(args: {
-  readonly maxOutputSize?: number;
-  readonly maxCompletionTokensCap?: number;
-  readonly capability?: ModelCapability;
-  readonly usedContextTokens?: number;
-}): CompletionBudgetParams | undefined {
-  const budget = completionBudgetParams({
-    budget: resolveCompletionBudget({
-      maxOutputSize: args.maxOutputSize,
-      maxCompletionTokensCap: args.maxCompletionTokensCap,
-    }),
-    capability: args.capability,
-    usedContextTokens: args.usedContextTokens,
-  });
-  if (args.maxCompletionTokensCap !== undefined && args.maxCompletionTokensCap <= 0) {
-    return {
-      ...budget,
-      maxCompletionTokens: args.maxCompletionTokensCap,
-      usedContextTokens: args.usedContextTokens,
-    };
-  }
-  return budget;
 }

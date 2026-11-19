@@ -1209,7 +1209,6 @@
     "apps/vis/server/test/lib/agent-tree.test.ts": 3,
     "apps/vis/server/test/lib/session-store.test.ts": 3,
     "packages/agent-core-v2/scripts/debarrel.mjs": 2,
-    "packages/agent-core-v2/test/agent/toolExecutor/toolExecutor.test.ts": 1,
     "packages/agent-core-v2/test/app/sessionIndex/sessionIndexMirror.test.ts": 1,
     "packages/agent-core-v2/test/persistence/backends/minidb/miniDbQueryStore.test.ts": 1,
     "packages/app-client/src/client/useKimiWebClient.ts": 3,

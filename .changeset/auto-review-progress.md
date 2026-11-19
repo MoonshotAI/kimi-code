@@ -2,4 +2,4 @@
 "kimi-code-app": patch
 ---
 
-在自动复核实验中显示工具复核进度，并在审批卡片中展示复核意见。
+Show Auto Review progress in tool cards and review feedback in approval cards. Enable Auto Review with [experimental] auto_review = true.
