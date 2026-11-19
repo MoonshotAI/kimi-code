@@ -15,6 +15,12 @@ export interface LoopLlmRequester {
 export type FullLoopLlmRequester = LlmRequester<LlmDimension>;
 export type LoopRequester = LoopLlmRequester | FullLoopLlmRequester;
 
+export function isFullLoopRequester(requester: LoopRequester | undefined): requester is FullLoopLlmRequester {
+  return requester !== undefined &&
+    'with' in requester && typeof requester.with === 'function' &&
+    'request' in requester && typeof requester.request === 'function';
+}
+
 export interface LoopRequestRuntime {
   readonly historyRevision: () => number;
 }
@@ -27,6 +33,14 @@ export interface LoopRequestInput {
 }
 
 export type LoopRequestProgress = Exclude<LlmRunEvent, { type: 'llm.ended' }>;
+
+export function requestProfileOf(profile: LoopProfile): LlmRequestProfile {
+  const { systemPrompt, tools } = profile;
+  return {
+    ...(systemPrompt === undefined || systemPrompt === '' ? {} : { systemPrompt }),
+    ...(tools === undefined ? {} : { tools }),
+  };
+}
 
 function failedOutcome(error: unknown): LlmOutcome {
   return { type: 'failed', error: toLlmErrorMessage(error), rawError: error };
@@ -63,11 +77,7 @@ export function runLoopRequest(
   };
   void (async () => {
     try {
-      const { systemPrompt, tools } = input.profile;
-      const requestProfile: LlmRequestProfile = {
-        ...(systemPrompt === undefined || systemPrompt === '' ? {} : { systemPrompt }),
-        ...(tools === undefined ? {} : { tools }),
-      };
+      const requestProfile = requestProfileOf(input.profile);
       end(
         await requester.generate(
           { content: { messages: input.messages }, profile: requestProfile, policy: input.policy },

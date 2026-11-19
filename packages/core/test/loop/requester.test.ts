@@ -93,3 +93,85 @@ describe('loop requester compatibility', () => {
     await loop.close();
   });
 });
+
+describe('loop side requester', () => {
+  it('fills live defaults and applies explicit overrides without mutating the facade', async () => {
+    const seen: LlmRequest[] = [];
+    const messages = [createUserMessage('live history')];
+    const tools = [{ name: 'live_tool', description: 'live tool', parameters: { type: 'object' } }];
+    const base = fullRequester((request) => {
+      seen.push(request);
+      return done('side response');
+    });
+    const loop = createLoop({
+      requester: base,
+      executor,
+      input: { messages, profile: { systemPrompt: 'live system', tools } },
+    });
+    const resolver = { id: 'probe', resolve: async (request: LlmRequest) => request };
+    loop.policy.addResolver(resolver);
+
+    const defaults = loop.requester.request({});
+    expect(defaults.content.messages).toEqual(messages);
+    expect(defaults.profile).toEqual({ systemPrompt: 'live system', tools });
+    const resolvers = defaults.policy?.resolvers;
+    expect(typeof resolvers === 'function' ? resolvers() : resolvers).toEqual([resolver]);
+
+    const derived = loop.requester.with({ profile: { systemPrompt: 'derived system' } });
+    const explicit = createUserMessage('explicit history');
+    expect((await derived.generate(
+      { content: { messages: [explicit] } },
+      { signal: new AbortController().signal },
+    )).type).toBe('done');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.content.messages).toEqual([explicit]);
+    expect(seen[0]?.profile).toEqual({ systemPrompt: 'derived system', tools });
+    expect(loop.requester.request({}).profile).toEqual({ systemPrompt: 'live system', tools });
+    expect(loop.requester.request({}).content.messages).toEqual(messages);
+    expect(loop.baseRequester).toBe(base);
+    await loop.close();
+  });
+
+  it('re-reads the latest raw base and live loop state on every call', async () => {
+    const seen: { readonly base: string; readonly request: LlmRequest }[] = [];
+    const makeBase = (name: string): FullLoopLlmRequester => fullRequester((request) => {
+      seen.push({ base: name, request });
+      return done(name);
+    });
+    const first = makeBase('first');
+    const second = makeBase('second');
+    const loop = createLoop({
+      requester: first,
+      executor,
+      input: { messages: [createUserMessage('old')], profile: { systemPrompt: 'old system' } },
+    });
+    const control = { signal: new AbortController().signal };
+
+    await loop.requester.generate({}, control);
+    loop.setRequester(second);
+    loop.setContext([createUserMessage('new')]);
+    loop.setSystemPrompt('new system');
+    await loop.requester.generate({}, control);
+
+    expect(seen.map((entry) => entry.base)).toEqual(['first', 'second']);
+    expect(seen[0]?.request.content.messages.map((message) => extractText(message))).toEqual(['old']);
+    expect(seen[1]?.request.content.messages.map((message) => extractText(message))).toEqual(['new']);
+    expect(seen[1]?.request.profile).toEqual({ systemPrompt: 'new system' });
+    expect(loop.baseRequester).toBe(second);
+    await loop.close();
+  });
+
+  it('reports missing full bases without affecting legacy normal turns', async () => {
+    const loop = createLoop({ executor });
+    const control = { signal: new AbortController().signal };
+
+    expect(() => loop.requester.request({})).toThrow('loop has no full core requester');
+    expect(() => loop.requester.generate({}, control)).toThrow('loop has no full core requester');
+    const legacy: LoopLlmRequester = { generate: () => Promise.resolve(done('legacy response')) };
+    loop.setRequester(legacy);
+    expect(() => loop.requester.request({})).toThrow('loop has no full core requester');
+    expect((await loop.runTurn(createUserMessage('legacy'))).type).toBe('done');
+    expect(loop.state.messages.map((message) => extractText(message))).toEqual(['legacy', 'legacy response']);
+    await loop.close();
+  });
+});

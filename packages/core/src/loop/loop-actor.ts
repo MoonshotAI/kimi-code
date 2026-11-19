@@ -31,7 +31,13 @@ import {
   runTurnStarting,
   type TurnStartingRun,
 } from '#/hook/loop/run';
-import type { LoopRequester, LoopRequestRuntime } from './request';
+import {
+  isFullLoopRequester,
+  type FullLoopLlmRequester,
+  type LoopRequester,
+  type LoopRequestRuntime,
+} from './request';
+import { createLoopRequester } from './requester';
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
 import {
   canContinue,
@@ -288,6 +294,7 @@ class LoopActor implements Loop {
   readonly executor: LoopToolExecutor;
   readonly policy: PolicyRegistry;
   readonly waitForTasks: WaitForTasks;
+  readonly requester: FullLoopLlmRequester;
 
   private readonly hook: Partial<LoopHooks>;
   private readonly turnHooks = createTurnHookRegistry();
@@ -342,6 +349,16 @@ class LoopActor implements Loop {
     this.abortGraceMs = options.abortGraceMs ?? 2_500;
     this.hook = options.hook ?? {};
     this.policy = createPolicyRegistry();
+    this.requester = createLoopRequester(
+      () => {
+        const base = this.requesterTemplate;
+        if (!isFullLoopRequester(base)) throw new Error('loop has no full core requester');
+        return base;
+      },
+      () => this.durable.messages,
+      () => this.durable.profile,
+      () => this.policy.asPolicy(),
+    );
     this.waitForTasks = createWaitForTasks(() =>
       Array.from(this.tools.values()).filter((slot) => slot.detached && !slot.done),
     );
@@ -996,7 +1013,6 @@ class LoopActor implements Loop {
       return;
     }
     turn.continueAfterAbort = continueAfterAbort || turn.continueAfterAbort === true;
-+++++++ uvuzvqyo 5393f6e6 "test(agent-core-v2): characterize operation requests" (rebased revision)
     this.releaseTurn(turn);
     turn.machine.abort(reason);
   }
