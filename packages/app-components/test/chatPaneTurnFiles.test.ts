@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App } from 'vue';
+import { createApp, h, nextTick, ref, type App } from 'vue';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 vi.mock('@moonshot-ai/app-markdown', async () => {
@@ -40,27 +40,37 @@ import ChatPane from '../src/chat/ChatPane.vue';
 
 const write = (id: string, path: string) => ({ id, name: 'write', arg: JSON.stringify({ path, content: '' }), status: 'ok', output: ['done'] });
 
-const turns = [
-  { id: 'u1', role: 'user', no: 1, text: 'Question' },
-  {
-    id: 'a1', role: 'assistant', no: 1, daemonTurnId: 1, daemonTurnState: 'completed', text: 'Final answer',
-    tools: [write('t1', 'a.ts'), write('t2', 'b.ts')],
-  },
-] as unknown as ChatTurn[];
+function conversation(state: 'running' | 'completed'): ChatTurn[] {
+  return [
+    { id: 'u1', role: 'user', no: 1, text: 'Question' },
+    {
+      id: 'a1', role: 'assistant', no: 1, daemonTurnId: 1, daemonTurnState: state, text: 'Final answer',
+      tools: [write('t1', 'a.ts'), write('t2', 'b.ts')],
+    },
+  ] as unknown as ChatTurn[];
+}
+
+const turns = ref<ChatTurn[]>([]);
 
 let app: App | null = null;
 let host: HTMLDivElement;
 let resolve: (value: TurnFileChangesResult) => void;
 
-function mount(): void {
+function mount(state: 'running' | 'completed'): void {
+  turns.value = conversation(state);
   const fetcher = Object.assign(
     vi.fn(() => new Promise<TurnFileChangesResult>((done) => { resolve = done; })),
     { getSignal: () => undefined },
   ) as FetchTurnFileChanges;
-  app = createApp({ render: () => h(ChatPane, { turns, sessionId: 's1', windowHistory: false }) });
+  app = createApp({ render: () => h(ChatPane, { turns: turns.value, sessionId: 's1', windowHistory: false }) });
   app.use(createKimiI18n({ locale: 'en' }));
   app.provide(FetchTurnFileChangesKey, fetcher);
   app.mount(host);
+}
+
+async function finishTurn(): Promise<void> {
+  turns.value = conversation('completed');
+  await nextTick();
 }
 
 async function settle(): Promise<void> {
@@ -82,8 +92,9 @@ afterEach(() => {
 });
 
 it('reserves the turn diff card while changes load and fills it in place', async () => {
-  mount();
+  mount('running');
   await nextTick();
+  await finishTurn();
   const card = host.querySelector('.turn-files');
   expect(card?.getAttribute('aria-busy')).toBe('true');
   expect(card?.querySelectorAll('.tf-row')).toHaveLength(2);
@@ -101,10 +112,21 @@ it('reserves the turn diff card while changes load and fills it in place', async
 });
 
 it('collapses the reserved card when the turn has no recorded changes', async () => {
-  mount();
+  mount('running');
   await nextTick();
+  await finishTurn();
   expect(host.querySelector('.turn-files')).not.toBeNull();
   resolve([]);
   await settle();
   expect(host.querySelector('.turn-files')).toBeNull();
+});
+
+it('does not reserve a card for turns that had already settled when the session opened', async () => {
+  mount('completed');
+  await nextTick();
+  expect(host.querySelector('.turn-files')).toBeNull();
+
+  resolve([{ path: 'a.ts', status: 'modified', additions: 1, deletions: 0 }]);
+  await settle();
+  expect(host.querySelector('.turn-files')?.hasAttribute('aria-busy')).toBe(false);
 });

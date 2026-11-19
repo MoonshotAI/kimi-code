@@ -4,7 +4,7 @@ import { browserReferenceAnchor, useComposerBrowserReferenceHost } from '../comp
 import BrowserReferenceDetails from '../composer/BrowserReferenceDetails.vue';
 import { useBrowserReferenceDetails } from '../composer/browserReferenceDetails';
 import { composerSnapshotFromMetadata, rebindComposerSnapshotMedia } from '@moonshot-ai/app-client/lib';
-import { computed, inject, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch, watchSyncEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, OpenMediaRequest, ToolMedia, QueuedPromptView, TurnAttachment, UIQuestion } from '@moonshot-ai/app-core/client/types';
 import type { AppSessionRatingResponse } from '@moonshot-ai/app-core/api';
@@ -268,6 +268,14 @@ function forkAssistantRun(turn: ChatTurn): void {
   emit('forkTurn', { turnIndex: turn.forkTurnIndex });
 }
 
+const liveTurnIds = new Set<number>();
+watchSyncEffect(() => {
+  for (const group of assistantTurnGroups.value.values()) {
+    const turnId = group[0]!.daemonTurnId;
+    if (turnId !== undefined && !groupSettled(group)) liveTurnIds.add(turnId);
+  }
+});
+
 const turnFileChangesById = computed(() => {
   const map = new Map<string, { changes: TurnFileChange[]; daemonTurnId: number; expected?: number }>();
   if (props.inspector) return map;
@@ -276,6 +284,7 @@ const turnFileChangesById = computed(() => {
     if (turnId === undefined || !groupSettled(group)) continue;
     const fetched = fetchedFileStats.value.get(turnId);
     if (fetched === 'pending') {
+      if (!liveTurnIds.has(turnId)) continue;
       const expected = editedFileCount(group, props.cwd);
       if (expected > 0) map.set(group[group.length - 1]!.id, { changes: [], daemonTurnId: turnId, expected });
       continue;
