@@ -2,6 +2,7 @@ import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '@moonshot-ai/core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import type { Loop } from '@moonshot-ai/core/loop/index';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { call, held, reply, say, think, thinkSigned } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -228,9 +229,13 @@ describe('Agent loop', () => {
           execute: async () => ({ output: 'work-result' }),
         }),
       });
+      const coreLoop = (localLoop as unknown as { loop?: Loop }).loop;
+      if (coreLoop === undefined) throw new Error('Loop is not started');
+      const setRequester = vi.spyOn(coreLoop, 'setRequester');
 
       await local.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
       await local.untilTurnEnd();
+      expect(setRequester).toHaveBeenCalledTimes(2);
       await local.rpc.prompt({ input: [{ type: 'text', text: 'second turn' }] });
       await local.untilTurnEnd();
 

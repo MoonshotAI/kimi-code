@@ -1,8 +1,13 @@
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
+import { contentsOf } from '@moonshot-ai/core/llm/requester';
+import type { FullLoopLlmRequester, Loop, LoopLlmRequester } from '@moonshot-ai/core/loop/index';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoopRequester } from '#/agent/loop/requesterContract';
+import type { AgentRequesterBinder } from '#/agent/loop/requesterBinder';
+import { IConfigService } from '#/app/config/config';
+import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
 import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -246,13 +251,64 @@ describe('ConfigState model capabilities', () => {
       ),
     );
     try {
+      const loopService = resumed.get(IAgentLoopService) as unknown as {
+        readonly requesterBinder: AgentRequesterBinder;
+        readonly loop?: Loop;
+      };
+      const configSnapshots = vi.spyOn(loopService.requesterBinder, 'requestConfigSnapshot');
+      expect(configSnapshots).not.toHaveBeenCalled();
+
       await resumed.restorePersisted();
 
+      expect(configSnapshots).toHaveBeenCalledTimes(1);
       expect(resumed.get(ITelemetryService).getContext()).toMatchObject({
         model: 'kimi-code/kimi-for-coding',
         provider_type: 'kimi',
         protocol: 'openai',
       });
+      const coreLoop = loopService.loop;
+      if (coreLoop === undefined) throw new Error('Loop is not started');
+      const setRequester = vi.spyOn(coreLoop, 'setRequester');
+      const config = resumed.get(IConfigService);
+
+      await config.set('modelOverrides', { temperature: 0.4 });
+      expect(setRequester).toHaveBeenCalledTimes(1);
+      const firstBase = coreLoop.baseRequester;
+      if (firstBase === undefined || !('with' in firstBase)) {
+        throw new Error('Expected a full raw requester');
+      }
+      const mixed = firstBase as FullLoopLlmRequester & LoopLlmRequester;
+      expect(mixed.snapshot?.()).not.toHaveProperty('with');
+      expect(contentsOf(firstBase).model?.sampling).toMatchObject({ temperature: 0.4 });
+
+      await config.set('modelOverrides', { temperature: 0.9 });
+      await config.set('thinking', { keep: 'all' });
+      await config.set('loopControl', { reservedContextSize: 128 });
+      expect(setRequester).toHaveBeenCalledTimes(4);
+
+      await config.set('models', {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+          maxOutputSize: 4_096,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+        },
+      });
+      resumed.get(IProviderCatalogRuntime).resync();
+      expect(setRequester).toHaveBeenCalledTimes(5);
+
+      const resumedProfile = resumed.get(IAgentLoopService);
+      resumedProfile.setThinking('low');
+      expect(setRequester).toHaveBeenCalledTimes(6);
+      await resumedProfile.setProfile({
+        ...resumedProfile.bindingSnapshot(),
+        thinkingLevel: 'high',
+      });
+      expect(setRequester).toHaveBeenCalledTimes(7);
+      expect(contentsOf(firstBase).model?.sampling).toMatchObject({ temperature: 0.4 });
+      expect(coreLoop.baseRequester).not.toBe(firstBase);
     } finally {
       await resumed.dispose();
     }

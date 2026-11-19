@@ -27,7 +27,7 @@ import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
-
+import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -214,6 +214,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IModelCatalog modelCatalog: IModelCatalog,
+    @IProviderCatalogRuntime providerCatalogRuntime: IProviderCatalogRuntime,
     @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionRequestAttributionService attribution: ISessionRequestAttributionService,
@@ -236,10 +237,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.requesterBinder = new AgentRequesterBinder({
       config,
       profile,
+      profileSnapshot: () => this.profileAdapter.snapshot(),
       modelCatalog,
       requesterFactory: protocolRegistry,
       requesterExecution: this.requesterExecution,
+      runtime: providerCatalogRuntime,
     });
+    this._register(this.requesterBinder);
     this.requester = {
       coreRequester: (options) => this.coreRequester(options),
       prepareOperation: async (options, _signal) => {
@@ -305,6 +309,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       catalog,
       telemetry,
       (value) => this.loop?.setSystemPrompt(value),
+      () => this.requesterBinder.invalidate(),
     );
     this.states.contributeState(turnKey);
     this.states.contributeState(loopLastRequestIdKey);
@@ -583,7 +588,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       },
       hook: this.loopHooks.hook,
     });
-    loop.setRequester(this.createLoopRequester(loop));
+    const legacyRequester = this.createLoopRequester(loop);
+    loop.setRequester(legacyRequester);
+    this.requesterBinder.attach(loop, legacyRequester);
     this.loop = loop;
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
@@ -889,7 +896,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         };
       });
       this.requesterExecution.recoveries.clear();
-      loop.setRequester(this.createLoopRequester(loop));
+      const legacyRequester = this.createLoopRequester(loop);
+      loop.setRequester(legacyRequester);
+      this.requesterBinder.attach(loop, legacyRequester);
       this.turns.invalidateHistory();
       this.scheduleTaskReconciliation(seededMessages);
       this.maybeSettle();

@@ -1,29 +1,64 @@
 import type { LlmRequestModel } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmRequesterExecution } from '@moonshot-ai/core/llm/policy/policy';
+import type { Loop, LoopLlmRequester } from '@moonshot-ai/core/loop/index';
+import { Disposable } from '#/_base/di/lifecycle';
 import type { IConfigService } from '#/app/config/config';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { IAgentProfileService, ProfileBindingSnapshot } from '#/agent/profile/profile';
 import type { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
 import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
 import type { ProviderRequesterFactory } from '#/provider-catalog/requester';
+import { LOOP_CONTROL_SECTION } from './configSection';
 import type {
   CoreLoopRequesterOptions,
   RequestConfigSnapshot,
   RequesterBinding,
 } from './requesterContract';
 
+const REQUEST_CONFIG_SECTIONS: ReadonlySet<string> = new Set([
+  LOOP_CONTROL_SECTION,
+  THINKING_SECTION,
+  'modelOverrides',
+]);
+
+interface RequesterAttachment {
+  readonly loop: Loop;
+  readonly legacyRequester: LoopLlmRequester;
+}
+
 export interface AgentRequesterBinderOptions {
   readonly config: IConfigService;
   readonly profile: IAgentProfileService;
+  readonly profileSnapshot: () => ProfileBindingSnapshot;
   readonly modelCatalog: IModelCatalog;
   readonly requesterFactory: Pick<ProviderRequesterFactory, 'request'>;
   readonly requesterExecution: LlmRequesterExecution;
+  readonly runtime: IProviderCatalogRuntime;
 }
 
-export class AgentRequesterBinder {
-  constructor(private readonly options: AgentRequesterBinderOptions) {}
+export class AgentRequesterBinder extends Disposable {
+  private attachment: RequesterAttachment | undefined;
+
+  constructor(private readonly options: AgentRequesterBinderOptions) {
+    super();
+    this._register(this.options.config.onDidSectionChange(({ domain }) => {
+      if (REQUEST_CONFIG_SECTIONS.has(domain)) this.refresh();
+    }));
+    this._register(this.options.runtime.onChanged(() => this.refresh()));
+  }
+
+  invalidate(): void {
+    this.refresh();
+  }
+
+  attach(loop: Loop, legacyRequester: LoopLlmRequester): void {
+    this.attachment = { loop, legacyRequester };
+    this.refresh();
+  }
 
   requestConfigSnapshot(profile: ProfileBindingSnapshot): RequestConfigSnapshot {
     return {
@@ -77,5 +112,18 @@ export class AgentRequesterBinder {
       model,
       requestMetadata: provider?.requestMetadata === true,
     };
+  }
+
+  private refresh(): void {
+    const attachment = this.attachment;
+    if (attachment === undefined) return;
+    const profile = this.options.profileSnapshot();
+    if (!this.options.profile.hasProvider(profile)) return;
+    const config = this.requestConfigSnapshot(profile);
+    const base = this.bindRequester({}, config).request;
+    attachment.loop.setRequester({
+      ...base,
+      snapshot: () => attachment.legacyRequester.snapshot?.() ?? attachment.legacyRequester,
+    });
   }
 }
