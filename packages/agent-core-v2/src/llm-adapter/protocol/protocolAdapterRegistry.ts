@@ -70,7 +70,11 @@ function routeFor(model: Model): AdapterRoute {
       return model.providerOptions?.vertexai === true
         ? {
             requester: googleVertexRequester,
-            options: { vertexai: true },
+            options: {
+              vertexai: true,
+              project: model.providerOptions?.project,
+              location: model.providerOptions?.location,
+            },
             providerId: 'google_genai',
           }
         : {

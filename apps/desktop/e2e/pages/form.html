@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<style>html{background:#fff;color:#111}</style>
+<title>Feedback form</title>
+<h1>Feedback form</h1>
+<form method="post" action="/submitted.html">
+  <label for="comment">Comment</label>
+  <input id="comment" name="comment">
+  <button type="submit">Send feedback</button>
+</form>
+<script>
+  window.addEventListener('beforeunload', (event) => {
+    if (document.getElementById('comment').value !== '') event.preventDefault();
+  });
+</script>
+</html>
