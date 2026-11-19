@@ -54,7 +54,14 @@ async function* keptLines(path: string, keep: (line: Buffer) => boolean): AsyncG
 
 async function copyFolder(source: string, destination: string, keep: (line: Buffer) => boolean): Promise<number> {
   let copied = 0;
-  for (const entry of await readdir(source, { withFileTypes: true }).catch(() => [])) {
+  let entries;
+  try {
+    entries = await readdir(source, { withFileTypes: true });
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return 0;
+    throw error;
+  }
+  for (const entry of entries) {
     const path = join(source, entry.name);
     if (entry.isDirectory()) copied += await copyFolder(path, join(destination, entry.name), keep);
     else if (entry.isFile()) {
