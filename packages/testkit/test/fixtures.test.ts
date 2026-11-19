@@ -15,7 +15,7 @@ import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv } from '#/fixtures/env';
 import { createTestHome } from '#/fixtures/home';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
-import { installNetworkGuard, isLoopback } from '#/fixtures/network';
+import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
 import { createNormalizer, normalize } from '#/fixtures/normalize';
 import { deferred, gate, until, waitForEvent } from '#/fixtures/wait';
 
@@ -229,6 +229,30 @@ describe('wait helpers', () => {
 });
 
 describe('network guard', () => {
+  it('resolves numeric port strings to the same TCP host as numeric ports', () => {
+    for (const port of [443, '443', '00443', '0x1bb', '4e2', ' +443 ', '0', '65535']) {
+      expect(tcpTargetOf([port, '127.0.0.1'])).toEqual({ host: '127.0.0.1', port });
+    }
+    expect(tcpTargetOf(['443'])).toEqual({ host: 'localhost', port: '443' });
+    expect(tcpTargetOf(['443', ''])).toEqual({ host: 'localhost', port: '443' });
+  });
+
+  it('leaves IPC paths and invalid positional port strings to Node', () => {
+    for (const path of ['./443', '-1', 'example.sock', String.raw`\\.\pipe\example`]) {
+      expect(tcpTargetOf([path])).toBeUndefined();
+    }
+    expect(tcpTargetOf([{ path: '443' }])).toBeUndefined();
+    for (const port of ['', '  ', '65536', '0.5', 'Infinity']) {
+      expect(tcpTargetOf([port, '127.0.0.1'])).toBeUndefined();
+    }
+  });
+
+  it('uses a TCP port when the options contain an empty IPC path', () => {
+    const options = { host: '127.0.0.1', port: '443', path: '' };
+    expect(tcpTargetOf([options])).toEqual({ host: '127.0.0.1', port: '443' });
+    expect(tcpTargetOf([[options, null]])).toEqual({ host: '127.0.0.1', port: '443' });
+  });
+
   it('recognizes the IPv4 loopback range only for valid IPv4 literals', () => {
     const loopback = [
       '127.0.0.1', '127.255.255.255', 'localhost', 'app.localhost', '::1', '[::1]', '0:0:0:0:0:0:0:1', '::ffff:127.0.0.1',

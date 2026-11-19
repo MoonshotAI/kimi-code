@@ -56,7 +56,7 @@ function install(): InstalledGuard {
   const original = descriptor?.value as Connect;
   const guard: InstalledGuard = { original, violations: [], allowHosts: new Set(), users: 0 };
   const patched: Connect = function guardedConnect(this: Socket, ...args: unknown[]): Socket {
-    const target = targetOf(args);
+    const target = tcpTargetOf(args);
     if (target === undefined || isLoopback(target.host) || guard.allowHosts.has(target.host.toLowerCase())) {
       return Reflect.apply(original, this, args) as Socket;
     }
@@ -77,16 +77,19 @@ interface Target {
   readonly port?: number | string;
 }
 
-function targetOf(args: readonly unknown[]): Target | undefined {
+export function tcpTargetOf(args: readonly unknown[]): Target | undefined {
   const first = Array.isArray(args[0]) ? (args[0] as readonly unknown[])[0] : args[0];
-  if (typeof first === 'string') return undefined;
-  if (typeof first === 'number') {
-    const host = typeof args[1] === 'string' ? args[1] : 'localhost';
+  if (typeof first === 'string' || typeof first === 'number') {
+    if (typeof first === 'string') {
+      const port = Number(first);
+      if (first.trim() === '' || !Number.isInteger(port) || port < 0 || port > 65535) return undefined;
+    }
+    const host = typeof args[1] === 'string' && args[1] !== '' ? args[1] : 'localhost';
     return { host, port: first };
   }
   if (typeof first !== 'object' || first === null) return undefined;
   const options = first as { readonly host?: unknown; readonly port?: unknown; readonly path?: unknown };
-  if (typeof options.path === 'string') return undefined;
+  if (typeof options.path === 'string' && options.path !== '') return undefined;
   const host = typeof options.host === 'string' && options.host !== '' ? options.host : 'localhost';
   const port = typeof options.port === 'number' || typeof options.port === 'string' ? options.port : undefined;
   return { host, port };
