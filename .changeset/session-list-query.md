@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": patch
+"@moonshot-ai/kap-server": patch
 ---
 
-Add a `query` parameter to `GET /api/v1/sessions` that filters sessions by title, last prompt, or exact session ID.
+Add a `query` parameter to `GET /api/v1/sessions` that keeps sessions whose title or last prompt contains the text, case-insensitively, or whose id equals it.
