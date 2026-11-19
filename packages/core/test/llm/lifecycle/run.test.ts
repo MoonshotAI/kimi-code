@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 
 import { anthropicProtocol } from '#/llm/builtin/protocol/anthropic/index';
 import { openAIProtocol } from '#/llm/builtin/protocol/openai/index';
+import { kimiOpenAIProtocol } from '#/llm/builtin/provider/kimi/protocol';
 import {
   createAssistantMessage,
   createToolMessage,
   createUserMessage,
 } from '#/llm/message';
+import { setLog } from '#/utils/log';
 
 import {
   aimockEndpoint,
@@ -284,6 +286,105 @@ describe('LLM run boundaries', () => {
         code: 'anthropic-thinking-effort-not-listed',
         data: { effort: 'custom', knownEfforts: ['low'] },
       },
+    });
+
+    const warnings: unknown[][] = [];
+    const debugLogs: unknown[][] = [];
+    setLog({
+      debug: (...args) => debugLogs.push(args),
+      info: () => {},
+      warn: (...args) => warnings.push(args),
+      error: () => {},
+    });
+    server().llm.clearFixtures();
+    server().llm.clearRequests();
+    server().llm.on({ predicate: () => true }, rawMockResponse('openai-chat', {
+      json: openAICompletion({ content: 'ok' }, { finishReason: 'stop' }),
+    }));
+    const duplicated = await runGenerate(kimiOpenAIProtocol, {
+      module: testModule({
+        profile: {
+          tools: [
+            { name: 'weather', description: 'old top', parameters: { type: 'object' } },
+            {
+              name: 'weather',
+              description: 'new top',
+              parameters: { type: 'object' },
+              deferred: true,
+            },
+          ],
+        },
+        messages: [
+          {
+            role: 'system',
+            content: [{ type: 'text', text: 'older' }],
+            tools: [
+              { name: 'weather', description: 'old system', parameters: { type: 'object' } },
+              { name: 'local', description: 'old local', parameters: { type: 'object' } },
+            ],
+          },
+          {
+            role: 'system',
+            content: [],
+            tools: [
+              { name: 'weather', description: 'new system', parameters: { type: 'object' } },
+              { name: 'local', description: 'new local', parameters: { type: 'object' } },
+            ],
+          },
+          {
+            role: 'system',
+            content: [],
+            tools: [
+              { name: 'weather', description: 'empty after dedupe', parameters: { type: 'object' } },
+            ],
+          },
+          { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        ],
+      }),
+      endpoint: aimockEndpoint(server().url),
+      stream: false,
+    });
+
+    expect(duplicated.outcome.type).toBe('done');
+    expect(duplicated.events.filter((event) => event.type === 'llm.notice')).toMatchObject([
+      {
+        notice: {
+          source: 'legalize-tools',
+          code: 'duplicate_tool_declaration',
+          data: { name: 'weather', kept: 'profile.tools[1]', dropped: 4 },
+        },
+      },
+      {
+        notice: {
+          source: 'legalize-tools',
+          code: 'duplicate_tool_declaration',
+          data: { name: 'local', kept: 'messages[1].tools[1]', dropped: 1 },
+        },
+      },
+    ]);
+    expect(warnings).toMatchObject([
+      [{ name: 'weather', kept: 'profile.tools[1]', dropped: 4 }, expect.any(String)],
+      [{ name: 'local', kept: 'messages[1].tools[1]', dropped: 1 }, expect.any(String)],
+    ]);
+    expect(debugLogs).toContainEqual([{ pass: 'with-capabilities' }, 'llm encode stage']);
+    expect(debugLogs).toContainEqual([{ pass: 'legalize-tools' }, 'llm encode stage']);
+    expect(server().llm.getRequests()[0]?.body).toMatchObject({
+      tools: [{
+        type: 'function',
+        function: { name: 'weather', description: 'new top', parameters: { type: 'object' } },
+      }],
+      messages: [
+        { role: 'system', content: 'older' },
+        {
+          role: 'system',
+          tools: [{
+            type: 'function',
+            function: { name: 'local', description: 'new local', parameters: { type: 'object' } },
+          }],
+        },
+        { role: 'system', content: '' },
+        { role: 'user', content: 'hi' },
+      ],
     });
   });
 });
