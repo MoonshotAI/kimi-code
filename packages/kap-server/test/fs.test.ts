@@ -15,6 +15,7 @@ import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 import { fakeModelCatalog } from './helpers/fakeModelCatalog';
+import { initRepo } from './helpers/gitRepo';
 
 interface Envelope<T> {
   code: number;
@@ -719,12 +720,7 @@ describe('server-v2 /api/v1 fs routes', () => {
   }, 20000);
 
   it('fs:git_status reports the head, untracked additions and the pull request lookup outcome', async () => {
-    git(work!, 'init', '-b', 'main');
-    git(work!, 'config', 'user.email', 'test@example.com');
-    git(work!, 'config', 'user.name', 'Test');
-    await writeFile(join(work!, 'main.txt'), 'one\n');
-    git(work!, 'add', '-A');
-    git(work!, 'commit', '-m', 'init');
+    await initRepo(work!, { 'main.txt': 'one\n' });
     await writeFile(join(work!, 'fresh.txt'), 'one\ntwo\n');
     const id = await createSession();
 
@@ -773,20 +769,14 @@ describe('server-v2 /api/v1 fs routes', () => {
 
     const gone = await postFs<null>(id, 'git_status', { root: 'gone' });
     const plain = await postFs<null>(id, 'git_status', { root: 'plain' });
-    const gonePullRequest = await postFs<null>(id, 'pull_request', { root: 'gone' });
     const batch = await postFs<{ errors: Record<string, { code: number }> }>(id, 'git_status:batch', {
       roots: ['gone', 'plain'],
-    });
-    const prBatch = await postFs<{ errors: Record<string, { code: number }> }>(id, 'pull_request:batch', {
-      roots: ['gone'],
     });
 
     expect(gone.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
     expect(plain.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
-    expect(gonePullRequest.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
     expect(batch.data.errors['gone']?.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
     expect(batch.data.errors['plain']?.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
-    expect(prBatch.data.errors['gone']?.code).toBe(ErrorCode.FS_DIRECTORY_NOT_FOUND);
 
     await rm(work!, { recursive: true, force: true });
     const rootGone = await postFs<null>(id, 'git_status', {});

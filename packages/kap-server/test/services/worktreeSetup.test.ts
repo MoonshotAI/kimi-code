@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,32 +15,24 @@ import {
   projectDirectoryName,
   type SetupProgress,
 } from '../../src/services/worktrees/worktreeSetup';
-
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trimEnd();
-}
+import { createRepoTemplate, git, hangingRemote, type RepoTemplate } from '../helpers/gitRepo';
 
 describe('worktree setup engine', () => {
   let scratch: string;
+  let template: RepoTemplate;
 
   beforeAll(async () => {
     scratch = await realpath(await mkdtemp(join(tmpdir(), 'kimi-worktree-setup-')));
+    template = await createRepoTemplate({ 'README.md': 'hello\n' });
   });
 
   afterAll(async () => {
     await rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await template.dispose();
   });
 
-  async function createRepo(name: string): Promise<string> {
-    const root = join(scratch, name);
-    await mkdir(root, { recursive: true });
-    git(root, 'init', '-q', '-b', 'main');
-    git(root, 'config', 'user.email', 'dev@example.com');
-    git(root, 'config', 'user.name', 'Dev');
-    await writeFile(join(root, 'README.md'), 'hello\n');
-    git(root, 'add', '.');
-    git(root, 'commit', '-q', '-m', 'init');
-    return root;
+  function createRepo(name: string): Promise<string> {
+    return template.copyTo(join(scratch, name));
   }
 
   function progressOf(creation: WorktreeCreation): SetupProgress {
@@ -127,16 +118,14 @@ describe('worktree setup engine', () => {
 
   it('fails with a timeout and creates nothing when the fetch hangs', async () => {
     const root = await createRepo('fetch-timeout');
-    git(root, 'config', 'protocol.ext.allow', 'always');
-    git(root, 'remote', 'add', 'origin', 'ext::sleep 30');
-    git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    hangingRemote(root);
     const projectDir = join(scratch, 'fetch-timeout-worktrees');
     const creation = await WorktreeCreation.plan({
       repoRoot: root,
       projectDir,
       osHomeDir: scratch,
       request: { source_branch: 'main', use_remote: true },
-      fetchTimeoutMs: 300,
+      fetchTimeoutMs: 50,
     });
     const progress = progressOf(creation);
 
