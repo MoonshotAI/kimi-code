@@ -918,6 +918,7 @@ export class SessionEventHandler {
       (session === undefined || this.host.session === session) &&
       !this.host.aborted &&
       this.host.state.appState.streamingPhase === 'idle' &&
+      !this.host.state.appState.isCompacting &&
       this.host.state.queuedMessages.length === 0 &&
       !this.host.state.queuedMessageDispatchPending
     );

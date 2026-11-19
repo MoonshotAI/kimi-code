@@ -8715,6 +8715,38 @@ capabilities = ["image_in", "video_in"]
     ]);
   });
 
+  it('queues bash input while compaction is running from idle and drains it afterward', async () => {
+    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.streamingPhase = 'idle';
+    driver.state.appState.isCompacting = true;
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+
+    expect(runShellCommand).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+    ]);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+      } as Event,
+      (item) => { driver.sendQueuedMessage(session, item); },
+    );
+
+    await vi.waitFor(() => {
+      expect(runShellCommand).toHaveBeenCalledWith('ls', expect.objectContaining({ commandId: expect.any(String) }));
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
   it('dispatches a queued bash item to runShellCommand instead of prompt', async () => {
     const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
     const session = makeSession({ runShellCommand });

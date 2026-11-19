@@ -1447,7 +1447,7 @@ export class KimiTUI {
     const historyText = wasBashMode ? `!${text}` : text;
     void this.persistInputHistory(historyText);
     if (wasBashMode) {
-      if (this.state.appState.streamingPhase !== 'idle') {
+      if (this.state.appState.streamingPhase !== 'idle' || this.state.appState.isCompacting) {
         this.enqueueMessage(text, undefined, 'bash');
         this.updateQueueDisplay();
         this.state.ui.requestRender();
@@ -1464,7 +1464,7 @@ export class KimiTUI {
     if (session === undefined) {
       session = await this.ensureSession();
       if (session === undefined) return;
-      if (this.state.appState.streamingPhase !== 'idle') {
+      if (this.state.appState.streamingPhase !== 'idle' || this.state.appState.isCompacting) {
         this.enqueueMessage(command, undefined, 'bash');
         this.updateQueueDisplay();
         this.state.ui.requestRender();
