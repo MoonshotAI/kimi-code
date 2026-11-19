@@ -402,6 +402,46 @@ export const rendererTrackEventSchema = z.discriminatedUnion('event', [
       cached: z.boolean(),
     }),
   }),
+  z.object({
+    event: z.literal('prediction_shown'),
+    properties: z.object({
+      prediction_id: shortStringSchema,
+      turn_id: z.number().int().nonnegative(),
+      duration_ms: clampedPerfMsSchema,
+      prediction_chars: clampedCountSchema,
+    }),
+  }),
+  z.object({
+    event: z.literal('prediction_accepted'),
+    properties: z.object({
+      prediction_id: shortStringSchema,
+      turn_id: z.number().int().nonnegative(),
+      duration_ms: clampedPerfMsSchema,
+      prediction_chars: clampedCountSchema,
+      key: z.enum(['tab', 'right']),
+    }),
+  }),
+  z.object({
+    event: z.literal('prediction_submitted'),
+    properties: z.object({
+      prediction_id: shortStringSchema,
+      turn_id: z.number().int().nonnegative(),
+      duration_ms: clampedPerfMsSchema,
+      prediction_chars: clampedCountSchema,
+      edited: z.boolean(),
+    }),
+  }),
+  z.object({
+    event: z.literal('prediction_dismissed'),
+    properties: z.object({
+      prediction_id: shortStringSchema,
+      turn_id: z.number().int().nonnegative(),
+      reason: z.enum(['input', 'escape', 'new_turn', 'session', 'dialog', 'queue', 'submit', 'visibility', 'shutdown']),
+      accepted: z.boolean(),
+      duration_ms: clampedPerfMsSchema,
+      prediction_chars: clampedCountSchema,
+    }),
+  }),
 ]);
 
 export type RendererTrackEvent = z.infer<typeof rendererTrackEventSchema>;

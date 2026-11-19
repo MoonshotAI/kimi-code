@@ -47,12 +47,26 @@ describe('renderer perf telemetry event schemas', () => {
       cached: true,
     };
 
-    it('accepts a full payload', () => {
+    it('accepts a full payload and rejects a non-boolean cached', () => {
       expect(parse('session_open_timing', base).success).toBe(true);
-    });
-
-    it('rejects a non-boolean cached', () => {
       expect(parse('session_open_timing', { ...base, cached: 'yes' }).success).toBe(false);
+    });
+  });
+
+  describe('prompt prediction', () => {
+    const base = {
+      prediction_id: 'prediction-1',
+      turn_id: 7,
+      duration_ms: 120,
+      prediction_chars: 10,
+    };
+
+    it('accepts the client funnel without prediction text', () => {
+      expect(parse('prediction_shown', base).success).toBe(true);
+      expect(parse('prediction_accepted', { ...base, key: 'tab' }).success).toBe(true);
+      expect(parse('prediction_submitted', { ...base, edited: true }).success).toBe(true);
+      expect(parse('prediction_dismissed', { ...base, reason: 'input', accepted: false }).success).toBe(true);
+      expect(parse('prediction_accepted', { ...base, key: 'enter' }).success).toBe(false);
     });
   });
 });

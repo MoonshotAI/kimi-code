@@ -126,3 +126,77 @@ test('a multi-line prompt is written, expanded, sent verbatim and recalled from 
     await expect(app.window.getByRole('alert')).toHaveCount(0);
   });
 });
+
+test.describe('next-prompt manual recall', () => {
+  test.use({ appEnv: { KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION: '1' } });
+
+  test('parks a prediction for Tab or Right Arrow recall and consumes it on submit or Escape', async ({ app, model }) => {
+    const tabPrediction = 'Recall this prediction with Tab';
+    const rightPrediction = 'Recall this prediction with Right Arrow';
+    const dismissedPrediction = 'Dismiss this prediction only';
+    const draft = 'keep this draft';
+    model.script(
+      say('First answer.'),
+      say(tabPrediction),
+      say('Second answer.'),
+      say(rightPrediction),
+      say('Third answer.'),
+      say(dismissedPrediction),
+    );
+    const input = app.window.getByRole('combobox', { name: 'Message input' });
+    const lines = input.getByRole('paragraph');
+    const ghost = app.window.locator('.composer-prompt-prediction-overlay');
+    const recall = app.window.locator('.prompt-prediction-recall');
+    const transcript = app.window.getByRole('list').first();
+
+    await app.startTurn(OPENER);
+    await expect(ghost).toHaveText(tabPrediction);
+    const descriptionId = await input.getAttribute('aria-describedby');
+    expect(descriptionId).toBeTruthy();
+    await expect(app.window.locator(`#${descriptionId}`)).toHaveText(`Prediction: ${tabPrediction}. Press Tab or Right Arrow to insert.`);
+    await app.window.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await expect(ghost).toBeVisible();
+    await input.click();
+    await app.window.keyboard.type('another draft');
+    await expect(ghost).toBeHidden();
+    await app.window.keyboard.press('ControlOrMeta+a');
+    await app.window.keyboard.press('Backspace');
+    await expect(recall).toBeVisible();
+    await expect(recall).toContainText(tabPrediction);
+    await app.window.keyboard.press('Tab');
+    await expect(lines).toHaveText([tabPrediction]);
+    await expect(recall).toHaveCount(0);
+    expect(model.requests()).toHaveLength(2);
+
+    await app.window.keyboard.press('ControlOrMeta+a');
+    await app.window.keyboard.press('Backspace');
+    await expect(recall).toHaveCount(0);
+    await app.window.keyboard.type(tabPrediction);
+    await app.window.keyboard.press('Enter');
+    const second = await model.waitForRequest(2);
+    expect(second.userTextsSinceReply).toEqual([tabPrediction]);
+    await expect(transcript.getByText('Second answer.', { exact: true })).toBeVisible();
+
+    await expect(ghost).toHaveText(rightPrediction);
+    await input.click();
+    await app.window.keyboard.type('another draft');
+    await app.window.keyboard.press('ControlOrMeta+a');
+    await app.window.keyboard.press('Backspace');
+    await expect(recall).toContainText(rightPrediction);
+    await app.window.keyboard.press('ArrowRight');
+    await expect(lines).toHaveText([rightPrediction]);
+    await app.window.keyboard.press('Enter');
+    const third = await model.waitForRequest(4);
+    expect(third.userTextsSinceReply).toEqual([rightPrediction]);
+    await expect(transcript.getByText('Third answer.', { exact: true })).toBeVisible();
+
+    await expect(ghost).toHaveText(dismissedPrediction);
+    await input.click();
+    await app.window.keyboard.type(draft);
+    await app.window.keyboard.press('Escape');
+    await expect(lines).toHaveText([draft]);
+    await expect(ghost).toBeHidden();
+    await expect(recall).toHaveCount(0);
+    expect(model.requests()).toHaveLength(6);
+  });
+});
