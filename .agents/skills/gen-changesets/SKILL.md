@@ -21,10 +21,9 @@ Product changesets are user-facing changelog entries (they feed release notes, u
 
 - **Changed a product's code and users can perceive it** → write for that product.
 - **Changed a library's source code** → always write for that library, even for internal refactors; the library's own changelog is the honest record of what changed. Test-only and docs-only changes are exempt.
-- **Changed public KAP (HTTP API) behavior that external callers can perceive** → write for the owning package (for example `kap-server`); hidden first-party endpoints (`hide: true`) are exempt.
-
 - **Changed a product's code and users can perceive it** → write for that product.
 - **Changed a library's source code** → always write for that library, even for internal refactors; the library's own changelog is the honest record of what changed. Test-only and docs-only changes are exempt.
+- **Changed public KAP (HTTP API) behavior that external callers can perceive** → write for the owning package (for example `kap-server`); hidden first-party endpoints (`hide: true`) are exempt.
 - **A library change flows into a product and is user-perceivable there** → also write for the product, as a separate file with a user-facing sentence.
   - Changed `kap-server`'s session-list behavior → a `kap-server` entry; desktop embeds kap-server and users feel the change → a `kimi-code-app` entry too.
   - `agent-core-v2` internal refactor (wire / journal / lifecycle plumbing) → an `agent-core-v2` entry only.
