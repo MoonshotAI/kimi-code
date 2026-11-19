@@ -9,6 +9,7 @@ export default defineConfig({
       'apps/kimi-code',
       'apps/vis/server',
       'apps/vis/web',
+      'tests/scenarios',
       ...vscodeProjects,
     ],
     coverage: {

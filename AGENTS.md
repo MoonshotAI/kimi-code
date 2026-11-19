@@ -29,6 +29,8 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - `packages/klient`: the client SDK — a contract-driven facade over agent-core-v2 (`global.*` / `session(id).*` / `agent(id).*`, zod-validated); transport via subpath entry (`@moonshot-ai/klient/ipc|memory`, both return the same `Klient`); also hosts the e2e suites. See `packages/klient/AGENTS.md`.
 - `packages/tree-sitter-bash`: a pure-TypeScript bash parser (no runtime deps, no wasm); `parse(source, { timeoutMs, maxNodes })` runs under a deterministic budget and returns a discriminated `ParseResult` — callers must treat aborted/hasError trees as "cannot analyze" and degrade. Parser only, no safety judgments; see the package README's "Known differences" section.
 - `packages/minidb`: the embedded JSON document store (`MiniDb`) behind kap-server's search index — snapshot + WAL persistence with an exclusive write lock, a larger-than-RAM full-text layer, and persistent index generations. See `packages/minidb/AGENTS.md`.
+- `packages/testkit`: shared test fixtures, a scriptable model and a KAP driver. See [the testkit guide](packages/testkit/README.md) for examples.
+- `tests/scenarios`: protocol tests that exercise the real kap-server and engine over REST and WebSocket using testkit.
 
 ## Environment Requirements
 

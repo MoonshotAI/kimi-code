@@ -1,0 +1,135 @@
+# @moonshot-ai/testkit
+
+Shared test infrastructure for this repository: a protocol-level fake model, a driver for the Kimi Agent Protocol (KAP), and the fixtures around them. The package depends on no `@moonshot-ai/*` package, so the tests of any package can use it. Code that needs a product package, such as the server, is passed in by the caller.
+
+| Import | What it provides |
+|---|---|
+| `@moonshot-ai/testkit/model` | the fake model, the step DSL, tool-call builders, and the provider config that points the product at the fake model |
+| `@moonshot-ai/testkit/kap` | `startKap`: a KAP server backed by the fake model, with REST and WebSocket clients and a turn reducer |
+| `@moonshot-ai/testkit/fixtures` | temporary homes, a `config.toml` writer, environment isolation, the network guard, waits, timeouts, media samples and normalizers |
+| `@moonshot-ai/testkit/vitest` | fixture definitions for `test.extend` and the network guard hooks |
+
+## A scenario test
+
+```ts
+import { createServerLogger, startServer, type RunningServer } from '@moonshot-ai/kap-server';
+import { bash, say } from '@moonshot-ai/testkit/model';
+import { kapFixtures, type KapFixtures } from '@moonshot-ai/testkit/vitest';
+import { test as base, expect } from 'vitest';
+
+const test = base.extend<KapFixtures<RunningServer>>(kapFixtures({ startServer, createServerLogger, config: { defaultPermissionMode: 'yolo' } }));
+
+test('runs a tool and answers', async ({ kap, model }) => {
+  model.script(bash('echo hi'), say('done'));
+  const session = await kap.createSession();
+
+  await kap.prompt(session.id, 'run it');
+  await kap.waitIdle(session.id);
+
+  expect(model.request(1).view.messages.at(-1)).toMatchObject({ role: 'tool', text: 'hi\n' });
+});
+```
+
+Define `test` in the test file itself with `base.extend(...)`. The repository's `vitest/no-standalone-expect` lint rule recognizes only `extend` chains of vitest's own `test` in the same file, so a `test` imported from a helper module fails lint.
+
+The `model` fixture calls `model.verify()` after the test and prints a request summary on failure. The `kap` fixture runs verification before shutdown so an unreleased hold stays visible. It then stops the server and removes the temporary home.
+
+Failed KAP tests also print summaries of the most recent 32 WebSocket frames and 32 server log entries. Pass the server package’s `createServerLogger` to collect info-level logs in memory for that test. The scenario suite does this by default. Frames show their type, IDs and error code. Logs show their level, message and request ID. The fixture respects an explicit `serverOptions.logger` or `serverOptions.logLevel` and reports when the diagnostic log stream is unavailable.
+
+## The fake model
+
+`createFakeModel(options)` returns a model that answers like a provider:
+
+- `model.fetch` serves requests in process. `await model.listen()` also serves them on `127.0.0.1` with a random port; then `model.baseUrl` is `http://127.0.0.1:<port>/v1` and `model.origin` has no path.
+- The request path picks the protocol: OpenAI chat completions (`kimi` and `openai` providers), Anthropic messages, or Google GenAI. `GET …/models` lists `options.models`.
+- `fakeModelConfig(model, { type })` produces the provider and model entries for `config.toml`. `startKap` adds them for you. New tests should use the default `kimi` type, because only that type sends the request metadata that routes subagent and compaction requests (see Lanes).
+
+### Scripts and steps
+
+`model.script(...steps)` queues replies for the main lane. Each request takes the next step. A step can also be an async function `(request, { lane, call, signal }) => step`. Its `AbortSignal` fires when the client cancels the request or the model closes while a reply is pending. Pass it to work the script should cancel. The model records the request as aborted and discards a reply that arrives after cancellation. With `model.fetch`, the signal carries the caller's cancellation reason. Over HTTP it signals the disconnect.
+
+| Step | Reply |
+|---|---|
+| `say(text \| chunks)` | text, one chunk per array entry |
+| `think(text, then?)`, `thinkSigned(text, signature, then?)` | reasoning before the next step |
+| `call(name, args, { text, id, rawArguments, argumentChunks, invalid })` | one tool call; `rawArguments` sends bytes as they are |
+| `reply(...)`, `batch(...)` | several parts in one reply; `batch` reads as parallel calls |
+| `interleave(step)` | interleaves the argument pieces of parallel calls |
+| `finishWith(reason, step)`, `withUsage(usage, step)` | finish reason and token usage, including cache reads and writes |
+| `paced(ms, step)`, `after(ms, step)` | delay between chunks, or before the reply |
+| `held(name, step, beforeUnit?)` | pauses before a chunk until the test releases it |
+| `httpError(status, options)` | an HTTP error with body, headers, `retry-after`, request and trace ids |
+| `streamError(step, options)`, `disconnect(step)` | fails or drops the stream after the step's chunks |
+| `networkError()`, `rawResponse({ status, headers, chunks })` | a reset connection, or arbitrary bytes |
+
+Tool calls get deterministic ids, `call_<requestIndex>_<callIndex>`; `model.callId(r, c)` returns them.
+
+The tool builders write calls in the wire shape of the engine's tools: `bash`, `read`, `write`, `edit`, `glob`, `grep`, `agent`, `waitFor`, `taskOutput`, `taskStop`, `todoList`, `askUserQuestion`, `exitPlanMode`, `createGoal`, `updateGoal` and `skill`. Their argument types mirror the engine's schemas, and `tests/scenarios/tool-builders.test.ts` checks every argument against the schemas a real engine offers.
+
+### Lanes
+
+Requests are sorted into lanes, and each lane has its own script:
+
+- With the `kimi` provider type, the `X-Msh-Client-Metadata` header gives the role: `main`, `subagent` or `compaction`. `model.lane('subagent').script(...)` scripts a subagent.
+- Other provider types send no metadata: requests with tools go to `main`, requests without tools go to `side`.
+- `model.route(name, match)` and `model.scriptFor(firstUserTextIncludes, ...)` take requests before the built-in lanes.
+
+### Strict by default
+
+An unscripted request on `main`, `subagent` or `compaction` gets HTTP 400, which the engine does not retry, and the test fails. `lane.unscripted('hang')` holds such requests instead, and `lane.unscripted({ reply })` answers them. Unscripted `side` requests get `options.sideReply`, `OK` by default.
+
+`model.verify()` fails the test when any of these happened:
+
+- a request had no scripted step;
+- a step was never used, or a hold was reached but never settled;
+- a request's messages were malformed: an empty message, a repeated user message, or a tool result missing, unknown or out of order;
+- a request used the wrong API key or an unknown endpoint;
+- a scripted call names a tool the request did not offer, or its arguments break the offered schema: a missing required argument, an unknown argument, or a top-level type or enum mismatch. Pass `{ invalid: true }` to send such a call on purpose. Calls with unparseable `rawArguments` are not checked.
+
+`checkMessages: false` and `checkCalls: false` turn the last two checks off for a whole model.
+
+When the testkit itself cannot answer (a step function or a route matcher throws, or a step asks for a status or header the transport cannot send), the request gets HTTP 400, which the engine does not retry, and `verify()` reports why.
+
+### Holds and requests
+
+```ts
+model.script(held('slow', say('late answer')));
+await kap.prompt(session.id, 'go');
+const request = await model.hold('slow').reached();
+model.hold('slow').release();
+```
+
+A hold can also `fail(status)` before the headers or `cut()` the connection. `model.releaseHeld()` releases every hold a request is waiting at, and leaves holds that no request has reached yet. Every request is recorded as `model.requests(lane?)` / `model.request(index)` with its raw body, parsed body, headers, metadata, state (`pending`, `streaming`, `held`, `finished`, `aborted`, `cut`, `failed`) and a normalized `view` of system text, tools and messages. Helpers include `firstUserText`, `userTextsSinceReply`, `remindersSinceReply` and `texts(role)`. `model.waitForRequest(index | predicate)` waits for one to arrive.
+
+## The KAP harness
+
+`startKap({ startServer, model, provider, config, env, serverOptions, home, token })` writes `config.toml` into a temporary home with the fake model as the default model and model-catalog refresh turned off, points `HOME` at that home, and starts the server on `127.0.0.1` with a random port, silent logs and no instance registry.
+
+| Method | What it does |
+|---|---|
+| `createSession`, `session`, `prompt`, `steer`, `prompts`, `cancel`, `undo`, `fork`, `compact` | the REST calls of the same names |
+| `turns(sessionId, agentId?)` | every persisted turn, across pages |
+| `interactions`, `answer`, `waitForInteraction` | pending approvals and questions |
+| `wait(sessionId, ms)`, `waitIdle(sessionId, { onInteraction })` | wait until no turn runs, nothing is queued and nothing waits for an answer |
+| `connect()` | a `KapSocket` that answers server pings, with `subscribe`, `command`, `waitFor`, `conversation` and `turns` |
+| `restart()` | restarts the server on the same home and token |
+| `rest` | a `KapRest` client for routes without a helper |
+| `server` | the running server returned by `startServer`, including `core` and `app` for white-box tests that need its internals |
+
+`socket.subscribe(sessionId, { agentIds })` waits for each agent's initial snapshot. Repeating a subscription reuses snapshots on that connection. A `turns.failed` snapshot raises a `KapCommandError` carrying the server’s code, message, session and agent. Set `waitForSnapshot: false` to wait for the command acknowledgement alone.
+
+`socket.turns(sessionId)` rebuilds turns from the live frames. After `turn.ended` has arrived it equals `kap.turns(sessionId)`, which is how a test checks that streaming and persistence agree.
+
+## Engine behaviors worth knowing
+
+- The engine retries 408, 409, 429, 500, 502, 503, 504 and 529 with a backoff that starts at 0.5 s, up to 10 attempts per step. Use a 400 to fail a turn fast.
+- It reads only an integer-second `retry-after` header; `retry-after-ms` is ignored.
+- A reply with no finish reason, or with reasoning only, is retried.
+- A new tool-call index ends the previous call, so `interleave` exercises client robustness, not an engine happy path.
+- Google clients detect a mid-stream error only when its JSON arrives as a chunk of its own. The fake model lets the client drain earlier chunks before it sends one.
+
+## Known limitations
+
+- Request indexes and the default tool-call ids follow arrival order. When subagents run concurrently, find their requests by lane and content (`waitForRequest(predicate)`) and take ids from `model.callId(request.index, k)`, or give the calls fixed ids with `call(name, args, { id })`.
+- `startKap` points `process.env.HOME` at the test home while the server runs, because user-level skills are read from the OS home. Do not run KAP tests concurrently in one worker.
+- Not built yet: the OpenAI responses API, recording and replay, ACP and TUI drivers, subprocess drivers, and fake MCP servers.

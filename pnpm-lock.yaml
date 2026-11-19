@@ -883,6 +883,28 @@ importers:
 
   packages/telemetry: {}
 
+  packages/testkit:
+    dependencies:
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
+    devDependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.95.2
+        version: 0.95.2(zod@4.3.6)
+      '@google/genai':
+        specifier: ^1.49.0
+        version: 1.49.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.1
+      openai:
+        specifier: ^6.34.0
+        version: 6.34.0(ws@8.20.0)(zod@4.3.6)
+
   packages/tree-sitter-bash:
     devDependencies:
       tree-sitter-bash:
@@ -891,6 +913,15 @@ importers:
       web-tree-sitter:
         specifier: 0.25.10
         version: 0.25.10
+
+  tests/scenarios:
+    devDependencies:
+      '@moonshot-ai/kap-server':
+        specifier: workspace:^
+        version: link:../../packages/kap-server
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../../packages/testkit
 
 packages:
 
