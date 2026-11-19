@@ -8545,7 +8545,7 @@ capabilities = ["image_in", "video_in"]
   it('dispatches the next queued message after the active turn ends', async () => {
     vi.useFakeTimers();
     try {
-      const { driver } = await makeDriver();
+      const { driver, session } = await makeDriver();
       const sendQueued = vi.fn();
       driver.state.appState.streamingPhase = 'waiting';
       driver.state.appState.streamingStartTime = 1;
@@ -8567,6 +8567,56 @@ capabilities = ["image_in", "video_in"]
       expect(sendQueued).toHaveBeenCalledWith({ text: 'next' });
       expect(driver.state.queuedMessages).toEqual([]);
       expect(driver.state.appState.streamingPhase).toBe('idle');
+
+      const main = { agentId: 'main', sessionId: 'ses-1' };
+      const handoffQueued = vi.fn();
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.state.appState.loopLifecycleEvents = true;
+      driver.state.appState.notifications = { enabled: true, condition: 'always' };
+      driver.handleUserInput('first');
+
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 2, reason: 'completed' } as Event,
+        handoffQueued,
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      driver.handleUserInput('second');
+
+      expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['first', 'second']);
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(session.steer).not.toHaveBeenCalled();
+      expect(handoffQueued).not.toHaveBeenCalled();
+      expect(driver.state.terminalState.notificationKeys.has('turn-complete:2')).toBe(false);
+
+      driver.sessionEventHandler.handleEvent(
+        {
+          ...main, type: 'turn.started', turnId: 3,
+          origin: { kind: 'task', taskId: 'bash-demo', status: 'killed', notificationId: 'task:bash-demo:killed' },
+        } as Event,
+        handoffQueued,
+      );
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'turn.ended', turnId: 3, reason: 'completed', stopReason: 'notify' } as Event,
+        handoffQueued,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(handoffQueued).not.toHaveBeenCalled();
+
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'loop.drained' } as Event,
+        handoffQueued,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(handoffQueued).toHaveBeenCalledOnce();
+      expect(handoffQueued).toHaveBeenCalledWith(expect.objectContaining({ text: 'first' }));
+      expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['second']);
+
+      driver.sessionEventHandler.handleEvent(
+        { ...main, type: 'loop.idle' } as Event,
+        handoffQueued,
+      );
+      expect(driver.state.terminalState.notificationKeys.has('turn-complete:3')).toBe(false);
     } finally {
       vi.useRealTimers();
     }

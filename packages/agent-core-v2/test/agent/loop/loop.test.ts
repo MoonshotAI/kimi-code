@@ -1097,6 +1097,15 @@ describe('Agent loop', () => {
     await completion;
 
     expect(ctx.llmCalls).toHaveLength(2);
+    const lifecycleEvents = ctx.allEvents.filter(
+      (event) => event.type === '[rpc]' && (event.event === 'turn.ended' || event.event === 'loop.drained' || event.event === 'loop.idle'),
+    );
+    expect(lifecycleEvents.map((event) => event.event)).toEqual([
+      'turn.ended',
+      'turn.ended',
+      'loop.drained',
+      'loop.idle',
+    ]);
     await expect(loop.settled()).resolves.toEqual({
       type: 'completed',
       steps: 1,

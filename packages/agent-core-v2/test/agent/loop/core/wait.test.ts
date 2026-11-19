@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createUserMessage } from '@moonshot-ai/core/llm/message';
+import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
 import { successfulExecutor } from './executor';
@@ -16,12 +17,26 @@ const noopExecutor = successfulExecutor(['noop']);
 describe('loop.wait', () => {
   it('resolves with the first emitted event of the type passing match', async () => {
     const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
+    const lifecycleEvents: LoopEmitted['type'][] = [];
+    loop.subscribe((event) => {
+      if (event.type === 'turn.ended' || event.type === 'loop.drained' || event.type === 'loop.idle') {
+        lifecycleEvents.push(event.type);
+      }
+    });
     const pending = loop.wait('turn.ended', { match: (event) => event.turnId === 1 });
     await loop.runTurn(prompt('one'));
     await loop.runTurn(prompt('two'));
     const event = await pending;
     expect(event.turnId).toBe(1);
     expect(event.outcome.type).toBe('done');
+    expect(lifecycleEvents).toEqual([
+      'turn.ended',
+      'loop.drained',
+      'loop.idle',
+      'turn.ended',
+      'loop.drained',
+      'loop.idle',
+    ]);
 
     let submissionState: unknown;
     const stopSubmission = loop.subscribe((event) => {
@@ -47,6 +62,13 @@ describe('loop.wait', () => {
     await active;
     await loop.waitForIdle();
     expect(loop.state.nextTurnId).toBe(4);
+
+    lifecycleEvents.length = 0;
+    loop.remind(prompt('passive reminder'));
+    await loop.waitForIdle();
+    expect(loop.state.inbox.remind).toEqual([]);
+    expect(lifecycleEvents).not.toContain('llm.started');
+    expect(lifecycleEvents).toEqual(['loop.drained', 'loop.idle']);
     await loop.close();
   });
 
@@ -109,3 +131,4 @@ describe('loop.wait', () => {
     await reentrant.close();
   });
 });
+

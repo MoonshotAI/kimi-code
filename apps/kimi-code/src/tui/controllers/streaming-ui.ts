@@ -53,6 +53,7 @@ export class StreamingUIController {
   readonly pendingToolCallFlushIds = new Set<string>();
 
   private _currentTurnId: string | undefined = undefined;
+  private lastCompletedTurnKey: string | undefined;
   private _currentStep = 0;
   private _assistantDraft = '';
   private _thinkingDraft = '';
@@ -497,10 +498,16 @@ export class StreamingUIController {
     this.host.deferUserMessages = false;
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
-    this.finalizeLiveTextBuffers('idle');
+    this.lastCompletedTurnKey = completedTurnKey;
+    this.finalizeLiveTextBuffers(state.appState.loopLifecycleEvents === true ? 'waiting' : 'idle');
     this.host.mergeCompletedTurnAssistants();
     this.resetToolCallState();
     this._currentTurnId = undefined;
+
+    if (state.appState.loopLifecycleEvents === true) {
+      this.host.setAppState({ streamingPhase: 'waiting' });
+      return;
+    }
 
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {
@@ -516,6 +523,41 @@ export class StreamingUIController {
 
     this.host.setAppState({ streamingPhase: 'idle' });
     this.host.resetLivePane();
+    notifyTerminalOnce(state, `turn-complete:${completedTurnKey}`, {
+      title: 'Kimi Code task complete',
+      body: state.appState.sessionTitle ?? undefined,
+    });
+  }
+
+  finalizeDrained(sendQueued: (item: QueuedMessage) => void): void {
+    const { state } = this.host;
+    if (state.appState.loopLifecycleEvents !== true) return;
+    const next = this.host.shiftQueuedMessage();
+    if (next !== undefined) {
+      state.queuedMessageDispatchPending = true;
+      this.host.setAppState({ streamingPhase: 'idle' });
+      this.host.resetLivePane();
+      setTimeout(() => {
+        state.queuedMessageDispatchPending = false;
+        sendQueued(next);
+      }, 0);
+      return;
+    }
+    this.host.setAppState({ streamingPhase: 'idle' });
+    this.host.resetLivePane();
+  }
+
+  finalizeIdle(): void {
+    const { state } = this.host;
+    if (
+      state.appState.loopLifecycleEvents !== true ||
+      state.queuedMessageDispatchPending ||
+      state.queuedMessages.length > 0
+    ) return;
+    this.host.setAppState({ streamingPhase: 'idle' });
+    this.host.resetLivePane();
+    const completedTurnKey =
+      this.lastCompletedTurnKey ?? `local:${String(state.appState.streamingStartTime)}`;
     notifyTerminalOnce(state, `turn-complete:${completedTurnKey}`, {
       title: 'Kimi Code task complete',
       body: state.appState.sessionTitle ?? undefined,

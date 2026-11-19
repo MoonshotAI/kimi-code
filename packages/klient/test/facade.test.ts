@@ -837,6 +837,8 @@ describe('event hub', () => {
       blocked: [] as unknown[],
       cancelled: [] as unknown[],
       completed: [] as unknown[],
+      drained: [] as unknown[],
+      idle: [] as unknown[],
     };
     const errors: Error[] = [];
     agent.events.onError((error) => {
@@ -849,6 +851,8 @@ describe('event hub', () => {
     agent.events.on('compaction.blocked', (event) => seen.blocked.push(event));
     agent.events.on('compaction.cancelled', (event) => seen.cancelled.push(event));
     agent.events.on('compaction.completed', (event) => seen.completed.push(event));
+    agent.events.on('loop.drained', (event) => seen.drained.push(event));
+    agent.events.on('loop.idle', (event) => seen.idle.push(event));
 
     expect(channel.subscriptions).toHaveLength(1);
     expect(channel.subscriptions[0]?.scope).toEqual({ sessionId: 's1', agentId: 'main' });
@@ -878,6 +882,8 @@ describe('event hub', () => {
     channel.emit(0, blocked);
     channel.emit(0, cancelled);
     channel.emit(0, completed);
+    channel.emit(0, { type: 'loop.drained', time: 1 });
+    channel.emit(0, { type: 'loop.idle', time: 2 });
     channel.emit(0, { type: 'tool.updated', turnId: 1, toolCallId: 'tc1', taskId: 'task-1', status: 'running', detached: false }); // missing fields
     channel.emit(0, { type: 'unregistered.type', turnId: 1 });
     await tick();
@@ -888,6 +894,8 @@ describe('event hub', () => {
     expect(seen.blocked).toEqual([blocked]);
     expect(seen.cancelled).toEqual([cancelled]);
     expect(seen.completed).toEqual([completed]);
+    expect(seen.drained).toEqual([{ type: 'loop.drained', time: 1 }]);
+    expect(seen.idle).toEqual([{ type: 'loop.idle', time: 2 }]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toBeInstanceOf(KlientValidationError);
   });

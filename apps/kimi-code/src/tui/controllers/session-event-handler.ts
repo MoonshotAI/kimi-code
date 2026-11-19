@@ -315,6 +315,8 @@ export class SessionEventHandler {
     switch (event.type) {
       case 'turn.started': this.handleTurnBegin(event); break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
+      case 'loop.drained': this.host.streamingUI.finalizeDrained(sendQueued); break;
+      case 'loop.idle': this.host.streamingUI.finalizeIdle(); break;
       case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
