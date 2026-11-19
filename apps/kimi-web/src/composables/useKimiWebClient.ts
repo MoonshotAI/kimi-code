@@ -1140,13 +1140,20 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     }));
     // The snapshot only carries the most recent page; keep any older pages the
     // user already loaded so reopening does not reset scrollback.
-    setSessionMessages(
-      sessionId,
-      mergeSnapshotMessages(rawState.messagesBySession[sessionId] ?? [], snap.messages),
+    const mergedMessages = mergeSnapshotMessages(
+      rawState.messagesBySession[sessionId] ?? [],
+      snap.messages,
     );
+    setSessionMessages(sessionId, mergedMessages);
+    // The snapshot's has-more flag only describes its bounded tail. If merging
+    // preserved an older prefix that the user had already fully loaded, keep
+    // pagination exhausted instead of showing a spurious "load older" button.
+    const alreadyExhaustedOlderPages =
+      rawState.messagesHasMoreBySession[sessionId] === false &&
+      mergedMessages.length > snap.messages.length;
     rawState.messagesHasMoreBySession = {
       ...rawState.messagesHasMoreBySession,
-      [sessionId]: snap.hasMoreMessages,
+      [sessionId]: alreadyExhaustedOlderPages ? false : snap.hasMoreMessages,
     };
     rawState.approvalsBySession = {
       ...rawState.approvalsBySession,
