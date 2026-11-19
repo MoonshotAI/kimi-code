@@ -53,12 +53,12 @@ function itemsResponse(query: { offset: number; limit: number }): SessionContext
 
 let app: App | undefined;
 let host: HTMLDivElement | undefined;
-const status = ref({ ctxUsed: 1000, ctxMax: 10000 });
+const status = ref({ ctxUsed: 1000, ctxMax: 10000, modelId: 'model-a' });
 const activity = ref('running');
 
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
-  status.value = { ctxUsed: 1000, ctxMax: 10000 };
+  status.value = { ctxUsed: 1000, ctxMax: 10000, modelId: 'model-a' };
   activity.value = 'running';
   mocks.client = { status, activity };
   mocks.getSessionContextItems.mockReset();
@@ -120,7 +120,7 @@ describe('ContextPanel live refresh', () => {
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
     expect(mocks.getSessionContextItem).toHaveBeenCalledTimes(1);
 
-    status.value = { ctxUsed: 2000, ctxMax: 10000 };
+    status.value = { ...status.value, ctxUsed: 2000 };
     await nextTick();
     expect(root.querySelector('.context-scroll')?.classList.contains('refreshing')).toBe(false);
     await settle();
@@ -145,7 +145,7 @@ describe('ContextPanel live refresh', () => {
       const response = itemsResponse(query);
       return { ...response, items: response.items.map(edit) };
     });
-    status.value = { ctxUsed: 500, ctxMax: 10000 };
+    status.value = { ...status.value, ctxUsed: 500 };
     await settle();
 
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
@@ -189,6 +189,20 @@ describe('ContextPanel live refresh', () => {
     await settle();
     expect(document.body.querySelector('.message-error')).toBeNull();
     expect(mocks.getSessionContextItem).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes when the model changes while the session is idle', async () => {
+    activity.value = 'idle';
+    await mountPanel();
+    mocks.getSessionContextItems.mockClear();
+
+    status.value = { ...status.value };
+    await settle();
+    expect(mocks.getSessionContextItems).not.toHaveBeenCalled();
+
+    status.value = { ...status.value, modelId: 'model-b' };
+    await settle();
+    expect(mocks.getSessionContextItems).toHaveBeenCalledTimes(1);
   });
 
   it('splits a refresh of more loaded items than one request allows', async () => {

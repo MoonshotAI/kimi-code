@@ -16,6 +16,7 @@ const props = withDefaults(defineProps<{
   mode: SessionInfoMode;
   ctxUsed?: number;
   ctxMax?: number;
+  modelId?: string;
   running?: boolean;
   tabs?: PanelTab[];
   available?: PanelLauncherItem[];
@@ -78,10 +79,11 @@ watch(
 );
 
 watch(
-  () => [props.ctxUsed, props.running] as const,
-  ([used, running], [prevUsed, prevRunning]) => {
+  () => [props.ctxUsed, props.ctxMax, props.modelId, props.running] as const,
+  ([used, max, model, running], [prevUsed, prevMax, prevModel, prevRunning]) => {
     if (!props.sessionId || !contextInspectorEnabled.value) return;
-    if (used !== prevUsed || (prevRunning === true && !running)) {
+    const contextChanged = used !== prevUsed || max !== prevMax || model !== prevModel;
+    if (contextChanged || (prevRunning === true && !running)) {
       void store.refreshContext?.(props.sessionId);
     }
   },

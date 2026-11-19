@@ -504,6 +504,33 @@ describe('SessionInfoPanel', () => {
     expect(store.unobserveContext).toHaveBeenCalledWith('s1');
   });
 
+  it('refreshes the context section when the model changes while idle', async () => {
+    useContextInspector().setContextInspectorEnabled(true);
+    store.rows.mockReturnValue([readyRow()]);
+    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
+    const props = reactive({
+      sessionId: 's1',
+      mode: 'sidebar' as const,
+      ctxUsed: 1000,
+      ctxMax: 10000,
+      modelId: 'model-a',
+      running: false,
+    });
+    host = document.createElement('div');
+    document.body.append(host);
+    app = createApp({ render: () => h(SessionInfoPanel, props) });
+    app.use(createKimiI18n({ locale: 'zh' }));
+    app.provide(IconResolverKey, (name) => getIcon(name as IconName)?.component);
+    app.mount(host);
+    await nextTick();
+    expect(store.refreshContext).not.toHaveBeenCalled();
+
+    props.modelId = 'model-b';
+    props.ctxMax = 20000;
+    await nextTick();
+    expect(store.refreshContext).toHaveBeenCalledExactlyOnceWith('s1');
+  });
+
   it('skips the context section and its reads while the context inspector is off', async () => {
     store.rows.mockReturnValue([readyRow()]);
     store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);

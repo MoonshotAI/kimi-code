@@ -125,7 +125,12 @@ watch(
 );
 
 watch(
-  () => [client.status.value?.ctxUsed, client.activity.value] as const,
+  [
+    () => client.status.value?.ctxUsed,
+    () => client.status.value?.ctxMax,
+    () => client.status.value?.modelId,
+    () => client.activity.value,
+  ],
   () => {
     if (props.sessionId) void fetchContext('refresh', sessionObservationOptions(props.sessionId));
   },

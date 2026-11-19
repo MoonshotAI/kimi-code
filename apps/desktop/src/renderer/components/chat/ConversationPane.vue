@@ -2120,6 +2120,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :mode="sessionInfoMode"
         :ctx-used="status.ctxUsed"
         :ctx-max="status.ctxMax"
+        :model-id="status.modelId"
         :running="client.activity.value !== 'idle'"
         :tabs="panelTabs ?? []"
         :available="availableTabs ?? []"
