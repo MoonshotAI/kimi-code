@@ -7,6 +7,10 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
+export function formatTokenEstimate(n: number): string {
+  return `~${formatTokens(n)}`;
+}
+
 export function formatTokenShare(tokens: number, total: number): string {
   const pct = total > 0 ? (tokens / total) * 100 : 0;
   return pct > 0 && pct < 0.1 ? '<0.1%' : `${pct.toFixed(1)}%`;

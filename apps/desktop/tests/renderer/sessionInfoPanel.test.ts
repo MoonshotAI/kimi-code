@@ -484,7 +484,7 @@ describe('SessionInfoPanel', () => {
     expect(segWidths[2]).toBeCloseTo((128000 / 1048576) * 100, 5);
     const rowText = (selector: string) => [...section.querySelectorAll(selector)].map((el) => el.textContent);
     expect(rowText('.ctx-role-name')).toEqual(['用户', '工具', '系统']);
-    expect(rowText('.ctx-role-tokens')).toEqual(['313k', '188k', '125k']);
+    expect(rowText('.ctx-role-tokens')).toEqual(['~313k', '~188k', '~125k']);
     expect(rowText('.ctx-role-share')).toEqual(['30.5%', '18.3%', '12.2%']);
 
     vi.useFakeTimers();
@@ -637,7 +637,7 @@ describe('SessionInfoPanel', () => {
     await nextTick();
     expect(host!.querySelector('.ctx-usage-headline')?.textContent).toBe('已用 2.9k');
     expect(host!.querySelector('.ctx-usage-total')).toBeNull();
-    expect([...host!.querySelectorAll('.ctx-role-tokens')].map((el) => el.textContent)).toEqual(['2k', '1000']);
+    expect([...host!.querySelectorAll('.ctx-role-tokens')].map((el) => el.textContent)).toEqual(['~2k', '~1000']);
     expect(host!.querySelector('.ctx-role-share')).toBeNull();
     const widths = [...host!.querySelectorAll<HTMLElement>('.ctx-composition-seg')]
       .map((seg) => Number.parseFloat(seg.style.width));

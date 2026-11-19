@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import type { SessionContextGroup, SessionContextSummary } from '@moonshot-ai/app-core/api';
-import { formatTokens, formatTokenShare } from '@moonshot-ai/app-core/lib';
+import { formatTokenEstimate, formatTokens, formatTokenShare } from '@moonshot-ai/app-core/lib';
 
 const props = withDefaults(defineProps<{
   snapshot: SessionContextSummary | null;
@@ -61,7 +61,7 @@ const rows = computed(() => {
       role: group.role,
       name: t(`inspector.role.${group.role}`, group.role),
       count: groupCountLabel(group),
-      tokens: formatTokens(group.tokens),
+      tokens: formatTokenEstimate(group.tokens),
       share: maxTokens.value > 0 ? formatTokenShare(group.tokens, maxTokens.value) : '',
       width: `${(group.tokens / scale) * 100}%`,
     }));

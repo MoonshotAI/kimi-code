@@ -16,7 +16,7 @@ export default {
   ringTooltipWithMax: 'Used {used} · {remaining} left of {max} ({pct}%)',
   composition: 'Context composition',
   tokenCount: 'Tokens',
-  tokens: '{n} tokens',
+  tokens: '~{n} tokens',
   messageOrder: 'Message order',
   all: 'All',
   clearFilter: 'Clear filter',

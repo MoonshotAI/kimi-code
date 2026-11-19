@@ -3,7 +3,7 @@ import { computed, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, EmptyState, Icon, IconButton, ScrollArea, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import { getKimiWebApi, sessionObservationOptions, useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { formatTokens, formatTokenShare } from '@moonshot-ai/app-core/lib';
+import { formatTokenEstimate, formatTokens, formatTokenShare } from '@moonshot-ai/app-core/lib';
 import type {
   ReadRequestOptions,
   SessionContextGroup,
@@ -262,7 +262,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
             >
               <span class="legend-marker" />
               <span>{{ t(`inspector.role.${group.role}`, group.role) }}</span>
-              <span class="legend-value">{{ formatTokens(group.tokens) }}</span>
+              <span class="legend-value">{{ formatTokenEstimate(group.tokens) }}</span>
             </button>
           </Tooltip>
           <Button v-if="filtering" size="sm" variant="text" @click="selectAllRoles">{{ t('inspector.clearFilter') }}</Button>
@@ -288,7 +288,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
             <span class="role-marker" />
             <span class="block-role">{{ t('inspector.role.system') }}</span>
             <span class="block-preview">{{ items[0].preview }}</span>
-            <span class="block-size">{{ formatTokens(items[0].tokens) }}</span>
+            <span class="block-size">{{ formatTokenEstimate(items[0].tokens) }}</span>
           </button>
 
           <details
@@ -301,7 +301,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
               <span class="role-marker" />
               <span class="block-role">{{ t('inspector.role.definition') }} · {{ tools.length }}</span>
               <span class="block-preview">{{ tools.map((item) => item.name).join(', ') }}</span>
-              <span class="block-size">{{ formatTokens(definitionSize) }}</span>
+              <span class="block-size">{{ formatTokenEstimate(definitionSize) }}</span>
             </summary>
             <div v-if="toolsOpen" class="nested-tools">
               <button
@@ -320,7 +320,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
                   <span v-if="tool.name" class="block-name">{{ tool.name }}</span>
                   <template v-if="tool.name && tool.preview"> · </template>{{ tool.preview }}
                 </span>
-                <span class="block-size">{{ formatTokens(tool.tokens) }}</span>
+                <span class="block-size">{{ formatTokenEstimate(tool.tokens) }}</span>
               </button>
             </div>
           </details>
@@ -342,7 +342,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
               <span v-if="item.name" class="block-name">{{ item.name }}</span>
               <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
             </span>
-            <span class="block-size">{{ formatTokens(item.tokens) }}</span>
+            <span class="block-size">{{ formatTokenEstimate(item.tokens) }}</span>
           </button>
         </template>
 
@@ -364,7 +364,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
               <span v-if="item.name" class="block-name">{{ item.name }}</span>
               <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
             </span>
-            <span class="block-size">{{ formatTokens(item.tokens) }}</span>
+            <span class="block-size">{{ formatTokenEstimate(item.tokens) }}</span>
           </button>
         </template>
 

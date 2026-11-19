@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatTokens, formatTokenShare } from '../src/lib/formatTokens';
+import { formatTokenEstimate, formatTokens, formatTokenShare } from '../src/lib/formatTokens';
 
 describe('formatTokens', () => {
   it('renders sub-k counts as-is', () => {
@@ -29,6 +29,13 @@ describe('formatTokens', () => {
     expect(formatTokens(1048576)).toBe('1M');
     expect(formatTokens(1572864)).toBe('1.5M');
     expect(formatTokens(10485760)).toBe('10M');
+  });
+});
+
+describe('formatTokenEstimate', () => {
+  it('marks the formatted count as approximate', () => {
+    expect(formatTokenEstimate(2)).toBe('~2');
+    expect(formatTokenEstimate(55_808)).toBe('~54.5k');
   });
 });
 

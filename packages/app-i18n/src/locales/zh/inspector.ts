@@ -16,7 +16,7 @@ export default {
   ringTooltipWithMax: '已用 {used} · 剩余 {remaining} / {max} ({pct}%)',
   composition: '上下文组成',
   tokenCount: 'Tokens',
-  tokens: '{n} tokens',
+  tokens: '~{n} tokens',
   messageOrder: '消息顺序',
   all: '全部',
   clearFilter: '清除筛选',
