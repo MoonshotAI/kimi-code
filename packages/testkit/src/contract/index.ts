@@ -6,4 +6,4 @@ export {
   type ContractGoldenOptions,
   type ContractGoldenPaths,
 } from '#/contract/golden';
-export { displayType, summarizeContract, type ContractDirection, type ContractField, type ContractSummary, type ContractType } from '#/contract/summary';
+export { contractDigest, displayType, summarizeContract, type ContractDirection, type ContractField, type ContractSummary, type ContractType } from '#/contract/summary';

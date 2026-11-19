@@ -201,7 +201,7 @@
 
 ### 契约文件是绊线
 
-以下文件定义跨组件或对外契约：`packages/agent-core-v2/docs/` 下的清单文件（`config-manifest.toml`、`wire-manifest.d.ts`、`state-manifest.d.ts`）、`packages/kap-server/test/__snapshots__/apiSurface.snapshot.test.ts.snap`、`packages/kap-server/docs/kap.md`、`packages/node-sdk/src/index.ts`、`packages/agent-core-v2/src/features/externalHooks/`、`packages/acp-server/` 和 `apps/kimi-code/src/cli/`。使用方包括本仓库的桌面端和 Web 端、通过 KAP 驱动核心会话和对话流程的外部 agent 和机器人、VS Code 扩展、Zed 等 ACP 客户端、SDK 用户、hook 脚本，以及解析无界面输出的程序。这些文件变化时，要求 PR 写明有哪些使用方，以及上一个版本的数据和客户端怎样继续正常工作。
+以下文件定义跨组件或对外契约：`packages/agent-core-v2/docs/` 下的清单文件（`config-manifest.toml`、`wire-manifest.d.ts`、`state-manifest.d.ts`）、`packages/kap-server/schema/contract.txt`、`packages/kap-server/docs/kap.md`、`packages/node-sdk/src/index.ts`、`packages/agent-core-v2/src/features/externalHooks/`、`packages/acp-server/` 和 `apps/kimi-code/src/cli/`。使用方包括本仓库的桌面端和 Web 端、通过 KAP 驱动核心会话和对话流程的外部 agent 和机器人、VS Code 扩展、Zed 等 ACP 客户端、SDK 用户、hook 脚本，以及解析无界面输出的程序。这些文件变化时，要求 PR 写明有哪些使用方，以及上一个版本的数据和客户端怎样继续正常工作。
 
 ### 移植和重构要带上旧路径的功能清单
 

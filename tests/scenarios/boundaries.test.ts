@@ -4,7 +4,7 @@ import { join, relative } from 'node:path';
 import { expect, it } from 'vitest';
 
 const ROOT = import.meta.dirname;
-const ALLOWED = [/^vitest$/, /^node:/, /^@moonshot-ai\/testkit\/(model|kap|fixtures|vitest|contract)$/, /^@moonshot-ai\/kap-server$/, /^\.\/support\/[\w-]+$/];
+const ALLOWED = [/^vitest$/, /^node:/, /^@moonshot-ai\/testkit\/(model|kap|fixtures|vitest)$/, /^@moonshot-ai\/kap-server$/, /^\.\/support\/[\w-]+$/];
 
 it('drives the product only through the KAP server entry and the testkit', async () => {
   const offending: string[] = [];

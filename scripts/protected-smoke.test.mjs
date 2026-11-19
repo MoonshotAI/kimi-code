@@ -64,7 +64,7 @@ for (const runner of ['vitest', 'playwright']) {
 }
 
 await test('regression and contract IDs are enforced on the full run from any project, without a smoke tag', () => {
-  const contract = { ...regression, id: 'kap.schema', kind: 'contract', project: 'scenarios', file: 'tests/scenarios/schema.test.ts' };
+  const contract = { ...regression, id: 'kap.schema', kind: 'contract', project: 'kap-server', file: 'packages/kap-server/test/apiSurface.test.ts' };
   const all = [...manifest, regression, contract];
   const smokeRuns = all.filter(entry => entry.runner === 'vitest' && entry.kind === 'smoke').map(entry => executionOf(entry));
   assert.deepEqual(checkProtectedExecutions('vitest', smokeRuns, { manifest: all, scope: 'smoke' }), []);

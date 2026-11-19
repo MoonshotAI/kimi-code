@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { classifyContractChanges, describeContractChanges } from '#/contract/changes';
 import { contractSummaryText, expectContractGolden } from '#/contract/golden';
-import { summarizeContract } from '#/contract/summary';
+import { contractDigest, summarizeContract } from '#/contract/summary';
 import { isolateProcessEnv } from '#/fixtures/env';
 import { REFRESH_ENV, stableJson } from '#/fixtures/golden';
 import { createTestHome } from '#/fixtures/home';
@@ -77,6 +77,33 @@ describe('contract summary', () => {
       `shape ${shape}.request_id: string`,
     ]);
     expect(lines.join('\n')).not.toContain('Create a session');
+  });
+});
+
+describe('contract digest', () => {
+  const labels = (valueType: string, extra: Record<string, unknown> = {}): unknown => ({
+    openapi: '3.1.0',
+    paths: {},
+    components: { schemas: { Labels: { type: 'object', ...extra, patternProperties: { title: { type: valueType } } } } },
+  });
+
+  it('ignores wording and follows every field, operation and message', () => {
+    const digest = contractDigest(openapi(), asyncapi());
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+    const reworded = JSON.parse(JSON.stringify(openapi()).replace('"description":"Create a session"', '"description":"Creates a session","summary":"Create","title":"Create session","examples":["x"]')) as unknown;
+    expect(JSON.stringify(reworded)).toContain('"title":"Create session"');
+    expect(contractDigest(reworded, asyncapi())).toBe(digest);
+    const retitled = JSON.parse(JSON.stringify(asyncapi()).replace('"subscribe":{', '"subscribe":{"title":"Subscribe to a session",')) as unknown;
+    expect(JSON.stringify(retitled)).toContain('"title":"Subscribe to a session"');
+    expect(contractDigest(openapi(), retitled)).toBe(digest);
+    expect(contractDigest(openapi({ response: { status: { enum: ['idle', 'running'] }, title: { type: 'number' } } }), asyncapi())).not.toBe(digest);
+    expect(contractDigest(openapi({ extraPath: true }), asyncapi())).not.toBe(digest);
+    expect(contractDigest(openapi(), asyncapi(true))).not.toBe(digest);
+  });
+
+  it('keeps pattern property names that look like annotations', () => {
+    expect(contractDigest(labels('string'), {})).not.toBe(contractDigest(labels('number'), {}));
+    expect(contractDigest(labels('string', { description: 'Labels' }), {})).toBe(contractDigest(labels('string'), {}));
   });
 });
 

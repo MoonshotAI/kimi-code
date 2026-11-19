@@ -10,6 +10,7 @@ on:
       - 'packages/app-core/test/replay/**'
       - 'packages/app-client/test/conversation-events.test.ts'
       - 'packages/kap-server/schema/**'
+      - 'packages/kap-server/test/apiSurface.test.ts'
       - 'packages/testkit/**'
       - 'apps/desktop/tests/perf/history-window/**'
       - 'tests/scenarios/**'

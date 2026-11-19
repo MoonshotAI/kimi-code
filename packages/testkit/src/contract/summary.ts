@@ -220,14 +220,24 @@ function shapeHash(schema: Schema): string | undefined {
   return createHash('sha256').update(canonical(schema)).digest('hex').slice(0, 8);
 }
 
-export function canonical(value: unknown, propertyNames = false): string {
+const ANNOTATION_KEYWORDS = new Set(['description', 'summary', 'example', 'examples', 'title']);
+const MEMBER_NAME_KEYWORDS = new Set(['properties', 'patternProperties']);
+
+export function canonical(value: unknown, memberNames = false): string {
   if (Array.isArray(value)) return `[${value.map((item) => canonical(item)).join(',')}]`;
   if (typeof value !== 'object' || value === null) return JSON.stringify(value);
   const entries = Object.entries(value)
-    .filter(([key]) => propertyNames || !['description', 'summary', 'example', 'examples', 'title'].includes(key))
+    .filter(([key, item]) => item !== undefined && (memberNames || !ANNOTATION_KEYWORDS.has(key)))
     .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item, !propertyNames && key === 'properties')}`);
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item, !memberNames && MEMBER_NAME_KEYWORDS.has(key))}`);
   return `{${entries.join(',')}}`;
+}
+
+export function contractDigest(openapi: unknown, asyncapi: unknown): string {
+  const rest = asRecord(openapi);
+  const ws = asRecord(asyncapi);
+  const contract = { paths: rest['paths'], components: rest['components'], operations: ws['operations'], messages: ws['components'] };
+  return createHash('sha256').update(canonical(contract)).digest('hex');
 }
 
 function asRecord(value: unknown): Schema {
