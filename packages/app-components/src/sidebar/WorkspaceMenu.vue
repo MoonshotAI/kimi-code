@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
+import { openHostSettings } from '@moonshot-ai/app-client/composables';
 import { hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { Icon, Menu, MenuItem } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
@@ -29,9 +30,12 @@ const target = ref<WorkspaceView | null>(null);
 const via = ref<'toggle' | 'context'>('toggle');
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const { open, menuStyle, showAnchored, openAt, close } = useAnchoredMenu(menuRef);
+const isRemoteTarget = computed(() => target.value?.hostId !== undefined);
+const targetBlocked = computed(() => hostsStore().blocked(target.value?.hostId));
+const canRenameTarget = computed(() => !targetBlocked.value);
 const canEditTarget = computed(() => {
   const id = target.value?.id;
-  if (!props.canEdit || id === undefined || hostsStore().unavailable(target.value?.hostId)) return false;
+  if (!props.canEdit || id === undefined || targetBlocked.value) return false;
   return store.workspaces.some((workspace) => workspace.id === id);
 });
 const targetPinned = computed(() => {
@@ -73,6 +77,12 @@ function act(action: 'pin' | 'copyPath' | 'rename' | 'edit' | 'remove'): void {
   else emit('remove', ws);
 }
 
+function openTargetHostSettings(): void {
+  const hostId = target.value?.hostId;
+  close();
+  if (hostId !== undefined) openHostSettings(hostId);
+}
+
 defineExpose({ toggle, openContext, close });
 </script>
 
@@ -87,13 +97,17 @@ defineExpose({ toggle, openContext, close });
         <Icon name="copy" size="sm" />
         {{ t('sidebar.copyPath') }}
       </MenuItem>
-      <MenuItem @click="act('rename')">
+      <MenuItem v-if="canRenameTarget" @click="act('rename')">
         <Icon name="pencil" size="sm" />
         {{ t('sidebar.rename') }}
       </MenuItem>
       <MenuItem v-if="canEditTarget" @click="act('edit')">
         <Icon name="sliders" size="sm" />
         {{ t('workspace.dialog.editTitle') }}
+      </MenuItem>
+      <MenuItem v-if="isRemoteTarget" class="ws-menu-host-settings" @click="openTargetHostSettings">
+        <Icon name="server" size="sm" />
+        {{ t('workspace.hostNotice.settings') }}
       </MenuItem>
       <MenuItem danger @click="act('remove')">
         <Icon name="close" size="sm" />
