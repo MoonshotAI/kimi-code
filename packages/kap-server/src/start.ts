@@ -138,6 +138,7 @@ export interface ServerStartOptions {
   readonly serverVersion?: string;
   readonly telemetry?: boolean;
   readonly socketPath?: string;
+  readonly ipcPsk?: Buffer;
   readonly managedBy?: string;
   readonly managedIdleExitMs?: number;
 }
@@ -157,6 +158,9 @@ const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
 export async function startServer(opts: ServerStartOptions): Promise<RunningServer> {
+  if (opts.socketPath !== undefined && (process.platform === 'win32' || opts.ipcPsk !== undefined) && opts.ipcPsk?.length !== 32) {
+    throw new Error('Private IPC requires a 32-byte key');
+  }
   const host = opts.host ?? DEFAULT_HOST;
   const port = opts.port ?? DEFAULT_PORT;
   const homeDir = resolveKimiHome(opts.homeDir);
@@ -680,12 +684,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   try {
     if (opts.socketPath !== undefined) {
       await app.ready();
-      rpcServer = await startIpcRpcServer(opts.socketPath, {
-        app,
-        wssV1,
-        wssDebug,
-        validateCredential: process.platform === 'win32' ? validateCredential : undefined,
-      });
+      rpcServer = await startIpcRpcServer(opts.socketPath, { app, wssV1, wssDebug }, opts.ipcPsk);
       boundPort = 0;
     } else {
       await listenWithPortRetry({

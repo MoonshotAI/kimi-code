@@ -1,20 +1,21 @@
-import { execFile, spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
-import { link, mkdir, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm, symlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join, win32 } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import { connectIpcTls, HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
 import type { Command } from 'commander';
 
 import { getDataDir } from '#/utils/paths';
 
 import { detectNativeInstall } from '../../update/source';
 import { getVersion } from '../../version';
+import { loadWindowsIpcKey, spawnWindowsDaemon } from './windows-daemon';
 
 const ENSURE_DAEMON_MARKER = '__KIMI_ENSURE_DAEMON__';
 const ENSURE_DAEMON_MANAGED_BY = 'ensure-daemon';
@@ -23,8 +24,6 @@ const LOCK_FILE = 'ensure-daemon.lock';
 const LOG_FILE = 'ensure-daemon.log';
 const SOCKET_FILE = 'daemon.sock';
 const AGENT_SOCKET_FILE = 'forwarded-ssh-agent.sock';
-const IPC_TOKEN_FILE = 'ensure-daemon.token';
-const IPC_TOKEN_ENV = 'KIMI_CODE_IPC_TOKEN';
 const POLL_INTERVAL_MS = 200;
 const LOCK_MAX_ATTEMPTS = 225;
 const START_MAX_ATTEMPTS = 150;
@@ -61,8 +60,7 @@ export interface EnsureDaemonDeps {
   readonly homeDir: string;
   readonly version: string;
   readonly sshAuthSock?: string;
-  readonly ipcToken?: string;
-  connectSocket(socketPath: string, ipcToken?: string): Promise<DaemonConnection | undefined>;
+  connectSocket(socketPath: string): Promise<DaemonConnection | undefined>;
   spawnServer(socketPath: string, logPath: string, agentSocket: string): Promise<void> | void;
   wait(ms: number): Promise<void>;
 }
@@ -76,30 +74,6 @@ export function daemonSocketPath(homeDir: string, platform: NodeJS.Platform = pr
   if (Buffer.byteLength(direct) <= 100) return direct;
   const hash = createHash('sha256').update(homeDir).digest('hex').slice(0, 16);
   return join(tmpdir(), `kimi-daemon-${hash}.sock`);
-}
-
-export async function loadWindowsIpcToken(homeDir: string): Promise<string> {
-  const tokenPath = join(homeDir, 'server', IPC_TOKEN_FILE);
-  await mkdir(dirname(tokenPath), { recursive: true });
-  const token = randomBytes(32).toString('base64url');
-  const tempPath = `${tokenPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
-  try {
-    const handle = await open(tempPath, 'wx', 0o600);
-    try {
-      await handle.writeFile(token);
-    } finally {
-      await handle.close();
-    }
-    await link(tempPath, tokenPath);
-    return token;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-  } finally {
-    await rm(tempPath, { force: true });
-  }
-  const existing = (await readFile(tokenPath, 'utf8')).trim();
-  if (existing.length === 0) throw new Error(`empty IPC token in ${tokenPath}`);
-  return existing;
 }
 
 function pidAlive(pid: number): boolean {
@@ -159,7 +133,7 @@ async function syncAgentSocket(deps: EnsureDaemonDeps): Promise<void> {
 
 async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> {
   const socketPath = daemonSocketPath(deps.homeDir);
-  const existing = await deps.connectSocket(socketPath, deps.ipcToken);
+  const existing = await deps.connectSocket(socketPath);
   if (existing !== undefined) {
     if (existing.version === deps.version) {
       return { version: deps.version, stream: existing.stream };
@@ -173,7 +147,7 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
     }
     let closed = false;
     for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
-      const probe = await deps.connectSocket(socketPath, deps.ipcToken);
+      const probe = await deps.connectSocket(socketPath);
       if (probe === undefined) {
         closed = true;
         break;
@@ -191,7 +165,7 @@ async function findOrStart(deps: EnsureDaemonDeps): Promise<EnsureDaemonResult> 
   const logPath = join(deps.homeDir, 'server', LOG_FILE);
   await deps.spawnServer(socketPath, logPath, agentSocketPath(deps));
   for (let attempt = 0; attempt < START_MAX_ATTEMPTS; attempt += 1) {
-    const started = await deps.connectSocket(socketPath, deps.ipcToken);
+    const started = await deps.connectSocket(socketPath);
     if (started !== undefined) {
       return { version: deps.version, stream: started.stream };
     }
@@ -210,37 +184,7 @@ export async function ensureDaemon(deps: EnsureDaemonDeps): Promise<EnsureDaemon
   }
 }
 
-function powerShellLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-function encodedPowerShell(script: string): string {
-  return Buffer.from(script, 'utf16le').toString('base64');
-}
-
-export function windowsDaemonLaunchScript(
-  argv: readonly string[],
-  logPath: string,
-  ipcToken: string,
-  launchPath: string,
-  env: NodeJS.ProcessEnv = process.env,
-): { commandLine: string; environment: readonly string[]; cimScript: string } {
-  const daemonScript = `$ErrorActionPreference = 'Stop'; & ${powerShellLiteral(argv[0]!)} ${argv.slice(1).map(powerShellLiteral).join(' ')} *> ${powerShellLiteral(logPath)}`;
-  const powerShell = win32.join(env['SystemRoot'] ?? env['windir'] ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const commandLine = `${powerShell} -NoLogo -NoProfile -NonInteractive -Command "${daemonScript}"`;
-  const environment = Object.entries({ ...env, [IPC_TOKEN_ENV]: ipcToken, SSH_AUTH_SOCK: undefined })
-    .filter((entry): entry is [string, string] => entry[1] !== undefined)
-    .map(([key, value]) => `${key}=${value}`);
-  const cimScript = [
-    `$launch = Get-Content -Raw -Encoding UTF8 -LiteralPath ${powerShellLiteral(launchPath)} | ConvertFrom-Json`,
-    `$startup = New-CimInstance -CimClass (Get-CimClass -ClassName Win32_ProcessStartup) -Property @{CreateFlags=16778240; ShowWindow=0; EnvironmentVariables=$launch.environment} -ClientOnly`,
-    `$result = Invoke-CimMethod -ClassName Win32_Process -Name Create -Arguments @{CommandLine=$launch.commandLine; ProcessStartupInformation=$startup}`,
-    `if ($result.ReturnValue -ne 0) { throw "kimi server failed to start with CIM error $($result.ReturnValue)" }`,
-  ].join('; ');
-  return { commandLine, environment, cimScript };
-}
-
-async function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: string, ipcToken?: string): Promise<void> {
+async function spawnDetachedServer(socketPath: string, logPath: string, agentSocket: string): Promise<void> {
   const argv = [
     ...(detectNativeInstall() ? [process.execPath] : [process.execPath, ...process.execArgv, process.argv[1]!]),
     'server',
@@ -252,26 +196,11 @@ async function spawnDetachedServer(socketPath: string, logPath: string, agentSoc
     ENSURE_DAEMON_MANAGED_BY,
   ];
   if (process.platform === 'win32') {
-    if (ipcToken === undefined) throw new EnsureDaemonError('start_timeout', 'missing Windows IPC token');
-    const launchPath = join(dirname(logPath), 'ensure-daemon.launch.json');
-    const { commandLine, environment, cimScript } = windowsDaemonLaunchScript(argv, logPath, ipcToken, launchPath);
-    await writeFile(launchPath, JSON.stringify({ commandLine, environment }), { mode: 0o600 });
     try {
-      await new Promise<void>((resolve, reject) => {
-        execFile('powershell', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodedPowerShell(cimScript)], {
-          timeout: 10_000,
-          windowsHide: true,
-          maxBuffer: 64 * 1024,
-        }, (error, _stdout, stderr) => {
-          if (error !== null) {
-            reject(new EnsureDaemonError('start_timeout', `unable to start the kimi server; see ${logPath}: ${stderr.trim()}`));
-            return;
-          }
-          resolve();
-        });
-      });
-    } finally {
-      await rm(launchPath, { force: true });
+      await spawnWindowsDaemon(argv, logPath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new EnsureDaemonError('start_timeout', `unable to start the kimi server; see ${logPath}: ${message}`);
     }
     return;
   }
@@ -284,7 +213,7 @@ async function spawnDetachedServer(socketPath: string, logPath: string, agentSoc
       {
         detached: true,
         stdio: ['ignore', log, log],
-        env: { ...process.env, SSH_AUTH_SOCK: agentSocket, [IPC_TOKEN_ENV]: ipcToken },
+        env: { ...process.env, SSH_AUTH_SOCK: agentSocket },
       },
     );
     child.on('error', () => {});
@@ -354,73 +283,40 @@ function rpcCall<T>(
   });
 }
 
-function authenticateIpcClient(socket: Duplex, token: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    let buffer = '';
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      socket.off('data', onData);
-      socket.off('error', onError);
-      socket.off('close', onClose);
-    };
-    const finish = (authenticated: boolean): void => {
-      cleanup();
-      resolve(authenticated);
-    };
-    const timer = setTimeout(() => {
-      finish(false);
-    }, SOCKET_TIMEOUT_MS);
-    const onError = (): void => {
-      finish(false);
-    };
-    const onClose = (): void => {
-      finish(false);
-    };
-    const onData = (chunk: Buffer | string): void => {
-      buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-      if (buffer.length > 64 * 1024) {
-        finish(false);
-        return;
-      }
-      const newline = buffer.indexOf('\n');
-      if (newline === -1) return;
-      const line = buffer.slice(0, newline).trim();
-      try {
-        const frame = JSON.parse(line) as { type?: string };
-        finish(frame.type === 'ipc.auth.ok');
-      } catch {
-        finish(false);
-      }
-    };
-    socket.on('data', onData);
-    socket.once('error', onError);
-    socket.once('close', onClose);
-    socket.write(`${JSON.stringify({ type: 'ipc.auth', token })}\n`);
-  });
-}
-
-export async function connectUnixSocket(socketPath: string, ipcToken?: string): Promise<DaemonConnection | undefined> {
-  const socket = await new Promise<Duplex | undefined>((resolve) => {
-    const client = createConnection(socketPath);
+export async function connectDaemonSocket(socketPath: string, ipcKey?: Buffer): Promise<DaemonConnection | undefined> {
+  const socket = await new Promise<Duplex | undefined>((resolve, reject) => {
+    const client = ipcKey === undefined ? createConnection(socketPath) : connectIpcTls(socketPath, ipcKey);
+    const failed = (): EnsureDaemonError => new EnsureDaemonError('start_timeout', 'Windows IPC authentication failed');
+    let connected = false;
     const timer = setTimeout(() => {
       client.destroy();
-      resolve(undefined);
+      if (ipcKey !== undefined && connected) reject(failed());
+      else resolve(undefined);
     }, SOCKET_TIMEOUT_MS);
     client.once('connect', () => {
-      clearTimeout(timer);
-      resolve(client);
+      connected = true;
+      if (ipcKey === undefined) {
+        clearTimeout(timer);
+        resolve(client);
+      }
     });
-    client.once('error', () => {
+    if (ipcKey !== undefined) {
+      client.once('secureConnect', () => {
+        clearTimeout(timer);
+        resolve(client);
+      });
+    }
+    client.once('error', (error: NodeJS.ErrnoException) => {
       clearTimeout(timer);
       client.destroy();
+      if (ipcKey !== undefined && (connected || !['ENOENT', 'ECONNREFUSED'].includes(error.code ?? ''))) {
+        reject(failed());
+        return;
+      }
       resolve(undefined);
     });
   });
   if (socket === undefined) return undefined;
-  if (ipcToken !== undefined && !await authenticateIpcClient(socket, ipcToken)) {
-    socket.destroy();
-    throw new EnsureDaemonError('start_timeout', 'Windows IPC authentication failed');
-  }
   const meta = await rpcCall<{ server_version?: string }>(socket, 'meta', 'GET', '/api/v1/meta');
   if (meta?.data?.server_version === undefined) {
     socket.destroy();
@@ -472,14 +368,13 @@ function relayStdio(
 
 async function defaultDeps(): Promise<EnsureDaemonDeps> {
   const homeDir = getDataDir();
-  const ipcToken = process.platform === 'win32' ? await loadWindowsIpcToken(homeDir) : undefined;
+  const ipcKey = process.platform === 'win32' ? await loadWindowsIpcKey(daemonSocketPath(homeDir)) : undefined;
   return {
     homeDir,
     version: getVersion(),
     sshAuthSock: process.env['SSH_AUTH_SOCK'],
-    ipcToken,
-    connectSocket: (socketPath) => connectUnixSocket(socketPath, ipcToken),
-    spawnServer: (socketPath, logPath, agentSocket) => spawnDetachedServer(socketPath, logPath, agentSocket, ipcToken),
+    connectSocket: (socketPath) => connectDaemonSocket(socketPath, ipcKey),
+    spawnServer: spawnDetachedServer,
     wait: (ms) => sleep(ms),
   };
 }

@@ -1,3 +1,4 @@
+import { once } from 'node:events';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createConnection } from 'node:net';
@@ -20,6 +21,7 @@ import { HostBridgeManager } from '../src/services/hosts/hostBridgeManager';
 import { hostWireSchema } from '../src/services/hosts/hostsConfig';
 import { HostRequestError, type HostHttpRequest, type HostHttpResponse, type HostSession } from '../src/services/hosts/hostSession';
 import { StdioHostSession } from '../src/services/hosts/stdioHostSession';
+import { connectIpcTls } from '../src/transport/ipcTls';
 import { JsonlRpcStream, RPC_BACKPRESSURE_TIMEOUT_MS } from '../src/transport/jsonlRpcStream';
 import { startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -50,18 +52,20 @@ function thrown(run: () => unknown): HostConnectError {
 async function withFakeSsh(
   script: string | ((dir: string) => string),
   run: (ssh: string, dir: string) => Promise<void>,
-  platform: 'posix' | 'windows' | 'powershell' = 'posix',
+  platform: 'posix' | 'windows' | 'windows-nt' | 'powershell' | 'script-only' = 'posix',
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'kimi-fake-ssh-'));
   try {
     const ssh = join(dir, 'ssh');
-    const probe = `powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from("[Console]::WriteLine('KIMI_WINDOWS')", 'utf16le').toString('base64')}`;
+    const probe = `powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from("if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { [Console]::WriteLine('KIMI_WINDOWS') }", 'utf16le').toString('base64')}`;
     const body = typeof script === 'function' ? script(dir) : script;
+    const unameByPlatform: Partial<Record<typeof platform, string>> = { windows: 'MSYS_NT-10.0', 'windows-nt': 'Windows_NT' };
+    const uname = unameByPlatform[platform] ?? 'Linux';
     const nodeScript = body.startsWith('#!/usr/bin/env node');
     const prelude = nodeScript
       ? `#!/usr/bin/env node
 if (process.argv.at(-1) === 'uname -s') {
-  ${platform === 'powershell' ? 'process.exit(127)' : `process.stdout.write('${platform === 'windows' ? 'MSYS_NT-10.0' : 'Linux'}\\n'); process.exit(0)`}
+  ${platform === 'powershell' ? 'process.exit(127)' : `process.stdout.write('${uname}\\n'); process.exit(0)`}
 }
 if (process.argv.at(-1) === ${JSON.stringify(probe)}) {
   process.stdout.write('KIMI_WINDOWS\\r\\n');
@@ -71,14 +75,14 @@ if (process.argv.at(-1) === ${JSON.stringify(probe)}) {
       : `#!/bin/sh
 for _ssh_last_arg; do :; done
 if [ "$_ssh_last_arg" = "uname -s" ]; then
-  ${platform === 'powershell' ? 'exit 127' : `echo ${platform === 'windows' ? 'MSYS_NT-10.0' : 'Linux'}; exit 0`}
+  ${platform === 'powershell' ? 'exit 127' : `echo ${uname}; exit 0`}
 fi
 if [ "$_ssh_last_arg" = '${probe}' ]; then
   printf 'KIMI_WINDOWS\\r\\n'
   exit 0
 fi
 `;
-    writeFileSync(ssh, `${prelude}${body.replace(/^#![^\n]*\n/, '')}`);
+    writeFileSync(ssh, platform === 'script-only' ? body : `${prelude}${body.replace(/^#![^\n]*\n/, '')}`);
     chmodSync(ssh, 0o755);
     await run(ssh, dir);
   } finally {
@@ -221,9 +225,10 @@ describe('ssh bootstrap', () => {
     expect(checkBootstrapOutput(marker(undefined))).toBe(true);
   });
 
-  it.skipIf(process.platform === 'win32').each(['windows', 'powershell'] as const)('connects to a Windows host using %s platform detection', async (platform) => {
+  it.skipIf(process.platform === 'win32').each(['windows', 'windows-nt', 'powershell'] as const)('connects to a Windows host using %s platform detection', async (platform) => {
     await withFakeSsh(
-      `echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3","windows_ipc":true}'
+      `test "$_ssh_last_arg" = '${remoteKimiCommand(undefined, 'server ensure-daemon', 'windows')}' || exit 1
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3","windows_ipc":true}'
 while IFS= read -r line; do
   printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
 done
@@ -239,6 +244,69 @@ done
         }
       },
       platform,
+    );
+  });
+
+  it.skipIf(process.platform === 'win32').each([
+    ['denied', 'exit 126'],
+    ['available on POSIX', 'exit 0'],
+  ] as const)('uses the original POSIX command when uname is denied and PowerShell is %s', async (_name, powerShellResult) => {
+    await withFakeSsh(
+      `#!/bin/sh
+for command; do :; done
+case "$command" in
+  'kimi --version; kimi server ensure-daemon'|'kimi --version; kimi server ensure-daemon --probe')
+    echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)}}'
+    case "$command" in *--probe) exit 0 ;; esac
+    read line
+    echo '{"type":"http.res","id":"1","status":200,"headers":{}}'
+    ;;
+  powershell*) ${powerShellResult} ;;
+  *) exit 126 ;;
+esac
+`,
+      async (ssh) => {
+        const bridge = new SshKapBridge({ host: 'dev', remoteBin: 'kimi' }, { sshProgram: ssh });
+        try {
+          await expect(bridge.probe()).resolves.toBeUndefined();
+          const session = await bridge.connect();
+          await expect(session.request({ method: 'GET', path: '/healthz', headers: {} })).resolves.toMatchObject({ status: 200 });
+        } finally {
+          bridge.dispose();
+        }
+      },
+      'script-only',
+    );
+  });
+
+  it.skipIf(process.platform === 'win32')('retries platform detection after a temporary SSH connection failure', async () => {
+    await withFakeSsh(
+      (dir) => `#!/bin/sh
+for command; do :; done
+if [ "$command" = 'uname -s' ]; then
+  if [ ! -f '${join(dir, 'first-probe')}' ]; then
+    touch '${join(dir, 'first-probe')}'
+    echo 'ssh: connect to host dev port 22: Connection refused' >&2
+    exit 255
+  fi
+  echo Linux
+  exit 0
+fi
+echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)}}'
+read line
+echo '{"type":"http.res","id":"1","status":200,"headers":{}}'
+`,
+      async (ssh) => {
+        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        try {
+          await expect(bridge.connect()).rejects.toMatchObject({ failure: 'connection_refused' });
+          await vi.waitFor(() => expect(bridge.status).toBe('ready'), { timeout: 3_000 });
+          await expect(bridge.session?.request({ method: 'GET', path: '/healthz', headers: {} })).resolves.toMatchObject({ status: 200 });
+        } finally {
+          bridge.dispose();
+        }
+      },
+      'script-only',
     );
   });
 
@@ -1023,8 +1091,8 @@ describe('host model providers', () => {
   }, 30_000);
 });
 
-function rpcClient(socketPath: string) {
-  const socket = createConnection(socketPath);
+function rpcClient(socketPath: string, ipcPsk?: Buffer) {
+  const socket = ipcPsk === undefined ? createConnection(socketPath) : connectIpcTls(socketPath, ipcPsk);
   const frames: Array<Record<string, unknown>> = [];
   createInterface({ input: socket, crlfDelay: Infinity }).on('line', (line) => {
     if (line.trim().length > 0) frames.push(JSON.parse(line.trim()) as Record<string, unknown>);
@@ -1089,36 +1157,45 @@ describe('stdio rpc transport', () => {
     }
   });
 
-  it('authenticates IPC clients before forwarding request frames', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-auth-'));
+  it('admits only the IPC key through the production server wiring', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-rpc-auth-'));
     const socketPath = process.platform === 'win32'
       ? `\\\\.\\pipe\\kimi-rpc-auth-${basename(dir)}`
       : join(dir, 'daemon.sock');
-    const app = Fastify();
-    app.get('/api/v1/meta', async () => ({ data: { server_version: '1.2.3' } }));
-    await app.ready();
-    const rpcServer = await startIpcRpcServer(socketPath, {
-      app,
-      wssV1: new WebSocketServer({ noServer: true }),
-      validateCredential: async (candidate) => candidate === 'test-ipc-secret',
-    });
-    const rejected = rpcClient(socketPath);
-    const accepted = rpcClient(socketPath);
+    const ipcPsk = Buffer.alloc(32, 1);
+    const webBearer = 'a'.repeat(32);
+    const webPassword = 'b'.repeat(32);
+    const validateWebCredential = vi.fn(async (candidate: string) => candidate === webBearer || candidate === webPassword);
+    const options = {
+      socketPath,
+      homeDir: dir,
+      hostIdentity: TEST_HOST_IDENTITY,
+      logLevel: 'silent',
+      authTokenService: { _serviceBrand: undefined, getToken: () => webBearer, isValid: validateWebCredential },
+    } as const;
     try {
-      rejected.send({ type: 'ipc.auth', token: 'wrong' });
-      expect(await rejected.next()).toEqual({ type: 'ipc.auth.error' });
-      accepted.send({ type: 'ipc.auth', token: 'test-ipc-secret' });
-      expect(await accepted.next()).toEqual({ type: 'ipc.auth.ok' });
-      accepted.send({ type: 'http.req', id: 'meta', method: 'GET', path: '/api/v1/meta', headers: {} });
-      const response = await accepted.next();
-      expect(response['type']).toBe('http.res');
-      expect(response['status']).toBe(200);
+      await expect(startServer({ ...options, ipcPsk: Buffer.alloc(0) })).rejects.toThrow('32-byte key');
+      if (process.platform === 'win32') {
+        await expect(startServer(options)).rejects.toThrow('32-byte key');
+      }
+      const server = await startServer({ ...options, ipcPsk });
+      const client = rpcClient(socketPath, ipcPsk);
+      try {
+        await once(client.socket, 'secureConnect');
+        for (const credential of [webBearer, webPassword]) {
+          const rejected = connectIpcTls(socketPath, Buffer.from(credential));
+          await expect(once(rejected, 'secureConnect')).rejects.toBeInstanceOf(Error);
+          rejected.destroy();
+        }
+        expect(validateWebCredential).not.toHaveBeenCalled();
+        client.send({ type: 'http.req', id: 'meta', method: 'GET', path: '/api/v1/meta', headers: {} });
+        expect(await client.next()).toMatchObject({ type: 'http.res', status: 200 });
+      } finally {
+        client.socket.destroy();
+        await server.close();
+      }
     } finally {
-      rejected.socket.destroy();
-      accepted.socket.destroy();
-      await rpcServer.close();
-      await app.close();
-      rmSync(dir, { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true });
     }
   });
 

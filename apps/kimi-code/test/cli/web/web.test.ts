@@ -1,8 +1,8 @@
-import { lstatSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
-import * as fsPromises from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import chalk, { Chalk } from 'chalk';
@@ -15,14 +15,13 @@ import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
-  connectUnixSocket,
+  connectDaemonSocket,
   daemonSocketPath,
   ensureDaemon,
-  loadWindowsIpcToken,
-  windowsDaemonLaunchScript,
   type DaemonConnection,
   type EnsureDaemonDeps,
 } from '#/cli/sub/web/ensure-daemon';
+import { loadWindowsIpcKey, windowsDaemonCommandLine } from '#/cli/sub/web/windows-daemon';
 import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type {
   RemoteControlCloseReason,
@@ -35,11 +34,6 @@ import { darkColors } from '#/tui/theme/colors';
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, spawn: vi.fn() };
-});
-
-vi.mock('node:fs/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, open: vi.fn(actual.open), readFile: vi.fn(actual.readFile) };
 });
 
 function stripAnsi(text: string): string {
@@ -1166,142 +1160,54 @@ describe('`kimi server ensure-daemon`', () => {
     };
   }
 
-  it('uses a stable named pipe and persistent IPC token on Windows', async () => {
-    const first = daemonSocketPath(homeDir, 'win32');
-    expect(first).toMatch(/^\\\\\.\\pipe\\kimi-daemon-[a-f0-9]{16}$/);
-    expect(daemonSocketPath(homeDir, 'win32')).toBe(first);
-
-    const token = await loadWindowsIpcToken(homeDir);
-    expect(token).toMatch(/^[A-Za-z0-9_-]{40,50}$/);
-    expect(await loadWindowsIpcToken(homeDir)).toBe(token);
-    expect(readFileSync(join(homeDir, 'server', 'ensure-daemon.token'), 'utf8')).toBe(token);
+  it('uses a stable named pipe on Windows', () => {
+    const pipe = daemonSocketPath(homeDir, 'win32');
+    expect(pipe).toMatch(/^\\\\\.\\pipe\\kimi-daemon-[a-f0-9]{16}$/);
+    expect(daemonSocketPath(homeDir, 'win32')).toBe(pipe);
+    expect(daemonSocketPath(join(homeDir, 'other'), 'win32')).not.toBe(pipe);
   });
 
-  it('publishes one complete IPC token across concurrent first-time loads', async () => {
-    const open = vi.mocked(fsPromises.open);
-    const readFile = vi.mocked(fsPromises.readFile);
-    const originalOpen = open.getMockImplementation()!;
-    const originalReadFile = readFile.getMockImplementation()!;
-    let notifyFirstWrite = () => {};
-    const firstWriteStarted = new Promise<void>((resolve) => { notifyFirstWrite = resolve; });
-    let releaseFirstWrite = () => {};
-    const firstWriteGate = new Promise<void>((resolve) => { releaseFirstWrite = resolve; });
-    let notifySecondRead = () => {};
-    const secondReadStarted = new Promise<void>((resolve) => { notifySecondRead = resolve; });
-    let returnEmpty = true;
-    open.mockImplementationOnce(async (...args) => {
-      const handle = await originalOpen(...args);
-      return new Proxy(handle, {
-        get(target, property, receiver) {
-          if (property === 'writeFile') {
-            return async (...writeArgs: Parameters<typeof target.writeFile>) => {
-              notifyFirstWrite();
-              await firstWriteGate;
-              return target.writeFile(...writeArgs);
-            };
-          }
-          return Reflect.get(target, property, receiver);
-        },
-      });
-    });
-    readFile.mockImplementationOnce(async (...args) => {
-      notifySecondRead();
-      return returnEmpty ? '' : originalReadFile(...args);
-    });
+  it.runIf(process.platform === 'win32')('persists one complete Windows IPC key across concurrent loads', async () => {
+    const pipe = daemonSocketPath(homeDir, 'win32');
+    const file = `${createHash('sha256').update(pipe).digest('hex')}.key`;
+    const localAppData = process.env['LOCALAPPDATA'];
     try {
-      const first = loadWindowsIpcToken(homeDir);
-      await firstWriteStarted;
-      const second = loadWindowsIpcToken(homeDir);
-      const all = Promise.all([first, second]);
-      await Promise.race([secondReadStarted, second.catch(() => {})]);
-      returnEmpty = false;
-      releaseFirstWrite();
-      const tokens = await all;
-      expect(new Set(tokens).size).toBe(1);
-      expect(tokens[0]).toMatch(/^[A-Za-z0-9_-]{40,50}$/);
-      expect(readFileSync(join(homeDir, 'server', 'ensure-daemon.token'), 'utf8')).toBe(tokens[0]);
-      expect(readdirSync(join(homeDir, 'server')).filter((name) => name.startsWith('ensure-daemon.token.') && name.endsWith('.tmp'))).toEqual([]);
+      const [first, second] = await Promise.all([loadWindowsIpcKey(pipe), loadWindowsIpcKey(pipe)]);
+      expect(first).toHaveLength(32);
+      expect(second).toEqual(first);
+      expect(await loadWindowsIpcKey(pipe)).toEqual(first);
     } finally {
-      releaseFirstWrite();
-      open.mockImplementation(originalOpen);
-      readFile.mockImplementation(originalReadFile);
+      if (localAppData !== undefined) {
+        rmSync(join(localAppData, 'KimiCode.SshIpc', file), { force: true });
+      }
     }
   });
 
-  it('builds a hidden CIM launch that escapes the SSH job and preserves environment', () => {
-    const { commandLine, environment, cimScript } = windowsDaemonLaunchScript(
-      ['C:\\Users\\test\\kimi.exe', 'server', '--socket', '\\\\.\\pipe\\kimi-test', '--managed-by', 'ensure-daemon'],
+  it('builds a PowerShell command line for a Windows daemon with spaces in its path', () => {
+    const commandLine = windowsDaemonCommandLine(
+      ['C:\\Program Files\\Kimi\\kimi.exe', 'server', '--socket', '\\\\.\\pipe\\kimi-test'],
       'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.log',
-      'test-ipc-secret',
-      'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.launch.json',
-      {
-        SystemRoot: 'C:\\Windows',
-        PATH: 'C:\\Tools',
-        KIMI_CODE_HOME: 'C:\\Users\\test\\.kimi-code',
-        SSH_AUTH_SOCK: '\\\\.\\pipe\\ssh-agent',
-      },
     );
-    expect(commandLine.startsWith('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo')).toBe(true);
-    expect(commandLine).toContain(' -Command "');
-    expect(commandLine).not.toContain('-EncodedCommand');
-    const marker = ' -Command "';
-    const daemonScript = commandLine.slice(commandLine.indexOf(marker) + marker.length, -1);
-    expect(daemonScript).toContain(`& 'C:\\Users\\test\\kimi.exe'`);
-    expect(daemonScript).toContain(`'server' '--socket' '\\\\.\\pipe\\kimi-test'`);
-    expect(daemonScript).toContain(`*> 'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.log'`);
-    expect(cimScript).toContain('CreateFlags=16778240');
-    expect(cimScript).toContain('ShowWindow=0');
-    expect(cimScript).toContain('Get-Content -Raw -Encoding UTF8 -LiteralPath');
-    expect(cimScript).toContain('ensure-daemon.launch.json');
-    expect(cimScript).not.toContain('test-ipc-secret');
-    expect(environment).toContain('KIMI_CODE_IPC_TOKEN=test-ipc-secret');
-    expect(environment).toContain('KIMI_CODE_HOME=C:\\Users\\test\\.kimi-code');
-    expect(environment).toContain('PATH=C:\\Tools');
-    expect(environment.some((entry) => entry.startsWith('SSH_AUTH_SOCK='))).toBe(false);
+    expect(commandLine).toMatch(/^"[^"]+\\powershell\.exe" -NoLogo -NoProfile -NonInteractive -Command "/i);
+    expect(commandLine).toContain(`& 'C:\\Program Files\\Kimi\\kimi.exe' 'server' '--socket' '\\\\.\\pipe\\kimi-test'`);
+    expect(commandLine).toContain(`*> 'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.log'`);
   });
 
-  it('passes the Windows IPC token to daemon connection probes', async () => {
-    const conn = connection();
-    const connectSocket = vi.fn(async () => conn);
-    const deps = makeDeps({ ipcToken: 'test-ipc-secret', connectSocket });
-    await ensureDaemon(deps);
-    expect(connectSocket).toHaveBeenCalledWith(daemonSocketPath(homeDir), 'test-ipc-secret');
-  });
-
-  it.skipIf(process.platform === 'win32')('authenticates the IPC client before reading daemon metadata', async () => {
-    const socketPath = join(homeDir, 'daemon.sock');
-    let receivedToken: string | undefined;
+  it('refuses to use an unauthenticated daemon socket', async () => {
+    const socketPath = process.platform === 'win32'
+      ? `\\\\.\\pipe\\${basename(homeDir)}`
+      : join(homeDir, 'daemon.sock');
     const server = createServer((socket) => {
-      let pending = '';
-      socket.on('data', (chunk: Buffer) => {
-        pending += chunk.toString('utf8');
-        while (pending.includes('\n')) {
-          const newline = pending.indexOf('\n');
-          const frame = JSON.parse(pending.slice(0, newline)) as { type: string; id?: string; token?: string };
-          pending = pending.slice(newline + 1);
-          if (frame.type === 'ipc.auth') {
-            receivedToken = frame.token;
-            socket.write('{"type":"ipc.auth.ok"}\n');
-          } else if (frame.type === 'http.req') {
-            const body = Buffer.from(JSON.stringify({ data: { server_version: '1.2.3' } })).toString('base64');
-            socket.write(`${JSON.stringify({ type: 'http.res', id: frame.id, status: 200, headers: {}, body })}\n`);
-          }
-        }
-      });
+      socket.destroy();
     });
     await new Promise<void>((resolve) => {
       server.listen(socketPath, resolve);
     });
     try {
-      const daemon = await connectUnixSocket(socketPath, 'test-ipc-secret');
-      expect(receivedToken).toBe('test-ipc-secret');
-      expect(daemon?.version).toBe('1.2.3');
-      daemon?.close();
+      await expect(connectDaemonSocket(socketPath, Buffer.alloc(32, 1))).rejects.toThrow('Windows IPC authentication failed');
     } finally {
       await new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
-        });
+        server.close(() => { resolve(); });
       });
     }
   });

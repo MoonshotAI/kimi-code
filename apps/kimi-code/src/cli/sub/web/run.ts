@@ -32,6 +32,7 @@ import {
   splitTokenFragment,
 } from './access-urls';
 import { type NetworkAddress } from './networks';
+import { loadWindowsIpcKey } from './windows-daemon';
 import {
   formatRemoteControlOutput,
   formatRemoteControlStatus,
@@ -424,7 +425,7 @@ async function runServerInProcess(
     webTitle: options.webTitle,
     socketPath: options.socketPath,
     managedBy: options.managedBy,
-    rpcToken: options.socketPath !== undefined && process.platform === 'win32' ? process.env['KIMI_CODE_IPC_TOKEN'] : undefined,
+    ipcPsk: options.socketPath !== undefined && process.platform === 'win32' ? await loadWindowsIpcKey(options.socketPath) : undefined,
     telemetry: true,
     webAssetsDir,
   });

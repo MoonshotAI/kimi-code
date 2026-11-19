@@ -1,6 +1,6 @@
 # 在网页中使用
 
-Kimi Code Web 是 Kimi Code CLI 内置的浏览器图形界面：既可以在本机或局域网浏览器里直接运行 `kimi web` 使用，也可以开启**远程控制**（`kimi rc`）从公网上的手机、平板或另一台电脑扫码访问——任务和数据始终全部运行并保存在你的本机，网页只是交互窗口。
+Kimi Code Web 是 Kimi Code CLI 内置的浏览器图形界面：既可以在本机或局域网浏览器里直接运行 `kimi web` 使用，也可以开启**远程控制**（`kimi rc`）从公网上的手机、平板或另一台电脑扫码访问。使用本机项目时，任务在运行 `kimi web` 或 `kimi rc` 的机器上执行，文件也保存在该机器上。
 
 ![Kimi Code Web 界面](../../media/kimi-web-ui.jpg)
 
@@ -65,6 +65,12 @@ Stop:    Ctrl+C
 ::: warning 注意
 远程控制链接对应这台机器的访问入口，仅限登录同一 Kimi 账号后使用，请勿分享给他人。结束时在本地终端按 `Ctrl+C` 即可下线（若找不到原终端，可根据 `~/.kimi-code/server/rc.json` 中的 `pid` 执行 `kill <pid>`）。关闭远程浏览器页面不会中断本机正在运行的任务。
 :::
+
+## 连接 Windows SSH 主机 {#windows-ssh-host}
+
+在 Kimi Code Web 或桌面端添加 Windows SSH 主机后，项目会在该主机上运行。请在远端启用 Windows OpenSSH Server，并安装支持 Windows SSH 主机的 Kimi Code CLI。使用 Windows PowerShell 5.1，并确保 SSH 登录账号可以通过 CIM 启动本地进程。如果连接时提示升级，请在远端升级 CLI。
+
+Kimi Code 默认在远端查找 `%USERPROFILE%\\.kimi-code\\bin\\kimi.exe`。如果安装在其他位置，请将该主机的 `remote_bin` 设为完整路径，例如 `C:\\Program Files\\Kimi\\kimi.exe`。SSH agent 转发适用于 POSIX 主机。在 Windows 上，请为远端账号配置 Git 等工具所需的凭据。
 
 ## 与 CLI 的关系
 

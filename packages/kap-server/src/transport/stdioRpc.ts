@@ -4,11 +4,12 @@ import type { IncomingHttpHeaders, IncomingMessage, OutgoingHttpHeaders } from '
 import { createServer, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 import type { Duplex } from 'node:stream';
+import { createServer as createTlsServer } from 'node:tls';
 
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket, WebSocketServer } from 'ws';
 
-import type { CredentialValidator } from '../services/auth/credentials';
+import { IPC_PSK_IDENTITY, IPC_TLS_OPTIONS } from './ipcTls';
 import { HOST_RPC_MAX_BODY_BYTES, JsonlRpcStream } from './jsonlRpcStream';
 import { WS_DEBUG_PATH } from './ws/debug/registerWsDebug';
 import { WS_PATH as WS_PATH_V1 } from './ws/v1/registerWsV1';
@@ -68,7 +69,6 @@ export interface RpcStreamOptions {
   readonly app: FastifyInstance;
   readonly wssV1: WebSocketServer;
   readonly wssDebug?: WebSocketServer;
-  readonly validateCredential?: CredentialValidator;
 }
 
 class RpcBodyTooLargeError extends Error {
@@ -259,82 +259,29 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
   );
 }
 
-function authenticateIpcClient(socket: Socket, validate: CredentialValidator): Promise<boolean> {
-  return new Promise((resolve) => {
-    let buffer = '';
-    let settled = false;
-    const finish = (authenticated: boolean): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.off('data', onData);
-      socket.off('error', onError);
-      socket.off('close', onClose);
-      if (socket.destroyed) {
-        resolve(false);
-        return;
-      }
-      const frame = authenticated ? '{"type":"ipc.auth.ok"}\n' : '{"type":"ipc.auth.error"}\n';
-      socket.write(frame, () => {
-        if (!authenticated) socket.destroy();
-        resolve(authenticated);
-      });
-    };
-    const timer = setTimeout(() => {
-      finish(false);
-    }, 2_000);
-    const onError = (): void => {
-      finish(false);
-    };
-    const onClose = (): void => {
-      finish(false);
-    };
-    const onData = (chunk: Buffer): void => {
-      buffer += chunk.toString('utf8');
-      if (buffer.length > 64 * 1024) {
-        finish(false);
-        return;
-      }
-      const newline = buffer.indexOf('\n');
-      if (newline === -1) return;
-      try {
-        const frame = JSON.parse(buffer.slice(0, newline)) as { type?: string; token?: string };
-        if (frame.type !== 'ipc.auth' || typeof frame.token !== 'string') {
-          finish(false);
-          return;
-        }
-        void validate(frame.token).then(finish, () => {
-          finish(false);
-        });
-      } catch {
-        finish(false);
-      }
-    };
-    socket.on('data', onData);
-    socket.once('error', onError);
-    socket.once('close', onClose);
-  });
-}
-
 export async function startIpcRpcServer(
   socketPath: string,
   opts: RpcStreamOptions,
+  psk?: Buffer,
 ): Promise<{ close(): Promise<void> }> {
   if (process.platform !== 'win32') {
     await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
     await rm(socketPath, { force: true });
   }
+  const accept = (socket: Socket): void => {
+    attachRpcStream(socket, opts);
+  };
+  const server = psk === undefined
+    ? createServer(accept)
+    : createTlsServer({
+        ...IPC_TLS_OPTIONS,
+        handshakeTimeout: 2_000,
+        pskCallback: (_socket, identity) => identity === IPC_PSK_IDENTITY ? psk : null,
+      }, accept).on('tlsClientError', (_error, socket) => socket.destroy());
   const clients = new Set<Socket>();
-  const server = createServer((socket) => {
+  server.on('connection', (socket) => {
     clients.add(socket);
-    socket.on('close', () => clients.delete(socket));
-    if (opts.validateCredential === undefined) {
-      attachRpcStream(socket, opts);
-      return;
-    }
-    void authenticateIpcClient(socket, opts.validateCredential).then((authenticated) => {
-      if (authenticated) attachRpcStream(socket, opts);
-    });
+    socket.once('close', () => clients.delete(socket));
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

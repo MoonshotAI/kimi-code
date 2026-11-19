@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   PrivateFileTooPermissiveError,
@@ -24,7 +24,6 @@ import {
 import { createTokenStore } from '../src/services/auth/tokenStore';
 import { createAuthTokenService } from '../src/services/auth/authTokenService';
 import { resolvePasswordHash, verifyPassword } from '../src/services/auth/password';
-import { createCredentialValidator } from '../src/services/auth/credentials';
 
 let tmpDir: string;
 
@@ -224,18 +223,5 @@ describe('createAuthTokenService', () => {
     expect(await svc.isValid(store.getToken())).toBe(true);
     expect(await svc.isValid('any-password')).toBe(false);
     await store.dispose();
-  });
-});
-
-describe('createCredentialValidator', () => {
-  it('checks the dedicated RPC token before ordinary credentials', async () => {
-    const isValid = vi.fn(async () => false);
-    const validate = createCredentialValidator({
-      _serviceBrand: undefined,
-      getToken: () => 'server-token',
-      isValid,
-    }, 'ipc-token');
-    await expect(validate('ipc-token')).resolves.toBe(true);
-    expect(isValid).not.toHaveBeenCalled();
   });
 });

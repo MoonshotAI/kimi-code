@@ -1,6 +1,6 @@
 # Using in the Browser
 
-Kimi Code Web is the browser-based graphical interface built into Kimi Code CLI: open it locally or on your LAN with `kimi web`, or turn on **Remote Control** (`kimi rc`) to scan a QR code and follow up from a phone, tablet, or another computer over the internet — all tasks and files stay and execute on your machine while the browser acts as a window.
+Kimi Code Web is the browser-based graphical interface built into Kimi Code CLI: open it locally or on your LAN with `kimi web`, or turn on **Remote Control** (`kimi rc`) to scan a QR code and follow up from a phone, tablet, or another computer over the internet. For local projects, tasks run and files stay on the machine that runs `kimi web` or `kimi rc`.
 
 ![Kimi Code Web UI](../../media/kimi-web-ui.jpg)
 
@@ -65,6 +65,12 @@ The terminal prints the access link (`https://code-rc.kimi.com/devices/<device I
 ::: warning
 The Remote Control link grants access to your machine upon signing into the same Kimi account — do not share it publicly. Press `Ctrl+C` in the local terminal to go offline (or run `kill <pid>` using the `pid` in `~/.kimi-code/server/rc.json` if you lost the terminal). Closing the remote browser tab leaves local tasks running uninterrupted.
 :::
+
+## Connect to a Windows SSH Host {#windows-ssh-host}
+
+Add a Windows SSH Host in Kimi Code Web or Desktop to run projects on that machine. Enable Windows OpenSSH Server and install a version of Kimi Code CLI that supports Windows SSH Hosts on the remote machine. Use Windows PowerShell 5.1 and an SSH account that can start local processes through CIM. If the connection asks you to upgrade Kimi, upgrade the CLI on the remote host.
+
+Kimi Code looks for `%USERPROFILE%\\.kimi-code\\bin\\kimi.exe` on the host. If Kimi is installed elsewhere, set `remote_bin` for that host to its full path, such as `C:\\Program Files\\Kimi\\kimi.exe`. SSH agent forwarding is available for POSIX Hosts. On Windows, configure Git and other tools to authenticate from the remote account.
 
 ## Relationship with the CLI
 
