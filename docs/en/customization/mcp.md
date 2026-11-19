@@ -131,7 +131,7 @@ In this example the server receives `LOG_LEVEL=debug` from `env`; every other va
 
 ## Loading tools on demand
 
-By default, every tool of a server goes straight into the model's top-level tool list; with many connected servers — or a single server that exposes many tools — those definitions occupy context for the whole session. Marking a server as deferred keeps its tools out of the top-level list: the model first sees a manifest of loadable tools, loads full definitions on demand through the built-in `select_tools` tool, and can call them in the same turn once loaded.
+By default, every tool of a server goes straight into the model's top-level tool list; with many connected servers — or a single server that exposes many tools — those definitions occupy context for the whole session. Marking a server as deferred controls how its schemas are disclosed. With dynamic loading, the ToolSelect resolver removes deferred entries from the resolved top-level tool list and turns the baseline deferred names into an initial reminder; later additions and removals are announced as deltas. The built-in `select_tools` tool loads selected schemas into system messages. Models without dynamic loading remove the metadata and send the initial deferred tools as ordinary declarations. The final encoder does not independently drop tools solely because of this flag; duplicate declarations prefer the top-level list.
 
 Loading tools on demand is experimental and takes effect only when both prerequisites are met:
 
