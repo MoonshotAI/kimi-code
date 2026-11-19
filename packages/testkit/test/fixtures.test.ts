@@ -15,7 +15,7 @@ import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv } from '#/fixtures/env';
 import { createTestHome } from '#/fixtures/home';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
-import { installNetworkGuard } from '#/fixtures/network';
+import { installNetworkGuard, isLoopback } from '#/fixtures/network';
 import { createNormalizer, normalize } from '#/fixtures/normalize';
 import { deferred, gate, until, waitForEvent } from '#/fixtures/wait';
 
@@ -229,6 +229,15 @@ describe('wait helpers', () => {
 });
 
 describe('network guard', () => {
+  it('recognizes the IPv4 loopback range only for valid IPv4 literals', () => {
+    const loopback = [
+      '127.0.0.1', '127.255.255.255', 'localhost', 'app.localhost', '::1', '[::1]', '0:0:0:0:0:0:0:1', '::ffff:127.0.0.1',
+    ];
+    const other = ['192.0.2.1', '127.example.test', '127.0.0.256', '[127.0.0.1]'];
+    expect(loopback.filter(isLoopback)).toEqual(loopback);
+    expect(other.filter(isLoopback)).toEqual([]);
+  });
+
   it('fails a test that handled a blocked connection and clears the violation for the next test', async () => {
     const vitest = fileURLToPath(new URL('vitest.mjs', import.meta.resolve('vitest/package.json')));
     const args = [vitest, 'run', 'network-guard.test.ts', '--dir', 'test-fixtures', '--reporter=json', '--disableConsoleIntercept'];

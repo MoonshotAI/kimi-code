@@ -1,4 +1,4 @@
-import { Socket } from 'node:net';
+import { isIPv4, Socket } from 'node:net';
 
 import { TestkitError } from '#/errors';
 
@@ -92,14 +92,14 @@ function targetOf(args: readonly unknown[]): Target | undefined {
   return { host, port };
 }
 
-function isLoopback(host: string): boolean {
+export function isLoopback(host: string): boolean {
   const normalized = host.toLowerCase().replace(/^\[|\]$/g, '');
   return (
     normalized === 'localhost' ||
     normalized.endsWith('.localhost') ||
     normalized === '::1' ||
     normalized === '0:0:0:0:0:0:0:1' ||
-    normalized.startsWith('127.') ||
+    (host.startsWith('127.') && isIPv4(host)) ||
     normalized === '::ffff:127.0.0.1'
   );
 }

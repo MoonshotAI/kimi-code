@@ -24,6 +24,7 @@ import {
   say,
   streamError,
   think,
+  thinkSigned,
   withUsage,
 } from '#/model/steps';
 import { agent, bash, exitPlanMode, read, taskStop, todoList, updateGoal } from '#/model/tools';
@@ -681,5 +682,36 @@ describe('http transport', () => {
         for await (const chunk of await hanging) expect(chunk).toBeDefined();
       })(),
     ).rejects.toThrow();
+  });
+});
+
+describe('non-streaming OpenAI reasoning', () => {
+  it('returns each signed reasoning block in order alongside the full reasoning text', async () => {
+    const model = fakeModel();
+    model.script(thinkSigned('first', 'sig-a', think(' then ', thinkSigned('second', 'sig-b', say('done')))));
+    const completion = await clientOf(model).chat.completions.create({
+      model: 'm', messages: [{ role: 'user', content: 'think' }], tools: TOOLS, stream: false,
+    });
+    expect(completion.choices[0]?.message).toMatchObject({
+      content: 'done',
+      reasoning_content: 'first then second',
+      reasoning_details: [
+        { type: 'summary', index: 0, summary: 'first' },
+        { type: 'encrypted', index: 0, encrypted: 'sig-a' },
+        { type: 'summary', index: 1, summary: 'second' },
+        { type: 'encrypted', index: 1, encrypted: 'sig-b' },
+      ],
+    });
+  });
+
+  it('omits reasoning details for ordinary thinking', async () => {
+    const model = fakeModel();
+    model.script(think('unsigned', say('done')));
+    const completion = await clientOf(model).chat.completions.create({
+      model: 'm', messages: [{ role: 'user', content: 'think' }], tools: TOOLS, stream: false,
+    });
+    const message = completion.choices[0]?.message;
+    expect(message).toMatchObject({ content: 'done', reasoning_content: 'unsigned' });
+    expect(message).not.toHaveProperty('reasoning_details');
   });
 });

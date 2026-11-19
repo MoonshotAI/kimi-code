@@ -51,6 +51,8 @@ Define `test` in the test file itself with `base.extend(...)`. The repository's 
 
 The `model` fixture calls `model.verify()` after the test and prints a request summary on failure. The `kap` fixture runs verification before shutdown so an unreleased hold stays visible. It then stops the server and removes the temporary home.
 
+The network guard allows local TCP connections. For IPv4, use a valid address in the loopback range (`127.0.0.0/8`).
+
 Failed KAP tests also print summaries of the most recent 32 WebSocket frames and 32 server log entries. Pass the server package’s `createServerLogger` to collect info-level logs in memory for that test. The scenario suite does this by default. Frames show their type, IDs and error code. Logs show their level, message and request ID. The fixture respects an explicit `serverOptions.logger` or `serverOptions.logLevel` and reports when the diagnostic log stream is unavailable.
 
 ## The fake model
@@ -68,7 +70,7 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 | Step | Reply |
 |---|---|
 | `say(text \| chunks)` | text, one chunk per array entry |
-| `think(text, then?)`, `thinkSigned(text, signature, then?)` | reasoning before the next step |
+| `think(text, then?)`, `thinkSigned(text, signature, then?)` | reasoning before the next step. For OpenAI chat completions, signed reasoning includes the signature in `reasoning_details` in both streaming and non-streaming replies |
 | `call(name, args, { text, id, rawArguments, argumentChunks, invalid })` | one tool call. OpenAI and streaming Anthropic can preserve raw argument text. Google and non-streaming Anthropic require a JSON object |
 | `reply(...)`, `batch(...)` | several parts in one reply; `batch` reads as parallel calls |
 | `interleave(step)` | interleaves argument pieces of parallel calls in an OpenAI stream |

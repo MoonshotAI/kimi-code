@@ -43,7 +43,9 @@ export const openaiCodec: ProtocolCodec = {
   },
   encodeJson(step, context) {
     const text = step.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('');
-    const reasoning = step.parts.flatMap((part) => (part.type === 'think' ? [part.text] : [])).join('');
+    const thinking = step.parts.filter((part) => part.type === 'think');
+    const reasoning = thinking.map((part) => part.text).join('');
+    const signed = thinking.flatMap(({ text, signature }) => signature === undefined ? [] : [{ text, signature }]);
     const calls = step.parts.flatMap((part) => (part.type === 'call' ? [part.call] : []));
     return jsonResponse(200, {
       id: context.responseId,
@@ -58,6 +60,7 @@ export const openaiCodec: ProtocolCodec = {
             role: 'assistant',
             content: text,
             reasoning_content: reasoning === '' ? undefined : reasoning,
+            reasoning_details: signed.length === 0 ? undefined : signed.flatMap(({ text, signature }, index) => signedDetails(text, signature, index)),
             tool_calls:
               calls.length === 0
                 ? undefined
@@ -83,12 +86,7 @@ function deltaOf(emission: Emission): Record<string, unknown> {
       return { content: emission.text };
     case 'think':
       if (emission.signature === undefined) return { reasoning_content: emission.text };
-      return {
-        reasoning_details: [
-          { type: 'summary', index: 0, summary: emission.text },
-          { type: 'encrypted', index: 0, summary: '', encrypted: emission.signature },
-        ],
-      };
+      return { reasoning_details: signedDetails(emission.text, emission.signature, 0) };
     case 'call-start':
       return {
         tool_calls: [{ index: emission.callIndex, id: emission.id, type: 'function', function: { name: emission.call.name, arguments: '' } }],
@@ -96,6 +94,13 @@ function deltaOf(emission: Emission): Record<string, unknown> {
     case 'call-arguments':
       return { tool_calls: [{ index: emission.callIndex, function: { arguments: emission.piece } }] };
   }
+}
+
+function signedDetails(text: string, signature: string, index: number) {
+  return [
+    { type: 'summary', index, summary: text },
+    { type: 'encrypted', index, summary: '', encrypted: signature },
+  ];
 }
 
 export function finishReasonOf(step: ReplyStep): string | null {

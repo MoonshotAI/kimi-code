@@ -1,6 +1,6 @@
 # 用假模型测试 provider 客户端
 
-要验证客户端发了什么，或它能否读懂某种模型响应，可以把 `model.fetch` 传给客户端。SDK 仍然负责生成协议请求和解析响应，假模型在同一个进程内接收请求并按脚本回答。只接受服务地址的客户端可以用 `await model.listen()` 启动同一套脚本。OpenAI 客户端使用返回的 `/v1` 地址，Google GenAI 客户端使用 `model.origin`。[回环 HTTP 用例](../test/model.test.ts#L647) · [Google 客户端用例](../test/protocols.test.ts#L182)
+要验证客户端发了什么，或它能否读懂某种模型响应，可以把 `model.fetch` 传给客户端。SDK 仍然负责生成协议请求和解析响应，假模型在同一个进程内接收请求并按脚本回答。只接受服务地址的客户端可以用 `await model.listen()` 启动同一套脚本。OpenAI 客户端使用返回的 `/v1` 地址，Google GenAI 客户端使用 `model.origin`。[回环 HTTP 用例](../test/model.test.ts#L649) · [Google 客户端用例](../test/protocols.test.ts#L182)
 
 ## 写第一个 SDK 用例
 
@@ -37,7 +37,7 @@ test('reads a reply from the side lane', async ({ model }) => {
 });
 ```
 
-这两条断言分别检查 SDK 读到的回复和假模型收到的请求。这个请求没有工具，也没有 Kimi 的客户端元数据，所以走 `side`。如果把 `say('hello')` 排进 `model.script()`，SDK 会收到 `side` 的默认回复 `OK`，主通道的步骤会被留在队列。夹具会在用例结束时调用 `verify()` 并关闭模型。[两个通道的对照用例](../test/model.test.ts#L153)
+这两条断言分别检查 SDK 读到的回复和假模型收到的请求。这个请求没有工具，也没有 Kimi 的客户端元数据，所以走 `side`。如果把 `say('hello')` 排进 `model.script()`，SDK 会收到 `side` 的默认回复 `OK`，主通道的步骤会被留在队列。夹具会在用例结束时调用 `verify()` 并关闭模型。[两个通道的对照用例](../test/model.test.ts#L154)
 
 ## 按模型请求安排脚本
 
@@ -55,13 +55,14 @@ test('reads a reply from the side lane', async ({ model }) => {
 
 有 Kimi 元数据时，压缩请求进入 `compaction`，其余非主 agent 的请求进入 `subagent`，其余带元数据的请求进入 `main`。缺少元数据时，带工具的请求进入 `main`，无工具请求进入 `side`。`model.script(...)` 给 `main` 入队。子 agent 的回复用 `model.lane('subagent').script(...)`。需要按内容分流时，`model.scriptFor('关键词', ...steps)` 匹配第一条用户文本，`model.route(name, matcher)` 可读取协议、路径、工具、元数据和消息。自定义路由先于内置路由，按注册顺序取第一个匹配项。[路由用例](../test/model.test.ts) · [主 agent 与子 agent 共用一个模型](../../../tests/scenarios/conversation.test.ts#L223)
 
-全局请求序号随到达顺序分配。当主 agent 和子 agent 同时工作，先用 `model.waitForRequest(predicate)` 按通道、文本或元数据定位请求，再用 `model.callId(request.index, 0)` 取得该请求第一条工具调用的默认 ID。也可以在 `call(name, args, { id })` 中提供固定 ID。动态步骤 `(request, { lane, call, signal }) => step` 中的 `call` 是从零开始的通道内请求序号。异步步骤可以把 `signal` 交给自己的 I/O，以便客户端取消时一起停止。[动态脚本和并发路由](../test/model.test.ts#L346) · [取消正在生成的回复](../../../tests/scenarios/conversation.test.ts#L121)
+全局请求序号随到达顺序分配。当主 agent 和子 agent 同时工作，先用 `model.waitForRequest(predicate)` 按通道、文本或元数据定位请求，再用 `model.callId(request.index, 0)` 取得该请求第一条工具调用的默认 ID。也可以在 `call(name, args, { id })` 中提供固定 ID。动态步骤 `(request, { lane, call, signal }) => step` 中的 `call` 是从零开始的通道内请求序号。异步步骤可以把 `signal` 交给自己的 I/O，以便客户端取消时一起停止。[动态脚本和并发路由](../test/model.test.ts#L344) · [取消正在生成的回复](../../../tests/scenarios/conversation.test.ts#L121)
 
 ## 决定在哪一层断言
 
 - **多个 provider 的共同行为**可以断言 `request.view.messages`、`view.tools`、`firstUserText` 或 `userTextsSinceReply`。例如，工具调用的下一次请求应包含一条具有匹配 `callId` 的 `role: 'tool'` 消息。[四种 provider 的同一条验收场景](../../../tests/scenarios/providers.test.ts)
 - **协议特有的字段和分块**可以断言 `request.body`、`rawBody` 或 SDK 解析出的事件。OpenAI 工具参数是字符串。Anthropic 流可携带分段参数文本，非流式的 `tool_use.input` 和 Google 的 `functionCall.args` 要求 JSON 对象。要构造畸形 SSE 或 JSON 文本，用 `rawResponse({ chunks: [...] })` 提供字符串块。[官方 SDK 的协议测试](../test/protocols.test.ts)
-- **流的时序**可以用 `held('after-first', say(['A', 'B']), 1)` 把流停在第一块之后。发起流式请求后，等待 `model.hold('after-first').reached()`，确认模型已发出第一块。再从 SDK 流中读到文本 `A`，就能断言客户端也收到了它。调用 `release()` 后再读完余下的流，或用 `cut()` 测试服务端断流。客户端主动中止时请求记录为 `aborted`，脚本主动切断时记录为 `cut`。[命名挂起点用例](../test/model.test.ts#L176)
+- **验证 OpenAI 的思考签名**时，用 `thinkSigned('分析', 'sig-1', say('回答'))` 安排回复。流式请求读取 `choices[0].delta.reasoning_details`，非流式请求读取 `choices[0].message.reasoning_details`。在数组中找到 `type: 'encrypted'` 的项，再核对它的 `encrypted` 是否等于传入的签名。
+- **流的时序**可以用 `held('after-first', say(['A', 'B']), 1)` 把流停在第一块之后。发起流式请求后，等待 `model.hold('after-first').reached()`，确认模型已发出第一块。再从 SDK 流中读到文本 `A`，就能断言客户端也收到了它。调用 `release()` 后再读完余下的流，或用 `cut()` 测试服务端断流。客户端主动中止时请求记录为 `aborted`，脚本主动切断时记录为 `cut`。[命名挂起点用例](../test/model.test.ts#L177)
 
 ## 读懂严格校验的失败
 
