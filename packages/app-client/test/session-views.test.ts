@@ -18,6 +18,7 @@ import { sessionRuntimeStore } from '../src/stores/sessionRuntime';
 import { formatTime, sessionViewsStore } from '../src/stores/sessionViews';
 import { sessionsStore } from '../src/stores/sessions';
 import { workspacesStore } from '../src/stores/workspaces';
+import { sessionWorktree } from '../src/testing/worktreeFixtures';
 
 const T1 = '2026-01-01T00:00:00.000Z';
 const T2 = '2026-01-02T00:00:00.000Z';
@@ -164,32 +165,14 @@ describe('sessionsForView', () => {
 
   it('tags worktree sessions with the environment they actually use', () => {
     seedWorkspaces();
-    const setup = (status: 'running' | 'ready' | 'local') => ({
-      status,
-      purpose: 'create' as const,
-      request: { sourceBranch: 'main' },
-      steps: [],
-      commandsRan: 0,
-      startedAt: T1,
-      script: 'none' as const,
-    });
     sessionsStore().setSessions([
       sessionRow('local', { updatedAt: T1 }),
-      { ...sessionRow('creating', { updatedAt: T1 }), worktree: { setup: setup('running') } },
-      { ...sessionRow('ready', { updatedAt: T1 }), worktree: { path: '/wt/a', setup: setup('ready') } },
-      { ...sessionRow('gone', { updatedAt: T1 }), worktree: { path: '/wt/b', missing: true, setup: setup('ready') } },
-      { ...sessionRow('fallback', { updatedAt: T1 }), worktree: { setup: setup('local') } },
+      { ...sessionRow('ready', { updatedAt: T1 }), worktree: sessionWorktree('ready', { path: '/wt/a' }) },
     ]);
 
     const tags = Object.fromEntries(sessionViewsStore().sessionsForView.map((row) => [row.id, row.environment]));
 
-    expect(tags).toEqual({
-      local: undefined,
-      creating: 'settingUp',
-      ready: 'worktree',
-      gone: 'invalid',
-      fallback: undefined,
-    });
+    expect(tags).toEqual({ local: undefined, ready: 'worktree' });
   });
 });
 

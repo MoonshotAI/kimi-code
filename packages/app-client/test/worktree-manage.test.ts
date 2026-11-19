@@ -15,6 +15,7 @@ import {
   type WorktreeRemovalProgressItem,
 } from '../src/lib/worktreeManage';
 import type { WorktreeRemovalItem } from '../src/stores/worktrees';
+import { appWorktree } from '../src/testing/worktreeFixtures';
 
 function translator(locale: 'en' | 'zh') {
   const i18n = createKimiI18n({ locale });
@@ -41,18 +42,7 @@ function target(name: string, overrides: Partial<WorktreeDeleteTarget> = {}): Wo
 }
 
 function worktree(overrides: Partial<AppWorktree> = {}): AppWorktree {
-  return {
-    path: '/wt/a',
-    name: 'a',
-    repoRoot: '/repo',
-    workspaceId: 'ws-1',
-    workspaceName: 'Repo',
-    branch: 'kimi/a',
-    origin: 'product',
-    sizeBytes: 60 * MB,
-    sessions: [],
-    ...overrides,
-  };
+  return appWorktree('a', { sizeBytes: 60 * MB, ...overrides });
 }
 
 function session(id: string, overrides: Partial<AppWorktree['sessions'][number]> = {}) {

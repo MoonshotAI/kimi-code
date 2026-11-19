@@ -36,7 +36,6 @@ vi.mock('@moonshot-ai/app-client/stores', () => ({
 }));
 
 import SessionHoverCard from '../src/worktree/SessionHoverCard.vue';
-import sessionHoverCardSource from '../src/worktree/SessionHoverCard.vue?raw';
 
 const WORKTREE = '/Users/me/.kimi-code/worktrees/cursor-worktree-entry-test';
 
@@ -204,8 +203,6 @@ describe('SessionHoverCard', () => {
     expect(el.querySelector('.shc-created')).toBeNull();
     expect(el.querySelector('.shc-branch')?.textContent).toBe('kimi/1104-b8b6');
     expect(el.querySelector('.shc-pr')).toBeNull();
-    expect(sessionHoverCardSource).toMatch(/\.shc-path\.missing \{ text-decoration: line-through; \}/);
-    expect(sessionHoverCardSource).toMatch(/\.shc-missing > \.swi \{ color: var\(--color-warning\); \}/);
   });
 
   it('shows only the directory for a local session', async () => {

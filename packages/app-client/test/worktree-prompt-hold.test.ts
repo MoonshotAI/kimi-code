@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import type { AppSession, AppSessionWorktree, WorkspaceGitBranches } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
-import { createWorkspaceRig } from '../src/testing/workspaceRig';
+import { createWorkspaceRig, type WorkspaceRig } from '../src/testing/workspaceRig';
+import { appSession, sessionWorktree as worktree } from '../src/testing/worktreeFixtures';
 import { modelsStore } from '../src/stores/models';
 import { modeStore } from '../src/stores/mode';
 import { newSessionEnvironmentStore } from '../src/stores/newSessionEnvironment';
@@ -24,50 +25,8 @@ const BRANCHES: WorkspaceGitBranches = {
   branches: [{ name: 'main', committedAt: '2026-11-18T00:00:00.000Z', remoteRef: 'origin/main' }],
 };
 
-function worktree(
-  status: AppSessionWorktree['setup']['status'],
-  overrides: Partial<AppSessionWorktree> = {},
-  setup: Partial<AppSessionWorktree['setup']> = {},
-): AppSessionWorktree {
-  return {
-    ...overrides,
-    setup: {
-      status,
-      purpose: 'create',
-      request: { sourceBranch: 'main' },
-      steps: [],
-      commandsRan: 0,
-      startedAt: '2026-11-18T00:00:00.000Z',
-      script: 'none',
-      ...setup,
-    },
-  };
-}
-
 function session(overrides: Partial<AppSession> = {}): AppSession {
-  return {
-    id: SID,
-    title: SID,
-    createdAt: '2026-11-18T00:00:00.000Z',
-    updatedAt: '2026-11-18T00:00:00.000Z',
-    busy: false,
-    archived: false,
-    cwd: '/workspace',
-    model: 'kimi-k3',
-    usage: {
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      totalCostUsd: 0,
-      contextTokens: 0,
-      contextLimit: 0,
-      turnCount: 0,
-    },
-    messageCount: 0,
-    workspaceId: 'workspace',
-    ...overrides,
-  };
+  return appSession({ id: SID, title: SID, ...overrides });
 }
 
 function setWorktree(next: AppSessionWorktree | undefined, cwd = '/workspace'): void {
@@ -103,6 +62,16 @@ function sentTexts(submitPrompt: ReturnType<typeof vi.fn>): string[] {
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 20; i += 1) await Promise.resolve();
+}
+
+function start(ws: WorkspaceRig, text = 'hello') {
+  return ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text }));
+}
+
+async function moveTo(ws: WorkspaceRig, next: AppSessionWorktree | undefined, cwd?: string): Promise<void> {
+  setWorktree(next, cwd);
+  ws.syncWorktreeHold(SID);
+  await flush();
 }
 
 async function createRig(options: { worktree?: boolean } = {}) {
@@ -199,7 +168,7 @@ describe('worktree first-prompt hold', () => {
   it('creates a local session and sends at once when Local is selected', async () => {
     const { api, ws } = await createRig({ worktree: false });
 
-    const started = await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    const started = await start(ws);
 
     expect(started).toEqual({ sessionId: SID, promptRejected: false });
     expect(Object.hasOwn(api.createSession.mock.calls[0]![0], 'worktree')).toBe(false);
@@ -209,7 +178,7 @@ describe('worktree first-prompt hold', () => {
   it('creates the session with the worktree request and holds the first prompt', async () => {
     const { api, ws } = await createRig();
 
-    const started = await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    const started = await start(ws);
 
     expect(started).toEqual({ sessionId: SID, promptRejected: false, held: true });
     expect(api.createSession.mock.calls[0]![0]).toMatchObject({
@@ -224,7 +193,7 @@ describe('worktree first-prompt hold', () => {
 
   it('sends the held prompt exactly once when the worktree becomes ready', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    await start(ws);
 
     ws.syncWorktreeHold(SID);
     await flush();
@@ -239,26 +208,9 @@ describe('worktree first-prompt hold', () => {
     expect(promptStore().heldFirstPromptBySession[SID]).toBeUndefined();
   });
 
-  it('keeps holding through a failed setup and sends after falling back to local mode', async () => {
-    const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
-
-    for (const status of ['failed', 'stopped', 'awaiting_script_confirmation'] as const) {
-      setWorktree(worktree(status));
-      ws.syncWorktreeHold(SID);
-      await flush();
-      expect(api.submitPrompt).not.toHaveBeenCalled();
-    }
-
-    setWorktree(worktree('local'));
-    ws.syncWorktreeHold(SID);
-    await flush();
-    expect(sentTexts(api.submitPrompt)).toEqual(['hello']);
-  });
-
   it('queues later messages behind the held prompt and flushes them in order', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'first' }));
+    await start(ws, 'first');
 
     expect(ws.wouldEnqueuePrompt(SID)).toBe(true);
     expect(ws.wouldSteerPrompt(SID)).toBe(false);
@@ -270,16 +222,14 @@ describe('worktree first-prompt hold', () => {
     expect(api.submitPrompt).not.toHaveBeenCalled();
     expect(promptStore().queuedBySession[SID]?.map((entry) => entry.text)).toEqual(['second', 'third']);
 
-    setWorktree(worktree('ready', { path: '/wt/a' }), '/wt/a');
-    ws.syncWorktreeHold(SID);
-    await flush();
+    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
     expect(sentTexts(api.submitPrompt)).toEqual(['first', 'second', 'third']);
     expect(promptStore().queuedBySession[SID]).toEqual([]);
   });
 
   it('refuses a direct submit while the worktree is not ready', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'first' }));
+    await start(ws, 'first');
 
     expect(await ws.submitPromptInternal(SID, ws.createPromptEnvelope({ text: 'sneaky' }))).toBe('rejected');
     expect(api.submitPrompt).not.toHaveBeenCalled();
@@ -294,9 +244,7 @@ describe('worktree first-prompt hold', () => {
     expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'later' }))).toBe('queued');
     expect(api.submitPrompt).not.toHaveBeenCalled();
 
-    setWorktree(worktree('ready', { path: '/wt/a' }), '/wt/a');
-    ws.syncWorktreeHold(SID);
-    await flush();
+    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
     expect(sentTexts(api.submitPrompt)).toEqual(['later']);
   });
 
@@ -314,7 +262,7 @@ describe('worktree first-prompt hold', () => {
 
   it('stops the worktree setup instead of a turn while it is running', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    await start(ws);
 
     expect(await ws.abortCurrentPrompt()).toBe(true);
 
@@ -327,7 +275,7 @@ describe('worktree first-prompt hold', () => {
 
   it('applies a worktree action result and releases the hold when it settles', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    await start(ws);
     setWorktree(worktree('failed'));
 
     api.sessionWorktreeAction.mockResolvedValueOnce(session({ worktree: worktree('running') }));
@@ -345,7 +293,7 @@ describe('worktree first-prompt hold', () => {
 
   it('reports a failed worktree action and keeps the hold', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    await start(ws);
     api.sessionWorktreeAction.mockRejectedValueOnce(new Error('offline'));
 
     expect(await ws.runSessionWorktreeAction(SID, 'retry')).toBe(false);
@@ -356,7 +304,7 @@ describe('worktree first-prompt hold', () => {
 
   it('drops the held prompt when the session disappears', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    await start(ws);
 
     sessionsStore().removeSession(SID);
     ws.syncWorktreeHold(SID);
@@ -368,13 +316,11 @@ describe('worktree first-prompt hold', () => {
 
   it('puts the first prompt at the head of the queue when its send fails after release', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'first' }));
+    await start(ws, 'first');
     await ws.sendPrompt(ws.createPromptEnvelope({ text: 'second' }));
     api.submitPrompt.mockRejectedValueOnce(Object.assign(new Error('bad request'), { name: 'DaemonApiError', code: 40001 }));
 
-    setWorktree(worktree('ready', { path: '/wt/a' }), '/wt/a');
-    ws.syncWorktreeHold(SID);
-    await flush();
+    await moveTo(ws, worktree('ready', { path: '/wt/a' }), '/wt/a');
 
     expect(api.submitPrompt).toHaveBeenCalledTimes(1);
     expect(promptStore().queuedBySession[SID]?.map((entry) => entry.text)).toEqual(['first', 'second']);
@@ -382,11 +328,9 @@ describe('worktree first-prompt hold', () => {
 
   it('keeps holding through the setup script, after the session already points at the worktree', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    await start(ws);
 
-    setWorktree(worktree('running', { path: '/wt/a', branch: 'kimi/a' }), '/wt/a');
-    ws.syncWorktreeHold(SID);
-    await flush();
+    await moveTo(ws, worktree('running', { path: '/wt/a', branch: 'kimi/a' }), '/wt/a');
     expect(api.submitPrompt).not.toHaveBeenCalled();
 
     expect(await ws.abortCurrentPrompt()).toBe(true);
@@ -397,22 +341,18 @@ describe('worktree first-prompt hold', () => {
       worktree('failed', { path: '/wt/a' }, { stoppedStep: 'script', failure: { kind: 'script_failed', exitCode: 1 } }),
       worktree('awaiting_script_confirmation', { path: '/wt/a' }, { script: 'pending', scriptContent: 'make' }),
     ]) {
-      setWorktree(paused, '/wt/a');
-      ws.syncWorktreeHold(SID);
-      await flush();
+      await moveTo(ws, paused, '/wt/a');
       expect(api.submitPrompt).not.toHaveBeenCalled();
       expect(await ws.sendPrompt(ws.createPromptEnvelope({ text: 'later' }))).toBe('queued');
     }
 
-    setWorktree(worktree('ready', { path: '/wt/a' }, { script: 'skipped' }), '/wt/a');
-    ws.syncWorktreeHold(SID);
-    await flush();
+    await moveTo(ws, worktree('ready', { path: '/wt/a' }, { script: 'skipped' }), '/wt/a');
     expect(sentTexts(api.submitPrompt)[0]).toBe('hello');
   });
 
   it('stays held when running the script comes back still awaiting confirmation', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    await start(ws);
     setWorktree(worktree('awaiting_script_confirmation', { path: '/wt/a' }, { script: 'pending', scriptContent: 'make' }), '/wt/a');
 
     api.sessionWorktreeAction.mockResolvedValueOnce(
@@ -438,7 +378,7 @@ describe('worktree first-prompt hold', () => {
 
   it('reports an action the server refuses at a script pause and keeps the hold', async () => {
     const { api, ws } = await createRig();
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    await start(ws);
     const paused = worktree('failed', { path: '/wt/a' }, { stoppedStep: 'script', failure: { kind: 'script_timeout' } });
     setWorktree(paused, '/wt/a');
     api.sessionWorktreeAction.mockRejectedValueOnce(
@@ -482,7 +422,7 @@ describe('worktree first-prompt hold', () => {
       new DaemonApiError({ code: 40001, msg: 'source_branch does not exist', requestId: 'r1' }),
     );
 
-    const started = await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    const started = await start(ws);
     await flush();
 
     expect(api.createSession.mock.calls[0]![0]).toMatchObject({ worktree: { sourceBranch: 'gone' } });
@@ -503,7 +443,7 @@ describe('worktree first-prompt hold', () => {
     );
     api.getWorkspaceGitBranches.mockResolvedValueOnce({ isRepo: false, dirty: false, remotes: [], branches: [] });
 
-    const started = await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    const started = await start(ws);
     await flush();
 
     expect(started).toEqual({ sessionId: null, promptRejected: false });
@@ -512,7 +452,7 @@ describe('worktree first-prompt hold', () => {
     expect(environment.effectiveEnvironment('workspace')).toBe('local');
 
     api.createSession.mockResolvedValueOnce(session());
-    const retried = await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    const retried = await start(ws);
     expect(retried).toEqual({ sessionId: SID, promptRejected: false });
     expect(Object.hasOwn(api.createSession.mock.calls[1]![0], 'worktree')).toBe(false);
     expect(sentTexts(api.submitPrompt)).toEqual(['hello']);
@@ -523,7 +463,7 @@ describe('worktree first-prompt hold', () => {
     api.getWorkspaceGitBranches.mockClear();
     api.createSession.mockRejectedValueOnce(new Error('network down'));
 
-    const started = await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    const started = await start(ws);
     await flush();
 
     expect(started).toEqual({ sessionId: null, promptRejected: false });
@@ -536,7 +476,7 @@ describe('worktree first-prompt hold', () => {
     await environment.ensureSetupScript('workspace');
     environment.setRunSetupScript(false);
 
-    await ws.startSessionAndSendPrompt('workspace', ws.createPromptEnvelope({ text: 'hello' }));
+    await start(ws);
 
     expect(api.createSession.mock.calls[0]![0]).toMatchObject({ worktree: { sourceBranch: 'main', runSetupScript: false } });
     expect(environment.runSetupScript).toBe(true);

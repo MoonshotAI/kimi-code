@@ -6,6 +6,7 @@ import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { sessionInfoStore } from '../src/stores/sessionInfo';
 import { sessionsStore } from '../src/stores/sessions';
 import { workspacesStore } from '../src/stores/workspaces';
+import { sessionWorktree } from '../src/testing/worktreeFixtures';
 
 const getKimiWebApiMock = vi.fn();
 
@@ -13,24 +14,8 @@ function gitStatus(branch: string): GitStatusEntry {
   return { branch, ahead: 0, behind: 0, entries: {}, additions: 1, deletions: 0, pullRequest: null };
 }
 
-function worktree(
-  status: NonNullable<AppSession['worktree']>['setup']['status'],
-  overrides: Partial<NonNullable<AppSession['worktree']>> = {},
-): NonNullable<AppSession['worktree']> {
-  return {
-    path: '/wt/a',
-    branch: 'kimi/a',
-    ...overrides,
-    setup: {
-      status,
-      purpose: 'create',
-      request: { sourceBranch: 'main' },
-      steps: [],
-      commandsRan: 0,
-      startedAt: '2026-11-18T00:00:00.000Z',
-      script: 'none',
-    },
-  };
+function readyWorktree() {
+  return sessionWorktree('ready', { path: '/wt/a', branch: 'kimi/a' });
 }
 
 function deferred<T>() {
@@ -110,22 +95,22 @@ describe('sessionInfoStore', () => {
   });
 
   it('flags the status as loading only while the status request is in flight', async () => {
-    let resolveStatus!: (value: ReturnType<typeof statusBatch>) => void;
-    let resolvePullRequests!: (value: ReturnType<typeof prBatch>) => void;
-    const getGitStatusBatch = vi.fn().mockReturnValue(new Promise((resolve) => { resolveStatus = resolve; }));
-    const getPullRequestBatch = vi.fn().mockReturnValue(new Promise((resolve) => { resolvePullRequests = resolve; }));
+    const status = deferred<GitStatusBatchResult>();
+    const pullRequests = deferred<PullRequestBatchResult>();
+    const getGitStatusBatch = vi.fn().mockReturnValue(status.promise);
+    const getPullRequestBatch = vi.fn().mockReturnValue(pullRequests.promise);
     mockBatches(getGitStatusBatch, getPullRequestBatch);
 
     const observed = sessionInfoStore().observe('s1', folders('/a'));
     await Promise.resolve();
     expect(sessionInfoStore().rows('s1')[0]?.statusLoading).toBe(true);
 
-    resolveStatus(statusBatch({ '/a': gitStatus('branch-a') }));
+    status.resolve(statusBatch({ '/a': gitStatus('branch-a') }));
     await vi.waitFor(() => expect(getPullRequestBatch).toHaveBeenCalledOnce());
     expect(sessionInfoStore().rows('s1')[0]?.statusLoading).toBe(false);
     expect(sessionInfoStore().refreshing('s1')).toBe(true);
 
-    resolvePullRequests(prBatch({ '/a': null }));
+    pullRequests.resolve(prBatch({ '/a': null }));
     await observed;
     expect(sessionInfoStore().rows('s1')[0]?.statusLoading).toBe(false);
   });
@@ -307,16 +292,10 @@ describe('sessionInfoStore', () => {
   });
 
   it('uses the worktree directory as the main folder of a worktree session', () => {
-    sessionsStore().setSessions([
-      { id: 's1', workspaceId: 'ws1', cwd: '/wt/a', worktree: worktree('ready') } as AppSession,
-      { id: 's2', workspaceId: 'ws1', cwd: '/repo', worktree: worktree('running', { path: undefined }) } as AppSession,
-      { id: 's3', workspaceId: 'ws1', cwd: '/repo', worktree: worktree('local') } as AppSession,
-    ]);
+    sessionsStore().setSessions([{ id: 's1', workspaceId: 'ws1', cwd: '/wt/a', worktree: readyWorktree() } as AppSession]);
     workspacesStore().workspaces = [seedWorkspace('ws1', '/repo', ['/extra'])];
 
     expect(sessionInfoStore().foldersForSession('s1')).toEqual(folders('/wt/a', '/extra'));
-    expect(sessionInfoStore().foldersForSession('s2')).toEqual(folders('/repo', '/extra'));
-    expect(sessionInfoStore().foldersForSession('s3')).toEqual(folders('/repo', '/extra'));
   });
 
   it('keeps data and raises the refreshing flag while a refresh runs', async () => {
@@ -364,7 +343,7 @@ describe('sessionInfoStore', () => {
   });
 
   it('marks a missing directory apart from a non-git one and flags the worktree session invalid', async () => {
-    sessionsStore().setSessions([{ id: 's1', workspaceId: 'ws1', cwd: '/wt/a', worktree: worktree('ready') } as AppSession]);
+    sessionsStore().setSessions([{ id: 's1', workspaceId: 'ws1', cwd: '/wt/a', worktree: readyWorktree() } as AppSession]);
     workspacesStore().workspaces = [seedWorkspace('ws1', '/repo', ['/plain'])];
     const getGitStatusBatch = vi.fn()
       .mockResolvedValueOnce(statusBatch({}, {

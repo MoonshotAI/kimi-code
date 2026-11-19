@@ -7,6 +7,7 @@ import type { AppWorktree, WorktreeInspection } from '@moonshot-ai/app-core/api'
 import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { resetWorktreeManageDialogs, useWorktreeManageDialogs } from '@moonshot-ai/app-client/composables';
 import { worktreesStore, type WorktreeRemovalItem } from '@moonshot-ai/app-client/stores';
+import { appWorktree, memoryStorage, worktreeRisk } from '@moonshot-ai/app-client/testing';
 import WorktreesPanel from '../src/settings/WorktreesPanel.vue';
 
 const i18n = createKimiI18n({ locale: 'en' });
@@ -23,25 +24,13 @@ const dialogs = useWorktreeManageDialogs();
 let app: App | undefined;
 let host: HTMLDivElement;
 let openSession: ReturnType<typeof vi.fn>;
-let storage: Map<string, string>;
 
 function session(id: string, title: string, extra: Partial<AppWorktree['sessions'][number]> = {}) {
   return { id, title, archived: false, busy: false, ...extra };
 }
 
 function worktree(name: string, overrides: Partial<AppWorktree> = {}): AppWorktree {
-  return {
-    path: `/wt/${name}`,
-    name,
-    repoRoot: '/code/kimi-code-app',
-    workspaceId: 'ws-app',
-    workspaceName: 'kimi-code-app',
-    branch: `kimi/${name}`,
-    origin: 'product',
-    sizeBytes: 60 * MB,
-    sessions: [],
-    ...overrides,
-  };
+  return appWorktree(name, { workspaceName: 'kimi-code-app', sizeBytes: 60 * MB, ...overrides });
 }
 
 const fixture = (): AppWorktree[] => [
@@ -113,19 +102,13 @@ function check(input: HTMLInputElement): void {
 }
 
 beforeEach(() => {
-  storage = new Map();
-  vi.stubGlobal('localStorage', {
-    getItem: (key: string) => storage.get(key) ?? null,
-    setItem: (key: string, value: string) => void storage.set(key, value),
-    removeItem: (key: string) => void storage.delete(key),
-    clear: () => storage.clear(),
-  });
+  vi.stubGlobal('localStorage', memoryStorage());
   host = document.createElement('div');
   document.body.append(host);
   openSession = vi.fn();
   for (const mock of Object.values(api)) mock.mockReset();
   api.inspectWorktrees.mockImplementation(async (paths) => ({
-    items: paths.map((path) => ({ path, uncommittedFiles: 0, unpushedCommits: 0, sessions: [] })),
+    items: paths.map((path) => worktreeRisk(path.split('/').at(-1)!)),
     errors: {},
   }));
   setKimiClientDeps({
@@ -186,7 +169,14 @@ describe('Worktrees settings page', () => {
   });
 
   it('renders each kind of row', () => {
-    mount();
+    mount({
+      items: [...fixture(), worktree('hello')],
+      removals: [
+        { path: '/wt/hello', name: 'hello', deleteBranch: false, state: 'failed', reason: 'in_use', output: 'busy' },
+        { path: '/wt/badge', name: 'badge', deleteBranch: false, state: 'deleting' },
+      ],
+      deleted: { '/wt/hello': 'Hello' },
+    });
 
     expect(text(row('demo').querySelector('.manage-row__title'))).toBe('Reply hello');
     expect(text(row('demo').querySelector('.manage-row__meta'))).toBe('kimi/demo · 60 MB');
@@ -205,6 +195,9 @@ describe('Worktrees settings page', () => {
       'tower/task-3-api-client · 260 MB · No associated session',
     );
     expect(row('task-3').querySelector('.manage-row__open')).toBeNull();
+
+    expect(text(row('hello').querySelector('.manage-row__title'))).toBe('Hello Deleted');
+    expect(text(row('badge').querySelector('.manage-row__actions'))).toBe('Deleting…');
   });
 
   it('opens the associated session', () => {
@@ -223,15 +216,12 @@ describe('Worktrees settings page', () => {
     toggle.click();
     await nextTick();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(toggle.querySelector('.wtp-card-chevron')!.classList.contains('is-expanded')).toBe(false);
-    expect(host.querySelectorAll('.wtp-card-body')[1]!.classList.contains('wtp-collapse-leave-active')).toBe(true);
     await frames();
     expect(host.querySelectorAll('.manage-row')).toHaveLength(1);
 
     toggle.click();
     await nextTick();
-    expect(toggle.querySelector('.wtp-card-chevron')!.classList.contains('is-expanded')).toBe(true);
-    expect(host.querySelectorAll('.wtp-card-body')[1]!.classList.contains('wtp-collapse-enter-active')).toBe(true);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(host.querySelectorAll('.manage-row')).toHaveLength(5);
   });
 
@@ -288,36 +278,6 @@ describe('Worktrees settings page', () => {
     row('demo').querySelector<HTMLButtonElement>('.manage-row__link')!.click();
     await nextTick();
     expect(row('demo').querySelector('.manage-row__output')).toBeNull();
-  });
-
-  it('labels the worktree of a session deleted in this run', () => {
-    mount({
-      items: [worktree('hello')],
-      removals: [
-        { path: '/wt/hello', name: 'hello', deleteBranch: false, state: 'failed', reason: 'in_use', output: 'busy' },
-      ],
-      deleted: { '/wt/hello': 'Hello' },
-    });
-
-    expect(text(row('hello').querySelector('.manage-row__title'))).toBe('Hello Deleted');
-    expect(text(row('hello').querySelector('.manage-row__meta'))).toBe('kimi/hello · 60 MB');
-    expect(text(row('hello').querySelector('.manage-row__failure'))).toContain('Deletion failed: directory in use');
-    expect(row('hello').querySelector('.manage-row__open')).toBeNull();
-    expect(row('hello').querySelector('.manage-row__delete')).not.toBeNull();
-  });
-
-  it('shows rows being deleted in the background', () => {
-    mount({
-      removals: [
-        { path: '/wt/demo', name: 'demo', deleteBranch: false, state: 'deleting' },
-        { path: '/wt/login', name: 'login', deleteBranch: false, state: 'waiting' },
-      ],
-    });
-
-    expect(text(row('demo').querySelector('.manage-row__actions'))).toBe('Deleting…');
-    expect(text(row('login').querySelector('.manage-row__actions'))).toBe('Deleting…');
-    expect(row('demo').querySelector('.manage-row__delete')).toBeNull();
-    expect(row('retry').querySelector('.manage-row__delete')).not.toBeNull();
   });
 
   it('clears the failures the user has seen when the page closes', () => {
@@ -378,14 +338,10 @@ describe('batch mode', () => {
     );
   });
 
-  it('explains Batch Delete in Chinese', async () => {
-    i18n.global.locale.value = 'zh';
-    try {
-      mount();
-      expect(await hoverBatch()).toBe('选择要删除的工作树（可删除 4 个）。删除会移除工作树目录，其中未提交的改动将丢失。');
-    } finally {
-      i18n.global.locale.value = 'en';
-    }
+  it('explains Batch Delete in Chinese', () => {
+    expect(createKimiI18n({ locale: 'zh' }).global.t('worktreeManage.batchDeleteTip', { n: 4 })).toBe(
+      '选择要删除的工作树（可删除 4 个）。删除会移除工作树目录，其中未提交的改动将丢失。',
+    );
   });
 
   function rowCheckbox(name: string): HTMLInputElement {

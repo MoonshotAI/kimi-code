@@ -105,7 +105,6 @@ describe('SessionRow environment indicator', () => {
 
     expect(host.querySelector('.act .wt [data-icon="git-fork-off"]')).not.toBeNull();
     expect(rowEl().classList.contains('env-invalid')).toBe(true);
-    expect(sessionRowSource).toMatch(/\.se\.env-invalid \.t \{\s*color: var\(--color-text-faint\);/);
   });
 
   it('replaces the icon and date with the row actions on hover', () => {

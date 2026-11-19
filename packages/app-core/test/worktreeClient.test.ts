@@ -16,6 +16,18 @@ function envelope(data: unknown, details?: unknown): Response {
   });
 }
 
+function respond(data: unknown, details?: unknown): void {
+  vi.mocked(fetch).mockResolvedValueOnce(envelope(data, details));
+}
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn());
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 function createApi(): DaemonKimiWebApi {
   return new DaemonKimiWebApi({
     origin: 'http://daemon.test',
@@ -129,16 +141,8 @@ describe('session worktree mapping', () => {
 });
 
 describe('worktree routes', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it('creates a session with the worktree request', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(envelope(WIRE_SESSION));
+    respond(WIRE_SESSION);
     await createApi().createSession({
       cwd: '/repo',
       workspaceId: 'ws-1',
@@ -152,7 +156,7 @@ describe('worktree routes', () => {
   });
 
   it('omits the worktree key for a local session', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(envelope(WIRE_SESSION));
+    respond(WIRE_SESSION);
     await createApi().createSession({ cwd: '/repo' });
     expect(lastRequest().body).toEqual({ metadata: { cwd: '/repo' } });
   });
@@ -165,7 +169,7 @@ describe('worktree routes', () => {
     ['runScript', 'run_script'],
     ['recreate', 'recreate'],
   ] as const)('posts the %s action to worktree:%s', async (action, segment) => {
-    vi.mocked(fetch).mockResolvedValueOnce(envelope(WIRE_SESSION));
+    respond(WIRE_SESSION);
     const session = await createApi().sessionWorktreeAction('sess/1', action);
     const request = lastRequest();
     expect(request.url).toBe(`http://daemon.test/api/v1/sessions/sess%2F1/worktree:${segment}`);
@@ -184,9 +188,7 @@ describe('worktree routes', () => {
   });
 
   it('deletes a session with worktree options and maps the outcome', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({ deleted: true, worktree: { outcome: 'kept_in_use', branch_deleted: false, other_sessions: 2, output: 'busy' } }),
-    );
+    respond({ deleted: true, worktree: { outcome: 'kept_in_use', branch_deleted: false, other_sessions: 2, output: 'busy' } });
     const result = await createApi().deleteSession('sess-1', { removeWorktree: true, deleteBranch: true });
     expect(lastRequest().body).toEqual({ remove_worktree: true, delete_branch: true });
     expect(result).toEqual({
@@ -197,49 +199,47 @@ describe('worktree routes', () => {
 
   it('maps a missing worktree whose branch was still deleted, and a session without a linked worktree', async () => {
     const api = createApi();
-    vi.mocked(fetch).mockResolvedValueOnce(envelope({ deleted: true, worktree: { outcome: 'missing', branch_deleted: true } }));
+    respond({ deleted: true, worktree: { outcome: 'missing', branch_deleted: true } });
     expect(await api.deleteSession('sess-1', { removeWorktree: true, deleteBranch: true })).toEqual({
       deleted: true,
       worktree: { outcome: 'missing', branchDeleted: true, otherSessions: undefined, output: undefined },
     });
-    vi.mocked(fetch).mockResolvedValueOnce(envelope({ deleted: true }));
+    respond({ deleted: true });
     const plain = await api.deleteSession('sess-2', { removeWorktree: true });
     expect(plain).toEqual({ deleted: true });
     expect(Object.hasOwn(plain, 'worktree')).toBe(false);
   });
 
   it('deletes a session without a body by default', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(envelope({ deleted: true }));
+    respond({ deleted: true });
     expect(await createApi().deleteSession('sess-1')).toEqual({ deleted: true });
     expect(lastRequest().body).toEqual({});
   });
 
   it('lists branches for a workspace', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({
-        is_repo: true,
-        head_branch: 'main',
-        dirty: true,
-        remotes: ['fork', 'origin'],
-        branches: [
-          {
-            name: 'main',
-            committed_at: '2026-11-18T00:00:00.000Z',
-            remote_ref: 'origin/main',
-            remote: 'origin',
-            remote_source: 'upstream',
-          },
-          {
-            name: 'feat',
-            committed_at: '2026-11-17T12:00:00.000Z',
-            remote_ref: 'fork/feat',
-            remote: 'fork',
-            remote_source: 'same_name',
-          },
-          { name: 'topic', committed_at: '2026-11-17T00:00:00.000Z' },
-        ],
-      }),
-    );
+    respond({
+      is_repo: true,
+      head_branch: 'main',
+      dirty: true,
+      remotes: ['fork', 'origin'],
+      branches: [
+        {
+          name: 'main',
+          committed_at: '2026-11-18T00:00:00.000Z',
+          remote_ref: 'origin/main',
+          remote: 'origin',
+          remote_source: 'upstream',
+        },
+        {
+          name: 'feat',
+          committed_at: '2026-11-17T12:00:00.000Z',
+          remote_ref: 'fork/feat',
+          remote: 'fork',
+          remote_source: 'same_name',
+        },
+        { name: 'topic', committed_at: '2026-11-17T00:00:00.000Z' },
+      ],
+    });
     const result = await createApi().getWorkspaceGitBranches('ws/1');
     expect(lastRequest().url).toBe('http://daemon.test/api/v1/workspaces/ws%2F1/git/branches');
     expect(result).toEqual({
@@ -274,7 +274,7 @@ describe('worktree routes', () => {
   });
 
   it('reports a non-git workspace without throwing', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(envelope({ is_repo: false, dirty: false, remotes: [], branches: [] }));
+    respond({ is_repo: false, dirty: false, remotes: [], branches: [] });
     expect(await createApi().getWorkspaceGitBranches('ws-1')).toEqual({
       isRepo: false,
       headBranch: undefined,
@@ -329,50 +329,38 @@ describe('worktree routes', () => {
 
   it('inspects, removes and looks up worktrees', async () => {
     const api = createApi();
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({
-        items: [{ path: '/wt/a', branch: 'kimi/a', uncommitted_files: 3, unpushed_commits: 1, sessions: [] }],
-        errors: { '/wt/b': { code: 40423, msg: 'gone' } },
-      }),
-    );
+    respond({
+      items: [{ path: '/wt/a', branch: 'kimi/a', uncommitted_files: 3, unpushed_commits: 1, sessions: [] }],
+      errors: { '/wt/b': { code: 40423, msg: 'gone' } },
+    });
     expect(await api.inspectWorktrees(['/wt/a', '/wt/b'])).toEqual({
       items: [{ path: '/wt/a', branch: 'kimi/a', uncommittedFiles: 3, unpushedCommits: 1, sessions: [] }],
       errors: { '/wt/b': { code: 40423, msg: 'gone' } },
     });
     expect(lastRequest()).toMatchObject({ url: 'http://daemon.test/api/v1/worktrees:inspect', body: { paths: ['/wt/a', '/wt/b'] } });
 
-    vi.mocked(fetch).mockResolvedValueOnce(envelope({ removed: true, branch_deleted: true }));
+    respond({ removed: true, branch_deleted: true });
     expect(await api.removeWorktree({ path: '/wt/a', deleteBranch: true })).toEqual({ removed: true, branchDeleted: true });
     expect(lastRequest()).toMatchObject({ url: 'http://daemon.test/api/v1/worktrees:remove', body: { path: '/wt/a', delete_branch: true } });
 
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({
-        worktree: {
-          repo_root: '/repo',
-          branch: 'kimi/a',
-          workspace: { id: 'ws-1', root: '/repo', name: 'repo', kind: 'managed', additional_dirs: [], session_count: 2 },
-          session_count: 2,
-        },
-      }),
-    );
+    respond({
+      worktree: {
+        repo_root: '/repo',
+        branch: 'kimi/a',
+        workspace: { id: 'ws-1', root: '/repo', name: 'repo', kind: 'managed', additional_dirs: [], session_count: 2 },
+        session_count: 2,
+      },
+    });
     const found = await api.lookupWorktree('/wt/a');
     expect(found).toMatchObject({ repoRoot: '/repo', branch: 'kimi/a', sessionCount: 2, workspace: { id: 'ws-1', root: '/repo' } });
     expect(lastRequest()).toMatchObject({ url: 'http://daemon.test/api/v1/worktrees:lookup', body: { path: '/wt/a' } });
 
-    vi.mocked(fetch).mockResolvedValueOnce(envelope({ worktree: null }));
+    respond({ worktree: null });
     expect(await api.lookupWorktree('/elsewhere')).toBeNull();
   });
 });
 
 describe('git status mapping', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   const wireStatus = {
     branch: 'main',
     ahead: 1,
@@ -406,14 +394,12 @@ describe('git status mapping', () => {
   };
 
   it('maps the new single-status fields', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(envelope(wireStatus));
+    respond(wireStatus);
     expect(await createApi().getGitStatus('sess-1')).toEqual(appStatus);
   });
 
   it('maps every batch entry', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({ results: { '/repo': wireStatus }, errors: { '/gone': { code: 40422, msg: 'missing' } } }),
-    );
+    respond({ results: { '/repo': wireStatus }, errors: { '/gone': { code: 40422, msg: 'missing' } } });
     expect(await createApi().getGitStatusBatch('sess-1', { roots: ['/repo', '/gone'] })).toEqual({
       results: { '/repo': appStatus },
       errors: { '/gone': { code: 40422, msg: 'missing' } },
@@ -422,44 +408,36 @@ describe('git status mapping', () => {
 
   it('reads the pull request from the data and its status from the envelope details', async () => {
     const api = createApi();
-    vi.mocked(fetch).mockResolvedValueOnce(envelope(null, { pull_request_status: 'none' }));
+    respond(null, { pull_request_status: 'none' });
     expect(await api.getPullRequest('sess-1')).toEqual({ pullRequest: null, status: 'none' });
 
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({ number: 7, state: 'open', url: 'https://example.test/7' }, { pull_request_status: 'found' }),
-    );
+    respond({ number: 7, state: 'open', url: 'https://example.test/7' }, { pull_request_status: 'found' });
     expect(await api.getPullRequest('sess-1')).toEqual({
       pullRequest: { number: 7, state: 'open', url: 'https://example.test/7' },
       status: 'found',
     });
 
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope(null, { pull_request_status: 'failed', pull_request_error: 'gh: timeout' }),
-    );
+    respond(null, { pull_request_status: 'failed', pull_request_error: 'gh: timeout' });
     expect(await api.getPullRequest('sess-1')).toEqual({ pullRequest: null, status: 'failed', error: 'gh: timeout' });
   });
 
   it('does not read a status out of the pull request data', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({ number: 7, state: 'open', url: 'https://example.test/7', pull_request_status: 'failed' }),
-    );
+    respond({ number: 7, state: 'open', url: 'https://example.test/7', pull_request_status: 'failed' });
     expect(await createApi().getPullRequest('sess-1')).toEqual({
       pullRequest: { number: 7, state: 'open', url: 'https://example.test/7' },
     });
   });
 
   it('reads batch statuses from the sibling map and leaves failed roots without one', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({
-        results: { '/a': { number: 7, state: 'open', url: 'https://example.test/7' }, '/b': null, '/c': null },
-        errors: { '/d': { code: 40422, msg: 'missing' } },
-        statuses: {
-          '/a': { pull_request_status: 'found' },
-          '/b': { pull_request_status: 'unavailable' },
-          '/c': { pull_request_status: 'failed', pull_request_error: 'gh: timeout' },
-        },
-      }),
-    );
+    respond({
+      results: { '/a': { number: 7, state: 'open', url: 'https://example.test/7' }, '/b': null, '/c': null },
+      errors: { '/d': { code: 40422, msg: 'missing' } },
+      statuses: {
+        '/a': { pull_request_status: 'found' },
+        '/b': { pull_request_status: 'unavailable' },
+        '/c': { pull_request_status: 'failed', pull_request_error: 'gh: timeout' },
+      },
+    });
     expect(await createApi().getPullRequestBatch('sess-1', { roots: ['/a', '/b', '/c', '/d'] })).toEqual({
       results: { '/a': { number: 7, state: 'open', url: 'https://example.test/7' }, '/b': null, '/c': null },
       statuses: {
@@ -472,7 +450,7 @@ describe('git status mapping', () => {
   });
 
   it('returns an empty status map when the batch carries none', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(envelope({ results: { '/a': null }, errors: {} }));
+    respond({ results: { '/a': null }, errors: {} });
     expect(await createApi().getPullRequestBatch('sess-1', { roots: ['/a'] })).toEqual({
       results: { '/a': null },
       statuses: {},
@@ -481,9 +459,7 @@ describe('git status mapping', () => {
   });
 
   it('leaves the pull request fields out of a status read without them', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({ branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null, detached: false }),
-    );
+    respond({ branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null, detached: false });
     const status = await createApi().getGitStatus('sess-1');
     expect(status).toEqual({ branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null, detached: false });
     expect(Object.hasOwn(status, 'pullRequestStatus')).toBe(false);
@@ -492,18 +468,8 @@ describe('git status mapping', () => {
 });
 
 describe('worktree setup script routes', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it('reads the project setup script', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({ path: '/repo/.kimi/setup.sh', exists: true, content: 'pnpm install', needs_confirmation: true }),
-    );
+    respond({ path: '/repo/.kimi/setup.sh', exists: true, content: 'pnpm install', needs_confirmation: true });
     expect(await createApi().getWorktreeSetupScript('ws/1')).toEqual({
       path: '/repo/.kimi/setup.sh',
       exists: true,
@@ -517,14 +483,12 @@ describe('worktree setup script routes', () => {
   });
 
   it('reports a project without a script', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(envelope({ path: '/repo/.kimi/setup.sh', exists: false }));
+    respond({ path: '/repo/.kimi/setup.sh', exists: false });
     expect(await createApi().getWorktreeSetupScript('ws-1')).toEqual({ path: '/repo/.kimi/setup.sh', exists: false });
   });
 
   it('saves the script with a PUT and maps the result', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
-      envelope({ path: '/repo/.kimi/setup.sh', exists: true, content: 'make', needs_confirmation: false }),
-    );
+    respond({ path: '/repo/.kimi/setup.sh', exists: true, content: 'make', needs_confirmation: false });
     expect(await createApi().saveWorktreeSetupScript('ws-1', 'make')).toEqual({
       path: '/repo/.kimi/setup.sh',
       exists: true,

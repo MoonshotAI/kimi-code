@@ -6,6 +6,7 @@ import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { useNewSessionEnvironmentStore } from '../src/stores/newSessionEnvironment';
 import { workspacesStore } from '../src/stores/workspaces';
+import { memoryStorage } from '../src/testing/worktreeFixtures';
 
 const getWorkspaceGitBranches = vi.fn<(workspaceId: string) => Promise<WorkspaceGitBranches>>();
 const getWorktreeSetupScript = vi.fn<(workspaceId: string) => Promise<WorktreeSetupScript>>();
@@ -37,16 +38,6 @@ function repo(overrides: Partial<WorkspaceGitBranches> = {}): WorkspaceGitBranch
   };
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
 function freshStore() {
   return useNewSessionEnvironmentStore(createPinia());
 }
@@ -55,12 +46,7 @@ let storage: Map<string, string>;
 
 beforeEach(() => {
   storage = new Map();
-  vi.stubGlobal('localStorage', {
-    getItem: (key: string) => storage.get(key) ?? null,
-    setItem: (key: string, value: string) => void storage.set(key, value),
-    removeItem: (key: string) => void storage.delete(key),
-    clear: () => storage.clear(),
-  });
+  vi.stubGlobal('localStorage', memoryStorage(storage));
   getWorkspaceGitBranches.mockReset();
   getWorkspaceGitBranches.mockResolvedValue(repo());
   getWorktreeSetupScript.mockReset();
@@ -108,7 +94,7 @@ describe('new session environment', () => {
   });
 
   it('is temporarily unavailable while the git check is loading', async () => {
-    const pending = deferred<WorkspaceGitBranches>();
+    const pending = Promise.withResolvers<WorkspaceGitBranches>();
     getWorkspaceGitBranches.mockReturnValueOnce(pending.promise);
     const store = freshStore();
     store.selectEnvironment('worktree');
@@ -168,7 +154,7 @@ describe('new session environment', () => {
     await store.ensureBranches('git');
     expect(getWorkspaceGitBranches).toHaveBeenCalledTimes(1);
 
-    const pending = deferred<WorkspaceGitBranches>();
+    const pending = Promise.withResolvers<WorkspaceGitBranches>();
     getWorkspaceGitBranches.mockReturnValueOnce(pending.promise);
     const refreshed = store.refreshBranches('git');
     expect(store.availability('git')).toBe('available');
@@ -182,12 +168,6 @@ describe('new session environment', () => {
     const store = freshStore();
     store.selectEnvironment('worktree');
     await vi.waitFor(() => expect(getWorkspaceGitBranches).toHaveBeenCalledWith('git'));
-  });
-
-  it('defaults the source to the current branch without local changes', async () => {
-    const store = freshStore();
-    await store.ensureBranches('git');
-    expect(store.selection('git')).toMatchObject({ branch: { name: 'main' }, includeLocalChanges: false, isDefault: true });
   });
 
   it('remembers the source branch per project across restarts', async () => {
@@ -204,14 +184,17 @@ describe('new session environment', () => {
     expect(restarted.selection('git')).toMatchObject({ branch: { name: 'topic' }, isDefault: false });
   });
 
-  it('falls back to the default when the remembered branch is gone', async () => {
+  it('falls back to the default branch after a refresh no longer lists the remembered one', async () => {
     const store = freshStore();
+    store.selectEnvironment('worktree');
     await store.ensureBranches('git');
     store.selectSource('git', { branch: 'topic' });
+    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'topic' });
+
     getWorkspaceGitBranches.mockResolvedValueOnce(repo({ branches: [repo().branches[1]!] }));
     await store.refreshBranches('git');
-
     expect(store.selection('git')).toMatchObject({ branch: { name: 'main' }, isDefault: true });
+    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'main' });
   });
 
   it('rejects a branch that is not in the list', async () => {
@@ -257,18 +240,6 @@ describe('new session environment', () => {
 
     const restarted = freshStore();
     expect(restarted.useRemote('git')).toBe(true);
-  });
-
-  it('falls back to the default branch after a refresh no longer lists the remembered one', async () => {
-    const store = freshStore();
-    store.selectEnvironment('worktree');
-    await store.ensureBranches('git');
-    store.selectSource('git', { branch: 'topic' });
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'topic' });
-
-    getWorkspaceGitBranches.mockResolvedValueOnce(repo({ branches: [repo().branches[1]!] }));
-    await store.refreshBranches('git');
-    expect(store.worktreeRequest('git')).toEqual({ sourceBranch: 'main' });
   });
 
   it('stops offering Worktree once a refresh reports the project is not a repository', async () => {
@@ -366,7 +337,7 @@ describe('new session environment', () => {
   });
 
   it('ignores a stale branch response', async () => {
-    const slow = deferred<WorkspaceGitBranches>();
+    const slow = Promise.withResolvers<WorkspaceGitBranches>();
     getWorkspaceGitBranches.mockReturnValueOnce(slow.promise);
     const store = freshStore();
     const first = store.ensureBranches('git');

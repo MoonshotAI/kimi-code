@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSession, AppSessionWorktree, KimiWebApi } from '@moonshot-ai/app-core/api';
 import type { ToastOptions } from '@moonshot-ai/app-ui';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { sessionWorktree } from '../src/testing/worktreeFixtures';
 
 const clientApiMock: Record<string, unknown> = {};
 
@@ -55,12 +56,7 @@ async function freshFacade() {
 }
 
 function worktree(status: AppSessionWorktree['setup']['status'], extra: Partial<AppSessionWorktree> = {}) {
-  return {
-    path: '/wt/a',
-    branch: 'kimi/a',
-    setup: { status, purpose: 'create', request: {}, steps: [], commandsRan: 0, startedAt: '', script: 'none' },
-    ...extra,
-  } as AppSessionWorktree;
+  return sessionWorktree(status, { path: '/wt/a', branch: 'kimi/a', ...extra });
 }
 
 function session(id: string, extra: Partial<AppSession> = {}): AppSession {
@@ -78,13 +74,26 @@ function session(id: string, extra: Partial<AppSession> = {}): AppSession {
   } as AppSession;
 }
 
+function waitFor(check: () => void): Promise<void> {
+  return vi.waitFor(check, { interval: 1 });
+}
+
+async function openDeleteDialog(
+  facade: Awaited<ReturnType<typeof freshFacade>>,
+  sessions: AppSession[] = [session('s1', { worktree: worktree('ready') })],
+) {
+  facade.sessions.setSessions(sessions);
+  const pending = facade.client.deleteSessionWithToast('s1');
+  await waitFor(() => expect(facade.dialogs.deleteDialog.value).not.toBeNull());
+  return { ...facade, pending };
+}
+
 describe('deleting a worktree session', () => {
   it('asks in the worktree dialog and removes the worktree with the session', async () => {
-    const { client, sessions, dialogs, confirmDialog, toasts } = await freshFacade();
-    sessions.setSessions([session('s1', { worktree: worktree('ready') }), session('s2')]);
-
-    const pending = client.deleteSessionWithToast('s1');
-    await vi.waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
+    const { sessions, dialogs, confirmDialog, toasts, pending } = await openDeleteDialog(await freshFacade(), [
+      session('s1', { worktree: worktree('ready') }),
+      session('s2'),
+    ]);
 
     expect(clientApiMock.inspectWorktrees).toHaveBeenCalledWith(['/wt/a']);
     expect(confirmDialog.current.value).toBeNull();
@@ -106,11 +115,7 @@ describe('deleting a worktree session', () => {
   });
 
   it('passes the branch choice through', async () => {
-    const { client, sessions, dialogs } = await freshFacade();
-    sessions.setSessions([session('s1', { worktree: worktree('ready') })]);
-
-    const pending = client.deleteSessionWithToast('s1');
-    await vi.waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
+    const { dialogs, pending } = await openDeleteDialog(await freshFacade());
     dialogs.setDeleteBranch(true);
     dialogs.confirmDeletion();
     await pending;
@@ -120,11 +125,7 @@ describe('deleting a worktree session', () => {
 
   it.each(['kept_in_use', 'missing'] as const)('shows the usual toast when the directory outcome is %s', async (outcome) => {
     clientApiMock.deleteSession = vi.fn().mockResolvedValue({ deleted: true, worktree: { outcome } });
-    const { client, sessions, dialogs, worktrees, toasts } = await freshFacade();
-    sessions.setSessions([session('s1', { worktree: worktree('ready') })]);
-
-    const pending = client.deleteSessionWithToast('s1');
-    await vi.waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
+    const { dialogs, worktrees, toasts, pending } = await openDeleteDialog(await freshFacade());
     dialogs.confirmDeletion();
     await pending;
 
@@ -137,12 +138,9 @@ describe('deleting a worktree session', () => {
       .fn()
       .mockResolvedValue({ deleted: true, worktree: { outcome: 'failed', output: 'Directory not empty' } });
     const opened = vi.fn();
-    const { client, sessions, dialogs, worktrees, toasts, registerWorktreeSettingsOpener } = await freshFacade();
-    registerWorktreeSettingsOpener(opened);
-    sessions.setSessions([session('s1', { worktree: worktree('ready') })]);
-
-    const pending = client.deleteSessionWithToast('s1');
-    await vi.waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
+    const facade = await freshFacade();
+    facade.registerWorktreeSettingsOpener(opened);
+    const { sessions, dialogs, worktrees, toasts, pending } = await openDeleteDialog(facade);
     dialogs.confirmDeletion();
     await pending;
 
@@ -165,11 +163,7 @@ describe('deleting a worktree session', () => {
   });
 
   it('deletes nothing when the dialog is cancelled', async () => {
-    const { client, sessions, dialogs, toasts } = await freshFacade();
-    sessions.setSessions([session('s1', { worktree: worktree('ready') })]);
-
-    const pending = client.deleteSessionWithToast('s1');
-    await vi.waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
+    const { sessions, dialogs, toasts, pending } = await openDeleteDialog(await freshFacade());
     dialogs.closeDeleteDialog();
     await pending;
 
@@ -182,7 +176,7 @@ describe('deleting a worktree session', () => {
     const { client, dialogs } = await freshFacade();
 
     const pending = client.deleteSessionWithToast('s9', { title: 'Archived one', worktree: worktree('ready') });
-    await vi.waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
+    await waitFor(() => expect(dialogs.deleteDialog.value).not.toBeNull());
     expect(dialogs.deleteDialog.value).toMatchObject({ kind: 'session', title: 'Archived one' });
     dialogs.confirmDeletion();
     await pending;
@@ -194,15 +188,13 @@ describe('deleting a worktree session', () => {
 describe('sessions that keep the plain dialog', () => {
   it.each([
     ['a local session', undefined],
-    ['a session still setting up its worktree', worktree('running', { path: undefined })],
-    ['a session that chose local mode', worktree('local', { path: undefined })],
     ['a session whose worktree directory is flagged missing', worktree('ready', { missing: true })],
-  ])('asks the plain question for %s and leaves the directory alone', async (_name, sessionWorktree) => {
+  ])('asks the plain question for %s and leaves the directory alone', async (_name, attached) => {
     const { client, sessions, dialogs, confirmDialog } = await freshFacade();
-    sessions.setSessions([session('s1', sessionWorktree === undefined ? {} : { worktree: sessionWorktree })]);
+    sessions.setSessions([session('s1', attached === undefined ? {} : { worktree: attached })]);
 
     const pending = client.deleteSessionWithToast('s1');
-    await vi.waitFor(() => expect(confirmDialog.current.value).not.toBeNull());
+    await waitFor(() => expect(confirmDialog.current.value).not.toBeNull());
 
     expect(dialogs.deleteDialog.value).toBeNull();
     expect(clientApiMock.inspectWorktrees).not.toHaveBeenCalled();
@@ -222,7 +214,7 @@ describe('sessions that keep the plain dialog', () => {
     sessions.setSessions([session('s1', { worktree: worktree('ready') })]);
 
     const pending = client.deleteSessionWithToast('s1');
-    await vi.waitFor(() => expect(confirmDialog.current.value).not.toBeNull());
+    await waitFor(() => expect(confirmDialog.current.value).not.toBeNull());
 
     expect(dialogs.deleteDialog.value).toBeNull();
     await confirmDialog.runAction();

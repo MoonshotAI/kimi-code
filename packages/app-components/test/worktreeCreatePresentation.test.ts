@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { worktreeSetup } from '@moonshot-ai/app-client/testing';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import type { AppSessionWorktree, AppWorktreeSetup, AppWorktreeSetupStep } from '@moonshot-ai/app-core/api';
 import {
@@ -14,21 +15,8 @@ const i18n = createKimiI18n({ locale: 'en' });
 const t = i18n.global.t as unknown as CreateTranslate;
 const zh = createKimiI18n({ locale: 'zh' }).global.t as unknown as CreateTranslate;
 
-function setup(overrides: Partial<AppWorktreeSetup> = {}): AppWorktreeSetup {
-  return {
-    status: 'ready',
-    purpose: 'create',
-    request: { sourceBranch: 'main' },
-    steps: [],
-    commandsRan: 0,
-    startedAt: '2026-11-18T10:00:00.000Z',
-    script: 'none',
-    ...overrides,
-  };
-}
-
 function worktree(overrides: Partial<AppWorktreeSetup> = {}, extra: Partial<AppSessionWorktree> = {}): AppSessionWorktree {
-  return { setup: setup(overrides), ...extra };
+  return { ...extra, setup: worktreeSetup(overrides) };
 }
 
 function step(kind: AppWorktreeSetupStep['kind'], state: AppWorktreeSetupStep['state'], extra: Partial<AppWorktreeSetupStep> = {}): AppWorktreeSetupStep {
@@ -39,24 +27,27 @@ const actionIds = (view: { actions: { id: string }[] } | null) => view?.actions.
 const actionLabels = (view: { actions: { label: string }[] } | null) => view?.actions.map((item) => item.label);
 
 describe('worktree creation step copy', () => {
-  it('follows the step by state table', () => {
-    const ref = 'origin/main';
-    expect(createStepLabel(step('fetch', 'pending', { ref }), t)).toBe('Fetch origin/main');
-    expect(createStepLabel(step('fetch', 'running', { ref }), t)).toBe('Fetching origin/main');
-    expect(createStepLabel(step('fetch', 'done', { ref }), t)).toBe('Fetched origin/main');
-    expect(createStepLabel(step('fetch', 'failed', { ref }), t)).toBe('Failed to fetch origin/main');
-    expect(createStepLabel(step('fetch', 'failed', { ref, timedOut: true }), t)).toBe('Fetching origin/main timed out');
-    expect(createStepLabel(step('fetch', 'stopped', { ref }), t)).toBe('Stopped fetching origin/main');
-    expect(createStepLabel(step('create', 'pending'), t)).toBe('Create Worktree');
-    expect(createStepLabel(step('create', 'running', { ref }), t)).toBe('Creating Worktree from origin/main');
-    expect(createStepLabel(step('create', 'done', { ref: 'main' }), t)).toBe('Worktree created from main');
-    expect(createStepLabel(step('create', 'failed', { ref }), t)).toBe('Worktree creation failed');
-    expect(createStepLabel(step('changes', 'pending'), t)).toBe('Include local uncommitted changes');
-    expect(createStepLabel(step('changes', 'failed'), t)).toBe('Failed to include local changes');
-    expect(createStepLabel(step('script', 'running'), t)).toBe('Running initialization script');
-    expect(createStepLabel(step('script', 'skipped'), t)).toBe('Initialization script skipped');
-    expect(createStepLabel(step('script', 'failed', { timedOut: true }), t)).toBe('Initialization script timed out');
-    expect(createStepLabel(step('prune', 'running'), t)).toBe('Cleaning up invalid Worktree record');
+  const ref = 'origin/main';
+
+  it.each<[AppWorktreeSetupStep, string]>([
+    [step('fetch', 'pending', { ref }), 'Fetch origin/main'],
+    [step('fetch', 'running', { ref }), 'Fetching origin/main'],
+    [step('fetch', 'done', { ref }), 'Fetched origin/main'],
+    [step('fetch', 'failed', { ref }), 'Failed to fetch origin/main'],
+    [step('fetch', 'failed', { ref, timedOut: true }), 'Fetching origin/main timed out'],
+    [step('fetch', 'stopped', { ref }), 'Stopped fetching origin/main'],
+    [step('create', 'pending'), 'Create Worktree'],
+    [step('create', 'running', { ref }), 'Creating Worktree from origin/main'],
+    [step('create', 'done', { ref: 'main' }), 'Worktree created from main'],
+    [step('create', 'failed', { ref }), 'Worktree creation failed'],
+    [step('changes', 'pending'), 'Include local uncommitted changes'],
+    [step('changes', 'failed'), 'Failed to include local changes'],
+    [step('script', 'running'), 'Running initialization script'],
+    [step('script', 'skipped'), 'Initialization script skipped'],
+    [step('script', 'failed', { timedOut: true }), 'Initialization script timed out'],
+    [step('prune', 'running'), 'Cleaning up invalid Worktree record'],
+  ])('labels %j as "%s"', (item, label) => {
+    expect(createStepLabel(item, t)).toBe(label);
   });
 
   it('uses the Chinese wording from the design', () => {
@@ -112,22 +103,24 @@ describe('worktree creation block', () => {
     expect(view.steps[0]?.label).toBe('Worktree created from main');
   });
 
-  it('titles every terminal state', () => {
-    const title = (overrides: Partial<AppWorktreeSetup>) => createBlockView(worktree(overrides), t).title;
-    expect(title({ status: 'ready', script: 'skipped' })).toBe('Worktree created; initialization script skipped');
-    expect(title({ status: 'awaiting_script_confirmation', script: 'pending' })).toBe(
-      'Worktree created; initialization script awaiting confirmation',
-    );
-    expect(title({ status: 'failed', failure: { kind: 'fetch_failed' } })).toBe('Remote fetch failed');
-    expect(title({ status: 'failed', failure: { kind: 'fetch_timeout' } })).toBe('Remote fetch timed out');
-    expect(title({ status: 'failed', failure: { kind: 'conflict' } })).toBe('Local changes conflict with the remote');
-    expect(title({ status: 'failed', failure: { kind: 'disk_full' } })).toBe('Worktree creation failed');
-    expect(title({ status: 'failed', failure: { kind: 'create_failed' } })).toBe('Worktree creation failed');
-    expect(title({ status: 'failed', failure: { kind: 'script_failed' } })).toBe('Initialization script failed');
-    expect(title({ status: 'failed', failure: { kind: 'script_timeout' } })).toBe('Initialization script timed out');
-    expect(title({ status: 'stopped', stoppedStep: 'create' })).toBe('Worktree creation stopped');
-    expect(title({ status: 'stopped', stoppedStep: 'script' })).toBe('Initialization script stopped');
-    expect(title({ status: 'local' })).toBe('Switched to Local Mode');
+  it.each<[Partial<AppWorktreeSetup>, string]>([
+    [{ status: 'ready', script: 'skipped' }, 'Worktree created; initialization script skipped'],
+    [{ status: 'awaiting_script_confirmation', script: 'pending' }, 'Worktree created; initialization script awaiting confirmation'],
+    [{ status: 'failed', failure: { kind: 'fetch_failed' } }, 'Remote fetch failed'],
+    [{ status: 'failed', failure: { kind: 'fetch_timeout' } }, 'Remote fetch timed out'],
+    [{ status: 'failed', failure: { kind: 'conflict' } }, 'Local changes conflict with the remote'],
+    [{ status: 'failed', failure: { kind: 'disk_full' } }, 'Worktree creation failed'],
+    [{ status: 'failed', failure: { kind: 'create_failed' } }, 'Worktree creation failed'],
+    [{ status: 'failed', failure: { kind: 'script_failed' } }, 'Initialization script failed'],
+    [{ status: 'failed', failure: { kind: 'script_timeout' } }, 'Initialization script timed out'],
+    [{ status: 'stopped', stoppedStep: 'create' }, 'Worktree creation stopped'],
+    [{ status: 'stopped', stoppedStep: 'script' }, 'Initialization script stopped'],
+    [{ status: 'local' }, 'Switched to Local Mode'],
+  ])('titles %j as "%s"', (overrides, title) => {
+    expect(createBlockView(worktree(overrides), t).title).toBe(title);
+  });
+
+  it('counts a single command in the singular', () => {
     expect(createBlockView(worktree({ commandsRan: 1 }), t).meta).toBe('1 command ran');
   });
 

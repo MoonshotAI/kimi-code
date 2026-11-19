@@ -7,6 +7,7 @@ import type { AppWorkspace, WorkspaceGitBranches, WorktreeSetupScript } from '@m
 import { onToast, resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { registerWorktreeSettingsOpener } from '@moonshot-ai/app-client/composables';
 import { newSessionEnvironmentStore, workspacesStore, worktreesStore } from '@moonshot-ai/app-client/stores';
+import { memoryStorage } from '@moonshot-ai/app-client/testing';
 import CreateEnvironmentPicker from '../src/worktree/CreateEnvironmentPicker.vue';
 import CreateSourceBranchPicker from '../src/worktree/CreateSourceBranchPicker.vue';
 
@@ -79,13 +80,7 @@ const q = <T extends HTMLElement = HTMLElement>(selector: string) => host.queryS
 const all = (selector: string) => [...host.querySelectorAll<HTMLElement>(selector)];
 
 beforeEach(() => {
-  const storage = new Map<string, string>();
-  vi.stubGlobal('localStorage', {
-    getItem: (key: string) => storage.get(key) ?? null,
-    setItem: (key: string, value: string) => void storage.set(key, value),
-    removeItem: (key: string) => void storage.delete(key),
-    clear: () => storage.clear(),
-  });
+  vi.stubGlobal('localStorage', memoryStorage());
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} unobserve() {} });
   for (const mock of Object.values(api)) mock.mockReset();
   api.getWorkspaceGitBranches.mockResolvedValue(repo);
@@ -119,8 +114,8 @@ afterEach(() => {
 
 describe('CreateEnvironmentPicker', () => {
   it('starts on Local and enables Worktree once the project is known to be a Git repository', async () => {
-    let resolveBranches!: (info: WorkspaceGitBranches) => void;
-    api.getWorkspaceGitBranches.mockReturnValueOnce(new Promise((resolve) => { resolveBranches = resolve; }));
+    const branches = Promise.withResolvers<WorkspaceGitBranches>();
+    api.getWorkspaceGitBranches.mockReturnValueOnce(branches.promise);
     mount(CreateEnvironmentPicker, { workspaceId: 'ws1' });
     await nextTick();
 
@@ -137,7 +132,7 @@ describe('CreateEnvironmentPicker', () => {
     worktreeRow().click();
     expect(newSessionEnvironmentStore().preferred).toBe('local');
 
-    resolveBranches(repo);
+    branches.resolve(repo);
     await settle();
     expect(worktreeRow().getAttribute('aria-disabled')).toBe('false');
     expect(worktreeRow().querySelector('.ui-spinner')).toBeNull();

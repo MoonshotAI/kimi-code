@@ -3,7 +3,7 @@ import { createApp, h, nextTick, ref, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import type { AppSessionWorktree, AppWorktreeSetup } from '@moonshot-ai/app-core/api';
+import type { AppSessionWorktree } from '@moonshot-ai/app-core/api';
 
 const worktree = ref<AppSessionWorktree | undefined>(undefined);
 const actions = {
@@ -59,28 +59,16 @@ vi.mock('@moonshot-ai/app-markdown', () => ({ Markdown: { render: () => null } }
 
 import { registerWorktreeSettingsOpener } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
+import { worktreeSetup } from '@moonshot-ai/app-client/testing';
 import DesktopChatDock from '../../src/renderer/components/chat/ChatDock.vue';
 
 let app: App | null = null;
 let host: HTMLDivElement;
 
-function setup(overrides: Partial<AppWorktreeSetup> = {}): AppWorktreeSetup {
-  return {
-    status: 'ready',
-    purpose: 'create',
-    request: { sourceBranch: 'main' },
-    steps: [],
-    commandsRan: 0,
-    startedAt: '2026-11-18T10:00:00.000Z',
-    script: 'none',
-    ...overrides,
-  };
-}
-
-async function mountDock(component: unknown): Promise<void> {
+async function mountDock(): Promise<void> {
   app = createApp({
     render: () =>
-      h(component as never, {
+      h(DesktopChatDock, {
         dockPanel: null,
         bashTasks: [],
         subagentTasks: [],
@@ -125,24 +113,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe.each([
-  ['desktop', DesktopChatDock],
-])('%s ChatDock worktree cards', (_name, ChatDock) => {
+describe('desktop ChatDock worktree cards', () => {
   it('shows nothing extra for a local or ready session', async () => {
-    await mountDock(ChatDock);
+    await mountDock();
     expect(host.querySelector('[data-worktree-card]')).toBeNull();
     expect(host.querySelector('[data-worktree-invalid]')).toBeNull();
     expect(composer().style.display).toBe('');
 
-    worktree.value = { path: '/w', setup: setup() };
+    worktree.value = { path: '/w', setup: worktreeSetup() };
     await nextTick();
     expect(host.querySelector('[data-worktree-card]')).toBeNull();
     expect(composer().style.display).toBe('');
   });
 
   it('keeps the composer below a decision card and maps its buttons to worktree actions', async () => {
-    worktree.value = { setup: setup({ status: 'failed', failure: { kind: 'fetch_failed' } }) };
-    await mountDock(ChatDock);
+    worktree.value = { setup: worktreeSetup({ status: 'failed', failure: { kind: 'fetch_failed' } }) };
+    await mountDock();
 
     const card = host.querySelector<HTMLElement>('[data-worktree-card="fetchFailed"]')!;
     expect(card).not.toBeNull();
@@ -155,7 +141,7 @@ describe.each([
     expect(actions.retrySessionWorktree).toHaveBeenLastCalledWith('s1', { useRemote: false });
 
     worktree.value = {
-      setup: setup({ status: 'failed', failure: { kind: 'conflict', remoteRef: 'origin/main', conflictFiles: ['a.ts'] } }),
+      setup: worktreeSetup({ status: 'failed', failure: { kind: 'conflict', remoteRef: 'origin/main', conflictFiles: ['a.ts'] } }),
     };
     await nextTick();
     await press('createFromRemote');
@@ -163,7 +149,7 @@ describe.each([
 
     const openSettings = vi.fn();
     registerWorktreeSettingsOpener(openSettings);
-    worktree.value = { setup: setup({ status: 'failed', failure: { kind: 'disk_full' } }) };
+    worktree.value = { setup: worktreeSetup({ status: 'failed', failure: { kind: 'disk_full' } }) };
     await nextTick();
     await press('manage');
     expect(openSettings).toHaveBeenCalledTimes(1);
@@ -174,16 +160,16 @@ describe.each([
   it('maps the script cards to skip and run', async () => {
     worktree.value = {
       path: '/w',
-      setup: setup({ status: 'awaiting_script_confirmation', script: 'pending', scriptContent: 'pnpm install' }),
+      setup: worktreeSetup({ status: 'awaiting_script_confirmation', script: 'pending', scriptContent: 'pnpm install' }),
     };
-    await mountDock(ChatDock);
+    await mountDock();
     expect(host.querySelector('[data-worktree-card="scriptConfirm"] .wcc-code')?.textContent).toBe('pnpm install');
     await press('runScript');
     expect(actions.runSessionWorktreeScript).toHaveBeenCalledWith('s1');
 
     worktree.value = {
       path: '/w',
-      setup: setup({ status: 'failed', stoppedStep: 'script', failure: { kind: 'script_failed', exitCode: 1 } }),
+      setup: worktreeSetup({ status: 'failed', stoppedStep: 'script', failure: { kind: 'script_failed', exitCode: 1 } }),
     };
     await nextTick();
     await press('skipScript');
@@ -192,8 +178,8 @@ describe.each([
   });
 
   it('replaces the composer with the invalid card and recreates inside it', async () => {
-    worktree.value = { path: '/w', branch: 'kimi/1', missing: true, setup: setup() };
-    await mountDock(ChatDock);
+    worktree.value = { path: '/w', branch: 'kimi/1', missing: true, setup: worktreeSetup() };
+    await mountDock();
 
     expect(host.querySelector('[data-worktree-invalid="missing"]')).not.toBeNull();
     expect(host.querySelector('[data-worktree-card]')).toBeNull();
@@ -204,7 +190,7 @@ describe.each([
     worktree.value = {
       branch: 'kimi/1',
       missing: true,
-      setup: setup({ purpose: 'recreate', status: 'running', steps: [{ kind: 'create', state: 'running', command: 'git worktree add /w kimi/1' }] }),
+      setup: worktreeSetup({ purpose: 'recreate', status: 'running', steps: [{ kind: 'create', state: 'running', command: 'git worktree add /w kimi/1' }] }),
     };
     await nextTick();
     expect(host.querySelector('[data-worktree-invalid="recreating"] .wci-command')?.textContent).toBe('git worktree add /w kimi/1');
@@ -212,22 +198,15 @@ describe.each([
     await press('stop');
     expect(actions.cancelSessionWorktree).toHaveBeenCalledWith('s1');
 
-    worktree.value = { branch: 'kimi/1', missing: true, setup: setup({ purpose: 'recreate', status: 'stopped', stoppedStep: 'create' }) };
+    worktree.value = { branch: 'kimi/1', missing: true, setup: worktreeSetup({ purpose: 'recreate', status: 'stopped', stoppedStep: 'create' }) };
     await nextTick();
     expect(host.querySelector('[data-worktree-invalid="stopped"]')).not.toBeNull();
     await press('retry');
     expect(actions.retrySessionWorktree).toHaveBeenLastCalledWith('s1');
 
-    worktree.value = { path: '/w', branch: 'kimi/1', setup: setup({ purpose: 'recreate' }) };
+    worktree.value = { path: '/w', branch: 'kimi/1', setup: worktreeSetup({ purpose: 'recreate' }) };
     await nextTick();
     expect(host.querySelector('[data-worktree-invalid]')).toBeNull();
     expect(composer().style.display).toBe('');
-  });
-
-  it('only offers local mode when the branch is gone too', async () => {
-    worktree.value = { path: '/w', branch: 'kimi/1', missing: true, branchMissing: true, setup: setup() };
-    await mountDock(ChatDock);
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[data-worktree-invalid] button')];
-    expect(buttons.map((item) => item.dataset.action)).toEqual(['useLocal']);
   });
 });

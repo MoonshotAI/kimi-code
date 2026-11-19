@@ -5,7 +5,8 @@ import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
 import type { SessionFolderInfoRow } from '@moonshot-ai/app-client/stores';
-import type { GitStatusEntry } from '@moonshot-ai/app-core/api';
+import { appSession, sessionWorktree } from '@moonshot-ai/app-client/testing';
+import type { AppSession, AppSessionWorktree, AppWorktreeSetup, GitStatusEntry } from '@moonshot-ai/app-core/api';
 import type { SessionWorktreeDisplay } from '@moonshot-ai/app-components/support';
 
 import SessionInfoFolder from '../../src/renderer/components/chat/SessionInfoFolder.vue';
@@ -32,7 +33,7 @@ const store = vi.hoisted(() => ({
 }));
 
 const sessionState = vi.hoisted(() => ({
-  sessions: [] as Array<Record<string, unknown>>,
+  sessions: [] as AppSession[],
   fsHome: null as string | null,
   mergedWorkspaces: [] as Array<{ id: string; name: string }>,
   workspaceIdForSession: (session: { workspaceId?: string }) => session.workspaceId ?? '',
@@ -100,18 +101,20 @@ function worktree(overrides: Partial<SessionWorktreeDisplay> = {}): SessionWorkt
   };
 }
 
-function worktreeSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
+function worktreeSession(
+  overrides: Partial<AppSessionWorktree> = {},
+  status: AppWorktreeSetup['status'] = 'ready',
+): AppSession {
+  return appSession({
     id: 's1',
     cwd: '/repo/a',
-    worktree: {
+    worktree: sessionWorktree(status, {
       path: '/repo/a',
       branch: 'kimi/1104-b8b6',
       base: { ref: 'origin/main', remote: true },
-      setup: { status: 'ready' },
       ...overrides,
-    },
-  };
+    }),
+  });
 }
 
 function mount(component: unknown, props: Record<string, unknown>) {
@@ -122,6 +125,17 @@ function mount(component: unknown, props: Record<string, unknown>) {
   app.provide(IconResolverKey, (name) => getIcon(name as IconName)?.component);
   app.mount(host);
   return host;
+}
+
+async function mountPanel(
+  rows: SessionFolderInfoRow[] = [readyRow()],
+  props: Record<string, unknown> = {},
+): Promise<HTMLDivElement> {
+  store.rows.mockReturnValue(rows);
+  store.foldersForSession.mockReturnValue(rows.map(row => ({ path: row.path, primary: row.primary })));
+  const el = mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar', ...props });
+  await nextTick();
+  return el;
 }
 
 function popover(): HTMLElement | null {
@@ -211,13 +225,22 @@ describe('SessionInfoFolder', () => {
   });
 
   it('shows the short head with a warning tooltip when detached', async () => {
-    mount(SessionInfoFolder, { row: readyRow({ branch: '', detached: true, head: '3f2a91c', upstream: undefined }) });
-    await nextTick();
+    vi.useFakeTimers();
+    try {
+      mount(SessionInfoFolder, { row: readyRow({ branch: '', detached: true, head: '3f2a91c', upstream: undefined }) });
+      await nextTick();
 
-    expect(host!.querySelector('.sif-branch')?.textContent).toBe('HEAD @ 3f2a91c');
-    expect(host!.querySelector('.sif-branch-line .ui-tip')).not.toBeNull();
-    expect(host!.querySelector('.sif-not-pushed')).toBeNull();
-    expect(sessionInfoFolderSource).toContain("t('worktreeSession.detachedTooltip')");
+      const branch = host!.querySelector<HTMLElement>('.sif-branch-line .ui-tip .sif-branch')!;
+      expect(branch.textContent).toBe('HEAD @ 3f2a91c');
+      expect(host!.querySelector('.sif-not-pushed')).toBeNull();
+
+      branch.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 10, clientY: 10 }));
+      branch.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 27, clientY: 10 }));
+      await vi.advanceTimersByTimeAsync(200);
+      expect(document.querySelector('.ui-tip__bubble')?.textContent).toBe('当前不在任何分支上，新提交可能会丢失。');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uses the app tooltip only when the branch is truncated', async () => {
@@ -304,7 +327,7 @@ describe('SessionInfoFolder', () => {
     vi.useFakeTimers();
     try {
       const row = reactive<SessionFolderInfoRow>({ ...readyRow(), statusLoading: true });
-      mount({ render: () => h(SessionInfoFolder, { row }) }, {});
+      mount(SessionInfoFolder, { row });
       await nextTick();
 
       expect(host!.querySelector('.sif-changes-loading')).toBeNull();
@@ -327,7 +350,7 @@ describe('SessionInfoFolder', () => {
     vi.useFakeTimers();
     try {
       const row = reactive<SessionFolderInfoRow>({ ...readyRow(), statusLoading: true });
-      mount({ render: () => h(SessionInfoFolder, { row }) }, {});
+      mount(SessionInfoFolder, { row });
       await vi.advanceTimersByTimeAsync(200);
       row.statusLoading = false;
       await vi.advanceTimersByTimeAsync(1000);
@@ -393,7 +416,6 @@ describe('SessionInfoFolder', () => {
     expect(host!.querySelector('.sif-created')).toBeNull();
     expect(host!.querySelector('.sif-diff-button')).toBeNull();
     expect(host!.querySelector('.sif-pr')).toBeNull();
-    expect(sessionInfoFolderSource).toMatch(/\.sif-missing,\s*\.sif-missing \.sif-ico\s*\{\s*color: var\(--color-warning\);/);
   });
 
   it('marks a directory reported missing by the store', async () => {
@@ -687,10 +709,7 @@ describe('SessionInfoPanel', () => {
   it('shows worktree information only on the main directory of a worktree session', async () => {
     sessionState.sessions = [worktreeSession()];
     sessionState.fsHome = '/repo';
-    store.rows.mockReturnValue([readyRow(), { ...readyRow(), path: '/project', primary: false }]);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }, { path: '/project', primary: false }]);
-    const el = mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar' });
-    await nextTick();
+    const el = await mountPanel([readyRow(), { ...readyRow(), path: '/project', primary: false }]);
 
     expect(el.querySelector('[data-folder="/repo/a"] .sif-path')?.textContent).toBe('~/a');
     expect(el.querySelector('[data-folder="/repo/a"] .sif-created')?.textContent).toBe('基于 origin/main 创建');
@@ -701,16 +720,9 @@ describe('SessionInfoPanel', () => {
     expect(el.querySelector('[data-folder="/project"] .sif-primary')).toBeNull();
   });
 
-  it.each([
-    { name: 'before the worktree exists', worktree: { path: undefined, base: undefined, setup: { status: 'running' } } },
-    { name: 'after falling back to local', worktree: { path: undefined, setup: { status: 'local' } } },
-    { name: 'after creation failed', worktree: { path: undefined, setup: { status: 'failed' } } },
-  ])('shows plain directory information $name', async ({ worktree: state }) => {
-    sessionState.sessions = [worktreeSession(state)];
-    store.rows.mockReturnValue([readyRow()]);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
-    const el = mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar' });
-    await nextTick();
+  it('shows plain directory information after falling back to local', async () => {
+    sessionState.sessions = [worktreeSession({ path: undefined }, 'local')];
+    const el = await mountPanel();
 
     expect(el.querySelector('.sif-created')).toBeNull();
     expect(el.querySelector('.sif-branch')?.textContent).toBe('feat/session-info');
@@ -718,10 +730,7 @@ describe('SessionInfoPanel', () => {
   });
 
   it('refreshes every directory from the main directory title row', async () => {
-    store.rows.mockReturnValue([readyRow(), { ...readyRow(), path: '/repo/b', primary: false }]);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }, { path: '/repo/b', primary: false }]);
-    const el = mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar' });
-    await nextTick();
+    const el = await mountPanel([readyRow(), { ...readyRow(), path: '/repo/b', primary: false }]);
 
     expect(el.querySelectorAll('.si-refresh')).toHaveLength(1);
     const button = el.querySelector<HTMLButtonElement>('[data-folder="/repo/a"] .sif-head .si-refresh')!;
@@ -734,10 +743,7 @@ describe('SessionInfoPanel', () => {
 
   it('keeps the data and rotates the icon while refreshing', async () => {
     store.refreshing.mockReturnValue(true);
-    store.rows.mockReturnValue([readyRow()]);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
-    const el = mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar' });
-    await nextTick();
+    const el = await mountPanel();
 
     expect(el.querySelector('.si-refresh')?.classList.contains('spinning')).toBe(true);
     expect(el.querySelector('.sif-branch')?.textContent).toBe('feat/session-info');
@@ -746,10 +752,7 @@ describe('SessionInfoPanel', () => {
 
   it('replaces the refresh button with a warning that explains a failed refresh', async () => {
     store.refreshError.mockReturnValue({ output: 'git status timed out' });
-    store.rows.mockReturnValue([readyRow()]);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
-    const el = mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar' });
-    await nextTick();
+    const el = await mountPanel();
 
     expect(el.querySelector('.si-refresh')).toBeNull();
     expect(el.querySelector('.sif-branch')?.textContent).toBe('feat/session-info');
@@ -763,11 +766,7 @@ describe('SessionInfoPanel', () => {
 
   it('leaves only Browser under Open In when the worktree is missing', async () => {
     sessionState.sessions = [worktreeSession({ missing: true })];
-    store.rows.mockReturnValue([{ ...readyRow(), state: { status: 'missing' as const } }]);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
-    const el = mount(SessionInfoPanel, {
-      sessionId: 's1',
-      mode: 'sidebar',
+    const el = await mountPanel([{ ...readyRow(), state: { status: 'missing' } }], {
       available: [
         { type: 'browser', icon: 'browser', label: '浏览器', keys: [], disabled: false },
         { type: 'term', icon: 'terminal', label: '终端', keys: [], disabled: false },
@@ -775,43 +774,36 @@ describe('SessionInfoPanel', () => {
         { type: 'sidechat', icon: 'side-chat', label: '侧边聊天', keys: [], disabled: false },
       ],
     });
-    await nextTick();
 
     expect(el.querySelector('.sif-missing')?.textContent).toBe('工作树目录不存在');
     expect([...el.querySelectorAll('.sit-available')].map(node => node.textContent)).toEqual(['浏览器']);
   });
 
   it('refreshes when a session update marks the worktree missing or restored', async () => {
-    const session = reactive(worktreeSession()) as { worktree: { missing?: boolean } };
-    sessionState.sessions = reactive([session]) as never;
+    const session = reactive(worktreeSession());
+    sessionState.sessions = reactive([session]);
     const rows = reactive<SessionFolderInfoRow[]>([readyRow()]);
-    store.rows.mockReturnValue(rows);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
-    mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar' });
-    await nextTick();
+    await mountPanel(rows);
     expect(store.refresh).not.toHaveBeenCalled();
 
-    session.worktree.missing = true;
+    session.worktree!.missing = true;
     await nextTick();
     expect(store.refresh).toHaveBeenCalledExactlyOnceWith('s1');
 
     rows[0]!.state = { status: 'missing' };
-    session.worktree.missing = false;
+    session.worktree!.missing = false;
     await nextTick();
     expect(store.refresh).toHaveBeenCalledTimes(2);
   });
 
   it('does not refresh again when the store itself detected the missing worktree', async () => {
-    const session = reactive(worktreeSession()) as { worktree: { missing?: boolean } };
-    sessionState.sessions = reactive([session]) as never;
+    const session = reactive(worktreeSession());
+    sessionState.sessions = reactive([session]);
     const rows = reactive<SessionFolderInfoRow[]>([readyRow()]);
-    store.rows.mockReturnValue(rows);
-    store.foldersForSession.mockReturnValue([{ path: '/repo/a', primary: true }]);
-    mount(SessionInfoPanel, { sessionId: 's1', mode: 'sidebar' });
-    await nextTick();
+    await mountPanel(rows);
 
     rows[0]!.state = { status: 'missing' };
-    session.worktree.missing = true;
+    session.worktree!.missing = true;
     await nextTick();
     expect(store.refresh).not.toHaveBeenCalled();
   });

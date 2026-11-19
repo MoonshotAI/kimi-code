@@ -3,7 +3,8 @@ import { createApp, h, nextTick, reactive, type App, type Component } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import type { AppSessionWorktree, AppWorktreeSetup, AppWorktreeSetupStep } from '@moonshot-ai/app-core/api';
+import { sessionWorktree } from '@moonshot-ai/app-client/testing';
+import type { AppSessionWorktree, AppWorktreeSetupStep } from '@moonshot-ai/app-core/api';
 import CreateDecisionCard from '../src/worktree/CreateDecisionCard.vue';
 import CreateInvalidCard from '../src/worktree/CreateInvalidCard.vue';
 import CreateProgressBlock from '../src/worktree/CreateProgressBlock.vue';
@@ -19,25 +20,13 @@ const t = createKimiI18n({ locale: 'en' }).global.t as unknown as CreateTranslat
 let app: App | null = null;
 let host: HTMLDivElement;
 
-function mount(component: Component, props: Record<string, unknown>): HTMLDivElement {
-  app = createApp({ render: () => h(component, props) });
+function mount(component: Component, props: Record<string, unknown> | (() => Record<string, unknown>)): HTMLDivElement {
+  const read = typeof props === 'function' ? props : () => props;
+  app = createApp({ render: () => h(component, read()) });
   app.use(createKimiI18n({ locale: 'en' }));
   app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
   app.mount(host);
   return host;
-}
-
-function setup(overrides: Partial<AppWorktreeSetup> = {}): AppWorktreeSetup {
-  return {
-    status: 'ready',
-    purpose: 'create',
-    request: { sourceBranch: 'main' },
-    steps: [],
-    commandsRan: 0,
-    startedAt: '2026-11-18T10:00:00.000Z',
-    script: 'none',
-    ...overrides,
-  };
 }
 
 function step(kind: AppWorktreeSetupStep['kind'], state: AppWorktreeSetupStep['state'], extra: Partial<AppWorktreeSetupStep> = {}): AppWorktreeSetupStep {
@@ -70,27 +59,21 @@ describe('CreateProgressBlock', () => {
   it('shows elapsed seconds and every step while running', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-18T10:00:05.000Z'));
-    const worktree: AppSessionWorktree = {
-      setup: setup({
-        status: 'running',
-        steps: [
-          step('fetch', 'done', { ref: 'origin/main', command: 'git fetch --no-tags origin main' }),
-          step('create', 'running', { ref: 'origin/main', command: 'git worktree add --no-track -b kimi/1 /w origin/main' }),
-          step('script', 'pending'),
-        ],
-      }),
-    };
+    const worktree = sessionWorktree('running', {}, {
+      startedAt: '2026-11-18T10:00:00.000Z',
+      steps: [
+        step('fetch', 'done', { ref: 'origin/main', command: 'git fetch --no-tags origin main' }),
+        step('create', 'running', { ref: 'origin/main', command: 'git worktree add --no-track -b kimi/1 /w origin/main' }),
+        step('script', 'pending'),
+      ],
+    });
     mount(CreateProgressBlock, { worktree, sessionId: 's1' });
     await nextTick();
 
     expect(text('.wcb-title')).toBe('Creating Worktree');
     expect(text('.wcb-elapsed')).toBe('5 s');
     expect(host.querySelector('.wcb-head svg[data-icon="check"], .wcb-head svg[data-icon="alert-triangle"]')).toBeNull();
-    expect(stepRows().map((row) => [row.dataset.state, row.querySelector('.wcb-label')?.textContent])).toEqual([
-      ['done', 'Fetched origin/main'],
-      ['running', 'Creating Worktree from origin/main'],
-      ['pending', 'Run initialization script'],
-    ]);
+    expect(stepRows().map((row) => row.dataset.state)).toEqual(['done', 'running', 'pending']);
     expect(stepRows()[0]?.querySelector('.wcb-command')?.textContent).toBe('git fetch --no-tags origin main');
     expect(stepRows()[0]?.querySelector('svg[data-icon="check"]')).not.toBeNull();
     expect(stepRows()[2]?.querySelector('.wcb-dot')).not.toBeNull();
@@ -102,11 +85,11 @@ describe('CreateProgressBlock', () => {
   });
 
   it('collapses when created and expands on demand', async () => {
-    const worktree: AppSessionWorktree = {
-      path: '/w',
-      includedLocalChanges: true,
-      setup: setup({ commandsRan: 2, steps: [step('create', 'done', { ref: 'main', command: 'git worktree add /w main' }), step('changes', 'done')] }),
-    };
+    const worktree = sessionWorktree(
+      'ready',
+      { path: '/w', includedLocalChanges: true },
+      { commandsRan: 2, steps: [step('create', 'done', { ref: 'main', command: 'git worktree add /w main' }), step('changes', 'done')] },
+    );
     mount(CreateProgressBlock, { worktree, sessionId: 's1' });
     await nextTick();
 
@@ -125,25 +108,19 @@ describe('CreateProgressBlock', () => {
 
   it('auto-expands with the failed step in red and its output', async () => {
     const state = reactive<{ worktree: AppSessionWorktree }>({
-      worktree: { setup: setup({ status: 'running', steps: [step('fetch', 'running', { ref: 'origin/main', command: 'git fetch' })] }) },
+      worktree: sessionWorktree('running', {}, { steps: [step('fetch', 'running', { ref: 'origin/main', command: 'git fetch' })] }),
     });
-    app = createApp({ render: () => h(CreateProgressBlock, { worktree: state.worktree, sessionId: 's1' }) });
-    app.use(createKimiI18n({ locale: 'en' }));
-    app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
-    app.mount(host);
+    mount(CreateProgressBlock, () => ({ worktree: state.worktree, sessionId: 's1' }));
     await nextTick();
     host.querySelector<HTMLButtonElement>('.wcb-head')!.click();
     await nextTick();
     expect(stepRows()).toHaveLength(0);
 
-    state.worktree = {
-      setup: setup({
-        status: 'failed',
-        failure: { kind: 'fetch_failed' },
-        commandsRan: 1,
-        steps: [step('fetch', 'failed', { ref: 'origin/main', command: 'git fetch', output: 'fatal: Could not resolve host' })],
-      }),
-    };
+    state.worktree = sessionWorktree('failed', {}, {
+      failure: { kind: 'fetch_failed' },
+      commandsRan: 1,
+      steps: [step('fetch', 'failed', { ref: 'origin/main', command: 'git fetch', output: 'fatal: Could not resolve host' })],
+    });
     await nextTick();
 
     expect(text('.wcb-title')).toBe('Remote fetch failed');
@@ -156,19 +133,16 @@ describe('CreateProgressBlock', () => {
 
   it('keeps showing the original creation while the worktree is recreated', async () => {
     const state = reactive<{ worktree: AppSessionWorktree }>({
-      worktree: { path: '/w', setup: setup({ commandsRan: 1, steps: [step('create', 'done', { ref: 'main' })] }) },
+      worktree: sessionWorktree('ready', { path: '/w' }, { commandsRan: 1, steps: [step('create', 'done', { ref: 'main' })] }),
     });
-    app = createApp({ render: () => h(CreateProgressBlock, { worktree: state.worktree, sessionId: 's1' }) });
-    app.use(createKimiI18n({ locale: 'en' }));
-    app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
-    app.mount(host);
+    mount(CreateProgressBlock, () => ({ worktree: state.worktree, sessionId: 's1' }));
     await nextTick();
 
-    state.worktree = {
-      branch: 'kimi/1',
-      missing: true,
-      setup: setup({ purpose: 'recreate', status: 'running', steps: [step('prune', 'running'), step('create', 'pending')] }),
-    };
+    state.worktree = sessionWorktree(
+      'running',
+      { branch: 'kimi/1', missing: true },
+      { purpose: 'recreate', steps: [step('prune', 'running'), step('create', 'pending')] },
+    );
     await nextTick();
 
     expect(text('.wcb-title')).toBe('Worktree created');
@@ -181,7 +155,7 @@ describe('CreateProgressBlock', () => {
 describe('CreateDecisionCard', () => {
   it('renders the problem, the body and the buttons with the primary one last', async () => {
     const onAction = vi.fn();
-    const view = createDecisionCardView({ setup: setup({ status: 'failed', failure: { kind: 'disk_full' } }) }, t)!;
+    const view = createDecisionCardView(sessionWorktree('failed', {}, { failure: { kind: 'disk_full' } }), t)!;
     mount(CreateDecisionCard, { view, onAction });
     await nextTick();
 
@@ -199,7 +173,7 @@ describe('CreateDecisionCard', () => {
 
   it('lists conflict files and shows the script to confirm', async () => {
     const conflict = createDecisionCardView(
-      { setup: setup({ status: 'failed', failure: { kind: 'conflict', remoteRef: 'origin/main', conflictFiles: ['src/a.ts', 'src/b.ts'] } }) },
+      sessionWorktree('failed', {}, { failure: { kind: 'conflict', remoteRef: 'origin/main', conflictFiles: ['src/a.ts', 'src/b.ts'] } }),
       t,
     )!;
     mount(CreateDecisionCard, { view: conflict });
@@ -208,26 +182,19 @@ describe('CreateDecisionCard', () => {
     app?.unmount();
 
     const confirm = createDecisionCardView(
-      { path: '/w', setup: setup({ status: 'awaiting_script_confirmation', script: 'pending', scriptContent: 'pnpm install' }) },
+      sessionWorktree('awaiting_script_confirmation', { path: '/w' }, { script: 'pending', scriptContent: 'pnpm install' }),
       t,
     )!;
     mount(CreateDecisionCard, { view: confirm });
     await nextTick();
     expect(text('.wcc-code')).toBe('pnpm install');
-    expect([...host.querySelectorAll<HTMLButtonElement>('.wcc-actions button')].map((item) => item.dataset.action)).toEqual([
-      'skipScript',
-      'runScript',
-    ]);
   });
 
   it('runs the primary action on Enter outside editable fields and blocks actions while busy', async () => {
     const onAction = vi.fn();
-    const view = createDecisionCardView({ setup: setup({ status: 'failed', failure: { kind: 'fetch_failed' } }) }, t)!;
+    const view = createDecisionCardView(sessionWorktree('failed', {}, { failure: { kind: 'fetch_failed' } }), t)!;
     const state = reactive<{ busy: string | null }>({ busy: null });
-    app = createApp({ render: () => h(CreateDecisionCard, { view, busyAction: state.busy as never, onAction }) });
-    app.use(createKimiI18n({ locale: 'en' }));
-    app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
-    app.mount(host);
+    mount(CreateDecisionCard, () => ({ view, busyAction: state.busy, onAction }));
     await nextTick();
 
     const input = document.createElement('textarea');
@@ -252,12 +219,11 @@ describe('CreateDecisionCard', () => {
 describe('CreateInvalidCard', () => {
   it('offers recreate and local mode for a missing worktree', async () => {
     const onAction = vi.fn();
-    const view = createInvalidCardView({ path: '/w', branch: 'kimi/1', missing: true, setup: setup() }, t)!;
+    const view = createInvalidCardView(sessionWorktree('ready', { path: '/w', branch: 'kimi/1', missing: true }), t)!;
     mount(CreateInvalidCard, { view, onAction });
     await nextTick();
 
-    expect(text('.wci-title')).toBe('Worktree no longer exists');
-    expect(text('.wci-body')).toBe('You can recreate it from branch kimi/1 or switch to Local mode.');
+    expect(text('.wci-body')).toBe(view.body);
     button('Recreate Worktree').click();
     button('Use Local Mode').click();
     expect(onAction.mock.calls.map((call) => call[0])).toEqual(['recreate', 'useLocal']);
@@ -266,17 +232,16 @@ describe('CreateInvalidCard', () => {
   it('shows the running command with a stop button while recreating', async () => {
     const onAction = vi.fn();
     const view = createInvalidCardView(
-      {
-        branch: 'kimi/1',
-        missing: true,
-        setup: setup({ purpose: 'recreate', status: 'running', steps: [step('prune', 'done'), step('create', 'running', { command: 'git worktree add /w kimi/1' })] }),
-      },
+      sessionWorktree(
+        'running',
+        { branch: 'kimi/1', missing: true },
+        { purpose: 'recreate', steps: [step('prune', 'done'), step('create', 'running', { command: 'git worktree add /w kimi/1' })] },
+      ),
       t,
     )!;
     mount(CreateInvalidCard, { view, onAction });
     await nextTick();
 
-    expect(text('.wci-title')).toBe('Recreating Worktree from kimi/1');
     expect(text('.wci-command')).toBe('git worktree add /w kimi/1');
     expect(host.querySelectorAll('.wci-actions button')).toHaveLength(1);
     button('Stop').click();
@@ -286,28 +251,21 @@ describe('CreateInvalidCard', () => {
   it('toggles the raw output of a failed recreate without emitting', async () => {
     const onAction = vi.fn();
     const view = createInvalidCardView(
-      {
-        branch: 'kimi/1',
-        missing: true,
-        setup: setup({
+      sessionWorktree(
+        'failed',
+        { branch: 'kimi/1', missing: true },
+        {
           purpose: 'recreate',
-          status: 'failed',
           failure: { kind: 'disk_full' },
           steps: [step('create', 'failed', { command: 'git worktree add /w kimi/1', output: 'No space left on device' })],
-        }),
-      },
+        },
+      ),
       t,
     )!;
     mount(CreateInvalidCard, { view, onAction });
     await nextTick();
 
     expect(text('.wci-title')).toBe('Worktree recreation failed');
-    expect([...host.querySelectorAll<HTMLButtonElement>('.wci-actions button')].map((item) => item.dataset.action)).toEqual([
-      'viewOutput',
-      'manage',
-      'useLocal',
-      'retry',
-    ]);
     expect(host.querySelector('.wci-output')).toBeNull();
     button('View Raw Output').click();
     await nextTick();

@@ -1,13 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const memStorage = new Map<string, string>();
-vi.stubGlobal('localStorage', {
-  getItem: (key: string) => memStorage.get(key) ?? null,
-  setItem: (key: string, value: string) => void memStorage.set(key, value),
-  removeItem: (key: string) => void memStorage.delete(key),
-  clear: () => memStorage.clear(),
-});
-
 import type { AppWorkspace, WorktreeLookup } from '@moonshot-ai/app-core/api';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import type { ToastOptions } from '@moonshot-ai/app-ui';
@@ -17,6 +9,10 @@ import { resetWorktreeManageDialogs, useWorktreeManageDialogs } from '../src/com
 import { noopProductTracker, setProductTracker } from '../src/contracts';
 import { sessionsStore } from '../src/stores/sessions';
 import { workspacesStore } from '../src/stores/workspaces';
+import { memoryStorage } from '../src/testing/worktreeFixtures';
+
+const memStorage = new Map<string, string>();
+vi.stubGlobal('localStorage', memoryStorage(memStorage));
 
 const i18n = createKimiI18n({ locale: 'en' });
 
