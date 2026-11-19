@@ -1,17 +1,9 @@
 import type { Message, UserMessage } from '#/llm/message';
+import type { Event, Projection } from '#/store/index';
 import type { UnfinishedTurn } from './contract/command';
 import type { LoopEmitted } from './contract/emitted';
 import type { LoopProfile } from './contract/profile';
 import { type TurnOutcome } from './contract/outcome';
-
-interface Event {
-  readonly type: string;
-}
-
-interface Projection<S, E> {
-  initial(): S;
-  reduce(state: S, entry: { readonly seq: number; readonly time: number; readonly event: E }): S;
-}
 
 const recordTypes = [
   'turn.started',
