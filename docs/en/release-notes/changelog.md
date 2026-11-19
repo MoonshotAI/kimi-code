@@ -14,12 +14,9 @@ This page documents the changes in each Kimi Code CLI release.
 - View running foreground agents and their activity in `/tasks`.
 - Web: Show project and session titles in browser tab titles.
 - Support configuring SSH hosts for Kimi Code projects, with each host using its own Kimi login and optional copied custom model providers.
+- Allow resuming sessions that are open in another client.
 - Support Amazon Bedrock models. See the [Amazon Bedrock configuration guide](https://moonshotai.github.io/kimi-code/en/configuration/providers.html#bedrock).
 - Add experimental next-prompt predictions in the TUI after completed turns. Enable with `KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1` and press Tab or Right Arrow to accept.
-
-### Polish
-
-- Allow resuming sessions that are open in another client.
 
 ### Bug Fixes
 
