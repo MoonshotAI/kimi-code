@@ -150,7 +150,7 @@ watch([listRef, () => props.items.length, panelHeight], (_, __, onCleanup) => {
   if (!list || typeof ResizeObserver === 'undefined') return;
   const resizeObserver = new ResizeObserver(updateScrollEdges);
   resizeObserver.observe(list);
-  const content = list.querySelector('.history-window, .virtual-list');
+  const content = list.querySelector('.virtual-list');
   if (content) resizeObserver.observe(content);
   onCleanup(() => resizeObserver.disconnect());
 }, { flush: 'post' });

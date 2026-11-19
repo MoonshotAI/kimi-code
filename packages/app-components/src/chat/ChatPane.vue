@@ -1847,13 +1847,13 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .chat > .chat-row:first-child {
   padding-top: 0;
 }
-.chat[data-first-kind] > :is(.history-window, .transcript-list) {
+.chat[data-first-kind] > :is(.block-list, .transcript-list) {
   margin-top: calc(-1 * var(--chat-turn-gap));
 }
-.chat[data-first-kind='assistant'] > :is(.history-window, .transcript-list) {
+.chat[data-first-kind='assistant'] > :is(.block-list, .transcript-list) {
   margin-top: calc(-1 * var(--chat-assistant-gap));
 }
-.chat > .top-sentinel + :is(.history-window, .transcript-list) {
+.chat > .top-sentinel + :is(.block-list, .transcript-list) {
   margin-top: 0;
 }
 
@@ -2218,75 +2218,75 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg .msg :deep(p) { margin: 0; }
 .a-msg .msg :deep(p + p) { margin-top: 8px; }
 .a-msg > :deep(.think),
-.a-msg > :deep(.history-window > .history-row > .think),
+.a-msg > :deep(.block-list > .history-row > .think),
 .a-msg > :deep(.tool-group),
-.a-msg > :deep(.history-window > .history-row > .tool-group),
+.a-msg > :deep(.block-list > .history-row > .tool-group),
 .a-msg > :deep(.activity-run),
-.a-msg > :deep(.history-window > .history-row > .activity-run),
+.a-msg > :deep(.block-list > .history-row > .activity-run),
 .a-msg > :deep(.agent-group),
-.a-msg > :deep(.history-window > .history-row > .agent-group),
+.a-msg > :deep(.block-list > .history-row > .agent-group),
 .a-msg > :deep(.tool-line),
-.a-msg > :deep(.history-window > .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row > .tool-line),
 .a-msg > :deep(.media-tool),
-.a-msg > :deep(.history-window > .history-row > .media-tool),
+.a-msg > :deep(.block-list > .history-row > .media-tool),
 .a-msg > :deep(.ask-receipt),
-.a-msg > :deep(.history-window > .history-row > .ask-receipt) {
+.a-msg > :deep(.block-list > .history-row > .ask-receipt) {
   margin-top: var(--chat-block-gap);
 }
 .a-msg > :deep(.think),
-.a-msg > :deep(.history-window > .history-row > .think),
+.a-msg > :deep(.block-list > .history-row > .think),
 .a-msg > :deep(.turn-fold),
-.a-msg > :deep(.history-window > .history-row > .turn-fold),
+.a-msg > :deep(.block-list > .history-row > .turn-fold),
 .a-msg > :deep(.activity-run),
-.a-msg > :deep(.history-window > .history-row > .activity-run) {
+.a-msg > :deep(.block-list > .history-row > .activity-run) {
   margin-top: var(--chat-strip-gap);
 }
 .a-msg > :deep(.tool-line),
-.a-msg > :deep(.history-window > .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row > .tool-line),
 .a-msg > :deep(.ntf-list),
-.a-msg > :deep(.history-window > .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row > .ntf-list) {
   margin-top: var(--chat-group-gap);
 }
 .a-msg > .msg + :deep(.tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .msg) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .msg) + .history-row > .tool-line),
 .a-msg > .msg + :deep(.ntf-list),
-.a-msg > :deep(.history-window > .history-row:has(> .msg) + .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row:has(> .msg) + .history-row > .ntf-list) {
   margin-top: var(--chat-strip-gap);
 }
 .a-msg > :deep(.tool-line + .tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .tool-line),
 .a-msg > :deep(.ntf-list + .tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list) + .history-row > .tool-line),
 .a-msg > :deep(.tool-line + .ntf-list),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .ntf-list) {
   margin-top: var(--chat-strip-tight);
 }
 .a-msg > :deep(.tool-line.open + .tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .tool-line),
 .a-msg > :deep(.ntf-list:has(.tool-line.open) + .tool-line),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .tool-line),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .tool-line),
 .a-msg > :deep(.tool-line.open + .ntf-list),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .ntf-list) {
   margin-top: var(--chat-group-gap);
 }
 .a-msg > :deep(.tool-line + .think),
 .a-msg > :deep(.tool-line + .activity-run),
 .a-msg > :deep(.ntf-list + .think),
 .a-msg > :deep(.ntf-list + .activity-run),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .think),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line) + .history-row > .activity-run),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list) + .history-row > .think),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list) + .history-row > .activity-run) {
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .think),
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line) + .history-row > .activity-run),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list) + .history-row > .think),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list) + .history-row > .activity-run) {
   margin-top: var(--chat-strip-tight);
 }
 .a-msg > :deep(.tool-line.open + .think),
 .a-msg > :deep(.tool-line.open + .activity-run),
 .a-msg > :deep(.ntf-list:has(.tool-line.open) + .think),
 .a-msg > :deep(.ntf-list:has(.tool-line.open) + .activity-run),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .think),
-.a-msg > :deep(.history-window > .history-row:has(> .tool-line.open) + .history-row > .activity-run),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .think),
-.a-msg > :deep(.history-window > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .activity-run) {
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .think),
+.a-msg > :deep(.block-list > .history-row:has(> .tool-line.open) + .history-row > .activity-run),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .think),
+.a-msg > :deep(.block-list > .history-row:has(> .ntf-list .tool-line.open) + .history-row > .activity-run) {
   margin-top: var(--chat-group-gap);
 }
 
@@ -2299,25 +2299,25 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg > :deep(.ntf-list:first-child),
 .a-msg > :deep(.media-tool:first-child),
 .a-msg > :deep(.ask-receipt:first-child),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .msg),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .think),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .tool-group),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .activity-run),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .agent-group),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .tool-line),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .ntf-list),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .media-tool),
-.a-msg > :deep(.history-window:first-child > .history-row:first-child > .ask-receipt) {
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .msg),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .think),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .tool-group),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .activity-run),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .agent-group),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .tool-line),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .ntf-list),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .media-tool),
+.a-msg > :deep(.block-list:first-child > .history-row:first-child > .ask-receipt) {
   margin-top: 0;
 }
 .a-msg > :deep(.ntf-list),
-.a-msg > :deep(.history-window > .history-row > .ntf-list) {
+.a-msg > :deep(.block-list > .history-row > .ntf-list) {
   margin-bottom: 0;
 }
-.a-msg > :deep(.history-window > .history-row > .agent-card) {
+.a-msg > :deep(.block-list > .history-row > .agent-card) {
   margin: 0;
 }
-.a-msg > :deep(.history-window:last-child > .history-row:last-child > .agent-card) {
+.a-msg > :deep(.block-list:last-child > .history-row:last-child > .agent-card) {
   margin-bottom: var(--space-1);
 }
 .a-msg :deep(:not(pre) > code:not(.md code)) {
