@@ -16,6 +16,7 @@ import { logWarn, workspaceRootKey } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi, t } from '../client/deps';
 import { clientPinia } from './pinia';
 import { configStore } from './config';
+import { hostsStore } from './hosts';
 import { sessionsStore } from './sessions';
 import { sessionRatingStore } from './sessionRating';
 import { connectionStore } from './connection';
@@ -989,25 +990,42 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
 
   async function loadFirstWorkspacePage(workspaceId: string): Promise<boolean> {
     const wsStore = workspacesStore();
+    const initialHostId = wsStore.workspaces.find((w) => w.id === workspaceId)?.hostId;
     try {
       const page = await getKimiWebApi().listSessions({
         workspaceId,
         pageSize: SESSIONS_INITIAL_PAGE_SIZE,
         hasPrompt: true,
       });
+      if (
+        initialHostId !== undefined &&
+        (hostsStore().unavailable(initialHostId) ||
+          wsStore.workspaces.find((w) => w.id === workspaceId)?.hostId !== initialHostId)
+      ) {
+        return false;
+      }
+      const items = page.items
+        .filter((s) => !archivedTombstoneIds.has(s.id) && !deletedTombstoneIds.has(s.id))
+        .map(withFallbackSessionTitle);
       const existing = new Set(sessionsStore().sessions.map((s) => s.id));
-      const fresh = page.items.filter(
-        (s) =>
-          !existing.has(s.id) &&
-          !archivedTombstoneIds.has(s.id) &&
-          !deletedTombstoneIds.has(s.id),
-      );
-      for (const s of fresh) poolInsertsDuringLoad.add(s.id);
-      if (fresh.length > 0) {
+      const updatedById = new Map<string, AppSession>();
+      const fresh: AppSession[] = [];
+      for (const s of items) {
+        if (existing.has(s.id)) updatedById.set(s.id, s);
+        else {
+          poolInsertsDuringLoad.add(s.id);
+          fresh.push(s);
+        }
+      }
+      if (fresh.length > 0 || updatedById.size > 0) {
         sessionsStore().setSessions(
-          [...sessionsStore().sessions, ...fresh].sort(
-            (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-          ),
+          [
+            ...sessionsStore().sessions.map((s) => {
+              const next = updatedById.get(s.id);
+              return next === undefined ? s : { ...s, hostId: next.hostId ?? s.hostId };
+            }),
+            ...fresh,
+          ].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
         );
       }
       wsStore.setSessionCursor(
@@ -1020,6 +1038,45 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
       sessionListHooks?.pushOperationFailure('loadMoreSessions', err);
       return false;
     }
+  }
+
+  function removeHostSessions(hostIds: readonly string[], workspaceIds: readonly string[] = []): string[] {
+    if (hostIds.length === 0 && workspaceIds.length === 0) return [];
+    const hostSet = new Set(hostIds);
+    const workspaceSet = new Set(workspaceIds);
+    const matches = (s: AppSession): boolean =>
+      (s.hostId !== undefined && hostSet.has(s.hostId)) ||
+      (s.workspaceId !== undefined && workspaceSet.has(s.workspaceId));
+    const removedIds = new Set<string>();
+    const keptSessions: AppSession[] = [];
+    for (const s of sessionsStore().sessions) {
+      if (matches(s)) removedIds.add(s.id);
+      else keptSessions.push(s);
+    }
+    if (keptSessions.length !== sessionsStore().sessions.length) {
+      sessionsStore().setSessions(keptSessions);
+    }
+    const keptDone: AppSession[] = [];
+    for (const s of doneSessions.value) {
+      if (matches(s)) removedIds.add(s.id);
+      else keptDone.push(s);
+    }
+    if (keptDone.length !== doneSessions.value.length) {
+      doneSessions.value = keptDone;
+    }
+    for (const id of removedIds) {
+      hydrationControllers.get(id)?.abort();
+      hydrationControllers.delete(id);
+    }
+    if (removedIds.size > 0) {
+      flatSessionsNextPageToken.value = null;
+      flatSessionsSeeded.value = false;
+      flatSessionsHasMore.value = true;
+      doneSessionsNextPageToken.value = null;
+      doneSessionsSeeded.value = false;
+      doneSessionsHasMore.value = true;
+    }
+    return [...removedIds];
   }
 
   async function backfillWorkspaceSessions(
@@ -1161,6 +1218,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
     loadAllSessions,
     backfillWorkspaceSessions,
     loadFirstWorkspacePage,
+    removeHostSessions,
     fetchFlatSessionsFirstPage,
     notePoolInsert,
     clearPoolInserts,
