@@ -1,19 +1,6 @@
-import type { AppHost, AppHostConnectFailure } from '../api/types';
+import type { AppHost } from '../api/types';
 
 export type HostDisplayState = 'local' | 'missing' | 'disabled' | 'ready' | 'connecting' | 'failed' | 'idle';
-
-const RETRYABLE_FAILURES: ReadonlySet<AppHostConnectFailure> = new Set([
-  'connection_refused',
-  'host_unreachable',
-  'connect_timeout',
-  'remote_busy',
-  'remote_start_failed',
-  'unknown',
-]);
-
-export function isRetryableHostFailure(failure: AppHostConnectFailure | undefined): boolean {
-  return failure === undefined || RETRYABLE_FAILURES.has(failure);
-}
 
 export function hostDisplayState(
   hostId: string | undefined,

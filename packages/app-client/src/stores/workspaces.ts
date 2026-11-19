@@ -672,7 +672,13 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     const name = workspaceById.value.get(id)?.name ?? id;
     const hostId = workspace?.hostId;
     if (hostId !== undefined) {
-      return tr('workspace.removeWorkspaceConfirmHost', { name, device: hostsStore().displayName(hostId) ?? hostId });
+      const device = hostsStore().hostLabel(hostId, tr);
+      return tr(
+        hostsStore().unavailable(hostId)
+          ? 'workspace.removeWorkspaceConfirmHostOffline'
+          : 'workspace.removeWorkspaceConfirmHost',
+        { name, device },
+      );
     }
     return tr(workspace?.kind === 'managed' ? 'workspace.removeWorkspaceConfirmProject' : 'workspace.removeWorkspaceConfirmDir', { name });
   }
@@ -723,10 +729,9 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
       .map((item) => ({ path: resolveLocalPath(root, item.path), label: item.path }));
   }
 
-  async function getFsHome(): Promise<{ home: string; recentRoots: string[] }> {
+  async function getFsHome(hostId?: string): Promise<{ home: string; recentRoots: string[] }> {
     try {
-      const api = getKimiWebApi();
-      return await api.getFsHome();
+      return await getDeviceApi(hostId).getFsHome();
     } catch {
       return { home: '', recentRoots: [] };
     }
@@ -860,9 +865,9 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     }
   }
 
-  async function fetchWorkspaceProjectConfigDirs(root: string): Promise<string[] | undefined> {
+  async function fetchWorkspaceProjectConfigDirs(root: string, hostId?: string): Promise<string[] | undefined> {
     try {
-      return await getKimiWebApi().getWorkspaceProjectConfigDirs(root);
+      return await getDeviceApi(hostId).getWorkspaceProjectConfigDirs(root);
     } catch (err) {
       logWarn('[kimi-code] getWorkspaceProjectConfigDirs failed for', root, err);
       return undefined;

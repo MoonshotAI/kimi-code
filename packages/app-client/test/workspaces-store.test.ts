@@ -1164,4 +1164,28 @@ describe('saveWorkspace', () => {
     apiMock.mkdirFs = vi.fn().mockRejectedValueOnce(conflict);
     await expect(store.mkdirFs('/Users/x/fresh')).rejects.toBe(conflict);
   });
+
+  it('routes home and project config requests to the target SSH host', async () => {
+    const remoteApi = {
+      getFsHome: vi.fn().mockResolvedValue({ home: '/home/ubuntu', recentRoots: ['/home/ubuntu/app'] }),
+      getWorkspaceProjectConfigDirs: vi.fn().mockResolvedValue(['/home/ubuntu/shared']),
+    };
+    apiMock.deviceApi = vi.fn(() => remoteApi);
+    const store = workspacesStore();
+
+    await expect(store.getFsHome('devbox')).resolves.toEqual({ home: '/home/ubuntu', recentRoots: ['/home/ubuntu/app'] });
+    await expect(store.fetchWorkspaceProjectConfigDirs('/home/ubuntu/app', 'devbox')).resolves.toEqual(['/home/ubuntu/shared']);
+    expect(remoteApi.getWorkspaceProjectConfigDirs).toHaveBeenCalledExactlyOnceWith('/home/ubuntu/app');
+    expect(apiMock.deviceApi).toHaveBeenCalledWith('devbox');
+    delete apiMock.deviceApi;
+  });
+
+  it('uses offline removal copy for a missing host without exposing its id', () => {
+    hostsStore().loaded = true;
+    hostsStore().byId = {};
+    workspacesStore().workspaces = [makeWorkspace('wm_gone', '/srv/app', { name: 'trainer', hostId: 'host-a1b2c3d4' })];
+    const tr = (key: string, params?: Record<string, unknown>) => key === 'workspace.deletedHost' ? 'Removed host' : `${key}:${String(params?.device)}`;
+    expect(workspacesStore().removeWorkspaceMessage('wm_gone', tr)).toBe('workspace.removeWorkspaceConfirmHostOffline:Removed host');
+    hostsStore().loaded = false;
+  });
 });

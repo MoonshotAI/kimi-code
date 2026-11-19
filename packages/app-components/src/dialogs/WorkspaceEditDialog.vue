@@ -18,10 +18,10 @@ const props = withDefaults(
     initialDirs?: string[];
     initialHostId?: string;
     pick: () => Promise<string[]>;
-    pickRemote?: (hostId: string, path: string) => Promise<string | undefined>;
+    pickRemote?: (hostId: string, path: string) => Promise<string[]>;
     hosts?: AppHost[];
     manageHosts?: () => void;
-    importProjectConfig?: (primary: string) => Promise<string[] | undefined>;
+    importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
     busy?: boolean;
   }>(),
   {
@@ -36,6 +36,19 @@ const emit = defineEmits<{
   submit: [payload: { name: string; dirs: string[]; hostId?: string; projectConfigDirs: string[] }];
   cancel: [];
 }>();
+
+function hostState(host: AppHost) {
+  return hostDisplayState(host.id, host, { loaded: true, connecting: hostsStore().connecting[host.id] === true });
+}
+
+function initialSourceId(): string {
+  const id = props.initialHostId;
+  if (id === undefined) return LOCAL_SOURCE;
+  if (props.mode === 'edit') return id;
+  const candidate = props.hosts.find((host) => host.id === id);
+  if (candidate !== undefined && isHostBlocked(hostState(candidate))) return LOCAL_SOURCE;
+  return id;
+}
 
 const open = ref(true);
 const nameInput = ref<InstanceType<typeof Input>>();
@@ -56,16 +69,22 @@ const importing = ref(false);
 const importHint = ref<'empty' | 'failed' | null>(null);
 const primaryStatus = ref('');
 const dirList = ref<HTMLElement>();
-const sourceId = ref(props.initialHostId ?? LOCAL_SOURCE);
+const sourceId = ref(initialSourceId());
 const hostId = computed(() => (sourceId.value === LOCAL_SOURCE ? undefined : sourceId.value));
 const hostName = computed(() => {
   if (hostId.value === undefined) return '';
   const host = props.hosts.find((candidate) => candidate.id === hostId.value);
   return host === undefined ? hostsStore().displayName(hostId.value) ?? t('workspace.deletedHost') : hostDisplayName(host);
 });
-function hostState(host: AppHost) {
-  return hostDisplayState(host.id, host, { loaded: true, connecting: hostsStore().connecting[host.id] === true });
-}
+const selectedHostState = computed(() => {
+  if (hostId.value === undefined) return 'local' as const;
+  const candidate = props.hosts.find((host) => host.id === hostId.value) ?? hostsStore().hostFor(hostId.value);
+  return hostDisplayState(hostId.value, candidate, {
+    loaded: props.hosts.length > 0 || hostsStore().loaded,
+    connecting: hostsStore().connecting[hostId.value] === true,
+  });
+});
+const selectedHostBlocked = computed(() => isHostBlocked(selectedHostState.value));
 const remoteOptions = computed(() => props.hosts.map((host) => {
   const state = hostState(host);
   return {
@@ -84,22 +103,16 @@ const sourceOptions = computed(() => [
     trailingIcon: 'arrow-up-right',
   }]),
 ]);
-const isRemoteProject = computed(() => hostId.value !== undefined);
-const rootLocked = computed(() => props.mode === 'edit' && isRemoteProject.value);
 const showSourceField = computed(() => props.mode === 'create' && (remoteOptions.value.length > 0 || props.manageHosts !== undefined));
-const canImportProjectConfig = computed(() => props.importProjectConfig !== undefined && !isRemoteProject.value && dirs.value.length > 0);
+const canImportProjectConfig = computed(() => props.importProjectConfig !== undefined && dirs.value.length > 0 && !selectedHostBlocked.value);
 const submitHint = computed(() => {
+  if (selectedHostBlocked.value && (selectedHostState.value === 'failed' || selectedHostState.value === 'disabled' || selectedHostState.value === 'missing')) {
+    return t(`workspace.hostNotice.${selectedHostState.value}`, { name: hostName.value });
+  }
   if (dirs.value.length === 0) return t('workspace.dialog.submitMissingDirs');
   if (name.value.trim().length === 0) return t('workspace.dialog.submitMissingName');
   return '';
 });
-
-watch(() => props.hosts, (hosts) => {
-  if (hostId.value === undefined || props.mode === 'edit') return;
-  const usable = hosts.filter((host) => !isHostBlocked(hostState(host)));
-  if (usable.some((host) => host.id === sourceId.value)) return;
-  sourceId.value = usable[0]?.id ?? LOCAL_SOURCE;
-}, { immediate: true });
 
 watch(sourceId, (selected, previous) => {
   if (selected === MANAGE_HOSTS) {
@@ -129,7 +142,7 @@ function appendDirs(added: readonly string[]): void {
 }
 
 async function addDirectory(): Promise<void> {
-  if (props.busy || picking.value || importing.value) return;
+  if (props.busy || picking.value || importing.value || selectedHostBlocked.value) return;
   const target = hostId.value;
   if (target !== undefined && props.pickRemote === undefined) return;
   picking.value = true;
@@ -138,11 +151,7 @@ async function addDirectory(): Promise<void> {
     if (target === undefined) {
       appendDirs(await props.pick());
     } else {
-      const picked = await props.pickRemote!(target, dirs.value[0] ?? '');
-      if (picked) {
-        dirs.value = [picked];
-        prefillNameFromDirs();
-      }
+      appendDirs(await props.pickRemote!(target, dirs.value[0] ?? ''));
     }
   } catch {
     pickFailed.value = true;
@@ -154,11 +163,11 @@ async function addDirectory(): Promise<void> {
 async function importDirs(): Promise<void> {
   const fetcher = props.importProjectConfig;
   const primary = dirs.value[0];
-  if (fetcher === undefined || primary === undefined || isRemoteProject.value || props.busy || picking.value || importing.value) return;
+  if (fetcher === undefined || primary === undefined || selectedHostBlocked.value || props.busy || picking.value || importing.value) return;
   importing.value = true;
   importHint.value = null;
   try {
-    const result = await fetcher(primary);
+    const result = await fetcher(primary, hostId.value);
     if (result === undefined) {
       importHint.value = 'failed';
       return;
@@ -198,7 +207,7 @@ async function promoteDir(target: string): Promise<void> {
 }
 
 const canSubmit = computed(
-  () => !props.busy && !picking.value && !importing.value && dirs.value.length > 0 && name.value.trim().length > 0,
+  () => !props.busy && !picking.value && !importing.value && !selectedHostBlocked.value && dirs.value.length > 0 && name.value.trim().length > 0,
 );
 
 function submit(): void {
@@ -208,7 +217,7 @@ function submit(): void {
     name: name.value.trim(),
     dirs: deduped,
     hostId: hostId.value,
-    projectConfigDirs: isRemoteProject.value ? [] : projectConfigDirs.value.filter((path) => deduped.includes(path)),
+    projectConfigDirs: projectConfigDirs.value.filter((path) => deduped.includes(path)),
   });
 }
 
@@ -272,7 +281,7 @@ function onNameKeydown(e: KeyboardEvent): void {
               <Button
                 variant="ghost"
                 size="xs"
-                :disabled="busy || picking || importing"
+                :disabled="busy || picking || importing || selectedHostBlocked"
                 :loading="importing"
                 @click="importDirs"
               >
@@ -280,16 +289,14 @@ function onNameKeydown(e: KeyboardEvent): void {
               </Button>
             </Tooltip>
             <Button
-              v-if="!rootLocked"
               class="we-add-directory"
               variant="ghost"
               size="xs"
-              :disabled="busy || picking || importing"
+              :disabled="busy || picking || importing || selectedHostBlocked"
               :loading="picking"
               @click="addDirectory"
             >
-              <template v-if="isRemoteProject">{{ t('workspace.dialog.changeDir') }}</template>
-              <template v-else><Icon name="plus" size="sm" />{{ t('workspace.dialog.addDirs') }}</template>
+              <Icon name="plus" size="sm" />{{ t('workspace.dialog.addDirs') }}
             </Button>
           </span>
         </div>
@@ -298,7 +305,7 @@ function onNameKeydown(e: KeyboardEvent): void {
           v-if="dirs.length === 0"
           class="we-drop we-add-directory"
           type="button"
-          :disabled="busy || picking || importing"
+          :disabled="busy || picking || importing || selectedHostBlocked"
           @click="addDirectory"
         >
           <Spinner v-if="picking" size="sm" />
@@ -327,8 +334,7 @@ function onNameKeydown(e: KeyboardEvent): void {
                 <span v-if="hostName" class="we-dir-host" :title="hostName">{{ hostName }}</span>
               </div>
             </div>
-            <span v-if="isRemoteProject" class="we-dir-primary" aria-hidden="true" />
-            <Badge v-else-if="i === 0" class="we-dir-badge" size="sm" variant="outline">
+            <Badge v-if="i === 0" class="we-dir-badge" size="sm" variant="outline">
               {{ t('workspace.dialog.primaryBadge') }}
             </Badge>
             <Button

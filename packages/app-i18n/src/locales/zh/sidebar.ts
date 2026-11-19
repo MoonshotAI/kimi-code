@@ -13,6 +13,7 @@ export default {
   expandAll: '展开全部项目',
   newChat: '新建会话',
   newWorkspace: '新建项目',
+  newWorkspaceNeedsConnection: '连接后可新建项目',
   dropToAddWorkspace: '松开鼠标添加项目',
   options: '选项',
   rename: '重命名',
