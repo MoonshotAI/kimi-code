@@ -1402,6 +1402,30 @@ HEAD /api/v1/hosts/{id}/proxy/{*} param path:id: string
 HEAD /api/v1/hosts/{id}/proxy/{*} response 200: any
 HEAD /api/v1/hosts/{id}/proxy/{*}: operation
 HEAD /api/v1/hosts/{id}/proxy: operation
+PATCH /api/v1/feedback/{feedback_id} param path:feedback_id: integer maximum=9007199254740991 exclusiveMinimum=0
+PATCH /api/v1/feedback/{feedback_id} request: oneOf
+PATCH /api/v1/feedback/{feedback_id} request<#0>.content: string minLength=1 maxLength=2000 optional
+PATCH /api/v1/feedback/{feedback_id} request<#0>.kind: enum "details"
+PATCH /api/v1/feedback/{feedback_id} request<#0>.reasons: array maxItems=12
+PATCH /api/v1/feedback/{feedback_id} request<#0>.reasons[]: string pattern="^[a-z][a-z0-9_-]{0,63}$"
+PATCH /api/v1/feedback/{feedback_id} request<#0>.upload_session: boolean optional
+PATCH /api/v1/feedback/{feedback_id} request<#0>: object
+PATCH /api/v1/feedback/{feedback_id} request<#1>.kind: enum "cancel"
+PATCH /api/v1/feedback/{feedback_id} request<#1>: object
+PATCH /api/v1/feedback/{feedback_id} response 200: oneOf
+PATCH /api/v1/feedback/{feedback_id} response 200<code=0>.code: enum 0
+PATCH /api/v1/feedback/{feedback_id} response 200<code=0>.data.feedback_id: integer maximum=9007199254740991 exclusiveMinimum=true
+PATCH /api/v1/feedback/{feedback_id} response 200<code=0>.data: object closed
+PATCH /api/v1/feedback/{feedback_id} response 200<code=0>.details: any optional
+PATCH /api/v1/feedback/{feedback_id} response 200<code=0>.msg: string
+PATCH /api/v1/feedback/{feedback_id} response 200<code=0>.request_id: string
+PATCH /api/v1/feedback/{feedback_id} response 200<code=0>: object closed
+PATCH /api/v1/feedback/{feedback_id} response 200<code=40001>: shape a642160a
+PATCH /api/v1/feedback/{feedback_id} response 200<code=40111>: shape 00776ba9
+PATCH /api/v1/feedback/{feedback_id} response 200<code=40112>: shape fa735462
+PATCH /api/v1/feedback/{feedback_id} response 200<code=40936>: shape 9bd41b04
+PATCH /api/v1/feedback/{feedback_id} response 200<code=50001>: shape c8fef53e
+PATCH /api/v1/feedback/{feedback_id}: operation
 PATCH /api/v1/hosts/{id}/proxy param path:id: string
 PATCH /api/v1/hosts/{id}/proxy response 200: any
 PATCH /api/v1/hosts/{id}/proxy/{*} param path:*: string
@@ -1539,6 +1563,87 @@ POST /api/v1/config response 200<code=0>.request_id: string
 POST /api/v1/config response 200<code=0>: object closed
 POST /api/v1/config response 200<code=40001>: shape a642160a
 POST /api/v1/config: operation
+POST /api/v1/feedback request: oneOf
+POST /api/v1/feedback request<#0>.category: enum "bug"|"other"|"suggestion"
+POST /api/v1/feedback request<#0>.client: enum "desktop"|"web" optional
+POST /api/v1/feedback request<#0>.content: string minLength=1 maxLength=2000
+POST /api/v1/feedback request<#0>.kind: enum "global"
+POST /api/v1/feedback request<#0>.session_id: string minLength=1 maxLength=200 optional
+POST /api/v1/feedback request<#0>.source: enum "command"|"sidebar"
+POST /api/v1/feedback request<#0>.upload_logs: boolean optional
+POST /api/v1/feedback request<#0>.upload_session: boolean optional
+POST /api/v1/feedback request<#0>: object
+POST /api/v1/feedback request<#1>.client: enum "desktop"|"web" optional
+POST /api/v1/feedback request<#1>.kind: enum "turn"
+POST /api/v1/feedback request<#1>.rating: enum "down"|"up"
+POST /api/v1/feedback request<#1>.reply_id: string minLength=1 maxLength=200 optional
+POST /api/v1/feedback request<#1>.session_id: string minLength=1 maxLength=200
+POST /api/v1/feedback request<#1>.turn_id: string minLength=1 maxLength=200
+POST /api/v1/feedback request<#1>: object
+POST /api/v1/feedback response 200: oneOf
+POST /api/v1/feedback response 200<code=0>.code: enum 0
+POST /api/v1/feedback response 200<code=0>.data.feedback_id: integer maximum=9007199254740991 exclusiveMinimum=true
+POST /api/v1/feedback response 200<code=0>.data: object closed
+POST /api/v1/feedback response 200<code=0>.details: any optional
+POST /api/v1/feedback response 200<code=0>.msg: string
+POST /api/v1/feedback response 200<code=0>.request_id: string
+POST /api/v1/feedback response 200<code=0>: object closed
+POST /api/v1/feedback response 200<code=40001>: shape a642160a
+POST /api/v1/feedback response 200<code=40111>: shape 00776ba9
+POST /api/v1/feedback response 200<code=40112>: shape fa735462
+POST /api/v1/feedback response 200<code=40401>: shape 2bda561c
+POST /api/v1/feedback response 200<code=40421>: shape 647cc887
+POST /api/v1/feedback response 200<code=40936>: shape 9bd41b04
+POST /api/v1/feedback response 200<code=50001>: shape c8fef53e
+POST /api/v1/feedback/{feedback_id}/attachments param path:feedback_id: integer maximum=9007199254740991 exclusiveMinimum=0
+POST /api/v1/feedback/{feedback_id}/attachments param query:kind: enum "diagnostics"|"media"
+POST /api/v1/feedback/{feedback_id}/attachments request.file: string format binary
+POST /api/v1/feedback/{feedback_id}/attachments request: object
+POST /api/v1/feedback/{feedback_id}/attachments response 200: oneOf
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=0>.code: enum 0
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=0>.data.upload_id: integer maximum=9007199254740991 exclusiveMinimum=true
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=0>.data: object closed
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=0>.details: any optional
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=0>.msg: string
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=0>.request_id: string
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=0>: object closed
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=40001>: shape a642160a
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=40111>: shape 00776ba9
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=40112>: shape fa735462
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=40936>: shape 9bd41b04
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.code: enum 41301
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.data: enum null nullable
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.details: any optional
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.msg: string
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>.request_id: string
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=41301>: object closed
+POST /api/v1/feedback/{feedback_id}/attachments response 200<code=50001>: shape c8fef53e
+POST /api/v1/feedback/{feedback_id}/attachments/session param path:feedback_id: integer maximum=9007199254740991 exclusiveMinimum=0
+POST /api/v1/feedback/{feedback_id}/attachments/session request.session_id: string minLength=1 maxLength=200
+POST /api/v1/feedback/{feedback_id}/attachments/session request: object
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200: oneOf
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=0>.code: enum 0
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=0>.data.upload_id: integer maximum=9007199254740991 exclusiveMinimum=true
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=0>.data: object closed
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=0>.details: any optional
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=0>.msg: string
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=0>.request_id: string
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=0>: object closed
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=40001>: shape a642160a
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=40111>: shape 00776ba9
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=40112>: shape fa735462
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=40401>: shape 2bda561c
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=40936>: shape 9bd41b04
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.code: enum 41301
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.data: enum null nullable
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.details: any optional
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.msg: string
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>.request_id: string
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=41301>: object closed
+POST /api/v1/feedback/{feedback_id}/attachments/session response 200<code=50001>: shape c8fef53e
+POST /api/v1/feedback/{feedback_id}/attachments/session: operation
+POST /api/v1/feedback/{feedback_id}/attachments: operation
+POST /api/v1/feedback: operation
 POST /api/v1/files request.expires_in_sec: number minimum=0 optional
 POST /api/v1/files request.file: string format binary
 POST /api/v1/files request.name: string optional
@@ -4521,6 +4626,11 @@ shape 95fda33a.models: array optional
 shape 95fda33a.models[]: string minLength=1
 shape 95fda33a.status: enum "connected"|"error"|"unconfigured"
 shape 95fda33a.type: string minLength=1
+shape 9bd41b04.code: enum 40936
+shape 9bd41b04.data: enum null nullable
+shape 9bd41b04.details: any optional
+shape 9bd41b04.msg: string
+shape 9bd41b04.request_id: string
 shape 9d70335c.code: enum 40930
 shape 9d70335c.data: enum null nullable
 shape 9d70335c.details: any optional
@@ -4743,6 +4853,11 @@ shape f7431fdb.data: enum null nullable
 shape f7431fdb.details: any optional
 shape f7431fdb.msg: string
 shape f7431fdb.request_id: string
+shape fa735462.code: enum 40112
+shape fa735462.data: enum null nullable
+shape fa735462.details: any optional
+shape fa735462.msg: string
+shape fa735462.request_id: string
 shape faf07186.code: enum 40911
 shape faf07186.data: enum null nullable
 shape faf07186.details: any optional
