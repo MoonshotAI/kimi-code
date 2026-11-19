@@ -6,7 +6,8 @@ function lineToInlineNodes(line: string, attachmentKindFor?: AttachmentKindSourc
   if (!line) return [];
   return splitInlineSegments(line, attachmentKindFor).map((segment) => {
     if (segment.type === 'mention') {
-      const rawDest = segment.attrs.kind !== 'skill' && mentionActionPath(segment.rawDest) !== segment.rawDest ? segment.rawDest : undefined;
+      const pathLike = segment.attrs.kind === 'file' || segment.attrs.kind === 'folder';
+      const rawDest = pathLike && mentionActionPath(segment.rawDest) !== segment.rawDest ? segment.rawDest : undefined;
       return mentionNode({ ...segment.attrs, rawDest });
     }
     if (segment.type === 'attachment') return attachmentNode(segment.attrs);

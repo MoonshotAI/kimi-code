@@ -45,7 +45,7 @@ export default {
   slashSheetTitle: 'Commands',
   slashSearchPlaceholder: 'Search commands…',
   mentionSheetTitle: 'Mention',
-  mentionSearchPlaceholder: 'Search attachments, files, or skills…',
+  mentionSearchPlaceholder: 'Search attachments, files, skills, or sessions…',
   addSlash: 'Commands',
   addSlashDesc: 'Built-in commands or skills',
   addMention: 'Mention',

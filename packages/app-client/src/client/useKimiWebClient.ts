@@ -93,6 +93,7 @@ import { useConfirmDialog } from '../composables/useConfirmDialog';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
 import { closeSessionBusyWindow, openSessionBusyWindow } from '../lib/perfTracking';
 import { waitForSessionExecution, type SessionExecutionState } from '../lib/sessionExecutionReadiness';
+import { sessionMentionCandidates as buildSessionMentionCandidates, type SessionMentionCandidate } from '../lib/sessionReferences';
 import { useSessionAdmin } from './useSessionAdmin';
 import { useBrowserTabTitle } from '../composables/useBrowserTabTitle';
 import { useDocumentTitle } from '../composables/useDocumentTitle';
@@ -2405,6 +2406,33 @@ const workspacesView = computed<WorkspaceView[]>(() => workspacesStore().workspa
 const activeWorkspaceId = computed<string | null>(() => workspacesStore().activeWorkspaceId);
 const visibleWorkspace = computed<WorkspaceView | null>(() => workspacesStore().visibleWorkspace);
 
+const SESSION_MENTION_SEARCH_PAGE_SIZE = 50;
+
+function mentionCandidatesFrom(sessions: readonly AppSession[]): SessionMentionCandidate[] {
+  return buildSessionMentionCandidates({
+    sessions,
+    activeSessionId: rawState.activeSessionId,
+    activeWorkspaceId: activeWorkspaceId.value,
+    workspaceName: (id) => workspacesView.value.find((workspace) => workspace.id === id)?.name,
+    formatTime,
+  });
+}
+
+const sessionMentionCandidates = computed<SessionMentionCandidate[]>(() => {
+  if (visibleWorkspace.value?.hostId !== undefined) return [];
+  void sessionViewsStore().sessionTimeClock;
+  return mentionCandidatesFrom(rawState.sessions);
+});
+
+async function searchSessionMentions(query: string, options: { signal: AbortSignal }): Promise<SessionMentionCandidate[]> {
+  if (visibleWorkspace.value?.hostId !== undefined) return [];
+  const page = await getKimiWebApi().listSessions(
+    { query, pageSize: SESSION_MENTION_SEARCH_PAGE_SIZE, hasPrompt: true, localOnly: true },
+    options,
+  );
+  return mentionCandidatesFrom(page.items);
+}
+
 const activeWorkspaceTrust = computed<boolean | undefined>(() => {
   const store = workspacesStore();
   const id = store.activeWorkspaceId;
@@ -3144,6 +3172,8 @@ export function useKimiWebClient() {
     workspaceSortMode,
     visibleWorkspace,
     activeWorkspaceId,
+    sessionMentionCandidates,
+    searchSessionMentions,
     activeWorkspaceTrust,
     activeWorkspaceTrustError,
     activeWorkspaceTrustLoading,

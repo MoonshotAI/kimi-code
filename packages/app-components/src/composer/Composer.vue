@@ -880,17 +880,21 @@ const {
   active: mentionActive,
   loading: mentionLoading,
   fileStale: mentionFileStale,
+  sessionMenuOpen: mentionSessionMenuOpen,
   update: updateMentionMenu,
   close: closeMentionMenu,
   select: selectMentionItem,
   complete: completeMentionItem,
   navigate: mentionNavigate,
+  leaveSessionMenu: leaveMentionSessionMenu,
   getToken: getMentionToken,
 } = useMentionMenu({
   text,
   editorRef,
   searchFiles: () => searchFiles,
   skills: () => skills.value,
+  sessions: () => client.sessionMentionCandidates.value,
+  searchSessions: client.searchSessionMentions,
   attachments: () => attachmentMentionCandidates.value,
   browsers: () => browserCaptures.value.map((capture) => ({
     captureId: capture.id, label: capture.label, title: capture.page.title, url: capture.page.url,
@@ -906,6 +910,8 @@ const {
     }
   },
 });
+
+const mentionSubmenuTitle = computed(() => (mentionSessionMenuOpen.value ? t('mention.sessions') : undefined));
 
 const slashSheetQuery = computed<string>({
   get: () => slashQuery.value,
@@ -1970,6 +1976,11 @@ function handleKeydown(e: KeyboardEvent): boolean {
       closeMentionMenu();
       return true;
     }
+    if (e.key === 'Backspace' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && mentionSessionMenuOpen.value && getMentionToken()?.token === '') {
+      e.preventDefault();
+      leaveMentionSessionMenu();
+      return true;
+    }
     if (e.key === 'Tab' && mentionItems.value.length === 0) {
       closeMentionMenu();
       return false;
@@ -2993,8 +3004,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           :active-index="mentionActive"
           :loading="mentionLoading"
           :stale="mentionFileStale"
+          :submenu-title="mentionSubmenuTitle"
           @select="selectMentionItem"
           @hover="mentionNavigate"
+          @back="leaveMentionSessionMenu"
         />
 
         <Transition name="composer-menu-pop">
@@ -3468,8 +3481,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         :active-index="mentionActive"
         :loading="mentionLoading"
         :stale="mentionFileStale"
+        :submenu-title="mentionSubmenuTitle"
         @select="selectMentionItem"
         @hover="mentionNavigate"
+        @back="leaveMentionSessionMenu"
       />
     </BottomSheet>
   </Teleport>
