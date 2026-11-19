@@ -141,7 +141,7 @@ jobs:
       - run: pnpm run lint
       - run: node --test 'scripts/checks/*.test.mjs'
       - run: node --test scripts/check-comments.test.mjs
-      - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs
+      - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs
       - run: pnpm run sherif
 
   typecheck:
