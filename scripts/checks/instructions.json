@@ -1,0 +1,32 @@
+{
+  "budgets": {
+    "AGENTS.md": 23200
+  },
+  "unresolved": [
+    {
+      "file": "AGENTS.md",
+      "reference": "packages/tui",
+      "why": "A path in the upstream earendil-works/pi repository that pi-tui is forked from, not in this one."
+    },
+    {
+      "file": "packages/pi-tui/AGENTS.md",
+      "reference": "packages/tui",
+      "why": "A path in the upstream earendil-works/pi repository that pi-tui is forked from, not in this one."
+    },
+    {
+      "file": "docs/AGENTS.md",
+      "reference": "docs/.vitepress/dist",
+      "why": "The VitePress build output; it exists only after the docs site is built."
+    },
+    {
+      "file": "apps/kimi-code/AGENTS.md",
+      "reference": "apps/desktop/web-dist",
+      "why": "The desktop renderer's web build output, ignored by Git."
+    },
+    {
+      "file": "apps/kimi-code/AGENTS.md",
+      "reference": "apps/kimi-code/dist-web",
+      "why": "The web bundle copied into the CLI during prebuild, ignored by Git."
+    }
+  ]
+}

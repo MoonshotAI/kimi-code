@@ -10,6 +10,7 @@ export default defineConfig({
       'apps/vis/server',
       'apps/vis/web',
       'apps/desktop',
+      'tests/scenarios',
       ...vscodeProjects,
     ],
     coverage: {

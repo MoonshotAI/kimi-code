@@ -469,5 +469,23 @@ describe('HostRouter', () => {
     expect(remote.stream.subscribeConversation).toHaveBeenCalledWith(session.id, 'main');
     expect(remote.stream.subscribeConversation).toHaveBeenCalledWith(session.id, 'sub-1');
     expect(remote.stream.watchTaskOutput).toHaveBeenCalledWith(session.id, 'main', 'task-1');
+
+    remote.stream.subscribeConversation.mockClear();
+    remote.stream.watchTaskOutput.mockClear();
+    localHandlers!.onEvent(
+      { type: 'hostsChanged', hosts: [] },
+      { sessionId: '' },
+    );
+    local.api.listWorkspaces.mockResolvedValue([workspace('local-ws'), { ...workspace('remote-ws'), hostId: 'dev-readded' }]);
+    remote.api.listSessions.mockResolvedValue({ items: [{ id: session.id }], hasMore: false, nextPageToken: null, total: 1 } as never);
+    localHandlers!.onEvent(
+      { type: 'hostsChanged', hosts: [{ id: 'dev-readded', host: 'dev.example.test', status: 'ready' }] },
+      { sessionId: '' },
+    );
+    await api.listWorkspaces();
+    await api.listSessions({ workspaceId: 'remote-ws' });
+    expect(remote.stream.subscribeConversation).toHaveBeenCalledWith(session.id, 'main');
+    expect(remote.stream.subscribeConversation).toHaveBeenCalledWith(session.id, 'sub-1');
+    expect(remote.stream.watchTaskOutput).toHaveBeenCalledWith(session.id, 'main', 'task-1');
   });
 });

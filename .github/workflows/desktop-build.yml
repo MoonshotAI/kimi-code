@@ -131,30 +131,22 @@ jobs:
             echo "::notice::hotfix 补丁分支：跳过本次 push 的 canary 构建"
           fi
 
+  # nightly 只拦同仓 changeset-release/release/* -> release/* 且确含 Desktop
+  # 版本变化的 PR；CLI-only 不阻断，版本证据不可判读时 fail-closed。
   nightly-guard:
-    name: Skip nightly during release window
+    name: Skip nightly during Desktop release window
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
+      - uses: actions/checkout@v6
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          prs="$(gh pr list --repo "${{ github.repository }}" --state open --limit 100 \
-            --json number,headRefName,baseRefName,isCrossRepository \
-            --jq '[.[] | select((.headRefName | startswith("changeset-release/")) and (.isCrossRepository | not))]')"
-          echo "open desktop version PRs: $(echo "$prs" | jq -c '.[]')"
-          [ "$(echo "$prs" | jq 'length')" -eq 0 ] && skip=false || skip=true
-          echo "nightly skip: $skip"
-          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+        run: node scripts/desktop-nightly-guard.mjs
 
   # 动态矩阵：jobs.<id>.if 在 matrix 展开前求值、拿不到 matrix 上下文
   #（之前 job 级 if 引用 matrix.target 把整个文件判了无效，push 全是 0s
@@ -168,6 +160,9 @@ jobs:
       needs.nightly-guard.outputs.skip != 'true' &&
       (github.event_name != 'push' || github.workflow != 'Desktop build' || needs.branch-kind.outputs.kind == 'weekly')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       targets: ${{ steps.matrix.outputs.targets }}
       artifact-prefix: ${{ steps.artifact-name.outputs.prefix }}
@@ -189,6 +184,7 @@ jobs:
         if: inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))
         env:
           CANARY_TARGET_VERSION: ${{ inputs.target-version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           node scripts/canary-version.mjs >> "$GITHUB_OUTPUT"
@@ -455,11 +451,40 @@ jobs:
           set -euo pipefail
           version="$CANARY_VERSION"
           tag="kimi-code-desktop@${version}"
+          title="Kimi Code Desktop ${version}"
           echo "==> canary tag: ${tag}"
           ls -la dist-desktop-canary
-          gh release create "$tag" \
-            --target "${GITHUB_SHA}" \
-            --title "Kimi Code Canary ${version}" \
-            --notes "目标版本：${version%%-canary.*}；来源：${GITHUB_REF_NAME} @ ${GITHUB_SHA}。CDN 需手动发布。" \
-            --prerelease
-          gh release upload "$tag" dist-desktop-canary/*
+          release_json=""
+          if release_json=$(gh release view "$tag" --json tagName,targetCommitish,name,isDraft,isPrerelease,assets 2>&1); then
+            printf '%s' "$release_json" | jq -e \
+              --arg tag "$tag" \
+              --arg target "$GITHUB_SHA" \
+              --arg title "$title" \
+              '.tagName == $tag and .targetCommitish == $target and .name == $title and .isDraft == false and .isPrerelease == true' >/dev/null \
+              || { echo "error: existing ${tag} does not match this build" >&2; exit 1; }
+          else
+            printf '%s' "$release_json" | grep -qiE 'release not found|HTTP 404' \
+              || { printf '%s\n' "$release_json" >&2; exit 1; }
+            gh release create "$tag" \
+              --target "${GITHUB_SHA}" \
+              --title "Kimi Code Desktop ${version}" \
+              --notes "目标版本：${version%%-canary.*}；来源：${GITHUB_REF_NAME} @ ${GITHUB_SHA}。CDN 需手动发布。" \
+              --prerelease
+            release_json='{"assets":[]}'
+          fi
+          mapfile -t existing < <(printf '%s' "$release_json" | jq -r '.assets[]?.name')
+          missing=()
+          while IFS= read -r -d '' file; do
+            name="${file##*/}"
+            found=0
+            for current in "${existing[@]}"; do
+              if [ "$current" = "$name" ]; then
+                found=1
+                break
+              fi
+            done
+            if [ "$found" -eq 0 ]; then missing+=("$file"); fi
+          done < <(find dist-desktop-canary -maxdepth 1 -type f -print0 | sort -z)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            gh release upload "$tag" "${missing[@]}"
+          fi

@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppHost } from '@moonshot-ai/app-core/api';
 
 import { setKimiClientDeps } from '../src/client/deps';
-import { hostsStore } from '../src/stores/hosts';
+import { hostsStore, setHostsHooks } from '../src/stores/hosts';
+import { modelsStore } from '../src/stores/models';
 
 const api = {
   listHosts: vi.fn(),
@@ -41,6 +42,7 @@ beforeEach(() => {
   remote.listModels.mockResolvedValue([]);
   remote.getConfig.mockResolvedValue({});
   setKimiClientDeps({ api: () => api as never, t: (key) => key });
+  setHostsHooks(null);
   const store = hostsStore();
   store.byId = {};
   store.loaded = false;
@@ -115,11 +117,43 @@ describe('hosts store', () => {
     expect(hostsStore().displayName('gone')).toBeUndefined();
   });
 
-  it('reports which hosts just became ready', () => {
+  it('reports host lifecycle transitions and notifies registered hooks', async () => {
     const store = hostsStore();
-    expect(store.applySnapshot([host('devbox'), host('ready', { status: 'ready' })])).toEqual(['ready']);
-    expect(store.applySnapshot([host('devbox', { status: 'ready' }), host('ready', { status: 'ready' })])).toEqual(['devbox']);
-    expect(store.applySnapshot([host('devbox', { status: 'ready' })])).toEqual([]);
+    const onHostsChanged = vi.fn();
+    setHostsHooks({ onHostsChanged });
+    remote.listModels.mockResolvedValue([{ id: 'remote-m', model: 'remote-m', provider: 'managed:kimi-code' }]);
+    remote.getConfig.mockResolvedValue({ defaultModel: 'remote-m' });
+
+    expect(store.applySnapshot([host('devbox'), host('ready', { status: 'ready' })])).toEqual({
+      becameReady: ['ready'],
+      becameDisabled: [],
+      removed: [],
+    });
+    await modelsStore().loadHostCatalog('ready');
+    modelsStore().setActiveHost('ready');
+    expect(modelsStore().activeModels.map((m) => m.id)).toEqual(['remote-m']);
+
+    expect(store.applySnapshot([host('devbox', { status: 'ready' }), host('ready', { status: 'ready' })])).toEqual({
+      becameReady: ['devbox'],
+      becameDisabled: [],
+      removed: [],
+    });
+    expect(store.applySnapshot([host('devbox', { status: 'disconnected', enabled: false }), host('ready', { status: 'ready' })])).toEqual({
+      becameReady: [],
+      becameDisabled: ['devbox'],
+      removed: [],
+    });
+    expect(store.applySnapshot([host('devbox', { status: 'disconnected', enabled: false })])).toEqual({
+      becameReady: [],
+      becameDisabled: [],
+      removed: ['ready'],
+    });
+    expect(modelsStore().activeHostId).toBeUndefined();
+    expect(onHostsChanged).toHaveBeenLastCalledWith({
+      becameReady: [],
+      becameDisabled: [],
+      removed: ['ready'],
+    });
   });
 
   it('marks a host connecting until the connect request settles and does not repeat it', async () => {

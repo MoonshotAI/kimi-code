@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-      - run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs
+      - run: node --test scripts/release.test.mjs scripts/release-trigger.test.mjs scripts/canary-release.test.mjs scripts/desktop-nightly-guard.test.mjs
 
   build:
     runs-on: ubuntu-latest
@@ -141,7 +141,7 @@ jobs:
       - run: pnpm run lint
       - run: node --test 'scripts/checks/*.test.mjs'
       - run: node --test scripts/check-comments.test.mjs
-      - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs
+      - run: node --test scripts/desktop-artifact-prefix.test.mjs scripts/canary-version.test.mjs scripts/desktop-canary-publish.test.mjs scripts/canary-linux.test.mjs scripts/mac-update-minimum-system-version.test.mjs
       - run: pnpm run sherif
 
   typecheck:
@@ -161,7 +161,7 @@ jobs:
       - name: Typecheck
         run: |
           pnpm exec tsc --version
-          for config in packages/*/tsconfig.json apps/kimi-code/tsconfig.json; do
+          for config in packages/*/tsconfig.json apps/kimi-code/tsconfig.json tests/scenarios/tsconfig.json; do
             # Source-only app packages are typechecked through the desktop
             # renderer program below, not standalone under the root tsc setup.
             case "${config}" in

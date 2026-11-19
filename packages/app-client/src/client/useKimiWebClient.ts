@@ -106,7 +106,7 @@ import { modeStore, setModeHooks } from '../stores/mode';
 import { warningsStore, warningDetail } from '../stores/warnings';
 import { goalStore, setGoalHooks } from '../stores/goal';
 import { configStore, setConfigHooks } from '../stores/config';
-import { hostsStore } from '../stores/hosts';
+import { hostsStore, setHostsHooks } from '../stores/hosts';
 import { tasksStore, setTasksHooks } from '../stores/tasks';
 import { agentStatesStore } from '../stores/agentStates';
 import { setFilesHooks } from '../stores/files';
@@ -1215,7 +1215,7 @@ function createOnEventHandler(): KimiEventHandlers['onEvent'] {
   return (appEvent, meta) => {
     if (meta.hostId !== undefined && applyHostAccountEvent(meta.hostId, appEvent)) return;
     if (appEvent.type === 'hostsChanged') {
-      const ready = hostsStore().applySnapshot(appEvent.hosts);
+      const { becameReady: ready } = hostsStore().applySnapshot(appEvent.hosts);
       if (ready.length > 0) {
         void workspacesStore().loadWorkspaces().then(() => {
           for (const hostId of ready) loadHostSessions(hostId);
@@ -2802,6 +2802,25 @@ setConfigHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setApprovalsHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setTasksHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setAuthHooks({ reload: () => workspaceBoot.load() });
+setHostsHooks({
+  onHostsChanged: ({ removed, becameDisabled }) => {
+    if (removed.length > 0) {
+      const removedWorkspaces = workspacesStore().removeHostWorkspaces(removed);
+      for (const workspaceId of removedWorkspaces) {
+        refreshedSkillRootsByWorkspace.delete(workspaceId);
+        modelProvider.invalidateSkillsForWorkspace(workspaceId);
+      }
+      const removedSessions = sessionListStore().removeHostSessions(removed, removedWorkspaces);
+      for (const sessionId of removedSessions) {
+        modelProvider.invalidateSkillsForSession(sessionId);
+        forgetSession(sessionId);
+      }
+    }
+    if (becameDisabled.length > 0) {
+      workspacesStore().handleUnavailableHosts(becameDisabled);
+    }
+  },
+});
 setWorkspacesHooks({
   selectSession: (sid, opts) => sessionSelection.selectSession(sid, opts),
   writeSessionUrl: (sid, mode) => sessionRoute.writeSessionUrl(sid, mode),

@@ -369,13 +369,23 @@ while IFS= read -r line; do :; done
       async (ssh, dir) => {
         const down = join(dir, 'down');
         writeFileSync(down, '');
-        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const states: { status: string; failure?: string; error?: string }[] = [];
+        let refused: string | undefined;
+        const bridge = new SshKapBridge({ host: 'dev' }, {
+          sshProgram: ssh,
+          onChange: () => {
+            states.push({ status: bridge.status, failure: bridge.failure, error: bridge.error });
+            if (bridge.failure === 'connection_refused') refused = bridge.error;
+          },
+        });
         try {
           bridge.start();
-          await vi.waitFor(() => {
-            expect(bridge.status).toBe('disconnected');
-            expect(bridge.failure).toBe('connection_refused');
-          });
+          await vi.waitFor(
+            () => {
+              expect(states).toContainEqual({ status: 'connecting', failure: 'connection_refused', error: refused });
+            },
+            { timeout: 3_000, interval: 20 },
+          );
           await expect(bridge.connect()).rejects.toBeInstanceOf(HostConnectError);
           rmSync(down);
           await vi.waitFor(

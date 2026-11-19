@@ -240,7 +240,20 @@ it('lists the projects and sessions of a host again once it is reachable', async
   await h.client.selectSession('a');
   const [local] = workspacesStore().workspaces;
   const remote = { id: 'remote-ws', root: '/srv/project', name: 'remote', sessionCount: 1, hostId: 'dev' };
-  const listSessions = vi.fn(async () => ({ items: [], hasMore: false }));
+  const remoteSession: AppSession = {
+    ...h.sessionsStore().sessions[0]!,
+    id: 's-remote',
+    title: 's-remote',
+    cwd: '/srv/project',
+    workspaceId: 'remote-ws',
+    hostId: 'old-dev',
+    lastPrompt: 'hi',
+  };
+  h.sessionsStore().setSessions([...h.sessionsStore().sessions, remoteSession]);
+  const listSessions = vi.fn(async () => ({
+    items: [{ ...remoteSession, hostId: 'dev', title: '' }],
+    hasMore: false,
+  }));
   Object.assign(h.api, {
     listWorkspaces: vi.fn(async () => [local!, remote]),
     getFsHome: vi.fn(async () => ({ home: '/home', recentRoots: [] })),
@@ -252,10 +265,87 @@ it('lists the projects and sessions of a host again once it is reachable', async
 
   await vi.waitFor(() => expect(listSessions).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'remote-ws' })));
   expect(workspacesStore().workspaces.map((workspace) => workspace.id)).toEqual(['ws1', 'remote-ws']);
+  expect(h.sessionsStore().sessions.find((s) => s.id === 's-remote')?.hostId).toBe('dev');
+  expect(
+    h.sessionViewsStore().workspaceGroups.find((g) => g.workspace.id === 'remote-ws')?.sessions.map((s) => s.id),
+  ).toEqual(['s-remote']);
   expect(h.hostApi.listModels).not.toHaveBeenCalled();
 
   h.client.selectWorkspace('remote-ws');
   await vi.waitFor(() => expect(h.hostApi.listModels).toHaveBeenCalledTimes(1));
+});
+
+it('cascades cleanup when an SSH host is removed and restores sessions when re-added with a new host id', async () => {
+  const h = await setup();
+  const { workspacesStore } = await import('../src/stores/workspaces');
+  const { sessionListStore } = await import('../src/stores/sessionList');
+  await h.client.selectSession('a');
+  const [local] = workspacesStore().workspaces;
+  const remote = { id: 'remote-ws', root: '/srv/project', name: 'remote', sessionCount: 2, hostId: 'old-dev' };
+  const remoteSession: AppSession = {
+    ...h.sessionsStore().sessions[0]!,
+    id: 's-remote',
+    title: 's-remote',
+    cwd: '/srv/project',
+    workspaceId: 'remote-ws',
+    hostId: 'old-dev',
+    lastPrompt: 'hi',
+  };
+  const remoteDone: AppSession = {
+    ...remoteSession,
+    id: 's-remote-done',
+    title: 's-remote-done',
+  };
+  h.event('', { type: 'hostsChanged', hosts: [{ id: 'old-dev', host: 'dev', status: 'ready' }] });
+  workspacesStore().workspaces = [local!, remote];
+  workspacesStore().storedActiveWorkspaceId = 'remote-ws';
+  workspacesStore().trustErrorByWorkspaceId = {
+    'remote-ws': { operation: 'read', message: 'boom', originalError: new Error('boom') },
+  };
+  workspacesStore().trustLoadingByWorkspaceId = { 'remote-ws': true };
+  h.sessionsStore().setSessions([...h.sessionsStore().sessions, remoteSession]);
+  sessionListStore().doneSessions = [remoteDone];
+  h.modelsStore().setSkillsForSession('s-remote', [{ name: 'old-skill', description: '', source: 'project' } as never]);
+  h.sessionsStore().setActiveSessionId('s-remote');
+
+  let resolveStalePage!: (value: { items: AppSession[]; hasMore: boolean }) => void;
+  Object.assign(h.api, {
+    listSessions: vi.fn(() => new Promise((resolve) => { resolveStalePage = resolve; })),
+  });
+  const stalePage = sessionListStore().loadFirstWorkspacePage('remote-ws');
+
+  h.event('', { type: 'hostsChanged', hosts: [] });
+  expect(h.sessionsStore().activeSessionId).toBeUndefined();
+  expect(workspacesStore().activeWorkspaceId).toBe('ws1');
+  expect(workspacesStore().workspaces.map((w) => w.id)).toEqual(['ws1']);
+  expect(workspacesStore().trustErrorByWorkspaceId['remote-ws']).toBeUndefined();
+  expect(workspacesStore().trustLoadingByWorkspaceId['remote-ws']).toBe(false);
+  expect(h.sessionsStore().sessions.some((s) => s.id === 's-remote')).toBe(false);
+  expect(sessionListStore().doneSessions).toEqual([]);
+  expect(h.modelsStore().skillsBySession['s-remote']).toBeUndefined();
+
+  resolveStalePage({ items: [remoteSession], hasMore: false });
+  await expect(stalePage).resolves.toBe(false);
+  expect(h.sessionsStore().sessions.some((s) => s.id === 's-remote')).toBe(false);
+
+  const readdedRemote = { ...remote, hostId: 'new-dev' };
+  const listSessions = vi.fn(async () => ({
+    items: [{ ...remoteSession, hostId: 'new-dev', title: '' }],
+    hasMore: false,
+  }));
+  Object.assign(h.api, {
+    listWorkspaces: vi.fn(async () => [local!, readdedRemote]),
+    getFsHome: vi.fn(async () => ({ home: '/home', recentRoots: [] })),
+    listSessions,
+  });
+
+  h.event('', { type: 'hostsChanged', hosts: [{ id: 'new-dev', host: 'dev', status: 'ready' }] });
+  await vi.waitFor(() => expect(listSessions).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'remote-ws' })));
+  expect(workspacesStore().workspaces.map((w) => w.id)).toEqual(['ws1', 'remote-ws']);
+  expect(h.sessionsStore().sessions.find((s) => s.id === 's-remote')?.hostId).toBe('new-dev');
+  expect(
+    h.sessionViewsStore().workspaceGroups.find((g) => g.workspace.id === 'remote-ws')?.sessions.map((s) => s.id),
+  ).toEqual(['s-remote']);
 });
 
 it.each(['revisit', 'stay-offscreen'] as const)('owns background turn-end sidecars through %s without stale writes', async (action) => {

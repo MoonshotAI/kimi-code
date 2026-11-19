@@ -292,9 +292,8 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
 
   const activeWorkspaceId = computed<string | null>(() => {
     const id = storedActiveWorkspaceId.value;
-    if (id && workspaceById.value.has(id)) return id;
-    const list = workspacesView.value;
-    return (list.find((w) => !hostsStore().unavailable(w.hostId)) ?? list[0])?.id ?? null;
+    if (id && visibleWorkspaceIds.value.has(id)) return id;
+    return workspacesView.value.find((w) => !hostsStore().unavailable(w.hostId))?.id ?? null;
   });
 
   const visibleWorkspace = computed<WorkspaceView | null>(() => {
@@ -304,33 +303,106 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
 
   const isLocalWorkspace = computed<boolean>(() => visibleWorkspace.value?.hostId === undefined);
 
-  watch(
-    () => {
-      if (!hostsStore().loaded) return [false, false] as const;
-      const activeSid = sessionsStore().activeSessionId;
-      const activeSession = activeSid ? sessionsStore().sessions.find((s) => s.id === activeSid) : undefined;
-      const sessionWsId =
-        activeSession?.workspaceId ??
-        (activeSession?.cwd !== undefined ? workspaceIdForSession(activeSession) : undefined);
-      const sessionHostId =
-        activeSession?.hostId ??
-        (sessionWsId ? mergedWorkspaces.value.find((w) => w.id === sessionWsId)?.hostId : undefined);
-      return [
-        hostsStore().unavailable(sessionHostId),
-        hostsStore().unavailable(visibleWorkspace.value?.hostId),
-      ] as const;
-    },
-    ([sessionUnavailable, workspaceUnavailable]) => {
-      if (!sessionUnavailable && !workspaceUnavailable) return;
-      if (workspaceUnavailable) migrateActiveWorkspaceAfterRemoval();
-      if (sessionsStore().activeSessionId !== undefined) {
-        clearActiveSessionId();
-        workspacesHooks?.setSessionLoading(false);
-        filesStore().clearFileDiff();
-        workspacesHooks?.writeSessionUrl(undefined, 'replace');
+  function clearWorkspaceTrustState(workspaceIds: readonly string[], clearCached = false): void {
+    let trustChanged = false;
+    const nextTrust = clearCached ? { ...trustByWorkspaceId.value } : undefined;
+    for (const id of workspaceIds) {
+      trustInflight.delete(id);
+      setTrustError(id, undefined);
+      if (trustLoadingByWorkspaceId.value[id] === true) setTrustLoading(id, false);
+      if (nextTrust !== undefined && Object.prototype.hasOwnProperty.call(nextTrust, id)) {
+        delete nextTrust[id];
+        trustChanged = true;
       }
-    },
-  );
+    }
+    if (nextTrust !== undefined && trustChanged) trustByWorkspaceId.value = nextTrust;
+  }
+
+  function clearWorkspacePaginationState(workspaceIds: readonly string[]): void {
+    const stale = new Set(workspaceIds);
+    const omit = <T>(record: Record<string, T>): Record<string, T> | undefined => {
+      let changed = false;
+      const next = { ...record };
+      for (const id of stale) {
+        if (!Object.prototype.hasOwnProperty.call(next, id)) continue;
+        delete next[id];
+        changed = true;
+      }
+      return changed ? next : undefined;
+    };
+    const nextHasMore = omit(sessionsHasMoreByWorkspace.value);
+    if (nextHasMore !== undefined) sessionsHasMoreByWorkspace.value = nextHasMore;
+    const nextLoadingMore = omit(sessionsLoadingMoreByWorkspace.value);
+    if (nextLoadingMore !== undefined) sessionsLoadingMoreByWorkspace.value = nextLoadingMore;
+    const nextCursors = omit(sessionsCursorByWorkspace.value);
+    if (nextCursors !== undefined) sessionsCursorByWorkspace.value = nextCursors;
+    const nextCounts = omit(sessionsInitialCountByWorkspace.value);
+    if (nextCounts !== undefined) sessionsInitialCountByWorkspace.value = nextCounts;
+  }
+
+  function inspectHostSelection(
+    hostSet: ReadonlySet<string>,
+    affectedWorkspaceIds: ReadonlySet<string>,
+  ): { sessionAffected: boolean; workspaceAffected: boolean } {
+    const activeSid = sessionsStore().activeSessionId;
+    const activeSession = activeSid ? sessionsStore().sessions.find((s) => s.id === activeSid) : undefined;
+    const sessionWsId =
+      activeSession?.workspaceId ??
+      (activeSession?.cwd !== undefined ? workspaceIdForSession(activeSession) : undefined);
+    const sessionHostId =
+      activeSession?.hostId ??
+      (sessionWsId ? mergedWorkspaces.value.find((w) => w.id === sessionWsId)?.hostId : undefined);
+    const storedId = storedActiveWorkspaceId.value;
+    const storedHostId = storedId ? workspaceById.value.get(storedId)?.hostId : undefined;
+    return {
+      sessionAffected:
+        (sessionHostId !== undefined && hostSet.has(sessionHostId)) ||
+        (sessionWsId !== undefined && affectedWorkspaceIds.has(sessionWsId)),
+      workspaceAffected:
+        (storedHostId !== undefined && hostSet.has(storedHostId)) ||
+        (storedId !== null && affectedWorkspaceIds.has(storedId)),
+    };
+  }
+
+  function applyHostSelectionExit(
+    selection: { sessionAffected: boolean; workspaceAffected: boolean },
+    excludedWorkspaceIds?: ReadonlySet<string>,
+  ): void {
+    if (selection.workspaceAffected) migrateActiveWorkspaceAfterRemoval(excludedWorkspaceIds);
+    if ((selection.sessionAffected || selection.workspaceAffected) && sessionsStore().activeSessionId !== undefined) {
+      clearActiveSessionId();
+      workspacesHooks?.setSessionLoading(false);
+      filesStore().clearFileDiff();
+      workspacesHooks?.writeSessionUrl(undefined, 'replace');
+    }
+  }
+
+  function handleUnavailableHosts(hostIds: readonly string[]): void {
+    if (hostIds.length === 0) return;
+    const hostSet = new Set(hostIds);
+    const affected = mergedWorkspaces.value
+      .filter((w) => w.hostId !== undefined && hostSet.has(w.hostId))
+      .map((w) => w.id);
+    const affectedSet = new Set(affected);
+    const selection = inspectHostSelection(hostSet, affectedSet);
+    clearWorkspaceTrustState(affected);
+    applyHostSelectionExit(selection, affectedSet);
+  }
+
+  function removeHostWorkspaces(hostIds: readonly string[]): string[] {
+    if (hostIds.length === 0) return [];
+    const hostSet = new Set(hostIds);
+    const affected = mergedWorkspaces.value
+      .filter((w) => w.hostId !== undefined && hostSet.has(w.hostId))
+      .map((w) => w.id);
+    const affectedSet = new Set(affected);
+    const selection = inspectHostSelection(hostSet, affectedSet);
+    workspaces.value = workspaces.value.filter((w) => w.hostId === undefined || !hostSet.has(w.hostId));
+    clearWorkspaceTrustState(affected, true);
+    clearWorkspacePaginationState(affected);
+    applyHostSelectionExit(selection, affectedSet);
+    return affected;
+  }
 
   watch(
     () => sessionsStore().sessions,
@@ -455,8 +527,11 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     setTrustLoading(id, false);
   }
 
-  function migrateActiveWorkspaceAfterRemoval(): void {
-    const nextWorkspace = workspacesView.value.find((w) => !hostsStore().unavailable(w.hostId))?.id ?? null;
+  function migrateActiveWorkspaceAfterRemoval(excludedIds?: ReadonlySet<string>): void {
+    const nextWorkspace =
+      workspacesView.value.find(
+        (w) => !excludedIds?.has(w.id) && !hostsStore().unavailable(w.hostId),
+      )?.id ?? null;
     storedActiveWorkspaceId.value = nextWorkspace;
     if (nextWorkspace) saveActiveWorkspace(nextWorkspace);
     else safeRemove(STORAGE_KEYS.activeWorkspace);
@@ -839,7 +914,12 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   }
 
   function ensureWorkspaceTrust(workspaceId: string, options?: ReadRequestOptions): Promise<WorkspaceTrustResult> {
-    if (options?.signal?.aborted) return Promise.resolve({ status: 'aborted' });
+    if (
+      options?.signal?.aborted ||
+      hostsStore().blocked(mergedWorkspaces.value.find((w) => w.id === workspaceId)?.hostId)
+    ) {
+      return Promise.resolve({ status: 'aborted' });
+    }
     const trusted = trustByWorkspaceId.value[workspaceId];
     if (trusted !== undefined) return Promise.resolve({ status: 'success', trusted });
     const existing = trustInflight.get(workspaceId);
@@ -932,6 +1012,8 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     upsertWorkspacePreserveOrder,
     hideWorkspace,
     removeWorkspaceEntries,
+    handleUnavailableHosts,
+    removeHostWorkspaces,
     migrateActiveWorkspaceAfterRemoval,
     applyWorkspaceRename,
     commitSessionGroupPagination,

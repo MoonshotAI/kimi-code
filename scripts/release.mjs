@@ -83,7 +83,7 @@ if (command === 'check') {
       const sections = changelog.split(/(?=^## )/m);
       const notes = sections.find((section) => section.split(/\r?\n/, 1)[0] === heading);
       if (!notes) throw new Error(`Missing changelog entry for ${tag}`);
-      execFileSync('gh', ['release', 'create', tag, '--repo', repo, '--verify-tag', '--draft', '--title', tag, '--notes-file', '-', ...(pkg.version.includes('-') ? ['--prerelease'] : [])], { input: notes, stdio: ['pipe', 'inherit', 'inherit'] });
+      execFileSync('gh', ['release', 'create', tag, '--repo', repo, '--verify-tag', '--draft', '--title', `Kimi Code Desktop ${pkg.version}`, '--notes-file', '-', ...(pkg.version.includes('-') ? ['--prerelease'] : [])], { input: notes, stdio: ['pipe', 'inherit', 'inherit'] });
       release = findRelease(tag);
       if (!release) throw new Error(`Release ${tag} was not created`);
     }

@@ -9,7 +9,7 @@ description: Translate and sync bilingual user documentation between docs/zh/ an
 
 This repository keeps bilingual user documentation under `docs/zh/` and `docs/en/`. This skill synchronizes the two locales, page by page, after either side has been updated.
 
-This skill is invoked by both `gen-docs` (incremental updates) and `audit-docs` (full pre-release audit) to keep locale mirrors in sync.
+Use this skill for the pages affected by a documentation update. For release entries, [sync-changelog](../sync-changelog/SKILL.md) selects the published versions to translate.
 
 ## Prerequisites
 
@@ -21,7 +21,6 @@ If any of the following are missing, stop and report to the user before continui
 ## Locale sync rules
 
 - **Changelog** (`release-notes/changelog.md`): English is the source. Translate to Chinese.
-- **Breaking changes** (`release-notes/breaking-changes.md`): English is the source. Translate to Chinese.
 - **All other pages**: `docs/en/` and `docs/zh/` are mirrored pairs. After either side changes, update the other locale in the same change.
 
 When non-changelog pages change in either locale, sync the mirror before release. When the English changelog changes, sync the Chinese changelog.
@@ -30,7 +29,7 @@ When non-changelog pages change in either locale, sync the mirror before release
 
 1. **Detect what needs syncing**
 
-   - `git diff main..HEAD --stat docs/` — see which files changed
+   - `git diff main...HEAD --stat -- docs/` and `git status --short -- docs/` — locate committed and pending page changes
    - For each changed file under `docs/en/` or `docs/zh/`, locate its mirror in the other locale (same relative path).
 
 2. **Translate page by page, section by section**
@@ -43,17 +42,17 @@ When non-changelog pages change in either locale, sync the mirror before release
    - Use the term table exactly. Do not invent translations or use synonyms.
    - English H2+ uses sentence case (proper nouns excepted, per the term table).
    - Chinese typography: full-width punctuation (`，。；：？！（）`), space between Chinese and ASCII (letters / numbers / inline code / links).
-   - Callout titles (`::: tip` / `::: warning` / `::: info` / `::: danger`) use the short Chinese labels from `docs/AGENTS.md`.
+   - Callout titles (`::: tip` / `::: warning` / `::: info` / `::: danger`) use the short Chinese labels in the [writing guide](../gen-docs/references/writing-guide.md#排版).
 
 4. **Verify**
 
    - `git diff docs/` — scan for terminology drift or punctuation regressions.
-   - Run the docs build if available (`pnpm --filter docs run build` or equivalent) to catch broken links and Markdown errors.
+   - Run the docs build if available (`pnpm -C docs run build`) to catch broken links and Markdown errors.
 
 ## Rules and conventions
 
 - **Do not one-sided fixes**: if the changed locale has an unclear or incorrect statement, fix it there first; do not patch only the mirror.
-- **Match style, not just words**: Chinese docs use a narrative tone (see `docs/AGENTS.md` writing-style examples); preserve that tone in Chinese; preserve sentence-case headings and concise English style in English.
+- **Match style, not just words**: Chinese docs use a narrative tone (see the [writing-style examples](../gen-docs/references/writing-guide.md#写作风格)); preserve that tone in Chinese; preserve sentence-case headings and concise English style in English.
 - **Code blocks and identifiers stay as-is**: do not translate code, command names, flag names, or file paths.
 - **Public examples**: Do not introduce real internal endpoints, key names, account names, or service names while translating. Keep or replace them with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY` in both locales.
 

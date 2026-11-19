@@ -82,6 +82,7 @@
         ./packages/remote-control
         ./packages/session-import
         ./packages/telemetry
+        ./packages/testkit
         ./packages/tree-sitter-bash
         ./packages/vite-preset
         ./apps/desktop
@@ -91,6 +92,7 @@
         ./apps/vis/server
         ./apps/vis/web
         ./docs
+        ./tests/scenarios
       ];
 
       workspaceNames = [
@@ -115,6 +117,7 @@
         "@moonshot-ai/remote-control"
         "@moonshot-ai/session-import"
         "@moonshot-ai/kimi-telemetry"
+        "@moonshot-ai/testkit"
         "@moonshot-ai/tree-sitter-bash"
         "@moonshot-ai/vite-preset"
         "kimi-code-app"
@@ -124,6 +127,7 @@
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"
         "kimi-code-docs"
+        "@moonshot-ai/scenarios"
       ];
     in
     {
