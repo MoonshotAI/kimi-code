@@ -691,6 +691,7 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
       );
     }
     const mention = pillMention(pill);
+    if (mention.kind === 'session') return buildMentionSkillTooltip({ name: mention.name, description: '' });
     if (mention.kind === 'skill') {
       const skill = host.resolveSkill?.(mention.name, mention.path || undefined);
       if (!skill?.path || !host.openPath) {
@@ -884,7 +885,7 @@ export function startMentionTooltip(host: MentionTooltipHost): () => void {
       }
     } else if (!pill.classList.contains('quote-pill')) {
       const mention = pillMention(pill);
-      shownPath = mention.kind !== 'skill' && mention.path !== '' ? mention.path : null;
+      shownPath = (mention.kind === 'file' || mention.kind === 'folder') && mention.path !== '' ? mention.path : null;
       if (shownPath !== null) {
         probeRequest = {
           path: shownPath,

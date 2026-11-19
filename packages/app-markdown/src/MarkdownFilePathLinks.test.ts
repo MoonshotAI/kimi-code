@@ -306,6 +306,23 @@ describe('Markdown file path links with resolveFilePath', () => {
     expect(link.dataset.mentionPath).toBe('/work/B/review/SKILL.md');
   });
 
+  it('renders a session link as an inert session pill without a navigable href', async () => {
+    app = createApp({ render: () => h(Markdown, { text: 'see [Fix login](kimi-code://session/wd_app_0123456789ab/session_1)' }) });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await vi.waitFor(async () => {
+      await nextTick();
+      expect(host.querySelector('a.mention-session')).not.toBeNull();
+    });
+
+    const link = host.querySelector<HTMLAnchorElement>('a.mention-session')!;
+    expect(link.hasAttribute('href')).toBe(false);
+    expect(link.getAttribute('role')).toBeNull();
+    expect(link.dataset.mentionName).toBe('Fix login');
+    expect(link.dataset.mentionPath).toBe('wd_app_0123456789ab/session_1');
+    expect(link.dataset.mentionActionPath).toBeUndefined();
+  });
+
   it('resolves angle-bracketed image sources containing spaces', async () => {
     const prop = vi.fn(async (src: string) => `data:image/png;base64,iVBORw0KGgo=`);
     app = createApp({ render: () => h(Markdown, { text: '![logo](<KIMI CODE LOGO/Original Logo.png>)', resolveImage: prop }) });

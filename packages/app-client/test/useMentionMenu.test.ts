@@ -5,10 +5,13 @@ import {
   type AttachmentMentionCandidate,
   type FileSearch,
   type MentionEntry,
+  type MentionItem,
+  type SessionSearch,
 } from '../src/composables';
 import type { FileItem } from '@moonshot-ai/app-core/client';
 import type { AppSkill } from '@moonshot-ai/app-core/api';
 import type { TextFieldLike } from '@moonshot-ai/app-composer/runtime';
+import type { SessionMentionCandidate } from '../src/lib/sessionReferences';
 
 interface MockEditor {
   value: string;
@@ -20,6 +23,8 @@ interface MockEditor {
 interface SetupOptions {
   skills?: AppSkill[] | Ref<AppSkill[]>;
   attachments?: AttachmentMentionCandidate[] | Ref<AttachmentMentionCandidate[]>;
+  sessions?: SessionMentionCandidate[];
+  searchSessions?: SessionSearch;
   insertMention?: (entry: MentionEntry, range: { start: number; end: number }) => void;
   completeMention?: (text: string, range: { start: number; end: number }) => void;
   runStart?: number;
@@ -43,6 +48,8 @@ function setup(initialText = '', searchFiles?: FileSearch, options: SetupOptions
     searchFiles: () => searchFiles,
     skills: options.skills ? () => unref(options.skills!) : undefined,
     attachments: options.attachments ? () => unref(options.attachments!) : undefined,
+    sessions: options.sessions ? () => options.sessions! : undefined,
+    searchSessions: options.searchSessions,
     insertMention: options.insertMention,
     completeMention: options.completeMention,
   });
@@ -1089,6 +1096,252 @@ describe('useMentionMenu — full-width ＠ trigger (Chinese IMEs)', () => {
     expect(calls[0]).toEqual({
       entry: { kind: 'file', path: 'src/a.ts', name: 'a.ts' },
       range: { start: 3, end: 5 },
+    });
+  });
+});
+
+describe('useMentionMenu — sessions', () => {
+  function session(id: string, title: string, workspaceName = 'app'): SessionMentionCandidate {
+    return { id, workspaceId: 'wd_app_0123456789ab', title, workspaceName, time: '2h' };
+  }
+
+  const SESSIONS = [session('session_1', 'Fix login redirect'), session('session_2', 'Refactor parser')];
+
+  function typeToken(target: ReturnType<typeof setup>, value: string): void {
+    target.text.value = value;
+    target.editor.value = value;
+    target.editor.selectionStart = value.length;
+    target.mention.update();
+  }
+
+  function kinds(items: readonly { kind: string }[]): string[] {
+    return items.map((item) => item.kind);
+  }
+
+  it('shows the Sessions entry above project files on a bare @', async () => {
+    const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/a.ts', name: 'a.ts' }]);
+    const { mention } = setup('@', searchFiles, { sessions: SESSIONS });
+    mention.update();
+    expect(kinds(mention.items.value)).toEqual(['session-group']);
+    await Promise.resolve();
+    await nextTick();
+    expect(kinds(mention.items.value)).toEqual(['session-group', 'file']);
+  });
+
+  it('lists the Sessions entry after other results when the query matches a session', async () => {
+    const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/login.ts', name: 'login.ts' }]);
+    const { mention } = setup('@login', searchFiles, { sessions: SESSIONS });
+    mention.update();
+    await Promise.resolve();
+    await nextTick();
+    expect(kinds(mention.items.value)).toEqual(['file', 'session-group']);
+  });
+
+  it('hides the Sessions entry when no session matches the query', () => {
+    const { mention } = setup('@zzz', undefined, { sessions: SESSIONS });
+    mention.update();
+    expect(kinds(mention.items.value)).toEqual([]);
+    expect(mention.open.value).toBe(false);
+  });
+
+  it('opens the session submenu from the entry and filters it by the query typed after @', async () => {
+    const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/a.ts', name: 'a.ts' }]);
+    const target = setup('@', searchFiles, { sessions: SESSIONS });
+    const { mention } = target;
+    mention.update();
+    await Promise.resolve();
+    await nextTick();
+    searchFiles.mockClear();
+
+    mention.select(mention.items.value[0]!);
+    expect(mention.sessionMenuOpen.value).toBe(true);
+    expect(mention.open.value).toBe(true);
+    expect(mention.items.value.map((item) => item.kind === 'session' && item.session.id)).toEqual(['session_1', 'session_2']);
+
+    typeToken(target, '@log');
+    expect(searchFiles).not.toHaveBeenCalled();
+    expect(mention.items.value).toEqual([
+      { kind: 'session', session: SESSIONS[0], matchPositions: [4, 5, 6] },
+    ]);
+  });
+
+  it('keeps the submenu open without matches so the user can step back', () => {
+    const target = setup('@', undefined, { sessions: SESSIONS });
+    target.mention.update();
+    target.mention.select({ kind: 'session-group' });
+    typeToken(target, '@zzz');
+    expect(target.mention.items.value).toEqual([]);
+    expect(target.mention.open.value).toBe(true);
+  });
+
+  it('inserts the chosen session with its workspace-scoped path and closes the menu', () => {
+    const calls: Array<{ entry: MentionEntry; range: { start: number; end: number } }> = [];
+    const target = setup('see @', undefined, {
+      sessions: SESSIONS,
+      insertMention: (entry, range) => calls.push({ entry, range }),
+    });
+    target.mention.update();
+    target.mention.select({ kind: 'session-group' });
+    typeToken(target, 'see @fix');
+    target.mention.select(target.mention.items.value[0]!);
+
+    expect(calls).toEqual([{
+      entry: { kind: 'session', name: 'Fix login redirect', path: 'wd_app_0123456789ab/session_1' },
+      range: { start: 4, end: 8 },
+    }]);
+    expect(target.mention.open.value).toBe(false);
+    expect(target.mention.sessionMenuOpen.value).toBe(false);
+  });
+
+  it('enters the submenu on Tab and returns to the root list on leaveSessionMenu', async () => {
+    const searchFiles = vi.fn().mockResolvedValue([{ path: 'src/a.ts', name: 'a.ts' }]);
+    const { mention } = setup('@', searchFiles, { sessions: SESSIONS });
+    mention.update();
+    mention.complete({ kind: 'session-group' });
+    expect(mention.sessionMenuOpen.value).toBe(true);
+
+    searchFiles.mockClear();
+    mention.leaveSessionMenu();
+    expect(mention.sessionMenuOpen.value).toBe(false);
+    expect(searchFiles).toHaveBeenCalledWith('', expect.anything());
+    await Promise.resolve();
+    await nextTick();
+    expect(kinds(mention.items.value)).toEqual(['session-group', 'file']);
+  });
+
+  it('resets the submenu when the menu closes', () => {
+    const { mention } = setup('@', undefined, { sessions: SESSIONS });
+    mention.update();
+    mention.select({ kind: 'session-group' });
+    mention.close();
+    expect(mention.sessionMenuOpen.value).toBe(false);
+    mention.update();
+    expect(kinds(mention.items.value)).toEqual(['session-group']);
+  });
+
+  it('ranks title prefixes before title substrings and workspace-name matches', () => {
+    const sessions = [
+      session('session_a', 'Refactor login'),
+      session('session_b', 'Login page'),
+      session('session_c', 'Other work', 'login-service'),
+    ];
+    const { mention } = setup('@login', undefined, { sessions });
+    mention.update();
+    mention.select({ kind: 'session-group' });
+    expect(mention.items.value.map((item) => item.kind === 'session' && item.session.id)).toEqual(['session_b', 'session_a', 'session_c']);
+  });
+
+  function sessionIds(items: readonly MentionItem[]): string[] {
+    return items.flatMap((item) => (item.kind === 'session' ? [item.session.id] : []));
+  }
+
+  it('matches the last prompt and an exact session id, but not id fragments', () => {
+    const sessions = [
+      { ...session('session_a', 'Refactor parser'), lastPrompt: 'Look into the OAuth callback' },
+      session('session_b', 'Fix login redirect'),
+    ];
+    const target = setup('@oauth', undefined, { sessions });
+    target.mention.update();
+    target.mention.select({ kind: 'session-group' });
+    expect(sessionIds(target.mention.items.value)).toEqual(['session_a']);
+
+    typeToken(target, '@SESSION_B');
+    expect(sessionIds(target.mention.items.value)).toEqual(['session_b']);
+
+    typeToken(target, '@sess');
+    expect(target.mention.items.value).toEqual([]);
+  });
+
+  describe('server search', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('searches the server after a pause and ranks found sessions with the loaded ones', async () => {
+      const searchSessions = vi.fn<SessionSearch>().mockResolvedValue([
+        session('session_old', 'Login audit from last year'),
+        session('session_1', 'Fix login redirect'),
+      ]);
+      const { mention } = setup('@login', undefined, { sessions: SESSIONS, searchSessions });
+      mention.update();
+      expect(searchSessions).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(150);
+      expect(searchSessions).toHaveBeenCalledTimes(1);
+      expect(searchSessions).toHaveBeenCalledWith('login', { signal: expect.any(AbortSignal) });
+
+      mention.select({ kind: 'session-group' });
+      expect(sessionIds(mention.items.value)).toEqual(['session_old', 'session_1']);
+    });
+
+    it('waits for typing to pause and ignores a superseded search', async () => {
+      const calls: Array<{ query: string; signal: AbortSignal; resolve: (found: SessionMentionCandidate[]) => void }> = [];
+      const searchSessions: SessionSearch = (query, { signal }) =>
+        new Promise((resolve) => {
+          calls.push({ query, signal, resolve });
+        });
+      const target = setup('@', undefined, { sessions: SESSIONS, searchSessions });
+      target.mention.update();
+      target.mention.select({ kind: 'session-group' });
+
+      typeToken(target, '@a');
+      await vi.advanceTimersByTimeAsync(100);
+      typeToken(target, '@au');
+      await vi.advanceTimersByTimeAsync(150);
+      expect(calls.map((call) => call.query)).toEqual(['au']);
+
+      typeToken(target, '@aud');
+      expect(calls[0]!.signal.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(calls.map((call) => call.query)).toEqual(['au', 'aud']);
+
+      calls[0]!.resolve([session('session_stale', 'Audit stale')]);
+      calls[1]!.resolve([session('session_audit', 'Audit trail')]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sessionIds(target.mention.items.value)).toEqual(['session_audit']);
+    });
+
+    it('shows the submenu as loading while a search is pending and never searches a blank query', async () => {
+      let resolve!: (found: SessionMentionCandidate[]) => void;
+      const searchSessions = vi.fn<SessionSearch>(() => new Promise((done) => {
+        resolve = done;
+      }));
+      const target = setup('@', undefined, { sessions: SESSIONS, searchSessions });
+      target.mention.update();
+      target.mention.select({ kind: 'session-group' });
+      await vi.advanceTimersByTimeAsync(150);
+      expect(searchSessions).not.toHaveBeenCalled();
+      expect(target.mention.loading.value).toBe(false);
+
+      typeToken(target, '@zz');
+      expect(target.mention.loading.value).toBe(true);
+      expect(target.mention.open.value).toBe(true);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(target.mention.loading.value).toBe(true);
+
+      resolve([]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(target.mention.loading.value).toBe(false);
+      expect(target.mention.items.value).toEqual([]);
+    });
+
+    it('opens the menu for sessions found only on the server and drops them when it closes', async () => {
+      const searchSessions = vi.fn<SessionSearch>().mockResolvedValue([session('session_old', 'Login audit')]);
+      const target = setup('@login', undefined, { sessions: [], searchSessions });
+      target.mention.update();
+      expect(target.mention.open.value).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(150);
+      expect(kinds(target.mention.items.value)).toEqual(['session-group']);
+      expect(target.mention.open.value).toBe(true);
+
+      target.mention.close();
+      target.mention.update();
+      expect(target.mention.items.value).toEqual([]);
     });
   });
 });
