@@ -30,6 +30,9 @@ import type {
   AppSession,
   AppSessionRatingReport,
   AppSessionRatingOffer,
+  SessionContextItemDetail,
+  SessionContextItemsResponse,
+  SessionContextSummary,
   AppSkill,
   AppSkillAttachment,
   AppSkillActivationOptions,
@@ -815,6 +818,44 @@ export class DaemonKimiWebApi implements KimiWebApi {
     await this.http.post(
       `/sessions/${encodeURIComponent(sessionId)}:compact`,
       instruction ? { instruction } : {},
+    );
+  }
+
+  async getSessionContextSummary(
+    sessionId: string,
+    agentId?: string,
+    options?: ReadRequestOptions,
+  ): Promise<SessionContextSummary> {
+    return this.http.get<SessionContextSummary>(
+      `/sessions/${encodeURIComponent(sessionId)}/context/summary`,
+      { agent_id: agentId },
+      options,
+    );
+  }
+
+  async getSessionContextItems(
+    sessionId: string,
+    query?: { agentId?: string; role?: string; roles?: readonly string[]; offset?: number; limit?: number },
+  ): Promise<SessionContextItemsResponse> {
+    return this.http.get<SessionContextItemsResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/context/items`,
+      {
+        agent_id: query?.agentId,
+        role: query?.roles?.length ? query.roles : query?.role,
+        offset: query?.offset !== undefined ? String(query.offset) : undefined,
+        limit: query?.limit !== undefined ? String(query.limit) : undefined,
+      },
+    );
+  }
+
+  async getSessionContextItem(
+    sessionId: string,
+    itemId: string,
+    agentId?: string,
+  ): Promise<SessionContextItemDetail> {
+    return this.http.get<SessionContextItemDetail>(
+      `/sessions/${encodeURIComponent(sessionId)}/context/items/${encodeURIComponent(itemId)}`,
+      { agent_id: agentId },
     );
   }
 

@@ -81,6 +81,8 @@ export default {
     sidebarTabsHint: 'The sidebar shows Open / Done / Projects tabs',
     notifyUser: 'Progress updates',
     notifyUserHint: 'Let the agent post progress updates in the conversation. Only applies to sessions created afterwards.',
+    contextInspector: 'Context usage',
+    contextInspectorHint: 'Show context usage and composition in the composer ring and session info, and inspect each item the model receives.',
   },
   plugins: {
     localOnlyHint: 'Plugins and MCP servers apply to projects on this machine only. Projects on SSH hosts use what is set up on each host',

@@ -84,6 +84,7 @@ function payloadOf(type: PanelTabType, value: unknown): Record<string, unknown> 
     case 'diff': return {};
     case 'files': return {};
     case 'inspector': return {};
+    case 'context': return {};
     case 'browser': return string('browserId') && /^[A-Za-z0-9:_-]{1,128}$/.test(value['browserId'] as string) ? { browserId: value['browserId'], ...(string('title') ? { title: (value['title'] as string).slice(0, 512) } : {}), ...(string('customTitle') ? { customTitle: (value['customTitle'] as string).slice(0, 512) } : {}) } : null;
     case 'file':
       return string('path') && (value['content'] === undefined || string('content')) &&

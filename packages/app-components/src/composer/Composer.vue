@@ -5,6 +5,7 @@ let composerMenuSequence = 0;
 <script setup lang="ts">
 import { useComposerNativeMenuHost } from './nativeMenus';
 import BrowserReferenceDetails from './BrowserReferenceDetails.vue';
+import ContextSummaryBody from './ContextSummaryBody.vue';
 import { useBrowserReferenceDetails } from './browserReferenceDetails';
 import { BrowserScreenshotRecovery } from '@moonshot-ai/app-client/lib';
 import { useComposerBrowserReferenceHost, restoreBrowserCaptureBookmark, browserReferenceAnchor, type BrowserCaptureResource } from './browserReferences';
@@ -13,11 +14,12 @@ import { newAttId } from '@moonshot-ai/app-composer/features/attachment';
 import { composerSnapshotDocument, docToText, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import type { NativeMenuItem } from '@moonshot-ai/app-core/native-menu';
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
+import type { SessionContextSummary } from '@moonshot-ai/app-core/api';
 import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
-import { useAppearance } from '@moonshot-ai/app-core';
+import { useAppearance, useContextInspector } from '@moonshot-ai/app-core';
 import type { IconName } from '@moonshot-ai/app-client/icons';
 import type { PermissionMode, ToolMedia, TurnAttachment } from '@moonshot-ai/app-core/client/types';
 import {
@@ -91,6 +93,7 @@ import {
   trackMenuSurface,
 } from '@moonshot-ai/app-ui';
 import { resolveComposerBinding } from '@moonshot-ai/app-client/contracts';
+import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import MediaLightbox from '../chat/MediaLightbox.vue';
 import ComposerMediaRail from './ComposerMediaRail.vue';
@@ -117,6 +120,7 @@ const props = defineProps<{
 const isSideChat = computed(() => props.variant === 'side-chat');
 
 const { t, locale } = useI18n();
+const panelApi = inject(panelApiKey, undefined);
 const client = useKimiWebClient();
 
 const sessionId = client.activeSessionId;
@@ -1932,6 +1936,11 @@ function handleKeydown(e: KeyboardEvent): boolean {
       closePermDropdown();
       return true;
     }
+    if (ctxCardOpen.value) {
+      e.preventDefault();
+      closeCtxCard();
+      return true;
+    }
   }
 
   if (slashOpen.value) {
@@ -2084,13 +2093,36 @@ const hasUpload = computed(() => !!uploadImage);
 
 const dropdownOpen = ref(false);
 const permDropdownOpen = ref(false);
+const ctxCardOpen = ref(false);
 const addMenuOpen = ref(false);
 type MenuHandle = InstanceType<typeof Menu>;
 const toolbarRef = ref<HTMLElement | null>(null);
 const addMenuRef = ref<HTMLElement | null>(null);
 const addSheetRef = ref<HTMLElement | null>(null);
 const permPillRef = ref<HTMLElement | null>(null);
+const ctxBtnRef = ref<HTMLElement | null>(null);
+const ctxCardRef = ref<MenuHandle | null>(null);
 const modelPillRef = ref<HTMLElement | null>(null);
+
+const { contextInspectorEnabled } = useContextInspector();
+const ctxSnapshot = shallowRef<SessionContextSummary | null>(null);
+const ctxLoading = ref(false);
+const ctxError = ref('');
+const ctxCardLeft = ref('');
+const ctxCardMaxWidth = ref('');
+const ctxCardMaxHeight = ref('');
+const ctxCardDropDown = ref(false);
+const ctxCardStyle = computed<Record<string, string>>(() => {
+  const style: Record<string, string> = {};
+  if (ctxCardLeft.value) {
+    style.left = ctxCardLeft.value;
+    style.right = 'auto';
+  }
+  if (ctxCardMaxWidth.value) style.maxWidth = ctxCardMaxWidth.value;
+  if (ctxCardMaxHeight.value) style.maxHeight = ctxCardMaxHeight.value;
+  return style;
+});
+let ctxFetchToken = 0;
 
 trackMenuSurface(addMenuOpen, addMenuRef);
 
@@ -2155,7 +2187,13 @@ const modelMenuStyle = computed<Record<string, string>>(() => {
 });
 
 const anyPopupOpen = computed(
-  () => dropdownOpen.value || permDropdownOpen.value || addMenuOpen.value || slashOpen.value || mentionOpen.value,
+  () =>
+    dropdownOpen.value ||
+    permDropdownOpen.value ||
+    ctxCardOpen.value ||
+    addMenuOpen.value ||
+    slashOpen.value ||
+    mentionOpen.value,
 );
 
 function closeOverlays(): void {
@@ -2164,6 +2202,7 @@ function closeOverlays(): void {
   closeAddMenu();
   closeDropdown();
   closePermDropdown();
+  closeCtxCard();
   closeMediaAttachment();
   browserDetails.close();
 }
@@ -2172,9 +2211,14 @@ const isEmpty = () => text.value.trim().length === 0 && activeAttachmentEntries.
 
 defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty });
 
+function hasAnyToolbarMenuOpen(): boolean {
+  return dropdownOpen.value || permDropdownOpen.value || ctxCardOpen.value || addMenuOpen.value;
+}
+
 function toggleDropdown(): void {
   if (nativeModelMenu?.available && !isMobile.value && modelPillRef.value !== null) {
     closePermDropdown();
+    closeCtxCard();
     closeAddMenu();
     nativeModelMenu.toggle(modelPillRef.value, { initialFocus: 'first-item' });
     return;
@@ -2183,9 +2227,10 @@ function toggleDropdown(): void {
   if (dropdownOpen.value) {
     updateModelMenuPosition();
     permDropdownOpen.value = false;
+    ctxCardOpen.value = false;
     addMenuOpen.value = false;
     document.addEventListener('click', onDocClick, true);
-  } else {
+  } else if (!hasAnyToolbarMenuOpen()) {
     document.removeEventListener('click', onDocClick, true);
   }
 }
@@ -2193,7 +2238,7 @@ function toggleDropdown(): void {
 function closeDropdown(): void {
   nativeModelMenu?.close();
   dropdownOpen.value = false;
-  if (!permDropdownOpen.value && !addMenuOpen.value) {
+  if (!hasAnyToolbarMenuOpen()) {
     document.removeEventListener('click', onDocClick, true);
   }
 }
@@ -2201,6 +2246,7 @@ function closeDropdown(): void {
 function togglePermDropdown(): void {
   if (nativePermissionMenu?.available && !isMobile.value && permPillRef.value !== null) {
     closeDropdown();
+    closeCtxCard();
     closeAddMenu();
     nativePermissionMenu.toggle(permPillRef.value, { initialFocus: 'first-item' });
     return;
@@ -2209,9 +2255,10 @@ function togglePermDropdown(): void {
   if (permDropdownOpen.value) {
     updatePermissionMenuPosition();
     dropdownOpen.value = false;
+    ctxCardOpen.value = false;
     addMenuOpen.value = false;
     document.addEventListener('click', onDocClick, true);
-  } else {
+  } else if (!hasAnyToolbarMenuOpen()) {
     document.removeEventListener('click', onDocClick, true);
   }
 }
@@ -2219,7 +2266,28 @@ function togglePermDropdown(): void {
 function closePermDropdown(): void {
   nativePermissionMenu?.close();
   permDropdownOpen.value = false;
-  if (!dropdownOpen.value && !addMenuOpen.value) {
+  if (!hasAnyToolbarMenuOpen()) {
+    document.removeEventListener('click', onDocClick, true);
+  }
+}
+
+function toggleCtxCard(): void {
+  ctxCardOpen.value = !ctxCardOpen.value;
+  if (ctxCardOpen.value) {
+    closeDropdown();
+    closePermDropdown();
+    addMenuOpen.value = false;
+    slashOpen.value = false;
+    closeMentionMenu();
+    document.addEventListener('click', onDocClick, true);
+  } else if (!hasAnyToolbarMenuOpen()) {
+    document.removeEventListener('click', onDocClick, true);
+  }
+}
+
+function closeCtxCard(): void {
+  ctxCardOpen.value = false;
+  if (!hasAnyToolbarMenuOpen()) {
     document.removeEventListener('click', onDocClick, true);
   }
 }
@@ -2227,8 +2295,9 @@ function closePermDropdown(): void {
 function toggleAddMenu(): void {
   addMenuOpen.value = !addMenuOpen.value;
   if (addMenuOpen.value) {
-    dropdownOpen.value = false;
-    permDropdownOpen.value = false;
+    closeDropdown();
+    closePermDropdown();
+    ctxCardOpen.value = false;
     slashOpen.value = false;
     closeMentionMenu();
     document.addEventListener('click', onDocClick, true);
@@ -2236,14 +2305,14 @@ function toggleAddMenu(): void {
       const root = isMobile.value ? addSheetRef.value : addMenuRef.value;
       root?.querySelector<HTMLElement>('.am-row')?.focus();
     });
-  } else {
+  } else if (!hasAnyToolbarMenuOpen()) {
     document.removeEventListener('click', onDocClick, true);
   }
 }
 
 function closeAddMenu(): void {
   addMenuOpen.value = false;
-  if (!dropdownOpen.value && !permDropdownOpen.value) {
+  if (!hasAnyToolbarMenuOpen()) {
     document.removeEventListener('click', onDocClick, true);
   }
 }
@@ -2359,6 +2428,7 @@ function onDocClick(e: MouseEvent): void {
   if (!insideToolbar && !insideAddMenu) {
     closeDropdown();
     closePermDropdown();
+    closeCtxCard();
     closeAddMenu();
   }
 }
@@ -2374,10 +2444,88 @@ const pct = computed(() => {
 });
 
 const ctxTooltip = computed(() => {
-  const used = formatTokens(status.value?.ctxUsed ?? 0);
-  const max = formatTokens(status.value?.ctxMax ?? 0);
+  const usedRaw = status.value?.ctxUsed ?? 0;
+  const maxRaw = status.value?.ctxMax ?? 0;
+  const used = formatTokens(usedRaw);
+  const max = formatTokens(maxRaw);
+  if (contextInspectorEnabled.value && maxRaw > 0) {
+    const remaining = formatTokens(Math.max(0, maxRaw - usedRaw));
+    return t('inspector.ringTooltipWithMax', { used, remaining, max, pct: pct.value });
+  }
   return t('status.ctxTooltip', { used, max, pct: pct.value });
 });
+
+const ctxUsageLabel = computed(() => {
+  const usedRaw = status.value?.ctxUsed ?? 0;
+  const maxRaw = status.value?.ctxMax ?? 0;
+  const used = formatTokens(usedRaw);
+  if (maxRaw <= 0) return `${t('inspector.usedLabel')} ${used}`;
+  return t('inspector.usageSummary', { used, remaining: formatTokens(Math.max(0, maxRaw - usedRaw)) });
+});
+
+const canOpenContextDetail = computed(() => Boolean(panelApi?.openContext));
+
+async function refreshCtxSnapshot(): Promise<void> {
+  const sid = sessionId.value;
+  if (!ctxCardOpen.value || !sid) {
+    ctxLoading.value = false;
+    return;
+  }
+  if (ctxSnapshot.value && ctxSnapshot.value.session_id !== sid) {
+    ctxSnapshot.value = null;
+  }
+  const token = ++ctxFetchToken;
+  ctxLoading.value = true;
+  ctxError.value = '';
+  try {
+    const next = await getKimiWebApi().getSessionContextSummary(sid);
+    if (token !== ctxFetchToken || !ctxCardOpen.value || sessionId.value !== sid) return;
+    ctxSnapshot.value = next;
+  } catch (err) {
+    if (token !== ctxFetchToken || !ctxCardOpen.value || sessionId.value !== sid) return;
+    ctxError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    if (token === ctxFetchToken) ctxLoading.value = false;
+  }
+}
+
+watch(sessionId, () => {
+  ctxSnapshot.value = null;
+  ctxError.value = '';
+  ctxLoading.value = false;
+  closeCtxCard();
+});
+
+watch(
+  [ctxCardOpen, sessionId, () => status.value?.ctxUsed, () => running.value],
+  ([open]) => {
+    if (!open) {
+      ctxLoading.value = false;
+      return;
+    }
+    void refreshCtxSnapshot().then(() => {
+      if (ctxCardOpen.value) void nextTick(clampCtxCardToViewport);
+    });
+  },
+);
+
+function handleCompactFromCard(): void {
+  closeCtxCard();
+  client.compact();
+}
+
+function handleOpenContextDetail(): void {
+  closeCtxCard();
+  panelApi?.openContext?.();
+}
+
+function onCtxCardKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeCtxCard();
+    ctxBtnRef.value?.focus();
+  }
+}
 
 const currentModel = computed(() =>
   models.value?.find((m) => m.id === status.value?.modelId),
@@ -2704,7 +2852,7 @@ const permDropdownRef = ref<MenuHandle | null>(null);
 function clampToolbarPopupToViewport(options: {
   menu: HTMLElement | null;
   anchor: HTMLElement | null;
-  align: 'left' | 'right';
+  align: 'left' | 'right' | 'center';
   setOffset: (value: string) => void;
   setMaxWidth: (value: string) => void;
   setMaxHeight: (value: string) => void;
@@ -2733,13 +2881,23 @@ function clampToolbarPopupToViewport(options: {
       if (anchor) {
         const anchorRect = anchor.getBoundingClientRect();
         if (anchorRect.width > 0) {
-          if (align === 'right') menu.style.right = '0px';
-          else menu.style.left = '0px';
+          if (align === 'right') {
+            menu.style.right = '0px';
+          } else {
+            menu.style.left = '0px';
+            menu.style.right = 'auto';
+          }
           const menuW = Math.min(menu.offsetWidth, availableWidth);
           if (align === 'right') {
             const rightEdge = Math.min(Math.max(anchorRect.right, minLeft + menuW), maxRight);
             const offsetPx = `${Math.round(rect.right - rightEdge)}px`;
             menu.style.right = offsetPx;
+            setOffset(offsetPx);
+          } else if (align === 'center') {
+            const centeredLeft = anchorRect.left + anchorRect.width / 2 - menuW / 2;
+            const leftEdge = Math.max(Math.min(centeredLeft, maxRight - menuW), minLeft);
+            const offsetPx = `${Math.round(leftEdge - rect.left)}px`;
+            menu.style.left = offsetPx;
             setOffset(offsetPx);
           } else {
             const leftEdge = Math.max(Math.min(anchorRect.left, maxRight - menuW), minLeft);
@@ -2786,9 +2944,22 @@ function clampPermissionMenuToViewport(): void {
   });
 }
 
+function clampCtxCardToViewport(): void {
+  clampToolbarPopupToViewport({
+    menu: menuElement(ctxCardRef.value),
+    anchor: ctxBtnRef.value,
+    align: 'center',
+    setOffset: (value) => { ctxCardLeft.value = value; },
+    setMaxWidth: (value) => { ctxCardMaxWidth.value = value; },
+    setMaxHeight: (value) => { ctxCardMaxHeight.value = value; },
+    setDropDown: (value) => { ctxCardDropDown.value = value; },
+  });
+}
+
 function onViewportResize(): void {
   closeDropdown();
   closePermDropdown();
+  closeCtxCard();
 }
 
 function addModelMenuViewportListeners(): void {
@@ -2801,9 +2972,19 @@ function removeModelMenuViewportListeners(): void {
   window.visualViewport?.removeEventListener('resize', onViewportResize);
 }
 
-watch([dropdownOpen, permDropdownOpen], ([modelOpen, permOpen]) => {
-  if (modelOpen || permOpen) addModelMenuViewportListeners();
+watch([dropdownOpen, permDropdownOpen, ctxCardOpen], ([modelOpen, permOpen, ctxOpen]) => {
+  if (modelOpen || permOpen || ctxOpen) addModelMenuViewportListeners();
   else removeModelMenuViewportListeners();
+});
+
+watch(ctxCardOpen, async (open) => {
+  if (!open) return;
+  ctxCardDropDown.value = false;
+  ctxCardLeft.value = '';
+  ctxCardMaxWidth.value = '';
+  ctxCardMaxHeight.value = '';
+  await nextTick();
+  clampCtxCardToViewport();
 });
 
 watch(dropdownOpen, async (open) => {
@@ -3169,16 +3350,31 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         </div>
 
         <div ref="toolbarRightRef" class="toolbar-right">
-          <Tooltip :text="ctxTooltip">
-            <span
-              v-if="status && !hideContext && !isSideChat"
-              class="ctx-group"
-              role="img"
-              tabindex="0"
-              :aria-label="ctxTooltip"
-            >
-              <ContextRing :pct="pct" />
-            </span>
+          <Tooltip :text="ctxCardOpen ? null : ctxTooltip">
+            <template v-if="status && !hideContext && !isSideChat">
+              <button
+                v-if="contextInspectorEnabled"
+                ref="ctxBtnRef"
+                type="button"
+                class="ctx-group ctx-trigger"
+                :class="{ open: ctxCardOpen }"
+                aria-haspopup="dialog"
+                :aria-expanded="ctxCardOpen"
+                :aria-label="ctxTooltip"
+                @click.stop="toggleCtxCard"
+              >
+                <ContextRing :pct="pct" />
+              </button>
+              <span
+                v-else
+                class="ctx-group"
+                role="img"
+                tabindex="0"
+                :aria-label="ctxTooltip"
+              >
+                <ContextRing :pct="pct" />
+              </span>
+            </template>
           </Tooltip>
 
           <Tooltip v-if="status && !isSideChat && (gateVerdict === 'ok' || (gateVerdict === 'upgrade' && currentModel))" :text="modelPillCollapsed ? modelIconLabel : null">
@@ -3377,6 +3573,36 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             <Icon class="md-more-arrow" name="chevron-right" size="sm" style="color: var(--md-more-arrow-color)" />
           </MenuItem>
         </Menu>
+        </Transition>
+
+        <Transition name="composer-menu-pop">
+          <Menu
+            v-if="ctxCardOpen && status && !isSideChat"
+            ref="ctxCardRef"
+            role="dialog"
+            class="ctx-card"
+            :class="{ 'flip-down': ctxCardDropDown }"
+            :style="ctxCardStyle"
+            :aria-label="t('inspector.title')"
+            @click.stop
+            @keydown="onCtxCardKeydown"
+          >
+            <div class="ctx-card-head">
+              <span class="ctx-card-title">{{ t('inspector.title') }}</span>
+              <span class="ctx-card-usage">{{ ctxUsageLabel }}</span>
+            </div>
+
+            <ContextSummaryBody
+              :snapshot="ctxSnapshot"
+              :loading="ctxLoading"
+              :error="ctxError"
+              :can-compact="Boolean(sessionId) && !running"
+              :can-open-detail="canOpenContextDetail"
+              show-divider
+              @compact="handleCompactFromCard"
+              @open-detail="handleOpenContextDetail"
+            />
+          </Menu>
         </Transition>
       </div>
   </div>
@@ -4328,6 +4554,62 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
+.ctx-trigger {
+  display: inline-flex;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: background var(--duration-base) var(--ease-out);
+}
+.ctx-trigger:hover {
+  background: var(--color-hover);
+}
+.ctx-trigger.open {
+  background: var(--color-accent-soft);
+}
+.ctx-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+
+.ctx-card {
+  position: absolute;
+  bottom: calc(100% + var(--space-1));
+  right: calc(var(--composer-control-inset) + var(--composer-send-size) + var(--space-1));
+  z-index: var(--z-dropdown);
+  width: 268px;
+  max-width: calc(100vw - var(--space-8));
+  padding: var(--space-3);
+  gap: var(--space-2);
+  transform-origin: bottom center;
+  font-family: var(--font-ui);
+}
+.ctx-card.flip-down {
+  top: calc(100% + var(--space-1));
+  bottom: auto;
+  transform-origin: top center;
+}
+
+.ctx-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.ctx-card-title {
+  font-size: var(--ui-font-size);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+}
+.ctx-card-usage {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
 
 .model-pill {
   gap: var(--space-1);
@@ -4433,7 +4715,9 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
 .model-dropdown.flip-down.composer-menu-pop-enter-from,
 .model-dropdown.flip-down.composer-menu-pop-leave-to,
 .perm-dropdown.flip-down.composer-menu-pop-enter-from,
-.perm-dropdown.flip-down.composer-menu-pop-leave-to {
+.perm-dropdown.flip-down.composer-menu-pop-leave-to,
+.ctx-card.flip-down.composer-menu-pop-enter-from,
+.ctx-card.flip-down.composer-menu-pop-leave-to {
   transform: scale(0.97) translateY(-2px);
 }
 

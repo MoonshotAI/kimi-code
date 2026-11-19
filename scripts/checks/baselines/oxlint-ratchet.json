@@ -787,7 +787,7 @@
     "apps/desktop/src/main/browser/browser-session-store.ts": 2,
     "apps/desktop/src/main/browser/browser-view.ts": 1,
     "apps/desktop/src/renderer/api/config.ts": 1,
-    "apps/desktop/src/renderer/components/panel/panelComponents.ts": 8,
+    "apps/desktop/src/renderer/components/panel/panelComponents.ts": 9,
     "apps/kimi-code/src/tui/components/markdown/markdown.ts": 1,
     "apps/kimi-code/src/tui/utils/message-replay.ts": 1,
     "apps/vis/web/src/components/shared/JsonViewer.tsx": 1,
