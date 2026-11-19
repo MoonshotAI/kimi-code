@@ -64,3 +64,23 @@ describe.each(PROVIDERS)('the engine talking to a $type provider', ({ type, prot
     );
   });
 });
+
+describe.each(PROVIDERS)('the engine reading a $type stream split at random byte boundaries', ({ type }) => {
+  const test = base.extend<ScenarioFixtures>(scenarioFixtures({ provider: type, modelOptions: { chunking: { seed: 20_261_119, maxBytes: 5 } } }));
+
+  test('rebuilds multi-byte text, reasoning and tool arguments exactly', async ({ kap, model }) => {
+    model.script(think('想一想🙂', bash('echo 你好，世界🙂', { text: '先检查一下。' })), say('完成了 ✅'));
+    const session = await kap.createSession();
+
+    await kap.prompt(session.id, 'go');
+    await kap.waitIdle(session.id);
+
+    const [turn] = await kap.turns(session.id);
+    expect(turn?.['outcome']).toBe('completed');
+    const items = turn?.items ?? [];
+    expect(items.find((item) => item.type === 'reasoning')).toMatchObject({ text: '想一想🙂' });
+    expect(items.find((item) => item.type === 'tool_call')).toMatchObject({ name: 'Bash', outcome: 'completed' });
+    expect(model.requests('main')[1]?.view.messages.find((message) => message.role === 'tool')?.text).toContain('你好，世界🙂');
+    expect(items.filter((item) => item.type === 'assistant_message').map((item) => item['text'])).toEqual(['先检查一下。', '完成了 ✅']);
+  });
+});

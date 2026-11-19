@@ -8,5 +8,3 @@
 *.gif binary
 *.ico binary
 *.png binary
-
-packages/kap-server/schema/*.json linguist-generated=true

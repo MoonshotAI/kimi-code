@@ -13,6 +13,15 @@ export interface NetworkGuardOptions {
   readonly onViolation?: (target: string) => void;
 }
 
+export const NETWORK_LOG_ENV = 'TESTKIT_NETWORK_LOG';
+export const FETCH_STUBS_ENV = 'TESTKIT_FETCH_STUBS';
+
+export interface FetchStub {
+  readonly method: string;
+  readonly url: string;
+  readonly status: number;
+}
+
 type Connect = (this: Socket, ...args: unknown[]) => Socket;
 
 interface InstalledGuard {

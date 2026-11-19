@@ -3,15 +3,23 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { until, writeKimiConfig } from '@moonshot-ai/testkit/fixtures';
-import type { KapTurn, KapTurnsPage } from '@moonshot-ai/testkit/kap';
+import { until, writeKimiConfig, type TestHome } from '@moonshot-ai/testkit/fixtures';
+import { KapProcess, type KapSocket, type KapTurn } from '@moonshot-ai/testkit/kap';
 import { fakeModelConfig, say } from '@moonshot-ai/testkit/model';
 import { homeFixtures, modelFixtures, type HomeFixtures, type ModelFixtures } from '@moonshot-ai/testkit/vitest';
 import { expect, test as base } from 'vitest';
 
-import { startKapProcess } from './support/kap-process';
-
 const test = base.extend<HomeFixtures & ModelFixtures>({ ...homeFixtures(), ...modelFixtures() });
+
+function startServer(home: TestHome): Promise<KapProcess> {
+  return KapProcess.start({ home, env: { KIMI_CODE_PERSISTENCE_MINIDB_READMODEL: undefined } });
+}
+
+async function subscribe(server: KapProcess, sessionId: string): Promise<KapSocket> {
+  const socket = await server.connect();
+  await socket.subscribe(sessionId);
+  return socket;
+}
 
 test('continues a released session across a fresh KAP process and recovers the completed turn after a crash', { timeout: 90_000 }, async ({ model, testHome }) => {
   const root = fileURLToPath(new URL('./fixtures/released-2.6.3/', import.meta.url));
@@ -28,11 +36,10 @@ test('continues a released session across a fresh KAP process and recovers the c
   await model.listen();
   await writeKimiConfig(testHome.dataDir, fakeModelConfig(model, { type: 'openai' }));
   const id = fixture.sessionId;
-  const first = await startKapProcess(testHome);
+  const first = await startServer(testHome);
   let history: readonly KapTurn[];
   try {
-    const channel = await first.subscribe(id);
-    history = channel.turns(id);
+    history = (await subscribe(first, id)).turns(id);
     expect(history, 'released writer history before continuation').toMatchObject([{ status: 'ended', outcome: 'completed', items: [
       { type: 'user_message', text: 'Remember this greeting.' },
       { type: 'assistant_message', text: 'Hello from the released writer.' },
@@ -40,24 +47,24 @@ test('continues a released session across a fresh KAP process and recovers the c
   } finally {
     await first.close();
   }
-  const second = await startKapProcess(testHome);
+  const second = await startServer(testHome);
   let completed: readonly KapTurn[];
   try {
     expect(second.pid).not.toBe(first.pid);
-    const channel = await second.subscribe(id);
+    const channel = await subscribe(second, id);
     expect(channel.turns(id)).toEqual(history);
     model.script(say('The previous greeting is still here.'));
-    await second.rest.post(`/api/v1/sessions/${id}/prompts`, { content: [{ type: 'text', text: 'Continue the greeting.' }] });
+    await second.prompt(id, 'Continue the greeting.');
+    await second.waitIdle(id);
     await channel.waitFor(f => f.type === 'turn.ended' && f['session_id'] === id);
     const request = model.requests('main')[0]!;
     expect(request.texts('assistant')).toContain('Hello from the released writer.');
-    const page = await second.rest.get<KapTurnsPage>(`/api/v1/sessions/${id}/agents/main/turns`);
-    completed = page.turns;
+    completed = await second.turns(id);
     expect(completed).toMatchObject([history[0], { status: 'ended', outcome: 'completed', items: [
       { type: 'user_message', text: 'Continue the greeting.' }, { type: 'assistant_message', text: 'The previous greeting is still here.' },
     ] }]);
     expect(channel.turns(id)).toEqual(completed);
-    expect((await second.subscribe(id)).turns(id)).toEqual(completed);
+    expect((await subscribe(second, id)).turns(id)).toEqual(completed);
     const wire = Object.keys(fixture.files).find(name => name.endsWith('/agents/main/wire.jsonl'))!;
     await until('continued turn.ended persisted to the session wire before abrupt process loss', async () => {
       const content = await readFile(join(testHome.dataDir, wire), 'utf8');
@@ -69,10 +76,10 @@ test('continues a released session across a fresh KAP process and recovers the c
   } finally {
     await second.crash();
   }
-  const recovered = await startKapProcess(testHome);
+  const recovered = await startServer(testHome);
   try {
     expect(recovered.pid).not.toBe(second.pid);
-    expect((await recovered.subscribe(id)).turns(id)).toEqual(completed);
+    expect((await subscribe(recovered, id)).turns(id)).toEqual(completed);
   } finally {
     await recovered.close();
   }

@@ -82,6 +82,16 @@ test('reads a reply from the side lane', async ({ model }) => {
 
 空用户消息如果插在两个工具结果之间，错误还会指出哪个工具调用仍在等待结果。[空消息与工具结果顺序回归](../test/protocols.test.ts#L57)
 
+## 检查客户端是否依赖整齐的分块
+
+默认每个步骤按完整的 SSE 事件写出。真实 provider 和网络会把字节流切在任意位置，包括多字节字符和 JSON 的中间。创建模型时传 `chunking: { seed, maxBytes }`（例如 `createFakeModel({ chunking: { seed: 7, maxBytes: 3 } })`，KAP 场景用 `scenarioFixtures({ modelOptions: { chunking } })`），回复和 JSON 响应体会被切成 1 到 `maxBytes` 字节的小块逐块写出。挂起点仍落在原来的位置，流内错误仍整块写出。同一个种子每次切法相同，失败可以复现。
+
+Google SDK 只把「单独一次读到的错误 JSON」识别为流中错误。进程内 `model.fetch` 每次写入都是单独一块，所以结果确定；经回环 HTTP 时，网络可能把错误和前面的数据合到一次读取里，SDK 就认不出这个错误。需要稳定断言 Google 流中错误时，走进程内 `fetch`（引擎进程内测试就是这样接入的），或者改用流开始前的 `httpError`。[官方 SDK 对照](../test/protocols.test.ts) · [经过真实引擎](../../../tests/scenarios/providers.test.ts)
+
+## 在引擎进程内接入假模型
+
+agent-core-v2 的集成测试不起服务端，用 harness 的 `testkitAgentFixtures()` 取得 `{ agent, model }`。它把 `model.fetch` 注入引擎真实的 provider 请求链：步骤、命名挂起点、通道、请求记录和 `verify()` 都与其他层相同，请求会经过真实的协议编码和解析。harness 默认的 provider 是 `kimi`，所以子 agent 和压缩请求会自动进入各自的通道。这时调用旧的 `agent.mockNextResponse()` 会直接报错，避免两套脚本混用。[引擎用例](../../agent-core-v2/test/integration/conversation/testkit-model.test.ts) · [harness 夹具](../../agent-core-v2/test/harness/testkit.ts)
+
 ## 在桌面端接入假模型
 
 从[桌面应用夹具](../../../apps/desktop/e2e/fixtures/app.ts)导入 `testWithProvider`。它在 Electron 首次启动前为内嵌 KAP 配置严格模型，用例可直接使用 `{ app, provider }`。设置里的 provider 为 `e2e`，默认模型为 `e2e/stub`，请求中的模型名为 `stub`。teardown 自动验证和关闭模型，失败时保留诊断。原有 `test` 导出继续提供旧 stub。

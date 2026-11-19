@@ -1,11 +1,17 @@
+import { writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer, type WebSocket as ServerSocket } from 'ws';
 
 import { WaitTimeoutError } from '#/errors';
+import { createTestHome, type TestHome } from '#/fixtures/home';
+import { FIXED_TIME } from '#/fixtures/normalize';
 import { isConversationFrame, turnsFromFrames, type KapFrame } from '#/kap/frames';
 import { startKap, type KapRunningServer } from '#/kap/harness';
+import { KapProcess } from '#/kap/process';
+import { KapRecorder, readKapRecording, replayKapRecording, type KapRecording } from '#/kap/recording';
 import { KapEnvelopeError, KapRest } from '#/kap/rest';
 import { KapCommandError, KapSocket, WS_BEARER_PROTOCOL_PREFIX } from '#/kap/socket';
 
@@ -303,5 +309,142 @@ describe('KapHarness', () => {
     expect(process.env['HOME']).toBe(second.home.home);
     await second.close();
     expect(process.env['HOME']).toBe(before);
+  });
+});
+
+const STUB_KAP_SERVER = `import { createServer } from 'node:http';
+import { connect } from 'node:net';
+
+const mode = process.env.STUB_MODE;
+const token = 'stub-token';
+if (mode === 'remote-ready') {
+  console.log(JSON.stringify({ origin: 'http://192.0.2.1:80', ws_url: 'ws://192.0.2.1:80/api/v1/ws', token }));
+  setInterval(() => {}, 60_000);
+} else {
+  const server = createServer((request, response) => {
+    if (request.headers.authorization !== 'Bearer ' + token) return response.writeHead(401).end();
+    if (request.method !== 'POST' || request.url !== '/api/v1/shutdown') return response.writeHead(404).end();
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ code: 0, msg: 'ok', data: {} }), () => process.exit(0));
+  });
+  server.listen(0, '127.0.0.1', async () => {
+    if (mode === 'leaky') {
+      await new Promise((resolve) => {
+        connect({ host: 'blocked.example.test', port: 443, lookup: (_host, _options, callback) => callback(new Error('lookup disabled')) }).once('error', resolve);
+      });
+    }
+    const { port } = server.address();
+    console.log(JSON.stringify({ origin: 'http://127.0.0.1:' + port, ws_url: 'ws://127.0.0.1:' + port + '/api/v1/ws', token }));
+  });
+}
+`;
+
+describe('KapProcess', () => {
+  const homes: TestHome[] = [];
+
+  afterEach(async () => {
+    await Promise.all(homes.splice(0).map((home) => home.remove()));
+  });
+
+  async function startStub(mode: string): Promise<KapProcess> {
+    const home = await createTestHome('testkit-kap-process');
+    homes.push(home);
+    const entry = join(home.root, 'stub-kap-server.mjs');
+    await writeFile(entry, STUB_KAP_SERVER);
+    return KapProcess.start({ home, command: { entry }, env: { STUB_MODE: mode } });
+  }
+
+  it('connects from the ready line and shuts the server down through the authenticated API', async () => {
+    const server = await startStub('normal');
+    expect(server.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(server.wsUrl).toBe(`${server.origin.replace('http', 'ws')}/api/v1/ws`);
+    expect(server.token).toBe('stub-token');
+    await server.close();
+    await expect(server.close()).resolves.toBeUndefined();
+  }, 20_000);
+
+  it('kills the process tree when a test simulates a crash', async () => {
+    const server = await startStub('normal');
+    await expect(server.crash()).resolves.toBeUndefined();
+  }, 20_000);
+
+  it('fails the shutdown when the server reached a non-loopback address', async () => {
+    const server = await startStub('leaky');
+    await expect(server.close()).rejects.toMatchObject({
+      message: expect.stringContaining('Could not close the KAP server'),
+      cause: expect.objectContaining({ message: expect.stringContaining('non-loopback addresses: blocked.example.test:443') }),
+    });
+  }, 20_000);
+
+  it('refuses a ready line that points away from loopback and stops the child', async () => {
+    await expect(startStub('remote-ready')).rejects.toMatchObject({
+      message: expect.stringMatching(/^The KAP server failed to start\nKAP server pid=\d+ exit=null signal=SIGKILL|^The KAP server failed to start\nKAP server pid=\d+ exit=1/),
+      cause: expect.objectContaining({ message: expect.stringContaining('does not describe a loopback server') }),
+    });
+  }, 20_000);
+});
+
+describe('KAP recordings', () => {
+  it('keeps one session and agent per checkpoint and gives the same token to an ID wherever it appears', () => {
+    const frames: KapFrame[] = [{ type: 'turns', session_id: 's-1', agent_id: 'main', turns: [], has_more: false }];
+    const socket = { get frames() { return frames; }, mark: () => frames.length } as unknown as KapSocket;
+    const recorder = new KapRecorder(socket, 's-1');
+    frames.push(
+      { type: 'turns', session_id: 's-1', agent_id: 'main', turns: [], has_more: false, event_created_at: '2026-11-19T08:00:00.000Z' },
+      { type: 'turns', session_id: 's-2', agent_id: 'main', turns: [], has_more: false },
+    );
+    expect(recorder.checkpoint('subscribed')).toHaveLength(1);
+    frames.push(
+      { type: 'turn.started', session_id: 's-1', agent_id: 'main', turn: { turn_id: 't-9', ordinal: 0, items: [] } },
+      { type: 'turn.started', session_id: 's-1', agent_id: 'subagent-1', turn: { turn_id: 't-10', ordinal: 0, items: [] } },
+      { type: 'session.updated', session_id: 's-1', agent_id: 'main' },
+    );
+    recorder.checkpoint('started');
+    const recording = recorder.recording({
+      serverVersion: '1.0.0',
+      kapVersion: '1',
+      initial: { turns: [], has_more: false },
+      final: { turns: [{ turn_id: 't-9', ordinal: 0, items: [] }], has_more: false },
+    });
+    expect(recording.checkpoints.map((checkpoint) => [checkpoint.name, checkpoint.frames.map((frame) => frame.type)])).toEqual([
+      ['subscribed', ['turns']],
+      ['started', ['turn.started']],
+    ]);
+    expect(recording.checkpoints[0]?.frames[0]).toMatchObject({ session_id: '<session_id:1>', event_created_at: FIXED_TIME });
+    expect(recording.checkpoints[1]?.frames[0]?.['turn']).toMatchObject({ turn_id: '<turn_id:1>' });
+    expect(recording.final.turns[0]).toMatchObject({ turn_id: '<turn_id:1>' });
+  });
+
+  it('replays checkpoints in order and refuses recordings it cannot read', async () => {
+    const home = await createTestHome('testkit-recording');
+    try {
+      const recording: KapRecording = {
+        format: 1,
+        serverVersion: '1.0.0',
+        kapVersion: '1',
+        initial: { turns: [], has_more: false },
+        checkpoints: [
+          { name: 'first', frames: [{ type: 'turn.started' }] },
+          { name: 'second', frames: [{ type: 'item.started' }, { type: 'turn.ended' }] },
+        ],
+        final: { turns: [], has_more: false },
+      };
+      const path = join(home.root, 'trace.json');
+      await writeFile(path, JSON.stringify(recording));
+      const replayed = replayKapRecording(await readKapRecording(path), {
+        start: (page) => [`start:${page.turns.length}`],
+        apply: (seen, frame) => [...seen, frame.type],
+      });
+      expect(replayed).toEqual([
+        { name: 'first', view: ['start:0', 'turn.started'] },
+        { name: 'second', view: ['start:0', 'turn.started', 'item.started', 'turn.ended'] },
+      ]);
+      await writeFile(path, JSON.stringify({ ...recording, format: 2 }));
+      await expect(readKapRecording(path)).rejects.toThrow(/uses KAP recording format 2; this testkit reads format 1/);
+      await writeFile(path, JSON.stringify({ ...recording, checkpoints: [{ name: 'broken' }] }));
+      await expect(readKapRecording(path)).rejects.toThrow(/is not a complete KAP recording/);
+    } finally {
+      await home.remove();
+    }
   });
 });

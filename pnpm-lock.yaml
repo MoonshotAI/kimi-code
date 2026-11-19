@@ -788,6 +788,9 @@ importers:
         specifier: 4.3.6
         version: 4.3.6
     devDependencies:
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@types/cross-spawn':
         specifier: ^6.0.6
         version: 6.0.6
@@ -1005,6 +1008,9 @@ importers:
       '@moonshot-ai/app-i18n':
         specifier: workspace:^
         version: link:../app-i18n
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       shiki:
         specifier: 4.3.1
         version: 4.3.1

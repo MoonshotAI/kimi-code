@@ -8,3 +8,4 @@
 - 协议编码器先用官方 SDK 验证（`test/protocols.test.ts`），再经由真实引擎验证（`tests/scenarios/providers.test.ts`）。改编码器两边都要跑。
 - 工具快捷写法的参数类型照抄引擎工具的 schema；`tests/scenarios/tool-builders.test.ts` 用真实引擎提供的 schema 检查每个参数。引擎改了工具参数，这个测试会失败，同步改 `src/model/tools.ts`。
 - 改动代码时核对受影响的用法。公开接口、默认行为、时序、错误或清理方式有变化，就在同一次改动中更新 README 和相关指南里受影响的说明与示例，并用对应测试核对示例。
+- `src/fixtures/network-preload.ts` 和它导入的模块会被子进程直接加载，可能没有 tsx，只靠 Node 原生的类型剥离，所以只能用可擦除的 TS 语法（不用参数属性、枚举、装饰器）。`test/fixtures.test.ts` 里的 `TestProcess` 用例不带 tsx 启动子进程，会发现这类问题。

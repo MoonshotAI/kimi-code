@@ -6,7 +6,7 @@
           "agent_id": "main",
           "event_created_at": "2000-01-01T00:00:00.000Z",
           "has_more": false,
-          "session_id": "recorded-1",
+          "session_id": "<session_id:1>",
           "turns": [],
           "type": "turns"
         }
@@ -18,14 +18,14 @@
         {
           "agent_id": "main",
           "event_created_at": "2000-01-01T00:00:00.000Z",
-          "session_id": "recorded-1",
+          "session_id": "<session_id:1>",
           "turn": {
             "kind": "agent",
             "ordinal": 0,
             "started_at": "2000-01-01T00:00:00.000Z",
             "status": "running",
             "steps": [],
-            "turn_id": "recorded-2",
+            "turn_id": "<turn_id:1>",
             "turn_number": 0
           },
           "type": "turn.started"
@@ -36,22 +36,22 @@
           "item": {
             "attachments": [],
             "created_at": "2000-01-01T00:00:00.000Z",
-            "item_id": "recorded-3",
+            "item_id": "<item_id:1>",
             "origin": {
               "kind": "user"
             },
             "outcome": "completed",
             "placement": "opener",
             "prompt_ids": [
-              "recorded-3"
+              "<item_id:1>"
             ],
             "skills": [],
             "status": "ended",
             "text": "A question",
             "type": "user_message"
           },
-          "session_id": "recorded-1",
-          "turn_id": "recorded-2",
+          "session_id": "<session_id:1>",
+          "turn_id": "<turn_id:1>",
           "type": "item.ended"
         },
         {
@@ -59,14 +59,14 @@
           "event_created_at": "2000-01-01T00:00:00.000Z",
           "item": {
             "created_at": "2000-01-01T00:00:00.000Z",
-            "item_id": "recorded-4",
+            "item_id": "<item_id:2>",
             "status": "running",
             "step_index": 1,
             "text": "First",
             "type": "assistant_message"
           },
-          "session_id": "recorded-1",
-          "turn_id": "recorded-2",
+          "session_id": "<session_id:1>",
+          "turn_id": "<turn_id:1>",
           "type": "item.started"
         }
       ],
@@ -79,9 +79,9 @@
           "delta": " answer",
           "event_created_at": "2000-01-01T00:00:00.000Z",
           "field": "text",
-          "item_id": "recorded-4",
-          "session_id": "recorded-1",
-          "turn_id": "recorded-2",
+          "item_id": "<item_id:2>",
+          "session_id": "<session_id:1>",
+          "turn_id": "<turn_id:1>",
           "type": "item.delta"
         },
         {
@@ -89,21 +89,21 @@
           "event_created_at": "2000-01-01T00:00:00.000Z",
           "item": {
             "created_at": "2000-01-01T00:00:00.000Z",
-            "item_id": "recorded-4",
+            "item_id": "<item_id:2>",
             "outcome": "completed",
             "status": "ended",
             "step_index": 1,
             "text": "First answer",
             "type": "assistant_message"
           },
-          "session_id": "recorded-1",
-          "turn_id": "recorded-2",
+          "session_id": "<session_id:1>",
+          "turn_id": "<turn_id:1>",
           "type": "item.ended"
         },
         {
           "agent_id": "main",
           "event_created_at": "2000-01-01T00:00:00.000Z",
-          "session_id": "recorded-1",
+          "session_id": "<session_id:1>",
           "step": {
             "ended_at": "2000-01-01T00:00:00.000Z",
             "finish_reason": "end_turn",
@@ -117,13 +117,13 @@
               "output": 3
             }
           },
-          "turn_id": "recorded-2",
+          "turn_id": "<turn_id:1>",
           "type": "turn.updated"
         },
         {
           "agent_id": "main",
           "event_created_at": "2000-01-01T00:00:00.000Z",
-          "session_id": "recorded-1",
+          "session_id": "<session_id:1>",
           "turn": {
             "duration_ms": 0,
             "ended_at": "2000-01-01T00:00:00.000Z",
@@ -147,7 +147,7 @@
                 }
               }
             ],
-            "turn_id": "recorded-2",
+            "turn_id": "<turn_id:1>",
             "turn_number": 0,
             "usage": {
               "input_cache_creation": 0,
@@ -172,14 +172,14 @@
           {
             "attachments": [],
             "created_at": "2000-01-01T00:00:00.000Z",
-            "item_id": "recorded-3",
+            "item_id": "<item_id:1>",
             "origin": {
               "kind": "user"
             },
             "outcome": "completed",
             "placement": "opener",
             "prompt_ids": [
-              "recorded-3"
+              "<item_id:1>"
             ],
             "skills": [],
             "status": "ended",
@@ -188,7 +188,7 @@
           },
           {
             "created_at": "2000-01-01T00:00:00.000Z",
-            "item_id": "recorded-4",
+            "item_id": "<item_id:2>",
             "outcome": "completed",
             "status": "ended",
             "step_index": 1,
@@ -216,7 +216,7 @@
             }
           }
         ],
-        "turn_id": "recorded-2",
+        "turn_id": "<turn_id:1>",
         "turn_number": 0,
         "usage": {
           "input_cache_creation": 0,

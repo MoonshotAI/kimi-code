@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron, expect, test as base, type ElectronApplication, type Page, type TestInfo } from '@playwright/test';
 
-import { killProcessTree } from '@moonshot-ai/testkit/fixtures';
+import { killProcessTree, osHomeEnv } from '@moonshot-ai/testkit/fixtures';
 import { startFakeModel, type FakeModel } from '@moonshot-ai/testkit/model';
 
 import { connectBrowserAgent, type BrowserAgent } from './agent';
@@ -172,13 +172,7 @@ export const test = base.extend<Options & Fixtures>({
       if (value !== undefined && !/^(KIMI_|ELECTRON_RUN_AS_NODE$)/.test(key)) env[key] = value;
     }
     Object.assign(env, {
-      HOME: osHome,
-      USERPROFILE: osHome,
-      XDG_CONFIG_HOME: join(osHome, '.config'),
-      XDG_CACHE_HOME: join(osHome, '.cache'),
-      XDG_DATA_HOME: join(osHome, '.local', 'share'),
-      APPDATA: join(osHome, 'AppData', 'Roaming'),
-      LOCALAPPDATA: join(osHome, 'AppData', 'Local'),
+      ...osHomeEnv(osHome),
       KIMI_CODE_HOME: home,
       KIMI_BROWSER_MCP_TEST_TOKEN: token,
       KIMI_DISABLE_TELEMETRY: '1',

@@ -10,4 +10,4 @@
 - `scenarioFixtures()` 默认 `yolo` 权限模式；要测审批就在 `prompt` 时传 `permissionMode: 'manual'`。
 - 断言写在用户能看到的那一层：REST 和 WebSocket 返回的回合、条目、交互，以及模型收到的请求。
 
-需要全新进程时，使用 [startKapProcess](support/kap-process.ts) 启动协议规定的 CLI web JSON 入口，从标准输出读取就绪行中的连接信息。close 等待经认证的正常关闭，crash 强制结束测试进程树。[发布版样本](fixtures/released-2.6.3/README.md)只复制到临时 home 使用。验证已落盘回合的崩溃恢复时，先观察对应的 wire 结束记录；WebSocket 的 turn.ended 可能先到。[冷恢复验证](cold-recovery.test.ts)
+需要全新进程时，使用 testkit 的 `KapProcess.start({ home })` 启动协议规定的 CLI web JSON 入口，它提供和 `kap` 相同的会话操作。close 等待经认证的正常关闭，crash 强制结束测试进程树。[子进程驱动](../../packages/testkit/src/kap/process.ts)[发布版样本](fixtures/released-2.6.3/README.md)只复制到临时 home 使用。验证已落盘回合的崩溃恢复时，先观察对应的 wire 结束记录；WebSocket 的 turn.ended 可能先到。[冷恢复验证](cold-recovery.test.ts)

@@ -37,6 +37,10 @@
 			"types": "./src/index.ts",
 			"default": "./src/index.ts"
 		},
+		"./testing": {
+			"types": "./test/virtual-terminal.ts",
+			"default": "./test/virtual-terminal.ts"
+		},
 		"./package.json": "./package.json"
 	},
 	"publishConfig": {
