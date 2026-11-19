@@ -20,6 +20,7 @@ const feedback = inject(DesktopFeedbackKey);
 const menu = ref<InstanceType<typeof Menu>>();
 const editor = ref<InstanceType<typeof Textarea>>();
 const scrolls = ref(false);
+const deferPreview = ref(false);
 const position = shallowRef<{ top: number; left: number; maxHeight: number }>();
 const configuredReasons = shallowRef<readonly FeedbackReason[]>();
 const builtinReasons = ['incorrect', 'missed_instructions', 'off_topic', 'lost_context', 'slow', 'other'] as const;
@@ -125,6 +126,10 @@ async function submit(): Promise<void> {
     tabindex="-1"
     :aria-label="t('feedback.detailTitle')"
     :style="position ? { top: `${position.top}px`, left: `${position.left}px`, maxHeight: `${position.maxHeight}px` } : { visibility: 'hidden' }"
+    @pointerdown.capture="deferPreview = overLimit && !!editor?.el?.matches(':focus')"
+    @pointerup="deferPreview = false"
+    @pointercancel="deferPreview = false"
+    @pointerleave="deferPreview = false"
   >
     <div class="feedback-popover-header">
       <strong>{{ t('feedback.detailTitle') }}</strong>
@@ -141,7 +146,7 @@ async function submit(): Promise<void> {
         @click="toggle(reason.id)"
       ><span>{{ reason.label }}</span></Pill>
     </div>
-    <div class="feedback-editor" :class="{ 'is-scrollable': scrolls }">
+    <div class="feedback-editor" :class="{ 'is-scrollable': scrolls, 'defer-preview': deferPreview }">
       <Textarea
         ref="editor"
         v-model="detail"
@@ -274,6 +279,12 @@ async function submit(): Promise<void> {
   font: inherit;
 }
 .feedback-editor .ui-textarea::placeholder { color: var(--color-text-quaternary); }
+.feedback-editor:not(.defer-preview) .ui-textarea[aria-invalid="true"]:not(:focus) {
+  max-height: 1lh;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .feedback-editor .ui-textarea:disabled { opacity: 1; }
 .feedback-count {
   color: var(--color-text-quaternary);
