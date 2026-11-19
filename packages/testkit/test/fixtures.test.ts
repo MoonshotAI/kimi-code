@@ -12,7 +12,7 @@ import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 
 import { WaitTimeoutError } from '#/errors';
-import { KIMI_SERVICE_URL, kimiCliEnv, kimiServiceStubs } from '#/fixtures/cli';
+import { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliEnv, kimiServiceStubs } from '#/fixtures/cli';
 import { kimiConfigToml, mergeKimiConfig } from '#/fixtures/config';
 import { expectGolden, jsonDifferences, REFRESH_ENV, stableJson } from '#/fixtures/golden';
 import { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv } from '#/fixtures/env';
@@ -35,6 +35,17 @@ async function startScript(home: TestHome, source: string, options: Partial<Star
 }
 
 describe('TestProcess', () => {
+  it('refuses to start an entry that does not exist', async () => {
+    const home = await createTestHome('testkit-process');
+    try {
+      const entry = join(home.root, 'missing.mjs');
+      expect(() => TestProcess.start({ label: 'probe', command: { entry }, cwd: home.workspace, env: testEnv(), logDir: home.root }))
+        .toThrow(`probe cannot start: ${entry} does not exist`);
+    } finally {
+      await home.remove();
+    }
+  });
+
   it('drains a large output, finds the ready line and reports a connection the child swallowed', async () => {
     const home = await createTestHome('testkit-process');
     try {
@@ -177,6 +188,22 @@ describe('child process environment', () => {
     } finally {
       restore();
       await home.remove();
+    }
+  });
+
+  it('runs the CLI from source unless the built bundle is asked for', () => {
+    expect(kimiCliBuild(undefined)).toBe('source');
+    expect(kimiCliBuild('')).toBe('source');
+    expect(kimiCliBuild('source')).toBe('source');
+    expect(kimiCliBuild('dist')).toBe('dist');
+    expect(() => kimiCliBuild('built')).toThrow('TESTKIT_CLI_BUILD must be "source" or "dist", got "built"');
+    expect(kimiCliCommand('source')).toMatchObject({ entry: repoPath('apps', 'kimi-code', 'src', 'main.ts'), env: { KIMI_CODE_DEV_SERVER: '1' } });
+    expect(kimiCliCommand('dist')).toEqual({ entry: repoPath('apps', 'kimi-code', 'dist', 'main.mjs') });
+    const restore = isolateProcessEnv({ set: { [CLI_BUILD_ENV]: 'dist' } });
+    try {
+      expect(kimiCliCommand()).toEqual(kimiCliCommand('dist'));
+    } finally {
+      restore();
     }
   });
 });

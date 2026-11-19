@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url';
 
+import { TestkitError } from '#/errors';
 import { testEnv } from '#/fixtures/env';
 import { osHomeEnv, type TestHome } from '#/fixtures/home';
 import type { FetchStub } from '#/fixtures/network';
@@ -8,11 +9,22 @@ import { repoPath } from '#/fixtures/repo';
 
 export const KIMI_SERVICE_URL = 'http://kimi-services.example.test';
 
+export const CLI_BUILD_ENV = 'TESTKIT_CLI_BUILD';
+
+export type KimiCliBuild = 'source' | 'dist';
+
 export function kimiServiceStubs(): FetchStub[] {
   return ['client_configs', 'resource_configs'].map((name) => ({ method: 'POST', url: `${KIMI_SERVICE_URL}/${name}`, status: 404 }));
 }
 
-export function kimiCliCommand(): NodeCommand {
+export function kimiCliBuild(value: string | undefined = process.env[CLI_BUILD_ENV]): KimiCliBuild {
+  if (value === undefined || value === '' || value === 'source') return 'source';
+  if (value === 'dist') return 'dist';
+  throw new TestkitError(`${CLI_BUILD_ENV} must be "source" or "dist", got ${JSON.stringify(value)}`);
+}
+
+export function kimiCliCommand(build: KimiCliBuild = kimiCliBuild()): NodeCommand {
+  if (build === 'dist') return { entry: repoPath('apps', 'kimi-code', 'dist', 'main.mjs') };
   return {
     entry: repoPath('apps', 'kimi-code', 'src', 'main.ts'),
     imports: [import.meta.resolve('tsx'), pathToFileURL(repoPath('build', 'register-raw-text-loader.mjs')).href],

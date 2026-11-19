@@ -8,7 +8,7 @@ export {
   type ProviderConfig,
   type TomlValue,
 } from '#/fixtures/config';
-export { KIMI_SERVICE_URL, kimiCliCommand, kimiCliEnv, kimiServiceStubs } from '#/fixtures/cli';
+export { CLI_BUILD_ENV, KIMI_SERVICE_URL, kimiCliBuild, kimiCliCommand, kimiCliEnv, kimiServiceStubs, type KimiCliBuild } from '#/fixtures/cli';
 export { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, type TestEnvOptions } from '#/fixtures/env';
 export {
   describeDifferences,

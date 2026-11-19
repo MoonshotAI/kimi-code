@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Writable } from 'node:stream';
@@ -116,6 +117,7 @@ export class TestProcess {
   }
 
   static start(options: StartTestProcessOptions): TestProcess {
+    if (!existsSync(options.command.entry)) throw new TestkitError(`${options.label} cannot start: ${options.command.entry} does not exist`);
     return new TestProcess(options);
   }
 

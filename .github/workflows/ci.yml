@@ -43,6 +43,10 @@ jobs:
       - run: pnpm run build
       - name: Smoke test CLI bundle
         run: pnpm -C apps/kimi-code run smoke
+      - name: Run the TUI and KAP subprocess journeys on the built CLI
+        run: pnpm exec vitest run apps/kimi-code/test/e2e/tui tests/scenarios/cold-recovery.test.ts
+        env:
+          TESTKIT_CLI_BUILD: dist
 
   test:
     runs-on: ubuntu-latest

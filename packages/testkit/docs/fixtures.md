@@ -60,9 +60,9 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 
 ## 启动被测程序的子进程
 
-需要真正的进程边界时（冷启动、强杀、终端读屏），用 `TestProcess.start({ label, command, cwd, env, logDir })` 启动 Node 子进程。它一直读空 stdout，保留 stdout 和 stderr 的尾部，可以用 `waitForLine(predicate)` 等结构化的就绪行，用 `onOutput(listener)` 把输出交给虚拟终端。子进程提前退出时，等待会立刻失败，并附上退出码和 stderr。[进程夹具](../src/fixtures/process.ts) · [用例](../test/fixtures.test.ts)
+需要真正的进程边界时（冷启动、强杀、终端读屏），用 `TestProcess.start({ label, command, cwd, env, logDir })` 启动 Node 子进程。入口文件不存在时直接失败。它一直读空 stdout，保留 stdout 和 stderr 的尾部，可以用 `waitForLine(predicate)` 等结构化的就绪行，用 `onOutput(listener)` 把输出交给虚拟终端。子进程提前退出时，等待会立刻失败，并附上退出码和 stderr。[进程夹具](../src/fixtures/process.ts) · [用例](../test/fixtures.test.ts)
 
-- **启动 CLI** 用 `command: kimiCliCommand()` 和 `env: kimiCliEnv(testHome, extra)`。前者用 tsx 运行 `apps/kimi-code/src/main.ts`；后者在 `testEnv()` 基础上，把 OS home、`KIMI_CODE_HOME` 指向测试目录，关闭自动更新，并把 Kimi 服务地址指向网络守卫会拦截的 `KIMI_SERVICE_URL`。产品启动时会读的两个可选配置接口用 `kimiServiceStubs()` 回 404；对这个地址的其他请求都会记为违例，所以首轮流程里新增的服务依赖会让测试变红。只需要 OS home 那组变量（`HOME`、`USERPROFILE`、XDG 和 Windows 的 AppData）时，用 `osHomeEnv(dir)`。[CLI 命令与环境](../src/fixtures/cli.ts)
+- **启动 CLI** 用 `command: kimiCliCommand()` 和 `env: kimiCliEnv(testHome, extra)`。前者默认用 tsx 运行 `apps/kimi-code/src/main.ts`；环境变量 `TESTKIT_CLI_BUILD=dist` 时改用 Node 直接运行发布用的 `apps/kimi-code/dist/main.mjs`，不加载 tsx，也不打开开发服务器开关，所以要先构建，没有构建产物时子进程不会启动。后者在 `testEnv()` 基础上，把 OS home、`KIMI_CODE_HOME` 指向测试目录，关闭自动更新，并把 Kimi 服务地址指向网络守卫会拦截的 `KIMI_SERVICE_URL`。产品启动时会读的两个可选配置接口用 `kimiServiceStubs()` 回 404；对这个地址的其他请求都会记为违例，所以首轮流程里新增的服务依赖会让测试变红。只需要 OS home 那组变量（`HOME`、`USERPROFILE`、XDG 和 Windows 的 AppData）时，用 `osHomeEnv(dir)`。[CLI 命令与环境](../src/fixtures/cli.ts)
 - **子进程的网络**：每个 `TestProcess` 都预加载 testkit 的网络守卫，违例逐条追加到 `logDir` 下的日志，所以子进程被强杀后仍能读到。收尾时调用 `await child.networkViolations()`；如果子进程没有加载守卫，这个调用会失败，不会返回空列表。产品会访问、又无法改地址的固定下载（例如 CDN 上的 fd 压缩包），用 `fetchStubs: [{ method, url, status }]` 在子进程里直接回固定状态码。
 - **结束子进程**：先走被测程序自己的退出路径并等 `child.closed`，再检查退出码；超时或模拟崩溃时用 `await child.forceKill()`，它在 POSIX 上结束整个进程组，在 Windows 上结束进程树。只需要清理测试自己启动的其他进程时，用 `killProcessTree(pid)`，并在 POSIX 上以 `detached: true` 启动它。
 - **KAP 服务端子进程**用 `KapProcess.start({ home })`，见 [KAP 场景指南](kap-scenarios.md#重启清理与失败诊断)。终端读屏见 [TUI 夹具](../../../apps/kimi-code/test/e2e/tui/support/terminal-session.ts)。
