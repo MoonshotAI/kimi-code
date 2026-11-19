@@ -5,6 +5,7 @@ import { createUserMessage, type Message, type StreamedMessagePart } from '#/llm
 import type { DecodeSink, LlmModule, Protocol } from '#/llm/protocol/protocol';
 import type {
   LlmEndpoint,
+  LlmRequest,
   LlmRequestModel,
   LlmRequestProfile,
 } from '#/llm/request';
@@ -170,6 +171,10 @@ export async function runGenerate<TOptions, TRequest, TResponse, TChunk, TClient
     endpoint?: LlmEndpoint;
     stream?: boolean;
     signal?: AbortSignal;
+    maxAttemptsPerStep?: number;
+    infiniteRetry?: boolean;
+    recoveries?: NonNullable<LlmRequest['policy']>['recoveries'];
+    resolvers?: NonNullable<LlmRequest['policy']>['resolvers'];
   },
 ): Promise<{ outcome: LlmOutcome; events: LlmRunEvent[] }> {
   const events: LlmRunEvent[] = [];
@@ -189,7 +194,14 @@ export async function runGenerate<TOptions, TRequest, TResponse, TChunk, TClient
         messages: input.module.content.messages,
         usedTokens: input.module.content.usedTokens,
       },
-      policy: { retry: { maxAttemptsPerStep: 1 } },
+      policy: {
+        retry: {
+          maxAttemptsPerStep: input.maxAttemptsPerStep ?? 1,
+          infiniteRetry: input.infiniteRetry,
+        },
+        recoveries: input.recoveries,
+        resolvers: input.resolvers,
+      },
     },
     {
       signal: input.signal ?? new AbortController().signal,
@@ -209,7 +221,7 @@ export function failedOutcome(outcome: LlmOutcome): Extract<LlmOutcome, { type: 
   return outcome;
 }
 
-export async function* asyncChunks<T>(chunks: readonly T[]): AsyncGenerator<T> {
+export async function* asyncChunks<T>(chunks: Iterable<T>): AsyncGenerator<T> {
   yield* chunks;
 }
 

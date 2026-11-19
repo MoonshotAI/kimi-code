@@ -43,6 +43,8 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
   const providerCopies = ref<Record<string, HostProviderCopy>>({});
   const accounts = ref<Record<string, HostAccount>>({});
   const loginHostId = ref<string | null>(null);
+  const focusHostId = ref<string | null>(null);
+  const addIfEmpty = ref(false);
   const accountLoads = new Map<string, number>();
 
   const hosts = computed(() => Object.values(byId.value));
@@ -261,7 +263,18 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
     return isHostBlocked(displayState(hostId));
   }
 
-  return { byId, hosts, loaded, connecting, accounts, loginHostId, loadAccount, signOut, openLogin, closeLogin, startLogin, pollLogin, cancelLogin, loginRegion, finishLogin, needsLogin, applySnapshot, load, connect, save, remove, test, loadSshConfig, providerCopies, copyProviders, hostFor, displayState, displayName, hostLabel, searchTerms, workspacePathLabel, unavailable, blocked };
+  function requestFocus(hostId: string | null, options?: { addIfEmpty?: boolean }): void {
+    focusHostId.value = hostId;
+    addIfEmpty.value = options?.addIfEmpty === true;
+  }
+
+  function takeAddIfEmpty(): boolean {
+    const pending = addIfEmpty.value;
+    addIfEmpty.value = false;
+    return pending;
+  }
+
+  return { byId, hosts, loaded, connecting, accounts, loginHostId, focusHostId, addIfEmpty, requestFocus, takeAddIfEmpty, loadAccount, signOut, openLogin, closeLogin, startLogin, pollLogin, cancelLogin, loginRegion, finishLogin, needsLogin, applySnapshot, load, connect, save, remove, test, loadSshConfig, providerCopies, copyProviders, hostFor, displayState, displayName, hostLabel, searchTerms, workspacePathLabel, unavailable, blocked };
 });
 
 export function hostsStore() {

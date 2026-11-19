@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createAssistantMessage,
@@ -308,5 +308,52 @@ describe('LLM request settlement', () => {
       type: 'llm.ended',
       outcome: { type: 'aborted' },
     });
+  });
+
+  it('retries a retryable failure within one generate and returns the final response', async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const protocol = fakeProtocol({
+        sendStream: async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error('temporary failure');
+          return {
+            body: asyncChunks([{
+              text: 'recovered',
+              finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+            }]),
+            headers: { 'x-request-id': 'req-retry' },
+          };
+        },
+      });
+      const retryableProtocol: Protocol = {
+        ...protocol,
+        decodeError: (error): LlmRemoteErrorMessage => ({
+          kind: 'provider',
+          message: error instanceof Error ? error.message : String(error),
+          retryable: true,
+        }),
+      };
+
+      const pending = runGenerate(retryableProtocol, {
+        module: testModule(),
+        maxAttemptsPerStep: 2,
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      const { outcome, events } = await pending;
+
+      expect(doneOutcome(outcome).message.content).toEqual([{ type: 'text', text: 'recovered' }]);
+      expect(attempts).toBe(2);
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'llm.retrying',
+        reason: 'backoff',
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 2,
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

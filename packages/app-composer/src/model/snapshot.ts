@@ -34,7 +34,7 @@ function validInlineNode(node: Record<string, unknown>): boolean {
   const attrs = node.attrs;
   if (node.type === 'browser_reference') return isBrowserReferenceId(attrs.refId) && typeof attrs.label === 'string' && attrs.label.length <= 256;
   if (node.type === 'mention') {
-    return (attrs.kind === 'file' || attrs.kind === 'folder' || attrs.kind === 'skill') &&
+    return (attrs.kind === 'file' || attrs.kind === 'folder' || attrs.kind === 'skill' || attrs.kind === 'session') &&
       typeof attrs.name === 'string' && typeof attrs.path === 'string' &&
       (attrs.rawDest === undefined || typeof attrs.rawDest === 'string');
   }

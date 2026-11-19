@@ -227,6 +227,7 @@ interface WireMeta {
   server_version: string;
   server_id: string;
   started_at: string;
+  home_dir: string;
   capabilities: Record<string, boolean>;
   open_in_apps?: string[];
   dangerous_bypass_auth?: boolean;
@@ -360,6 +361,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     serverVersion: string;
     serverId: string;
     startedAt: string;
+    homeDir: string;
     capabilities: Record<string, boolean>;
     openInApps: string[];
     dangerousBypassAuth: boolean;
@@ -373,6 +375,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       serverVersion: data.server_version,
       serverId: data.server_id,
       startedAt: data.started_at,
+      homeDir: data.home_dir,
       capabilities: data.capabilities,
       openInApps: Array.isArray(data.open_in_apps) ? data.open_in_apps : [],
       dangerousBypassAuth: data.dangerous_bypass_auth === true,
@@ -431,9 +434,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
       has_prompt: input?.hasPrompt,
       updated_after: input?.updatedAfter,
       updated_before: input?.updatedBefore,
+      query: input?.query,
       sort: input?.sort,
       include: input?.include,
-      hosts: this.hostsQuery(),
+      hosts: input?.localOnly === true ? undefined : this.hostsQuery(),
     };
     const data = await this.http.get<WireSessionsPage>('/sessions', query, options);
     return {

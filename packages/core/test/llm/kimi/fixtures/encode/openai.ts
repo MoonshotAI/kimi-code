@@ -73,4 +73,16 @@ export const kimiOpenAIEncodeFixtures = [{
       user: 'outside',
     },
   },
+}, {
+  name: 'kimi-openai-cache-key',
+  module: testModule({
+    model: { ...TEST_MODEL, cacheKey: 'kimi-cache-1' },
+  }),
+  expected: {
+    params: {
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'hi' }],
+      prompt_cache_key: 'kimi-cache-1',
+    },
+  },
 }] satisfies KimiOpenAIEncodeFixture[];

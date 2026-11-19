@@ -34,9 +34,9 @@ import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
-  buildSubagentModelDescriptions,
-  exposesSubagentModelChoice,
+  buildSubagentPoolModelDescriptions,
   resolveSubagentBinding,
+  resolveSubagentModelPool,
   resolveSubagentThinking,
   resolveSubagentTimeoutMs,
   stripSubagentModelParameter,
@@ -69,6 +69,17 @@ async function reviewExcerpt(store: TowerStore, file: string): Promise<string> {
   return truncateSection(body.trim(), REVIEW_EXCERPT_MAX_CHARS);
 }
 
+function resolveSpawnBinding(
+  config: IConfigService,
+  args: TowerSpawnToolInput,
+  own: { modelAlias: string; thinkingLevel: string },
+): SubagentBinding {
+  if (args.kind === 'reviewer' && args.model === undefined) {
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
+  }
+  return resolveSubagentBinding(config, own, args.model);
+}
+
 async function findCompletionReport(
   store: TowerStore,
   author: string,
@@ -84,14 +95,14 @@ export class TowerSpawnTool implements ITowerSpawnTool {
   readonly name = 'TowerSpawn' as const;
 
   get description(): string {
-    const modelLines = buildSubagentModelDescriptions(this.config);
+    const modelLines = buildSubagentPoolModelDescriptions(this.config);
     return modelLines === undefined ? DESCRIPTION : `${DESCRIPTION}\n\n${modelLines}`;
   }
 
   get parameters(): Record<string, unknown> {
-    return exposesSubagentModelChoice(this.config)
-      ? TOWER_SPAWN_PARAMETERS
-      : TOWER_SPAWN_PARAMETERS_NO_MODEL;
+    return resolveSubagentModelPool(this.config) === undefined
+      ? TOWER_SPAWN_PARAMETERS_NO_MODEL
+      : TOWER_SPAWN_PARAMETERS;
   }
 
   private readonly callerAgentId: string;
@@ -222,11 +233,10 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         binding =
           own.modelAlias === undefined
             ? undefined
-            : resolveSubagentBinding(
-                this.config,
-                { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-                args.model,
-              );
+            : resolveSpawnBinding(this.config, args, {
+                modelAlias: own.modelAlias,
+                thinkingLevel: own.thinkingLevel,
+              });
       } catch (error) {
         return {
           output: error instanceof Error ? error.message : String(error),
@@ -635,7 +645,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       checklist +
       `# When done — TowerReview is the only mandatory protocol step\n` +
       (targetMission?.kind === 'artifact'
-        ? `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. This independent review is advisory only: it cannot replace explicit human acceptance recorded by reviewer=tower on the exact branch tip. Standard review-result notifications are stored automatically — do not send a second manual TowerSend.\n`
+        ? `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. This independent review is advisory only: it cannot replace artifact acceptance recorded by reviewer=tower on the exact branch tip. Standard review-result notifications are stored automatically — do not send a second manual TowerSend.\n`
         : `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. Only a clean review with merge verdict "merge" on the exact branch tip lets the tower merge. Standard review-result notifications are stored automatically — do not send a second manual TowerSend.\n`) +
       'Then finish with a structured summary of the review.' +
       extra

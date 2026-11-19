@@ -40,7 +40,7 @@ export const TowerPlanToolInputSchema = z
               .enum(['build', 'survey', 'artifact'])
               .optional()
               .describe(
-                '"survey" = read-only, zero-diff investigation with no reserved scope or review. "artifact" = committed deliverables with reserved scope and explicit human acceptance instead of independent review. Default "build".',
+                '"survey" = read-only, zero-diff investigation with no reserved scope or review. "artifact" = committed deliverables with reserved scope and tower-recorded acceptance of the entire committed tip instead of independent review. Default "build".',
               ),
           })
           .strict(),

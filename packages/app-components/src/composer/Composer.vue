@@ -30,12 +30,13 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '@moonshot-ai/app-core/lib';
-import { openAgentSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
+import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
 import { useSlashMenu } from '@moonshot-ai/app-client/composables';
 import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/composables';
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
+import { hostsStore } from '@moonshot-ai/app-client/stores';
 import {
   createComposerEditor,
   discardStashedEditorState,
@@ -884,17 +885,21 @@ const {
   active: mentionActive,
   loading: mentionLoading,
   fileStale: mentionFileStale,
+  sessionMenuOpen: mentionSessionMenuOpen,
   update: updateMentionMenu,
   close: closeMentionMenu,
   select: selectMentionItem,
   complete: completeMentionItem,
   navigate: mentionNavigate,
+  leaveSessionMenu: leaveMentionSessionMenu,
   getToken: getMentionToken,
 } = useMentionMenu({
   text,
   editorRef,
   searchFiles: () => searchFiles,
   skills: () => skills.value,
+  sessions: () => client.sessionMentionCandidates.value,
+  searchSessions: client.searchSessionMentions,
   attachments: () => attachmentMentionCandidates.value,
   browsers: () => browserCaptures.value.map((capture) => ({
     captureId: capture.id, label: capture.label, title: capture.page.title, url: capture.page.url,
@@ -910,6 +915,8 @@ const {
     }
   },
 });
+
+const mentionSubmenuTitle = computed(() => (mentionSessionMenuOpen.value ? t('mention.sessions') : undefined));
 
 const slashSheetQuery = computed<string>({
   get: () => slashQuery.value,
@@ -1721,6 +1728,15 @@ function resetAfterDispatch(
   );
 }
 
+function passSubmitGate(): boolean {
+  if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return false;
+  if (hostSetupId.value !== undefined) {
+    openHostSetup();
+    return false;
+  }
+  return true;
+}
+
 function handleSteer(): void {
   const decision = currentSubmitDecision();
   if (
@@ -1730,7 +1746,7 @@ function handleSteer(): void {
   ) {
     return;
   }
-  if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return;
+  if (!passSubmitGate()) return;
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
@@ -1752,7 +1768,7 @@ function handleQueue(): void {
   ) {
     return;
   }
-  if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return;
+  if (!passSubmitGate()) return;
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
@@ -1780,7 +1796,7 @@ function handleSubmit(): void {
     decision.kind === 'unresolved-skill-command' ||
     decision.kind === 'prompt-command' ||
     (decision.kind === 'builtin-command' && decision.leave === true);
-  if (sessionBound && props.beforeSubmit !== undefined && props.beforeSubmit() === false) return;
+  if (sessionBound && !passSubmitGate()) return;
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
@@ -1977,6 +1993,11 @@ function handleKeydown(e: KeyboardEvent): boolean {
     if (e.key === 'Escape') {
       e.preventDefault();
       closeMentionMenu();
+      return true;
+    }
+    if (e.key === 'Backspace' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && mentionSessionMenuOpen.value && getMentionToken()?.token === '') {
+      e.preventDefault();
+      leaveMentionSessionMenu();
       return true;
     }
     if (e.key === 'Tab' && mentionItems.value.length === 0) {
@@ -2783,6 +2804,17 @@ onUnmounted(() => {
   toolbarLabelObserver = null;
 });
 const { fontScale } = useAppearance();
+const hostSetupId = computed(() => {
+  const hostId = client.visibleWorkspace?.value?.hostId;
+  if (hostId === undefined || hostsStore().displayState(hostId) !== 'ready') return undefined;
+  return hostsStore().needsLogin(hostId) ? hostId : undefined;
+});
+
+function openHostSetup(): void {
+  const hostId = hostSetupId.value;
+  if (hostId !== undefined) openHostSettings(hostId);
+}
+
 watch(
   [
     permLabel,
@@ -2792,6 +2824,7 @@ watch(
     () => status.value?.model,
     () => working.value,
     gateVerdict,
+    hostSetupId,
     () => models.value?.length,
     fontScale,
     locale,
@@ -3166,8 +3199,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           :active-index="mentionActive"
           :loading="mentionLoading"
           :stale="mentionFileStale"
+          :submenu-title="mentionSubmenuTitle"
           @select="selectMentionItem"
           @hover="mentionNavigate"
+          @back="leaveMentionSessionMenu"
         />
 
         <Transition name="composer-menu-pop">
@@ -3370,7 +3405,22 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </template>
           </Tooltip>
 
-          <Tooltip v-if="status && !isSideChat && (gateVerdict === 'ok' || (gateVerdict === 'upgrade' && currentModel))" :text="modelPillCollapsed ? modelIconLabel : null">
+          <Tooltip v-if="status && !isSideChat && hostSetupId" :text="modelPillCollapsed ? t('login.configureHostModelsAction') : null">
+          <button
+            type="button"
+            class="model-pill login-pill"
+            :class="{ 'icon-only': modelPillCollapsed, 'model-gone': modelPillGone }"
+            :aria-label="modelPillCollapsed ? t('login.configureHostModelsAction') : undefined"
+            @click.stop="openHostSetup"
+          >
+            <Icon v-if="modelPillCollapsed" name="bolt" size="md" />
+            <template v-else>
+              <Icon name="bolt" size="sm" />
+              <span ref="mpNameRef" class="mp-name">{{ t('login.configureHostModelsAction') }}</span>
+            </template>
+          </button>
+          </Tooltip>
+          <Tooltip v-else-if="status && !isSideChat && (gateVerdict === 'ok' || (gateVerdict === 'upgrade' && currentModel))" :text="modelPillCollapsed ? modelIconLabel : null">
           <button
             ref="modelPillRef"
             type="button"
@@ -3688,8 +3738,10 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
         :active-index="mentionActive"
         :loading="mentionLoading"
         :stale="mentionFileStale"
+        :submenu-title="mentionSubmenuTitle"
         @select="selectMentionItem"
         @hover="mentionNavigate"
+        @back="leaveMentionSessionMenu"
       />
     </BottomSheet>
   </Teleport>
