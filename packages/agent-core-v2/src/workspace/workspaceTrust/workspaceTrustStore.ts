@@ -1,7 +1,13 @@
+import { join } from 'pathe';
+
+import { ILogService } from '#/_base/log/log';
+import { TimeoutTimer } from '#/_base/utils/timer';
+import { watch } from '#human/utils/watch';
 import { Disposable } from '#/_base/di/lifecycle';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
+import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -14,7 +20,7 @@ import {
   workspaceTrustRequired,
 } from './configSection';
 import { trustWorkspaceEnvTrusted } from './trustEnv';
-import { deleteWorkspaceTrust, readWorkspaceTrust, writeWorkspaceTrust } from './trustRecord';
+import { WORKSPACE_TRUST_SCOPE, deleteWorkspaceTrust, readWorkspaceTrust, writeWorkspaceTrust } from './trustRecord';
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
 
 export interface IWorkspaceTrustEntry extends IWorkspaceTrust {
@@ -37,6 +43,7 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
 
   private initialization?: Promise<void>;
   private initializationFailed = false;
+  private initialized = false;
   private readonly root: string;
   private readonly envTrusted: boolean;
   private trusted = false;
@@ -50,6 +57,7 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
     private readonly telemetry: ITelemetryService,
     bootstrap: IBootstrapService,
     private readonly config: IConfigService,
+    private readonly watchReady: Promise<void>,
   ) {
     super();
     this.root = root;
@@ -59,9 +67,10 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   get ready(): Promise<void> {
     if (this.initialization !== undefined) return this.initialization;
     const recovering = this.initializationFailed;
-    const initialization = readWorkspaceTrust(this.docs, this.root, this.telemetry).then((trusted) => {
+    const initialization = this.watchReady.then(() => readWorkspaceTrust(this.docs, this.root, this.telemetry)).then((trusted) => {
       this.trusted = trusted;
       this.initializationFailed = false;
+      this.initialized = true;
       if (recovering) this.changeEmitter.fire({ trusted });
     });
     this.initialization = initialization;
@@ -92,7 +101,13 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
     if (!this.trustGateEnabled()) return true;
     await this.ready;
     const refresh = this.mutationTail.catch(() => {}).then(async () => {
-      const trusted = await readWorkspaceTrust(this.docs, this.root, this.telemetry);
+      const trusted = await readWorkspaceTrust(this.docs, this.root, this.telemetry).catch((error: unknown) => {
+        if (this.trusted) {
+          this.trusted = false;
+          this.changeEmitter.fire({ trusted: false });
+        }
+        throw error;
+      });
       if (this.trusted === trusted) return;
       this.trusted = trusted;
       this.changeEmitter.fire({ trusted });
@@ -100,6 +115,12 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
     this.mutationTail = refresh;
     await refresh;
     return this.isTrusted();
+  }
+
+  markerChanged(keys: ReadonlySet<string>): boolean {
+    if (!this.initialized) return false;
+    const exists = keys.has(encodeWorkDirKey(canonicalWorkspaceRoot(this.root))) || keys.has(encodeWorkDirKey(this.root));
+    return exists !== this.trusted;
   }
 
   onConfigChange(): void {
@@ -127,15 +148,16 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   private mutate(trusted: boolean): Promise<void> {
     const mutation = this.mutationTail.catch(() => {}).then(async () => {
       await this.ready;
-      if (this.trusted === trusted) return;
-      if (trusted) {
-        await writeWorkspaceTrust(this.docs, this.root, Date.now());
-      } else {
-        await deleteWorkspaceTrust(this.docs, this.root);
+      const persisted = await readWorkspaceTrust(this.docs, this.root, this.telemetry);
+      if (persisted !== trusted) {
+        if (trusted) await writeWorkspaceTrust(this.docs, this.root, Date.now());
+        else await deleteWorkspaceTrust(this.docs, this.root);
+        this.telemetry.track2('workspace_trust_changed', { trusted });
       }
-      this.trusted = trusted;
-      this.changeEmitter.fire({ trusted });
-      this.telemetry.track2('workspace_trust_changed', { trusted });
+      if (this.trusted !== trusted) {
+        this.trusted = trusted;
+        this.changeEmitter.fire({ trusted });
+      }
     });
     this.mutationTail = mutation;
     return mutation;
@@ -215,14 +237,28 @@ export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustSt
 
   private readonly entries = new Map<string, WorkspaceTrustEntry>();
   private readonly groups = new Map<string, WorkspaceTrustGroup>();
+  private readonly watchReady: Promise<void>;
 
   constructor(
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
+    @ILogService log: ILogService,
   ) {
     super();
+    const dir = join(bootstrap.homeDir, WORKSPACE_TRUST_SCOPE);
+    const watcher = this._register(watch(dir, { listing: false, recursive: false }));
+    this.watchReady = watcher.ready.catch((error: unknown) => log.warn('cannot watch directory trust records', { error }));
+    const debounce = this._register(new TimeoutTimer());
+    this._register(watcher.onDidChange(() => {
+      debounce.cancelAndSet(() => {
+        void this.docs.list(WORKSPACE_TRUST_SCOPE).then(async (keys) => {
+          const markers = new Set(keys);
+          await Promise.all([...this.entries.values()].filter((entry) => entry.markerChanged(markers)).map((entry) => entry.refresh()));
+        }).catch((error: unknown) => log.warn('cannot refresh directory trust', { error }));
+      }, 50);
+    }));
     this._register(this.config.onDidSectionChange((event) => {
       if (event.domain !== WORKSPACE_TRUST_SECTION) return;
       for (const entry of this.entries.values()) entry.onConfigChange();
@@ -233,7 +269,7 @@ export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustSt
     const key = canonicalWorkspaceRoot(root);
     const existing = this.entries.get(key);
     if (existing !== undefined) return existing;
-    const entry = this._register(new WorkspaceTrustEntry(root, this.docs, this.telemetry, this.bootstrap, this.config));
+    const entry = this._register(new WorkspaceTrustEntry(root, this.docs, this.telemetry, this.bootstrap, this.config, this.watchReady));
     this.entries.set(key, entry);
     return entry;
   }

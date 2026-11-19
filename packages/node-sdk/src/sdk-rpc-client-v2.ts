@@ -257,6 +257,7 @@ import {
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
   type WorkspaceInstance,
+  type ProgramWorkdir,
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -727,6 +728,22 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
   }
 
+  private withLocalWorkdir<T>(
+    operation: string,
+    cwd: string,
+    use: (workdir: ProgramWorkdir) => Promise<T>,
+  ): Promise<T> {
+    const root = normalizeRequiredWorkDir(operation, cwd);
+    return this.withWorkspaceInstance(operation, root, async (project) => {
+      const workdir = await project.program.acquireWorkdir('local', root);
+      try {
+        return await use(workdir);
+      } finally {
+        workdir.dispose();
+      }
+    });
+  }
+
   /**
    * Through the workspace instance's `IWorkspaceSkillCatalog` — the engine's
    * own merged view (builtin / user / explicit / extra / workspace-root /
@@ -735,24 +752,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * materializes the instance anyway.
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
-    return this.withWorkspaceInstance('listWorkspaceSkills', workDir, async (handler) => {
-      const catalog = handler.program.skills;
+    return this.withLocalWorkdir('listWorkspaceSkills', workDir, async (workdir) => {
+      const catalog = workdir.skills;
       await catalog.ready;
       return catalog.catalog.listSkills().map(summarizeSkill);
     });
   }
 
   override async getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]> {
-    const lease = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .acquire({ root: normalizeRequiredWorkDir('getWorkspaceAdditionalDirs', workDir) });
-    try {
-      const dirs = lease.instance.program.dirs;
+    return this.withLocalWorkdir('getWorkspaceAdditionalDirs', workDir, async ({ dirs }) => {
       await dirs.ready;
       return [...dirs.additionalDirs];
-    } finally {
-      lease.dispose();
-    }
+    });
   }
 
   /**
@@ -790,7 +801,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (input.sessionId !== undefined) {
       return suggest(this.requireLiveSession(input.sessionId).accessor.get(ISessionWorkdir).fs);
     }
-    return this.withWorkspaceInstance('suggestFiles', workDir, (handler) => suggest(handler.program.fs));
+    return this.withLocalWorkdir('suggestFiles', workDir, (workdir) => suggest(workdir.fs));
   }
 
   /**
@@ -834,15 +845,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     workDir: string,
     options?: WorkspaceTrustInfoOptions,
   ): Promise<WorkspaceTrustInfo> {
-    const environment = options?.environmentId === undefined
-      ? undefined
-      : await this.resolveSessionEnvironment({
-          workDir,
-          environmentId: options.environmentId,
-          environmentCwd: options.environmentCwd,
-        });
-    const baseDir = environment?.cwd ?? normalizeRequiredWorkDir('getWorkspaceTrustInfo', workDir);
-    return this.withWorkspaceInstance('getWorkspaceTrustInfo', workDir, async (handler) => {
+    const baseDir = normalizeRequiredWorkDir('getWorkspaceTrustInfo', workDir);
+    return this.withWorkspaceInstance('getWorkspaceTrustInfo', baseDir, async (handler) => {
       const trusted = await handler.program.trust.get();
       if (trusted) {
         return {
@@ -854,45 +858,26 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           instructionSources: EMPTY_INSTRUCTION_SOURCES,
         };
       }
-      let additionalDirs = options?.additionalDirs;
-      let pendingAdditionalDirsResolved = false;
-      if (environment !== undefined && additionalDirs !== undefined) {
-        const workdir = await handler.program.acquireWorkdir(
-          environment.environmentId,
-          environment.cwd ?? baseDir,
-        );
-        try {
-          const resolved = await workdir.localConfig.resolveAdditionalDirs(
-            environment.cwd ?? baseDir,
-            additionalDirs,
-          );
-          additionalDirs = await Promise.all(
-            resolved.map(async (dir) => {
-              try {
-                return await workdir.hostFs.realpath(dir);
-              } catch {
-                return dir;
-              }
-            }),
-          );
-          pendingAdditionalDirsResolved = true;
-        } finally {
-          workdir.dispose();
-        }
+      const environment = await this.resolveSessionEnvironment({
+        workDir: baseDir,
+        environmentId: options?.environmentId,
+        environmentCwd: options?.environmentCwd,
+      });
+      const cwd = environment.cwd ?? baseDir;
+      const workdir = await handler.program.acquireWorkdir(environment.environmentId, cwd);
+      try {
+        const activation = await workdir.trustDisclosure.describeGatedActivation(options?.additionalDirs, cwd);
+        return {
+          trusted: false,
+          gatedMcpServers: activation.mcpServers,
+          gatedAdditionalDirs: activation.additionalDirs,
+          additionalDirSources: activation.additionalDirSources,
+          warnings: activation.warnings,
+          instructionSources: activation.instructionSources,
+        };
+      } finally {
+        workdir.dispose();
       }
-      const activation = await handler.program.trustDisclosure.describeGatedActivation(
-        additionalDirs,
-        baseDir,
-        pendingAdditionalDirsResolved,
-      );
-      return {
-        trusted: false,
-        gatedMcpServers: activation.mcpServers,
-        gatedAdditionalDirs: activation.additionalDirs,
-        additionalDirSources: activation.additionalDirSources,
-        warnings: activation.warnings,
-        instructionSources: activation.instructionSources,
-      };
     });
   }
 
@@ -3049,8 +3034,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * Same `McpServerEntry`-as-`McpServerInfo` cast as listMcpServers.
    */
   override async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
-    return this.withWorkspaceInstance('listWorkspaceMcpServers', workDir, async (handler) => {
-      const mcp = handler.program.mcp;
+    return this.withLocalWorkdir('listWorkspaceMcpServers', workDir, async (workdir) => {
+      const mcp = workdir.mcp;
       await mcp.ready;
       return mcp.connectionManager().list() as readonly McpServerInfo[];
     });

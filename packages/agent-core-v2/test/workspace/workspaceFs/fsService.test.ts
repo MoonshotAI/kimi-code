@@ -61,6 +61,7 @@ function stubWorkspaceDirs(additionalDirs: readonly string[] = []): IWorkspaceDi
     additionalDirs: [...additionalDirs],
     sharedAdditionalDirs: [...additionalDirs],
     primaryByWorkspace: {},
+    onDidChangeLocalConfig: () => ({ dispose: () => {} }),
     onDidChange: () => ({ dispose: () => {} }),
     addDir: () => Promise.reject(new Error('not supported in tests')),
     mergeAdditionalDirs: () => Promise.resolve(),

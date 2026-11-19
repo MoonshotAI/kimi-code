@@ -1,4 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import type { ScopeSeed } from '#/_base/di/scope';
 import type { WorkspaceKind } from '#/app/workspace/workspace';
 
@@ -7,6 +8,7 @@ export type WorkspaceSource = 'local';
 export interface WorkspaceMeta {
   readonly id: string;
   readonly root: string;
+  readonly additionalDirs?: readonly string[];
   readonly name: string;
   readonly kind: WorkspaceKind;
   readonly createdAt: number;
@@ -21,6 +23,7 @@ export interface IWorkspaceContext {
   readonly source: WorkspaceSource;
   readonly remoteCwd?: string;
   readonly meta: WorkspaceMeta;
+  readonly onDidChangeProject?: Event<void>;
   readonly persistenceScope: string;
 }
 

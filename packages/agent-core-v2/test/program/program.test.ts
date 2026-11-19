@@ -1,3 +1,4 @@
+import { directoryKey } from '#/_base/utils/paths';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,9 +7,11 @@ import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
+import { ProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRulesService';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { AgentProfileRegistryService } from '#/app/agentProfileCatalog/agentProfileRegistryService';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
@@ -24,8 +27,11 @@ import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { fakeEnvironment } from '../environment/stubs';
+import { cwdStdioFixture } from '../mcpCore/stubs';
 import { noopLogger } from '../wire/stubs';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { writeWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
 import { WorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -103,6 +109,8 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
       getSkillRoots: () => [],
     };
     const root = {
+      mcpConfig: { ...behavior, servers: () => ({}) },
+      mcp: behavior,
       state: behavior,
       dirs: behavior,
       fs: behavior,
@@ -113,14 +121,10 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
     };
     return {
       id,
-      workdirs: { root, reload: async () => {}, dispose: () => {} },
-      mcpConfig: { ...behavior, servers: () => ({}) },
-      mcp: behavior,
+      workdirs: { root, currentRoot: root, reload: async () => {}, dispose: () => {} },
       trust: { ...behavior, isTrusted: () => false },
       userAgentProfiles: behavior,
       pluginAgentProfiles: behavior,
-      explicitAgentProfiles: behavior,
-      extraAgentProfiles: behavior,
       disposables: [behavior],
       ready: false,
       failed: false,
@@ -225,9 +229,9 @@ describe('Program', () => {
           getSkillRoots(): string[];
         } };
         instructions: { snapshot: { agentsMdPaths?: readonly string[] } };
+        mcpConfig: { servers(): Record<string, unknown> };
+        mcp: unknown;
       } };
-      mcpConfig: { servers(): Record<string, unknown> };
-      mcp: unknown;
     };
     const skill = { source: 'workspace' };
     generation.workdirs.root.skills.catalog.listSkills = () => [skill];
@@ -235,14 +239,14 @@ describe('Program', () => {
     generation.workdirs.root.skills.catalog.getSkippedByPolicy = () => [];
     generation.workdirs.root.skills.catalog.getSkillRoots = () => ['/workspace/.agents/skills'];
     generation.workdirs.root.instructions.snapshot = { agentsMdPaths: ['/workspace/AGENTS.md'] };
-    generation.mcpConfig.servers = () => ({ baseline: {} });
+    generation.workdirs.root.mcpConfig.servers = () => ({ baseline: {} });
     await program.ready;
     await Promise.resolve();
 
     expect(program.skills).toBe(generation.workdirs.root.skills);
     expect(program.instructions).toBe(generation.workdirs.root.instructions);
-    expect(program.mcpConfig).toBe(generation.mcpConfig);
-    expect(program.mcp).toBe(generation.mcp);
+    expect(program.mcpConfig).toBe(generation.workdirs.root.mcpConfig);
+    expect(program.mcp).toBe(generation.workdirs.root.mcp);
     expect(program.snapshot()).toMatchObject({
       workspaceId: 'workspace',
       binding: { environmentId: 'local' },
@@ -321,7 +325,7 @@ interface LocalityFixture {
   readonly registry: EnvironmentRegistry;
   readonly program: Program;
   readonly local: () => GenerationAccess;
-  readonly workdir: (cwd: string, environmentId?: string, followsPrimary?: boolean) => Promise<ProgramWorkdir>;
+  readonly workdir: (cwd: string, environmentId?: string) => Promise<ProgramWorkdir>;
   readonly controllerInputs: ProgramSessionControllerInput[];
   readonly profileRegistry: AgentProfileRegistryService;
   readonly profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[];
@@ -331,6 +335,7 @@ interface LocalityFixture {
   readonly remoteAltRoot: string;
   readonly homeDir: string;
   readonly remoteHomeDir: string;
+  readonly promote: (cwd: string) => void;
   readonly replaceLocal: (generation: string) => Promise<void>;
   readonly cleanup: () => Promise<void>;
 }
@@ -361,7 +366,7 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
   };
 }
 
-async function localityFixture(options: { readonly remoteCwd?: string } = {}): Promise<LocalityFixture> {
+async function localityFixture(options: { readonly remoteCwd?: string; readonly relativeResources?: boolean } = {}): Promise<LocalityFixture> {
   const base = await mkdtemp(join(tmpdir(), 'kimi-program-locality-'));
   const localRoot = join(base, 'local');
   const remoteRoot = join(base, 'target');
@@ -416,14 +421,8 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
 
   await execFileAsync('git', ['init', '-b', 'main', remoteRoot]);
 
-  const docsRecords = new Map<string, unknown>();
-  const docs = {
-    _serviceBrand: undefined,
-    get: async <T,>(scope: string, key: string) => docsRecords.get(`${scope}/${key}`) as T | undefined,
-    set: async <T,>(scope: string, key: string, value: T) => { docsRecords.set(`${scope}/${key}`, value); },
-    delete: async (scope: string, key: string) => { docsRecords.delete(`${scope}/${key}`); },
-  };
-  await writeWorkspaceTrust(docs as never, localRoot, Date.now());
+  const docs = new JsonAtomicDocumentStore(new FileStorageService(kimiHome));
+  await writeWorkspaceTrust(docs, localRoot, Date.now());
 
   const localGitCalls: string[] = [];
   const localGit = {
@@ -440,23 +439,31 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
   const profileContainer = new InstantiationService(new ServiceCollection(), true);
   const profileRegistry = profileContainer.createInstance(AgentProfileRegistryService);
   const profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[] = [];
-  const bootstrap = { _serviceBrand: undefined, homeDir: kimiHome, osHomeDir: homeDir, args: {}, getEnv: () => undefined };
+  const bootstrap = { _serviceBrand: undefined, homeDir: kimiHome, osHomeDir: homeDir, args: options.relativeResources ? { agentFiles: ['selected.md'], skillDirs: ['explicit-skills'] } : {}, getEnv: () => undefined };
   const config = {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
-    get: () => undefined,
+    get: (key: string) => {
+      if (!options.relativeResources) return undefined;
+      if (key === 'extraAgentDirs') return ['custom-agents'];
+      if (key === 'extraSkillDirs') return ['configured'];
+      return undefined;
+    },
     onDidSectionChange: () => ({ dispose: () => {} }),
   };
-  const trustStore = new WorkspaceTrustStore(docs as never, noopTelemetryService, bootstrap as never, config as never);
+  const trustStore = new WorkspaceTrustStore(docs, noopTelemetryService, bootstrap as never, config as never, noopLogger);
   const userSkills = new UserFileSkillSource(
     new FileSkillDiscovery(noopLogger),
     bootstrap as never,
     config as never,
   );
+  const projectChange = new Emitter<void>();
+  const context = programWorkspace(localRoot);
+  let meta = context.meta;
   const program = new Program(
     'workspace',
     registry as unknown as IEnvironmentService,
-    programWorkspace(localRoot),
+    { ...context, get meta() { return meta; }, onDidChangeProject: projectChange.event },
     {
       appState: undefined,
       bootstrap,
@@ -469,6 +476,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       },
       log: noopLogger,
       oauth: {
+        now: () => Date.now(),
         onEvent: () => () => {},
         setConfigurationSource: () => {},
         removeConfigurationSource: () => {},
@@ -481,7 +489,6 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
         pluginAgentRoots: async () => [],
         pluginSkillRoots: async () => [],
       },
-      sessionManager: { current: undefined, onDidChange: Event.None },
       agentProfiles: {
         _serviceBrand: undefined,
         onDidChange: profileRegistry.onDidChange,
@@ -533,17 +540,21 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       : { fs: scopedFs(remoteRoot, await realpath(remoteRoot), realFs), process: new HostProcessService() },
   ) as FakeEnvironment);
 
-  const local = (): GenerationAccess => {
-    const generation = (program as unknown as {
-      generation: { workdirs: { root: GenerationAccess }; mcpConfig: IWorkspaceMcpConfigService; userAgentProfiles: IUserAgentProfileLoader };
-    }).generation;
-    return { ...generation.workdirs.root, mcpConfig: generation.mcpConfig, userAgentProfiles: generation.userAgentProfiles };
-  };
+  const local = (): GenerationAccess => ({
+    fs: program.fs,
+    git: program.git,
+    mcpConfig: program.mcpConfig,
+    instructions: program.instructions,
+    skills: program.skills,
+    dirs: program.dirs,
+    agentProfiles: program.agentProfiles,
+    userAgentProfiles: program.userAgentProfiles,
+  });
   const workdirs: ProgramWorkdir[] = [];
   let controller: { dispose(): void } | undefined;
-  const workdir = async (cwd: string, environmentId = 'remote', followsPrimary?: boolean): Promise<ProgramWorkdir> => {
+  const workdir = async (cwd: string, environmentId = 'remote'): Promise<ProgramWorkdir> => {
     controller ??= program.createSessionController();
-    const created = await controllerInputs[0]!.acquireWorkdir(environmentId, cwd, followsPrimary);
+    const created = await controllerInputs[0]!.acquireWorkdir(environmentId, cwd);
     workdirs.push(created);
     return created;
   };
@@ -561,6 +572,10 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     remoteAltRoot,
     homeDir,
     remoteHomeDir,
+    promote: (cwd) => {
+      meta = { ...meta, root: cwd };
+      projectChange.fire();
+    },
     replaceLocal: async (generation: string) => {
       await localRegistration.remove();
       registry.register(Object.assign(
@@ -576,6 +591,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       for (const created of workdirs) created.dispose();
       controller?.dispose();
       await program.dispose();
+      projectChange.dispose();
       userSkills.dispose();
       profileContainer.dispose();
       trustStore.dispose();
@@ -619,13 +635,42 @@ describe('Program local generation and remote workdirs', () => {
         { sourceId: 'workspace', profiles: ['local-agent'] },
       ]);
       expect(fixture.profileRegistry.entries().find((entry) => entry.sourceId === 'workspace')?.contextKey)
-        .toBe(environmentBindingId('local', fixture.localRoot));
+        .toBe(environmentBindingId('local', directoryKey(fixture.localRoot)));
 
       await local.git.status();
       expect(fixture.localGitCalls).toEqual([fixture.localRoot]);
 
       const listed = await local.fs.list({ path: '.', depth: 1, limit: 100, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false });
       expect(listed.items.map((entry) => entry.name)).toContain('AGENTS.md');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('resolves explicit and configured resources inside each local workdir', async () => {
+    const fixture = await localityFixture({ relativeResources: true });
+    try {
+      for (const name of ['first', 'second']) {
+        const cwd = join(fixture.localRoot, name);
+        for (const source of ['explicit-skills', 'configured']) {
+          const skill = `${name}-${source}`;
+          const folder = join(cwd, source, skill);
+          await mkdir(folder, { recursive: true });
+          await writeFile(join(folder, 'SKILL.md'), `---\nname: ${skill}\ndescription: ${skill}\n---\nBody`);
+        }
+        const profile = (source: string) => `---\nname: ${name}-${source}\ndescription: Test profile\n---\n\nUse this profile.\n`;
+        await writeFile(join(cwd, 'selected.md'), profile('selected'));
+        await mkdir(join(cwd, 'custom-agents'));
+        await writeFile(join(cwd, 'custom-agents', 'agent.md'), profile('extra'));
+        const view = await fixture.workdir(cwd, 'local');
+        await Promise.all([view.agentProfiles.ready, view.skills.ready]);
+        expect(view.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(expect.arrayContaining([
+          `${name}-explicit-skills`, `${name}-configured`,
+        ]));
+        const sources = fixture.profileRegistry.entries().filter((entry) => entry.contextKey === view.contextKey);
+        expect(sources.flatMap((entry) => entry.contribution.profiles.map((profile) => profile.name)).toSorted())
+          .toEqual([`${name}-extra`, `${name}-selected`]);
+      }
     } finally {
       await fixture.cleanup();
     }
@@ -651,9 +696,13 @@ describe('Program local generation and remote workdirs', () => {
 
       expect(remote.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(['target-skill', 'user-skill']);
       expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
-      expect(remoteProfiles).toEqual([]);
+      expect(remoteProfiles.toSorted((a, b) => a.sourceId.localeCompare(b.sourceId))).toEqual([
+        { sourceId: 'explicit', profiles: [] },
+        { sourceId: 'extra', profiles: [] },
+      ]);
       expect(remote.contextKey).toBe(environmentBindingId('remote', fixture.remoteRoot));
-      expect(fixture.profileRegistry.entries().some((entry) => entry.contextKey === remote.contextKey)).toBe(false);
+      expect(fixture.profileRegistry.entries().filter((entry) => entry.contextKey === remote.contextKey)
+        .map((entry) => entry.sourceId).toSorted()).toEqual(['explicit', 'extra']);
 
       const listed = await remote.fs.list({ path: '.', depth: 1, limit: 100, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false });
       expect(listed.items.map((entry) => entry.name)).toContain('AGENTS.md');
@@ -697,23 +746,145 @@ describe('Program local generation and remote workdirs', () => {
     }
   });
 
-  it('separates pinned and primary-following local workdirs for the same environment and cwd', async () => {
+  it('isolates instructions, permission rules and live MCP connections in two linked checkouts', async () => {
+    vi.stubEnv('KIMI_CODE_WATCH', 'true');
+    const fixture = await localityFixture();
+    const checkout = (name: string) => join(fixture.localRoot, name);
+    const cwd = (name: string) => join(checkout(name), 'src');
+    const server = { command: process.execPath, args: [cwdStdioFixture] };
+    const permissions: ProjectPermissionRulesService[] = [];
+    const rulesFor = (view: ProgramWorkdir) => {
+      const session = { cwd: view.dirs.primary } as ISessionContext;
+      const workdir = { _serviceBrand: undefined, environmentId: 'local', cwd: session.cwd, dirs: view.dirs, fs: view.fs };
+      const rules = new ProjectPermissionRulesService(session, workdir, view.localConfig, fixture.program.trust);
+      permissions.push(rules);
+      return rules;
+    };
+    const localConfig = (pattern: string) =>
+      `[workspace]\nadditional_dir = ["extra"]\n[[permission.rules]]\ndecision = "allow"\npattern = "${pattern}"\n`;
+    const callCwd = async (view: ProgramWorkdir, name: string) => {
+      await view.mcp.ready;
+      const connection = view.mcp.connectionManager().resolved(name);
+      expect(connection).toBeDefined();
+      return (await connection!.client.callTool('get_cwd', {})).content[0];
+    };
+    try {
+      await writeFile(join(fixture.homeDir, '.kimi-code', 'mcp.json'), '{}');
+      await execFileAsync('git', ['init', '-b', 'main', checkout('one')]);
+      await execFileAsync('git', ['-C', checkout('one'), '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--no-gpg-sign', '--allow-empty', '-m', 'initial']);
+      await execFileAsync('git', ['-C', checkout('one'), 'worktree', 'add', '--detach', checkout('two'), 'HEAD']);
+      const views = await Promise.all(['one', 'two'].map(async (name) => {
+        await mkdir(join(checkout(name), '.kimi-code'));
+        await mkdir(join(cwd(name), '.kimi-code'), { recursive: true });
+        await mkdir(join(checkout(name), 'extra'));
+        await writeFile(join(checkout(name), 'AGENTS.md'), name);
+        await writeFile(join(checkout(name), '.kimi-code', 'local.toml'), localConfig(`Bash(${name} *)`));
+        await writeFile(join(checkout(name), '.mcp.json'), JSON.stringify({ mcpServers: { repo: server } }));
+        await writeFile(join(cwd(name), '.kimi-code', 'mcp.json'), JSON.stringify({ mcpServers: { shared: { ...server, env: { CHECKOUT: name } } } }));
+        return fixture.workdir(cwd(name), 'local');
+      }));
+      for (const [index, name] of ['one', 'two'].entries()) {
+        const view = views[index]!;
+        await awaitWorkdir(view);
+        const rules = rulesFor(view);
+        await rules.ready;
+        expect(rules.rules).toEqual([{ decision: 'allow', scope: 'project', pattern: `Bash(${name} *)` }]);
+        expect(view.instructions.snapshot.agentsMd).toContain(name);
+        expect(view.dirs.additionalDirs).toEqual([join(checkout(name), 'extra')]);
+        expect(await callCwd(view, 'shared')).toEqual({ type: 'text', text: await realpath(cwd(name)) });
+        expect(await callCwd(view, 'repo')).toEqual({ type: 'text', text: await realpath(checkout(name)) });
+        expect(view.mcpConfig.servers()['shared']).toMatchObject({ env: { CHECKOUT: name } });
+      }
+      const [one, two] = views;
+      await writeFile(join(checkout('one'), '.kimi-code', 'local.toml'), localConfig('Write'));
+      await vi.waitFor(() => expect(permissions[0]!.rules[0]?.pattern).toBe('Write'));
+      expect(permissions[1]!.rules[0]?.pattern).toBe('Bash(two *)');
+      await one!.dirs.mergeAdditionalDirs(checkout('one'), ['.kimi-code']);
+      expect(two!.dirs.additionalDirs).toEqual([join(checkout('two'), 'extra')]);
+      const oldConnections = one!.mcp.connectionManager();
+      permissions[0]!.dispose();
+      one!.dispose();
+      expect(oldConnections.resolved('shared')).toBeUndefined();
+      expect(await callCwd(two!, 'shared')).toEqual({ type: 'text', text: await realpath(cwd('two')) });
+
+      const reopened = await fixture.workdir(cwd('one'), 'local');
+      expect(await callCwd(reopened, 'shared')).toEqual({ type: 'text', text: await realpath(cwd('one')) });
+      const reopenedRules = rulesFor(reopened);
+      await reopenedRules.ready;
+      expect(reopenedRules.rules[0]?.pattern).toBe('Write');
+      await fixture.program.trust.untrust();
+      await Promise.all([reopenedRules.refreshTrust(), permissions[1]!.refreshTrust()]);
+      expect(reopenedRules.rules).toEqual([]);
+      expect(permissions[1]!.rules).toEqual([]);
+      await vi.waitFor(() => {
+        expect(reopened.mcp.connectionManager().resolved('shared')).toBeUndefined();
+        expect(two!.mcp.connectionManager().resolved('shared')).toBeUndefined();
+      });
+    } finally {
+      for (const rules of permissions) rules.dispose();
+      await fixture.cleanup();
+    }
+  });
+
+  it('keeps a remote session’s host MCP connection until the session closes after a project primary change', async () => {
     const fixture = await localityFixture();
     try {
-      const pinnedRoot = join(fixture.localRoot, 'pinned');
-      await mkdir(pinnedRoot);
-      await writeFile(join(pinnedRoot, 'AGENTS.md'), 'pinned project instructions');
-      const following = await fixture.workdir(pinnedRoot, 'local', true);
-      const pinned = await fixture.workdir(pinnedRoot, 'local', false);
-      await Promise.all([awaitWorkdir(following), awaitWorkdir(pinned)]);
+      const promoted = join(fixture.localRoot, 'promoted');
+      await mkdir(promoted);
+      await writeFile(join(fixture.localRoot, '.mcp.json'), '{}');
+      const server = { command: process.execPath, args: [cwdStdioFixture] };
+      await writeFile(join(fixture.homeDir, '.kimi-code', 'mcp.json'), JSON.stringify({ mcpServers: { user: server } }));
+      const remote = await fixture.workdir(fixture.remoteRoot);
+      const handle = remote.mcp.sessionHandle();
+      await handle.ready;
+      const connection = handle.connectionManager.resolved('user');
+      expect(connection).toBeDefined();
+      fixture.promote(promoted);
+      expect(fixture.program.dirs.primary).toBe(promoted);
+      expect(handle.connectionManager.resolved('user')?.client).toBe(connection!.client);
+      expect((await connection!.client.callTool('get_cwd', {})).content[0]).toEqual({ type: 'text', text: await realpath(fixture.localRoot) });
+      remote.dispose();
+      expect(handle.connectionManager.list()).toEqual([]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 
-      expect(following.contextKey).not.toBe(pinned.contextKey);
-      expect(following.dirs.primary).toBe(fixture.localRoot);
-      expect(pinned.dirs.primary).toBe(pinnedRoot);
-      expect(following.instructions.snapshot.agentsMd).toContain('local project instructions');
-      expect(following.instructions.snapshot.agentsMd).not.toContain('pinned project instructions');
-      expect(pinned.instructions.snapshot.agentsMd).toContain('pinned project instructions');
-      expect(pinned.instructions.snapshot.agentsMd).not.toContain('local project instructions');
+  it('opens a valid workdir when the default directory has an invalid local.toml', async () => {
+    const fixture = await localityFixture();
+    try {
+      const invalidFile = join(fixture.localRoot, '.kimi-code', 'local.toml');
+      await writeFile(invalidFile, '[workspace');
+      const cwd = join(fixture.localRoot, 'valid');
+      await mkdir(cwd);
+      await writeFile(join(cwd, 'AGENTS.md'), 'valid workdir instructions');
+      const valid = await fixture.workdir(cwd, 'local');
+      await awaitWorkdir(valid);
+      const invalid = await fixture.workdir(fixture.localRoot, 'local');
+      await expect(invalid.dirs.ready).rejects.toThrow(invalidFile);
+      expect(valid.instructions.snapshot.agentsMd).toContain('valid workdir instructions');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('shares local configuration for the same cwd and keeps other directories independent', async () => {
+    const fixture = await localityFixture();
+    try {
+      const cwd = join(fixture.localRoot, 'pinned');
+      await mkdir(cwd);
+      await writeFile(join(cwd, 'AGENTS.md'), 'pinned project instructions');
+      const first = await fixture.workdir(cwd, 'local');
+      const second = await fixture.workdir(cwd, 'local');
+      const root = await fixture.workdir(fixture.localRoot, 'local');
+      await Promise.all([awaitWorkdir(first), awaitWorkdir(second), awaitWorkdir(root)]);
+      expect(first.contextKey).toBe(second.contextKey);
+      expect(first.instructions).toBe(second.instructions);
+      expect(first.dirs.primary).toBe(cwd);
+      expect(root.instructions.snapshot.agentsMd).toContain('local project instructions');
+      expect(root.instructions.snapshot.agentsMd).not.toContain('pinned project instructions');
+      expect(first.instructions.snapshot.agentsMd).toContain('pinned project instructions');
+      expect(first.instructions.snapshot.agentsMd).not.toContain('local project instructions');
     } finally {
       await fixture.cleanup();
     }

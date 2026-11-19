@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Emitter } from '#/_base/event';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
@@ -103,6 +104,7 @@ function stubProjectRules(): ProjectRulesStub {
       get rules() {
         return stub.rules;
       },
+      refreshTrust: async () => {},
       appendRules: (rules: readonly PermissionRule[]) => {
         stub.appended.push(...rules);
         stub.rules = [...stub.rules, ...rules];
@@ -257,10 +259,13 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
         return { projectRoot: cwd, configPath: `${cwd}/.kimi-code/local.toml`, rules: rawRules };
       },
     } as never;
-    const trust = { get: async () => trusted } as never;
+    const changes = new Emitter<void>();
+    const configChanges = new Emitter<void>();
+    const trust = { get: async () => trusted, isTrusted: () => trusted, onDidChange: changes.event } as never;
+    const workdir = { environmentId: 'local', cwd: '/local/project', dirs: { onDidChangeLocalConfig: configChanges.event } } as never;
     const untrusted = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
-      { environmentId: 'local', cwd: '/local/project' } as never,
+      workdir,
       localConfig,
       trust,
     );
@@ -272,7 +277,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     rawRules = [projectRule];
     const local = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
-      { environmentId: 'local', cwd: '/local/project' } as never,
+      workdir,
       localConfig,
       trust,
     );
@@ -297,7 +302,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     rawRules = [runtimeRule];
     const invalid = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
-      { environmentId: 'local', cwd: '/local/project' } as never,
+      workdir,
       localConfig,
       trust,
     );
@@ -318,6 +323,25 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
       '/local/project',
       '/local/project',
     ]);
+
+    untrusted.dispose();
+    invalid.dispose();
+    rawRules = [appendedRule];
+    configChanges.fire();
+    await vi.waitFor(() => expect(local.rules).toEqual([appendedRule]));
+    trusted = false;
+    changes.fire();
+    expect(local.rules).toEqual([]);
+    trusted = true;
+    rawRules = [projectRule];
+    changes.fire();
+    await vi.waitFor(() => expect(local.rules).toEqual([projectRule]));
+    rawRules = [runtimeRule];
+    configChanges.fire();
+    await vi.waitFor(() => expect(() => local.rules).toThrow('/local/project/.kimi-code/local.toml'));
+    local.dispose();
+    changes.dispose();
+    configChanges.dispose();
 
     const userRule: PermissionRule = { ...runtimeRule, scope: 'user' };
     config.permission = {

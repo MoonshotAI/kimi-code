@@ -22,6 +22,7 @@ import { watch } from '#human/utils/watch';
 import type { Workspace } from './workspace';
 import {
   IWorkspacePersistence,
+  PROJECTS_KEY,
   type PersistedProjectsFile,
   type PersistedWorkspaceEntry,
   type PersistedWorkspaceFile,
@@ -32,7 +33,6 @@ import {
 const PROJECTS_SCHEMA_VERSION = 2;
 const WORKSPACE_CATALOG_SCOPE = '';
 const LEGACY_WORKSPACES_KEY = 'workspaces.json';
-const PROJECTS_KEY = 'projects.json';
 const PROJECTS_LOCK_KEY = '.projects-write-lock';
 const WATCH_DEBOUNCE_MS = 150;
 const textDecoder = new TextDecoder();

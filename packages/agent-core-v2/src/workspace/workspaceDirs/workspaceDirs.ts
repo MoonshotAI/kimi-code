@@ -24,6 +24,7 @@ export interface IWorkspaceDirs {
   readonly sharedAdditionalDirs: readonly string[];
   readonly primaryByWorkspace: Readonly<Record<string, string>>;
   readonly onDidChange: Event<void>;
+  readonly onDidChangeLocalConfig: Event<void>;
   addDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult>;
   mergeAdditionalDirs(baseDir: string, dirs: readonly string[]): Promise<void>;
   reload(): Promise<void>;

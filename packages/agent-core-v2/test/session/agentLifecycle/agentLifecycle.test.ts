@@ -294,6 +294,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       rules: [],
+      refreshTrust: async () => {},
       appendRules: async () => {},
     });
     ix.stub(IWorkspaceInstanceManager, {

@@ -6,6 +6,7 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { loadMcpServersDetailed } from '#/app/mcpConfig/configLoader';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
@@ -25,54 +26,22 @@ export class McpRegistryService implements IMcpRegistryService {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IWorkspaceTrustStore private readonly trust: IWorkspaceTrustStore,
+    @IWorkspaceService private readonly workspaces: IWorkspaceService,
   ) {}
 
   async list(query: McpRegistryQuery = {}): Promise<readonly McpRegistryEntry[]> {
     const out: McpRegistryEntry[] = [];
 
-    if (query.cwd === undefined) {
-      const userEntries = await this.store.list();
-      for (const server of userEntries) {
-        const { name, ...config } = server;
-        out.push({
-          name,
-          config,
-          source: 'global',
-          origin: this.store.path,
-          mutable: true,
-        });
+    const cwd = query.cwd === undefined ? undefined : canonicalWorkspaceRoot(query.cwd);
+    if (cwd !== undefined && await this.trust.forRoots(await this.workspaces.implicitDirectories(cwd)).refresh()) {
+      const detailed = await loadMcpServersDetailed({ fs: this.fs, cwd, homeDir: this.bootstrap.homeDir });
+      for (const [name, config] of Object.entries(detailed.servers)) {
+        const origin = detailed.origins[name] ?? this.store.path;
+        out.push({ name, config, source: 'global', origin, mutable: origin === this.store.path });
       }
     } else {
-      const cwd = canonicalWorkspaceRoot(query.cwd);
-      const trusted = await this.trust.forRoot(cwd).refresh();
-      if (!trusted) {
-        const userEntries = await this.store.list();
-        for (const server of userEntries) {
-          const { name, ...config } = server;
-          out.push({
-            name,
-            config,
-            source: 'global',
-            origin: this.store.path,
-            mutable: true,
-          });
-        }
-      } else {
-        const detailed = await loadMcpServersDetailed({
-          fs: this.fs,
-          cwd,
-          homeDir: this.bootstrap.homeDir,
-        });
-        for (const [name, config] of Object.entries(detailed.servers)) {
-          const origin = detailed.origins[name] ?? this.store.path;
-          out.push({
-            name,
-            config,
-            source: 'global',
-            origin,
-            mutable: origin === this.store.path,
-          });
-        }
+      for (const { name, ...config } of await this.store.list()) {
+        out.push({ name, config, source: 'global', origin: this.store.path, mutable: true });
       }
     }
 

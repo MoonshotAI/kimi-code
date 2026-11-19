@@ -65,6 +65,15 @@ export class WorkspaceService implements IWorkspaceService {
     });
   }
 
+  implicitDirectories(cwd: string): Promise<readonly string[]> {
+    return this.runExclusive(async () => {
+      await this.ensureMerged();
+      const { workspaces } = await this.loadCatalog();
+      const project = findImplicitWorkspace(workspaces, cwd);
+      return project === undefined ? [cwd] : [project.root, ...project.additionalDirs];
+    });
+  }
+
   createOrTouch(root: string, name?: string): Promise<Workspace> {
     return this.runExclusive(async () => {
       let stat;
@@ -90,16 +99,7 @@ export class WorkspaceService implements IWorkspaceService {
         const byId = new Map(catalog.workspaces.map((entry) => [entry.id, entry]));
         const deletedIds = new Set(catalog.deletedIds);
         const id = encodeWorkDirKey(root);
-        existing = byId.get(id);
-        if (existing === undefined) {
-          const rootKey = workspaceRootKey(root);
-          for (const entry of byId.values()) {
-            if (isWorkDirKey(entry.id) && workspaceRootKey(entry.root) === rootKey) {
-              existing = entry;
-              break;
-            }
-          }
-        }
+        existing = findImplicitWorkspace(catalog.workspaces, root);
         const now = Date.now();
         ws =
           existing !== undefined
@@ -213,28 +213,45 @@ export class WorkspaceService implements IWorkspaceService {
   }
 
   update(id: string, patch: WorkspaceUpdate): Promise<Workspace | undefined> {
+    return this.changeProject(id, async (existing) => ({
+      ...existing,
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      additionalDirs: patch.additionalDirs === undefined
+        ? existing.additionalDirs
+        : await this.normalizeAdditionalDirs(existing.root, patch.additionalDirs),
+    }));
+  }
+
+  addDirectory(id: string, dir: string): Promise<Workspace | undefined> {
+    return this.changeProject(id, async (existing) => {
+      const [resolved] = await this.localConfig.resolveAdditionalDirs(existing.root, [dir]);
+      if (resolved === undefined) throw new Error2(ErrorCodes.CONFIG_INVALID, `additional dir ${dir} did not resolve`);
+      const key = workspaceRootKey(resolved);
+      if (workspaceRootKey(existing.root) === key || existing.additionalDirs.some((kept) => workspaceRootKey(kept) === key)) {
+        return existing;
+      }
+      return { ...existing, additionalDirs: [...existing.additionalDirs, resolved] };
+    });
+  }
+
+  private changeProject(
+    id: string,
+    change: (existing: Workspace) => Promise<Workspace>,
+  ): Promise<Workspace | undefined> {
     return this.runExclusive(async () => {
       await this.ensureMerged();
       let updated: Workspace | undefined;
+      let changed = false;
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
-        const additionalDirs =
-          patch.additionalDirs === undefined
-            ? existing.additionalDirs
-            : await this.normalizeAdditionalDirs(existing.root, patch.additionalDirs);
-        updated = {
-          ...existing,
-          ...(patch.name !== undefined ? { name: patch.name } : {}),
-          additionalDirs,
-        };
-        return {
-          workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated! : ws)),
-          deletedIds: catalog.deletedIds,
-          idempotencyKeys: catalog.idempotencyKeys,
-        };
+        const next = await change(existing);
+        updated = next;
+        if (existing === next) return catalog;
+        changed = true;
+        return { ...catalog, workspaces: catalog.workspaces.map((ws) => ws.id === id ? next : ws) };
       });
-      if (updated !== undefined) {
+      if (changed && updated !== undefined) {
         this.event.publish(new WorkspaceUpdated({ payload: { workspace: updated } }));
       }
       return updated;
@@ -501,3 +518,10 @@ registerScopedService(
   ScopeActivation.OnScopeCreated,
   'workspace',
 );
+
+function findImplicitWorkspace(workspaces: readonly Workspace[], root: string): Workspace | undefined {
+  const id = encodeWorkDirKey(root);
+  const key = workspaceRootKey(root);
+  return workspaces.find((workspace) => workspace.id === id)
+    ?? workspaces.find((workspace) => isWorkDirKey(workspace.id) && workspaceRootKey(workspace.root) === key);
+}

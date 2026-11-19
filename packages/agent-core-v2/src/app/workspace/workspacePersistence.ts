@@ -3,6 +3,8 @@ import type { Event } from '#/_base/event';
 
 import type { Workspace } from './workspace';
 
+export const PROJECTS_KEY = 'projects.json';
+
 export interface PersistedWorkspaceEntry {
   readonly root: string;
   readonly name: string;

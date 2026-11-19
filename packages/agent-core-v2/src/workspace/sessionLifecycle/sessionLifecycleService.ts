@@ -95,15 +95,8 @@ import { IModelService } from '#/llm-adapter/model/model';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
-import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
-import {
-  IExplicitAgentProfileLoader,
-} from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
-import {
-  IExtraAgentProfileLoader,
-} from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, legacySessionMetaScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
@@ -203,20 +196,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IFlagService private readonly flags: IFlagService,
-    @IExtraAgentProfileLoader
-    private readonly extraAgentProfileLoader: IExtraAgentProfileLoader,
-    @IExplicitAgentProfileLoader
-    private readonly explicitAgentProfileLoader: IExplicitAgentProfileLoader,
     @IUserAgentProfileLoader
     private readonly userAgentProfileLoader: IUserAgentProfileLoader,
     @IPluginAgentProfileLoader
     private readonly pluginAgentProfileLoader: IPluginAgentProfileLoader,
-    @IWorkspaceMcpService private readonly workspaceMcp: IWorkspaceMcpService,
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
     private readonly environments: IEnvironmentService,
     private readonly trust: IWorkspaceTrust,
-    private readonly acquireWorkdir: (environmentId: string, cwd: string, followsPrimary: boolean) => Promise<ProgramWorkdir>,
+    private readonly acquireWorkdir: (environmentId: string, cwd: string) => Promise<ProgramWorkdir>,
     onDispose?: () => void,
   ) {
     super();
@@ -361,7 +349,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             }),
             [ISessionSkillCatalogData, workdir.skills.sessionData()],
             [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],
-            [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
+            [ISessionMcpHandle, workdir.mcp.sessionHandle()],
             [ISessionWorkspaceInfo, dirs.sessionInfo()],
             [ISessionWorkdir, {
               _serviceBrand: undefined,
@@ -378,6 +366,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               'telemetry:session-context',
             );
             container.anchorKernelEntry(() => { workdir.dispose(); }, 'sessionLifecycle:workdir');
+            if (opts.mcpServers !== undefined && Object.keys(opts.mcpServers).length > 0) {
+              const overlay = workdir.mcp.sessionOverlay(opts.mcpServers, { sessionId: opts.sessionId });
+              container.anchorKernelEntry(() => { void overlay.shutdown(); }, 'sessionLifecycle:mcp');
+              container.provide(ISessionMcpHandle, overlay.handle);
+            }
             this._onWillCreateSession.fire({
               sessionId: opts.sessionId,
               onDidCreateScope: scopeCreated.event,
@@ -407,14 +400,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await handle.accessor.get(IProjectPermissionRulesService).ready;
       await Promise.all([
         workdir.agentProfiles.ready,
-        this.extraAgentProfileLoader.ready,
-        this.explicitAgentProfileLoader.ready,
         this.userAgentProfileLoader.ready,
         this.pluginAgentProfileLoader.ready,
       ]);
     } catch (error) {
+      void workdir.agentProfiles.reload().catch(() => undefined);
       void handle.dispose();
-      void this.explicitAgentProfileLoader.reload().catch(() => undefined);
       throw error;
     }
     this.sessions.set(opts.sessionId, handle);
@@ -447,7 +438,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } finally {
       lease.dispose();
     }
-    return this.acquireWorkdir(environmentId, cwd, false);
+    return this.acquireWorkdir(environmentId, cwd);
   }
 
   private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {

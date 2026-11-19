@@ -1,9 +1,7 @@
-import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
-import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import {
@@ -13,11 +11,8 @@ import {
 } from '#/mcpCore/connection-manager';
 import type { McpOAuthEvent, McpOAuthService } from '#/mcpCore/oauth/service';
 import { canonicalMcpOAuthResource } from '#/mcpCore/oauth/store';
-import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import {
@@ -36,17 +31,13 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
 
   private readonly manager: McpConnectionManager;
   private readonly oauthService: McpOAuthService;
-  private readonly workspaceId: string;
   private appliedPrimary?: string;
   readonly ready: Promise<void>;
   private mutationTail: Promise<void> = Promise.resolve();
   private readonly resolveClientName = (): string | undefined => this.identity.current().slug;
-  private readonly sessionLifecycle: LiveRef<ISessionManager>;
-  private sessionLifecycleAttached = false;
   private shutdown?: Promise<void>;
 
   constructor(
-    @IWorkspaceContext workspace: IWorkspaceContext,
     @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
     @IEnvironmentService private readonly environmentResolver: EnvironmentResolver,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
@@ -54,11 +45,8 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
-    @ref(ISessionManager) sessionLifecycle: LiveRef<ISessionManager>,
   ) {
     super();
-    this.sessionLifecycle = sessionLifecycle;
-    this.workspaceId = workspace.workspaceId;
     this.oauthService = oauthService;
     this.manager = new McpConnectionManager({
       log: this.log,
@@ -86,8 +74,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       }),
     );
     this._register({ dispose: this.oauthEventSubscription(this.manager) });
-    this.attachSessionLifecycle();
-    this._register(sessionLifecycle.onDidChange(() => this.attachSessionLifecycle()));
     this.ready = this.initialize().catch((error: unknown) => {
       this.log.error('mcp initial load failed', { error });
     });
@@ -115,29 +101,6 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       }
     })();
     return this.shutdown;
-  }
-
-  private attachSessionLifecycle(): void {
-    if (this.sessionLifecycleAttached) return;
-    const lifecycle = this.sessionLifecycle.current;
-    if (lifecycle?.onWillCreateSession === undefined) return;
-    this.sessionLifecycleAttached = true;
-    this._register(
-      lifecycle.onWillCreateSession((event) => {
-        const context = event.readSeed(ISessionContext);
-        if (context.workspaceId !== this.workspaceId) return;
-        const servers = event.readSeed(ISessionEphemeralMcpServers);
-        if (Object.keys(servers).length === 0) return;
-        const overlay = this.sessionOverlay(servers, {
-          stdioCwd: this.dirs.primary,
-          sessionId: context.sessionId,
-        });
-        event.contributeSeed(ISessionMcpHandle, overlay.handle);
-        event.onSessionDispose(() => {
-          void overlay.shutdown();
-        });
-      }),
-    );
   }
 
   connectionManager(): McpConnectionManager {
@@ -323,6 +286,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
   private async initialize(): Promise<void> {
     await this.mcpConfig.ready;
     await this.identity.resolved();
+    if (this._store.isDisposed) return;
     this.appliedPrimary = this.dirs.primary;
     const servers = this.mcpConfig.servers();
     if (Object.keys(servers).length === 0) return;
@@ -343,6 +307,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       await this.manager.markRemoved(name);
     }
     for (const [name, config] of Object.entries(change.upsert)) {
+      if (this._store.isDisposed) return;
       await this.manager.connect(name, config);
     }
   }

@@ -1,3 +1,4 @@
+import { Emitter } from '#/_base/event';
 import type { Workspace } from '#/app/workspace/workspace';
 import { Program, type ProgramSnapshot } from '#/program/program';
 import type { ProgramDependencies } from '#/program/programDependencies';
@@ -16,6 +17,7 @@ export class WorkspaceInstance {
   readonly program: Program;
   private lifecycle: WorkspaceInstanceLifecycle = 'materializing';
   private metadataValue: Workspace;
+  private readonly projectChange = new Emitter<void>();
 
   constructor(
     metadata: Workspace,
@@ -24,7 +26,7 @@ export class WorkspaceInstance {
     dependencies: ProgramDependencies,
   ) {
     this.metadataValue = metadata;
-    const liveContext = { ...context };
+    const liveContext = { ...context, onDidChangeProject: this.projectChange.event };
     Object.defineProperty(liveContext, 'meta', { get: () => this.metadata });
     this.program = new Program(metadata.id, environments, liveContext, dependencies);
   }
@@ -35,6 +37,7 @@ export class WorkspaceInstance {
 
   update(metadata: Workspace): void {
     this.metadataValue = metadata;
+    this.projectChange.fire();
   }
 
   get id(): string {
@@ -66,6 +69,7 @@ export class WorkspaceInstance {
     } catch (error) {
       errors.push(error);
     }
+    this.projectChange.dispose();
     this.lifecycle = 'disposed';
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, `workspace ${this.id} disposal failed`);

@@ -3,12 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
+import { findGitWorkTree } from '#/app/git/workTree';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IProjectLocalConfigService,
   type ProjectAdditionalDirsLoadResult,
+  type ProjectLocalConfigLocation,
   type ProjectPermissionRulesLoadResult,
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
@@ -38,8 +40,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
   ) {}
 
   async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
-    const projectRoot = await this.findProjectRoot(workDir);
-    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const { projectRoot, configPath } = await this.locate(workDir);
     const file = await this.readProjectLocalToml(configPath);
 
     const additionalDirs = file?.parsed.workspace?.additional_dir;
@@ -50,7 +51,10 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     return {
       projectRoot,
       configPath,
-      additionalDirs: await this.resolveAdditionalDirs(projectRoot, additionalDirs),
+      additionalDirs: await this.resolveAdditionalDirs(projectRoot, additionalDirs).catch((error: unknown) => {
+        if (!(error instanceof Error2) || error.code !== ErrorCodes.CONFIG_INVALID) throw error;
+        throw new Error2(error.code, `${configPath}: ${error.message}`, { cause: error });
+      }),
     };
   }
 
@@ -59,8 +63,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
   }
 
   async readPermissionRules(workDir: string): Promise<ProjectPermissionRulesLoadResult> {
-    const projectRoot = await this.findProjectRoot(workDir);
-    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const { projectRoot, configPath } = await this.locate(workDir);
     const file = await this.readProjectLocalToml(configPath);
     return { projectRoot, configPath, rules: readRawPermissionRules(file?.raw) };
   }
@@ -69,8 +72,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     workDir: string,
     rules: readonly unknown[],
   ): Promise<ProjectPermissionRulesLoadResult> {
-    const projectRoot = await this.findProjectRoot(workDir);
-    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const { projectRoot, configPath } = await this.locate(workDir);
     return enqueuePermissionWrite(configPath, async () => {
       await this.assertNoSymlinks(projectRoot, configPath);
       const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
@@ -120,20 +122,9 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     }
   }
 
-  private getProjectLocalConfigPath(projectRoot: string): string {
-    return join(projectRoot, '.kimi-code', 'local.toml');
-  }
-
-  private async findProjectRoot(workDir: string): Promise<string> {
-    const initial = normalize(workDir);
-    let current = initial;
-
-    while (true) {
-      if (await this.pathExists(join(current, '.git'))) return current;
-      const parent = dirname(current);
-      if (parent === current) return initial;
-      current = parent;
-    }
+  async locate(workDir: string): Promise<ProjectLocalConfigLocation> {
+    const projectRoot = (await findGitWorkTree(this.fs, workDir))?.root ?? normalize(workDir);
+    return { projectRoot, configPath: join(projectRoot, '.kimi-code', 'local.toml') };
   }
 
   private async readProjectLocalToml(
@@ -170,7 +161,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
       );
     }
 
-    return { raw, parsed: parseProjectLocalToml(raw) };
+    return { raw, parsed: parseProjectLocalToml(raw, configPath) };
   }
 
   private async resolveAdditionalDirsInternal(
@@ -236,14 +227,6 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     }
   }
 
-  private async pathExists(filePath: string): Promise<boolean> {
-    try {
-      await this.fs.lstat(filePath);
-      return true;
-    } catch {
-      return false;
-    }
-  }
 }
 
 function normalizeAdditionalDirs(additionalDirs: readonly string[]): string[] {
@@ -274,12 +257,12 @@ function normalizeAdditionalDirInput(additionalDir: string): string {
   return normalize(trimmed);
 }
 
-function parseProjectLocalToml(raw: Record<string, unknown>): ProjectLocalToml {
+function parseProjectLocalToml(raw: Record<string, unknown>, configPath: string): ProjectLocalToml {
   try {
     return ProjectLocalTomlSchema.parse(raw);
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
-      throw new Error2(ErrorCodes.CONFIG_INVALID, describeProjectLocalValidationError(error), {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, `${configPath}: ${describeProjectLocalValidationError(error)}`, {
         cause: error,
       });
     }

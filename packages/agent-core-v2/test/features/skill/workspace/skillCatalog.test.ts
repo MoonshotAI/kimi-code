@@ -194,6 +194,7 @@ function workspaceDirsStub(
     additionalDirs,
     sharedAdditionalDirs,
     primaryByWorkspace: {},
+    onDidChangeLocalConfig: () => ({ dispose: () => {} }),
     onDidChange: () => ({ dispose: () => {} }),
     addDir: async () => {
       throw new Error('addDir is not used by these tests');
@@ -447,7 +448,7 @@ describe('WorkspaceSkillCatalogService', () => {
     }
   });
 
-  it('uses the current primary after a live primary change without losing other dirs', async () => {
+  it('keeps workdir skill precedence when the project primary directory changes', async () => {
     const base = await mkdtemp(join(tmpdir(), 'skill-catalog-primary-change-'));
     const primary = join(base, 'primary');
     const secondary = join(base, 'secondary');
@@ -483,7 +484,7 @@ describe('WorkspaceSkillCatalogService', () => {
       dirChanges.fire();
       await changed;
 
-      expect(catalog.catalog.getSkill('shared')?.description).toBe('from secondary');
+      expect(catalog.catalog.getSkill('shared')?.description).toBe('from primary');
       expect(catalog.catalog.getSkill('primary-only')?.description).toBe('from primary');
       expect(catalog.catalog.getSkill('secondary-only')?.description).toBe('from secondary');
     } finally {

@@ -33,12 +33,13 @@ export class ExtraAgentProfileLoaderService
   constructor(
     @IConfigService private readonly configService: IConfigService,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
-    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
+    @IWorkspaceDirs private readonly dirs: Pick<IWorkspaceDirs, 'primary' | 'onDidChange'>,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
     registry?: IAgentProfileRegistry,
+    protected override readonly contextKey?: string,
   ) {
     super(log, registry);
     this._register(

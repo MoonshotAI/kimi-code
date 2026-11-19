@@ -1790,6 +1790,9 @@ key = "${titleOAuthRef.key}"
       try {
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
         await workspaces.create({ root: workDir, additionalDirs: [extraDir] });
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
+        const project = await workspaces.createOrTouch(workDir);
+        await workspaces.update(project.id, { additionalDirs: [extraDir] });
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
         expect(harness.sessions.size).toBe(0);
       } finally {
@@ -1805,7 +1808,8 @@ key = "${titleOAuthRef.key}"
       const client = harness['rpc'] as SDKRpcClientV2;
       const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
       const lease = await manager.acquire({ root: workDir });
-      const dirs = lease.instance.program.dirs;
+      const workdir = await lease.instance.program.acquireWorkdir('local', workDir);
+      const dirs = workdir.dirs;
       let releaseReady!: () => void;
       const readyGate = new Promise<void>((resolve) => {
         releaseReady = resolve;
@@ -1822,7 +1826,9 @@ key = "${titleOAuthRef.key}"
           get: () => (ready ? [extraDir] : []),
         },
       });
-      const dirsSpy = vi.spyOn(lease.instance.program, 'dirs', 'get').mockReturnValue(gatedDirs);
+      const dirsSpy = vi.spyOn(lease.instance.program, 'acquireWorkdir').mockResolvedValue({
+        ...workdir, dirs: gatedDirs, dispose: () => {},
+      });
       try {
         let settled = false;
         const pending = harness.getWorkspaceAdditionalDirs(workDir);
@@ -1838,6 +1844,7 @@ key = "${titleOAuthRef.key}"
       } finally {
         releaseReady();
         dirsSpy.mockRestore();
+        workdir.dispose();
         lease.dispose();
         await harness.close();
       }

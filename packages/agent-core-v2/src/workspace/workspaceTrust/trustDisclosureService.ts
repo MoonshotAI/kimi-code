@@ -1,4 +1,4 @@
-import { isAbsolute, relative } from 'pathe';
+import { isAbsolute, join, relative } from 'pathe';
 
 import type { ILogService } from '#/_base/log/log';
 import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
@@ -7,6 +7,7 @@ import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { loadMcpServersDetailed, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
+import { PROJECTS_KEY } from '#/app/workspace/workspacePersistence';
 import type { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -62,6 +63,8 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     private readonly agentProfilesRegistry: IAgentProfileRegistry,
     private readonly instructions: IWorkspaceInstructionsService,
     private readonly log: ILogService,
+    private readonly contextKey?: string,
+    private readonly hostMcpSource?: () => { readonly fs: IHostFileSystem; readonly cwd: string },
   ) {}
 
   async describeGatedActivation(
@@ -106,11 +109,11 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   }
 
   private async describeGatedMcpServers(): Promise<readonly TrustGatedMcpServer[]> {
-    const cwd = this.workspaceDirs.primary;
+    const { cwd, fs } = this.hostMcpSource?.() ?? { cwd: this.workspaceDirs.primary, fs: this.fs };
     const homeDir = this.bootstrap.homeDir;
     const [paths, loaded] = await Promise.all([
-      resolveMcpJsonPaths({ fs: this.fs, cwd, homeDir }),
-      loadMcpServersDetailed({ fs: this.fs, cwd, homeDir, includeProject: true }),
+      resolveMcpJsonPaths({ fs, cwd, homeDir }),
+      loadMcpServersDetailed({ fs, cwd, homeDir, includeProject: true }),
     ]);
     const projectPaths = new Set([paths.projectRoot, paths.project]);
     const servers = Object.entries(loaded.servers)
@@ -121,7 +124,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     return Promise.all(
       servers.map(async (server) => ({
         ...server,
-        origin: await realpathOrSelf(this.fs, server.origin),
+        origin: await realpathOrSelf(fs, server.origin),
       })),
     );
   }
@@ -132,23 +135,33 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     dirs: readonly string[];
     sources: readonly string[];
   }> {
-    const result = await this.localConfig.readAdditionalDirs(this.workspaceDirs.primary);
+    const result = this.context.meta.kind === 'managed'
+      ? { ...await this.localConfig.locate(this.workspaceDirs.primary), additionalDirs: [] }
+      : await this.localConfig.readAdditionalDirs(this.workspaceDirs.primary);
     const realRoot = await realpathOrSelf(this.fs, result.projectRoot);
-    const dirs: string[] = [];
-    for (const dir of result.additionalDirs) {
-      const realPath = await realpathOrSelf(this.fs, dir);
-      if (isInsideOrEqualDir(realPath, realRoot)) continue;
-      dirs.push(realPath);
+    const dirs = new Set<string>();
+    const sources = new Set<string>();
+    const registered = this.hostMcpSource === undefined ? this.context.meta.additionalDirs ?? [] : [];
+    for (const [paths, source] of [
+      [registered, join(this.bootstrap.homeDir, PROJECTS_KEY)],
+      [result.additionalDirs, result.configPath],
+    ] as const) {
+      let disclosed = false;
+      for (const dir of paths) {
+        const realPath = await realpathOrSelf(this.fs, dir);
+        if (isInsideOrEqualDir(realPath, realRoot)) continue;
+        dirs.add(realPath);
+        disclosed = true;
+      }
+      if (disclosed) sources.add(await realpathOrSelf(this.fs, source));
     }
-    const sources =
-      dirs.length > 0 ? [await realpathOrSelf(this.fs, result.configPath)] : [];
     for (const dir of pendingAdditionalDirs) {
       const realPath = await realpathOrSelf(this.fs, dir);
-      if (isInsideOrEqualDir(realPath, realRoot)) continue;
-      dirs.push(realPath);
-      sources.push(realPath);
+      if (this.hostMcpSource === undefined && isInsideOrEqualDir(realPath, realRoot)) continue;
+      dirs.add(realPath);
+      sources.add(realPath);
     }
-    return { dirs, sources };
+    return { dirs: [...dirs], sources: [...sources] };
   }
 
   private async readGatedSkillRoots(): Promise<readonly string[]> {
@@ -201,7 +214,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       .entries()
       .find(
         (entry) =>
-          entry.sourceId === 'workspace' && entry.workspaceKey === this.context.workspaceId,
+          entry.sourceId === 'workspace' && entry.workspaceKey === this.context.workspaceId && entry.contextKey === this.contextKey,
       );
     const [skillPaths, profilePaths] = await Promise.all([
       skillsReady
@@ -255,7 +268,8 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       .entries()
       .filter(
         (entry) =>
-          entry.workspaceKey === undefined || entry.workspaceKey === this.context.workspaceId,
+          (entry.workspaceKey === undefined || entry.workspaceKey === this.context.workspaceId) &&
+          (entry.contextKey === undefined || entry.contextKey === this.contextKey),
       );
     const builtinNames = new Set(
       entries

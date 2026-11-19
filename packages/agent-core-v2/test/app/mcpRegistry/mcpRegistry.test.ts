@@ -1,3 +1,5 @@
+import { stubLog } from '../../_base/log/stubs';
+import { ILogService } from '#/_base/log/log';
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,6 +18,7 @@ import {
   McpConfigStore,
   type GlobalMcpServerConfig,
 } from '#/app/mcpConfig/configStore';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginMcpServerEntry } from '#/app/plugin/types';
 import { IMcpRegistryService, mcpServerConfigsEqual } from '#/app/mcpRegistry/mcpRegistry';
@@ -60,6 +63,7 @@ describe('McpRegistryService', () => {
   let pluginError: Error | undefined;
   let trusted: boolean;
   let trustedKey: string | undefined;
+  let selectedRoots: readonly string[] | undefined;
   let env: NodeJS.ProcessEnv;
   let workspaceTrustEnabled: boolean;
   let registry: IMcpRegistryService;
@@ -73,6 +77,7 @@ describe('McpRegistryService', () => {
     pluginError = undefined;
     trusted = true;
     trustedKey = undefined;
+    selectedRoots = undefined;
     env = {};
     workspaceTrustEnabled = true;
     const ix = createServices(disposables, {
@@ -108,6 +113,8 @@ describe('McpRegistryService', () => {
               ? { requireTrust: workspaceTrustEnabled }
               : undefined) as T) as IConfigService['get'],
         });
+        reg.definePartialInstance(IWorkspaceService, { implicitDirectories: async (cwd) => selectedRoots ?? [cwd] });
+        reg.defineInstance(ILogService, stubLog());
         reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
         reg.define(IMcpRegistryService, McpRegistryService);
       },
@@ -270,7 +277,7 @@ describe('McpRegistryService', () => {
       expect(configEntries.map((entry) => entry.name).toSorted()).toEqual(expected);
     });
 
-    it('checks trust at the queried cwd rather than the canonical git root', async () => {
+    it('respects the separate trust of an exact historical subdirectory project', async () => {
       const { project, sub } = await makeProject();
       await writeJson(join(project, '.mcp.json'), {
         mcpServers: { projectOnly: { command: 'project-only' } },
@@ -280,6 +287,18 @@ describe('McpRegistryService', () => {
       const entries = await registry.list({ cwd: sub });
 
       expect(entries.map((entry) => entry.name)).not.toContain('projectOnly');
+    });
+
+    it('uses the selected implicit project’s persisted directories while inspecting the queried cwd', async () => {
+      const { project, sub } = await makeProject();
+      await writeJson(join(sub, '.kimi-code', 'mcp.json'), {
+        mcpServers: { localOnly: { command: 'local-only' } },
+      });
+      selectedRoots = [project, home];
+      trustedKey = home;
+      expect((await registry.list({ cwd: sub })).map((entry) => entry.name)).toContain('localOnly');
+      trustedKey = sub;
+      expect((await registry.list({ cwd: sub })).map((entry) => entry.name)).not.toContain('localOnly');
     });
 
     it('lists project layers when the queried subdirectory cwd itself is trusted', async () => {

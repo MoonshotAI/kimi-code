@@ -15,6 +15,7 @@ import {
 } from '#/tool/rule-match';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
+import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService, type PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -123,6 +124,7 @@ describe('AgentPermissionPolicyService chain', () => {
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
         reg.define(IBashParserService, BashParserService);
+        reg.definePartialInstance(IProjectPermissionRulesService, { refreshTrust: async () => {} });
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
@@ -566,6 +568,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
           findWorkTree: (cwd: string) => findGitWorkTree(hostFs, cwd),
         });
         reg.define(IBashParserService, BashParserService);
+        reg.definePartialInstance(IProjectPermissionRulesService, { refreshTrust: async () => {} });
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,

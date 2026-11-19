@@ -4,7 +4,7 @@ import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { isStorageError, StorageErrors } from '#/persistence/interface/storage';
 
-const TRUST_SCOPE = 'workspace-trust';
+export const WORKSPACE_TRUST_SCOPE = 'workspace-trust';
 
 interface TrustRecord {
   readonly root: string;
@@ -23,11 +23,11 @@ export async function readWorkspaceTrust(
 ): Promise<boolean> {
   try {
     const canonicalKey = trustKey(root);
-    if ((await docs.get<TrustRecord>(TRUST_SCOPE, canonicalKey)) !== undefined) return true;
+    if ((await docs.get<TrustRecord>(WORKSPACE_TRUST_SCOPE, canonicalKey)) !== undefined) return true;
 
     const legacyKey = encodeWorkDirKey(root);
     if (legacyKey !== canonicalKey) {
-      const legacy = await docs.get<TrustRecord>(TRUST_SCOPE, legacyKey);
+      const legacy = await docs.get<TrustRecord>(WORKSPACE_TRUST_SCOPE, legacyKey);
       if (legacy !== undefined) {
         await migrateWorkspaceTrust(docs, canonicalKey, legacyKey, legacy);
         return true;
@@ -50,7 +50,7 @@ export function writeWorkspaceTrust(
   root: string,
   trustedAt: number,
 ): Promise<void> {
-  return docs.set(TRUST_SCOPE, trustKey(root), { root, trustedAt });
+  return docs.set(WORKSPACE_TRUST_SCOPE, trustKey(root), { root, trustedAt });
 }
 
 export async function deleteWorkspaceTrust(
@@ -59,10 +59,10 @@ export async function deleteWorkspaceTrust(
 ): Promise<void> {
   const canonicalKey = trustKey(root);
   const legacyKey = encodeWorkDirKey(root);
-  await docs.delete(TRUST_SCOPE, canonicalKey);
-  if (legacyKey !== canonicalKey) await docs.delete(TRUST_SCOPE, legacyKey);
+  await docs.delete(WORKSPACE_TRUST_SCOPE, canonicalKey);
+  if (legacyKey !== canonicalKey) await docs.delete(WORKSPACE_TRUST_SCOPE, legacyKey);
   for (const variant of await findLegacyTrustRecords(docs, root)) {
-    await docs.delete(TRUST_SCOPE, variant.key);
+    await docs.delete(WORKSPACE_TRUST_SCOPE, variant.key);
   }
 }
 
@@ -72,8 +72,8 @@ async function migrateWorkspaceTrust(
   legacyKey: string,
   record: TrustRecord,
 ): Promise<void> {
-  await docs.set(TRUST_SCOPE, canonicalKey, record);
-  await docs.delete(TRUST_SCOPE, legacyKey);
+  await docs.set(WORKSPACE_TRUST_SCOPE, canonicalKey, record);
+  await docs.delete(WORKSPACE_TRUST_SCOPE, legacyKey);
 }
 
 async function findLegacyTrustRecords(
@@ -84,10 +84,10 @@ async function findLegacyTrustRecords(
   const canonicalKey = trustKey(root);
   const legacyKey = encodeWorkDirKey(root);
   const result: TrustRecordEntry[] = [];
-  for (const key of await docs.list(TRUST_SCOPE)) {
+  for (const key of await docs.list(WORKSPACE_TRUST_SCOPE)) {
     if (key === canonicalKey || key === legacyKey || /\.tmp\.\d+\.[0-9a-f]+$/.test(key)) continue;
     try {
-      const record = await docs.get<TrustRecord | null>(TRUST_SCOPE, key);
+      const record = await docs.get<TrustRecord | null>(WORKSPACE_TRUST_SCOPE, key);
       if (record === undefined || record === null || typeof record.root !== 'string') continue;
       if (canonicalWorkspaceRoot(record.root) === canonicalRoot) result.push({ key, record });
     } catch (error) {

@@ -1442,6 +1442,7 @@ export class AgentTestContext {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
               rules: [],
+              refreshTrust: async () => {},
               appendRules: () => Promise.resolve(),
             });
             reg.defineDescriptor(

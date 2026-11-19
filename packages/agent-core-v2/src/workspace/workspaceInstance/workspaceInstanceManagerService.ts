@@ -15,7 +15,6 @@ import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
-import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import { IUserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { IAppStateService } from '#/app/state/appState';
@@ -71,7 +70,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IMcpConfigStore private readonly configStore: IMcpConfigStore,
     @IPluginService private readonly plugins: IPluginService,
     @IProviderService private readonly modelProviders: IProviderService,
-    @ref(ISessionManager) private readonly sessionManager: LiveRef<ISessionManager>,
     @IAgentProfileRegistry private readonly agentProfiles: IAgentProfileRegistry,
     @IBuiltinAgentProfileLoader private readonly builtinAgentProfiles: IBuiltinAgentProfileLoader,
     @IBuiltinSkillSource private readonly builtinSkills: IBuiltinSkillSource,
@@ -152,7 +150,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     let workspace: Workspace | undefined;
     if ('workspaceId' in ref) {
       workspace = await this.workspaces.get(ref.workspaceId);
-      if (workspace === undefined && ref.root !== undefined) workspace = await this.workspaces.createOrTouch(ref.root);
     } else {
       workspace = await this.workspaces.createOrTouch(ref.root);
     }
@@ -263,7 +260,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         oauth: this.oauth,
         configStore: this.configStore,
         plugins: this.plugins,
-        sessionManager: this.sessionManager,
         agentProfiles: this.agentProfiles,
         builtinAgentProfiles: this.builtinAgentProfiles,
         builtinSkills: this.builtinSkills,
@@ -289,11 +285,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.event,
           this.telemetry,
           this.flags,
-          input.extraAgentProfiles,
-          input.explicitAgentProfiles,
           input.userAgentProfiles,
           input.pluginAgentProfiles,
-          input.mcp,
           this.models,
           this.modelProviders,
           this.environments,

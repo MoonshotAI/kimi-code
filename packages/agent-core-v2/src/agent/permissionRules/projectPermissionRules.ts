@@ -7,6 +7,7 @@ export interface IProjectPermissionRulesService {
 
   readonly ready: Promise<void>;
   readonly rules: readonly PermissionRule[];
+  refreshTrust(): Promise<void>;
   appendRules(rules: readonly PermissionRule[]): Promise<void>;
 }
 
