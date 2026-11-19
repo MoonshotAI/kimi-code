@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { createDomAnchors, type AnchorPath, type ScrollMode } from '../../src/lib/transcriptScroll';
+import { createDomAnchors, HOLD_MS, type AnchorPath, type ScrollMode } from '../../src/lib/transcriptScroll';
 import { blockRows, DOCK_GAP, LayoutSim, mulberry32, textRows, type SimRow } from './layoutSim';
 
 const ROW = 278;
@@ -94,6 +94,22 @@ describe('follow mode', () => {
     s.frame();
     expect(s.scrollHeight).toBe(12 * ROW + 160 + DOCK_GAP);
     expect(s.distanceFromBottom()).toBe(0);
+  });
+
+  it('drops the bottom padding when the dock is removed', () => {
+    const s = setup();
+    s.setDock(160);
+    s.frame();
+    s.controller.observeAux('dock', null);
+    expect(s.scrollHeight).toBe(12 * ROW + DOCK_GAP);
+    expect(s.distanceFromBottom()).toBe(0);
+  });
+
+  it('keeps the last height when a row reports zero', () => {
+    const s = setup(textRows(12, 200));
+    s.setRowHeight('r3', 0);
+    s.frame();
+    expect(s.model.height(3)).toBe(200);
   });
 
   it('stays at the bottom when the viewport shrinks or the tail grows', () => {
@@ -379,6 +395,36 @@ describe('hold', () => {
     s.setChildHeight('r11', 'md', 0, 400);
     s.frame();
     expect(s.visualTop(el)).toBe(before);
+  });
+
+  it('returns to follow once the hold ends at the bottom', () => {
+    const s = setup();
+    s.controller.hold(s.blockEl('r11', 'head'));
+    s.setChildHeight('r11', 'md', 2, 20);
+    s.frame();
+    expect(s.distanceFromBottom()).toBe(0);
+    s.frame(HOLD_MS);
+    s.frame();
+    expect(s.controller.state.mode.kind).toBe('follow');
+    s.insertRows(12, textRows(1, 300, 'n'));
+    s.frame();
+    expect(s.distanceFromBottom()).toBe(0);
+  });
+
+  it('honors a longer hold and stays anchored away from the bottom', () => {
+    const s = setup();
+    s.controller.hold(s.blockEl('r11', 'head'), HOLD_MS * 2);
+    s.frame(HOLD_MS + 16);
+    expect(s.controller.state.mode.kind).toBe('anchored');
+    s.frame(HOLD_MS);
+    s.frame();
+    expect(s.controller.state.mode.kind).toBe('follow');
+
+    scrollUserTo(s, 1000);
+    s.controller.hold(s.childEl('r3', 'md', 3));
+    s.frame(HOLD_MS);
+    s.frame();
+    expect(s.controller.state.mode.kind).toBe('anchored');
   });
 
   it('releases on the next user scroll', () => {

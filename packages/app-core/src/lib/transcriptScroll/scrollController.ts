@@ -5,6 +5,7 @@ import type { LayoutModel } from './layoutModel';
 
 export const FOLLOW_THRESHOLD = 24;
 export const SCROLL_ANIMATION_MS = 240;
+export const HOLD_MS = 200;
 
 export type ScrollAlign = 'start' | 'center';
 
@@ -102,7 +103,7 @@ export interface ScrollController {
   sync(): void;
   follow(options?: { smooth?: boolean }): void;
   navigate(path: AnchorPath, options?: NavigateOptions): Promise<void>;
-  hold(el: HTMLElement): void;
+  hold(el: HTMLElement, ms?: number): void;
   snapshot(): ScrollSnapshot;
   restore(snapshot: ScrollSnapshot | null, options?: RestoreOptions): void;
   dispose(): void;
@@ -188,7 +189,8 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   const aux = new Map<string, HTMLElement>();
   let dockHeight = 0;
   let expectedTop = scroller.scrollTop;
-  let held: { el: HTMLElement; offset: number } | null = null;
+  let held: { el: HTMLElement; offset: number; until: number } | null = null;
+  let holdFrame = 0;
   let dragging = false;
   let touchActive = false;
   let touching = false;
@@ -476,7 +478,10 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
         }
         continue;
       }
-      if (target.kind === 'row') model.measure(target.key, blockSize(entry));
+      if (target.kind === 'row') {
+        const height = blockSize(entry);
+        if (height > 0) model.measure(target.key, height);
+      }
       else if (target.kind === 'dock') dockHeight = blockSize(entry);
     }
     model.refreshEstimates();
@@ -540,6 +545,8 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
       observer.observe(el, { box: 'border-box' });
     } else if (kind === 'dock') {
       dockHeight = 0;
+      adapter.applyLayout({ dockHeight });
+      correct('resize');
     }
   }
 
@@ -590,7 +597,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     return done;
   }
 
-  function hold(el: HTMLElement): void {
+  function hold(el: HTMLElement, ms = HOLD_MS): void {
     if (disposed) return;
     const path = adapter.pathOf(el);
     if (!path) return;
@@ -599,8 +606,22 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     const top = viewTop();
     const resolved = adapter.resolveAnchor(path) ?? el;
     setMode(anchoredAt(path, resolved.getBoundingClientRect().top - top));
-    held = { el, offset: el.getBoundingClientRect().top - top };
+    held = { el, offset: el.getBoundingClientRect().top - top, until: options.now() + ms };
+    if (!holdFrame) holdFrame = options.requestFrame(releaseHold);
     emit();
+  }
+
+  function releaseHold(): void {
+    holdFrame = 0;
+    if (disposed || !held) return;
+    if (options.now() < held.until) {
+      holdFrame = options.requestFrame(releaseHold);
+      return;
+    }
+    held = null;
+    if (state.mode.kind !== 'anchored' || dragging || touching || maxTop() - scroller.scrollTop > options.followThreshold) return;
+    setMode({ kind: 'follow' });
+    correct('follow');
   }
 
   function snapshot(): ScrollSnapshot {
@@ -633,6 +654,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     if (disposed) return;
     disposed = true;
     cancelAnimation();
+    if (holdFrame) options.cancelFrame(holdFrame);
     finishNavigation();
     observer.disconnect();
     rows.clear();

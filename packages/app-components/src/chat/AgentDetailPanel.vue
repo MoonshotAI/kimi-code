@@ -196,7 +196,7 @@ const showEmptyOutput = computed(
 );
 const showOutputState = computed(() => outputLoading.value || showEmptyOutput.value);
 
-provide(PinScrollKey, (el: HTMLElement) => panelScroll.hold(el));
+provide(PinScrollKey, (el: HTMLElement, ms?: number) => panelScroll.hold(el, ms));
 
 const modelDisplay = inject(ModelDisplayKey);
 const subagentEffort = inject(SubagentEffortKey);

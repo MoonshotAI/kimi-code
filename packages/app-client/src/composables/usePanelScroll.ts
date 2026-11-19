@@ -28,7 +28,7 @@ export interface PanelScroll {
   onScroll: () => void;
   onInput: (event: Event) => void;
   follow: (options?: { smooth?: boolean }) => void;
-  hold: (el: HTMLElement) => void;
+  hold: (el: HTMLElement, ms?: number) => void;
 }
 
 export function usePanelScroll(options: PanelScrollOptions): PanelScroll {
@@ -178,8 +178,8 @@ export function usePanelScroll(options: PanelScrollOptions): PanelScroll {
     controller?.follow(followOptions);
   }
 
-  function hold(el: HTMLElement): void {
-    controller?.hold(el);
+  function hold(el: HTMLElement, ms?: number): void {
+    controller?.hold(el, ms);
   }
 
   return { scroller, dock, following, showJump, onScroll, onInput, follow, hold };

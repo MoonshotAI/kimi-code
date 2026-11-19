@@ -219,7 +219,7 @@ export function useTranscriptScroll(options: TranscriptScrollOptions): Transcrip
   };
 
   provide(TranscriptScrollKey, host);
-  provide(PinScrollKey, (el: HTMLElement) => controller.value?.hold(el));
+  provide(PinScrollKey, (el: HTMLElement, ms?: number) => controller.value?.hold(el, ms));
 
   function onInput(event: Event): void {
     controller.value?.onInput(event);

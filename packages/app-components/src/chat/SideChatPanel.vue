@@ -134,7 +134,7 @@ watch(() => props.agentId, (agentId) => {
   seedDraftFromHandoff(agentId);
 });
 
-provide(PinScrollKey, (el: HTMLElement) => panelScroll.hold(el));
+provide(PinScrollKey, (el: HTMLElement, ms?: number) => panelScroll.hold(el, ms));
 
 provide(FetchTurnFileChangesKey, undefined);
 
