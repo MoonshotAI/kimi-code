@@ -31,7 +31,7 @@ import {
   runTurnStarting,
   type TurnStartingRun,
 } from '#/hook/loop/run';
-import type { LoopLlmRequester, LoopRequestRuntime } from './request';
+import type { LoopRequester, LoopRequestRuntime } from './request';
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
 import {
   canContinue,
@@ -304,7 +304,7 @@ class LoopActor implements Loop {
   private readonly tools = new Map<string, LiveTool>();
   private toolBatch: ActiveToolBatch | undefined;
   private completedToolBatch: { readonly turnId: number; readonly step: number; readonly result: TurnToolBatchResult } | undefined;
-  private requesterTemplate: LoopLlmRequester | undefined;
+  private requesterTemplate: LoopRequester | undefined;
   private revision = 0;
   private seq = 0;
   private readonly completionWaiters = new Set<() => void>();
@@ -455,6 +455,10 @@ class LoopActor implements Loop {
 
   get historyRevision(): number {
     return this.revision;
+  }
+
+  get baseRequester(): LoopRequester | undefined {
+    return this.requesterTemplate;
   }
 
   operation<T>(create: (runtime: LoopRequestRuntime) => T): T {
@@ -823,7 +827,7 @@ class LoopActor implements Loop {
     }
   }
 
-  setRequester(requester: LoopLlmRequester | undefined): void {
+  setRequester(requester: LoopRequester | undefined): void {
     if (!this.open()) return;
     this.actor.act(() => {
       if (!this.open()) return;
@@ -992,6 +996,7 @@ class LoopActor implements Loop {
       return;
     }
     turn.continueAfterAbort = continueAfterAbort || turn.continueAfterAbort === true;
++++++++ uvuzvqyo 5393f6e6 "test(agent-core-v2): characterize operation requests" (rebased revision)
     this.releaseTurn(turn);
     turn.machine.abort(reason);
   }

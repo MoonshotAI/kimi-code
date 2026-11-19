@@ -15,7 +15,7 @@ import {
   type StepStartingRun,
   type ToolBatchStartingRun,
 } from '#/hook/loop/run';
-import { runLoopRequest, type LoopLlmRequester, type LoopRequestProgress } from '../request';
+import { runLoopRequest, type LoopLlmRequester, type LoopRequester, type LoopRequestProgress } from '../request';
 import type {
   Turn,
   TurnEmitted,
@@ -62,7 +62,7 @@ class ActorTurn implements Turn {
   private readonly scope: AbortScope;
   private readonly actor: Actor<TurnState>;
   private currentStep: TurnStep | undefined;
-  private requester: LoopLlmRequester | undefined;
+  private requester: LoopRequester | undefined;
   private profile: LoopProfile | undefined;
   private requesterError: unknown;
   private requestId: string | undefined;
@@ -205,7 +205,7 @@ class ActorTurn implements Turn {
       };
       try {
         const template = this.runtime.requester();
-        this.requester = template?.snapshot?.() ?? template;
+        this.requester = (template as LoopLlmRequester | undefined)?.snapshot?.() ?? template;
       } catch (error) {
         this.requester = undefined;
         this.requesterError = error;
@@ -544,7 +544,7 @@ class ActorTurn implements Turn {
   private executeRequest(
     proc: TurnProcess,
     step: TurnStep,
-    requester: LoopLlmRequester,
+    requester: LoopRequester,
     profile: LoopProfile,
   ): Promise<LlmOutcome> {
     this.setPhase(proc, 'requesting');

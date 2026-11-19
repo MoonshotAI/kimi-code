@@ -2,7 +2,7 @@ import type { Message } from '#/llm/message';
 import type { LlmPolicy, LlmRunControl } from '#/llm/policy/policy';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequestProfile } from '#/llm/request';
-import type { LlmDimension, LlmRequestRest } from '#/llm/requester';
+import type { LlmDimension, LlmRequester, LlmRequestRest } from '#/llm/requester';
 import type { LlmOutcome, LlmRunEvent } from '#/llm/response';
 import type { LoopProfile } from './contract/profile';
 import { isLlmOutcome } from './guards';
@@ -11,6 +11,9 @@ export interface LoopLlmRequester {
   snapshot?(): LoopLlmRequester;
   generate(rest: LlmRequestRest<LlmDimension>, control: LlmRunControl): Promise<LlmOutcome>;
 }
+
+export type FullLoopLlmRequester = LlmRequester<LlmDimension>;
+export type LoopRequester = LoopLlmRequester | FullLoopLlmRequester;
 
 export interface LoopRequestRuntime {
   readonly historyRevision: () => number;
@@ -39,7 +42,7 @@ function isAborted(signal: AbortSignal, error: unknown): boolean {
 }
 
 export function runLoopRequest(
-  requester: LoopLlmRequester,
+  requester: LoopRequester,
   input: LoopRequestInput,
   onProgress: (event: LoopRequestProgress) => void,
 ): Promise<LlmOutcome> {

@@ -8,7 +8,7 @@ import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { LoopHooks } from './contract/hook';
 import type { RemindMessage } from './contract/inbox';
 import type { TurnOutcome } from './contract/outcome';
-import type { LoopLlmRequester, LoopRequestRuntime } from './request';
+import type { LoopRequester, LoopRequestRuntime } from './request';
 import type { LoopState } from './state';
 import type { WaitForTasks } from './tool/tasks';
 import type { ToolCompletionFactory } from './tool/outcome';
@@ -29,7 +29,7 @@ export interface LoopToolExecutor {
 }
 
 export interface CreateLoopOptions {
-  readonly requester?: LoopLlmRequester;
+  readonly requester?: LoopRequester;
   readonly executor: LoopToolExecutor;
   readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'origin' | 'turnId'>;
   readonly hook?: Partial<LoopHooks>;
@@ -46,7 +46,8 @@ export interface Loop {
   readonly executor: LoopToolExecutor;
   readonly waitForTasks: WaitForTasks;
   readonly policy: PolicyRegistry;
-  setRequester(requester: LoopLlmRequester | undefined): void;
+  readonly baseRequester: LoopRequester | undefined;
+  setRequester(requester: LoopRequester | undefined): void;
   setContext(messages: Message[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined;
   setSystemPrompt(systemPrompt: string): LoopAck<'system_prompt.settled'> | undefined;
   /**
@@ -177,6 +178,8 @@ export interface Loop {
   abort(reason?: unknown, options?: { readonly continue?: boolean }): void;
   abortTool(toolCallId: string, reason?: unknown): void;
   detachTool(toolCallId: string, text?: string, completion?: ToolCompletionFactory): void;
+  reset(prepare: () => Promise<LoopInput>): Promise<void>;
+  setRequester(requester: LoopRequester | undefined): void;
   operation<T>(create: (runtime: LoopRequestRuntime) => T): T;
   subscribe(listener: (event: LoopEmitted) => void): () => void;
   wait<T extends LoopEmitted['type']>(type: T, opts?: WaitOpts<LoopAck<T>>): Promise<LoopAck<T>>;
