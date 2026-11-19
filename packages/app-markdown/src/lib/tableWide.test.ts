@@ -487,6 +487,29 @@ describe('table actions positioning', () => {
     expect(StubResizeObserver.instances).toHaveLength(1);
     expect(StubResizeObserver.instances[0]!.observed).toEqual([wrapper, hostOf(wrapper)]);
   });
+
+  it('observes clipping ancestors and recomputes when their bounds change', () => {
+    const wrapper = makeWrapper({ rectRight: 600 });
+    const pane = new StubElement();
+    pane.rectRight = 900;
+    pane.clientWidth = 900;
+    pane.overflowX = 'auto';
+    pane.appendChild(hostOf(wrapper));
+    ensureTableWideToggle(wrapper, LABELS);
+    const actions = actionsOf(wrapper);
+    stubOf(actions).rectRight = 26;
+    const observer = StubResizeObserver.instances[0]!;
+    expect(observer.observed).toEqual([wrapper, hostOf(wrapper), pane]);
+    expect(actions.style.left).toBe('606px');
+
+    pane.clientWidth = 620;
+    observer.fire();
+    expect(actions.style.left).toBe('568px');
+
+    pane.clientWidth = 900;
+    observer.fire();
+    expect(actions.style.left).toBe('606px');
+  });
 });
 
 describe('positionTableActions', () => {

@@ -55,11 +55,20 @@ export function isTableWideHost(wrapper: HTMLElement): boolean {
   return wrapper.closest('.a-msg .msg') !== null;
 }
 
-function tableActionsClipRight(host: HTMLElement): number {
-  let right = Number.POSITIVE_INFINITY;
+function tableActionsClippingAncestors(host: HTMLElement): HTMLElement[] {
+  const ancestors: HTMLElement[] = [];
   for (let ancestor = host.parentElement; ancestor; ancestor = ancestor.parentElement) {
     const overflowX = getComputedStyle(ancestor).overflowX;
-    if (overflowX !== 'auto' && overflowX !== 'hidden' && overflowX !== 'scroll' && overflowX !== 'clip') continue;
+    if (overflowX === 'auto' || overflowX === 'hidden' || overflowX === 'scroll' || overflowX === 'clip') {
+      ancestors.push(ancestor);
+    }
+  }
+  return ancestors;
+}
+
+function tableActionsClipRight(host: HTMLElement): number {
+  let right = Number.POSITIVE_INFINITY;
+  for (const ancestor of tableActionsClippingAncestors(host)) {
     const rect = ancestor.getBoundingClientRect();
     right = Math.min(right, rect.left + ancestor.clientWidth);
   }
@@ -217,6 +226,7 @@ export function ensureTableWideToggle(
   const observer = new ResizeObserver(() => positionTableActions(wrapper));
   observer.observe(wrapper);
   observer.observe(host);
+  for (const ancestor of tableActionsClippingAncestors(host)) observer.observe(ancestor);
   actionsObservers.set(wrapper, observer);
 
   positionTableActions(wrapper);
