@@ -18,7 +18,7 @@ import { WorkspaceTrustDialog } from '@moonshot-ai/app-components';
 import ChatDock from './ChatDock.vue';
 import SessionInfoPanel from './SessionInfoPanel.vue';
 import { useSessionInfoLayout } from '../../composables/useSessionInfoLayout';
-import { toHtmlEl, useLegacyTranscriptScroll } from '../../composables/useLegacyTranscriptScroll';
+import { toHtmlEl, useTranscriptScrollBinding } from '../../composables/useTranscriptScroll';
 import WorkspaceHome from './WorkspaceHome.vue';
 import { WorkspaceRecentSessions } from '@moonshot-ai/app-components';
 import { ConversationToc, type ConversationTocItem } from '@moonshot-ai/app-components';
@@ -45,7 +45,7 @@ import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
 import type { PanelLauncherItem } from '../../lib/panelLauncher';
-import { historyRenderAllAffordable, turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
+import { turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
 import type { TurnFileChange } from '@moonshot-ai/app-components';
 
 const { t } = useI18n();
@@ -447,20 +447,8 @@ const approvalBusy = computed<boolean>(() => {
 
 const transcriptSearchOpen = ref(false);
 const historySelection = ref(false);
-const activeSessionPaged = ref(false);
 const historyState = new Map<string, unknown>();
 
-watch(
-  () => props.sessionId,
-  () => {
-    activeSessionPaged.value = hasMoreMessages.value;
-  },
-  { immediate: true },
-);
-
-watch(hasMoreMessages, (hasMore) => {
-  if (hasMore) activeSessionPaged.value = true;
-});
 const transcriptSearchRef = ref<InstanceType<typeof TranscriptSearch> | null>(null);
 let searchPreFocus: Element | null = null;
 
@@ -497,7 +485,6 @@ const {
   following,
   showPill,
   panesScrolling,
-  sessionSettling,
   dockHeight,
   contentWrapStyle,
   chatDockStyle,
@@ -512,19 +499,14 @@ const {
   scrollToTurn,
   revealTranscriptRange,
   followAfterUserAction,
-  lockFollowForUserAction,
   handleLoadOlderMessages,
-} = useLegacyTranscriptScroll({
+} = useTranscriptScrollBinding({
   sessionId: () => props.sessionId,
   mobile: () => props.mobile,
   turns,
-  approvals,
-  sessionLoading,
   hasMoreMessages,
   loadingMore,
-  turnActive,
   conversationTocItems,
-  chatPaneRef,
   loadOlderMessages: (sessionId) => client.loadOlderMessages(sessionId),
   syncWideTableToc,
   keyScrollBlocked: (event) => isComposingKeyEvent(event) || anyOverlayOpen.value || composerPopupOpen(),
@@ -595,8 +577,6 @@ function bindChatDock(el: RefArg): void {
   bindDock(node);
 }
 
-void bindChatDock;
-
 function handleComposerSubmit(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }): void {
   followAfterUserAction();
   emit('submit', payload);
@@ -618,7 +598,7 @@ function handleEditMessage(payload: {
   snapshot?: ComposerDocumentSnapshot;
   turnId: string;
 }): void {
-  lockFollowForUserAction();
+  followAfterUserAction();
   emit('editMessage', { ...payload, text: reviveQuoteBlockLinks(payload.text) });
 }
 
@@ -829,7 +809,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :class="{
           'is-following': following,
           scrolling: panesScrolling,
-          'session-settling': sessionSettling,
         }"
         @scroll.passive="onPanesScroll"
         @wheel.passive="onPanesWheel"
@@ -976,7 +955,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :turns="turns"
               :window-history="true"
               :history-state="historyState"
-              :render-all-history="(!mobile && !hasMoreMessages && !activeSessionPaged && historyRenderAllAffordable(turns)) || transcriptSearchOpen || historySelection"
+              :render-all-history="transcriptSearchOpen || historySelection"
               :cwd="status.cwd"
               :approvals="approvals"
               :questions="questions"
@@ -1155,10 +1134,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   background-color: var(--color-chat-scrollbar-hover);
 }
 
-.panes.session-settling :deep(.chat > *:not(.chat-loading)) {
-  visibility: hidden;
-}
-
 .chat-layout {
   display: flex;
   flex-direction: row;
@@ -1178,6 +1153,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   flex: 1;
   min-height: 0;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .content-wrap {
@@ -1485,16 +1462,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 .ws-action:hover { background: var(--color-hover); color: var(--color-text); }
 .ws-action:hover > .kw-icon { color: var(--dim); }
 .ws-action:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-
-.chat-scroll {
-  display: flex;
-  flex-direction: column;
-}
-
-.mobile .panes:has(> .chat-layout) {
-  overflow: hidden;
-  scrollbar-gutter: auto;
-}
 
 .newmsg-pill {
   position: absolute;

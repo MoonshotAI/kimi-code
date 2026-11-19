@@ -156,6 +156,8 @@
   --markdown-table-selection-background: light-dark(rgb(15 110 242 / 10%), rgb(51 147 255 / 18%));
   --markdown-image-radius: 0.75rem;
   --markdown-image-border-width: var(--p-hairline);
+  --markdown-image-placeholder-width: 100%;
+  --markdown-image-placeholder-height: 8rem;
   --markdown-image-caption-padding-inline: 0.75rem;
   --markdown-image-caption-padding-block: 0.5rem;
   --markdown-image-caption-shadow: 0.0625rem 0.0625rem 0.125rem rgb(0 0 0 / 20%);
