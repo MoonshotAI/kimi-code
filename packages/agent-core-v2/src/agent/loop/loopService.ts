@@ -23,7 +23,7 @@ import {
 import { AgentLoopProjector } from './projector';
 import { project } from './projection';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
-import { createToolSelectResolver } from './toolSelectPolicy';
+import { createToolSelectResolver, shapeToolSelectRequest } from './toolSelectPolicy';
 import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
@@ -433,13 +433,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const capabilities = this.data().modelCapabilities;
     const disclosure = this.toolSelect.enabled(capabilities);
     const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
-    const tools = this.toolSelect.requestTools(this.baselineTools(), disclosure, true, source);
-    const messages = this.toolSelect.shapeHistory(source, disclosure, tools);
+    const view = shapeToolSelectRequest(this.toolSelect, this.baselineTools(), source, disclosure);
     const mediaInput = capabilities.image_in || capabilities.video_in;
     return {
       systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
-      tools: mediaInput ? tools : tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
-      messages: project(mediaInput ? messages : hideReadMediaFile(messages)),
+      tools: mediaInput ? view.tools : view.tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
+      messages: project(mediaInput ? view.messages : hideReadMediaFile(view.messages)),
     };
   }
 
