@@ -39,6 +39,9 @@ import browser from './zh/browser';
 import browserReference from './zh/browserReference';
 import serverAuth from './zh/serverAuth';
 import remoteControl from './zh/remoteControl';
+import worktreeCreate from './zh/worktreeCreate';
+import worktreeSession from './zh/worktreeSession';
+import worktreeManage from './zh/worktreeManage';
 
 export default {
   common,
@@ -82,4 +85,7 @@ export default {
   browserReference,
   serverAuth,
   remoteControl,
+  worktreeCreate,
+  worktreeSession,
+  worktreeManage,
 };
