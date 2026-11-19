@@ -66,7 +66,7 @@ describe('loop record', () => {
     expect((await loop.runTurn(prompt('hello'))).type).toBe('done');
     expect((await loop.runTurn(prompt('again'))).type).toBe('failed');
     const types = records.map((item) => item.type);
-    expect(types).not.toContain('llm.streaming.part');
+    expect(types).not.toContain('llm.delta.part');
     expect(types).not.toContain('prompt.submitted');
     const ended = records.findLast((item) => item.type === 'turn.ended');
     expect(ended).toMatchObject({ outcome: { type: 'failed', error: { message: 'boom' } } });

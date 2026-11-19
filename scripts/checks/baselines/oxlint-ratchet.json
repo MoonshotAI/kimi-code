@@ -1036,7 +1036,6 @@
     "packages/app-core/src/client/sessionTasks.ts": 1,
     "packages/app-core/src/conversation/reducer.ts": 1,
     "packages/core/src/llm/builtin/protocol/google-genai/lower.ts": 2,
-    "packages/core/src/llm/policy/settle.ts": 1,
     "packages/core/src/llm/response.ts": 2,
     "packages/core/src/loop/loop-actor.ts": 1,
     "packages/core/src/loop/record.ts": 1,
