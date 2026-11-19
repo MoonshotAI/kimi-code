@@ -59,6 +59,7 @@ export interface CoreLoopRequesterOptions {
   readonly runtime: LoopRequestRuntime;
   readonly config?: RequestConfigSnapshot;
   readonly binding?: RequesterBinding;
+  readonly baseContents?: InitializedLlmRequestPart;
   readonly onSnapshot?: (config: RequestConfigSnapshot) => void;
   readonly inheritedPolicy?: LlmPolicy;
   readonly maxOutputSize?: number;
@@ -80,7 +81,7 @@ export type OperationLoopRequesterOptions = Omit<CoreLoopRequesterOptions, 'runt
 
 export type OperationRequesterOptions = Omit<
   CoreLoopRequesterOptions,
-  'runtime' | 'config' | 'binding' | 'onSnapshot' | 'inheritedPolicy'
+  'runtime' | 'config' | 'binding' | 'baseContents' | 'onSnapshot' | 'inheritedPolicy'
 >;
 
 export type CoreLoopRequester = LoopLlmRequester;

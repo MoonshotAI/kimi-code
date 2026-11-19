@@ -714,18 +714,18 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             requestKind: 'full_compaction',
             logFields: { droppedCount },
           } as const;
-          const requester = await this.loopService.requester.prepareOperation({
+          const requester = this.loopService.requester.operationRequester(this.loopService.requester.llm, {
             maxOutputSize: compactionMaxOutputSize,
             promptCacheProbe: cacheProbePending ? 'compaction' : undefined,
             source: () => source,
             onTrace: (trace) => {
               active.trace = trace;
             },
-          }, signal);
-          const outcome = await requester.generate(
-            { content: { messages: historyFromContext(messages), usedTokens: usedContextTokens }, profile: {} },
-            { signal },
-          );
+          });
+          const outcome = await requester.with({
+            content: { messages: historyFromContext(messages), usedTokens: usedContextTokens },
+            profile: {},
+          }).generate({}, { signal });
           if (outcome.type === 'failed') throw errorFromLlmMessage(outcome.error, outcome.diagnostics);
           if (outcome.type === 'aborted') {
             const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';

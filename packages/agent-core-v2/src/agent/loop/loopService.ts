@@ -684,6 +684,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         ...options,
         config,
         binding,
+        baseContents: contentsOf(binding.request),
         runtime,
         tools,
         inheritedPolicy: loop.policy.asPolicy(),
@@ -772,7 +773,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       profile: { systemPrompt: resolved.systemPrompt, tools: resolved.tools },
       content: { messages: resolved.messages, usedTokens: resolved.usedContextTokens },
     } as Fields;
-    const base = mergeFields(defaults, contentsOf(resolved.request) as Fields);
+    const contents = mergeFields(
+      options.baseContents as Fields | undefined,
+      contentsOf(resolved.request) as Fields,
+    );
+    const base = mergeFields(defaults, contents);
     const request = mergeFields(base, rest as Fields) as unknown as CoreLlmRequest;
     const derivedPolicy = requester === undefined ? undefined : contentsOf(requester).policy;
     const inheritedPolicy = options.inheritedPolicy === undefined
