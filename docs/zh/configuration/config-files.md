@@ -347,12 +347,12 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 | `bash_auto_background_on_timeout` | `boolean` | `true` | 前台 `Bash` 命令超时后转为后台任务而非终止；设为 `false` 恢复超时即终止 |
 | `bash_task_timeout_s` | `integer` | `600` | 后台 `Bash` 任务默认超时（秒）；`0` 表示无超时，任务运行到自行结束或被手动停止；显式传入的 timeout 不受影响，print 模式默认 0 |
 | `print_background_mode` | `"exit" \| "drain" \| "steer"` | `"steer"` | 仅 print 模式生效；`"exit"` 立即退出、`"drain"` 等待终态（结果不回馈）、`"steer"` 由后台任务合成消息继续 turn（合成消息续跑至无未决任务） |
-| `print_wait_ceiling_s` | `integer` | `2147483` | 等待/steer 循环的墙钟上限（秒），非 print 模式或 `"exit"` 时无效 |
+| `print_wait_ceiling_s` | `integer` | `2147483` | 等待/steer 循环的墙钟上限（秒），同样限制等待 goal 续跑与定时 cron 触发的时间；非 print 模式无效 |
 | `print_max_turns` | `integer` | `100000` | steer 模式下后台任务触发新 turn 的数量上限，防止 steer 循环失控 |
 
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，`bash_task_timeout_s` 可被 `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` 覆盖，`print_background_mode`、`print_wait_ceiling_s`、`print_max_turns` 可分别被 `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`、`KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`、`KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS` 覆盖，优先级均高于两个配置节。
 
-在 print 模式（`kimi -p "<prompt>"`）下，只要还有未决的后台任务，Kimi Code 在 main agent 的 turn 结束后不会退出：每个任务完成都会以合成 user 消息回馈给 main agent，steer 出新的 turn（默认 `print_background_mode = "steer"`），直到某 turn 结束时没有任何未决任务才退出。该循环受 `print_wait_ceiling_s` 与 `print_max_turns` 约束，默认值都近似不设限。print 模式下后台工作也不会被墙钟超时杀掉：后台 `Bash` 任务默认无超时（`bash_task_timeout_s = 0`），subagent 默认无超时（`[subagent] timeout_ms` 与 `[swarm] timeout_ms` 未显式设置时均为 `0`），只有模型自己能停止任务。将 `print_background_mode` 设为 `"drain"` 可等待任务结束但不回馈结果，设为 `"exit"` 则在 main agent 结束后立即退出。
+在 print 模式（`kimi -p "<prompt>"`）下，只要还有未决的后台任务，Kimi Code 在 main agent 的 turn 结束后不会退出：每个任务完成都会以合成 user 消息回馈给 main agent，steer 出新的 turn（默认 `print_background_mode = "steer"`），直到某 turn 结束时没有任何未决任务才退出。该循环受 `print_wait_ceiling_s` 与 `print_max_turns` 约束，默认值都近似不设限。print 模式下后台工作也不会被墙钟超时杀掉：后台 `Bash` 任务默认无超时（`bash_task_timeout_s = 0`），subagent 默认无超时（`[subagent] timeout_ms` 与 `[swarm] timeout_ms` 未显式设置时均为 `0`），只有模型自己能停止任务。将 `print_background_mode` 设为 `"drain"` 可等待任务结束但不回馈结果，设为 `"exit"` 则在 main agent 结束后退出（若仍有 goal 续跑或未到期的 cron，仍会继续等待，直到 `print_wait_ceiling_s` 上限）。
 
 ## `subagent`
 
