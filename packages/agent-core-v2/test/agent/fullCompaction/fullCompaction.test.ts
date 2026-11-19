@@ -229,6 +229,13 @@ describe('FullCompaction', () => {
       role: 'user',
       origin: { kind: 'injection', variant: 'compaction_continuation' },
     });
+    expect(events).toContainEqual(expect.objectContaining({
+      event: 'usage.record',
+      args: expect.objectContaining({
+        usageScope: 'session',
+        usage: expect.objectContaining({ inputOther: 1215, output: 8 }),
+      }),
+    }));
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
@@ -1164,6 +1171,13 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'manual',
         error_type: 'APIStatusError',
+        request_id: 'trace-compact-fail',
+      }),
+    });
+    expect(records).toContainEqual({
+      event: 'api_error',
+      properties: expect.objectContaining({
+        request_kind: 'full_compaction',
         request_id: 'trace-compact-fail',
       }),
     });

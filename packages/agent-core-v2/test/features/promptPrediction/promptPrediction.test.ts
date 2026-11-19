@@ -59,7 +59,8 @@ describe('SessionPromptPredictionService', () => {
       { role: 'user', content: [{ type: 'text', text: 'hello' }] },
     ];
     const originalContext = contextSnapshot;
-    let nextResult = () => Promise.resolve(finish(structured('inspect the failing test')));
+    let nextResult: () => Promise<PredictionOutcome> = () =>
+      Promise.resolve({ ...finish(structured('inspect the failing test')), requestId: undefined });
     const requests: Array<{
       options: OperationLoopRequesterOptions;
       input?: Parameters<CoreLoopRequester['generate']>[0];
@@ -145,6 +146,15 @@ describe('SessionPromptPredictionService', () => {
       server_decode_ms: 220,
       client_consume_ms: 4,
       client_blocked_ms: 200,
+      request_id: 'request-1',
+    }));
+    expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
+      status: 'generated',
+      input_other: 3,
+      output_tokens: 2,
+      input_cache_read: 5,
+      input_cache_creation: 1,
+      request_id: 'request-1',
     }));
     expect(requests).toHaveLength(1);
     expect(requests[0]?.options.source()).toEqual({
@@ -179,6 +189,8 @@ describe('SessionPromptPredictionService', () => {
       }],
     });
     expect(requests[0]?.options.tools).toBeUndefined();
+    expect(requests[0]?.options.maxOutputSize).toBe(512);
+    expect(requests[0]?.input?.profile).toEqual({});
     expect(contextSnapshot).toBe(originalContext);
     expect(contextSnapshot).toHaveLength(1);
 
