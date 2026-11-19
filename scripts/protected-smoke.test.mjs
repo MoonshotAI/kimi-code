@@ -7,6 +7,8 @@ import { test } from 'node:test';
 
 import { stringify } from 'yaml';
 
+import DesktopSmokeReporter from '../apps/desktop/e2e/fixtures/smoke-reporter.ts';
+import VitestSmokeReporter from './vitest-smoke-reporter.mjs';
 import { checkSmokeExecutions, protectedSmokeCases } from './protected-smoke.ts';
 
 const manifest = protectedSmokeCases();
@@ -52,4 +54,36 @@ await test('a PR must still run a base ID when the head manifest drops or replac
   const required = protectedSmokeCases(head, base);
   assert.ok(required.some(entry => entry.id === replacement.id));
   assert.ok(required.some(entry => entry.id === original.id));
+});
+
+await test('both runner adapters reject a protected test which passed only on retry', async t => {
+  const messages = [];
+  t.mock.method(process.stderr, 'write', message => { messages.push(String(message)); return true; });
+  const savedExit = process.exitCode;
+  const savedMode = process.env.KIMI_E2E_PROTECTED;
+  try {
+    process.env.KIMI_E2E_PROTECTED = '1';
+    const desktop = new DesktopSmokeReporter();
+    for (const entry of manifest.filter(e => e.project === 'smoke')) {
+      const task = { title: `[L0:${entry.id}] case`, location: { file: fileURLToPath(new URL('../' + entry.file, import.meta.url)) },
+        parent: { project: () => ({ name: 'smoke' }) }, expectedStatus: 'passed', tags: ['@smoke'] };
+      desktop.onTestEnd(task, { status: 'failed', retry: 0 });
+      desktop.onTestEnd(task, { status: 'passed', retry: 1 });
+    }
+    assert.deepEqual(await desktop.onEnd(), { status: 'failed' });
+    const assertRetryReported = entry => assert.ok(messages.some(message =>
+      message.includes(`L0 ${entry.id} [${entry.project}]`) && message.includes('retry count=1')));
+    manifest.filter(entry => entry.project === 'smoke').forEach(assertRetryReported);
+    new VitestSmokeReporter().onTestRunEnd(manifest.filter(e => e.project !== 'smoke').map(entry => ({
+      project: { name: entry.project }, moduleId: fileURLToPath(new URL('../' + entry.file, import.meta.url)),
+      children: { allTests: () => [{ name: `[L0:${entry.id}] case`, tags: ['smoke'], options: {},
+        result: () => ({ state: 'passed' }), diagnostic: () => ({ retryCount: 1 }) }] },
+    })));
+    assert.equal(process.exitCode, 1);
+    manifest.filter(entry => entry.project !== 'smoke').forEach(assertRetryReported);
+  } finally {
+    process.exitCode = savedExit;
+    if (savedMode === undefined) delete process.env.KIMI_E2E_PROTECTED;
+    else process.env.KIMI_E2E_PROTECTED = savedMode;
+  }
 });

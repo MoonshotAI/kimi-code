@@ -233,5 +233,5 @@
     "turns": []
   },
   "kapVersion": "1.0.0",
-  "serverVersion": "0.3.0"
+  "serverVersion": "0.0.0-fixture"
 }

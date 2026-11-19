@@ -1,0 +1,21 @@
+{
+  "firstTurn": {
+    "prompt": "Respond to the shared question.",
+    "answer": "Shared answer.",
+    "kap": { "transport": "REST prompt and WebSocket conversation", "terminal": "completed" },
+    "acp": { "transport": "session/prompt and session/update", "terminal": "end_turn" }
+  },
+  "advertised": {
+    "kap": {
+      "websocket": true, "file_upload": true, "fs_query": true, "mcp": true, "tasks": true,
+      "interactions_list": true, "session_wait": true
+    },
+    "acp": {
+      "loadSession": true,
+      "promptCapabilities": { "image": true, "audio": false, "embeddedContext": true },
+      "sessionCapabilities": { "list": {}, "resume": {}, "close": {}, "delete": {}, "fork": {}, "additionalDirectories": {} },
+      "mcpCapabilities": { "http": true, "sse": true },
+      "auth": { "logout": {} }
+    }
+  }
+}

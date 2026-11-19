@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -8,6 +10,7 @@ import { killProcessTree, testEnv, TIMEOUTS, type TestHome } from '@moonshot-ai/
 import { KapRest, KapSocket } from '@moonshot-ai/testkit/kap';
 
 export async function startKapProcess(home: TestHome) {
+  const networkLog = join(home.root, randomUUID() + '.network.log');
   const child = spawn(process.execPath, [
     `--import=${import.meta.resolve('tsx')}`,
     `--import=${new URL('../../../build/register-raw-text-loader.mjs', import.meta.url).href}`,
@@ -26,6 +29,8 @@ export async function startKapProcess(home: TestHome) {
       APPDATA: join(home.home, 'AppData', 'Roaming'),
       LOCALAPPDATA: join(home.home, 'AppData', 'Local'),
       KIMI_CODE_HOME: home.dataDir,
+      KIMI_CODE_PERSISTENCE_MINIDB_READMODEL: undefined,
+      KIMI_TEST_KAP_NETWORK_LOG: networkLog,
       KIMI_CODE_TRUST_WORKSPACE: '1', KIMI_CODE_NO_AUTO_UPDATE: '1',
       KIMI_CODE_DEV_SERVER: '1', KIMI_CODE_BASE_URL: 'http://127.0.0.1:1',
       TSX_TSCONFIG_PATH: fileURLToPath(new URL('../../../apps/kimi-code/tsconfig.dev.json', import.meta.url)),
@@ -66,6 +71,8 @@ export async function startKapProcess(home: TestHome) {
           await rest.request('/api/v1/shutdown', { method: 'POST', body: {}, signal: AbortSignal.timeout(TIMEOUTS.wait) });
         }
         await closed;
+        const violations = await readFile(networkLog, 'utf8');
+        if (violations) throw new Error('Blocked external KAP connections: ' + violations.trim());
         const crashed = process.platform === 'win32'
           ? child.signalCode === 'SIGKILL' || (child.exitCode !== null && child.exitCode !== 0)
           : child.signalCode === 'SIGKILL';

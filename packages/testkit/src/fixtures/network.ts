@@ -10,6 +10,7 @@ export interface NetworkGuard {
 
 export interface NetworkGuardOptions {
   readonly allowHosts?: readonly string[];
+  readonly onViolation?: (target: string) => void;
 }
 
 type Connect = (this: Socket, ...args: unknown[]) => Socket;
@@ -17,7 +18,7 @@ type Connect = (this: Socket, ...args: unknown[]) => Socket;
 interface InstalledGuard {
   readonly original: Connect;
   readonly violations: string[];
-  readonly allowLists: ReadonlySet<string>[];
+  readonly scopes: { hosts: ReadonlySet<string>; onViolation?: (target: string) => void }[];
 }
 
 let installed: InstalledGuard | undefined;
@@ -25,7 +26,8 @@ let installed: InstalledGuard | undefined;
 export function installNetworkGuard(options: NetworkGuardOptions = {}): NetworkGuard {
   const guard = installed ?? install();
   const allowHosts = new Set(options.allowHosts?.map((host) => host.toLowerCase()));
-  guard.allowLists.push(allowHosts);
+  const scope = { hosts: allowHosts, onViolation: options.onViolation };
+  guard.scopes.push(scope);
   return {
     violations: () => [...guard.violations],
     assertNoViolations: () => {
@@ -39,10 +41,10 @@ export function installNetworkGuard(options: NetworkGuardOptions = {}): NetworkG
       );
     },
     uninstall: () => {
-      const index = guard.allowLists.indexOf(allowHosts);
+      const index = guard.scopes.indexOf(scope);
       if (index < 0) return;
-      guard.allowLists.splice(index, 1);
-      if (guard.allowLists.length > 0) return;
+      guard.scopes.splice(index, 1);
+      if (guard.scopes.length > 0) return;
       Socket.prototype.connect = guard.original as typeof Socket.prototype.connect;
       installed = undefined;
     },
@@ -52,14 +54,15 @@ export function installNetworkGuard(options: NetworkGuardOptions = {}): NetworkG
 function install(): InstalledGuard {
   const descriptor = Object.getOwnPropertyDescriptor(Socket.prototype, 'connect');
   const original = descriptor?.value as Connect;
-  const guard: InstalledGuard = { original, violations: [], allowLists: [] };
+  const guard: InstalledGuard = { original, violations: [], scopes: [] };
   const patched: Connect = function guardedConnect(this: Socket, ...args: unknown[]): Socket {
     const target = tcpTargetOf(args);
-    if (target === undefined || isLoopback(target.host) || guard.allowLists.some((hosts) => hosts.has(target.host.toLowerCase()))) {
+    if (target === undefined || isLoopback(target.host) || guard.scopes.some(({ hosts }) => hosts.has(target.host.toLowerCase()))) {
       return Reflect.apply(original, this, args) as Socket;
     }
     const description = `${target.host}:${target.port ?? '?'}`;
     guard.violations.push(description);
+    for (const scope of guard.scopes) scope.onViolation?.(description);
     process.nextTick(() => {
       this.destroy(Object.assign(new Error(`testkit network guard blocked a connection to ${description}`), { code: 'ECONNREFUSED' }));
     });

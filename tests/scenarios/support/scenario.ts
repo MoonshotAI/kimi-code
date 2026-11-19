@@ -6,6 +6,7 @@ import { kapFixtures, type KapFixtureDefinitions, type KapFixtures } from '@moon
 export type ScenarioFixtures = KapFixtures<RunningServer>;
 
 export interface ScenarioOptions {
+  readonly serverVersion?: string;
   readonly provider?: FakeProviderType;
   readonly config?: KimiConfig;
 }
@@ -14,6 +15,7 @@ export function scenarioFixtures(options: ScenarioOptions = {}): KapFixtureDefin
   return kapFixtures({
     startServer,
     createServerLogger,
+    serverOptions: { serverVersion: options.serverVersion },
     provider: { type: options.provider },
     config: { defaultPermissionMode: 'yolo', ...options.config },
   });

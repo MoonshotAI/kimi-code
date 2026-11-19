@@ -159,4 +159,4 @@ For OpenAI chat completions, `request.texts('system')` returns the individual sy
 
 - Request indexes and the default tool-call ids follow arrival order. When subagents run concurrently, find their requests by lane and content (`waitForRequest(predicate)`) and take ids from `model.callId(request.index, k)`, or give the calls fixed ids with `call(name, args, { id })`.
 - `startKap` points `process.env.HOME` at the test home while the server runs, because user-level skills are read from the OS home. Do not run KAP tests concurrently in one worker.
-- Not built yet: the OpenAI responses API, recording and replay, ACP and TUI drivers, subprocess drivers, and fake MCP servers.
+- Not built yet: the OpenAI responses API, general model recording/replay, an ACP driver in this package, and fake MCP servers. The KAP subprocess driver and checkpoint recording live in the scenario suite; the terminal session driver lives in the CLI tests. See the [testing guide](../../tests/AGENTS.md).

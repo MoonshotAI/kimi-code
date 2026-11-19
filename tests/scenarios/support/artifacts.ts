@@ -20,7 +20,7 @@ function firstDifference(expected: Json | undefined, actual: Json | undefined, p
   return `${path || '/'}: expected ${show(expected)}, received ${show(actual)}`;
 }
 
-export async function checkArtifact(target: URL, value: unknown, kind: 'replay'): Promise<void> {
+export async function checkArtifact(target: URL, value: unknown, kind: 'replay' | 'schema'): Promise<void> {
   const path = fileURLToPath(target);
   const text = JSON.stringify(value, (_key, item: unknown) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return item;

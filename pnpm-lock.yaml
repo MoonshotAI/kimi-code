@@ -669,6 +669,13 @@ importers:
       '@moonshot-ai/klient':
         specifier: workspace:^
         version: link:../klient
+    devDependencies:
+      '@moonshot-ai/kap-server':
+        specifier: workspace:^
+        version: link:../kap-server
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../testkit
 
   packages/agent-core-v2:
     dependencies:

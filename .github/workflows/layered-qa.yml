@@ -1,0 +1,68 @@
+name: Layered QA
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '21 7 * * *'
+  pull_request:
+    paths:
+      - 'packages/acp-server/test/kap-parity.test.ts'
+      - 'packages/app-core/test/replay/**'
+      - 'packages/app-client/test/conversation-events.test.ts'
+      - 'packages/kap-server/schema/**'
+      - 'packages/testkit/**'
+      - 'apps/desktop/tests/perf/history-window/**'
+      - 'tests/scenarios/**'
+      - 'scripts/measure-history.mjs'
+      - 'scripts/refresh-qa-fixtures.mjs'
+      - '.github/workflows/layered-qa.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.nvmrc'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: layered-qa-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm qa:layers
+
+  history-performance:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm qa:history-perf "$RUNNER_TEMP/history-perf"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: history-perf-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/history-perf/run-*/*.json
+            ${{ runner.temp }}/history-perf/run-*/*.png
+          retention-days: 14

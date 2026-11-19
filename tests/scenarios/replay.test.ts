@@ -6,7 +6,7 @@ import { checkArtifact } from './support/artifacts';
 import { normalizeRecording } from './support/recording';
 import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
 
-const test = base.extend<ScenarioFixtures>(scenarioFixtures());
+const test = base.extend<ScenarioFixtures>(scenarioFixtures({ serverVersion: '0.0.0-fixture' }));
 
 test('records a KAP first turn at visible stream checkpoints', async ({ kap, model }) => {
   const socket = await kap.connect();

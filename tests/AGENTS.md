@@ -90,3 +90,11 @@ pnpm --filter kimi-code-app run e2e:headless --quarantine --retries=0
 ## KAP 录制与客户端回放
 
 [首轮录制](scenarios/replay.test.ts)用真实服务分别捕获初始 REST 页、订阅基线、模型挂起时及回合结束时的 WS 帧和最终 REST 页。[客户端回放](../packages/app-core/test/replay/first-turn.test.ts)离线调用生产 reducer，业务期望由消费者独立维护。运行 `pnpm exec vitest run tests/scenarios/replay.test.ts packages/app-core/test/replay` 验证两端。只有显式运行 `pnpm qa:refresh replay` 才会刷新录制，随后评审数据差异。CI 始终只读。
+
+## 冷恢复、协议和规模门禁
+
+从根目录运行 `pnpm qa:layers` 验证已有协议快照、回放、历史数据、KAP/ACP 共有行为及客户端分页预算。[分层检查工作流](../.github/workflows/layered-qa.yml)在修改这些测试基建的 PR、夜间和手动触发时，均在 Linux、macOS 和 Windows 上运行。冷恢复使用[已发布 CLI 写出的原始格式](scenarios/fixtures/released-2.6.3/README.md)；宿主已经看到回合结束时，持久化写入仍可能进行中。
+
+- [协议字段检查](scenarios/schema.test.ts)重新读取真实服务的 OpenAPI 和 AsyncAPI，与[入库文档](../packages/kap-server/schema/)逐字段比较，并报告第一个不同的 JSON Pointer。测试宿主版本固定以隔离包版本变更，KAP 协议版本取实际值。显式更新用 `pnpm qa:refresh schema`。
+- [能力表](scenarios/capabilities/conversation.json)登记 KAP 与 ACP 实际公布的字段。共有首轮用真实协议对照相同提问和回答，再核对各自的结束信号。其他单侧字段仍由各自协议维护；能力表的两个传输字段集合可以不同。[对照入口](../packages/acp-server/test/kap-parity.test.ts)
+- PR 中客户端分页用 240 个会话回合，验证并发加载每个旧页只读一次。另用 `pnpm qa:history-perf` 在 Electron 测 240 条界面消息（120 轮问答），以 1280×900 窗口比较全量渲染和窗口化渲染。全量基线应挂载 240 条，窗口化初始和滚动挂载均以 32 条为上限。同一工作流在 macos-15 上对交替顺序的三对样本比较打开耗时和 JS 堆增长中位数，并保留环境与原始数据。同一提交的相对预算可以检出窗口化失效；跨版本共同变慢需要对照留存的历史产物。

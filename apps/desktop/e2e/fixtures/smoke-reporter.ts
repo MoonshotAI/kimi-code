@@ -11,8 +11,8 @@ export default class DesktopSmokeReporter implements Reporter {
       title: test.title,
       file: test.location.file,
       project: 'smoke',
-      status: result.status,
-      passed: result.status === 'passed' && test.expectedStatus === 'passed' && test.tags.includes('@smoke'),
+      status: result.retry ? `${result.status} (retry count=${result.retry})` : result.status,
+      passed: result.status === 'passed' && result.retry === 0 && test.expectedStatus === 'passed' && test.tags.includes('@smoke'),
     });
   }
 

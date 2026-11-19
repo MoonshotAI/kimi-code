@@ -53,3 +53,5 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 构造图片输入时，`dataUrl('image/png', solidPng(2, 2))` 可以生成完整的 PNG。需要区分损坏的 Base64 和无法解码的图片时，从 `BROKEN_DATA_URLS` 选择对应样本。`mp4Header()` 只构造 MP4 的文件类型头，适合格式识别测试。[媒体样本](../src/fixtures/media.ts)
 
 对子进程做强制清理时，`killProcessTree(pid)` 在 POSIX 优先终止该子进程的进程组，在 Windows 使用系统进程树终止命令。传入测试自己启动的子进程 PID，POSIX 启动时使用 `detached: true`，并等待进程退出。[TUI 的正常退出和强制回收](../../../apps/kimi-code/test/e2e/tui/support/terminal-session.ts)
+
+跨进程验证可通过 `installNetworkGuard({ onViolation })` 同步记录被拦截的目标。KAP 子进程在拒绝连接时将记录写入临时文件，父测试在正常关闭和强杀后都能发现被应用捕获的错误。[子进程守卫](../../../tests/scenarios/support/offline.ts)
