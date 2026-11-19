@@ -736,7 +736,12 @@ describe('server-v2 /api/v1 fs routes', () => {
       pullRequest: null;
       pull_request_status?: string;
       stats_error?: string;
-    }>(id, 'git_status', {});
+    }>(id, 'git_status', { include_untracked: true });
+    const tracked = await postFs<{ additions: number }>(id, 'git_status', {});
+    const batch = await postFs<{ results: Record<string, { additions: number }> }>(id, 'git_status:batch', {
+      roots: [work],
+      include_untracked: true,
+    });
     const pullRequest = await postFs<null>(id, 'pull_request', {});
     const prBatch = await postFs<{
       results: Record<string, null>;
@@ -748,6 +753,8 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(status.data.detached).toBe(false);
     expect(status.data.upstream).toBeUndefined();
     expect(status.data.additions).toBe(2);
+    expect(tracked.data.additions).toBe(0);
+    expect(batch.data.results[work!]?.additions).toBe(2);
     expect(status.data.stats_error).toBeUndefined();
     expect(status.data.pullRequest).toBeNull();
     expect(['none', 'unavailable']).toContain(status.data.pull_request_status);

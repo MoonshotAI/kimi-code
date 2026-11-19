@@ -44,6 +44,7 @@ export const fsGitStatusRequestSchema = z.object({
   root: z.string().min(1).optional(),
   paths: z.array(z.string().min(1)).optional(),
   include_pull_request: z.boolean().optional(),
+  include_untracked: z.boolean().optional(),
 });
 export type FsGitStatusRequest = z.infer<typeof fsGitStatusRequestSchema>;
 
@@ -56,6 +57,7 @@ export interface GitStatusOptions {
   pathFilter?: ReadonlySet<string>;
   scopeToCwd?: boolean;
   includePullRequest?: boolean;
+  includeUntracked?: boolean;
 }
 
 export const fsGitStatusResponseSchema = z.object({
@@ -84,6 +86,7 @@ export type FsBatchError = z.infer<typeof fsBatchErrorSchema>;
 export const fsGitStatusBatchRequestSchema = z.object({
   roots: z.array(z.string().min(1)).min(1).max(32),
   include_pull_request: z.boolean().optional(),
+  include_untracked: z.boolean().optional(),
 });
 export type FsGitStatusBatchRequest = z.infer<typeof fsGitStatusBatchRequestSchema>;
 

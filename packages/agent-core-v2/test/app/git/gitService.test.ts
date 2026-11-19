@@ -262,7 +262,7 @@ describe('GitService', () => {
       expect(detached.upstream).toBeUndefined();
     });
 
-    it('counts the lines of untracked text files as additions', async () => {
+    it('counts the lines of untracked text files as additions when asked', async () => {
       writeFileSync(join(repo, 'a.txt'), 'line1\n');
       commitAll('init');
       writeFileSync(join(repo, 'a.txt'), 'line1\nline2\n');
@@ -275,7 +275,10 @@ describe('GitService', () => {
       writeFileSync(join(repo, '.gitignore'), 'ignored.txt\n');
       writeFileSync(join(repo, 'ignored.txt'), 'a\nb\nc\n');
 
-      const all = await service.status(repo, { includePullRequest: false });
+      const tracked = await service.status(repo, { includePullRequest: false });
+      expect(tracked.additions).toBe(1);
+
+      const all = await service.status(repo, { includePullRequest: false, includeUntracked: true });
       expect(all.additions).toBe(1 + 3 + 2 + 1);
       expect(all.deletions).toBe(0);
       expect(all.stats_error).toBeUndefined();
@@ -283,11 +286,13 @@ describe('GitService', () => {
       const scoped = await service.status(join(repo, 'fresh'), {
         scopeToCwd: true,
         includePullRequest: false,
+        includeUntracked: true,
       });
       expect(scoped.additions).toBe(3);
       const filtered = await service.status(repo, {
         pathFilter: new Set(['no-newline.txt']),
         includePullRequest: false,
+        includeUntracked: true,
       });
       expect(filtered.additions).toBe(2);
     });
@@ -297,7 +302,10 @@ describe('GitService', () => {
       writeFileSync(join(repo, 'top.txt'), 'one\ntwo\n');
       writeFileSync(join(repo, 'sub/in.txt'), 'one\n');
 
-      const result = await service.status(join(repo, 'sub'), { includePullRequest: false });
+      const result = await service.status(join(repo, 'sub'), {
+        includePullRequest: false,
+        includeUntracked: true,
+      });
 
       expect(result.additions).toBe(3);
       expect(result.stats_error).toBeUndefined();

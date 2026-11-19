@@ -88,7 +88,7 @@ export class GitService implements IGitService {
           failures.push(commandFailure('git diff --numstat', numstat));
         }
       }
-      if (records.some((record) => record.startsWith('?? '))) {
+      if (options.includeUntracked === true && records.some((record) => record.startsWith('?? '))) {
         const untracked = await this.untrackedAdditions(cwd, scope);
         if (untracked.failure === undefined) result.additions += untracked.additions;
         else failures.push(untracked.failure);

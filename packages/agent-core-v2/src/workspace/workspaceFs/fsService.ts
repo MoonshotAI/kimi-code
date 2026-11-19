@@ -1307,11 +1307,18 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       pathFilter: filter,
       scopeToCwd: req.root !== undefined,
       includePullRequest: req.include_pull_request !== false,
+      ...(req.include_untracked === true ? { includeUntracked: true } : {}),
     });
   }
 
   gitStatusBatch(req: FsGitStatusBatchRequest): Promise<FsGitStatusBatchResponse> {
-    return this.batchGitValues(req.roots, (root) => this.gitStatus({ root, include_pull_request: req.include_pull_request }));
+    return this.batchGitValues(req.roots, (root) =>
+      this.gitStatus({
+        root,
+        include_pull_request: req.include_pull_request,
+        include_untracked: req.include_untracked,
+      }),
+    );
   }
 
   async pullRequestBatch(req: FsPullRequestBatchRequest): Promise<FsPullRequestBatchResponse> {
