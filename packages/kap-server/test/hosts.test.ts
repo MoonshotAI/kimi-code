@@ -680,18 +680,22 @@ void serve();
           await vi.waitFor(() => expect(bridge.session).toBeUndefined());
           const listWorkspaces = () => get('/api/v1/workspaces?hosts=include');
           const listSessions = () => get('/api/v1/sessions?hosts=include');
-          const [workspaces, sessions] = await Promise.all([listWorkspaces(), listSessions()]);
-          if (slow) {
-            expect(workspaces).toMatchObject({ code: 0, data: { items: [] } });
-            expect(sessions).toMatchObject({ code: 0, data: { unavailable_hosts: ['example'] } });
-            expect(bridge.session).toBeUndefined();
-            rmSync(hold);
-          }
-          const [availableWorkspaces, availableSessions] = slow
+          const first = await Promise.all([listWorkspaces(), listSessions()]);
+          const connected = bridge.session !== undefined;
+          if (slow) rmSync(hold);
+          const recovered = slow
             ? await Promise.all([listWorkspaces(), listSessions()])
-            : [workspaces, sessions];
-          expect(availableWorkspaces).toMatchObject({ code: 0, data: { items: [{ name: 'example', host_id: 'example' }] } });
-          expect(availableSessions).toMatchObject({ code: 0, data: { unavailable_hosts: [] } });
+            : first;
+          const available = [
+            { code: 0, data: { items: [{ name: 'example', host_id: 'example' }] } },
+            { code: 0, data: { unavailable_hosts: [] } },
+          ];
+          expect(connected).toBe(!slow);
+          expect(first).toMatchObject(slow ? [
+            { code: 0, data: { items: [] } },
+            { code: 0, data: { unavailable_hosts: ['example'] } },
+          ] : available);
+          expect(recovered).toMatchObject(available);
           expect(readFileSync(join(dir, 'count'), 'utf8')).toBe('xx');
         } finally {
           list.mockRestore();
