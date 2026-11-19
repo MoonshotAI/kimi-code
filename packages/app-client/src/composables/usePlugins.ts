@@ -464,7 +464,8 @@ export function pluginRowShowsInstall(row: PluginViewModel): boolean {
     const capability = row.capability;
     if (capability === undefined || !capability.supported) return false;
     if (capability.install.running) return true;
-    return row.installedPlugin === undefined || (capability.state === 'ready' && row.updateAvailable);
+    return row.installedPlugin === undefined ||
+      (row.updateAvailable && (capability.id === 'kimi-webbridge' || capability.state === 'ready'));
   }
   return row.installedPlugin === undefined || row.updateAvailable;
 }

@@ -28,12 +28,13 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '@moonshot-ai/app-core/lib';
-import { openAgentSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
+import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
 import { useSlashMenu } from '@moonshot-ai/app-client/composables';
 import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/composables';
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
+import { hostsStore } from '@moonshot-ai/app-client/stores';
 import {
   createComposerEditor,
   discardStashedEditorState,
@@ -1718,6 +1719,15 @@ function resetAfterDispatch(
   );
 }
 
+function passSubmitGate(): boolean {
+  if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return false;
+  if (hostSetupId.value !== undefined) {
+    openHostSetup();
+    return false;
+  }
+  return true;
+}
+
 function handleSteer(): void {
   const decision = currentSubmitDecision();
   if (
@@ -1727,7 +1737,7 @@ function handleSteer(): void {
   ) {
     return;
   }
-  if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return;
+  if (!passSubmitGate()) return;
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
@@ -1749,7 +1759,7 @@ function handleQueue(): void {
   ) {
     return;
   }
-  if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return;
+  if (!passSubmitGate()) return;
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
@@ -1777,7 +1787,7 @@ function handleSubmit(): void {
     decision.kind === 'unresolved-skill-command' ||
     decision.kind === 'prompt-command' ||
     (decision.kind === 'builtin-command' && decision.leave === true);
-  if (sessionBound && props.beforeSubmit !== undefined && props.beforeSubmit() === false) return;
+  if (sessionBound && !passSubmitGate()) return;
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
@@ -2644,6 +2654,17 @@ onUnmounted(() => {
   toolbarLabelObserver = null;
 });
 const { fontScale } = useAppearance();
+const hostSetupId = computed(() => {
+  const hostId = client.visibleWorkspace?.value?.hostId;
+  if (hostId === undefined || hostsStore().displayState(hostId) !== 'ready') return undefined;
+  return hostsStore().needsLogin(hostId) ? hostId : undefined;
+});
+
+function openHostSetup(): void {
+  const hostId = hostSetupId.value;
+  if (hostId !== undefined) openHostSettings(hostId);
+}
+
 watch(
   [
     permLabel,
@@ -2653,6 +2674,7 @@ watch(
     () => status.value?.model,
     () => stoppable.value,
     gateVerdict,
+    hostSetupId,
     () => models.value?.length,
     fontScale,
     locale,
@@ -3182,7 +3204,22 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </span>
           </Tooltip>
 
-          <Tooltip v-if="status && !isSideChat && (gateVerdict === 'ok' || (gateVerdict === 'upgrade' && currentModel))" :text="modelPillCollapsed ? modelIconLabel : null">
+          <Tooltip v-if="status && !isSideChat && hostSetupId" :text="modelPillCollapsed ? t('login.configureHostModelsAction') : null">
+          <button
+            type="button"
+            class="model-pill login-pill"
+            :class="{ 'icon-only': modelPillCollapsed, 'model-gone': modelPillGone }"
+            :aria-label="modelPillCollapsed ? t('login.configureHostModelsAction') : undefined"
+            @click.stop="openHostSetup"
+          >
+            <Icon v-if="modelPillCollapsed" name="bolt" size="md" />
+            <template v-else>
+              <Icon name="bolt" size="sm" />
+              <span ref="mpNameRef" class="mp-name">{{ t('login.configureHostModelsAction') }}</span>
+            </template>
+          </button>
+          </Tooltip>
+          <Tooltip v-else-if="status && !isSideChat && (gateVerdict === 'ok' || (gateVerdict === 'upgrade' && currentModel))" :text="modelPillCollapsed ? modelIconLabel : null">
           <button
             ref="modelPillRef"
             type="button"

@@ -13,6 +13,7 @@ export default {
   expandAll: 'Expand all projects',
   newChat: 'New Session',
   newWorkspace: 'New Project',
+  newWorkspaceNeedsConnection: 'Connect to create a project',
   dropToAddWorkspace: 'Drop to add project',
   options: 'Options',
   rename: 'Rename',

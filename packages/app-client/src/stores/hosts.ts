@@ -16,6 +16,22 @@ export type HostAccount =
   | { readonly status: 'signedOut'; readonly modelsReady: boolean }
   | { readonly status: 'signedIn'; readonly modelsReady: boolean };
 
+export interface HostSnapshotDiff {
+  readonly becameReady: string[];
+  readonly becameDisabled: string[];
+  readonly removed: string[];
+}
+
+export interface HostsHooks {
+  onHostsChanged?: (diff: HostSnapshotDiff) => void;
+}
+
+let hostsHooks: HostsHooks | null = null;
+
+export function setHostsHooks(next: HostsHooks | null): void {
+  hostsHooks = next;
+}
+
 export function hostDefinition(host: AppHost): AppHostDefinition {
   return { host: host.host, identityFile: host.identityFile, remoteBin: host.remoteBin, name: host.name, enabled: host.enabled };
 }
@@ -27,15 +43,23 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
   const providerCopies = ref<Record<string, HostProviderCopy>>({});
   const accounts = ref<Record<string, HostAccount>>({});
   const loginHostId = ref<string | null>(null);
+  const focusHostId = ref<string | null>(null);
+  const addIfEmpty = ref(false);
   const accountLoads = new Map<string, number>();
 
   const hosts = computed(() => Object.values(byId.value));
 
-  function applySnapshot(list: readonly AppHost[]): string[] {
+  function applySnapshot(list: readonly AppHost[]): HostSnapshotDiff {
+    const previousById = byId.value;
+    const nextById = Object.fromEntries(list.map((host) => [host.id, host]));
     const becameReady = list
-      .filter((host) => host.status === 'ready' && byId.value[host.id]?.status !== 'ready')
+      .filter((host) => host.status === 'ready' && previousById[host.id]?.status !== 'ready')
       .map((host) => host.id);
-    byId.value = Object.fromEntries(list.map((host) => [host.id, host]));
+    const becameDisabled = list
+      .filter((host) => host.enabled === false && previousById[host.id]?.enabled !== false)
+      .map((host) => host.id);
+    const removed = Object.keys(previousById).filter((hostId) => nextById[hostId] === undefined);
+    byId.value = nextById;
     loaded.value = true;
     for (const hostId of Object.keys(accounts.value)) {
       if (byId.value[hostId]?.status !== 'ready') setAccount(hostId, undefined);
@@ -45,7 +69,10 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
     for (const hostId of Object.keys(providerCopies.value)) {
       if (byId.value[hostId] === undefined) setProviderCopy(hostId, undefined);
     }
-    return becameReady;
+    if (removed.length > 0) modelsStore().removeHosts(removed);
+    const diff: HostSnapshotDiff = { becameReady, becameDisabled, removed };
+    hostsHooks?.onHostsChanged?.(diff);
+    return diff;
   }
 
   async function load(): Promise<AppHost[]> {
@@ -236,7 +263,18 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
     return isHostBlocked(displayState(hostId));
   }
 
-  return { byId, hosts, loaded, connecting, accounts, loginHostId, loadAccount, signOut, openLogin, closeLogin, startLogin, pollLogin, cancelLogin, loginRegion, finishLogin, needsLogin, applySnapshot, load, connect, save, remove, test, loadSshConfig, providerCopies, copyProviders, hostFor, displayState, displayName, hostLabel, searchTerms, workspacePathLabel, unavailable, blocked };
+  function requestFocus(hostId: string | null, options?: { addIfEmpty?: boolean }): void {
+    focusHostId.value = hostId;
+    addIfEmpty.value = options?.addIfEmpty === true;
+  }
+
+  function takeAddIfEmpty(): boolean {
+    const pending = addIfEmpty.value;
+    addIfEmpty.value = false;
+    return pending;
+  }
+
+  return { byId, hosts, loaded, connecting, accounts, loginHostId, focusHostId, addIfEmpty, requestFocus, takeAddIfEmpty, loadAccount, signOut, openLogin, closeLogin, startLogin, pollLogin, cancelLogin, loginRegion, finishLogin, needsLogin, applySnapshot, load, connect, save, remove, test, loadSshConfig, providerCopies, copyProviders, hostFor, displayState, displayName, hostLabel, searchTerms, workspacePathLabel, unavailable, blocked };
 });
 
 export function hostsStore() {

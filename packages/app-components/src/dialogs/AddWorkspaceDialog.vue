@@ -461,7 +461,7 @@ onUnmounted(() => {
 <template>
   <Dialog
     v-model:open="open"
-    :title="isRemote ? t('workspace.remotePickerTitle') : t('workspace.addTitle')"
+    :title="isRemote ? (hostName ? t('workspace.remotePickerTitleWithHost', { device: hostName }) : t('workspace.remotePickerTitle')) : t('workspace.addTitle')"
     size="lg"
     :padded="false"
     :initial-focus="() => pathField?.el ?? null"
