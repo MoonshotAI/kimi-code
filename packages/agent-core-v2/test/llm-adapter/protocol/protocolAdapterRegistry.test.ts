@@ -3,8 +3,8 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { contentsOf } from '@moonshot-ai/core/llm/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
-import { supportsLlmUpload } from '#/llm-adapter/model/media';
-import type { Model } from '#/llm-adapter/model/catalog';
+import { supportsLlmUpload } from '#/provider-catalog/model/media';
+import type { Model } from '#/provider-catalog/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import {
@@ -13,7 +13,7 @@ import {
   hasProviderDefinition,
   registerProviderDefinition,
   resolveProviderEndpoint,
-} from '#/llm-adapter/provider/provider-definition';
+} from '#/provider-catalog/provider/provider-definition';
 
 const ENV_KEYS = [
   'OPENAI_API_KEY',

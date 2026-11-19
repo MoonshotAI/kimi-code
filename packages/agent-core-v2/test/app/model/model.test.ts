@@ -10,8 +10,8 @@ import {
   modelsFromToml,
   modelsToToml,
 } from '#/app/kosongConfig/configSection';
-import { type ModelRecord } from '#/llm-adapter/model/model';
-import { effectiveModelConfig } from '#/llm-adapter/model/model-auth';
+import { type ModelRecord } from '#/provider-catalog/model/model';
+import { effectiveModelConfig } from '#/provider-catalog/model/model-auth';
 
 
 describe('effectiveModelConfig', () => {

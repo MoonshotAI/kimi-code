@@ -2,7 +2,7 @@ import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
-import { getProviderDefinition } from '../provider/provider-definition';
+import { getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
 
 import { IProtocolAdapterRegistry, type Protocol } from './protocol';
 import { getProtocolBase, listProtocolBases, type ProtocolBaseId } from './protocol-base';

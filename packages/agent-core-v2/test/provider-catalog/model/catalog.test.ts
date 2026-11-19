@@ -14,8 +14,8 @@ import {
   IProviderService,
   type ProviderConfig,
   type ProvidersSection,
-} from '#/llm-adapter/provider/provider';
-import '#/llm-adapter/provider/provider-service';
+} from '#/provider-catalog/provider/provider';
+import '#/provider-catalog/provider/provider-service';
 import {
   globalDefaultForProvider,
   IModelCatalog,
@@ -24,15 +24,15 @@ import {
   toProtocolModel,
   toProtocolModelFallback,
   toProtocolProvider,
-} from '#/llm-adapter/model/catalog';
-import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
+} from '#/provider-catalog/model/catalog';
+import { ModelCatalog } from '#/provider-catalog/model/catalog-service';
 import { createMockProvider, withMockProvider } from '../../harness/scripted-generate';
-import { ProviderCatalogRuntimeService } from '#/llm-adapter/model/catalog-runtime';
-import '#/llm-adapter/model/errors';
-import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
-import { IModelService, type ModelRecord, type ModelsSection } from '#/llm-adapter/model/model';
-import '#/llm-adapter/model/model-service';
-import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
+import { ProviderCatalogRuntimeService } from '#/provider-catalog/model/catalog-runtime';
+import '#/provider-catalog/model/errors';
+import { IHostRequestHeaders } from '#/provider-catalog/model/host-request-headers';
+import { IModelService, type ModelRecord, type ModelsSection } from '#/provider-catalog/model/model';
+import '#/provider-catalog/model/model-service';
+import { IModelOAuthTokens } from '#/provider-catalog/model/model-oauth';
 
 import { HostRequestHeadersAdapter } from '#/app/kosongConfig/hostRequestHeadersAdapter';
 

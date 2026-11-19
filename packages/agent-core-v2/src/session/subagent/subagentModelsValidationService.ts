@@ -1,7 +1,7 @@
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelCatalog } from '#/provider-catalog/model/catalog';
 
 import { assertValidSubagentModelConfig } from './configSection';
 import { ISessionSubagentModelsValidationService } from './subagentModelsValidation';

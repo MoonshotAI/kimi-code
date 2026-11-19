@@ -2,11 +2,11 @@ import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/inst
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import { IProjectService } from '@moonshot-ai/agent-core-v2/app/project/project';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IModelService } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
 import { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
-import { IProviderService } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
+import { IProviderService } from '@moonshot-ai/agent-core-v2/provider-catalog/provider/provider';
 import {
   IAuthSummaryService,
   IOAuthService,

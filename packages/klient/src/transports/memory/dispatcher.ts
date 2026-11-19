@@ -19,7 +19,7 @@ import {
 } from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
 import { IAgentLoopService, type LoopNotifyMessage, type PromptPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
 import { IProviderRequesterFactory } from '@moonshot-ai/agent-core-v2/provider-catalog/requester';
 import type { LlmRequestContent, LlmRequestModel, LlmRequestProfile } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';

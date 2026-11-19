@@ -13,7 +13,7 @@ import type {
   ConfigInspectValue,
   ConfigTarget,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/provider-catalog/provider/provider';
 import type {
   AuthStatus,
   IOAuthService,
@@ -25,8 +25,8 @@ import type {
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
+import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
 

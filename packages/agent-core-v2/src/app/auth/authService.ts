@@ -47,8 +47,8 @@ import {
   resolveModelForReady,
   providerNameFromFlatModel,
   type ModelReadyFailureReason,
-} from '#/llm-adapter/model/model-auth';
-import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
+} from '#/provider-catalog/model/model-auth';
+import { IModelService, type ModelRecord } from '#/provider-catalog/model/model';
 import {
   DEFAULT_MODEL_SECTION,
   MODELS_SECTION,
@@ -61,8 +61,8 @@ import {
   type OAuthRef,
   type ProviderConfig,
   type ProvidersChangedEvent,
-} from '#/llm-adapter/provider/provider';
-import { isOAuthCatalogVendor } from '#/llm-adapter/provider/provider-definition';
+} from '#/provider-catalog/provider/provider';
+import { isOAuthCatalogVendor } from '#/provider-catalog/provider/provider-definition';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IRegionService } from '#/app/region/region';
 import { kimiRegionEnv } from '#/app/region/regionService';

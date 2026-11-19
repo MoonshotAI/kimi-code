@@ -13,14 +13,14 @@ import {
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
 } from '@moonshot-ai/core/llm/thinking';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { type ModelOverrides } from '#/llm-adapter/model/model.types';
+import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
+import { type ModelOverrides } from '#/provider-catalog/model/model.types';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import {
   drivesThinkingThroughTraits,
   requiresStrictThinkingValidation,
   type ThinkingConfig,
-} from '#/llm-adapter/model/thinking';
+} from '#/provider-catalog/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';

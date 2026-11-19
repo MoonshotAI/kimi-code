@@ -12,14 +12,14 @@ import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
-import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
+import { IModelService, type ModelRecord } from '#/provider-catalog/model/model';
 import {
   resolveActiveModelProvider,
   resolveModelAuthMaterial,
-} from '#/llm-adapter/model/model-auth';
-import type { ResolvedModelAuthMaterial } from '#/llm-adapter/model/model.types';
-import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
-import { isOAuthCatalogVendor } from '#/llm-adapter/provider/provider-definition';
+} from '#/provider-catalog/model/model-auth';
+import type { ResolvedModelAuthMaterial } from '#/provider-catalog/model/model.types';
+import { IProviderService, type ProviderConfig } from '#/provider-catalog/provider/provider';
+import { isOAuthCatalogVendor } from '#/provider-catalog/provider/provider-definition';
 
 import { SERVICES_SECTION, type ServicesConfig } from '../configSection';
 import { MoonshotWebSearchProvider } from './providers/moonshot-web-search';

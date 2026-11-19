@@ -1,6 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Message } from '@moonshot-ai/core/llm/message';
-import type { Model } from '#/llm-adapter/model/catalog';
+import type { Model } from '#/provider-catalog/model/catalog';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 
 export interface IAgentMediaResolverService {

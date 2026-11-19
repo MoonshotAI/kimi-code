@@ -50,7 +50,7 @@ import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { AgentReminderService, IAgentReminderService } from '#/features/reminder/reminderService';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { SubagentSuspended } from '#/features/swarm/session/sessionSwarmService';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelCatalog } from '#/provider-catalog/model/catalog';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';

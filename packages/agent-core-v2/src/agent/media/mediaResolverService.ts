@@ -22,7 +22,7 @@ import {
 } from '@moonshot-ai/core/llm/message';
 import { mediaFileIdOf, mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
 import { MediaUploadFailedError } from '@moonshot-ai/core/llm/request';
-import type { Model } from '#/llm-adapter/model/catalog';
+import type { Model } from '#/provider-catalog/model/catalog';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { runWithCredentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
 import {
@@ -37,7 +37,7 @@ import {
   type ImageUploader,
   type MediaKindSupport,
   type MediaPosition,
-} from '#/llm-adapter/model/media';
+} from '#/provider-catalog/model/media';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
 import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { LlmEndpoint, LlmModelSpec } from '@moonshot-ai/core/llm/request';
-import type { Protocol, ProtocolProviderOptions } from '../protocol/protocol';
+import type { Protocol, ProtocolProviderOptions } from '#/llm-adapter/protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
 
 import type { ModelRecord, ModelUpgrade } from './model';

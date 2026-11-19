@@ -14,9 +14,9 @@ import { ModelsDevImportErrors } from '#/app/kosongConfig/errors';
 import { IKosongConfigService } from '#/app/kosongConfig/kosongConfig';
 import { IModelsDevImportService } from '#/app/kosongConfig/modelsDevImport';
 import '#/app/kosongConfig/modelsDevImportService';
-import { IModelCatalog, type ProviderCatalogItem } from '#/llm-adapter/model/catalog';
-import type { ModelsSection } from '#/llm-adapter/model/model';
-import type { ProvidersSection } from '#/llm-adapter/provider/provider';
+import { IModelCatalog, type ProviderCatalogItem } from '#/provider-catalog/model/catalog';
+import type { ModelsSection } from '#/provider-catalog/model/model';
+import type { ProvidersSection } from '#/provider-catalog/provider/provider';
 
 import { StubConfigService } from '../../stubs';
 import { stubBootstrap } from '../bootstrap/stubs';

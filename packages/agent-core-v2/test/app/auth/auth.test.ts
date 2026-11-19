@@ -34,10 +34,10 @@ import { IRegionService } from '#/app/region/region';
 import { RegionService } from '#/app/region/regionService';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
+import { IModelService, type ModelRecord } from '#/provider-catalog/model/model';
 import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/llm-adapter/provider/provider';
+import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/provider-catalog/provider/provider';
 
 
 import { registerBootstrapServices } from '../bootstrap/stubs';

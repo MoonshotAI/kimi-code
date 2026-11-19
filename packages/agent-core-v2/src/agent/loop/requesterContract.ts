@@ -5,7 +5,7 @@ import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import type { LlmPolicy } from '@moonshot-ai/core/llm/policy/policy';
 import type { InitializedLlmRequester, InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { ProfileModelContext } from '#/agent/profile/profile';
-import type { Model } from '#/llm-adapter/model/catalog';
+import type { Model } from '#/provider-catalog/model/catalog';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import type { LoopRequestRuntime } from '@moonshot-ai/core/loop/request';
 

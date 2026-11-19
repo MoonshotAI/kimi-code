@@ -25,14 +25,14 @@ import {
   ISessionExportService,
   type ExportSessionPreview,
 } from '#/app/sessionExport/sessionExport';
-import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
+import { IModelService, type ModelRecord } from '#/provider-catalog/model/model';
 import {
   nonEmpty,
   resolveActiveModelProvider,
   resolveModelAuthMaterial,
-} from '#/llm-adapter/model/model-auth';
-import type { ResolvedModelAuthMaterial } from '#/llm-adapter/model/model.types';
-import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
+} from '#/provider-catalog/model/model-auth';
+import type { ResolvedModelAuthMaterial } from '#/provider-catalog/model/model.types';
+import { IProviderService, type ProviderConfig } from '#/provider-catalog/provider/provider';
 
 import {
   IFeedbackService,

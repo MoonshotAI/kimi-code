@@ -7,10 +7,10 @@ import {
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
-import { type ModelRecord } from '#/llm-adapter/model/model';
-import { ModelService } from '#/llm-adapter/model/model-service';
-import { type ProviderConfig } from '#/llm-adapter/provider/provider';
-import { ProviderService } from '#/llm-adapter/provider/provider-service';
+import { type ModelRecord } from '#/provider-catalog/model/model';
+import { ModelService } from '#/provider-catalog/model/model-service';
+import { type ProviderConfig } from '#/provider-catalog/provider/provider';
+import { ProviderService } from '#/provider-catalog/provider/provider-service';
 
 import { StubConfigService } from '../../stubs';
 import { KosongConfigService } from '#/app/kosongConfig/kosongConfigService';

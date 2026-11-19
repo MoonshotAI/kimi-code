@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 import type { ConfigChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ModelsChangedEvent } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
-import type { ProvidersChangedEvent } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
+import type { ModelsChangedEvent } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
+import type { ProvidersChangedEvent } from '@moonshot-ai/agent-core-v2/provider-catalog/provider/provider';
 import type { ReloadSummary } from '@moonshot-ai/agent-core-v2/app/plugin/types';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 

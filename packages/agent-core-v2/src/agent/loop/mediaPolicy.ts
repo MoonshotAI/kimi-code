@@ -3,7 +3,8 @@ import type { Message, ToolMessage, UserMessage } from '@moonshot-ai/core/llm/me
 import type { LlmRecovery } from '@moonshot-ai/core/llm/policy/recovery';
 import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import type { LlmErrorMessage } from '@moonshot-ai/core/llm/response';
-import type { Model } from '#/llm-adapter/model/catalog';
+import { mediaUrlOf } from '@moonshot-ai/core/llm/protocol/kit/media';
+import type { Model } from '#/provider-catalog/model/catalog';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { buildMediaPathTag, matchMediaPathTags, type MediaPathTag } from '#/agent/media/mediaRef';

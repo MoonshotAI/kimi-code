@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { resolveCompletionBudget } from '#/provider-catalog/model/completion-budget';
 
 describe('resolveCompletionBudget', () => {
   it('prefers the explicit cap, then maxOutputSize, and omits the budget otherwise', () => {

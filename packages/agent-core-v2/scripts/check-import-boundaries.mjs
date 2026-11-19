@@ -8,6 +8,7 @@ export const SRC_ROOT = join(PKG_ROOT, 'src');
 const TEST_ROOT = join(PKG_ROOT, 'test');
 const HUMAN_ROOT = join(SRC_ROOT, 'human');
 const ADAPTER_ROOT = join(SRC_ROOT, 'llm-adapter');
+const PROVIDER_CATALOG_ADAPTER_ROOT = join(SRC_ROOT, 'provider-catalog');
 const LOOP_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop');
 const SESSION_LIFECYCLE_ADAPTER_ROOT = join(SRC_ROOT, 'session/agentLifecycle');
 const REMOTE_SERVER_ROOT = join(SRC_ROOT, 'remote/server');
@@ -162,6 +163,7 @@ export function checkSource(source, absFile) {
   const inHuman = isInside(HUMAN_ROOT, absFile);
   const inAdapter =
     isInside(ADAPTER_ROOT, absFile) ||
+    isInside(PROVIDER_CATALOG_ADAPTER_ROOT, absFile) ||
     isInside(LOOP_ADAPTER_ROOT, absFile) ||
     isInside(SESSION_LIFECYCLE_ADAPTER_ROOT, absFile);
 

@@ -23,7 +23,7 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';

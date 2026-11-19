@@ -34,7 +34,7 @@ import {
 } from '#/app/telemetry/telemetry';
 import { TelemetryService } from '#/app/telemetry/telemetryService';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
-import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
+import { IProviderService, type ProviderConfig } from '#/provider-catalog/provider/provider';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 
 import { stubLog } from '../../_base/log/stubs';

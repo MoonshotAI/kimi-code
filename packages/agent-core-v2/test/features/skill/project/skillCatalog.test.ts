@@ -20,7 +20,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { PluginReloadEvent } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { IProviderService } from '#/llm-adapter/provider/provider';
+import { IProviderService } from '#/provider-catalog/provider/provider';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';

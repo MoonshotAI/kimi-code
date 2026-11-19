@@ -211,23 +211,23 @@ import { WireService } from '#/wire/wireService';
 import { TurnPrompt } from '#/agent/loop/turnOps';
 import { UsageRecord } from '#/agent/usage/usageOps';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
-import { IModelService, type ModelsSection } from '#/llm-adapter/model/model';
+import { IModelService, type ModelsSection } from '#/provider-catalog/model/model';
 import {
   DEFAULT_MODEL_SECTION,
   DEFAULT_PROVIDER_SECTION,
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
-import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
-import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
-import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
+import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
+import { ModelCatalog } from '#/provider-catalog/model/catalog-service';
+import { IProviderCatalogRuntime } from '#/provider-catalog/model/catalog-runtime';
+import { IModelOAuthTokens } from '#/provider-catalog/model/model-oauth';
+import { IHostRequestHeaders } from '#/provider-catalog/model/host-request-headers';
 import {
   IProviderService,
   type ProviderConfig,
   type ProvidersSection,
-} from '#/llm-adapter/provider/provider';
+} from '#/provider-catalog/provider/provider';
 import type { ApprovalRequest, ApprovalResponse } from '#/agent/interaction/approval';
 import type { QuestionRequest, QuestionResult } from '#/agent/interaction/question';
 import {

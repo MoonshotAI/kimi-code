@@ -16,12 +16,12 @@ import {
 } from '#human/credentials/credentials';
 import type { LlmCredentialProvider, ModelCapability } from '@moonshot-ai/core/llm/request';
 import { createBedrockTokenProvider } from '@moonshot-ai/core/llm/builtin/provider/bedrock/credentials';
-import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
+import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
 import {
   IProtocolAdapterRegistry,
   type Protocol,
   type ProtocolProviderOptions,
-} from '../protocol/protocol';
+} from '#/llm-adapter/protocol/protocol';
 import { IProviderService } from '../provider/provider';
 import {
   getProviderDefinition,

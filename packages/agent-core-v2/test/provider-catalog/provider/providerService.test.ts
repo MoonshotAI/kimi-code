@@ -5,8 +5,8 @@ import {
   providersFromToml,
   providersToToml,
 } from '#/app/kosongConfig/configSection';
-import { ProviderService } from '#/llm-adapter/provider/provider-service';
-import { type ProviderConfig } from '#/llm-adapter/provider/provider';
+import { ProviderService } from '#/provider-catalog/provider/provider-service';
+import { type ProviderConfig } from '#/provider-catalog/provider/provider';
 
 describe('ProviderTypeSchema (free-form vendor identity)', () => {
   it('parses unregistered vendor names — resolve-time validation, not parse-time', () => {

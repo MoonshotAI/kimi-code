@@ -79,7 +79,7 @@ import {
   ISessionAgentProfileCatalog,
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { IModelService } from '#/llm-adapter/model/model';
+import { IModelService } from '#/provider-catalog/model/model';
 
 import { createTestAgent } from '../../harness';
 import { stubBootstrap } from '../../app/bootstrap/stubs';

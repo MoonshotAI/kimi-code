@@ -21,9 +21,9 @@ import {
   type ModelOverride,
   type ModelRecord,
   type ModelsSection,
-} from '#/llm-adapter/model/model';
-import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
-import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/llm-adapter/provider/provider';
+} from '#/provider-catalog/model/model';
+import type { ThinkingConfig } from '#/provider-catalog/model/thinking';
+import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/provider-catalog/provider/provider';
 import { ProtocolSchema } from '#/llm-adapter/protocol/protocol';
 
 export const PROVIDERS_SECTION = 'providers';

@@ -2,7 +2,7 @@ import { Service } from '#/_base/di/service';
 import { IntervalTimer } from '#/_base/utils/timer';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IModelService } from '#/llm-adapter/model/model';
+import { IModelService } from '#/provider-catalog/model/model';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,

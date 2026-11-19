@@ -22,7 +22,7 @@ import {
   type ReadMediaFileInput,
 } from '#/agent/tools/read-media-file/read-media-file';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
-import type { VideoUploader } from '#/llm-adapter/model/media';
+import type { VideoUploader } from '#/provider-catalog/model/media';
 import {
   MAX_IMAGE_DECODE_BYTES,
   setConfiguredReadImageByteBudget,
@@ -49,7 +49,7 @@ import {
 } from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
-import type { Model } from '#/llm-adapter/model/catalog';
+import type { Model } from '#/provider-catalog/model/catalog';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';

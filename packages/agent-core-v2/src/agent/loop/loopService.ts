@@ -25,8 +25,8 @@ import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadat
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
+import { IModelCatalog } from '#/provider-catalog/model/catalog';
+import { IProviderCatalogRuntime } from '#/provider-catalog/model/catalog-runtime';
 import { IProviderRequesterFactory, type ProviderRequesterFactory } from '#/provider-catalog/requester';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';

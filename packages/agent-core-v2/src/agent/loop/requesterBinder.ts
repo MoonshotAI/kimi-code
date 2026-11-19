@@ -8,11 +8,11 @@ import { Disposable } from '#/_base/di/lifecycle';
 import type { IConfigService } from '#/app/config/config';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { IAgentProfileService, ProfileBindingSnapshot } from '#/agent/profile/profile';
-import type { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
-import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
-import type { ModelOverrides } from '#/llm-adapter/model/model.types';
-import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
+import type { IModelCatalog } from '#/provider-catalog/model/catalog';
+import { IProviderCatalogRuntime } from '#/provider-catalog/model/catalog-runtime';
+import { resolveCompletionBudget } from '#/provider-catalog/model/completion-budget';
+import type { ModelOverrides } from '#/provider-catalog/model/model.types';
+import { getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
 import type { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import { LOOP_CONTROL_SECTION } from './configSection';
 import type {

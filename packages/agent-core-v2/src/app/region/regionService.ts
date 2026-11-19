@@ -9,7 +9,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { LifecycleScope } from '#/app/scopes';
-import { IProviderService } from '#/llm-adapter/provider/provider';
+import { IProviderService } from '#/provider-catalog/provider/provider';
 
 import { IRegionService } from './region';
 

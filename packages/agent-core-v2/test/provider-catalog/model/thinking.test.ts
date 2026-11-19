@@ -5,7 +5,7 @@ import {
   drivesThinkingThroughTraits,
   requiresStrictThinkingValidation,
   usesTraitDrivenThinking,
-} from '#/llm-adapter/model/thinking';
+} from '#/provider-catalog/model/thinking';
 import {
   declaredDefaultEffortForModel,
   defaultThinkingEffortForModel,

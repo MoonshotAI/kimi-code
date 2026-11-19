@@ -13,7 +13,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IRegionService } from '#/app/region/region';
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, PluginErrors } from '#/errors';
-import { IProviderService } from '#/llm-adapter/provider/provider';
+import { IProviderService } from '#/provider-catalog/provider/provider';
 
 import { PluginAvailabilityStore, pluginAvailabilitySourceKey } from './availability';
 import {

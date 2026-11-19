@@ -14,9 +14,9 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { type ModelsSection } from '#/llm-adapter/model/model';
-import { type ProviderConfig, type ProvidersSection } from '#/llm-adapter/provider/provider';
+import { IModelCatalog } from '#/provider-catalog/model/catalog';
+import { type ModelsSection } from '#/provider-catalog/model/model';
+import { type ProviderConfig, type ProvidersSection } from '#/provider-catalog/provider/provider';
 import { modelsDevProviderModels, resolveModelsDevImport } from './modelsDev';
 
 import {

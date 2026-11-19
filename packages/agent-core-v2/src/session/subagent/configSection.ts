@@ -11,14 +11,14 @@ import {
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
-import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
+import type { IModelCatalog, Model } from '#/provider-catalog/model/catalog';
 import {
   declaredDefaultEffortForModel,
   modelSupportsThinking,
   modelSupportsThinkingEffort,
   normalizeRequestedThinkingEffort,
 } from '@moonshot-ai/core/llm/thinking';
-import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
+import type { ThinkingConfig } from '#/provider-catalog/model/thinking';
 
 export const SUBAGENT_SECTION = 'subagent';
 export const SECONDARY_MODEL_SECTION = 'secondaryModel';

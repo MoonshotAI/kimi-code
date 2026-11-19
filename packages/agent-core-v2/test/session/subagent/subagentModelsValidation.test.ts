@@ -5,7 +5,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IConfigService } from '#/app/config/config';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
 import {
   SECONDARY_MODEL_SECTION,
   SUBAGENT_SECTION,

@@ -12,7 +12,7 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
 import type { ToolCall } from '#human/message';
 import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';

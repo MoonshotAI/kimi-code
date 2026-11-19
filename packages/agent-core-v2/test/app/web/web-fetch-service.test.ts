@@ -12,7 +12,7 @@ import {
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
-import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
+import { IProviderService, type ProviderConfig } from '#/provider-catalog/provider/provider';
 import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/app/web/providers/moonshot-fetch-url';
 import { IWebFetchService } from '#/app/web/web';

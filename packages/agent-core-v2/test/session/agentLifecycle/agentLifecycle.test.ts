@@ -42,7 +42,7 @@ import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeCo
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelCatalog } from '#/provider-catalog/model/catalog';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import type { ToolCall } from '#human/message';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';

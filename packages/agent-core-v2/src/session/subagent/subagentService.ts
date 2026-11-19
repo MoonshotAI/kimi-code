@@ -22,7 +22,7 @@ import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnviro
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import type { Environment } from '#/environment/environment';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';

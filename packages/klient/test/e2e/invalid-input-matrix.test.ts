@@ -17,7 +17,7 @@ import {
 
 import { TEST_CLIENT_IDENTITY } from '../helpers/engine.js';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
-import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
+import { IModelService } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
 
 import type { Klient } from '../../src/index.js';
 import type { AgentHandle } from '../../src/core/klient.js';

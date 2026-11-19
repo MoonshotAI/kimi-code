@@ -14,7 +14,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelCatalog } from '#/provider-catalog/model/catalog';
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 import {
   isToolActive as evaluateToolActive,

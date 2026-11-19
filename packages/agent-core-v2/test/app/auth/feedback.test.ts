@@ -11,8 +11,8 @@ import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import type { IOAuthService } from '#/app/auth/auth';
 import type { ISessionExportService } from '#/app/sessionExport/sessionExport';
-import type { IModelService, ModelRecord } from '#/llm-adapter/model/model';
-import type { IProviderService, ProviderConfig } from '#/llm-adapter/provider/provider';
+import type { IModelService, ModelRecord } from '#/provider-catalog/model/model';
+import type { IProviderService, ProviderConfig } from '#/provider-catalog/provider/provider';
 
 const SUBMIT = {
   content: 'test',

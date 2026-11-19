@@ -11,8 +11,8 @@ import {
   createLlmRequesterExecution,
   type LlmRequesterExecution,
 } from '@moonshot-ai/core/llm/policy/policy';
-import type { Model } from '#/llm-adapter/model/catalog';
-import { coreProviderRequesters, getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
+import type { Model } from '#/provider-catalog/model/catalog';
+import { coreProviderRequesters, getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';

@@ -186,9 +186,9 @@ export type { ConfigChangedEvent } from '#/app/config/configEvents';
 export * from '#/app/config/configService';
 export * from '#/app/config/configSectionContributions';
 import '#/app/kosongConfig/configSection';
-export * from '#/llm-adapter/provider/provider';
-export * from '#/llm-adapter/provider/provider-service';
-export * from '#/llm-adapter/provider/provider-definition';
+export * from '#/provider-catalog/provider/provider';
+export * from '#/provider-catalog/provider/provider-service';
+export * from '#/provider-catalog/provider/provider-definition';
 export * from '#/provider-catalog/requester';
 export * from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import '#/features/skill/catalog/configSection';
@@ -201,15 +201,15 @@ export * from '#/llm-adapter/protocol/errors';
 export * from '#/llm-adapter/protocol/protocol';
 export * from '#/llm-adapter/protocol/protocol-base';
 import '#/app/kosongConfig/envOverlay';
-export * from '#/llm-adapter/model/completion-budget';
-export * from '#/llm-adapter/model/host-request-headers';
-export * from '#/llm-adapter/model/model';
-export * from '#/llm-adapter/model/model.types';
-export * from '#/llm-adapter/model/model-service';
-export * from '#/llm-adapter/model/thinking';
-export * from '#/llm-adapter/model/catalog';
-export * from '#/llm-adapter/model/catalog-service';
-import '#/llm-adapter/model/errors';
+export * from '#/provider-catalog/model/completion-budget';
+export * from '#/provider-catalog/model/host-request-headers';
+export * from '#/provider-catalog/model/model';
+export * from '#/provider-catalog/model/model.types';
+export * from '#/provider-catalog/model/model-service';
+export * from '#/provider-catalog/model/thinking';
+export * from '#/provider-catalog/model/catalog';
+export * from '#/provider-catalog/model/catalog-service';
+import '#/provider-catalog/model/errors';
 export {
   MODEL_CATALOG_SECTION,
   ModelCatalogConfigSchema,
@@ -217,7 +217,7 @@ export {
 } from '#/app/kosongConfig/configSection';
 export * from '#/app/kosongConfig/kosongConfig';
 export * from '#/app/kosongConfig/kosongConfigService';
-export * from '#/llm-adapter/model/model-oauth';
+export * from '#/provider-catalog/model/model-oauth';
 export * from '#/app/kosongConfig/oauthTokenAdapter';
 export * from '#/app/kosongConfig/hostRequestHeadersAdapter';
 export * from '#/app/kosongConfig/discovery';

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { modelsFromToml, modelsToToml } from '#/app/kosongConfig/configSection';
-import { type ModelRecord } from '#/llm-adapter/model/model';
-import { ModelService } from '#/llm-adapter/model/model-service';
+import { type ModelRecord } from '#/provider-catalog/model/model';
+import { ModelService } from '#/provider-catalog/model/model-service';
 
 describe('models TOML transforms', () => {
   it('converts snake_case entries to camelCase and back', () => {

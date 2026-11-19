@@ -1,4 +1,4 @@
-import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
+import { IProviderService, type ProviderConfig } from '#/provider-catalog/provider/provider';
 
 export function stubProviderService(
   providers: Readonly<Record<string, ProviderConfig>> = {},

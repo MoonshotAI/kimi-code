@@ -23,3 +23,4 @@ export function resolveMaxOutputTokens(args: {
   const budget = resolveCompletionBudget(args);
   return budget === undefined ? undefined : Math.max(1, budget);
 }
+

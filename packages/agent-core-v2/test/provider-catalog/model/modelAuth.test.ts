@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { ConfigErrors } from '#/app/config/errors';
-import type { ProviderConfig } from '#/llm-adapter/provider/provider';
-import type { ModelRecord } from '#/llm-adapter/model/model';
+import type { ProviderConfig } from '#/provider-catalog/provider/provider';
+import type { ModelRecord } from '#/provider-catalog/model/model';
 import {
   deriveProviderId,
   effectiveModelConfig,
@@ -10,7 +10,7 @@ import {
   resolveModelAuthMaterial,
   resolveModelForReady,
   resolveModelProtocol,
-} from '#/llm-adapter/model/model-auth';
+} from '#/provider-catalog/model/model-auth';
 
 function authMaterial(args: {
   model: ModelRecord;

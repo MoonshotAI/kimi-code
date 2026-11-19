@@ -9,7 +9,7 @@ import {
   type MediaPosition,
 } from '@moonshot-ai/core/llm/protocol/rules/media';
 import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
-import type { Model } from '#/llm-adapter/model/catalog';
+import type { Model } from '#/provider-catalog/model/catalog';
 import { contentsOf } from '@moonshot-ai/core/llm/requester';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { ImageUploadUnsupportedError, VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';

@@ -12,12 +12,12 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
 import type { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
+import { IHostRequestHeaders } from '#/provider-catalog/model/host-request-headers';
 import {
   IProviderService,
   type OAuthRef,
   type ProviderConfig,
-} from '#/llm-adapter/provider/provider';
+} from '#/provider-catalog/provider/provider';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import {
   IAgentLifecycleService,

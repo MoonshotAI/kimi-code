@@ -15,17 +15,17 @@ import '#/app/kosongConfig/discoveryService';
 import { MODEL_CATALOG_SECTION } from '#/app/kosongConfig/configSection';
 import { IKosongConfigService } from '#/app/kosongConfig/kosongConfig';
 import '#/app/kosongConfig/kosongConfigService';
-import '#/llm-adapter/model/errors';
+import '#/provider-catalog/model/errors';
 import {
   IModelService,
   type ModelRecord,
-} from '#/llm-adapter/model/model';
-import '#/llm-adapter/model/model-service';
+} from '#/provider-catalog/model/model';
+import '#/provider-catalog/model/model-service';
 import {
   IProviderService,
   type ProviderConfig,
-} from '#/llm-adapter/provider/provider';
-import '#/llm-adapter/provider/provider-service';
+} from '#/provider-catalog/provider/provider';
+import '#/provider-catalog/provider/provider-service';
 
 import { StubConfigService, stubOAuthService, stubTokenProvider } from '../../stubs';
 import { stubBootstrap } from '../bootstrap/stubs';

@@ -10,7 +10,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import type { ContextInjectionProvider, ContextInjectionResult } from '#/features/reminder/types';

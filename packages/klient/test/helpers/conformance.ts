@@ -13,8 +13,8 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
+import { IModelService } from '@moonshot-ai/agent-core-v2/provider-catalog/model/model';
 import { IProviderRequesterFactory } from '@moonshot-ai/agent-core-v2/provider-catalog/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { deferred } from '@moonshot-ai/testkit/fixtures';

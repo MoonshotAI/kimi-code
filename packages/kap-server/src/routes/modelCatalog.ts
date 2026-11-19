@@ -14,7 +14,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { reconcileProviderCredentialUpdate } from '@moonshot-ai/kimi-code-oauth/provider-credential';
-import { setDefaultModelResponseSchema } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { setDefaultModelResponseSchema } from '@moonshot-ai/agent-core-v2/provider-catalog/model/catalog';
 import { refreshProviderModelsResponseSchema } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import {
   DEFAULT_MODEL_SECTION,

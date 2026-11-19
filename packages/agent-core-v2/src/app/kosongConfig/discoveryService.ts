@@ -15,16 +15,16 @@ import { AuthErrors } from '#/app/auth/errors';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
-import { ModelCatalogErrors } from '#/llm-adapter/model/errors';
-import { type ModelRecord } from '#/llm-adapter/model/model';
-import { effectiveModelConfig } from '#/llm-adapter/model/model-auth';
+import { ModelCatalogErrors } from '#/provider-catalog/model/errors';
+import { type ModelRecord } from '#/provider-catalog/model/model';
+import { effectiveModelConfig } from '#/provider-catalog/model/model-auth';
 import {
   IProviderService,
   type ModelSource,
   type OAuthRef,
   type ProviderConfig,
-} from '#/llm-adapter/provider/provider';
-import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
+} from '#/provider-catalog/provider/provider';
+import { getProviderDefinition } from '#/provider-catalog/provider/provider-definition';
 
 import {
   DEFAULT_MODEL_SECTION,

@@ -7,8 +7,8 @@ import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { type ConfigSectionChangedEvent, IConfigService } from '#/app/config/config';
 import { describeUnknownError } from '#/app/config/configPure';
 import { deepEqual } from '#/app/config/sectionDiff';
-import { IModelService, type ModelsSection } from '#/llm-adapter/model/model';
-import { IProviderService, type ProvidersSection } from '#/llm-adapter/provider/provider';
+import { IModelService, type ModelsSection } from '#/provider-catalog/model/model';
+import { IProviderService, type ProvidersSection } from '#/provider-catalog/provider/provider';
 
 import { IKosongConfigService } from './kosongConfig';
 import {

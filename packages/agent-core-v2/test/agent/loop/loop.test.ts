@@ -49,9 +49,9 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { IProviderRequesterFactory } from '#/provider-catalog/requester';
-import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
+import { IProviderCatalogRuntime } from '#/provider-catalog/model/catalog-runtime';
 import { IConfigService } from '#/app/config/config';
-import type { ProviderConfig } from '#/llm-adapter/provider/provider';
+import type { ProviderConfig } from '#/provider-catalog/provider/provider';
 
 import {
   agentService,
