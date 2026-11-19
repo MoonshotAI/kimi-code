@@ -56,6 +56,31 @@ kapTest('reports KAP diagnostics for a network failure', async ({ kap }) => {
   await requestError();
 });
 
+it.each(['first', 'second'] as const)('removes the %s installation and retains the other host permissions', async (remove) => {
+  const shared = 'shared.example.test';
+  const guards = {
+    first: installNetworkGuard({ allowHosts: ['first.example.test', shared, shared.toUpperCase()] }),
+    second: installNetworkGuard({ allowHosts: ['second.example.test', shared.toUpperCase()] }),
+  };
+  const keep = remove === 'first' ? 'second' : 'first';
+  const forwarded = { message: 'lookup disabled in this test' };
+  try {
+    for (const host of ['first.example.test', 'second.example.test', shared]) {
+      await expect(requestError(host)).resolves.toMatchObject(forwarded);
+    }
+    guards[remove].uninstall();
+    guards[remove].uninstall();
+    await expect(requestError(`${remove}.example.test`)).resolves.toMatchObject({ code: 'ECONNREFUSED' });
+    await expect(requestError(`${keep}.example.test`)).resolves.toMatchObject(forwarded);
+    await expect(requestError(shared)).resolves.toMatchObject(forwarded);
+    guards[keep].uninstall();
+    await expect(requestError(shared)).resolves.toMatchObject({ code: 'ECONNREFUSED' });
+  } finally {
+    guards.first.uninstall();
+    guards.second.uninstall();
+  }
+});
+
 it('starts the next test with no violations', () => {
   const nested = installNetworkGuard();
   try {

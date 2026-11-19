@@ -275,6 +275,8 @@ describe('network guard', () => {
       { status: 'failed', failureMessages: [violation] },
       { status: 'failed', failureMessages: [expect.stringContaining('setup.example.test:443\n- teardown.example.test:443')] },
       { status: 'failed', failureMessages: [violation] },
+      { status: 'failed', failureMessages: [expect.stringContaining('first.example.test:443\n- shared.example.test:443')] },
+      { status: 'failed', failureMessages: [expect.stringContaining('second.example.test:443\n- shared.example.test:443')] },
       { status: 'passed' },
     ]);
     expect(stderr).toContain('reports KAP diagnostics for a network failure\ntestkit fake model state:');

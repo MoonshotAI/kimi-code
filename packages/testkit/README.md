@@ -52,7 +52,7 @@ Define `test` in the test file itself with `base.extend(...)`. The repository's 
 
 The `model` fixture calls `model.verify()` after the test and prints a request summary on failure. The `kap` fixture runs verification before shutdown so an unreleased hold stays visible. It then stops the server and removes the temporary home.
 
-The network guard allows local TCP connections. It checks both numeric ports and port strings accepted by Node, and passes Unix socket paths and Windows named pipes through to Node. For IPv4, use a valid address in the loopback range (`127.0.0.0/8`).
+The network guard allows local TCP connections. It checks both numeric ports and port strings accepted by Node, and passes Unix socket paths and Windows named pipes through to Node. For IPv4, use a valid address in the loopback range (`127.0.0.0/8`). When guards overlap, their `allowHosts` lists combine. Uninstalling one guard removes its list.
 
 Failed KAP tests also print summaries of the most recent 32 WebSocket frames and 32 server log entries. Pass the server package’s `createServerLogger` to collect info-level logs in memory for that test. The scenario suite does this by default. Frames show their type, IDs and error code. Logs show their level, message and request ID. The fixture respects an explicit `serverOptions.logger` or `serverOptions.logLevel` and reports when the diagnostic log stream is unavailable.
 

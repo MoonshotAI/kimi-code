@@ -33,6 +33,7 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 - **被测代码接收环境参数时**，传入 `testEnv({ set: { HOME: testHome.home } })`。它返回新的对象，过滤继承来的 `KIMI_*`、已列出的厂商凭据和代理变量，再设置测试默认值。要保留某个原值用 `keep`，要模拟变量缺失用 `set: { MY_OPTION: undefined }`。[环境夹具](../src/fixtures/env.ts)
 - **被测代码直接读取 `process.env` 时**，用 `const restore = isolateProcessEnv(...)` 设置临时环境，并在 `finally` 调用 `restore()`。它修改整个进程，同一 worker 内使用这项夹具的测试应顺序运行。[环境恢复用例](../test/fixtures.test.ts)
 - **要发现意外的联网请求**，可以在 Vitest 的 `setupFiles` 中注册 `useNetworkGuard()`。testkit 和 KAP 场景项目已经启用它。其他包若需要相同行为，在自己的 setup 文件中从 `@moonshot-ai/testkit/vitest` 导入并调用它。守卫检查当前 Node 进程的 TCP 连接目标，默认允许本机回环连接。端口可以是数字或 Node 接受的端口字符串，Unix socket 路径和 Windows 命名管道交给 Node 处理。IPv4 目标须是 `127.0.0.0/8` 内的合法地址字面量。即使用例捕获了连接错误，结束时仍会报告违规的主机和端口。它的作用域不包括独立子进程。[场景 setup](../../../tests/scenarios/support/setup.ts) · [守卫验收](../test-fixtures/test/network-guard.test.ts)
+- **临时放行指定主机**时，从 `@moonshot-ai/testkit/fixtures` 调用 `installNetworkGuard({ allowHosts })`，并在 `finally` 里调用返回对象的 `uninstall()`。多个守卫允许同一主机时，卸载最后一个允许该主机的守卫才会撤销这项许可。
 
 ## 等待明确的事件
 

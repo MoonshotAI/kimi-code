@@ -17,17 +17,15 @@ type Connect = (this: Socket, ...args: unknown[]) => Socket;
 interface InstalledGuard {
   readonly original: Connect;
   readonly violations: string[];
-  readonly allowHosts: Set<string>;
-  users: number;
+  readonly allowLists: ReadonlySet<string>[];
 }
 
 let installed: InstalledGuard | undefined;
 
 export function installNetworkGuard(options: NetworkGuardOptions = {}): NetworkGuard {
   const guard = installed ?? install();
-  for (const host of options.allowHosts ?? []) guard.allowHosts.add(host.toLowerCase());
-  guard.users += 1;
-  let active = true;
+  const allowHosts = new Set(options.allowHosts?.map((host) => host.toLowerCase()));
+  guard.allowLists.push(allowHosts);
   return {
     violations: () => [...guard.violations],
     assertNoViolations: () => {
@@ -41,10 +39,10 @@ export function installNetworkGuard(options: NetworkGuardOptions = {}): NetworkG
       );
     },
     uninstall: () => {
-      if (!active) return;
-      active = false;
-      guard.users -= 1;
-      if (guard.users > 0) return;
+      const index = guard.allowLists.indexOf(allowHosts);
+      if (index < 0) return;
+      guard.allowLists.splice(index, 1);
+      if (guard.allowLists.length > 0) return;
       Socket.prototype.connect = guard.original as typeof Socket.prototype.connect;
       installed = undefined;
     },
@@ -54,10 +52,10 @@ export function installNetworkGuard(options: NetworkGuardOptions = {}): NetworkG
 function install(): InstalledGuard {
   const descriptor = Object.getOwnPropertyDescriptor(Socket.prototype, 'connect');
   const original = descriptor?.value as Connect;
-  const guard: InstalledGuard = { original, violations: [], allowHosts: new Set(), users: 0 };
+  const guard: InstalledGuard = { original, violations: [], allowLists: [] };
   const patched: Connect = function guardedConnect(this: Socket, ...args: unknown[]): Socket {
     const target = tcpTargetOf(args);
-    if (target === undefined || isLoopback(target.host) || guard.allowHosts.has(target.host.toLowerCase())) {
+    if (target === undefined || isLoopback(target.host) || guard.allowLists.some((hosts) => hosts.has(target.host.toLowerCase()))) {
       return Reflect.apply(original, this, args) as Socket;
     }
     const description = `${target.host}:${target.port ?? '?'}`;
