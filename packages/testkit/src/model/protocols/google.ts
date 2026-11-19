@@ -128,8 +128,10 @@ function statusOf(status: number): string {
 
 function parseRequest(body: unknown, path: string): RequestView {
   const record = asRecord(body);
+  const contents = asArray(record['contents']);
+  const callIds = new GoogleToolCallIds(contents);
   const messages: ViewMessage[] = [];
-  for (const raw of asArray(record['contents'])) {
+  for (const raw of contents) {
     const content = asRecord(raw);
     const role = content['role'] === 'model' ? 'assistant' : 'user';
     const wireParts = asArray(content['parts']);
@@ -141,7 +143,7 @@ function parseRequest(body: unknown, path: string): RequestView {
       if (part['functionCall'] !== undefined) {
         const functionCall = asRecord(part['functionCall']);
         const name = stringOf(functionCall['name']);
-        calls.push({ id: optionalString(functionCall['id']) ?? name, name, arguments: JSON.stringify(functionCall['args'] ?? {}) });
+        calls.push({ id: callIds.forCall(name, functionCall['id']), name, arguments: JSON.stringify(functionCall['args'] ?? {}) });
       } else if (part['functionResponse'] !== undefined) {
         if (role === 'user' && parts.length > 0) {
           messages.push({ role, text: textOfParts(parts), parts, calls: [] });
@@ -150,7 +152,7 @@ function parseRequest(body: unknown, path: string): RequestView {
         const response = asRecord(part['functionResponse']);
         const name = stringOf(response['name']);
         const text = JSON.stringify(response['response'] ?? {});
-        messages.push({ role: 'tool', text, parts: [{ type: 'text', text }], calls: [], callId: optionalString(response['id']) ?? name });
+        messages.push({ role: 'tool', text, parts: [{ type: 'text', text }], calls: [], callId: callIds.forResult(name, response['id']) });
       } else if (part['thought'] === true) {
         reasoning.push(stringOf(part['text']));
       } else {
@@ -181,6 +183,45 @@ function parseRequest(body: unknown, path: string): RequestView {
     ),
     messages,
   };
+}
+
+class GoogleToolCallIds {
+  private readonly used = new Set<string>();
+  private readonly pendingByName = new Map<string, string[]>();
+  private sequence = 0;
+
+  constructor(contents: readonly unknown[]) {
+    for (const content of contents) {
+      for (const rawPart of asArray(asRecord(content)['parts'])) {
+        const part = asRecord(rawPart);
+        const id = asRecord(part['functionCall'] ?? part['functionResponse'])['id'];
+        if (typeof id === 'string') this.used.add(id);
+      }
+    }
+  }
+
+  forCall(name: string, wireId: unknown): string {
+    if (typeof wireId === 'string') return wireId;
+    const id = this.allocate(name);
+    const pending = this.pendingByName.get(name) ?? [];
+    pending.push(id);
+    this.pendingByName.set(name, pending);
+    return id;
+  }
+
+  forResult(name: string, wireId: unknown): string {
+    return optionalString(wireId) ?? this.pendingByName.get(name)?.shift() ?? this.allocate(name);
+  }
+
+  private allocate(name: string): string {
+    let id = name;
+    while (this.used.has(id)) {
+      this.sequence += 1;
+      id = `${name}#${this.sequence}`;
+    }
+    this.used.add(id);
+    return id;
+  }
 }
 
 function viewPartOf(part: Record<string, unknown>): ViewPart {

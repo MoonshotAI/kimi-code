@@ -65,6 +65,8 @@ test('reads a reply from the side lane', async ({ model }) => {
 
 ## 读懂严格校验的失败
 
+在 Google 请求历史中，`functionCall` 和 `functionResponse` 可以省略 ID。两个同名调用都省略 ID 时，按它们出现的顺序配对无 ID 的结果。在 `request.view.messages` 中分别读取每条调用的 `id` 和结果的 `callId` 来断言配对关系。协议里显式给出的 ID 会原样保留，多出的结果或缺失的结果会被 `verify()` 报出。
+
 `model.problems()` 返回处理请求时已记录的问题。`verify()` 还会检查所有通道的剩余步骤和仍在等待处置的命名挂起点。手动用 `createFakeModel()` 时，在断言后调用 `verify()`，并用 `finally` 执行 `await model.close()`。有意发送的 `httpError(503)` 可以和成功通过的 `verify()` 同时出现。用例仍需断言客户端如何处理了错误。[校验实现](../src/model/fake-model.ts) · [未放行挂起点的场景](../../../tests/scenarios/verification.test.ts)
 
 | 看到的现象 | 接下来检查什么 |

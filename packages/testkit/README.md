@@ -81,6 +81,8 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 
 Tool calls get deterministic ids, `call_<requestIndex>_<callIndex>`; `model.callId(r, c)` returns them.
 
+When inspecting Google request history, use the IDs in `request.view.messages` to match results to calls. The view preserves explicit wire IDs. Each call with an omitted ID gets its own ID, and results with omitted IDs match pending calls of the same name in order.
+
 The tool builders write calls in the wire shape of the engine's tools: `bash`, `read`, `write`, `edit`, `glob`, `grep`, `agent`, `waitFor`, `taskOutput`, `taskStop`, `todoList`, `askUserQuestion`, `exitPlanMode`, `createGoal`, `updateGoal` and `skill`. Their argument types mirror the engine's schemas, and `tests/scenarios/tool-builders.test.ts` checks every argument against the schemas a real engine offers.
 
 ### Lanes

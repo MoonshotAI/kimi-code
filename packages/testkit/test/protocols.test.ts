@@ -265,6 +265,67 @@ describe('google genai', () => {
     expect(model.request(0).texts('user')).toEqual(['run', 'before', 'between', 'after']);
   });
 
+  describe('parallel Google function calls of the same name', () => {
+    type IDs = (string | undefined)[];
+
+    async function sendHistory(model: FakeModel, ...groups: { calls: IDs; results: IDs }[]): Promise<void> {
+      const response = await model.fetch('http://testkit.invalid/v1beta/models/testkit-model:generateContent', {
+        method: 'POST',
+        body: JSON.stringify({
+          tools: GOOGLE_TOOLS,
+          contents: [
+            { role: 'user', parts: [{ text: 'run both' }] },
+            ...groups.flatMap(({ calls, results }) => [
+              { role: 'model', parts: calls.map((id, index) => ({ functionCall: { id, name: 'Bash', args: { command: `echo ${index}` } } })) },
+              { role: 'user', parts: results.map((id, index) => ({ functionResponse: { id, name: 'Bash', response: { output: String(index) } } })) },
+            ]),
+          ],
+        }),
+      });
+      expect(response.status).toBe(200);
+    }
+
+    it('pairs each ID-less result in call order and preserves explicit IDs throughout the history', async () => {
+      const model = fakeModel();
+      model.script(say('done'));
+      const anonymousPair = { calls: [undefined, undefined], results: [undefined, undefined] };
+      await sendHistory(model, anonymousPair);
+      model.verify();
+      const previousCalls = model.request(0).view.messages.flatMap((message) => message.calls);
+      const reservedId = previousCalls.find((invocation) => invocation.id !== 'Bash')?.id;
+      expect(reservedId).toBeTypeOf('string');
+
+      model.script(say('done'));
+      await sendHistory(model, anonymousPair, {
+        calls: [undefined, 'Bash', reservedId],
+        results: [reservedId, 'Bash', undefined],
+      });
+      model.verify();
+      const messages = model.request(1).view.messages;
+      const ids = messages.flatMap((message) => message.calls.map((invocation) => invocation.id));
+      expect(ids).toHaveLength(5);
+      expect(new Set(ids).size).toBe(5);
+      expect(ids.slice(3)).toEqual(['Bash', reservedId]);
+      expect(messages.filter((message) => message.role === 'tool').map((message) => message.callId)).toEqual([
+        ids[0], ids[1], reservedId, 'Bash', ids[2],
+      ]);
+    });
+
+    it.each([
+      { example: 'a missing ID-less result', calls: [undefined, undefined], results: [undefined], problems: [/tool call .+ has no result/] },
+      { example: 'an extra ID-less result', calls: [undefined, undefined], results: [undefined, undefined, undefined], problems: [/messages\[4\].*answers unknown tool call/] },
+      { example: 'a repeated explicit result ID', calls: ['first', 'second'], results: ['first', 'first'], problems: [/answers unknown tool call first/, /tool call second has no result/] },
+      { example: 'an ID-less result for an explicit call', calls: [undefined, 'Bash'], results: [undefined, undefined], problems: [/answers unknown tool call/, /tool call Bash has no result/] },
+      { example: 'an explicit result for an ID-less call', calls: ['Bash', undefined], results: ['Bash', 'Bash'], problems: [/answers unknown tool call Bash/, /tool call .+ has no result/] },
+    ])('reports $example', async ({ calls, results, problems }) => {
+      const model = fakeModel();
+      model.script(say('done'));
+      await sendHistory(model, { calls, results });
+      expect(() => model.verify()).toThrow();
+      expect(model.problems()).toEqual(problems.map((problem) => expect.stringMatching(problem)));
+    });
+  });
+
   it('ends a stream with an error chunk the SDK raises as an API error', async () => {
     const model = fakeModel();
     model.script(streamError(say('partial'), { status: 503, message: 'overloaded' }), httpError(429, { message: 'slow down', retryAfterSeconds: 2 }));
