@@ -325,6 +325,14 @@ export class DaemonHttpClient {
     return this.request<T>('POST', path, body, undefined, opts);
   }
 
+  async postWithDetails<T>(
+    path: string,
+    body?: unknown,
+    opts?: DaemonRequestOptions,
+  ): Promise<{ data: T; details: unknown }> {
+    return this.requestEnvelope<T>('POST', path, body, undefined, opts);
+  }
+
   async postZip(
     path: string,
     body: unknown,
@@ -735,6 +743,16 @@ export class DaemonHttpClient {
     query?: RestQuery,
     opts: DaemonRequestOptions = {},
   ): Promise<T> {
+    return (await this.requestEnvelope<T>(method, path, body, query, opts)).data;
+  }
+
+  private async requestEnvelope<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    query?: RestQuery,
+    opts: DaemonRequestOptions = {},
+  ): Promise<{ data: T; details: unknown }> {
     const allowCodes = opts.allowCodes ?? [];
     const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
     const callerSignal = opts.signal;
@@ -873,7 +891,7 @@ export class DaemonHttpClient {
         });
       }
 
-      return envelope.data as T;
+      return { data: envelope.data as T, details: envelope.details };
     } finally {
       release?.();
     }

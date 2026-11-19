@@ -27,6 +27,8 @@ export {
   DaemonNetworkError,
   FileTooLargeError,
   FS_ALREADY_EXISTS_CODE,
+  FS_DIRECTORY_NOT_FOUND_CODE,
+  FS_GIT_UNAVAILABLE_CODE,
   FS_PATH_NOT_FOUND_CODE,
   FS_PERMISSION_DENIED_CODE,
   FS_VALIDATION_FAILED_CODE,
@@ -44,5 +46,10 @@ export {
   SESSION_STALE_CODE,
   sessionOccupiedHolderClient,
   sessionOccupiedHolderDisplayName,
+  WORKTREE_NOT_FOUND_CODE,
+  WORKTREE_REMOVE_FAILED_CODE,
+  WORKTREE_STATE_INVALID_CODE,
+  WORKTREE_UNSUPPORTED_CODE,
+  worktreeRemoveFailure,
 } from './errors';
 export * from './types';

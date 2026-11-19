@@ -24,9 +24,26 @@ import type {
   AppSessionRatingReport,
   AppSessionRatingOffer,
   AppSessionUsage,
+  AppSessionWorktree,
   AppWorkspace,
+  AppWorktree,
+  AppWorktreeRisk,
+  AppWorktreeSessionRef,
+  AppWorktreeSetupRequest,
   ApprovalResponse,
+  DeleteSessionResult,
+  GitStatusBatchResult,
+  GitStatusEntry,
   PromptSubmission,
+  PullRequestBatchResult,
+  PullRequestResult,
+  SessionWorktreeAction,
+  SessionWorktreeRetryInput,
+  WorkspaceGitBranches,
+  WorktreeInspection,
+  WorktreeList,
+  WorktreeLookup,
+  WorktreeSetupScript,
   QuestionAnswer,
   QuestionItem,
   QuestionOption,
@@ -62,7 +79,23 @@ import type {
   WireSession,
   WireSessionRatingReport,
   WireSessionRatingResult,
+  WireSessionWorktree,
   WireWorkspace,
+  WireWorkspaceGitBranches,
+  WireWorktree,
+  WireWorktreeRisk,
+  WireWorktreeSessionRef,
+  WireWorktreeSetupRequest,
+  WireDeleteSessionResponse,
+  WireGitStatusBatchResult,
+  WireGitStatusResult,
+  WireInspectWorktreesResponse,
+  WireListWorktreesResponse,
+  WireLookupWorktreeResponse,
+  WirePullRequest,
+  WirePullRequestBatchResult,
+  WirePullRequestLookupStatus,
+  WireWorktreeSetupScript,
   WireEvent,
   WireHost,
   WireConfig,
@@ -112,7 +145,219 @@ export function toAppSession(wire: WireSession): AppSession {
         : undefined,
     pullRequest: wire.git === undefined ? undefined : (wire.git.pull_request ?? null),
     hostId: wire.host_id,
+    ...(wire.worktree === undefined ? {} : { worktree: toAppSessionWorktree(wire.worktree) }),
   };
+}
+
+export function toAppWorktreeSetupRequest(wire: WireWorktreeSetupRequest): AppWorktreeSetupRequest {
+  return {
+    sourceBranch: wire.source_branch,
+    includeLocalChanges: wire.include_local_changes,
+    useRemote: wire.use_remote,
+    runSetupScript: wire.run_setup_script,
+  };
+}
+
+export function toWireWorktreeSetupRequest(app: AppWorktreeSetupRequest): WireWorktreeSetupRequest {
+  const wire: WireWorktreeSetupRequest = { source_branch: app.sourceBranch };
+  if (app.includeLocalChanges !== undefined) wire.include_local_changes = app.includeLocalChanges;
+  if (app.useRemote !== undefined) wire.use_remote = app.useRemote;
+  if (app.runSetupScript !== undefined) wire.run_setup_script = app.runSetupScript;
+  return wire;
+}
+
+export function toAppSessionWorktree(wire: WireSessionWorktree): AppSessionWorktree {
+  const setup = wire.setup;
+  return {
+    path: wire.path,
+    branch: wire.branch,
+    base: wire.base === undefined ? undefined : { ref: wire.base.ref, remote: wire.base.remote, commit: wire.base.commit },
+    includedLocalChanges: wire.included_local_changes,
+    missing: wire.missing,
+    branchMissing: wire.branch_missing,
+    setup: {
+      status: setup.status,
+      purpose: setup.purpose,
+      request: toAppWorktreeSetupRequest(setup.request),
+      steps: setup.steps.map((step) => ({
+        kind: step.kind,
+        state: step.state,
+        ref: step.ref,
+        command: step.command,
+        output: step.output,
+        timedOut: step.timed_out,
+      })),
+      commandsRan: setup.commands_ran,
+      startedAt: setup.started_at,
+      endedAt: setup.ended_at,
+      stoppedStep: setup.stopped_step,
+      failure:
+        setup.failure === undefined
+          ? undefined
+          : {
+              kind: setup.failure.kind,
+              remoteRef: setup.failure.remote_ref,
+              conflictFiles: setup.failure.conflict_files,
+              exitCode: setup.failure.exit_code,
+              timeoutSeconds: setup.failure.timeout_seconds,
+            },
+      script: setup.script,
+      scriptContent: setup.script_content,
+    },
+  };
+}
+
+const SESSION_WORKTREE_ACTION_SEGMENTS: Record<SessionWorktreeAction, string> = {
+  retry: 'retry',
+  cancel: 'cancel',
+  useLocal: 'use_local',
+  skipScript: 'skip_script',
+  runScript: 'run_script',
+  recreate: 'recreate',
+};
+
+export function sessionWorktreeActionSegment(action: SessionWorktreeAction): string {
+  return SESSION_WORKTREE_ACTION_SEGMENTS[action];
+}
+
+export function toWireSessionWorktreeRetry(input: SessionWorktreeRetryInput | undefined): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (input?.includeLocalChanges !== undefined) body['include_local_changes'] = input.includeLocalChanges;
+  if (input?.useRemote !== undefined) body['use_remote'] = input.useRemote;
+  return body;
+}
+
+function toAppWorktreeSessionRef(wire: WireWorktreeSessionRef): AppWorktreeSessionRef {
+  return { id: wire.id, title: wire.title, archived: wire.archived, busy: wire.busy };
+}
+
+export function toAppWorktree(wire: WireWorktree): AppWorktree {
+  return {
+    path: wire.path,
+    name: wire.name,
+    repoRoot: wire.repo_root,
+    workspaceId: wire.workspace_id,
+    workspaceName: wire.workspace_name,
+    branch: wire.branch,
+    origin: wire.origin,
+    createdAt: wire.created_at,
+    sizeBytes: wire.size_bytes,
+    sessions: (wire.sessions ?? []).map(toAppWorktreeSessionRef),
+  };
+}
+
+export function toWorktreeList(wire: WireListWorktreesResponse): WorktreeList {
+  return {
+    items: (wire.items ?? []).map(toAppWorktree),
+    totalSizeBytes: wire.total_size_bytes,
+  };
+}
+
+export function toAppWorktreeRisk(wire: WireWorktreeRisk): AppWorktreeRisk {
+  return {
+    path: wire.path,
+    branch: wire.branch,
+    uncommittedFiles: wire.uncommitted_files,
+    unpushedCommits: wire.unpushed_commits,
+    sessions: (wire.sessions ?? []).map(toAppWorktreeSessionRef),
+  };
+}
+
+export function toWorktreeInspection(wire: WireInspectWorktreesResponse): WorktreeInspection {
+  return {
+    items: (wire.items ?? []).map(toAppWorktreeRisk),
+    errors: wire.errors ?? {},
+  };
+}
+
+export function toWorktreeLookup(wire: WireLookupWorktreeResponse): WorktreeLookup | null {
+  const found = wire.worktree;
+  if (found === null || found === undefined) return null;
+  return {
+    repoRoot: found.repo_root,
+    branch: found.branch,
+    workspace: found.workspace === undefined ? undefined : toAppWorkspace(found.workspace),
+    sessionCount: found.session_count,
+  };
+}
+
+export function toWorkspaceGitBranches(wire: WireWorkspaceGitBranches): WorkspaceGitBranches {
+  return {
+    isRepo: wire.is_repo,
+    headBranch: wire.head_branch,
+    dirty: wire.dirty,
+    remotes: wire.remotes,
+    branches: (wire.branches ?? []).map((branch) => ({
+      name: branch.name,
+      committedAt: branch.committed_at,
+      remoteRef: branch.remote_ref,
+      remote: branch.remote,
+      remoteSource: branch.remote_source,
+    })),
+  };
+}
+
+export function toDeleteSessionResult(wire: WireDeleteSessionResponse): DeleteSessionResult {
+  if (wire.worktree === undefined) return { deleted: true };
+  return {
+    deleted: true,
+    worktree: {
+      outcome: wire.worktree.outcome,
+      branchDeleted: wire.worktree.branch_deleted,
+      otherSessions: wire.worktree.other_sessions,
+      output: wire.worktree.output,
+    },
+  };
+}
+
+export function toGitStatusEntry(wire: WireGitStatusResult): GitStatusEntry {
+  const entry: GitStatusEntry = {
+    branch: wire.branch,
+    ahead: wire.ahead,
+    behind: wire.behind,
+    entries: wire.entries,
+    additions: wire.additions,
+    deletions: wire.deletions,
+    pullRequest: wire.pullRequest ?? null,
+  };
+  if (wire.upstream !== undefined) entry.upstream = wire.upstream;
+  if (wire.head !== undefined) entry.head = wire.head;
+  if (wire.detached !== undefined) entry.detached = wire.detached;
+  if (wire.stats_error !== undefined) entry.statsError = wire.stats_error;
+  if (wire.pull_request_status !== undefined) entry.pullRequestStatus = wire.pull_request_status;
+  if (wire.pull_request_error !== undefined) entry.pullRequestError = wire.pull_request_error;
+  return entry;
+}
+
+export function toGitStatusBatchResult(wire: WireGitStatusBatchResult): GitStatusBatchResult {
+  const results: GitStatusBatchResult['results'] = {};
+  for (const [root, value] of Object.entries(wire.results ?? {})) results[root] = toGitStatusEntry(value);
+  return { results, errors: wire.errors ?? {} };
+}
+
+export function toPullRequestResult(data: WirePullRequest | null | undefined, details: unknown): PullRequestResult {
+  const result: PullRequestResult = {
+    pullRequest: data === null || data === undefined ? null : { number: data.number, state: data.state, url: data.url },
+  };
+  const lookup = (typeof details === 'object' && details !== null ? details : {}) as Partial<WirePullRequestLookupStatus>;
+  if (lookup.pull_request_status !== undefined) result.status = lookup.pull_request_status;
+  if (lookup.pull_request_error !== undefined) result.error = lookup.pull_request_error;
+  return result;
+}
+
+export function toPullRequestBatchResult(wire: WirePullRequestBatchResult): PullRequestBatchResult {
+  const statuses: PullRequestBatchResult['statuses'] = {};
+  for (const [root, lookup] of Object.entries(wire.statuses ?? {})) {
+    statuses[root] = { status: lookup.pull_request_status, error: lookup.pull_request_error };
+  }
+  return { results: wire.results ?? {}, statuses, errors: wire.errors ?? {} };
+}
+
+export function toWorktreeSetupScript(wire: WireWorktreeSetupScript): WorktreeSetupScript {
+  const script: WorktreeSetupScript = { path: wire.path, exists: wire.exists };
+  if (wire.content !== undefined) script.content = wire.content;
+  if (wire.needs_confirmation !== undefined) script.needsConfirmation = wire.needs_confirmation;
+  return script;
 }
 
 export function toAppWorkspace(wire: WireWorkspace): AppWorkspace {

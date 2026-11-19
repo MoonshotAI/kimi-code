@@ -147,6 +147,30 @@ export const FS_PERMISSION_DENIED_CODE = 40411;
 
 export const FS_ALREADY_EXISTS_CODE = 40919;
 
+export const FS_GIT_UNAVAILABLE_CODE = 40908;
+
+export const FS_DIRECTORY_NOT_FOUND_CODE = 40422;
+
+export const WORKTREE_NOT_FOUND_CODE = 40423;
+
+export const WORKTREE_STATE_INVALID_CODE = 40936;
+
+export const WORKTREE_REMOVE_FAILED_CODE = 40937;
+
+export const WORKTREE_UNSUPPORTED_CODE = 40938;
+
+export function worktreeRemoveFailure(
+  error: unknown,
+): { reason: 'in_use' | 'session_busy' | 'unknown'; output: string } | null {
+  if (!isDaemonApiError(error) || error.code !== WORKTREE_REMOVE_FAILED_CODE) return null;
+  const details = (typeof error.details === 'object' && error.details !== null ? error.details : {}) as {
+    reason?: unknown;
+    output?: unknown;
+  };
+  const reason = details.reason === 'in_use' || details.reason === 'session_busy' ? details.reason : 'unknown';
+  return { reason, output: typeof details.output === 'string' ? details.output : error.message };
+}
+
 export function isSessionStaleError(error: unknown): boolean {
   return isDaemonApiError(error) && error.code === SESSION_STALE_CODE;
 }
