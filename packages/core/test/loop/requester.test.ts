@@ -2,18 +2,22 @@ import { describe, expect, it } from 'vitest';
 
 import { createLoop } from '#/loop/index';
 import type { LoopToolContext, LoopToolExecutor } from '#/loop/create-loop';
+import { createMediaDegradeRecovery } from '#/llm/builtin/policy/media-degrade';
 import { createAssistantMessage, createUserMessage, extractText } from '#/llm/message';
-import type { LlmRunControl } from '#/llm/policy/policy';
+import { createLlmRequesterExecution, type LlmRunControl } from '#/llm/policy/policy';
+import type { LlmRecoveryRecord } from '#/llm/policy/recovery';
+import type { Protocol } from '#/llm/protocol/protocol';
 import type { LlmRequest } from '#/llm/request';
 import {
   contentsOf,
+  createRequester,
   mergeFields,
   requesterContents,
   type LlmDimension,
   type LlmRequester,
   type LlmRequestPart,
 } from '#/llm/requester';
-import type { LlmOutcome } from '#/llm/response';
+import type { LlmOutcome, LlmRemoteErrorMessage } from '#/llm/response';
 import { ToolExecutor } from '#/tool/tool-executor';
 import type { FullLoopLlmRequester, LoopLlmRequester } from '#/loop/request';
 
@@ -96,39 +100,111 @@ describe('loop requester compatibility', () => {
 });
 
 describe('loop side requester', () => {
-  it('fills live defaults and applies explicit overrides without mutating the facade', async () => {
-    const seen: LlmRequest[] = [];
-    const messages = [createUserMessage('live history')];
-    const tools = [{ name: 'live_tool', description: 'live tool', parameters: { type: 'object' } }];
-    const base = fullRequester((request) => {
-      seen.push(request);
-      return done('side response');
+  it('applies base, live, part, and rest priorities while sharing base recovery memory', async () => {
+    const attempts: { readonly request: LlmRequest; readonly recoveries: readonly LlmRecoveryRecord[] }[] = [];
+    const success = [{ text: 'side response', finish: { finishReason: 'completed' as const, rawFinishReason: 'stop' } }];
+    const protocol: Protocol = {
+      media: { kinds: {} },
+      encode: (module) => module.content.messages,
+      client: () => null,
+      send: async () => ({ body: success }),
+      sendStream: async () => {
+        if (attempts.length === 1) throw new Error('request too large');
+        return {
+          body: (async function* () {
+            yield* success;
+          })(),
+        };
+      },
+      decoder: (_module, sink) => ({
+        push: (chunk: (typeof success)[number]) => {
+          sink.onDelta({ type: 'text', text: chunk.text });
+          sink.onFinish(chunk.finish);
+        },
+        end: () => {},
+      }),
+      replay: (response) => response,
+      decodeError: (): LlmRemoteErrorMessage => ({
+        kind: 'request_too_large',
+        message: 'request too large',
+        requestId: null,
+        retryAfterMs: null,
+        headers: null,
+        retryable: false,
+      }),
+    };
+    const mediaMessage = (text: string) => createUserMessage([
+      { type: 'text', text },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,c2lkZQ==' } },
+    ]);
+    const baseMessage = mediaMessage('base history');
+    const liveMessage = mediaMessage('live history');
+    const partMessage = mediaMessage('part history');
+    const restMessage = mediaMessage('rest history');
+    const baseTools = [{ name: 'base_tool', description: 'base tool', parameters: { type: 'object' } }];
+    const liveTools = [{ name: 'live_tool', description: 'live tool', parameters: { type: 'object' } }];
+    const execution = createLlmRequesterExecution();
+    const base = createRequester(execution).with({
+      protocol: { base: protocol, stream: true },
+      endpoint: {},
+      model: { spec: { provider: 'test', name: 'test-model' } },
+      content: { messages: [baseMessage] },
+      profile: { systemPrompt: 'base system', tools: baseTools },
+      policy: { retry: { maxAttemptsPerStep: 1 }, recoveries: [createMediaDegradeRecovery()] },
     });
     const loop = createLoop({
       requester: base,
       executor,
-      input: { messages, profile: { systemPrompt: 'live system', tools } },
+      input: { messages: [liveMessage], profile: { systemPrompt: 'live system', tools: liveTools } },
     });
     const resolver = { id: 'probe', resolve: async (request: LlmRequest) => request };
     loop.policy.addResolver(resolver);
 
     const defaults = loop.requester.request({});
-    expect(defaults.content.messages).toEqual(messages);
-    expect(defaults.profile).toEqual({ systemPrompt: 'live system', tools });
+    expect(defaults.content.messages).toEqual([liveMessage]);
+    expect(defaults.profile).toEqual({ systemPrompt: 'live system', tools: liveTools });
     const resolvers = defaults.policy?.resolvers;
     expect(typeof resolvers === 'function' ? resolvers() : resolvers).toEqual([resolver]);
 
-    const derived = loop.requester.with({ profile: { systemPrompt: 'derived system' } });
-    const explicit = createUserMessage('explicit history');
-    expect((await derived.generate(
-      { content: { messages: [explicit] } },
-      { signal: new AbortController().signal },
-    )).type).toBe('done');
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.content.messages).toEqual([explicit]);
-    expect(seen[0]?.profile).toEqual({ systemPrompt: 'derived system', tools });
-    expect(loop.requester.request({}).profile).toEqual({ systemPrompt: 'live system', tools });
-    expect(loop.requester.request({}).content.messages).toEqual(messages);
+    const derived = loop.requester.with({
+      content: { messages: [partMessage] },
+      profile: { systemPrompt: 'part system' },
+    });
+    const part = derived.request({});
+    expect(part.content.messages).toEqual([partMessage]);
+    expect(part.profile).toEqual({ systemPrompt: 'part system', tools: liveTools });
+    const rest = {
+      content: { messages: [restMessage] },
+      profile: { systemPrompt: 'rest system' },
+    };
+    const explicit = derived.request(rest);
+    expect(explicit.content.messages).toEqual([restMessage]);
+    expect(explicit.profile).toEqual({ systemPrompt: 'rest system', tools: liveTools });
+
+    const control = {
+      signal: new AbortController().signal,
+      onAttempt: (request: LlmRequest, context: { readonly appliedRecoveries: readonly LlmRecoveryRecord[] }) => {
+        attempts.push({ request, recoveries: [...context.appliedRecoveries] });
+      },
+    };
+    expect((await base.generate({}, control)).type).toBe('done');
+    expect((await derived.generate(rest, control)).type).toBe('done');
+    expect(attempts.map(({ request }) => request.profile?.systemPrompt)).toEqual([
+      'base system',
+      'base system',
+      'rest system',
+    ]);
+    expect(attempts.map(({ request }) => request.content.messages.flatMap((message) => message.content)
+      .filter((part) => part.type === 'image_url').length)).toEqual([1, 0, 0]);
+    expect(attempts.map(({ recoveries }) => recoveries.map((recovery) =>
+      `${recovery.strategy}:${recovery.action}`))).toEqual([
+        [],
+        ['media-degrade:stripped'],
+        ['media-degrade:stripped'],
+      ]);
+    expect(attempts[2]?.request.content.messages[0]?.content[0]).toEqual({ type: 'text', text: 'rest history' });
+    expect(loop.requester.request({}).profile).toEqual({ systemPrompt: 'live system', tools: liveTools });
+    expect(loop.requester.request({}).content.messages).toEqual([liveMessage]);
     expect(loop.baseRequester).toBe(base);
     await loop.close();
   });
