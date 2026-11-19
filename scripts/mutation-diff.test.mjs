@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { baselineFailures, changedLines, mutationTargets, strykerConfig, summarize } from './mutation-diff.mjs';
+import { baselineFailures, changedLines, mutationTargets, runResult, strykerConfig, summarize } from './mutation-diff.mjs';
 
 const diff = [
   'diff --git a/packages/kit/src/a.ts b/packages/kit/src/a.ts',
@@ -39,6 +39,25 @@ await test('reads the added lines of each file from a zero-context diff', () => 
   ]);
 });
 
+await test('keeps file names with spaces, quotes and non-ASCII letters', () => {
+  const unusual = [
+    '+++ b/packages/kit/src/my file.ts\t',
+    '@@ -1 +1 @@',
+    '+++ "b/packages/kit/src/naïve \\"quoted\\".ts"\t',
+    '@@ -2 +2,2 @@',
+    '+++ "b/packages/kit/src/caf\\303\\251 \\"x\\".ts"\t',
+    '@@ -3 +3 @@',
+    '+++ b/packages/kit/src/naïve.ts',
+    '@@ -4 +4 @@',
+  ].join('\n');
+  assert.deepEqual([...changedLines(unusual)], [
+    ['packages/kit/src/my file.ts', [[1, 1]]],
+    ['packages/kit/src/naïve "quoted".ts', [[2, 3]]],
+    ['packages/kit/src/café "x".ts', [[3, 3]]],
+    ['packages/kit/src/naïve.ts', [[4, 4]]],
+  ]);
+});
+
 await test('mutates source files of packages with a Vitest config and reports the rest', () => {
   const files = new Set([
     'packages/kit/package.json', 'packages/kit/vitest.config.ts',
@@ -47,6 +66,9 @@ await test('mutates source files of packages with a Vitest config and reports th
   ]);
   const changes = new Map([
     ['packages/kit/src/a.ts', [[3, 3], [11, 12]]],
+    ['packages/kit/src/a.test.ts', [[1, 2]]],
+    ['packages/kit/src/b.spec.mts', [[1, 2]]],
+    ['packages/kit/src/__tests__/c.ts', [[1, 2]]],
     ['packages/kit/src/types.d.ts', [[1, 2]]],
     ['packages/kit/test/a.test.ts', [[1, 9]]],
     ['packages/kit/README.md', [[1, 1]]],
@@ -73,6 +95,19 @@ await test('runs each package in place with its own config and only the related 
   assert.equal(config.thresholds.break, null);
   assert.equal(config.jsonReporter.fileName, '/reports/packages-kit.json');
   assert.equal(strykerConfig({ config: 'vitest.config.ts', mutate: [] }, '/r', { vitestRunner: '/runner.js', includeStatic: true }).ignoreStatic, false);
+});
+
+await test('tells a package without related tests apart from a Stryker error', () => {
+  const report = { files: {} };
+  assert.deepEqual(runResult('packages/kit', { code: 0, report, log: '', logPath: 'kit.log' }), { packageDir: 'packages/kit', report });
+  const untested = 'INFO DryRunExecutor No tests were found\nERROR Stryker No tests were executed. Stryker will exit prematurely.';
+  assert.deepEqual(runResult('packages/pi-tui', { code: 1, report: undefined, log: untested, logPath: 'pi-tui.log' }), { packageDir: 'packages/pi-tui', untested: true });
+  const baseline = 'One or more tests failed in the initial test run:\n\tsome test\nThere were failed tests in the initial test run.';
+  assert.deepEqual(runResult('packages/server', { code: 1, report: undefined, log: baseline, logPath: 'server.log' }).baseline, [{ test: 'some test', details: [] }]);
+  assert.deepEqual(runResult('packages/broken', { code: 1, report: undefined, log: 'TypeError: boom', logPath: '.tmp/mutation/packages-broken.log' }), {
+    packageDir: 'packages/broken',
+    error: 'Stryker exited with code 1 before writing a report; see .tmp/mutation/packages-broken.log',
+  });
 });
 
 await test('reads the tests that failed before any mutation from the Stryker log', () => {
@@ -112,6 +147,7 @@ await test('lists surviving and uncovered mutants with their code, and every pac
       { packageDir: 'packages/kit', report },
       { packageDir: 'packages/server', baseline: [{ test: 'expands tilde paths', details: ['expected 50001 to be +0'] }] },
       { packageDir: 'packages/broken', error: 'Stryker exited with code 1 before writing a report; see .tmp/mutation/packages-broken.log' },
+      { packageDir: 'packages/pi-tui', untested: true },
     ],
     skipped: [{ subject: 'packages/bare/src/index.ts', reason: 'packages/bare has no Vitest config, so nothing runs its tests under Stryker' }],
   });
@@ -122,6 +158,7 @@ await test('lists surviving and uncovered mutants with their code, and every pac
   assert.doesNotMatch(summary, /ConditionalExpression|ArrayDeclaration/);
   assert.match(summary, /- packages\/server: these related tests fail under Stryker before any mutation[^\n]*\n {2}- expands tilde paths \(expected 50001 to be \+0\)/);
   assert.match(summary, /- packages\/broken: Stryker exited with code 1/);
+  assert.match(summary, /- packages\/pi-tui: no Vitest test of this package imports the changed files/);
   assert.match(summary, /- packages\/bare\/src\/index.ts: packages\/bare has no Vitest config/);
   assert.match(summarize({ base: 'abc', results: [], skipped: [] }), /No changed lines under a package `src` directory/);
 });

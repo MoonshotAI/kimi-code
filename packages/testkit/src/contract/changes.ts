@@ -82,6 +82,12 @@ function changed(old: ContractField, next: ContractField): ContractChange[] {
   if (old.closed !== next.closed) {
     change(input && next.closed ? 'breaking' : 'non-breaking', next.closed ? 'now rejects unknown properties' : 'now allows unknown properties');
   }
+  if (old.defaultValue !== next.defaultValue) {
+    const detail = old.defaultValue === undefined
+      ? `now defaults to ${next.defaultValue}`
+      : next.defaultValue === undefined ? `no longer defaults to ${old.defaultValue}` : `default ${old.defaultValue} → ${next.defaultValue}`;
+    change('unclassified', `${detail}; clients that omit it get the new behavior`);
+  }
   if (old.required !== next.required) {
     const risky = input ? next.required : !next.required;
     change(risky ? 'breaking' : 'non-breaking', next.required ? 'now required' : 'now optional');

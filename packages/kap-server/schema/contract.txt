@@ -168,7 +168,7 @@ GET /api/v1/config response 200.data.models: object optional
 GET /api/v1/config response 200.data.models{*}: any optional
 GET /api/v1/config response 200.data.permission: any optional
 GET /api/v1/config response 200.data.plan_mode: boolean optional
-GET /api/v1/config response 200.data.providers: object
+GET /api/v1/config response 200.data.providers: object default={}
 GET /api/v1/config response 200.data.providers{*}.api_key_env: string optional
 GET /api/v1/config response 200.data.providers{*}.base_url: string optional
 GET /api/v1/config response 200.data.providers{*}.default_model: string optional
@@ -1511,7 +1511,7 @@ POST /api/v1/config response 200<code=0>.data.models: object optional
 POST /api/v1/config response 200<code=0>.data.models{*}: any optional
 POST /api/v1/config response 200<code=0>.data.permission: any optional
 POST /api/v1/config response 200<code=0>.data.plan_mode: boolean optional
-POST /api/v1/config response 200<code=0>.data.providers: object
+POST /api/v1/config response 200<code=0>.data.providers: object default={}
 POST /api/v1/config response 200<code=0>.data.providers{*}.api_key_env: string optional
 POST /api/v1/config response 200<code=0>.data.providers{*}.base_url: string optional
 POST /api/v1/config response 200<code=0>.data.providers{*}.default_model: string optional
@@ -1581,15 +1581,15 @@ POST /api/v1/fs:mkdir response 200<code=40926>: shape 6367494b
 POST /api/v1/fs:mkdir: operation
 POST /api/v1/fs:suggest request.exclude_globs: array optional
 POST /api/v1/fs:suggest request.exclude_globs[]: string
-POST /api/v1/fs:suggest request.follow_gitignore: boolean optional
+POST /api/v1/fs:suggest request.follow_gitignore: boolean default=false optional
 POST /api/v1/fs:suggest request.include_globs: array optional
 POST /api/v1/fs:suggest request.include_globs[]: string
-POST /api/v1/fs:suggest request.limit: integer minimum=1 maximum=200 optional
+POST /api/v1/fs:suggest request.limit: integer minimum=1 maximum=200 default=50 optional
 POST /api/v1/fs:suggest request.query: string
 POST /api/v1/fs:suggest request.roots: array minItems=1 maxItems=32
 POST /api/v1/fs:suggest request.roots[]: string minLength=1
-POST /api/v1/fs:suggest request.show_hidden: boolean optional
-POST /api/v1/fs:suggest request.stream: boolean optional
+POST /api/v1/fs:suggest request.show_hidden: boolean default=false optional
+POST /api/v1/fs:suggest request.stream: boolean default=false optional
 POST /api/v1/fs:suggest request: object
 POST /api/v1/fs:suggest response 200: oneOf
 POST /api/v1/fs:suggest response 200<code=0>: shape fea0ab4f
@@ -2729,15 +2729,15 @@ POST /api/v1/sessions/{session_id}/{tail} request: oneOf
 POST /api/v1/sessions/{session_id}/{tail} request<#0>.allow_external_symlinks: boolean optional
 POST /api/v1/sessions/{session_id}/{tail} request<#0>.allow_ignored_globs: array optional
 POST /api/v1/sessions/{session_id}/{tail} request<#0>.allow_ignored_globs[]: string
-POST /api/v1/sessions/{session_id}/{tail} request<#0>.depth: integer minimum=1 maximum=10 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#0>.depth: integer minimum=1 maximum=10 default=1 optional
 POST /api/v1/sessions/{session_id}/{tail} request<#0>.exclude_globs: array optional
 POST /api/v1/sessions/{session_id}/{tail} request<#0>.exclude_globs[]: string
-POST /api/v1/sessions/{session_id}/{tail} request<#0>.follow_gitignore: boolean optional
-POST /api/v1/sessions/{session_id}/{tail} request<#0>.include_git_status: boolean optional
-POST /api/v1/sessions/{session_id}/{tail} request<#0>.limit: integer minimum=1 maximum=1000 optional
-POST /api/v1/sessions/{session_id}/{tail} request<#0>.path: string optional
-POST /api/v1/sessions/{session_id}/{tail} request<#0>.show_hidden: boolean optional
-POST /api/v1/sessions/{session_id}/{tail} request<#0>.sort: enum "mtime_desc"|"name_asc"|"name_desc"|"size_desc"|"type_first" optional
+POST /api/v1/sessions/{session_id}/{tail} request<#0>.follow_gitignore: boolean default=true optional
+POST /api/v1/sessions/{session_id}/{tail} request<#0>.include_git_status: boolean default=false optional
+POST /api/v1/sessions/{session_id}/{tail} request<#0>.limit: integer minimum=1 maximum=1000 default=200 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#0>.path: string default="." optional
+POST /api/v1/sessions/{session_id}/{tail} request<#0>.show_hidden: boolean default=false optional
+POST /api/v1/sessions/{session_id}/{tail} request<#0>.sort: enum "mtime_desc"|"name_asc"|"name_desc"|"size_desc"|"type_first" default="type_first" optional
 POST /api/v1/sessions/{session_id}/{tail} request<#0>: object
 POST /api/v1/sessions/{session_id}/{tail} request<#10>.line: integer maximum=9007199254740991 exclusiveMinimum=true optional
 POST /api/v1/sessions/{session_id}/{tail} request<#10>.path: string minLength=1
@@ -2749,21 +2749,21 @@ POST /api/v1/sessions/{session_id}/{tail} request<#11>: object
 POST /api/v1/sessions/{session_id}/{tail} request<#12>.path: string minLength=1
 POST /api/v1/sessions/{session_id}/{tail} request<#12>: object
 POST /api/v1/sessions/{session_id}/{tail} request<#1>.allow_external_symlinks: boolean optional
-POST /api/v1/sessions/{session_id}/{tail} request<#1>.encoding: enum "auto"|"base64"|"utf-8" optional
-POST /api/v1/sessions/{session_id}/{tail} request<#1>.length: integer minimum=1 maximum=10485760 optional
-POST /api/v1/sessions/{session_id}/{tail} request<#1>.offset: integer minimum=0 maximum=9007199254740991 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#1>.encoding: enum "auto"|"base64"|"utf-8" default="auto" optional
+POST /api/v1/sessions/{session_id}/{tail} request<#1>.length: integer minimum=1 maximum=10485760 default=1048576 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#1>.offset: integer minimum=0 maximum=9007199254740991 default=0 optional
 POST /api/v1/sessions/{session_id}/{tail} request<#1>.path: string minLength=1
 POST /api/v1/sessions/{session_id}/{tail} request<#1>: object
-POST /api/v1/sessions/{session_id}/{tail} request<#2>.depth: integer minimum=1 maximum=10 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#2>.depth: integer minimum=1 maximum=10 default=1 optional
 POST /api/v1/sessions/{session_id}/{tail} request<#2>.exclude_globs: array optional
 POST /api/v1/sessions/{session_id}/{tail} request<#2>.exclude_globs[]: string
-POST /api/v1/sessions/{session_id}/{tail} request<#2>.follow_gitignore: boolean optional
-POST /api/v1/sessions/{session_id}/{tail} request<#2>.include_git_status: boolean optional
-POST /api/v1/sessions/{session_id}/{tail} request<#2>.limit: integer minimum=1 maximum=1000 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#2>.follow_gitignore: boolean default=true optional
+POST /api/v1/sessions/{session_id}/{tail} request<#2>.include_git_status: boolean default=false optional
+POST /api/v1/sessions/{session_id}/{tail} request<#2>.limit: integer minimum=1 maximum=1000 default=200 optional
 POST /api/v1/sessions/{session_id}/{tail} request<#2>.paths: array minItems=1 maxItems=100
 POST /api/v1/sessions/{session_id}/{tail} request<#2>.paths[]: string minLength=1
-POST /api/v1/sessions/{session_id}/{tail} request<#2>.show_hidden: boolean optional
-POST /api/v1/sessions/{session_id}/{tail} request<#2>.sort: enum "mtime_desc"|"name_asc"|"name_desc"|"size_desc"|"type_first" optional
+POST /api/v1/sessions/{session_id}/{tail} request<#2>.show_hidden: boolean default=false optional
+POST /api/v1/sessions/{session_id}/{tail} request<#2>.sort: enum "mtime_desc"|"name_asc"|"name_desc"|"size_desc"|"type_first" default="type_first" optional
 POST /api/v1/sessions/{session_id}/{tail} request<#2>: object
 POST /api/v1/sessions/{session_id}/{tail} request<#3>.path: string minLength=1
 POST /api/v1/sessions/{session_id}/{tail} request<#3>: object
@@ -2771,28 +2771,28 @@ POST /api/v1/sessions/{session_id}/{tail} request<#4>.paths: array minItems=1 ma
 POST /api/v1/sessions/{session_id}/{tail} request<#4>.paths[]: string minLength=1
 POST /api/v1/sessions/{session_id}/{tail} request<#4>: object
 POST /api/v1/sessions/{session_id}/{tail} request<#5>.path: string minLength=1
-POST /api/v1/sessions/{session_id}/{tail} request<#5>.recursive: boolean optional
+POST /api/v1/sessions/{session_id}/{tail} request<#5>.recursive: boolean default=false optional
 POST /api/v1/sessions/{session_id}/{tail} request<#5>: object
 POST /api/v1/sessions/{session_id}/{tail} request<#6>.exclude_globs: array optional
 POST /api/v1/sessions/{session_id}/{tail} request<#6>.exclude_globs[]: string
-POST /api/v1/sessions/{session_id}/{tail} request<#6>.follow_gitignore: boolean optional
+POST /api/v1/sessions/{session_id}/{tail} request<#6>.follow_gitignore: boolean default=false optional
 POST /api/v1/sessions/{session_id}/{tail} request<#6>.include_globs: array optional
 POST /api/v1/sessions/{session_id}/{tail} request<#6>.include_globs[]: string
-POST /api/v1/sessions/{session_id}/{tail} request<#6>.limit: integer minimum=1 maximum=200 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#6>.limit: integer minimum=1 maximum=200 default=50 optional
 POST /api/v1/sessions/{session_id}/{tail} request<#6>.query: string
 POST /api/v1/sessions/{session_id}/{tail} request<#6>: object
-POST /api/v1/sessions/{session_id}/{tail} request<#7>.case_sensitive: boolean optional
-POST /api/v1/sessions/{session_id}/{tail} request<#7>.context_lines: integer minimum=0 maximum=10 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#7>.case_sensitive: boolean default=true optional
+POST /api/v1/sessions/{session_id}/{tail} request<#7>.context_lines: integer minimum=0 maximum=10 default=2 optional
 POST /api/v1/sessions/{session_id}/{tail} request<#7>.exclude_globs: array optional
 POST /api/v1/sessions/{session_id}/{tail} request<#7>.exclude_globs[]: string
-POST /api/v1/sessions/{session_id}/{tail} request<#7>.follow_gitignore: boolean optional
+POST /api/v1/sessions/{session_id}/{tail} request<#7>.follow_gitignore: boolean default=true optional
 POST /api/v1/sessions/{session_id}/{tail} request<#7>.include_globs: array optional
 POST /api/v1/sessions/{session_id}/{tail} request<#7>.include_globs[]: string
-POST /api/v1/sessions/{session_id}/{tail} request<#7>.max_files: integer minimum=1 maximum=10000 optional
-POST /api/v1/sessions/{session_id}/{tail} request<#7>.max_matches_per_file: integer minimum=1 maximum=10000 optional
-POST /api/v1/sessions/{session_id}/{tail} request<#7>.max_total_matches: integer minimum=1 maximum=100000 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#7>.max_files: integer minimum=1 maximum=10000 default=200 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#7>.max_matches_per_file: integer minimum=1 maximum=10000 default=50 optional
+POST /api/v1/sessions/{session_id}/{tail} request<#7>.max_total_matches: integer minimum=1 maximum=100000 default=5000 optional
 POST /api/v1/sessions/{session_id}/{tail} request<#7>.pattern: string minLength=1
-POST /api/v1/sessions/{session_id}/{tail} request<#7>.regex: boolean optional
+POST /api/v1/sessions/{session_id}/{tail} request<#7>.regex: boolean default=false optional
 POST /api/v1/sessions/{session_id}/{tail} request<#7>: object
 POST /api/v1/sessions/{session_id}/{tail} request<#8>.include_pull_request: boolean optional
 POST /api/v1/sessions/{session_id}/{tail} request<#8>.paths: array optional
@@ -3144,14 +3144,14 @@ POST /api/v1/shutdown: operation
 POST /api/v1/workspace/fs:list request.allow_external_symlinks: boolean optional
 POST /api/v1/workspace/fs:list request.allow_ignored_globs: array optional
 POST /api/v1/workspace/fs:list request.allow_ignored_globs[]: string
-POST /api/v1/workspace/fs:list request.depth: integer minimum=1 maximum=10 optional
+POST /api/v1/workspace/fs:list request.depth: integer minimum=1 maximum=10 default=1 optional
 POST /api/v1/workspace/fs:list request.exclude_globs: array optional
 POST /api/v1/workspace/fs:list request.exclude_globs[]: string
-POST /api/v1/workspace/fs:list request.follow_gitignore: boolean optional
-POST /api/v1/workspace/fs:list request.limit: integer minimum=1 maximum=1000 optional
-POST /api/v1/workspace/fs:list request.path: string optional
-POST /api/v1/workspace/fs:list request.show_hidden: boolean optional
-POST /api/v1/workspace/fs:list request.sort: enum "mtime_desc"|"name_asc"|"name_desc"|"size_desc"|"type_first" optional
+POST /api/v1/workspace/fs:list request.follow_gitignore: boolean default=true optional
+POST /api/v1/workspace/fs:list request.limit: integer minimum=1 maximum=1000 default=200 optional
+POST /api/v1/workspace/fs:list request.path: string default="." optional
+POST /api/v1/workspace/fs:list request.show_hidden: boolean default=false optional
+POST /api/v1/workspace/fs:list request.sort: enum "mtime_desc"|"name_asc"|"name_desc"|"size_desc"|"type_first" default="type_first" optional
 POST /api/v1/workspace/fs:list request.workspace: string minLength=1
 POST /api/v1/workspace/fs:list request: object
 POST /api/v1/workspace/fs:list response 200: oneOf
@@ -3187,10 +3187,10 @@ POST /api/v1/workspace/fs:list response 200<code=41304>: object closed
 POST /api/v1/workspace/fs:list: operation
 POST /api/v1/workspace/fs:search request.exclude_globs: array optional
 POST /api/v1/workspace/fs:search request.exclude_globs[]: string
-POST /api/v1/workspace/fs:search request.follow_gitignore: boolean optional
+POST /api/v1/workspace/fs:search request.follow_gitignore: boolean default=false optional
 POST /api/v1/workspace/fs:search request.include_globs: array optional
 POST /api/v1/workspace/fs:search request.include_globs[]: string
-POST /api/v1/workspace/fs:search request.limit: integer minimum=1 maximum=200 optional
+POST /api/v1/workspace/fs:search request.limit: integer minimum=1 maximum=200 default=50 optional
 POST /api/v1/workspace/fs:search request.query: string
 POST /api/v1/workspace/fs:search request.workspace: string minLength=1
 POST /api/v1/workspace/fs:search request: object
@@ -3209,13 +3209,13 @@ POST /api/v1/workspace/fs:search response 200<code=41303>: object closed
 POST /api/v1/workspace/fs:search: operation
 POST /api/v1/workspace/fs:suggest request.exclude_globs: array optional
 POST /api/v1/workspace/fs:suggest request.exclude_globs[]: string
-POST /api/v1/workspace/fs:suggest request.follow_gitignore: boolean optional
+POST /api/v1/workspace/fs:suggest request.follow_gitignore: boolean default=false optional
 POST /api/v1/workspace/fs:suggest request.include_globs: array optional
 POST /api/v1/workspace/fs:suggest request.include_globs[]: string
-POST /api/v1/workspace/fs:suggest request.limit: integer minimum=1 maximum=200 optional
+POST /api/v1/workspace/fs:suggest request.limit: integer minimum=1 maximum=200 default=50 optional
 POST /api/v1/workspace/fs:suggest request.query: string
-POST /api/v1/workspace/fs:suggest request.show_hidden: boolean optional
-POST /api/v1/workspace/fs:suggest request.stream: boolean optional
+POST /api/v1/workspace/fs:suggest request.show_hidden: boolean default=false optional
+POST /api/v1/workspace/fs:suggest request.stream: boolean default=false optional
 POST /api/v1/workspace/fs:suggest request.workspace: string minLength=1
 POST /api/v1/workspace/fs:suggest request: object
 POST /api/v1/workspace/fs:suggest response 200: oneOf
@@ -3771,7 +3771,7 @@ ws server message session_event<config>.config.models: object optional
 ws server message session_event<config>.config.models{*}: any optional
 ws server message session_event<config>.config.permission: any optional
 ws server message session_event<config>.config.plan_mode: boolean optional
-ws server message session_event<config>.config.providers: object optional
+ws server message session_event<config>.config.providers: object default={} optional
 ws server message session_event<config>.config.providers{*}.api_key_env: string optional
 ws server message session_event<config>.config.providers{*}.base_url: string optional
 ws server message session_event<config>.config.providers{*}.default_model: string optional

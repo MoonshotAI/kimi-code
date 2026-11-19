@@ -8,6 +8,7 @@ export interface ContractType {
   readonly nullable: boolean;
   readonly closed: boolean;
   readonly constraints: Readonly<Record<string, string>>;
+  readonly defaultValue: string | undefined;
 }
 
 export const CONSTRAINT_KEYWORDS = [
@@ -47,7 +48,7 @@ export function summarizeContract(openapi: unknown, asyncapi: unknown): Contract
   const walk: Walk = { fields: new Map(), lines: [], shapeUses, shapes: new Map() };
   for (const root of roots) {
     if (root.schema === undefined) {
-      addField(walk, root.key, root.direction, { base: 'operation', values: undefined, nullable: false, closed: false, constraints: {} }, true, false, 'operation');
+      addField(walk, root.key, root.direction, { base: 'operation', values: undefined, nullable: false, closed: false, constraints: {}, defaultValue: undefined }, true, false, 'operation');
       continue;
     }
     visit(walk, root.schema, root.key, root.direction, root.required, false);
@@ -190,12 +191,14 @@ function typeOf(schema: Schema): ContractType {
   for (const keyword of CONSTRAINT_KEYWORDS) {
     if (schema[keyword] !== undefined) constraints[keyword] = JSON.stringify(schema[keyword]);
   }
-  return { base, values, nullable: schema['nullable'] === true, closed: schema['additionalProperties'] === false, constraints };
+  const defaultValue = schema['default'] === undefined ? undefined : JSON.stringify(schema['default']);
+  return { base, values, nullable: schema['nullable'] === true, closed: schema['additionalProperties'] === false, constraints, defaultValue };
 }
 
 export function displayType(type: ContractType): string {
   const constraints = Object.entries(type.constraints).map(([keyword, value]) => `${keyword}=${value}`);
-  return [type.base, type.values?.join('|'), ...constraints, type.nullable ? 'nullable' : undefined, type.closed ? 'closed' : undefined]
+  const defaultValue = type.defaultValue === undefined ? undefined : `default=${type.defaultValue}`;
+  return [type.base, type.values?.join('|'), ...constraints, defaultValue, type.nullable ? 'nullable' : undefined, type.closed ? 'closed' : undefined]
     .filter((part) => part !== undefined)
     .join(' ');
 }

@@ -79,6 +79,16 @@ describe('contract summary', () => {
     expect(lines.join('\n')).not.toContain('Create a session');
   });
 
+  it('marks closed objects, nullable fields and the operation itself', () => {
+    const schema = { type: 'object', additionalProperties: false, properties: { note: { type: 'string', nullable: true } } };
+    const document = { openapi: '3.1.0', paths: { '/x': { post: { requestBody: { content: { 'application/json': { schema } } }, responses: {} } } } };
+    expect(summarizeContract(document, {}).lines).toEqual([
+      'POST /x request.note: string nullable optional',
+      'POST /x request: object closed optional',
+      'POST /x: operation',
+    ]);
+  });
+
   it('names a shared shape by its fields, whatever its wording', () => {
     const document = openapi() as { paths: Record<string, Record<string, { responses: Record<string, { content: Record<string, { schema: Record<string, unknown> }> }> }>> };
     document.paths['/api/v1/meta']!['get']!.responses['200']!.content['application/json']!.schema = { ...envelope, description: 'Meta envelope', title: 'Meta' };
@@ -121,6 +131,15 @@ describe('contract digest', () => {
 describe('contract change classification', () => {
   const classify = (before: unknown, after: unknown, beforeAsync = asyncapi(), afterAsync = asyncapi()) =>
     classifyContractChanges(summarizeContract(before, beforeAsync), summarizeContract(after, afterAsync)).map(({ kind, key, detail }) => `${kind}: ${key} — ${detail}`);
+
+  it('lists defaults and leaves a changed default to a person', () => {
+    const withMode = (mode: Record<string, unknown>): unknown => openapi({ request: { cwd: { type: 'string' }, mode: { enum: ['manual', 'yolo'], ...mode } } });
+    expect(summarizeContract(withMode({ default: 'manual' }), asyncapi()).lines).toContain('POST /api/v1/sessions request.mode: enum "manual"|"yolo" default="manual" optional');
+    const consequence = 'clients that omit it get the new behavior';
+    expect(classify(withMode({ default: 'manual' }), withMode({ default: 'yolo' }))).toEqual([`unclassified: POST /api/v1/sessions request.mode — default "manual" → "yolo"; ${consequence}`]);
+    expect(classify(withMode({}), withMode({ default: 'yolo' }))).toEqual([`unclassified: POST /api/v1/sessions request.mode — now defaults to "yolo"; ${consequence}`]);
+    expect(classify(withMode({ default: 'manual' }), withMode({}))).toEqual([`unclassified: POST /api/v1/sessions request.mode — no longer defaults to "manual"; ${consequence}`]);
+  });
 
   it('treats requests and responses in opposite directions', () => {
     expect(classify(openapi(), openapi({ request: { cwd: { type: 'string' }, mode: { enum: ['manual', 'yolo'] }, title: { type: 'string' } } }))).toEqual([
