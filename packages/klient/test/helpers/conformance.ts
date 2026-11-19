@@ -15,7 +15,7 @@ import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agent
 import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
-import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
+import { IProviderRequesterFactory } from '@moonshot-ai/agent-core-v2/provider-catalog/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { createFakeModel, say } from '@moonshot-ai/testkit/model';
@@ -503,7 +503,7 @@ export function defineKlientConformance(
         );
         await consume(kosong.generate(kimiId, publicInput, { model: { thinking: { effort: 'max' } } }));
         const catalog = target.app.accessor.get(IModelCatalog);
-        const registry = target.app.accessor.get(IProtocolAdapterRegistry);
+        const registry = target.app.accessor.get(IProviderRequesterFactory);
         const directGenerate = (effort: string) => {
           const requester = registry.request(catalog.get(kimiId), {
             model: { thinking: { effort } },

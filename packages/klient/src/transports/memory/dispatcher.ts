@@ -20,7 +20,7 @@ import {
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
 import { IAgentLoopService, type LoopNotifyMessage, type PromptPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
+import { IProviderRequesterFactory } from '@moonshot-ai/agent-core-v2/provider-catalog/requester';
 import type { LlmRequestContent, LlmRequestModel, LlmRequestProfile } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
@@ -528,7 +528,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
                 const [modelId, input, params] = args;
                 const model = resolved.like.accessor.get(IModelCatalog).get(modelId as string);
                 const requester = resolved.like.accessor
-                  .get(IProtocolAdapterRegistry)
+                  .get(IProviderRequesterFactory)
                   .request(model, wireClone(params) as InitializedLlmRequestPart | undefined);
                 const resolvedInput = wireClone(input) as LlmRequestProfile &
                   LlmRequestContent &

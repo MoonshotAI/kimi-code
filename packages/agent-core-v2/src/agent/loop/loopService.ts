@@ -27,7 +27,7 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { IProviderRequesterFactory, type ProviderRequesterFactory } from '#/provider-catalog/requester';
 import { ISessionRequestAttributionService } from '#/session/requestAttribution/requestAttribution';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
@@ -217,7 +217,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IModelCatalog modelCatalog: IModelCatalog,
     @IProviderCatalogRuntime providerCatalogRuntime: IProviderCatalogRuntime,
-    @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
+    @IProviderRequesterFactory requesterFactory: ProviderRequesterFactory,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionRequestAttributionService attribution: ISessionRequestAttributionService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -241,7 +241,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       profile,
       profileSnapshot: () => this.profileAdapter.snapshot(),
       modelCatalog,
-      requesterFactory: protocolRegistry,
+      requesterFactory,
       requesterExecution: this.requesterExecution,
       runtime: providerCatalogRuntime,
     });

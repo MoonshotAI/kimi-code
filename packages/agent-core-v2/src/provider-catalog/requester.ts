@@ -12,7 +12,10 @@ import {
   type LlmRequesterExecution,
 } from '@moonshot-ai/core/llm/policy/policy';
 import type { Model } from '#/llm-adapter/model/catalog';
-import { getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
+import { coreProviderRequesters, getProviderDefinition } from '#/llm-adapter/provider/provider-definition';
+import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { LifecycleScope } from '#/app/scopes';
 
 interface AdapterRoute {
   readonly requester: LlmRequester<'protocol'>;
@@ -79,8 +82,8 @@ export interface ProviderRequesterPresets {
 
 export class ProviderRequesterFactory {
   constructor(
-    private readonly detectedReasoningKeys: Map<string, string>,
-    private readonly presets: ProviderRequesterPresets,
+    private readonly detectedReasoningKeys = new Map<string, string>(),
+    private readonly presets: ProviderRequesterPresets = coreProviderRequesters,
   ) {}
 
   request(
@@ -140,3 +143,14 @@ export class ProviderRequesterFactory {
     return resolved.with({ model: { spec: { ...spec, provider: route.providerId } } });
   }
 }
+
+export const IProviderRequesterFactory: ServiceIdentifier<Pick<ProviderRequesterFactory, 'request'>> =
+  createDecorator<Pick<ProviderRequesterFactory, 'request'>>('providerRequesterFactory');
+
+registerScopedService(
+  LifecycleScope.App,
+  IProviderRequesterFactory,
+  ProviderRequesterFactory,
+  ScopeActivation.OnScopeCreated,
+  'provider',
+);

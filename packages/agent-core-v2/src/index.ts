@@ -189,6 +189,7 @@ import '#/app/kosongConfig/configSection';
 export * from '#/llm-adapter/provider/provider';
 export * from '#/llm-adapter/provider/provider-service';
 export * from '#/llm-adapter/provider/provider-definition';
+export * from '#/provider-catalog/requester';
 export * from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import '#/features/skill/catalog/configSection';
 import '#/app/agentIdentity/configSection';

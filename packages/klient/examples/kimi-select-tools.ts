@@ -18,8 +18,10 @@ import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester'
 import type { LlmRunEvent } from '@moonshot-ai/core/llm/response';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
-import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
-import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
+import {
+  IProviderRequesterFactory,
+  ProviderRequesterFactory,
+} from '@moonshot-ai/agent-core-v2/provider-catalog/requester';
 
 type RequestInput = LlmRequestProfile & LlmRequestContent & Pick<LlmRequestModel, 'responseFormat'>;
 
@@ -32,7 +34,7 @@ interface Requester {
   ): AsyncIterable<LlmRunEvent>;
 }
 
-function createRequester(model: Model, registry: IProtocolAdapterRegistry): Requester {
+function createRequester(model: Model, registry: Pick<ProviderRequesterFactory, 'request'>): Requester {
   return {
     model,
     request: (input, signal, params) => {
@@ -246,7 +248,7 @@ async function probeWireEncoding(): Promise<void> {
   });
   const port = (server.address() as AddressInfo).port;
 
-  const registry = new ProtocolAdapterRegistry();
+  const registry = new ProviderRequesterFactory();
   const makeRequester = (providerType?: string): Requester => {
     const model: Model = {
       id: 'probe',
@@ -471,7 +473,7 @@ async function probeLiveKimiProviders(): Promise<void> {
   try {
     await app.accessor.get(IConfigService).ready;
     const catalog = app.accessor.get(IModelCatalog);
-    const registry = app.accessor.get(IProtocolAdapterRegistry);
+    const registry = app.accessor.get(IProviderRequesterFactory);
 
     const filter = process.env['KIMI_SELECT_TOOLS_MODELS']?.split(',').map((s) => s.trim());
     const models = await catalog.listModels();
@@ -574,7 +576,7 @@ async function probeTappedContext(): Promise<void> {
   try {
     await app.accessor.get(IConfigService).ready;
     const catalog = app.accessor.get(IModelCatalog);
-    const registry = app.accessor.get(IProtocolAdapterRegistry);
+    const registry = app.accessor.get(IProviderRequesterFactory);
 
     const filter = process.env['KIMI_SELECT_TOOLS_MODELS']?.split(',').map((s) => s.trim());
     const models = await catalog.listModels();

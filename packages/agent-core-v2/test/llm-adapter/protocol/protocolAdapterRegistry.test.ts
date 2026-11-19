@@ -6,6 +6,7 @@ import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { supportsLlmUpload } from '#/llm-adapter/model/media';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import {
   getProviderDefinition,
   getProviderDefinitions,
@@ -60,6 +61,7 @@ registerProviderDefinition({
 });
 
 const registry = new ProtocolAdapterRegistry();
+const requesterFactory = new ProviderRequesterFactory();
 
 function modelWith(spec: {
   readonly protocol: Model['protocol'];
@@ -171,9 +173,9 @@ describe('resolveCapability', () => {
   });
 });
 
-describe('request gateway routes', () => {
+describe('ProviderRequesterFactory routes', () => {
   it('routes kimi+openai to the kimi trait with the video upload media', () => {
-    const resolved = registry.request(modelWith({ protocol: 'openai', providerType: 'kimi' }));
+    const resolved = requesterFactory.request(modelWith({ protocol: 'openai', providerType: 'kimi' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
     expect(contentsOf(resolved).model?.spec?.name).toBe('wire-model');
     expect(supportsLlmUpload(resolved, 'video')).toBe(true);
@@ -181,7 +183,7 @@ describe('request gateway routes', () => {
   });
 
   it('routes plain openai without the upload media', () => {
-    const resolved = registry.request(modelWith({ protocol: 'openai' }));
+    const resolved = requesterFactory.request(modelWith({ protocol: 'openai' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
     expect(supportsLlmUpload(resolved, 'video')).toBe(false);
     expect(supportsLlmUpload(resolved, 'image')).toBe(false);
@@ -192,7 +194,7 @@ describe('request gateway routes', () => {
     expect(options.detectedReasoningKey?.()).toBeUndefined();
     options.onReasoningKey?.('reasoning_content');
     expect(options.detectedReasoningKey?.()).toBe('reasoning_content');
-    const next = registry.request(modelWith({ protocol: 'openai' }));
+    const next = requesterFactory.request(modelWith({ protocol: 'openai' }));
     const nextOptions = contentsOf(next).protocol?.options as {
       detectedReasoningKey?: () => string | undefined;
     };
@@ -200,7 +202,7 @@ describe('request gateway routes', () => {
   });
 
   it('keeps stream business codes out of the real HTTP status at the registry boundary', () => {
-    const resolved = registry.request(modelWith({ protocol: 'openai', providerType: 'kimi' }));
+    const resolved = requesterFactory.request(modelWith({ protocol: 'openai', providerType: 'kimi' }));
     const decodeError = contentsOf(resolved).protocol?.base?.decodeError;
     const rawError = new RawOpenAISDKAPIError(
       429,
@@ -224,12 +226,12 @@ describe('request gateway routes', () => {
   });
 
   it('reports the wire protocol regardless of beta or vertex provider options', () => {
-    const beta = registry.request(
+    const beta = requesterFactory.request(
       modelWith({ protocol: 'anthropic', providerOptions: { betaApi: true } }),
     );
     expect(contentsOf(beta).model?.spec?.provider).toBe('anthropic');
     expect(contentsOf(beta).protocol?.options).toMatchObject({ betaApi: true });
-    const vertex = registry.request(
+    const vertex = requesterFactory.request(
       modelWith({
         protocol: 'google-genai',
         providerOptions: { vertexai: true, project: 'p', location: 'l' },
@@ -244,7 +246,7 @@ describe('request gateway routes', () => {
   });
 
   it('routes kimi+anthropic with media and explicit beta opt-in', async () => {
-    const resolved = registry.request(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
+    const resolved = requesterFactory.request(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
     expect(contentsOf(resolved).model?.spec?.provider).toBe('anthropic');
     expect(supportsLlmUpload(resolved, 'video')).toBe(true);
     expect(supportsLlmUpload(resolved, 'image')).toBe(true);
@@ -285,7 +287,7 @@ describe('request gateway routes', () => {
       );
     }) as typeof fetch);
     const generate = async (providerOptions?: Model['providerOptions']) => {
-      const routed = registry.request(
+      const routed = requesterFactory.request(
         modelWith({ protocol: 'anthropic', providerType: 'kimi', providerOptions }),
       );
       try {
@@ -314,7 +316,7 @@ describe('request gateway routes', () => {
   });
 
   it('carries thinking metadata and model limits onto the resolved LlmModel', () => {
-    const resolved = registry.request(
+    const resolved = requesterFactory.request(
       modelWith({
         protocol: 'anthropic',
         supportEfforts: ['low', 'high'],

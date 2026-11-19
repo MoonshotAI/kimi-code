@@ -112,7 +112,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import { IProviderRequesterFactory, ProviderRequesterFactory } from '#/provider-catalog/requester';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
 import { type ModelCapability, type ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import {
@@ -722,7 +722,7 @@ export function logServices(logger: Logger): TestAgentServiceOverride {
 }
 
 export function llmGenerateServices(requester: MockProvider): TestAgentServiceOverride {
-  return appService(IProtocolAdapterRegistry, createGenerateBackedGateway(requester));
+  return appService(IProviderRequesterFactory, createGenerateBackedRequesterFactory(requester));
 }
 
 export function telemetryServices(telemetry: ITelemetryService): TestAgentServiceOverride {
@@ -1239,8 +1239,8 @@ export class AgentTestContext {
             } satisfies ILogOptions,
           );
           reg.defineInstance(
-            IProtocolAdapterRegistry,
-            createGenerateBackedGateway(
+            IProviderRequesterFactory,
+            createGenerateBackedRequesterFactory(
               options.generate ?? (options.model === undefined ? this.scriptedGenerate.provider : fetchBackedProvider(options.model.fetch)),
             ),
           );
@@ -3013,17 +3013,9 @@ function createLogService(logger: Logger | undefined, bindings: LogContext = {})
   };
 }
 
-function createGenerateBackedGateway(requester: MockProvider): IProtocolAdapterRegistry {
-  const real = new ProtocolAdapterRegistry();
+function createGenerateBackedRequesterFactory(requester: MockProvider): Pick<ProviderRequesterFactory, 'request'> {
+  const real = new ProviderRequesterFactory();
   return {
-    _serviceBrand: undefined,
-    supportedProtocols: () => real.supportedProtocols(),
-    resolveAdapterIdentity: (protocol, providerType) =>
-      real.resolveAdapterIdentity(protocol, providerType),
-    resolveProviderBaseId: (protocol, providerType) =>
-      real.resolveProviderBaseId(protocol, providerType),
-    resolveCapability: (protocol, modelName, providerType) =>
-      real.resolveCapability(protocol, modelName, providerType),
     request: (model, params, execution) => {
       const cacheKey = (model as Model & { readonly promptCacheKey?: string }).promptCacheKey;
       const initialized = real.request(model, {

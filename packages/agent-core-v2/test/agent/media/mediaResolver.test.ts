@@ -24,7 +24,7 @@ import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { ImageUploader, VideoUploader } from '#/llm-adapter/model/media';
 import type { Model } from '#/llm-adapter/model/catalog';
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import type { LlmFiles, LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
@@ -269,7 +269,7 @@ function requester(opts: {
     },
     ...(hasFailed === undefined ? {} : { hasFailed: (id: string) => hasFailed(id) }),
   };
-  const initial = new ProtocolAdapterRegistry().request(model);
+  const initial = new ProviderRequesterFactory().request(model);
   return {
     model,
     requester: initial.with({ endpoint: { files } }),
@@ -1078,7 +1078,7 @@ describe('AgentMediaResolverService image upload', () => {
       baseUrl: 'https://example.test/v1',
       credentialProvider: createStaticCredentialProvider('YOUR_API_KEY'),
     });
-    const routed = new ProtocolAdapterRegistry()
+    const routed = new ProviderRequesterFactory()
       .request(model, { protocol: { stream: false } })
       .with({ endpoint: { fetch: mockFetch } });
     const media = createAgentMediaPolicy(resolver(new Map(), sessionDir, mediaStore), model, routed);

@@ -48,7 +48,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { IProviderRequesterFactory } from '#/provider-catalog/requester';
 import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
 import { IConfigService } from '#/app/config/config';
 import type { ProviderConfig } from '#/llm-adapter/provider/provider';
@@ -570,7 +570,7 @@ describe('Agent loop', () => {
         onTrace: (trace) => operationTraces.push(trace),
         onOutcome: (_outcome, source) => operationOutcomeSources.push(source),
       };
-      const registryRequest = vi.spyOn(local.get(IProtocolAdapterRegistry), 'request');
+      const registryRequest = vi.spyOn(local.get(IProviderRequesterFactory), 'request');
       expect(registryRequest).toHaveBeenCalledTimes(0);
       expect(localLoop.requester).toBe(coreLoop.requester);
       const operation = localLoop.operationRequester(localLoop.requester, operationOptions);
@@ -1360,7 +1360,7 @@ describe('Agent loop', () => {
       }),
     };
 
-    const registryRequest = vi.spyOn(ctx.get(IProtocolAdapterRegistry), 'request');
+    const registryRequest = vi.spyOn(ctx.get(IProviderRequesterFactory), 'request');
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
     const reasons = trackStepReasons(ctx);

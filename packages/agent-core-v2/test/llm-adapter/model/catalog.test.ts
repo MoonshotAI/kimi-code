@@ -8,7 +8,8 @@ import { ConfigErrors } from '#/app/config/errors';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import '#/llm-adapter/protocol/protocolAdapterRegistry';
+import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import {
   IProviderService,
   type ProviderConfig,
@@ -652,7 +653,7 @@ describe('direct generate', () => {
       }));
       const model = catalog.get('k1');
       const requester = withMockProvider(
-        new ProtocolAdapterRegistry().request(model, { model: { maxOutputTokens: 512 } }),
+        new ProviderRequesterFactory().request(model, { model: { maxOutputTokens: 512 } }),
         fakeRequester,
       );
       const events = [];
@@ -702,7 +703,7 @@ describe('direct generate', () => {
     try {
       const model = catalog.get('flat');
       const failure = await (async () => {
-        const requester = new ProtocolAdapterRegistry().request(model);
+        const requester = new ProviderRequesterFactory().request(model);
         for await (const event of streamLlmRequest(
           requester.request({
             profile: { systemPrompt: 'ping', tools: [] },

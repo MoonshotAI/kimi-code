@@ -2,27 +2,13 @@ import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
-import type {
-  InitializedLlmRequester,
-  InitializedLlmRequestPart,
-} from '@moonshot-ai/core/llm/requester';
-import type { LlmRequesterExecution } from '@moonshot-ai/core/llm/policy/policy';
-
-import type { Model } from '../model/catalog';
-import { coreProviderRequesters, getProviderDefinition } from '../provider/provider-definition';
-import { ProviderRequesterFactory } from '#/provider-catalog/requester';
+import { getProviderDefinition } from '../provider/provider-definition';
 
 import { IProtocolAdapterRegistry, type Protocol } from './protocol';
 import { getProtocolBase, listProtocolBases, type ProtocolBaseId } from './protocol-base';
 
 export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
   declare readonly _serviceBrand: undefined;
-
-  private readonly detectedReasoningKeys = new Map<string, string>();
-  private readonly requesterFactory = new ProviderRequesterFactory(
-    this.detectedReasoningKeys,
-    coreProviderRequesters,
-  );
 
   supportedProtocols(): readonly Protocol[] {
     return listProtocolBases().map((base) => base.id);
@@ -57,14 +43,6 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
       definition?.capability?.(modelName) ??
       getProtocolBase(identity.baseId)?.capability?.(modelName)
     );
-  }
-
-  request(
-    model: Model,
-    part?: InitializedLlmRequestPart,
-    execution?: LlmRequesterExecution,
-  ): InitializedLlmRequester {
-    return this.requesterFactory.request(model, part, execution);
   }
 }
 
