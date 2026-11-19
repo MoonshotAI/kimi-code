@@ -27,6 +27,8 @@ import {
   foldAnnouncedToolNames,
   isDynamicToolSchemaMessage,
   isLoadableToolsAnnouncement,
+  isLoadableToolsSnapshotAnnouncement,
+  LOADABLE_TOOLS_VARIANT,
   renderLoadableToolsAnnouncement,
   shapeUnsupportedDynamicToolContext,
 } from './dynamicTools';
@@ -61,6 +63,8 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   private reconcileTail: Promise<void> = Promise.resolve();
   private readonly notifiedUpdates = new Set<string>();
   private pendingInitialization: readonly ToolSelectTool[] | undefined;
+  private projectedAnnouncements: readonly ContextMessage[] = [];
+  private projectedHistoryRevision = -1;
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
@@ -157,7 +161,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     messages: readonly ContextMessage[] = this.history(),
   ): readonly Tool[] {
     if (!dynamic) return base ?? this.defaultToolsForDisclosure(disclosure);
-    if (disclosure) return base ?? [];
+    if (disclosure) return (base ?? []).filter((tool) => tool.deferred !== true);
     const loaded = collectLoadedDynamicTools(messages);
     const tools = (base ?? [])
       .filter((tool) => tool.name !== SELECT_TOOLS_TOOL_NAME)
@@ -182,8 +186,14 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     messages: readonly ContextMessage[],
     disclosure = this.enabled(),
     tools = this.defaultTools(disclosure),
+    deferred?: readonly Tool[],
   ): readonly ContextMessage[] {
-    return this.shapeHistoryForDisclosure(messages, disclosure, tools);
+    const shaped = this.shapeHistoryForDisclosure(messages, disclosure, tools, deferred);
+    if (deferred !== undefined) {
+      this.projectedAnnouncements = shaped.filter(isLoadableToolsAnnouncement);
+      this.projectedHistoryRevision = this.profile.historyRevision();
+    }
+    return shaped;
   }
 
   load(names: readonly string[]): LoadToolsResult {
@@ -261,6 +271,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   loadableToolsAnnouncement(
     lastDisclosure?: ToolSelectAnnouncementDisclosure,
+    includeSnapshot = true,
   ): ToolSelectAnnouncement | undefined {
     const enabled = this.featureEnabled();
     const state = this.modelState();
@@ -270,10 +281,12 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     const runtimeRevision = enabled
       ? -1
       : state.changes.findIndex((change) => change.added.some((tool) => tool.origin === 'runtime'));
-    const lastRevision = lastDisclosure?.revision ?? (runtimeRevision < 0 ? undefined : runtimeRevision);
+    let lastRevision = lastDisclosure?.revision ?? (runtimeRevision < 0 ? undefined : runtimeRevision);
+    if (enabled && !includeSnapshot && (lastRevision === undefined || lastRevision > revision)) lastRevision = 0;
     if (lastRevision === undefined || lastRevision > revision) {
       if (!enabled) return undefined;
-      const legacy = this.legacyAnnouncement(revision);
+      const legacy = this.legacyAnnouncement(revision, !includeSnapshot);
+      if (!includeSnapshot) return legacy?.disclosure.kind === 'snapshot' ? undefined : legacy;
       if (legacy !== undefined) return legacy;
       const tools = state.current.filter(
         (info) => this.isDynamicallyLoadable(info) && this.toolPolicy.isToolActive(info.name, info.source),
@@ -308,18 +321,25 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
         },
       };
     }
-    return enabled ? this.legacyAnnouncement(revision) : undefined;
+    if (!enabled) return undefined;
+    const legacy = this.legacyAnnouncement(revision, !includeSnapshot);
+    return !includeSnapshot && legacy?.disclosure.kind === 'snapshot' ? undefined : legacy;
   }
 
-  private legacyAnnouncement(revision: number): ToolSelectAnnouncement | undefined {
+  private legacyAnnouncement(revision: number, excludeBaseline = false): ToolSelectAnnouncement | undefined {
     const state = this.modelState();
-    const history = this.history();
+    const history = excludeBaseline && this.projectedHistoryRevision === this.profile.historyRevision()
+      ? this.projectedAnnouncements
+      : this.history();
     const announced = foldAnnouncedToolNames(history);
+    const baselineNames = new Set(
+      (excludeBaseline ? this.profile.baselineTools() : []).map((tool) => tool.name),
+    );
     const loadable = state.current.filter(
       (info) => this.isDynamicallyLoadable(info) && this.toolPolicy.isToolActive(info.name, info.source),
     );
     const loadableNames = new Set(loadable.map((tool) => tool.name));
-    const added = loadable.filter((tool) => !announced.has(tool.name));
+    const added = loadable.filter((tool) => !announced.has(tool.name) && !baselineNames.has(tool.name));
     const known = [
       ...state.current,
       ...(state.initial ?? []),
@@ -494,9 +514,24 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     messages: readonly ContextMessage[],
     disclosure: boolean,
     tools: readonly Tool[],
+    deferred?: readonly Tool[],
   ): readonly ContextMessage[] {
     if (!disclosure) return shapeUnsupportedDynamicToolContext(messages);
-    return this.shapeActiveHistory(messages, tools);
+    const shaped = this.shapeActiveHistory(messages, tools);
+    if (deferred === undefined) return shaped;
+    const deferredNames = new Set(deferred.map((tool) => tool.name));
+    const initialTools = this.initialToolInfos().filter((info) => deferredNames.has(info.name));
+    const withoutSnapshot = shaped.filter((message) => !isLoadableToolsSnapshotAnnouncement(message));
+    if (initialTools.length === 0) return withoutSnapshot;
+    const snapshot: ToolSelectAnnouncementDisclosure = { kind: 'snapshot', revision: 0, tools: initialTools };
+    return [
+      {
+        role: 'user',
+        content: [{ type: 'text' as const, text: wrapSystemReminder(renderSnapshotAnnouncement(initialTools)) }],
+        origin: { kind: 'injection', variant: LOADABLE_TOOLS_VARIANT, disclosure: snapshot },
+      },
+      ...withoutSnapshot,
+    ];
   }
 
   private readonly failedSelectionAttempts = new Map<string, number>();

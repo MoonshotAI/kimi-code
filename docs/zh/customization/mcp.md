@@ -131,7 +131,7 @@ defaultCwd = "/srv/work"
 
 ## 按需加载工具
 
-默认情况下，server 的所有工具都会直接进入模型的顶层工具列表；接入的 server 较多、或单个 server 暴露的工具较多时，这些工具定义会持续占用上下文。把 server 标记为 deferred 后，它的工具不再进入顶层工具列表：模型先看到一份可加载工具清单，需要时通过内置的 `select_tools` 工具加载完整定义，加载后同一轮即可调用。
+默认情况下，server 的所有工具都会直接进入模型的顶层工具列表；接入的 server 较多、或单个 server 暴露的工具较多时，这些工具定义会持续占用上下文。把 server 标记为 deferred 可以控制工具 schema 的披露方式。支持动态加载时，ToolSelect Resolver 会从解析后的顶层工具列表中移除 deferred 项，将 baseline 中的 deferred 名称转换为初始 reminder，后续新增和移除则通过 delta 公告。内置的 `select_tools` 再把选中的 schema 加载到 system message。不支持动态加载的模型会移除该元数据，并将初始 deferred 工具按普通声明发送。最终编码器自身不会仅凭这个标记删除工具；重复声明优先保留顶层列表。
 
 按需加载是实验功能，同时满足两个前提才会生效：
 

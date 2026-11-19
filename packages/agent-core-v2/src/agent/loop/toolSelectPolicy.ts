@@ -11,6 +11,9 @@ export function createToolSelectResolver(toolSelect: IAgentToolSelectService, dy
       const capabilities =
         withProtocolCapabilities(request.model.spec, request.protocol.base).capability ?? {};
       const disclosure = toolSelect.enabled(capabilities);
+      const deferred = dynamic
+        ? (request.profile?.tools ?? []).filter((tool) => disclosure && tool.deferred === true)
+        : undefined;
       const tools = toolSelect.requestTools(request.profile?.tools, disclosure, dynamic, request.content.messages);
       return {
         ...request,
@@ -20,7 +23,7 @@ export function createToolSelectResolver(toolSelect: IAgentToolSelectService, dy
         },
         content: {
           ...request.content,
-          messages: toolSelect.shapeHistory(request.content.messages, disclosure, tools),
+          messages: toolSelect.shapeHistory(request.content.messages, disclosure, tools, deferred),
         },
       };
     },
