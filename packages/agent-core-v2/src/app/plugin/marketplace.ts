@@ -129,8 +129,7 @@ export function pluginMarketplaceUrl(baseUrl: string): string {
 }
 
 const TRUSTED_PLUGIN_MARKETPLACE_URLS = new Set(
-  [...Object.values(KIMI_REGION_PROFILES).map((profile) => profile.baseUrl), 'https://coding.deva.msh.team/coding/v1']
-    .map(pluginMarketplaceUrl),
+  Object.values(KIMI_REGION_PROFILES).map((profile) => pluginMarketplaceUrl(profile.baseUrl)),
 );
 
 export function isTrustedPluginMarketplaceUrl(source: string): boolean {
