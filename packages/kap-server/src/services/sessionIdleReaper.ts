@@ -1,5 +1,6 @@
 import { Error2, ErrorCodes, type ISessionManager } from '@moonshot-ai/agent-core-v2';
 
+import { PeriodicSweep } from './periodicSweep';
 import type { ServerLogger } from './pinoLoggerService';
 
 export const SESSION_IDLE_RECLAIM_ENV = 'KIMI_CODE_SESSION_IDLE_RECLAIM_MS';
@@ -37,50 +38,26 @@ export async function closeIdleSessions(
   }
 }
 
-export class SessionIdleReaper {
-  private timer: ReturnType<typeof setInterval> | undefined;
-  private inFlight: Promise<void> | undefined;
-  private closed = false;
-
+export class SessionIdleReaper extends PeriodicSweep {
   constructor(
     private readonly sessions: Pick<ISessionManager, 'list' | 'closeIfIdle'>,
     private readonly logger: Pick<ServerLogger, 'info' | 'warn'>,
     private readonly idleTimeoutMs: number,
     private readonly sweepIntervalMs: number = SWEEP_INTERVAL_MS,
-  ) {}
+  ) {
+    super();
+  }
 
   start(): void {
     if (this.closed || this.idleTimeoutMs <= 0 || this.timer !== undefined) return;
-    this.timer = setInterval(() => {
-      void this.sweep();
-    }, this.sweepIntervalMs);
-    this.timer.unref?.();
+    this.schedule(this.sweepIntervalMs);
     this.logger.info(
       { idleTimeoutMs: this.idleTimeoutMs, sweepIntervalMs: this.sweepIntervalMs },
       'session idle reclaim enabled',
     );
   }
 
-  sweep(): Promise<void> {
-    if (this.inFlight !== undefined) return this.inFlight;
-    const run = this.sweepSessions();
-    this.inFlight = run;
-    void run.finally(() => {
-      if (this.inFlight === run) this.inFlight = undefined;
-    });
-    return run;
-  }
-
-  async close(): Promise<void> {
-    this.closed = true;
-    if (this.timer !== undefined) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
-    await this.inFlight;
-  }
-
-  private async sweepSessions(): Promise<void> {
+  protected async sweepOnce(): Promise<void> {
     await closeIdleSessions(
       this.sessions,
       this.idleTimeoutMs,

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ref } from 'vue';
 
 import {
   canUseNativeTerminal,
   createNativeTerminalStore,
   MAX_TERMINAL_SESSIONS,
+  supportsNativeTerminal,
   type NativeTerminalBridge,
 } from '../../src/renderer/composables/useNativeTerminal';
 
@@ -61,6 +63,46 @@ describe('canUseNativeTerminal', () => {
     expect(canUseNativeTerminal(undefined)).toBe(false);
     expect(canUseNativeTerminal({} as NativeTerminalBridge)).toBe(false);
     expect(canUseNativeTerminal(makeBridge().bridge)).toBe(true);
+  });
+
+  it('offers a terminal for local and SSH projects but not for account devices', () => {
+    expect(supportsNativeTerminal(undefined)).toBe(true);
+    expect(supportsNativeTerminal({ connection: 'ssh' })).toBe(true);
+    expect(supportsNativeTerminal({ connection: 'account' })).toBe(false);
+  });
+});
+
+describe('terminal capability of the active project', () => {
+  it('neither opens nor spawns while the project has no terminal, and works again once it does', async () => {
+    const { bridge } = makeBridge();
+    const supported = ref(false);
+    const store = createNativeTerminalStore(bridge, () => undefined, () => supported.value);
+
+    expect(store.available).toBe(true);
+    expect(store.canOpen.value).toBe(false);
+    store.toggle('/remote/app');
+    expect(store.open.value).toBe(false);
+    expect(await store.newTab('/remote/app')).toBeNull();
+    expect(await store.newPanelTab('/remote/app')).toEqual({ tab: null, error: null });
+    expect(bridge.createNativeTerminal).not.toHaveBeenCalled();
+
+    supported.value = true;
+    expect(store.canOpen.value).toBe(true);
+    store.toggle('/work/app');
+    await vi.waitFor(() => expect(store.tabs.value).toHaveLength(1));
+    expect(store.open.value).toBe(true);
+  });
+
+  it('still closes an open panel after the project loses its terminal', async () => {
+    const { bridge } = makeBridge();
+    const supported = ref(true);
+    const store = createNativeTerminalStore(bridge, () => undefined, () => supported.value);
+    store.toggle('/work/app');
+    await vi.waitFor(() => expect(store.tabs.value).toHaveLength(1));
+
+    supported.value = false;
+    store.toggle();
+    expect(store.open.value).toBe(false);
   });
 });
 

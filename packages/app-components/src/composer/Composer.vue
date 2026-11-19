@@ -30,13 +30,13 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '@moonshot-ai/app-core/lib';
-import { openAgentSettings, openHostSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
+import { openAgentSettings, openDeviceSettings, useInputHistory, useIsMobile, useRunningSendMode } from '@moonshot-ai/app-client/composables';
 import { useSlashMenu } from '@moonshot-ai/app-client/composables';
 import { useMentionMenu, type MentionEntry } from '@moonshot-ai/app-client/composables';
 import { useComposerDraft } from '@moonshot-ai/app-client/composables';
 import { useAttachmentUpload, usePasteImageAutoMention } from '@moonshot-ai/app-client/composables';
 import { useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 import {
   createComposerEditor,
   discardStashedEditorState,
@@ -1007,7 +1007,7 @@ function insertFolderPaths(paths: string[]): void {
   const ed = editor;
   resetHistoryBrowse();
   if (!ed) return;
-  if (client.visibleWorkspace.value?.hostId !== undefined) {
+  if (client.visibleWorkspace.value?.deviceId !== undefined) {
     client.notify({ severity: 'warning', title: t('composer.localFolderOnRemote') });
     return;
   }
@@ -1730,8 +1730,8 @@ function resetAfterDispatch(
 
 function passSubmitGate(): boolean {
   if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return false;
-  if (hostSetupId.value !== undefined) {
-    openHostSetup();
+  if (deviceSetupId.value !== undefined) {
+    openDeviceSetup();
     return false;
   }
   return true;
@@ -2804,15 +2804,15 @@ onUnmounted(() => {
   toolbarLabelObserver = null;
 });
 const { fontScale } = useAppearance();
-const hostSetupId = computed(() => {
-  const hostId = client.visibleWorkspace?.value?.hostId;
-  if (hostId === undefined || hostsStore().displayState(hostId) !== 'ready') return undefined;
-  return hostsStore().needsLogin(hostId) ? hostId : undefined;
+const deviceSetupId = computed(() => {
+  const deviceId = client.visibleWorkspace?.value?.deviceId;
+  if (deviceId === undefined || devicesStore().displayState(deviceId) !== 'ready') return undefined;
+  return devicesStore().needsLogin(deviceId) ? deviceId : undefined;
 });
 
-function openHostSetup(): void {
-  const hostId = hostSetupId.value;
-  if (hostId !== undefined) openHostSettings(hostId);
+function openDeviceSetup(): void {
+  const deviceId = deviceSetupId.value;
+  if (deviceId !== undefined) openDeviceSettings(deviceId);
 }
 
 watch(
@@ -2824,7 +2824,7 @@ watch(
     () => status.value?.model,
     () => working.value,
     gateVerdict,
-    hostSetupId,
+    deviceSetupId,
     () => models.value?.length,
     fontScale,
     locale,
@@ -3405,18 +3405,18 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             </template>
           </Tooltip>
 
-          <Tooltip v-if="status && !isSideChat && hostSetupId" :text="modelPillCollapsed ? t('login.configureHostModelsAction') : null">
+          <Tooltip v-if="status && !isSideChat && deviceSetupId" :text="modelPillCollapsed ? t('login.configureDeviceModelsAction') : null">
           <button
             type="button"
             class="model-pill login-pill"
             :class="{ 'icon-only': modelPillCollapsed, 'model-gone': modelPillGone }"
-            :aria-label="modelPillCollapsed ? t('login.configureHostModelsAction') : undefined"
-            @click.stop="openHostSetup"
+            :aria-label="modelPillCollapsed ? t('login.configureDeviceModelsAction') : undefined"
+            @click.stop="openDeviceSetup"
           >
             <Icon v-if="modelPillCollapsed" name="bolt" size="md" />
             <template v-else>
               <Icon name="bolt" size="sm" />
-              <span ref="mpNameRef" class="mp-name">{{ t('login.configureHostModelsAction') }}</span>
+              <span ref="mpNameRef" class="mp-name">{{ t('login.configureDeviceModelsAction') }}</span>
             </template>
           </button>
           </Tooltip>

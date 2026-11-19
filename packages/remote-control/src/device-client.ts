@@ -4,6 +4,7 @@ import {
   FileTokenStorage,
   resolveKimiRemoteControlAuth,
   resolveKimiTokenStorageName,
+  type KimiOAuthTokenRef,
   type KimiRemoteControlAuth,
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -27,6 +28,11 @@ export interface RemoteControlDeviceList {
   readonly max_devices?: number;
 }
 
+export interface RemoteControlRelayAccess {
+  readonly relayOrigin: string;
+  readonly cookie: string;
+}
+
 export class RemoteControlDeviceClientError extends Error {
   constructor(
     message: string,
@@ -37,12 +43,20 @@ export class RemoteControlDeviceClientError extends Error {
   }
 }
 
+export class RemoteControlLoginRequiredError extends RemoteControlDeviceClientError {
+  constructor() {
+    super('Remote Control requires a Kimi login.');
+    this.name = 'RemoteControlLoginRequiredError';
+  }
+}
+
 export interface RemoteControlDeviceClientOptions {
   readonly homeDir: string;
   readonly configuredOAuthKey?: () => string | undefined;
   readonly configuredOAuthHost?: () => string | undefined;
   readonly relayOrigin?: string;
   readonly fetchImpl?: typeof fetch;
+  readonly refreshToken?: (oauthRef: KimiOAuthTokenRef) => Promise<unknown>;
 }
 
 interface RemoteControlDeviceContext {
@@ -73,6 +87,19 @@ export class RemoteControlDeviceClient {
     this.exchanges.clear();
     this.abortController.abort();
     this.abortController = new AbortController();
+  }
+
+  async relayAccess(refresh = false): Promise<RemoteControlRelayAccess> {
+    try {
+      const context = await this.context();
+      if (refresh) this.cookies.delete(context.cacheKey);
+      return { relayOrigin: context.relayOrigin, cookie: await this.sessionCookie(context, refresh) };
+    } catch (error) {
+      if (error instanceof RemoteControlDeviceClientError) throw error;
+      throw new RemoteControlDeviceClientError(
+        `Remote Control session exchange failed: ${errorMessage(error)}`,
+      );
+    }
   }
 
   async listDevices(): Promise<RemoteControlDeviceList> {
@@ -125,12 +152,15 @@ export class RemoteControlDeviceClient {
       this.options.relayOrigin ??
       resolveRemoteControlRelayOrigin(process.env, auth.relayOrigin)
     ).replace(/\/+$/, '');
+    await this.options
+      .refreshToken?.({ key: auth.oauthKey, oauthHost: this.options.configuredOAuthHost?.() })
+      .catch(() => undefined);
     const storage = new FileTokenStorage(join(this.options.homeDir, 'credentials'));
     const token = await storage.load(
       resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }),
     );
     if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
-      throw new RemoteControlDeviceClientError('Remote Control requires a Kimi login.');
+      throw new RemoteControlLoginRequiredError();
     }
     return {
       auth,

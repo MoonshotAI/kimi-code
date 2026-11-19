@@ -8,7 +8,7 @@ export { useTasksStore, tasksStore, setTasksHooks, type TasksHooks } from './tas
 export { useAgentStatesStore, agentStatesStore } from './agentStates';
 export { useFilesStore, filesStore, setFilesHooks, type FilesHooks } from './files';
 export { useConfigStore, configStore, setConfigHooks, type ConfigHooks } from './config';
-export { useHostsStore, hostsStore, setHostsHooks, hostDefinition, type HostAccount, type HostDisplayState, type HostProviderCopy, type HostSnapshotDiff, type HostsHooks } from './hosts';
+export { useDevicesStore, devicesStore, setDevicesHooks, deviceDefinition, type DeviceAccount, type DeviceDisplayState, type DeviceInstall, type DeviceProviderCopy, type DeviceSnapshotDiff, type DevicesHooks, type MyDevice } from './devices';
 export { usePermissionsStore, permissionsStore } from './permissions';
 export { useWorkspacesStore, workspacesStore, setWorkspacesHooks, type WorkspacesHooks, type WorkspaceLifecycleEvent, type WorkspaceTrustError, type WorkspaceTrustResult } from './workspaces';
 export { usePromptStore, promptStore } from './prompt';

@@ -55,6 +55,8 @@ Stop:    Ctrl+C
 - **`kimi web --remote-control`**：与 `kimi rc` 等价；
 - **`/remote-control`**（别名 `/rc`）：已在 CLI 会话中时，把当前会话直接交给远程界面。
 
+在 macOS 和 Linux 上，可以给 `kimi rc` 或 `kimi web --remote-control` 加上 `--background`，改为在后台的 Kimi server 上运行远程控制。这时按 `Ctrl+C` 只会关闭远程访问，正在运行的任务会继续运行，适合开发机这类常开的机器。
+
 启动后终端会打印访问链接（国内 `https://code-rc.kimi.com/devices/<设备 ID>/`，全球区 `https://code-rc.kimi.ai/devices/<设备 ID>/`）、二维码（同时另存为 PNG 文件）与设备名：
 
 ![kimi rc 启动后的终端输出：二维码与连接状态](../../media/kimi-rc-banner.jpg)

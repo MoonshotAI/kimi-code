@@ -91,6 +91,7 @@ export interface DefineRouteOptions<
   body?: TBody;
   params?: TParams;
   querystring?: TQuery;
+  documentedHeaders?: z.ZodType;
   success?: { data: TSuccessData };
   errors?: Record<number, { dataSchema?: z.ZodTypeAny; detailsSchema?: z.ZodTypeAny }>;
   rawResponse?: Record<number, Record<string, unknown>>;
@@ -156,6 +157,9 @@ export function defineRoute<
   }
   if (options.querystring) {
     schema['querystring'] = jsonSchema(options.querystring);
+  }
+  if (options.documentedHeaders) {
+    schema['headers'] = jsonSchema(options.documentedHeaders);
   }
 
   const hasResponse =

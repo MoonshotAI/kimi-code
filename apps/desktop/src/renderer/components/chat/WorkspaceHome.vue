@@ -4,20 +4,20 @@ import { useI18n } from 'vue-i18n';
 import { Badge, Icon } from '@moonshot-ai/app-ui';
 import { WorkspaceIcon } from '@moonshot-ai/app-components/support';
 import { OpenInMenu } from '@moonshot-ai/app-components';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 import { useNativeTerminal } from '../../composables/useNativeTerminal';
 
 const props = defineProps<{
   workspaceName?: string;
   workspaceRoot?: string;
   workspaceDirs?: string[];
-  workspaceHostId?: string;
+  workspaceDeviceId?: string;
 }>();
 
 const { t } = useI18n();
 
-const remote = computed(() => props.workspaceHostId !== undefined);
-const hostLabel = computed(() => props.workspaceHostId === undefined ? '' : hostsStore().hostLabel(props.workspaceHostId, t));
+const remote = computed(() => props.workspaceDeviceId !== undefined);
+const deviceLabel = computed(() => props.workspaceDeviceId === undefined ? '' : devicesStore().deviceLabel(props.workspaceDeviceId, t));
 const dirs = computed(() => {
   if (props.workspaceDirs && props.workspaceDirs.length > 0) return props.workspaceDirs;
   return props.workspaceRoot ? [props.workspaceRoot] : [];
@@ -33,9 +33,9 @@ function toggleTerminalPanel(): void {
 <template>
   <div class="ws-home">
     <div class="ws-home-title">
-      <WorkspaceIcon class="ws-home-folder" :host-id="workspaceHostId" status="all" />
+      <WorkspaceIcon class="ws-home-folder" :device-id="workspaceDeviceId" status="all" />
       <span class="ws-home-name">{{ workspaceName }}</span>
-      <span v-if="hostLabel" class="ws-home-host" :title="hostLabel">{{ hostLabel }}</span>
+      <span v-if="deviceLabel" class="ws-home-device" :title="deviceLabel">{{ deviceLabel }}</span>
     </div>
     <div v-if="dirs.length > 0" class="ws-home-dirs">
       <div v-for="(dir, i) in dirs" :key="dir" class="ws-home-dir">
@@ -48,7 +48,7 @@ function toggleTerminalPanel(): void {
     <div class="ws-home-actions">
       <OpenInMenu v-if="workspaceRoot && !remote" :work-dir="workspaceRoot" />
       <button
-        v-if="terminalStore.available"
+        v-if="terminalStore.available && terminalStore.canOpen.value"
         type="button"
         class="ws-home-action"
         :class="{ open: terminalStore.open.value }"
@@ -82,7 +82,7 @@ function toggleTerminalPanel(): void {
 .ws-home-folder {
   color: var(--color-text-muted);
 }
-.ws-home-host {
+.ws-home-device {
   max-width: 120px;
   overflow: hidden;
   color: var(--color-text-faint);

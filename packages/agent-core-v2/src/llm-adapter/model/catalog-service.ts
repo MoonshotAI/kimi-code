@@ -8,6 +8,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
+import { registerClientIdentityScopedService } from '#/app/clientIdentity/clientIdentity';
 
 import type { CatalogModel, CatalogProviderInfo } from '#human/provider-catalog/catalog';
 import {
@@ -558,3 +559,4 @@ registerScopedService(
   ScopeActivation.OnScopeCreated,
   'modelCatalog',
 );
+registerClientIdentityScopedService(IModelCatalog, ModelCatalog);

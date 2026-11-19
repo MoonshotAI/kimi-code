@@ -40,7 +40,7 @@ describe('SessionLifecycleService', () => {
       dispose: vi.fn(),
     };
     const handle = {
-      accessor: { get: () => ({ ready }) },
+      accessor: { get: () => ({ ready, resolved: () => ready }) },
       dispose: vi.fn(),
     };
     createScopedChildHandleMock.mockReset();

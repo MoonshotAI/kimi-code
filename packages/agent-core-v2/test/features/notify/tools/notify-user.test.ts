@@ -4,6 +4,7 @@ import { appendContext } from '../../../agent/contextMemory/stubs';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type HostUiCapability, IBootstrapService } from '#/app/bootstrap/bootstrap';
+import type { IClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { IFlagService } from '#/app/flag/flag';
 import { NOTIFY_USER_FLAG_ENV, NOTIFY_USER_FLAG_ID, notifyUserFlag } from '#/features/notify/flag';
 import {
@@ -98,7 +99,7 @@ describe('NotifyUserTool', () => {
   it('is offered only when the flag is on and the host renders the update panel', () => {
     const flags = (enabled: boolean) => ({ enabled: () => enabled }) as unknown as IFlagService;
     const host = (uiCapabilities?: readonly HostUiCapability[]) =>
-      ({ args: { requestHeaders: {}, uiCapabilities } }) as unknown as IBootstrapService;
+      ({ requestHeaders: {}, uiCapabilities }) as unknown as IClientIdentity;
 
     expect(notifyUserAvailable(flags(true), host([NOTIFY_USER_UI_CAPABILITY]))).toBe(true);
     expect(notifyUserAvailable(flags(true), host([]))).toBe(false);

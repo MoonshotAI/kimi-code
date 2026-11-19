@@ -58,7 +58,7 @@ export default {
   thinkingSuffix: ' · 思考',
   thinkingSuffixEffort: ' · {level}',
   noArgCommand: '{cmd} 不接受任何参数',
-  localFolderOnRemote: '本机文件夹无法发给远程项目，请改用 @ 引用项目内的路径',
+  localFolderOnRemote: '这台电脑上的文件夹无法发给远程项目，请改用 @ 引用项目内的路径',
   pastedTextLines: '{n} 行',
   pastedTextChars: '{n} 个字符',
   viewPastedText: '查看文本',

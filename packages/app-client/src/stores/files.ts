@@ -139,7 +139,7 @@ export const useFilesStore = defineStore('kimi.files', () => {
     const workspace = workspacesStore().visibleWorkspace;
     if (!workspace?.root) return null;
     const absolutePath = isAbsoluteLocalPath(path) ? path : `${workspace.root.replace(/[\\/]+$/, '')}/${path}`;
-    return getDeviceApi(workspace.hostId).downloadHostFile(absolutePath, opts);
+    return getDeviceApi(workspace.deviceId).downloadHostFile(absolutePath, opts);
   }
 
   let fileDiffAbortController: AbortController | undefined;
@@ -410,7 +410,7 @@ export const useFilesStore = defineStore('kimi.files', () => {
   }
 
   function workspaceMachineApi(workspaceId: string | null | undefined) {
-    return getDeviceApi(workspaceId ? workspacesStore().workspaceById.get(workspaceId)?.hostId : undefined);
+    return getDeviceApi(workspaceId ? workspacesStore().workspaceById.get(workspaceId)?.deviceId : undefined);
   }
 
   async function readHostFileContent(path: string) {

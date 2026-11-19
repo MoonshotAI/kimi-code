@@ -45,14 +45,14 @@ export const useModelsStore = defineStore('kimi.models', () => {
   const defaultModel = ref<string | null>(null);
   const modelsReady = ref(false);
 
-  const activeHostId = ref<string | undefined>(undefined);
-  const modelsByHost = ref<Record<string, AppModel[]>>({});
-  const defaultModelByHost = ref<Record<string, string | null>>({});
+  const activeDeviceId = ref<string | undefined>(undefined);
+  const modelsByDevice = ref<Record<string, AppModel[]>>({});
+  const defaultModelByDevice = ref<Record<string, string | null>>({});
   const activeModels = computed(() =>
-    activeHostId.value === undefined ? models.value : modelsByHost.value[activeHostId.value] ?? [],
+    activeDeviceId.value === undefined ? models.value : modelsByDevice.value[activeDeviceId.value] ?? [],
   );
   const activeDefaultModel = computed(() =>
-    activeHostId.value === undefined ? defaultModel.value : defaultModelByHost.value[activeHostId.value] ?? null,
+    activeDeviceId.value === undefined ? defaultModel.value : defaultModelByDevice.value[activeDeviceId.value] ?? null,
   );
 
   const catalogProviders = ref<AppCatalogProvider[]>([]);
@@ -84,43 +84,43 @@ export const useModelsStore = defineStore('kimi.models', () => {
     );
   }
 
-  function setActiveHost(hostId: string | undefined): void {
-    activeHostId.value = hostId;
+  function setActiveDevice(deviceId: string | undefined): void {
+    activeDeviceId.value = deviceId;
   }
 
-  async function loadHostCatalog(hostId: string): Promise<void> {
-    const api = getDeviceApi(hostId);
+  async function loadDeviceCatalog(deviceId: string): Promise<void> {
+    const api = getDeviceApi(deviceId);
     const [list, config] = await Promise.all([api.listModels(), api.getConfig()]);
-    modelsByHost.value = { ...modelsByHost.value, [hostId]: list };
-    defaultModelByHost.value = { ...defaultModelByHost.value, [hostId]: config.defaultModel ?? null };
+    modelsByDevice.value = { ...modelsByDevice.value, [deviceId]: list };
+    defaultModelByDevice.value = { ...defaultModelByDevice.value, [deviceId]: config.defaultModel ?? null };
   }
 
-  function setHostDefaultModel(hostId: string, id: string | null): void {
-    defaultModelByHost.value = { ...defaultModelByHost.value, [hostId]: id };
+  function setDeviceDefaultModel(deviceId: string, id: string | null): void {
+    defaultModelByDevice.value = { ...defaultModelByDevice.value, [deviceId]: id };
   }
 
-  function removeHosts(hostIds: readonly string[]): void {
-    if (hostIds.length === 0) return;
-    const removed = new Set(hostIds);
-    if (activeHostId.value !== undefined && removed.has(activeHostId.value)) {
-      activeHostId.value = undefined;
+  function removeDevices(deviceIds: readonly string[]): void {
+    if (deviceIds.length === 0) return;
+    const removed = new Set(deviceIds);
+    if (activeDeviceId.value !== undefined && removed.has(activeDeviceId.value)) {
+      activeDeviceId.value = undefined;
     }
     let modelsChanged = false;
-    const nextModels = { ...modelsByHost.value };
+    const nextModels = { ...modelsByDevice.value };
     let defaultsChanged = false;
-    const nextDefaults = { ...defaultModelByHost.value };
-    for (const hostId of removed) {
-      if (Object.prototype.hasOwnProperty.call(nextModels, hostId)) {
-        delete nextModels[hostId];
+    const nextDefaults = { ...defaultModelByDevice.value };
+    for (const deviceId of removed) {
+      if (Object.prototype.hasOwnProperty.call(nextModels, deviceId)) {
+        delete nextModels[deviceId];
         modelsChanged = true;
       }
-      if (Object.prototype.hasOwnProperty.call(nextDefaults, hostId)) {
-        delete nextDefaults[hostId];
+      if (Object.prototype.hasOwnProperty.call(nextDefaults, deviceId)) {
+        delete nextDefaults[deviceId];
         defaultsChanged = true;
       }
     }
-    if (modelsChanged) modelsByHost.value = nextModels;
-    if (defaultsChanged) defaultModelByHost.value = nextDefaults;
+    if (modelsChanged) modelsByDevice.value = nextModels;
+    if (defaultsChanged) defaultModelByDevice.value = nextDefaults;
   }
 
   function setModels(next: AppModel[]): void {
@@ -266,13 +266,13 @@ export const useModelsStore = defineStore('kimi.models', () => {
     defaultModel,
     modelsReady,
     hasModels,
-    activeHostId,
+    activeDeviceId,
     activeModels,
     activeDefaultModel,
-    setActiveHost,
-    loadHostCatalog,
-    setHostDefaultModel,
-    removeHosts,
+    setActiveDevice,
+    loadDeviceCatalog,
+    setDeviceDefaultModel,
+    removeDevices,
     resolveSendModel,
     catalogProviders,
     catalogState,

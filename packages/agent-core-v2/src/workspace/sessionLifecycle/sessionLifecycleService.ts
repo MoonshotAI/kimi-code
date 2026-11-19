@@ -28,6 +28,7 @@ import { readUserPermissionRules } from '#/agent/permissionRules/configSection';
 import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
+import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
@@ -58,6 +59,11 @@ import {
 } from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
+import {
+  SessionClientIdentitySchema,
+  sessionClientIdentitySeed,
+  type SessionClientIdentity,
+} from '#/session/clientIdentity/sessionClientIdentity';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
@@ -308,6 +314,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionDir,
       metaScope,
       cwd: environment?.environmentId === LOCAL_ENVIRONMENT_ID ? environment.cwd : opts.workDir,
+      clientIdentity: opts.clientIdentity,
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
@@ -343,6 +350,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               fs: workdir.fs,
             }],
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
+            ...sessionClientIdentitySeed(opts.clientIdentity, this.bootstrap),
           ],
           configureContainer: (container) => {
             container.anchorKernelEntry(
@@ -374,6 +382,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     try {
       await handle.accessor.get(ISessionMetadata).ready;
+      await handle.accessor.get(IAgentIdentity).resolved();
       await handle.accessor.get(ISessionNotify).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
       await handle.accessor.get(IProjectPermissionRulesService).ready;
@@ -510,6 +519,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workDir,
       additionalDirs: opts?.additionalDirs,
       mcpServers: opts?.mcpServers,
+      clientIdentity: this.storedClientIdentity(sessionId, persisted?.clientIdentity),
     }, environment, await this.openWorkdir(environment, workDir));
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
@@ -523,6 +533,20 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       throw error;
     }
     return handle;
+  }
+
+  private storedClientIdentity(
+    sessionId: string,
+    stored: SessionClientIdentity | undefined,
+  ): SessionClientIdentity | undefined {
+    if (stored === undefined) return undefined;
+    const parsed = SessionClientIdentitySchema.safeParse(stored);
+    if (parsed.success) return parsed.data;
+    this.log.warn('ignoring an invalid stored session client identity; using the server identity', {
+      sessionId,
+      error: parsed.error.message,
+    });
+    return undefined;
   }
 
   list(): readonly ISessionScopeHandle[] {
@@ -827,6 +851,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         agents,
         environmentId: sourceMeta?.environmentId,
         environmentCwd: sourceMeta?.environmentCwd,
+        clientIdentity: sourceMeta?.clientIdentity,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
         lastTurnReason: turnSlice === undefined ? sourceMeta?.lastTurnReason : turnSlice.lastTurnReason,

@@ -12,7 +12,7 @@ export interface IConnectionRegistry {
   remove(connId: string): void;
   get(connId: string): ConnectionLike | undefined;
   values(): Iterable<ConnectionLike>;
-  closeAll(reason?: string): void;
+  closeAll(reason?: string, code?: number): void;
   size(): number;
 }
 
@@ -35,12 +35,12 @@ export class ConnectionRegistry implements IConnectionRegistry {
     return this.conns.values();
   }
 
-  closeAll(reason?: string): void {
+  closeAll(reason?: string, code = 1001): void {
     const snapshot = Array.from(this.conns.values());
     this.conns.clear();
     for (const conn of snapshot) {
       try {
-        conn.close(1001, reason);
+        conn.close(code, reason);
       } catch {
       }
     }

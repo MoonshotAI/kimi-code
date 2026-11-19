@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createConnection } from 'node:net';
 import { hostname, platform } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -23,7 +24,7 @@ import {
   resolveKimiTokenStorageName,
 } from '@moonshot-ai/kimi-code-oauth';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { WebSocket, type RawData } from 'ws';
+import { WebSocket, type ClientOptions, type RawData } from 'ws';
 
 import { acquireRemoteControlLock } from './lock';
 
@@ -37,6 +38,13 @@ export function resolveRemoteControlRelayOrigin(
 ): string {
   const value = env[REMOTE_CONTROL_RELAY_URL_ENV]?.trim();
   return value === undefined || value.length === 0 ? fallback : value;
+}
+
+const UNIX_SOCKET_ORIGIN_PREFIX = 'unix:';
+const UNIX_SOCKET_HTTP_ORIGIN = 'http://localhost';
+
+export function unixSocketOrigin(socketPath: string): string {
+  return `${UNIX_SOCKET_ORIGIN_PREFIX}${socketPath}`;
 }
 
 const MAX_HTTP_HEADER_BYTES = 64 * 1024;
@@ -152,7 +160,7 @@ export type RemoteControlCloseReason = 'local_close' | 'user_requested';
 export interface RemoteControlOptions {
   readonly homeDir: string;
   readonly localOrigin: string;
-  readonly localServerToken: string | (() => string);
+  readonly localServerToken?: string | (() => string);
   readonly clientVersion: string;
   readonly urlSource: string;
   readonly relayOrigin?: string;
@@ -180,7 +188,29 @@ interface ActiveStream {
   readonly tunnel: WebSocket;
 }
 
+interface LocalServerEndpoint {
+  readonly origin: string;
+  readonly socketPath?: string;
+}
+
+type WebSocketTransport = Pick<ClientOptions, 'agent' | 'createConnection'>;
+
 class RegistrationError extends Error {}
+
+function localServerEndpoint(localOrigin: string): LocalServerEndpoint {
+  if (localOrigin.startsWith(UNIX_SOCKET_ORIGIN_PREFIX)) {
+    return {
+      origin: UNIX_SOCKET_HTTP_ORIGIN,
+      socketPath: localOrigin.slice(UNIX_SOCKET_ORIGIN_PREFIX.length),
+    };
+  }
+  return { origin: localOrigin.replace(/\/+$/, '') };
+}
+
+function localWebSocketTransport(endpoint: LocalServerEndpoint): WebSocketTransport {
+  const socketPath = endpoint.socketPath;
+  return socketPath === undefined ? {} : { createConnection: () => createConnection(socketPath) };
+}
 
 export function buildRemoteControlUrl(
   deviceId: string,
@@ -252,7 +282,7 @@ function sliceChunks(chunks: readonly Buffer[], start: number, end: number): Buf
 
 export function filterForwardRequestHeaders(
   headers: readonly [string, string][],
-  serverToken: string,
+  serverToken: string | undefined,
 ): string[] {
   const connectionHeaders = new Set<string>();
   for (const [name, value] of headers) {
@@ -266,7 +296,7 @@ export function filterForwardRequestHeaders(
     if (BLOCKED_REQUEST_HEADERS.has(lower) || connectionHeaders.has(lower)) continue;
     result.push(name, value);
   }
-  result.push('Authorization', `Bearer ${serverToken}`);
+  if (serverToken !== undefined) result.push('Authorization', `Bearer ${serverToken}`);
   return result;
 }
 
@@ -350,11 +380,11 @@ function requestMatchesETag(
 export async function startRemoteControl(
   options: RemoteControlOptions,
 ): Promise<RemoteControlHandle> {
+  const configuredToken = options.localServerToken;
   const localServerToken =
-    typeof options.localServerToken === 'function'
-      ? options.localServerToken
-      : () => options.localServerToken as string;
-  if (localServerToken().length === 0) {
+    typeof configuredToken === 'function' ? configuredToken : () => configuredToken;
+  const localServer = localServerEndpoint(options.localOrigin);
+  if (localServer.socketPath === undefined && (localServerToken() ?? '').length === 0) {
     throw new Error('Remote Control requires local server authentication.');
   }
   const httpTunnelLimits = { ...DEFAULT_HTTP_TUNNEL_LIMITS, ...options.httpTunnelLimits };
@@ -387,6 +417,7 @@ export async function startRemoteControl(
   const client = new RemoteControlClient({
     ...options,
     httpTunnelLimits,
+    localServer,
     localServerToken,
     relayOrigin,
     deviceId,
@@ -423,8 +454,8 @@ export async function startRemoteControl(
 }
 
 class RemoteControlClient {
-  private readonly localOrigin: string;
-  private readonly localServerToken: () => string;
+  private readonly localServer: LocalServerEndpoint;
+  private readonly localServerToken: () => string | undefined;
   private readonly clientVersion: string;
   private readonly relayOrigin: string;
   private readonly deviceId: string;
@@ -452,15 +483,16 @@ class RemoteControlClient {
   private initialReject: ((error: unknown) => void) | undefined;
 
   constructor(
-    options: Omit<RemoteControlOptions, 'localServerToken' | 'httpTunnelLimits'> & {
-      readonly localServerToken: () => string;
+    options: Omit<RemoteControlOptions, 'localOrigin' | 'localServerToken' | 'httpTunnelLimits'> & {
+      readonly localServer: LocalServerEndpoint;
+      readonly localServerToken: () => string | undefined;
       readonly relayOrigin: string;
       readonly deviceId: string;
       readonly refreshToken: string;
       readonly httpTunnelLimits: HttpTunnelLimits;
     },
   ) {
-    this.localOrigin = options.localOrigin.replace(/\/+$/, '');
+    this.localServer = options.localServer;
     this.localServerToken = options.localServerToken;
     this.clientVersion = options.clientVersion;
     this.relayOrigin = options.relayOrigin;
@@ -553,7 +585,7 @@ class RemoteControlClient {
           alias: hostname(),
           platform: platform(),
           client_version: this.clientVersion,
-          local_base_url: this.localOrigin,
+          local_base_url: this.localServer.origin,
         },
       }),
     );
@@ -578,7 +610,7 @@ class RemoteControlClient {
       http,
       (request, signal, retain) =>
         requestLocalHttp(
-          this.localOrigin,
+          this.localServer,
           request,
           this.localServerToken(),
           this.publicPrefix(),
@@ -620,7 +652,7 @@ class RemoteControlClient {
       earlyFrames,
       this.pendingSockets,
       () => this.stopped,
-      this.relayAgent,
+      { agent: this.relayAgent },
     );
   }
 
@@ -699,12 +731,13 @@ class RemoteControlClient {
     const earlyLocalFrames: [RawData, boolean][] = [];
     try {
       local = await connectWebSocket(
-        localWebSocketUrl(this.localOrigin, path),
+        localWebSocketUrl(this.localServer.origin, path),
         this.localServerToken(),
         relayHeaders(payload['headers']),
         earlyLocalFrames,
         this.pendingSockets,
         () => this.stopped,
+        localWebSocketTransport(this.localServer),
       );
       tunnel = await this.connectRelay(`/v1/remote/stream/${encodeURIComponent(streamId)}`);
       if (this.stopped || this.management?.readyState !== WebSocket.OPEN) {
@@ -1020,13 +1053,16 @@ function createRelayProxyAgent(
 
 async function connectWebSocket(
   url: string,
-  token: string,
+  token: string | undefined,
   headers: Record<string, string> = {},
   earlyFrames?: [RawData, boolean][],
   pendingSockets?: Set<WebSocket>,
   isStopped?: () => boolean,
-  agent?: Agent,
+  transport: WebSocketTransport = {},
 ): Promise<WebSocket> {
+  if (token === undefined) {
+    return connectWebSocketAttempt(url, undefined, headers, earlyFrames, pendingSockets, transport);
+  }
   const protocol = `kimi-code.bearer.${token}`;
   if (isWebSocketProtocolToken(protocol)) {
     try {
@@ -1036,7 +1072,7 @@ async function connectWebSocket(
         headers,
         earlyFrames,
         pendingSockets,
-        agent,
+        transport,
       );
     } catch (error) {
       if (isStopped?.() === true) throw error;
@@ -1051,7 +1087,7 @@ async function connectWebSocket(
     },
     earlyFrames,
     pendingSockets,
-    agent,
+    transport,
   );
 }
 
@@ -1061,13 +1097,14 @@ function connectWebSocketAttempt(
   headers: Record<string, string>,
   earlyFrames?: [RawData, boolean][],
   pendingSockets?: Set<WebSocket>,
-  agent?: Agent,
+  transport: WebSocketTransport = {},
 ): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, protocols, {
       headers,
       handshakeTimeout: REGISTER_TIMEOUT_MS,
-      agent,
+      agent: transport.agent,
+      createConnection: transport.createConnection,
     });
     pendingSockets?.add(socket);
     if (earlyFrames !== undefined) {
@@ -1149,14 +1186,14 @@ function parseRelayMessage(data: RawData): RelayMessage {
 class ResponseBudgetExceededError extends Error {}
 
 function requestLocalHttp(
-  localOrigin: string,
+  localServer: LocalServerEndpoint,
   parsed: ParsedRawHttpRequest,
-  serverToken: string,
+  serverToken: string | undefined,
   publicPrefix: string,
   signal: AbortSignal,
   retain: (receivedBytes: number) => boolean,
 ): Promise<Buffer[]> {
-  const origin = new URL(localOrigin);
+  const origin = new URL(localServer.origin);
   const headers = [...filterForwardRequestHeaders(parsed.headers, serverToken), 'Host', origin.host];
   const bodyBytes = byteLength(parsed.body);
   const declaresLength = headers.some(
@@ -1169,6 +1206,7 @@ function requestLocalHttp(
         protocol: origin.protocol,
         hostname: origin.hostname,
         port: origin.port,
+        socketPath: localServer.socketPath,
         method: parsed.method,
         path: parsed.path,
         headers,

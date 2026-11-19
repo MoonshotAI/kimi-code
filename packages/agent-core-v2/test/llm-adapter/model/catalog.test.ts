@@ -33,6 +33,7 @@ import { IModelService, type ModelRecord, type ModelsSection } from '#/llm-adapt
 import '#/llm-adapter/model/model-service';
 import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
 
+import { HostClientIdentity } from '#/app/clientIdentity/clientIdentity';
 import { HostRequestHeadersAdapter } from '#/app/kosongConfig/hostRequestHeadersAdapter';
 
 import { StubConfigService, stubModelOAuthTokens, stubTokenProvider } from '../../stubs';
@@ -46,7 +47,7 @@ function hostHeadersPort(spec: {
   identitySlug?: string;
 }): IHostRequestHeaders {
   return new HostRequestHeadersAdapter(
-    stubBootstrap('/home', {}, { requestHeaders: spec.headers }),
+    new HostClientIdentity(stubBootstrap('/home', {}, { requestHeaders: spec.headers })),
     stubAgentIdentity({ slug: spec.identitySlug, hostRequestHeaders: spec.headers }),
   );
 }

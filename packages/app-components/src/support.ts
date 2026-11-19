@@ -12,4 +12,4 @@ export * from './lib/activitySummary';
 export { useDialogFocus } from './composables/useDialogFocus';
 export { default as ContextSummaryBody } from './composer/ContextSummaryBody.vue';
 export { default as WorkspaceIcon } from './WorkspaceIcon.vue';
-export { default as HostNotice } from './HostNotice.vue';
+export { default as DeviceNotice } from './DeviceNotice.vue';

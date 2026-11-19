@@ -3,9 +3,9 @@ import { createApp, h, nextTick, ref, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import WorkspaceEditDialog from '../src/dialogs/WorkspaceEditDialog.vue';
-import type { AppHost } from '@moonshot-ai/app-core/api';
+import type { AppDevice } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 
 
 
@@ -14,14 +14,14 @@ let host: HTMLDivElement;
 
 beforeEach(() => {
   setKimiClientDeps({
-    api: () => ({ listHostSshConfig: async () => ({ configPath: '', exists: false, hosts: [] }) }) as never,
+    api: () => ({ listDeviceSshConfig: async () => ({ configPath: '', exists: false, hosts: [] }) }) as never,
     t: (key) => key,
   });
   host = document.createElement('div');
   document.body.append(host);
-  hostsStore().byId = {};
-  hostsStore().loaded = true;
-  hostsStore().connecting = {};
+  devicesStore().byId = {};
+  devicesStore().loaded = true;
+  devicesStore().connecting = {};
 });
 
 afterEach(() => {
@@ -36,12 +36,12 @@ interface MountOptions {
   mode?: 'create' | 'edit';
   initialName?: string;
   initialDirs?: string[];
-  initialHostId?: string;
+  initialDeviceId?: string;
   pick?: () => Promise<string[]>;
-  pickRemote?: (hostId: string, path: string) => Promise<string[]>;
-  hosts?: AppHost[];
-  manageHosts?: () => void;
-  importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
+  pickRemote?: (deviceId: string, path: string) => Promise<string[]>;
+  devices?: AppDevice[];
+  manageDevices?: () => void;
+  importProjectConfig?: (primary: string, deviceId?: string) => Promise<string[] | undefined>;
   busy?: boolean;
 }
 
@@ -54,11 +54,11 @@ function mountDialog(opts: MountOptions = {}) {
         mode: opts.mode ?? 'create',
         initialName: opts.initialName,
         initialDirs: opts.initialDirs,
-        initialHostId: opts.initialHostId,
+        initialDeviceId: opts.initialDeviceId,
         pick: opts.pick ?? (async () => []),
         pickRemote: opts.pickRemote,
-        hosts: opts.hosts,
-        manageHosts: opts.manageHosts,
+        devices: opts.devices,
+        manageDevices: opts.manageDevices,
         importProjectConfig: opts.importProjectConfig,
         busy: opts.busy,
         onSubmit: submit,
@@ -70,8 +70,12 @@ function mountDialog(opts: MountOptions = {}) {
   return { submit, cancel };
 }
 
-function sshHost(id: string, extra: Partial<AppHost> = {}): AppHost {
-  return { id, host: `${id}.example.test`, status: 'pending', ...extra };
+function sshDevice(id: string, extra: Partial<AppDevice> = {}): AppDevice {
+  return { id, connection: 'ssh', host: `${id}.example.test`, status: 'pending', ...extra };
+}
+
+function accountDevice(id: string, extra: Partial<AppDevice> = {}): AppDevice {
+  return { id, connection: 'account', status: 'pending', ...extra };
 }
 
 function nameInput(): HTMLInputElement {
@@ -108,33 +112,33 @@ describe('WorkspaceEditDialog create mode', () => {
     expect(nameInput().value).toBe('project');
     expect(dirRows()).toHaveLength(2);
     expect(primaryRow()?.textContent).toContain('project');
-    expect(dirRows()[0]?.querySelector('.we-dir-name')?.classList.contains('we-dir-name--with-host')).toBe(false);
+    expect(dirRows()[0]?.querySelector('.we-dir-name')?.classList.contains('we-dir-name--with-device')).toBe(false);
   });
 
   it('shows a device by its name instead of its id', async () => {
-    mountDialog({ hosts: [sshHost('host-a1b2c3d4', { name: 'Build box' })], initialHostId: 'host-a1b2c3d4' });
+    mountDialog({ devices: [sshDevice('device-a1b2c3d4', { name: 'Build box' })], initialDeviceId: 'device-a1b2c3d4' });
     await nextTick();
     const drop = document.querySelector('.we-drop')?.textContent ?? '';
     expect(drop).toContain('Build box');
-    expect(drop).not.toContain('host-a1b2c3d4');
+    expect(drop).not.toContain('device-a1b2c3d4');
     expect(document.querySelector('.we-source-select')?.textContent).toContain('Build box');
   });
 
   it('keeps unconfigured SSH aliases out of the project source list', async () => {
     setKimiClientDeps({
       api: () => ({
-        listHostSshConfig: async () => ({ configPath: '/home/me/.ssh/config', exists: true, hosts: [{ alias: 'test', hostName: 'example.test', user: 'dev', port: 22 }] }),
-        connectHost: async (id: string) => sshHost(id, { status: 'ready' }),
+        listDeviceSshConfig: async () => ({ configPath: '/home/me/.ssh/config', exists: true, hosts: [{ alias: 'test', hostName: 'example.test', user: 'dev', port: 22 }] }),
+        connectDevice: async (id: string) => sshDevice(id, { status: 'ready' }),
       }) as never,
       t: (key) => key,
     });
-    const manageHosts = vi.fn();
-    hostsStore().byId = {
-      test: sshHost('test', { status: 'ready' }),
-      paused: sshHost('paused', { enabled: false }),
-      broken: sshHost('broken', { status: 'disconnected', connectError: 'Connection refused' }),
+    const manageDevices = vi.fn();
+    devicesStore().byId = {
+      test: sshDevice('test', { status: 'ready' }),
+      paused: sshDevice('paused', { enabled: false }),
+      broken: sshDevice('broken', { status: 'disconnected', connectError: 'Connection refused' }),
     };
-    mountDialog({ hosts: Object.values(hostsStore().byId), manageHosts });
+    mountDialog({ devices: Object.values(devicesStore().byId), manageDevices });
     await nextTick();
 
     document.querySelector<HTMLButtonElement>('button.we-source-select')!.click();
@@ -148,12 +152,34 @@ describe('WorkspaceEditDialog create mode', () => {
     expect(options.map((option) => option.disabled)).toEqual([false, false, true, true, false]);
     options[4]!.click();
     await nextTick();
-    expect(manageHosts).toHaveBeenCalledOnce();
+    expect(manageDevices).toHaveBeenCalledOnce();
   });
 
-  it('keeps the same host field when no SSH hosts exist', async () => {
-    const manageHosts = vi.fn();
-    mountDialog({ manageHosts });
+  it('offers account devices by their alias and platform and keeps offline ones unselectable', async () => {
+    devicesStore().byId = {
+      'rc-mac': accountDevice('rc-mac', { status: 'ready', alias: 'Work Mac', platform: 'darwin' }),
+      'rc-pc': accountDevice('rc-pc', { status: 'disconnected', connectError: 'offline', connectFailure: 'offline', alias: 'Gaming PC', platform: 'win32' }),
+    };
+    mountDialog({ devices: Object.values(devicesStore().byId), manageDevices: vi.fn() });
+    await nextTick();
+
+    document.querySelector<HTMLButtonElement>('button.we-source-select')!.click();
+    await nextTick();
+    const options = [...document.querySelectorAll<HTMLButtonElement>('.ui-select__option')];
+    expect(options.map((option) => option.textContent)).toEqual([
+      'This computer',
+      expect.stringContaining('Work Mac'),
+      expect.stringContaining('Gaming PC'),
+      'Manage devices',
+    ]);
+    expect(options[1]?.textContent).toContain('macOS · Connected');
+    expect(options[2]?.textContent).toContain('Windows · Offline');
+    expect(options.map((option) => option.disabled)).toEqual([false, false, true, false]);
+  });
+
+  it('keeps the same device field when no SSH devices exist', async () => {
+    const manageDevices = vi.fn();
+    mountDialog({ manageDevices });
     await nextTick();
 
     const select = document.querySelector<HTMLButtonElement>('button.we-source-select');
@@ -165,14 +191,14 @@ describe('WorkspaceEditDialog create mode', () => {
     const sourceLabel = select!.textContent;
     options[1]!.click();
     await nextTick();
-    expect(manageHosts).toHaveBeenCalledOnce();
+    expect(manageDevices).toHaveBeenCalledOnce();
     expect(select!.textContent).toBe(sourceLabel);
   });
 
-  it('does not preselect a host that failed to connect', async () => {
-    const broken = sshHost('broken', { status: 'disconnected', connectError: 'Connection refused' });
-    hostsStore().byId = { broken };
-    mountDialog({ hosts: [broken], initialHostId: 'broken', manageHosts: vi.fn() });
+  it('does not preselect a device that failed to connect', async () => {
+    const broken = sshDevice('broken', { status: 'disconnected', connectError: 'Connection refused' });
+    devicesStore().byId = { broken };
+    mountDialog({ devices: [broken], initialDeviceId: 'broken', manageDevices: vi.fn() });
     await nextTick();
 
     expect(document.querySelector('button.we-source-select')?.textContent).not.toContain('broken');
@@ -287,18 +313,20 @@ describe('WorkspaceEditDialog create mode', () => {
 });
 
 describe('WorkspaceEditDialog edit mode', () => {
-  it('allows adding and reordering directories for a project that lives on an SSH host', async () => {
+  it('allows adding and reordering directories for a project that lives on an SSH device', async () => {
     const pickRemote = vi.fn(async () => ['/home/dev/extra']);
     const { submit } = mountDialog({
       mode: 'edit',
       initialName: 'demo',
       initialDirs: ['/home/dev/demo'],
-      initialHostId: 'dev',
-      hosts: [sshHost('dev', { name: 'Dev box' })],
+      initialDeviceId: 'dev',
+      devices: [sshDevice('dev', { name: 'Dev box' })],
       pickRemote,
     });
     await nextTick();
     expect(dirRows()).toHaveLength(1);
+    expect(dirRows()[0]?.textContent).toContain('Dev box');
+    expect(dirRows()[0]?.querySelector('.we-dir-name')?.classList.contains('we-dir-name--with-device')).toBe(true);
 
     document.querySelector<HTMLButtonElement>('.we-add-directory')!.click();
     await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
@@ -313,7 +341,7 @@ describe('WorkspaceEditDialog edit mode', () => {
     expect(submit).toHaveBeenCalledWith({
       name: 'demo',
       dirs: ['/home/dev/extra', '/home/dev/demo'],
-      hostId: 'dev',
+      deviceId: 'dev',
       projectConfigDirs: [],
     });
   });
@@ -416,8 +444,8 @@ describe('WorkspaceEditDialog remote directories', () => {
       .mockResolvedValueOnce(['/srv/one', '/srv/two'])
       .mockResolvedValueOnce(['/srv/two', '/srv/three']);
     const { submit } = mountDialog({
-      initialHostId: 'devbox',
-      hosts: [sshHost('devbox')],
+      initialDeviceId: 'devbox',
+      devices: [sshDevice('devbox')],
       pickRemote,
     });
     await nextTick();
@@ -436,15 +464,15 @@ describe('WorkspaceEditDialog remote directories', () => {
     expect(submit).toHaveBeenCalledWith({
       name: 'one',
       dirs: ['/srv/one', '/srv/two', '/srv/three'],
-      hostId: 'devbox',
+      deviceId: 'devbox',
       projectConfigDirs: [],
     });
   });
 
-  it('clears added directories when switching hosts', async () => {
+  it('clears added directories when switching devices', async () => {
     mountDialog({
       initialDirs: ['/a/first', '/a/second'],
-      hosts: [sshHost('devbox')],
+      devices: [sshDevice('devbox')],
       pickRemote: vi.fn(),
     });
     await nextTick();
@@ -466,7 +494,7 @@ describe('WorkspaceEditDialog remote directories', () => {
     const pickRemote = vi.fn();
     mountDialog({
       initialDirs: ['/a/first'],
-      hosts: [sshHost('devbox')],
+      devices: [sshDevice('devbox')],
       pick,
       pickRemote,
     });
@@ -482,13 +510,13 @@ describe('WorkspaceEditDialog remote directories', () => {
   it('imports remote project config and blocks submit while importing or disconnected', async () => {
     let finishImport!: (dirs: string[]) => void;
     const importProjectConfig = vi.fn(() => new Promise<string[]>((resolve) => { finishImport = resolve; }));
-    const devbox = ref(sshHost('devbox', { status: 'ready' }));
+    const devbox = ref(sshDevice('devbox', { status: 'ready' }));
     const { submit } = mountDialog({
       mode: 'edit',
       initialName: 'app',
       initialDirs: ['/srv/app'],
-      initialHostId: 'devbox',
-      get hosts() { return [devbox.value]; },
+      initialDeviceId: 'devbox',
+      get devices() { return [devbox.value]; },
       importProjectConfig,
     });
     await nextTick();
@@ -505,7 +533,7 @@ describe('WorkspaceEditDialog remote directories', () => {
     finishImport(['/srv/shared']);
     await vi.waitFor(() => expect(dirRows()).toHaveLength(2));
     expect(importProjectConfig).toHaveBeenCalledExactlyOnceWith('/srv/app', 'devbox');
-    devbox.value = sshHost('devbox', { status: 'disconnected', connectError: 'Connection reset' });
+    devbox.value = sshDevice('devbox', { status: 'disconnected', connectError: 'Connection reset' });
     await nextTick();
     expect(submitButton().disabled).toBe(true);
     submitButton().click();

@@ -17,9 +17,11 @@ import {
   ICapabilityService,
   IPluginService,
   IEnvironmentService,
+  IOAuthToolkit,
   IWorkspaceService,
   IAgentLifecycleService,
   IAgentEnvironmentBindingService,
+  IClientIdentity,
   ISessionContext,
   MAIN_AGENT_ID,
   NOTIFY_USER_UI_CAPABILITY,
@@ -34,11 +36,13 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import {
   createKimiDefaultHeaders,
+  createKimiDeviceId,
   KIMI_CODE_PROVIDER_NAME,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 import { createAsyncApiDocument } from './protocol/asyncapi';
+import { encodeClientIdentityHeader } from './protocol/clientIdentity';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { installErrorHandler } from './error-handler';
@@ -86,8 +90,9 @@ import {
 import { createServerSessionRating } from './services/sessionRating';
 import { ConversationService } from './services/conversation/conversationService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
-import { HostBridgeManager, hostSnapshots } from './services/hosts/hostBridgeManager';
-import { matchHostProxyPath, proxyHostWebSocket, registerHostProxyRoutes } from './services/hosts/hostProxy';
+import { DeviceManager, deviceSnapshots } from './services/devices/deviceManager';
+import { matchDeviceProxyPath, proxyDeviceWebSocket, registerDeviceProxyRoutes } from './services/devices/deviceProxy';
+import { SERVER_UPGRADED_CLOSE_CODE, SystemUpgrade, type HostCommandRunner } from './services/devices/deviceUpgrade';
 import { DEFAULT_MANAGED_IDLE_EXIT_MS, ManagedIdleExit } from './services/managedIdleExit';
 import { SessionIdleReaper, closeIdleSessions, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
@@ -140,6 +145,8 @@ export interface ServerStartOptions {
   readonly socketPath?: string;
   readonly managedBy?: string;
   readonly managedIdleExitMs?: number;
+  readonly runHostCommand?: HostCommandRunner;
+  readonly deviceUpgradeTimeoutMs?: number;
 }
 
 export interface RunningServer {
@@ -147,7 +154,7 @@ export interface RunningServer {
   readonly core: Scope;
   readonly connectionRegistry: IConnectionRegistry;
   readonly authTokenService: IAuthTokenService;
-  readonly hostBridges: HostBridgeManager;
+  readonly deviceManager: DeviceManager;
   readonly host: string;
   readonly port: number;
   close(): Promise<void>;
@@ -214,6 +221,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
+  const localDeviceId = createKimiDeviceId(homeDir);
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
   const { app: core } = bootstrap(
@@ -277,6 +285,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     homeDir,
     configuredOAuthKey: () => readManagedOAuth()?.key,
     configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
+    refreshToken: (oauthRef) => core.accessor.get(IOAuthToolkit).tokenProvider(undefined, oauthRef).getAccessToken(),
   });
 
   let telemetry: ServerTelemetry = {};
@@ -367,7 +376,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   let rpcServer: { close(): Promise<void> } | undefined;
 
-  const close = async (): Promise<void> => {
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closing ??= closeServer();
+    return closing;
+  };
+  const closeServer = async (): Promise<void> => {
     await rpcServer?.close();
     if (wssDebug !== undefined) {
       for (const client of wssDebug.clients) client.terminate();
@@ -382,12 +396,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     capabilityInstallSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
-    if (hostNotifyTimer !== undefined) {
-      clearTimeout(hostNotifyTimer);
-      hostNotifyTimer = undefined;
+    if (deviceNotifyTimer !== undefined) {
+      clearTimeout(deviceNotifyTimer);
+      deviceNotifyTimer = undefined;
     }
     await managedIdleExit?.close();
-    hostBridges.close();
+    deviceManager.close();
     await sessionIdleReaper.close();
     try {
       await shutdownServerTelemetry(telemetry);
@@ -422,11 +436,20 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   };
 
   const connectionRegistry = new ConnectionRegistry();
-  let notifyHosts = (): void => {};
-  let hostNotifyTimer: ReturnType<typeof setTimeout> | undefined;
-  const hostBridges = new HostBridgeManager(core, () => notifyHosts());
+  let notifyDevices = (): void => {};
+  let deviceNotifyTimer: ReturnType<typeof setTimeout> | undefined;
+  const deviceManager = new DeviceManager(core, {
+    relay: remoteControlDevices,
+    localDeviceId,
+    upgradeTimeoutMs: opts.deviceUpgradeTimeoutMs,
+    onChange: () => notifyDevices(),
+  });
   const requestClose = (): void => {
     void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
+  };
+  const exitAfterUpgrade = (version: string): void => {
+    connectionRegistry.closeAll(`Kimi Code ${version} is installed; this server is restarting`, SERVER_UPGRADED_CLOSE_CODE);
+    setImmediate(requestClose);
   };
   const sessionManager = core.accessor.get(ISessionManager);
   const drainIdleSessions = async (): Promise<boolean> => {
@@ -443,6 +466,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           opts.managedIdleExitMs ?? DEFAULT_MANAGED_IDLE_EXIT_MS,
           requestClose,
         );
+  const systemUpgrade =
+    opts.managedBy === 'ensure-daemon' && opts.runHostCommand !== undefined && managedIdleExit !== undefined
+      ? new SystemUpgrade(
+          opts.runHostCommand,
+          serverVersion,
+          (version) => managedIdleExit.exitWhenIdle(() => exitAfterUpgrade(version)),
+          logger,
+        )
+      : undefined;
   const conversations = new ConversationService(core);
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
   core.accessor.get(IGlobalSearchService);
@@ -451,13 +483,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     logger,
     conversations,
   });
-  notifyHosts = () => {
-    if (hostNotifyTimer !== undefined) clearTimeout(hostNotifyTimer);
-    hostNotifyTimer = setTimeout(() => {
-      hostNotifyTimer = undefined;
-      broadcaster.publishHostChanged(hostSnapshots(hostBridges));
+  notifyDevices = () => {
+    if (deviceNotifyTimer !== undefined) clearTimeout(deviceNotifyTimer);
+    deviceNotifyTimer = setTimeout(() => {
+      deviceNotifyTimer = undefined;
+      broadcaster.publishDeviceChanged(deviceSnapshots(deviceManager));
     }, 10);
-    hostNotifyTimer.unref?.();
+    deviceNotifyTimer.unref?.();
   };
 
   const configService = core.accessor.get(IConfigService);
@@ -537,6 +569,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     serverId: registration.serverId,
     serverVersion,
     hostIdentity: opts.hostIdentity,
+    deviceId: localDeviceId,
     debugEndpoints,
     enableShutdown,
     remoteControl: {
@@ -554,11 +587,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     onShutdown: requestClose,
     drainIdleSessions,
-    hostBridges,
+    deviceManager,
     conversations,
     sessionRating,
     dangerousBypassAuth: opts.disableAuth === true,
-    managedHost: opts.managedBy === 'ensure-daemon',
+    managedDevice: opts.managedBy === 'ensure-daemon',
+    systemUpgrade,
     webTitle: opts.webTitle,
   });
 
@@ -577,8 +611,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
     const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
     const wss = isV1 ? wssV1 : isDebug ? wssDebug : undefined;
-    const hostProxyTarget = matchHostProxyPath(url);
-    if (wss === undefined && hostProxyTarget === undefined) {
+    const deviceProxyTarget = matchDeviceProxyPath(url);
+    if (wss === undefined && deviceProxyTarget === undefined) {
       socket.destroy();
       return;
     }
@@ -602,7 +636,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       return;
     }
 
-    if (opts.disableAuth !== true) {
+    if (!disableAuth) {
       const authHeader = req.headers.authorization;
       const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);
@@ -641,10 +675,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
     (socket as Socket).setNoDelay(true);
     if (wss === undefined) {
-      await proxyHostWebSocket(hostBridges, hostProxyTarget!, req, socket, head);
+      await proxyDeviceWebSocket(deviceManager, deviceProxyTarget!, req, socket, head);
       return;
     }
-    if (isV1) hostBridges.activate();
+    if (isV1) deviceManager.activate();
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
@@ -660,7 +694,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     await broadcaster.close();
   });
 
-  registerHostProxyRoutes(app, hostBridges);
+  registerDeviceProxyRoutes(
+    app,
+    deviceManager,
+    encodeClientIdentityHeader(core.accessor.get(IClientIdentity)),
+  );
 
   app.get('/asyncapi.json', async (_req, reply) => {
     return reply
@@ -713,7 +751,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
 
-  return { app, core, connectionRegistry, authTokenService, hostBridges, host, port: boundPort, close };
+  return { app, core, connectionRegistry, authTokenService, deviceManager, host, port: boundPort, close };
 }
 
 export const PORT_RETRY_LIMIT = 100;

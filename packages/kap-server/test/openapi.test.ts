@@ -64,6 +64,23 @@ describe('server-v2 OpenAPI', () => {
     expect(cancelProps['include_background']).toMatchObject({ type: 'boolean' });
   });
 
+  it('documents the optional client identity header on session creation only', async () => {
+    const doc = await fetchOpenApi();
+    const headerParams = (path: string, method: string) =>
+      ((operation(doc, path, method)['parameters'] ?? []) as Array<Record<string, unknown>>).filter(
+        (param) => param['in'] === 'header',
+      );
+
+    expect(headerParams('/api/v1/sessions', 'post')).toEqual([
+      expect.objectContaining({
+        name: 'x-kimi-client-identity',
+        required: false,
+        schema: expect.objectContaining({ type: 'string', maxLength: 8192 }),
+      }),
+    ]);
+    expect(headerParams('/api/v1/sessions', 'get')).toEqual([]);
+  });
+
   it('describes the file upload as multipart/form-data', async () => {
     const doc = await fetchOpenApi();
     const uploadOp = operation(doc, '/api/v1/files', 'post');

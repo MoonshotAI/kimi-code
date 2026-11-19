@@ -11,8 +11,8 @@ import { sidebarOf } from './fixtures/sessions';
 
 const PROMPT = 'Describe the release checklist';
 const REPLY = 'The release checklist has five steps, starting with the changelog review.';
-const EN_TABS = ['General', 'Account', 'Agent & Sessions', 'Model Providers', 'Remote Control', 'Browser', 'Plugins', 'Hotkeys', 'About', 'Lab', 'Archived Sessions'];
-const ZH_TABS = ['通用', '账户', '智能体与会话', '模型供应商', '远程控制', '浏览器', '插件', '快捷键', '关于', '实验室', '已归档的会话'];
+const EN_TABS = ['General', 'Account', 'Agent & Sessions', 'Model Providers', 'Devices', 'Browser', 'Plugins', 'Hotkeys', 'About', 'Lab', 'Archived Sessions'];
+const ZH_TABS = ['通用', '账户', '智能体与会话', '模型供应商', '设备', '浏览器', '插件', '快捷键', '关于', '实验室', '已归档的会话'];
 const DESKTOP_DIR = fileURLToPath(new URL('..', import.meta.url));
 const CORE_DIR = join(DESKTOP_DIR, '..', '..', 'kimi-code');
 

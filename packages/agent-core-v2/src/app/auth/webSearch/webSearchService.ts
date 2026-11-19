@@ -9,7 +9,10 @@ import { Error2 } from '#/_base/errors/errors';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import {
+  IClientIdentity,
+  registerClientIdentityScopedService,
+} from '#/app/clientIdentity/clientIdentity';
 import { IConfigService } from '#/app/config/config';
 import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
 import { IModelService, type ModelRecord } from '#/llm-adapter/model/model';
@@ -32,7 +35,7 @@ export class WebSearchProviderService implements IWebSearchProviderService {
   constructor(
     @IProviderService private readonly providers: IProviderService,
     @IOAuthService private readonly oauth: IOAuthService,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IClientIdentity private readonly client: IClientIdentity,
     @IConfigService private readonly config: IConfigService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @IModelService private readonly models: IModelService,
@@ -161,7 +164,7 @@ export class WebSearchProviderService implements IWebSearchProviderService {
     return new MoonshotWebSearchProvider({
       baseUrl,
       tokenProvider,
-      defaultHeaders: { ...this.bootstrap.args.requestHeaders },
+      defaultHeaders: { ...this.client.requestHeaders },
       customHeaders: provider.customHeaders,
     });
   }
@@ -179,3 +182,4 @@ registerScopedService(
   ScopeActivation.OnScopeCreated,
   'auth',
 );
+registerClientIdentityScopedService(IWebSearchProviderService, WebSearchProviderService);

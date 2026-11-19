@@ -97,10 +97,10 @@ export function toConfigResponse(
   const wire: Record<string, unknown> = {};
   for (const [domain, value] of Object.entries(resolved)) {
     let output = value;
-    if (domain === 'hosts') {
+    if (domain === 'devices') {
       const section: Record<string, unknown> = {};
       applySectionToToml(section, domain, value, registry);
-      output = section['hosts'];
+      output = section['devices'];
     }
     wire[camelToSnake(domain)] =
       domain === 'providers'

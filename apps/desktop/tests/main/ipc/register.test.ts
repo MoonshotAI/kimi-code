@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -402,6 +402,19 @@ describe('screenshot sender isolation', () => {
       }
       listener(IPC.screenshotCancel)(event);
       expect(mocks.cancelScreenshotCapture).toHaveBeenCalledTimes(source === 'main' ? 1 : 0);
+    } finally {
+      vi.mocked(getMainWindow).mockReturnValue(null);
+    }
+  });
+});
+
+describe('host name', () => {
+  it('tells only the live main renderer the host name of this computer', () => {
+    const mainWebContents = {};
+    vi.mocked(getMainWindow).mockReturnValue({ webContents: mainWebContents, isDestroyed: () => false } as ReturnType<typeof getMainWindow>);
+    try {
+      expect(handler(IPC.hostName)({ sender: mainWebContents })).toBe(hostname());
+      expect(() => handler(IPC.hostName)({ sender: {} })).toThrow('host-name: unknown sender');
     } finally {
       vi.mocked(getMainWindow).mockReturnValue(null);
     }

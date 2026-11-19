@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { AppHost } from '@moonshot-ai/app-core/api';
-import { basename, hostDisplayName, hostDisplayState, isHostBlocked } from '@moonshot-ai/app-core/lib';
+import type { AppDevice } from '@moonshot-ai/app-core/api';
+import { basename, deviceDisplayName, deviceDisplayState, devicePlatformLabel, isDeviceBlocked, type DeviceDisplayState } from '@moonshot-ai/app-core/lib';
 import { Badge, Banner, Button, Dialog, Field, Icon, IconButton, Input, Select, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/app-ui';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 
 const LOCAL_SOURCE = '';
-const MANAGE_HOSTS = '__manage__';
+const MANAGE_DEVICES = '__manage__';
+const BLOCKED_HINT_STATES: ReadonlySet<DeviceDisplayState> = new Set(['failed', 'disabled', 'missing', 'offline', 'outdated', 'signedOut']);
 
 const { t } = useI18n();
 
@@ -16,37 +17,46 @@ const props = withDefaults(
     mode: 'create' | 'edit';
     initialName?: string;
     initialDirs?: string[];
-    initialHostId?: string;
+    initialDeviceId?: string;
     pick: () => Promise<string[]>;
-    pickRemote?: (hostId: string, path: string) => Promise<string[]>;
-    hosts?: AppHost[];
-    manageHosts?: () => void;
-    importProjectConfig?: (primary: string, hostId?: string) => Promise<string[] | undefined>;
+    pickRemote?: (deviceId: string, path: string) => Promise<string[]>;
+    devices?: AppDevice[];
+    manageDevices?: () => void;
+    importProjectConfig?: (primary: string, deviceId?: string) => Promise<string[] | undefined>;
     busy?: boolean;
   }>(),
   {
     initialName: '',
     initialDirs: () => [],
-    hosts: () => [],
+    devices: () => [],
     busy: false,
   },
 );
 
 const emit = defineEmits<{
-  submit: [payload: { name: string; dirs: string[]; hostId?: string; projectConfigDirs: string[] }];
+  submit: [payload: { name: string; dirs: string[]; deviceId?: string; projectConfigDirs: string[] }];
   cancel: [];
 }>();
 
-function hostState(host: AppHost) {
-  return hostDisplayState(host.id, host, { loaded: true, connecting: hostsStore().connecting[host.id] === true });
+function deviceState(device: AppDevice) {
+  return deviceDisplayState(device.id, device, {
+    loaded: true,
+    connecting: devicesStore().connecting[device.id] === true,
+    settledFailure: devicesStore().settledFailures[device.id],
+  });
+}
+
+function deviceAddress(device: AppDevice): string | undefined {
+  if (device.connection === 'ssh') return device.host;
+  return device.platform === undefined ? undefined : devicePlatformLabel(device.platform);
 }
 
 function initialSourceId(): string {
-  const id = props.initialHostId;
+  const id = props.initialDeviceId;
   if (id === undefined) return LOCAL_SOURCE;
   if (props.mode === 'edit') return id;
-  const candidate = props.hosts.find((host) => host.id === id);
-  if (candidate !== undefined && isHostBlocked(hostState(candidate))) return LOCAL_SOURCE;
+  const candidate = props.devices.find((device) => device.id === id);
+  if (candidate !== undefined && isDeviceBlocked(deviceState(candidate))) return LOCAL_SOURCE;
   return id;
 }
 
@@ -70,44 +80,45 @@ const importHint = ref<'empty' | 'failed' | null>(null);
 const primaryStatus = ref('');
 const dirList = ref<HTMLElement>();
 const sourceId = ref(initialSourceId());
-const hostId = computed(() => (sourceId.value === LOCAL_SOURCE ? undefined : sourceId.value));
-const hostName = computed(() => {
-  if (hostId.value === undefined) return '';
-  const host = props.hosts.find((candidate) => candidate.id === hostId.value);
-  return host === undefined ? hostsStore().displayName(hostId.value) ?? t('workspace.deletedHost') : hostDisplayName(host);
+const deviceId = computed(() => (sourceId.value === LOCAL_SOURCE ? undefined : sourceId.value));
+const deviceName = computed(() => {
+  if (deviceId.value === undefined) return '';
+  const device = props.devices.find((candidate) => candidate.id === deviceId.value);
+  return device === undefined ? devicesStore().displayName(deviceId.value) ?? t('workspace.deletedDevice') : devicesStore().displayName(device.id) || deviceDisplayName(device);
 });
-const selectedHostState = computed(() => {
-  if (hostId.value === undefined) return 'local' as const;
-  const candidate = props.hosts.find((host) => host.id === hostId.value) ?? hostsStore().hostFor(hostId.value);
-  return hostDisplayState(hostId.value, candidate, {
-    loaded: props.hosts.length > 0 || hostsStore().loaded,
-    connecting: hostsStore().connecting[hostId.value] === true,
+const selectedDeviceState = computed(() => {
+  if (deviceId.value === undefined) return 'local' as const;
+  const candidate = props.devices.find((device) => device.id === deviceId.value) ?? devicesStore().deviceFor(deviceId.value);
+  return deviceDisplayState(deviceId.value, candidate, {
+    loaded: props.devices.length > 0 || devicesStore().loaded,
+    connecting: devicesStore().connecting[deviceId.value] === true,
+    settledFailure: devicesStore().settledFailures[deviceId.value],
   });
 });
-const selectedHostBlocked = computed(() => isHostBlocked(selectedHostState.value));
-const remoteOptions = computed(() => props.hosts.map((host) => {
-  const state = hostState(host);
+const selectedDeviceBlocked = computed(() => isDeviceBlocked(selectedDeviceState.value));
+const remoteOptions = computed(() => props.devices.map((device) => {
+  const state = deviceState(device);
   return {
-    value: host.id,
-    label: hostDisplayName(host),
-    description: [host.host, t(`workspace.hostState.${state}`)].filter(Boolean).join(' · '),
-    disabled: isHostBlocked(state),
+    value: device.id,
+    label: devicesStore().displayName(device.id) || deviceDisplayName(device),
+    description: [deviceAddress(device), t(`workspace.deviceState.${state}`)].filter(Boolean).join(' · '),
+    disabled: isDeviceBlocked(state),
   };
 }));
 const sourceOptions = computed(() => [
   { value: LOCAL_SOURCE, label: t('workspace.dialog.localDevice') },
   ...remoteOptions.value,
-  ...(props.manageHosts === undefined ? [] : [{
-    value: MANAGE_HOSTS,
-    label: t('workspace.dialog.manageHosts'),
+  ...(props.manageDevices === undefined ? [] : [{
+    value: MANAGE_DEVICES,
+    label: t('workspace.dialog.manageDevices'),
     trailingIcon: 'arrow-up-right',
   }]),
 ]);
-const showSourceField = computed(() => props.mode === 'create' && (remoteOptions.value.length > 0 || props.manageHosts !== undefined));
-const canImportProjectConfig = computed(() => props.importProjectConfig !== undefined && dirs.value.length > 0 && !selectedHostBlocked.value);
+const showSourceField = computed(() => props.mode === 'create' && (remoteOptions.value.length > 0 || props.manageDevices !== undefined));
+const canImportProjectConfig = computed(() => props.importProjectConfig !== undefined && dirs.value.length > 0 && !selectedDeviceBlocked.value);
 const submitHint = computed(() => {
-  if (selectedHostBlocked.value && (selectedHostState.value === 'failed' || selectedHostState.value === 'disabled' || selectedHostState.value === 'missing')) {
-    return t(`workspace.hostNotice.${selectedHostState.value}`, { name: hostName.value });
+  if (selectedDeviceBlocked.value && BLOCKED_HINT_STATES.has(selectedDeviceState.value)) {
+    return t(`workspace.deviceNotice.${selectedDeviceState.value}`, { name: deviceName.value });
   }
   if (dirs.value.length === 0) return t('workspace.dialog.submitMissingDirs');
   if (name.value.trim().length === 0) return t('workspace.dialog.submitMissingName');
@@ -115,12 +126,12 @@ const submitHint = computed(() => {
 });
 
 watch(sourceId, (selected, previous) => {
-  if (selected === MANAGE_HOSTS) {
+  if (selected === MANAGE_DEVICES) {
     sourceId.value = previous;
-    props.manageHosts?.();
+    props.manageDevices?.();
     return;
   }
-  if (previous === MANAGE_HOSTS || props.mode !== 'create' || dirs.value.length === 0) return;
+  if (previous === MANAGE_DEVICES || props.mode !== 'create' || dirs.value.length === 0) return;
   dirs.value = [];
   projectConfigDirs.value = [];
   importHint.value = null;
@@ -142,8 +153,8 @@ function appendDirs(added: readonly string[]): void {
 }
 
 async function addDirectory(): Promise<void> {
-  if (props.busy || picking.value || importing.value || selectedHostBlocked.value) return;
-  const target = hostId.value;
+  if (props.busy || picking.value || importing.value || selectedDeviceBlocked.value) return;
+  const target = deviceId.value;
   if (target !== undefined && props.pickRemote === undefined) return;
   picking.value = true;
   pickFailed.value = false;
@@ -163,11 +174,11 @@ async function addDirectory(): Promise<void> {
 async function importDirs(): Promise<void> {
   const fetcher = props.importProjectConfig;
   const primary = dirs.value[0];
-  if (fetcher === undefined || primary === undefined || selectedHostBlocked.value || props.busy || picking.value || importing.value) return;
+  if (fetcher === undefined || primary === undefined || selectedDeviceBlocked.value || props.busy || picking.value || importing.value) return;
   importing.value = true;
   importHint.value = null;
   try {
-    const result = await fetcher(primary, hostId.value);
+    const result = await fetcher(primary, deviceId.value);
     if (result === undefined) {
       importHint.value = 'failed';
       return;
@@ -207,7 +218,7 @@ async function promoteDir(target: string): Promise<void> {
 }
 
 const canSubmit = computed(
-  () => !props.busy && !picking.value && !importing.value && !selectedHostBlocked.value && dirs.value.length > 0 && name.value.trim().length > 0,
+  () => !props.busy && !picking.value && !importing.value && !selectedDeviceBlocked.value && dirs.value.length > 0 && name.value.trim().length > 0,
 );
 
 function submit(): void {
@@ -216,7 +227,7 @@ function submit(): void {
   emit('submit', {
     name: name.value.trim(),
     dirs: deduped,
-    hostId: hostId.value,
+    deviceId: deviceId.value,
     projectConfigDirs: projectConfigDirs.value.filter((path) => deduped.includes(path)),
   });
 }
@@ -281,7 +292,7 @@ function onNameKeydown(e: KeyboardEvent): void {
               <Button
                 variant="ghost"
                 size="xs"
-                :disabled="busy || picking || importing || selectedHostBlocked"
+                :disabled="busy || picking || importing || selectedDeviceBlocked"
                 :loading="importing"
                 @click="importDirs"
               >
@@ -292,7 +303,7 @@ function onNameKeydown(e: KeyboardEvent): void {
               class="we-add-directory"
               variant="ghost"
               size="xs"
-              :disabled="busy || picking || importing || selectedHostBlocked"
+              :disabled="busy || picking || importing || selectedDeviceBlocked"
               :loading="picking"
               @click="addDirectory"
             >
@@ -305,12 +316,12 @@ function onNameKeydown(e: KeyboardEvent): void {
           v-if="dirs.length === 0"
           class="we-drop we-add-directory"
           type="button"
-          :disabled="busy || picking || importing || selectedHostBlocked"
+          :disabled="busy || picking || importing || selectedDeviceBlocked"
           @click="addDirectory"
         >
           <Spinner v-if="picking" size="sm" />
           <Icon v-else name="plus" size="md" />
-          <span>{{ hostId === undefined ? t('workspace.dialog.emptyDirs') : t('workspace.dialog.emptyDirsFrom', { device: hostName }) }}</span>
+          <span>{{ deviceId === undefined ? t('workspace.dialog.emptyDirs') : t('workspace.dialog.emptyDirsFrom', { device: deviceName }) }}</span>
         </button>
 
         <div v-if="dirs.length > 0" ref="dirList" class="we-dir-list">
@@ -326,12 +337,12 @@ function onNameKeydown(e: KeyboardEvent): void {
                 <Tooltip :text="dir">
                   <span
                     class="we-dir-name"
-                    :class="{ 'we-dir-name--with-host': hostName }"
+                    :class="{ 'we-dir-name--with-device': deviceName }"
                     tabindex="0"
                     :aria-label="dir"
                   >{{ basename(dir) }}</span>
                 </Tooltip>
-                <span v-if="hostName" class="we-dir-host" :title="hostName">{{ hostName }}</span>
+                <span v-if="deviceName" class="we-dir-device" :title="deviceName">{{ deviceName }}</span>
               </div>
             </div>
             <Badge v-if="i === 0" class="we-dir-badge" size="sm" variant="outline">
@@ -385,7 +396,7 @@ function onNameKeydown(e: KeyboardEvent): void {
 </template>
 
 <style scoped>
-.we-dir-host {
+.we-dir-device {
   min-width: 0;
   max-width: 120px;
   overflow: hidden;
@@ -497,7 +508,7 @@ function onNameKeydown(e: KeyboardEvent): void {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.we-dir-name--with-host {
+.we-dir-name--with-device {
   flex: 0 1 auto;
   max-width: 60%;
 }

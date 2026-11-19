@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { HOST_API_LEVEL, startServer, type RunningServer } from '../src';
+import { DEVICE_API_LEVEL, startServer, type RunningServer } from '../src';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 
@@ -86,7 +86,7 @@ describe('API surface snapshot', () => {
     expect({ routes, meta }).toMatchSnapshot();
   });
 
-  it('pins the host API level to the client-visible contract', async () => {
+  it('pins the device API level to the client-visible contract', async () => {
     const base = `http://${server!.host}:${server!.port}`;
     const fetchJson = async (path: string): Promise<Record<string, unknown>> => {
       const res = await fetch(`${base}${path}`, { headers: authHeaders(server as RunningServer) } as never);
@@ -107,13 +107,13 @@ describe('API surface snapshot', () => {
     const digest = createHash('sha256').update(contract).digest('hex');
 
     expect(
-      { apiLevel: HOST_API_LEVEL, digest },
-      'The client-visible API contract changed. If the current client would break against a remote running the previous release, bump HOST_API_LEVEL; then update HOST_CONTRACT to the new level and digest.',
-    ).toEqual(HOST_CONTRACT);
+      { apiLevel: DEVICE_API_LEVEL, digest },
+      'The client-visible API contract changed. If the current client would break against a remote running the previous release, bump DEVICE_API_LEVEL; then update DEVICE_CONTRACT to the new level and digest.',
+    ).toEqual(DEVICE_CONTRACT);
   });
 });
 
-const HOST_CONTRACT = { apiLevel: 1, digest: '89a851a4277cd7d48235dc84d2129effce225fea9297b4111c5b84deac3f6e14' };
+const DEVICE_CONTRACT = { apiLevel: 1, digest: '98e57ca2687968b90137adf7944be602655284a87983481bd9a01af6939a8966' };
 
 const NON_CONTRACT_KEYS = new Set(['description', 'summary', 'example', 'examples']);
 const NAMED_MEMBER_KEYS = new Set(['properties', 'patternProperties']);

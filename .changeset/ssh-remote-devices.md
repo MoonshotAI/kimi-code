@@ -1,5 +1,5 @@
 ---
-"kimi-code-app": patch
+"kimi-code-app": minor
 ---
 
-Connect to SSH hosts and create projects on them. Each host uses its own Kimi account, and remote sessions keep running while this machine is asleep or offline.
+Add SSH devices: connect a machine over SSH in Settings → Devices to create projects and sessions on it, and remote sessions keep running while this computer is asleep or offline.

@@ -32,6 +32,7 @@ import {
   IModelCatalog,
   IModelService,
   ISessionActivityView,
+  ISessionContext,
   ISessionIndexMirror,
   ISessionManager,
   ISessionMetadata,
@@ -3447,6 +3448,282 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     expect(own).toHaveLength(1);
     expect(answerOf(own[0]!)).toEqual([sideAnswer]);
     expect(new Set(turns.map((turn) => turn.turn_id)).size).toBe(turns.length);
+  });
+});
+
+describe('server-v2 session client identity', () => {
+  const modelBase = 'https://identity-model.example.test/v1';
+  const deskIdentity = {
+    product_name: 'desk-product',
+    version: '7.6.5',
+    platform: 'desk_platform',
+    user_agent_suffix: 'desk',
+    display_name: 'Desk Host',
+    reply_style_guide: 'DESK STYLE: answer in short paragraphs for the desk chat.',
+    ui_capabilities: ['update_panel', 'future_panel'],
+  };
+  const storedDeskIdentity = {
+    productName: 'desk-product',
+    version: '7.6.5',
+    platform: 'desk_platform',
+    userAgentSuffix: 'desk',
+    displayName: 'Desk Host',
+    replyStyleGuide: 'DESK STYLE: answer in short paragraphs for the desk chat.',
+    uiCapabilities: ['update_panel'],
+  };
+  let server: RunningServer | undefined;
+  let home: string;
+  let base: string;
+  let deviceId: string;
+  const modelRequests: { readonly headers: Headers; readonly body: ModelRequestBody }[] = [];
+
+  interface ModelRequestBody {
+    readonly messages: readonly { readonly role: string; readonly content: unknown }[];
+    readonly tools?: readonly { readonly function: { readonly name: string } }[];
+  }
+
+  function identityHeader(wire: unknown): string {
+    return Buffer.from(JSON.stringify(wire), 'utf8').toString('base64url');
+  }
+
+  function sseBody(text: string): string {
+    const chunk = (delta: Record<string, unknown>, finishReason: string | null) =>
+      `data: ${JSON.stringify({
+        id: 'chatcmpl-identity',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'fake-model',
+        choices: [{ index: 0, delta, finish_reason: finishReason }],
+      })}\n\n`;
+    return `${chunk({ role: 'assistant', content: text }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`;
+  }
+
+  async function start(): Promise<void> {
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  }
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-client-identity-'));
+    await writeFile(
+      join(home, 'config.toml'),
+      [
+        'default_model = "fake"',
+        '',
+        '[experimental]',
+        'notify_user = true',
+        '',
+        '[providers.fake]',
+        'type = "kimi"',
+        'api_key = "sk-test"',
+        `base_url = "${modelBase}"`,
+        '',
+        '[models.fake]',
+        'provider = "fake"',
+        'model = "fake-model"',
+        'max_context_size = 131072',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!url.startsWith(modelBase)) return realFetch(input, init);
+      modelRequests.push({
+        headers: new Headers(init?.headers),
+        body: JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as ModelRequestBody,
+      });
+      return new Response(sseBody('ok'), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    await start();
+    deviceId = (await readFile(join(home, 'device_id'), 'utf-8')).trim();
+  });
+
+  afterAll(async () => {
+    vi.restoreAllMocks();
+    await server?.close();
+    server = undefined;
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+  });
+
+  async function postJson<T>(
+    path: string,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ): Promise<Envelope<T>> {
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json', ...headers }),
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  async function createSession(headers: Record<string, string> = {}): Promise<string> {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } }, headers);
+    expect(created.code).toBe(0);
+    return created.data.id;
+  }
+
+  async function storedIdentity(sessionId: string): Promise<unknown> {
+    const session = getLiveSessionById((server as RunningServer).core.accessor, sessionId);
+    return (await session?.accessor.get(ISessionMetadata).read())?.clientIdentity;
+  }
+
+  async function agentTurnsEnded(sessionId: string, agentId: string): Promise<boolean> {
+    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/agents/${agentId}/turns`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const body = (await res.json()) as Envelope<ConversationTurnsPage>;
+    return body.data.turns.every((turn) => turn.status === 'ended');
+  }
+
+  async function promptModel(sessionId: string, agentId: string = MAIN_AGENT_ID): Promise<{
+    readonly headers: Headers;
+    readonly systemPrompt: string;
+    readonly tools: readonly string[];
+  }> {
+    const before = modelRequests.length;
+    const submitted = await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      agent_id: agentId,
+    });
+    expect(submitted.code).toBe(0);
+    await vi.waitFor(() => expect(modelRequests.length).toBeGreaterThan(before), { timeout: 10_000 });
+    await vi.waitFor(async () => expect(await agentTurnsEnded(sessionId, agentId)).toBe(true), {
+      timeout: 10_000,
+    });
+    const request = modelRequests[before]!;
+    const system = request.body.messages.find((message) => message.role === 'system');
+    return {
+      headers: request.headers,
+      systemPrompt: typeof system?.content === 'string' ? system.content : JSON.stringify(system?.content),
+      tools: (request.body.tools ?? []).map((tool) => tool.function.name),
+    };
+  }
+
+  it('runs a stamped session with the header identity and leaves unstamped sessions on the server identity', async () => {
+    const stamped = await createSession({ 'x-kimi-client-identity': identityHeader(deskIdentity) });
+    const bare = await createSession();
+    const { ui_capabilities: _capabilities, ...withoutCapabilities } = deskIdentity;
+    const noPanel = await createSession({
+      'x-kimi-client-identity': identityHeader(withoutCapabilities),
+    });
+
+    expect(await storedIdentity(stamped)).toEqual(storedDeskIdentity);
+    expect(await storedIdentity(bare)).toBeUndefined();
+
+    const desk = await promptModel(stamped);
+    expect(desk.systemPrompt).toContain('You are Desk Host,');
+    expect(desk.systemPrompt).toContain(deskIdentity.reply_style_guide);
+    expect(desk.headers.get('user-agent')).toBe('desk-product/7.6.5 (desk)');
+    expect(desk.headers.get('x-msh-platform')).toBe('desk_platform');
+    expect(desk.headers.get('x-msh-version')).toBe('7.6.5');
+    expect(desk.headers.get('x-msh-device-id')).toBe(deviceId);
+    expect(desk.tools).toContain('NotifyUser');
+
+    const defaults = await promptModel(bare);
+    expect(defaults.systemPrompt).toContain('You are Kimi Code CLI,');
+    expect(defaults.systemPrompt).not.toContain(deskIdentity.reply_style_guide);
+    expect(defaults.headers.get('user-agent')).toBe('test-host/0.0.0-test');
+    expect(defaults.headers.get('x-msh-platform')).toBe('test_platform');
+    expect(defaults.headers.get('x-msh-version')).toBe('0.0.0-test');
+    expect(defaults.headers.get('x-msh-device-id')).toBe(deviceId);
+    expect(defaults.tools).toContain('NotifyUser');
+
+    const panelless = await promptModel(noPanel);
+    expect(panelless.systemPrompt).toContain('You are Desk Host,');
+    expect(panelless.tools).not.toContain('NotifyUser');
+  });
+
+  it('ignores an invalid client identity header and creates the session with the server identity', async () => {
+    const invalidHeaders = [
+      identityHeader({ ...deskIdentity, product_name: 'dèsk-product' }),
+      identityHeader({ ...deskIdentity, version: '' }),
+      identityHeader({ ...deskIdentity, display_name: 'Desk\nHost' }),
+      identityHeader('desk-product/7.6.5'),
+      '%%%',
+      'a'.repeat(9_000),
+    ];
+    const sessions: string[] = [];
+    for (const header of invalidHeaders) {
+      sessions.push(await createSession({ 'x-kimi-client-identity': header }));
+    }
+    for (const sessionId of sessions) expect(await storedIdentity(sessionId)).toBeUndefined();
+
+    const fallback = await promptModel(sessions[0]!);
+    expect(fallback.systemPrompt).toContain('You are Kimi Code CLI,');
+    expect(fallback.headers.get('user-agent')).toBe('test-host/0.0.0-test');
+  });
+
+  it('keeps a client identity that carries fields this server does not know', async () => {
+    const stamped = await createSession({
+      'x-kimi-client-identity': identityHeader({ ...deskIdentity, future_field: 'from a newer client' }),
+    });
+
+    const stored = await storedIdentity(stamped);
+    expect(stored).toEqual(expect.objectContaining({ productName: 'desk-product', displayName: 'Desk Host' }));
+    expect(stored).not.toHaveProperty('future_field');
+    expect(stored).not.toHaveProperty('futureField');
+  });
+
+  it('falls back to the server identity when a stored client identity no longer validates', async () => {
+    const stamped = await createSession({ 'x-kimi-client-identity': identityHeader(deskIdentity) });
+    const live = getLiveSessionById((server as RunningServer).core.accessor, stamped);
+    const statePath = join(live!.accessor.get(ISessionContext).sessionDir, 'state.json');
+    await server?.close();
+    const state = JSON.parse(await readFile(statePath, 'utf-8')) as { clientIdentity: Record<string, unknown> };
+    await writeFile(
+      statePath,
+      JSON.stringify({ ...state, clientIdentity: { ...state.clientIdentity, productName: 'dèsk-product' } }),
+      'utf-8',
+    );
+    await start();
+
+    const recovered = await promptModel(stamped);
+    expect(recovered.headers.get('user-agent')).toBe('test-host/0.0.0-test');
+    expect(recovered.headers.get('x-msh-platform')).toBe('test_platform');
+    expect(recovered.headers.get('x-msh-device-id')).toBe(deviceId);
+  });
+
+  it('carries the stamped identity into forks, side chats, and a resumed session', async () => {
+    const stamped = await createSession({ 'x-kimi-client-identity': identityHeader(deskIdentity) });
+    await promptModel(stamped);
+
+    const forked = await postJson<SessionWire>(
+      `/api/v1/sessions/${stamped}:fork`,
+      {},
+      { 'x-kimi-client-identity': identityHeader({ ...deskIdentity, display_name: 'Other Host' }) },
+    );
+    expect(forked.code).toBe(0);
+    const fork = await promptModel(forked.data.id);
+    expect(fork.systemPrompt).toContain('You are Desk Host,');
+    expect(fork.headers.get('user-agent')).toBe('desk-product/7.6.5 (desk)');
+    expect(await storedIdentity(forked.data.id)).toEqual(storedDeskIdentity);
+
+    const btw = await postJson<{ agent_id: string }>(`/api/v1/sessions/${stamped}:btw`, {});
+    expect(btw.code).toBe(0);
+    const side = await promptModel(stamped, btw.data.agent_id);
+    expect(side.systemPrompt).toContain('You are Desk Host,');
+    expect(side.headers.get('x-msh-platform')).toBe('desk_platform');
+
+    await server?.close();
+    await start();
+    const resumed = await promptModel(stamped);
+    expect(resumed.systemPrompt).toContain('You are Desk Host,');
+    expect(resumed.headers.get('user-agent')).toBe('desk-product/7.6.5 (desk)');
+    expect(resumed.headers.get('x-msh-device-id')).toBe(deviceId);
+    expect(await storedIdentity(stamped)).toEqual(storedDeskIdentity);
   });
 });
 

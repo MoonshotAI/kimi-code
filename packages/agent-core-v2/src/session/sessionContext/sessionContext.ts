@@ -1,5 +1,6 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ScopeSeed } from '#/_base/di/scope';
+import type { SessionClientIdentity } from '#/session/clientIdentity/sessionClientIdentity';
 
 export interface SessionWorkspaceAssociationSnapshot {
   readonly sessionId: string;
@@ -15,6 +16,7 @@ export interface ISessionContext {
   readonly sessionDir: string;
   readonly metaScope: string;
   readonly cwd: string;
+  readonly clientIdentity?: SessionClientIdentity;
   scope(subKey?: string): string;
 }
 
@@ -42,6 +44,7 @@ export function makeSessionContext(input: {
   readonly sessionScope: string;
   readonly cwd: string;
   readonly metaScope?: string;
+  readonly clientIdentity?: SessionClientIdentity;
 }): ISessionContext {
   const { sessionScope } = input;
   return {
@@ -51,6 +54,7 @@ export function makeSessionContext(input: {
     sessionDir: input.sessionDir,
     metaScope: input.metaScope ?? sessionScope,
     cwd: input.cwd,
+    clientIdentity: input.clientIdentity,
     scope: (subKey?: string): string =>
       subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
   };

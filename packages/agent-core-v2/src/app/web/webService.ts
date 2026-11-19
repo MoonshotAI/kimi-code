@@ -7,7 +7,10 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { SERVICES_SECTION, type ServicesConfig } from '#/app/auth/configSection';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import {
+  IClientIdentity,
+  registerClientIdentityScopedService,
+} from '#/app/clientIdentity/clientIdentity';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService } from '#/llm-adapter/provider/provider';
@@ -25,7 +28,7 @@ export class WebFetchService implements IWebFetchService {
   constructor(
     @IProviderService private readonly providers: IProviderService,
     @IOAuthService private readonly oauth: IOAuthService,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IClientIdentity private readonly client: IClientIdentity,
     @IConfigService private readonly config: IConfigService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -73,7 +76,7 @@ export class WebFetchService implements IWebFetchService {
     return new MoonshotFetchURLProvider({
       baseUrl,
       tokenProvider,
-      defaultHeaders: { ...this.bootstrap.args.requestHeaders },
+      defaultHeaders: { ...this.client.requestHeaders },
       customHeaders: provider.customHeaders,
       localFallback: this.localFetcher,
       telemetry: this.telemetry,
@@ -93,3 +96,4 @@ registerScopedService(
   ScopeActivation.OnScopeCreated,
   'web',
 );
+registerClientIdentityScopedService(IWebFetchService, WebFetchService);

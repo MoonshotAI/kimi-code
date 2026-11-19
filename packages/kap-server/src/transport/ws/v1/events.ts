@@ -1,4 +1,4 @@
-import type { HostSnapshot } from '../../../protocol/events-zod';
+import type { DeviceSnapshot } from '../../../protocol/events-zod';
 import type { CapabilityInstallProgressWire } from '../../../protocol/rest-capability';
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session } from '../../../protocol/session';
@@ -67,9 +67,9 @@ export interface CapabilityChangedEvent {
   readonly install: CapabilityInstallProgressWire;
 }
 
-export interface HostChangedEvent {
-  readonly type: 'event.host.changed';
-  readonly hosts: readonly HostSnapshot[];
+export interface DeviceChangedEvent {
+  readonly type: 'event.device.changed';
+  readonly devices: readonly DeviceSnapshot[];
 }
 
 export type PushEvent =
@@ -78,7 +78,7 @@ export type PushEvent =
   | ConfigGlobalEvent
   | InvalidatedGlobalEvent
   | CapabilityChangedEvent
-  | HostChangedEvent;
+  | DeviceChangedEvent;
 
 export type Event = PushEvent & {
   readonly agentId?: string;

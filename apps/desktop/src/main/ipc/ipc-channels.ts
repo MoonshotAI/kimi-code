@@ -23,6 +23,7 @@ export const IPC = {
   remoteControlRestoreStateGet: 'kimi:remote-control-restore-state-get',
   remoteControlRestoreStateSet: 'kimi:remote-control-restore-state-set',
   remoteControlRestoreFinished: 'kimi:remote-control-restore-finished',
+  hostName: 'kimi:host-name',
   canaryGetInfo: 'kimi:canary-get-info',
   canaryImportStableSettings: 'kimi:canary-import-stable-settings',
   runtimeEnvironmentGet: 'kimi:runtime-environment-get',
