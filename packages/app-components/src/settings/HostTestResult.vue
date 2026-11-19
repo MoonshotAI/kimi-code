@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import type { AppHostConnectFailure } from '@moonshot-ai/app-core/api';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
+
+const UPDATE_COMMAND = 'kimi upgrade';
+const INSTALL_COMMAND = 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash';
 
 const props = defineProps<{
   state: 'running' | 'failed';
   endpoint: string;
-  kimiFailed?: boolean;
+  failure?: AppHostConnectFailure;
   reason?: string;
   hint?: string;
   detail?: string;
@@ -15,11 +19,26 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const copied = ref(false);
+const commandCopied = ref(false);
 let copiedTimer = 0;
+let commandCopiedTimer = 0;
 
-const steps = computed(() => props.kimiFailed
-  ? [{ stage: 'connect', state: 'passed' }, { stage: 'start_kimi', state: 'failed' }] as const
-  : [{ stage: 'connect', state: 'failed' }, { stage: 'start_kimi', state: 'pending' }] as const);
+const command = computed(() => props.failure === 'executor_not_found'
+  ? INSTALL_COMMAND
+  : props.failure === 'executor_outdated'
+    ? UPDATE_COMMAND
+    : '');
+const commandLabel = computed(() => props.failure === 'executor_not_found'
+  ? 'settings.hosts.copyInstallCommand'
+  : 'settings.hosts.copyUpdateCommand');
+
+watch(
+  () => [props.state, props.endpoint, props.failure, props.reason, props.detail] as const,
+  () => {
+    commandCopied.value = false;
+    window.clearTimeout(commandCopiedTimer);
+  },
+);
 
 async function copyDetail(): Promise<void> {
   if (!await copyTextToClipboard(props.detail ?? '')) return;
@@ -30,7 +49,19 @@ async function copyDetail(): Promise<void> {
   }, 1200);
 }
 
-onUnmounted(() => window.clearTimeout(copiedTimer));
+async function copyCommand(): Promise<void> {
+  if (!await copyTextToClipboard(command.value)) return;
+  commandCopied.value = true;
+  window.clearTimeout(commandCopiedTimer);
+  commandCopiedTimer = window.setTimeout(() => {
+    commandCopied.value = false;
+  }, 1200);
+}
+
+onUnmounted(() => {
+  window.clearTimeout(copiedTimer);
+  window.clearTimeout(commandCopiedTimer);
+});
 </script>
 
 <template>
@@ -40,55 +71,45 @@ onUnmounted(() => window.clearTimeout(copiedTimer));
       <span class="etr-label">{{ t('settings.hosts.testing') }}</span>
       <span v-if="endpoint" class="etr-endpoint" :title="endpoint">{{ endpoint }}</span>
     </div>
-    <ol v-else class="etr-steps" :aria-label="t('settings.hosts.testSteps.label')">
-      <li v-for="step in steps" :key="step.stage" class="etr-step" :class="`etr-step--${step.state}`">
-        <span class="etr-marker">
-          <Icon v-if="step.state === 'passed'" name="check" size="sm" />
-          <Icon v-else-if="step.state === 'failed'" name="close" size="sm" />
-          <span v-else class="etr-dot" />
-        </span>
-        <div class="etr-body">
-          <div class="etr-line">
-            <span class="etr-label">{{ t(`settings.hosts.testSteps.${step.stage}`) }}</span>
-            <span v-if="step.stage === 'connect' && endpoint" class="etr-endpoint" :title="endpoint">{{ endpoint }}</span>
-          </div>
-          <div v-if="step.state === 'failed'" class="etr-failure" role="alert">
-            <span v-if="reason" class="etr-reason">{{ reason }}</span>
-            <span v-if="hint" class="etr-hint">{{ hint }}</span>
-            <div v-if="detail" class="etr-detail-block">
-              <pre class="etr-detail">{{ detail }}</pre>
-              <button type="button" class="etr-action etr-copy" @click="copyDetail">
-                <Icon :name="copied ? 'check' : 'copy'" size="sm" />{{ t('common.copy') }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </li>
-    </ol>
+    <div v-else class="etr-failure" role="alert">
+      <span v-if="reason" class="etr-reason">{{ reason }}</span>
+      <p v-if="hint || command" class="etr-solution">
+        <span v-if="hint" class="etr-hint">{{ hint }}</span><button
+          v-if="command"
+          type="button"
+          class="etr-action etr-command"
+          :class="failure === 'executor_not_found' ? 'etr-install-command' : 'etr-update-command'"
+          :title="command"
+          @click.stop="copyCommand"
+        >{{ t(commandCopied ? 'settings.copied' : commandLabel) }}</button>
+      </p>
+      <div v-if="detail" class="etr-detail-block">
+        <pre class="etr-detail">{{ detail }}</pre>
+        <button type="button" class="etr-action etr-copy" @click="copyDetail">
+          <Icon :name="copied ? 'check' : 'copy'" size="sm" />{{ t('common.copy') }}
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.etr { overflow: auto; max-height: min(240px, 40vh); padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); background: var(--color-surface); color: var(--color-text); font-size: var(--text-xs); line-height: var(--leading-normal); }
+.etr { overflow: auto; max-height: min(260px, 42vh); padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); background: var(--color-surface); color: var(--color-text); font-size: var(--text-xs); line-height: var(--leading-normal); }
 .etr-line { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .etr-line--running { align-items: center; }
 .etr-marker { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 16px; height: calc(var(--text-xs) * var(--leading-normal)); color: var(--color-text-faint); }
-.etr-step--passed .etr-marker { color: var(--color-success); }
-.etr-step--failed .etr-marker { color: var(--color-danger); }
 .etr-label { flex: none; }
 .etr-endpoint { overflow: hidden; min-width: 0; color: var(--color-text-faint); font-family: var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
-.etr-steps { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-.etr-step { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
-.etr-step--pending { color: var(--color-text-faint); }
-.etr-dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
-.etr-body { display: flex; flex: 1; flex-direction: column; gap: var(--space-1); min-width: 0; }
-.etr-failure { display: flex; flex-direction: column; gap: var(--space-1); }
-.etr-reason { color: var(--color-danger); }
+.etr-failure { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); width: 100%; min-width: 0; }
+.etr-reason { color: var(--color-danger); font-weight: var(--weight-medium); }
+.etr-solution { margin: 0; min-width: 0; }
 .etr-hint { color: var(--color-text-muted); }
-.etr-action { display: inline-flex; align-items: center; gap: var(--space-1); padding: 0; border: none; background: none; color: var(--color-text-faint); font: inherit; cursor: pointer; }
+.etr-action { display: inline-flex; align-items: center; align-self: flex-start; gap: var(--space-1); padding: 0; border: none; background: none; color: var(--color-text-faint); font: inherit; cursor: pointer; }
 .etr-action:hover { color: var(--color-text); }
+.etr-command { display: inline; color: var(--color-text-muted); vertical-align: baseline; white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
+.etr-hint + .etr-command { margin-inline-start: var(--space-2); }
 .etr-action:focus-visible { outline: none; border-radius: var(--radius-sm); box-shadow: var(--p-focus-ring); }
-.etr-detail-block { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text-muted); }
-.etr-detail { flex: 1; min-width: 0; margin: 0; font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word; }
+.etr-detail-block { display: flex; box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; max-height: min(160px, 30vh); align-items: flex-start; gap: var(--space-3); padding: var(--space-2) var(--space-3); overflow: auto; border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text-muted); }
+.etr-detail { flex: 1 1 0; width: 0; min-width: 0; margin: 0; font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .etr-copy { flex: none; }
 </style>
