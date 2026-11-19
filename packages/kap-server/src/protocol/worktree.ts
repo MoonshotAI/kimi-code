@@ -134,5 +134,7 @@ export const gitBranchSchema = z.object({
   name: z.string().min(1),
   committed_at: isoDateTimeSchema,
   remote_ref: z.string().min(1).optional(),
+  remote: z.string().min(1).optional(),
+  remote_source: z.enum(['upstream', 'same_name']).optional(),
 });
 export type GitBranch = z.infer<typeof gitBranchSchema>;

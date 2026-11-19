@@ -12,6 +12,7 @@ export const workspaceGitBranchesResponseSchema = z.object({
   is_repo: z.boolean(),
   head_branch: z.string().min(1).optional(),
   dirty: z.boolean(),
+  remotes: z.array(z.string().min(1)),
   branches: z.array(gitBranchSchema),
 });
 export type WorkspaceGitBranchesResponse = z.infer<typeof workspaceGitBranchesResponseSchema>;

@@ -2,8 +2,11 @@ import { realpath } from 'node:fs/promises';
 
 import { gitText, runGit } from './command';
 
+export type RemoteBranchSource = 'upstream' | 'same_name';
+
 export interface RemoteBranchRef {
   readonly remote: string;
+  readonly source: RemoteBranchSource;
   readonly ref: string;
   readonly remoteRef: string;
   readonly trackingRef: string;
@@ -17,6 +20,7 @@ export interface LocalBranch {
 
 export interface RepoBranches {
   readonly headBranch?: string;
+  readonly remotes: readonly string[];
   readonly branches: readonly LocalBranch[];
 }
 
@@ -89,6 +93,7 @@ function sameNamedRemote(branch: string, lookup: RemoteLookup): RemoteBranchRef 
   if (remote === undefined) return undefined;
   return {
     remote,
+    source: 'same_name',
     ref: `${remote}/${branch}`,
     remoteRef: `${HEADS_PREFIX}${branch}`,
     trackingRef: `${REMOTES_PREFIX}${remote}/${branch}`,
@@ -104,6 +109,7 @@ function upstreamRemote(
   if (!remoteRef.startsWith(HEADS_PREFIX) || !trackingRef.startsWith(REMOTES_PREFIX)) return undefined;
   return {
     remote: remoteName,
+    source: 'upstream',
     ref: trackingRef.slice(REMOTES_PREFIX.length),
     remoteRef,
     trackingRef,
@@ -135,7 +141,7 @@ export async function listLocalBranches(repoRoot: string): Promise<RepoBranches>
         sameNamedRemote(name, lookup),
     });
   }
-  return { headBranch: head, branches };
+  return { headBranch: head, remotes: lookup.remotes, branches };
 }
 
 export async function resolveRemoteRef(

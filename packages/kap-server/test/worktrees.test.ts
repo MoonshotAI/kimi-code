@@ -638,12 +638,19 @@ describe('server-v2 session worktrees', () => {
       is_repo: boolean;
       head_branch?: string;
       dirty: boolean;
-      branches: { name: string; committed_at: string; remote_ref?: string }[];
+      remotes: string[];
+      branches: {
+        name: string;
+        committed_at: string;
+        remote_ref?: string;
+        remote?: string;
+        remote_source?: 'upstream' | 'same_name';
+      }[];
     }
     const plain = join(scratch, 'branches-plain');
     await mkdir(plain, { recursive: true });
     const plainBranches = await get<Branches>(`/workspaces/${await createWorkspace(plain)}/git/branches`);
-    expect(plainBranches.data).toEqual({ is_repo: false, dirty: false, branches: [] });
+    expect(plainBranches.data).toEqual({ is_repo: false, dirty: false, remotes: [], branches: [] });
 
     const root = await createRepo('branches');
     await addRemote(root);
@@ -663,10 +670,27 @@ describe('server-v2 session worktrees', () => {
 
     const clean = await get<Branches>(`/workspaces/${workspaceId}/git/branches`);
     expect(clean.code).toBe(0);
-    expect(clean.data).toMatchObject({ is_repo: true, head_branch: 'main', dirty: false });
+    expect(clean.data).toMatchObject({ is_repo: true, head_branch: 'main', dirty: false, remotes: ['origin'] });
     expect(clean.data.branches.map((branch) => branch.name)).toEqual(['newest', 'older', 'main']);
     expect(clean.data.branches[0]).toEqual({ name: 'newest', committed_at: '2031-06-01T12:00:00.000Z' });
-    expect(clean.data.branches[2]).toMatchObject({ name: 'main', remote_ref: 'origin/main' });
+    expect(clean.data.branches[2]).toMatchObject({
+      name: 'main',
+      remote_ref: 'origin/main',
+      remote: 'origin',
+      remote_source: 'upstream',
+    });
+
+    git(root, 'remote', 'add', 'fork', join(scratch, 'branches-fork-does-not-exist.git'));
+    git(root, 'update-ref', 'refs/remotes/fork/older', 'older');
+    const forked = await get<Branches>(`/workspaces/${workspaceId}/git/branches`);
+    expect(forked.data.remotes).toEqual(['fork', 'origin']);
+    expect(forked.data.branches[1]).toMatchObject({
+      name: 'older',
+      remote_ref: 'fork/older',
+      remote: 'fork',
+      remote_source: 'same_name',
+    });
+    expect(forked.data.branches[0]).not.toHaveProperty('remote');
 
     await writeFile(join(root, 'untracked.txt'), 'x\n');
     git(root, 'checkout', '-q', '--detach');

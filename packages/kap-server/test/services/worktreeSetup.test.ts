@@ -171,6 +171,7 @@ describe('worktree setup engine', () => {
     track('origin', 'tracked');
     expect(await resolveRemoteRef(root, 'tracked')).toEqual({
       remote: 'fork',
+      source: 'upstream',
       ref: 'fork/renamed',
       remoteRef: 'refs/heads/renamed',
       trackingRef: 'refs/remotes/fork/renamed',
@@ -178,7 +179,7 @@ describe('worktree setup engine', () => {
 
     git(root, 'branch', 'single');
     track('mirror', 'single');
-    expect((await resolveRemoteRef(root, 'single'))?.ref).toBe('mirror/single');
+    expect(await resolveRemoteRef(root, 'single')).toMatchObject({ remote: 'mirror', source: 'same_name', ref: 'mirror/single' });
 
     git(root, 'branch', 'both');
     track('origin', 'both');
@@ -204,6 +205,7 @@ describe('worktree setup engine', () => {
 
     const listed = await listLocalBranches(root);
     expect(listed.headBranch).toBe('main');
+    expect(listed.remotes).toEqual(['fork', 'mirror', 'origin']);
     expect(Object.fromEntries(listed.branches.map((branch) => [branch.name, branch.remote?.ref]))).toEqual({
       main: undefined,
       tracked: 'fork/renamed',

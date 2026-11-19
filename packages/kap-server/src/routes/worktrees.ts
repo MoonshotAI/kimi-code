@@ -163,7 +163,7 @@ export function registerWorktreeRoutes(
         return;
       }
       if (!(await isRepoRoot(workspace.root))) {
-        reply.send(okEnvelope({ is_repo: false, dirty: false, branches: [] }, req.id));
+        reply.send(okEnvelope({ is_repo: false, dirty: false, remotes: [], branches: [] }, req.id));
         return;
       }
       const [listed, dirty] = await Promise.all([
@@ -176,10 +176,13 @@ export function registerWorktreeRoutes(
             is_repo: true,
             head_branch: listed.headBranch,
             dirty,
+            remotes: listed.remotes,
             branches: listed.branches.map((branch) => ({
               name: branch.name,
               committed_at: branch.committedAt,
               remote_ref: branch.remote?.ref,
+              remote: branch.remote?.remote,
+              remote_source: branch.remote?.source,
             })),
           },
           req.id,
