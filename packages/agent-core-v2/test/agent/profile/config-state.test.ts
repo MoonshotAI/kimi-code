@@ -1,7 +1,7 @@
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { LlmRequest } from '@moonshot-ai/core/llm/request';
 import { contentsOf } from '@moonshot-ai/core/llm/requester';
-import type { FullLoopLlmRequester, Loop, LoopLlmRequester } from '@moonshot-ai/core/loop/index';
+import type { Loop } from '@moonshot-ai/core/loop/index';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoopRequester } from '#/agent/loop/requesterContract';
@@ -277,8 +277,7 @@ describe('ConfigState model capabilities', () => {
       if (firstBase === undefined || !('with' in firstBase)) {
         throw new Error('Expected a full raw requester');
       }
-      const mixed = firstBase as FullLoopLlmRequester & LoopLlmRequester;
-      expect(mixed.snapshot?.()).not.toHaveProperty('with');
+      expect(firstBase).not.toHaveProperty('snapshot');
       expect(contentsOf(firstBase).model?.sampling).toMatchObject({ temperature: 0.4 });
 
       await config.set('modelOverrides', { temperature: 0.9 });

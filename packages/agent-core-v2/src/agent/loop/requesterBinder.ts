@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import type { LlmRequestModel } from '@moonshot-ai/core/llm/request';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import type { LlmRequesterExecution } from '@moonshot-ai/core/llm/policy/policy';
@@ -25,14 +27,15 @@ const REQUEST_CONFIG_SECTIONS: ReadonlySet<string> = new Set([
   'modelOverrides',
 ]);
 
+interface RequesterSnapshot {
+  readonly requester: FullLoopLlmRequester;
+  readonly config: RequestConfigSnapshot;
+  readonly binding: RequesterBinding;
+}
+
 interface RequesterAttachment {
   readonly loop: Loop;
-  readonly legacyRequester: LoopLlmRequester;
-  current?: {
-    readonly requester: FullLoopLlmRequester;
-    readonly config: RequestConfigSnapshot;
-    readonly binding: RequesterBinding;
-  };
+  current?: RequesterSnapshot;
 }
 
 export interface AgentRequesterBinderOptions {
@@ -60,20 +63,21 @@ export class AgentRequesterBinder extends Disposable {
     this.refresh();
   }
 
-  attach(loop: Loop, legacyRequester: LoopLlmRequester): void {
-    this.attachment = { loop, legacyRequester };
+  attach(loop: Loop): void {
+    this.attachment = { loop };
     this.refresh();
   }
 
-  turnSnapshot(requester: FullLoopLlmRequester): {
-    readonly config: RequestConfigSnapshot;
-    readonly binding: RequesterBinding;
-  } {
-    const current = this.attachment?.current;
-    if (current?.requester !== requester) {
+  turnSnapshot(requester: FullLoopLlmRequester): RequesterSnapshot {
+    const attachment = this.attachment;
+    const current = attachment?.current;
+    if (attachment === undefined || current?.requester !== requester) {
       throw new Error('Turn requester is not the current binder snapshot');
     }
-    return current;
+    const config = this.requestConfigSnapshot(this.options.profileSnapshot());
+    return isDeepStrictEqual(config, current.config)
+      ? current
+      : this.bindCurrent(attachment, config);
   }
 
   requestConfigSnapshot(profile: ProfileBindingSnapshot): RequestConfigSnapshot {
@@ -130,18 +134,36 @@ export class AgentRequesterBinder extends Disposable {
     };
   }
 
+  private bindCurrent(
+    attachment: RequesterAttachment,
+    config: RequestConfigSnapshot,
+  ): RequesterSnapshot {
+    const binding = this.bindRequester({}, config);
+    const requester = binding.request as FullLoopLlmRequester;
+    const current = { requester, config, binding };
+    attachment.current = current;
+    attachment.loop.setRequester(requester);
+    return current;
+  }
+
   private refresh(): void {
     const attachment = this.attachment;
     if (attachment === undefined) return;
-    const profile = this.options.profileSnapshot();
-    if (!this.options.profile.hasProvider(profile)) return;
-    const config = this.requestConfigSnapshot(profile);
-    const binding = this.bindRequester({}, config);
-    const requester: FullLoopLlmRequester & LoopLlmRequester = {
-      ...binding.request,
-      snapshot: () => attachment.legacyRequester.snapshot?.() ?? attachment.legacyRequester,
-    };
-    attachment.current = { requester, config, binding };
-    attachment.loop.setRequester(requester);
+    try {
+      const profile = this.options.profileSnapshot();
+      const config = this.requestConfigSnapshot(profile);
+      this.bindCurrent(attachment, config);
+    } catch (error) {
+      attachment.current = undefined;
+      const requester: LoopLlmRequester = {
+        snapshot: () => {
+          throw error;
+        },
+        generate: async () => {
+          throw error;
+        },
+      };
+      attachment.loop.setRequester(requester);
+    }
   }
 }

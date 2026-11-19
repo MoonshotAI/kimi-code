@@ -139,7 +139,6 @@ import {
   type Loop,
   type LoopEmitted,
   type FullLoopLlmRequester,
-  type LoopLlmRequester,
   type LoopHooks,
   type MessageAppendingEvent,
   type TurnStartingEvent,
@@ -563,6 +562,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): void {
     this.initialized = true;
     const loop = createLoop({
+      decorateTurnRequester: (requester) => this.decorateTurnRequester(loop, requester),
       shouldQueueTaskNotification: (taskId) => !this.suppressedTaskNotifications.has(taskId),
       completionMessage: (input: ToolCompletionInput) => {
         const handler = this.toolExecutor.handlerForCall(input.toolCall.id);
@@ -594,9 +594,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       },
       hook: this.loopHooks.hook,
     });
-    const legacyRequester = this.createLoopRequester(loop);
-    loop.setRequester(legacyRequester);
-    this.requesterBinder.attach(loop, legacyRequester);
+    this.requesterBinder.attach(loop);
     this.loop = loop;
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
@@ -660,31 +658,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.maybeSettle();
   }
 
-  private createLoopRequester(loop: Loop): LoopLlmRequester {
-    return loop.operation((runtime) => this.requester.coreRequester({
-      source: () => {
-        const turn = loop.state.turn;
-        if (turn === undefined) throw new BugIndicatingError('Turn request requires an active turn');
-        return { type: 'turn', turnId: turn.id, step: turn.step };
-      },
-      runtime,
-      onSnapshot: (config) => {
-        this.turns.thinkingEffort = config.resolved.thinkingLevel;
-      },
-      onTrace: (trace) => {
-        this.turns.requestTrace = trace;
-      },
-      onOutcome: (outcome, source) => this.turns.recordOutcome(outcome, source),
-    }));
-  }
 
   private decorateTurnRequester(
     loop: Loop,
     requester: FullLoopLlmRequester,
   ): FullLoopLlmRequester {
-    const { config, binding } = this.requesterBinder.turnSnapshot(requester);
+    const { config, binding, requester: current } = this.requesterBinder.turnSnapshot(requester);
     this.turns.thinkingEffort = config.resolved.thinkingLevel;
-    return loop.operation((runtime) => this.decorateRequester(requester, {
+    return loop.operation((runtime) => this.decorateRequester(current, {
       config,
       binding,
       source: () => {
@@ -965,9 +946,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         };
       });
       this.requesterExecution.recoveries.clear();
-      const legacyRequester = this.createLoopRequester(loop);
-      loop.setRequester(legacyRequester);
-      this.requesterBinder.attach(loop, legacyRequester);
+      this.requesterBinder.attach(loop);
       this.turns.invalidateHistory();
       this.scheduleTaskReconciliation(seededMessages);
       this.maybeSettle();

@@ -44,6 +44,8 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { abortedToolOutput, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
+import { IConfigService } from '#/app/config/config';
 import type { ProviderConfig } from '#/llm-adapter/provider/provider';
 
 import {
@@ -414,6 +416,22 @@ describe('Agent loop', () => {
       }));
       expect(observed).toHaveLength(2);
       expect(observed[1]).toEqual(observed[0]);
+
+      const frozenBase = coreLoop.baseRequester;
+      await local.get(IConfigService).replace('providers', { kimi: firstProvider });
+      local.get(IProviderCatalogRuntime).resync();
+      expect(coreLoop.baseRequester).not.toBe(frozenBase);
+      expect(coreLoop.baseRequester).not.toHaveProperty('with');
+
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'must fail explicitly' }] });
+      await local.untilTurnEnd();
+      const failure = await localLoop.settled();
+      expect(failure?.type).toBe('failed');
+      if (failure?.type !== 'failed') throw new Error('Expected the next turn to fail');
+      expect(failure.error).toMatchObject({
+        message: expect.stringContaining('Provider "other" referenced by model "second-model" is not configured.'),
+      });
+      expect(requests).toHaveLength(5);
     } finally {
       await local.dispose();
     }
@@ -929,10 +947,10 @@ describe('Agent loop', () => {
       }),
     };
 
+    const registryRequest = vi.spyOn(ctx.get(IProtocolAdapterRegistry), 'request');
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
     const reasons = trackStepReasons(ctx);
-    const registryRequest = vi.spyOn(ctx.get(IProtocolAdapterRegistry), 'request');
 
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     await ctx.rpc.prompt({
