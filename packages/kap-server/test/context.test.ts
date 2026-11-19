@@ -455,6 +455,65 @@ describe('context routes on restored sessions and dynamic tools', () => {
     ]);
   });
 
+  it('groups user-role messages by where they came from, in context order', async () => {
+    const sid = await createSession();
+    const main = await seedMainAgent(sid);
+    const userMessage = (text: string, origin?: ContextMessage['origin']): ContextMessage => ({
+      role: 'user',
+      content: [{ type: 'text', text }],
+      origin,
+    });
+    main.accessor.get(IAgentLoopService).replaceHistory(
+      [
+        userMessage('hello', { kind: 'user' }),
+        userMessage('<system-reminder>todo</system-reminder>', { kind: 'injection', variant: 'todo_list_reminder' }),
+        userMessage('Skill tool loaded instructions', {
+          kind: 'skill_activation',
+          activationId: 'activation-1',
+          skillName: 'demo-skill',
+          trigger: 'model-tool',
+        }),
+        userMessage('deploy staging', {
+          kind: 'plugin_command',
+          activationId: 'activation-2',
+          pluginId: 'demo-plugin',
+          commandName: 'deploy',
+          trigger: 'user-slash',
+        }),
+        userMessage('<notification>done</notification>', {
+          kind: 'task',
+          taskId: 'task-1',
+          status: 'completed',
+          notificationId: 'notification-1',
+        }),
+        userMessage('Summary of earlier work', { kind: 'compaction_summary' }),
+        userMessage('imported transcript'),
+      ].map(historyEntryFromContext),
+      'fork',
+    );
+    await main.accessor.get(IEventDispatcher).flush();
+
+    const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
+    expect(page.items.map((entry) => [entry.role, entry.name])).toEqual([
+      ['system', undefined],
+      ['user', undefined],
+      ['reminder', 'todo_list_reminder'],
+      ['skill', 'demo-skill'],
+      ['user', '/deploy'],
+      ['reminder', 'task'],
+      ['compaction', undefined],
+      ['user', undefined],
+    ]);
+    expect(page.summary.groups.map((group) => [group.role, group.count])).toEqual([
+      ['system', 1],
+      ['definition', page.tools.length],
+      ['user', 3],
+      ['reminder', 2],
+      ['skill', 1],
+      ['compaction', 1],
+    ]);
+  });
+
   it('reports the estimated total before any model call is measured', async () => {
     const sid = await createSession();
     await seedMainAgent(sid);

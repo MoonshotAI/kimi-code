@@ -8,6 +8,7 @@ import {
   ISessionTokenCountingService,
   resumeSessionById,
   type IAgentScopeHandle,
+  type PromptOrigin,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { ContentPart, Message } from '@moonshot-ai/core/llm/message';
@@ -26,6 +27,7 @@ import {
   type ContextItemSummary,
   type ContextSummary,
 } from '../protocol/rest-context';
+import { userMessageOriginOf } from '../services/conversation/conversationItems';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { sendMappedError, sessionConflictErrors } from './sessionErrors';
@@ -96,6 +98,50 @@ function partPreview(part: ContentPart): string {
   return `[${part.type}]`;
 }
 
+interface MessageIdentity {
+  readonly role: string;
+  readonly name: string | undefined;
+}
+
+function reminderNameOf(origin: PromptOrigin | undefined): string | undefined {
+  if (origin === undefined) return undefined;
+  if (origin.kind === 'injection') return origin.variant;
+  if (origin.kind === 'system_trigger') return origin.name;
+  if (origin.kind === 'hook_result') return origin.event;
+  return origin.kind;
+}
+
+function userMessageIdentity(message: Message): MessageIdentity {
+  const origin = message.attributes?.origin as PromptOrigin | undefined;
+  if (origin?.kind === 'compaction_summary') return { role: 'compaction', name: undefined };
+  const presented = userMessageOriginOf(origin);
+  switch (presented.kind) {
+    case 'user':
+      return { role: 'user', name: undefined };
+    case 'plugin_command':
+      return { role: 'user', name: `/${presented.command}` };
+    case 'skill':
+      return { role: 'skill', name: presented.name };
+    case 'cron':
+    case 'goal':
+    case 'hook':
+    case 'retry':
+    case 'system':
+      return { role: 'reminder', name: reminderNameOf(origin) };
+  }
+}
+
+function messageIdentity(message: Message, toolNames: ReadonlyMap<string, string>): MessageIdentity {
+  if (message.role === 'user') return userMessageIdentity(message);
+  if (message.role === 'tool') {
+    return { role: 'tool', name: toolNames.get(message.toolCallId) ?? message.toolCallId };
+  }
+  const declared = message.role === 'system' ? (message.tools ?? []) : [];
+  if (declared.length > 0) return { role: 'definition', name: declared.map((tool) => tool.name).join(', ') };
+  const calls = message.role === 'assistant' ? message.toolCalls : [];
+  return { role: message.role, name: calls.map((call) => call.name).join(', ') || undefined };
+}
+
 function outlineMessages(
   messages: readonly Message[],
   estimator: Pick<ISessionTokenCountingService, 'estimateMessage' | 'estimateTools'>,
@@ -103,14 +149,11 @@ function outlineMessages(
   const toolNames = new Map<string, string>();
   return messages.map((message) => {
     const declared = message.role === 'system' ? (message.tools ?? []) : [];
-    const calls = message.role === 'assistant' ? message.toolCalls : [];
-    for (const call of calls) toolNames.set(call.id, call.name);
+    if (message.role === 'assistant') {
+      for (const call of message.toolCalls) toolNames.set(call.id, call.name);
+    }
     return {
-      role: declared.length > 0 ? 'definition' : message.role,
-      name:
-        message.role === 'tool'
-          ? (toolNames.get(message.toolCallId) ?? message.toolCallId)
-          : (calls.length > 0 ? calls : declared).map((entry) => entry.name).join(', ') || undefined,
+      ...messageIdentity(message, toolNames),
       tokens: estimator.estimateMessage(message) + estimator.estimateTools(declared),
       count: Math.max(1, declared.length),
       hasMedia: message.content.some(isMediaPart),

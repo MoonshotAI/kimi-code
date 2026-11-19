@@ -152,6 +152,24 @@ describe('ContextPanel live refresh', () => {
     expect(mocks.getSessionContextItem).toHaveBeenCalledTimes(reads);
   });
 
+  it('shows the composition like the ring card and filters items from its rows', async () => {
+    const root = await mountPanel();
+    expect(root.querySelector('.ctx-usage-headline')?.textContent).toBe('10% 已用');
+    const userRow = () => root.querySelector<HTMLButtonElement>('.ctx-role-toggle[data-role="user"]')!;
+    expect(userRow().textContent).toContain('用户消息');
+    expect(userRow().getAttribute('aria-pressed')).toBe('false');
+
+    userRow().click();
+    await settle();
+    expect(lastQuery()).toMatchObject({ roles: ['user'], offset: 0 });
+    expect(userRow().getAttribute('aria-pressed')).toBe('true');
+
+    root.querySelector<HTMLButtonElement>('.clear-filter')!.click();
+    await settle();
+    expect(lastQuery()).toMatchObject({ roles: undefined, offset: 0 });
+    expect(userRow().getAttribute('aria-pressed')).toBe('false');
+  });
+
   it('loads the next page when the item dialog steps past the loaded range', async () => {
     const root = await mountPanel();
     const rows = root.querySelectorAll<HTMLButtonElement>('.context-row');
