@@ -1092,6 +1092,8 @@ describe('Windows taskbar identity', () => {
 });
 
 describe('main window host view', () => {
+  const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
+
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -1100,6 +1102,15 @@ describe('main window host view', () => {
     mocks.browserOccluded = false;
     mocks.windowFocused = false;
     mocks.contentBounds = { x: 0, y: 0, width: 1280, height: 832 };
+    Object.defineProperty(process, 'resourcesPath', { value: '/tmp/kimi-window-test/resources', configurable: true });
+  });
+
+  afterEach(() => {
+    if (resourcesPathDescriptor) {
+      Object.defineProperty(process, 'resourcesPath', resourcesPathDescriptor);
+    } else {
+      Reflect.deleteProperty(process, 'resourcesPath');
+    }
   });
 
   interface FakeHostView {

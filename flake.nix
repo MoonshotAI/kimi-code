@@ -211,10 +211,11 @@
                     "// runVerifyStep skipped in nix sandbox (sigtool lacks -dv)"
               ''}
               # The SEA blob step (scripts/native/02-sea-blob.mjs) embeds the
-              # Kimi web assets from apps/kimi-code/dist-web and fails if that
-              # directory is missing. The bundle is committed (synced from the
-              # code-app repo) — verify it is in place before producing the
-              # native executable.
+              # Kimi web assets from apps/kimi-code/dist-web. The bundle is not
+              # committed — build it from the desktop renderer's web variant,
+              # then verify it is in place before producing the native
+              # executable.
+              node apps/kimi-code/scripts/sync-web-dist.mjs
               node apps/kimi-code/scripts/check-web-assets.mjs
               pnpm --filter=@moonshot-ai/kimi-code run build:native:sea
               runHook postBuild

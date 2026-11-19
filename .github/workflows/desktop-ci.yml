@@ -1,0 +1,40 @@
+name: desktop-ci
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/desktop-ci.yml'
+      - 'apps/desktop/**'
+      - 'packages/app-*/**'
+      - 'patches/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter kimi-code-app run build:native:screenshot
+      - run: pnpm --filter kimi-code-app exec electron tests/main/fixtures/screenshot-windows-native.cjs
+      # PR 上只跑截图相关用例；手动 dispatch 跑全量。Windows runner 更慢，
+      # 默认 5s 的测试超时容易抖动，放宽到 30s。
+      - if: github.event_name == 'pull_request'
+        run: pnpm test apps/desktop/tests/main/screenshot apps/desktop/tests/main/app/lifecycle.test.ts apps/desktop/tests/main/window/main-window.test.ts apps/desktop/tests/main/shell/shortcuts.test.ts apps/desktop/tests/main/release/preview-release.test.ts apps/desktop/tests/renderer/screenshot --testTimeout=30000
+      - if: github.event_name == 'workflow_dispatch'
+        run: pnpm test --testTimeout=30000
