@@ -226,6 +226,8 @@ export function stepSummary(
     ended_at: isoTime(endedAt),
     finish_reason: end.finishReason,
     usage: usageOf(end),
+    first_token_ms: end.llmFirstTokenLatencyMs,
+    stream_ms: end.llmStreamDurationMs,
   };
 }
 
