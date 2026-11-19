@@ -178,7 +178,7 @@ describe('handleRemoteControlCommand', () => {
     }
   });
 
-  it('hands the active session to Remote Control on the background server after the TUI exits', async () => {
+  it('hands the active session to Remote Control after the TUI exits', async () => {
     vi.clearAllMocks();
     mocks.getDataDir.mockReturnValue('/tmp/kimi-home-without-lock');
     mocks.runRemoteControl.mockResolvedValue(undefined);
@@ -208,7 +208,7 @@ describe('handleRemoteControlCommand', () => {
   it('opens the device entry without a session and exits non-zero when Remote Control fails', async () => {
     vi.clearAllMocks();
     mocks.getDataDir.mockReturnValue('/tmp/kimi-home-without-lock');
-    mocks.runRemoteControl.mockRejectedValue(new Error('The background Kimi server stopped'));
+    mocks.runRemoteControl.mockRejectedValue(new Error('the relay rejected the device'));
     const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     const errors = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const host = makeHost();
@@ -227,7 +227,7 @@ describe('handleRemoteControlCommand', () => {
         expect.anything(),
       );
       expect(errors.mock.calls.map((call) => String(call[0])).join('')).toContain(
-        'Remote Control failed: The background Kimi server stopped',
+        'Remote Control failed: the relay rejected the device',
       );
       expect(exit.mock.calls[0]).toEqual([1]);
     } finally {

@@ -322,7 +322,7 @@ async function removeFromAccount(row: MyDevice): Promise<void> {
       <div v-else-if="store.registrations === null" class="ad-card ad-center" role="status">
         <Spinner size="md" />
       </div>
-      <div v-else class="ad-card ad-empty">{{ t('settings.devices.myDevicesEmpty', { command: 'kimi rc' }) }}</div>
+      <div v-else class="ad-card ad-empty">{{ t('settings.devices.myDevicesEmpty', { command: 'kimi rc --background' }) }}</div>
     </template>
 
     <template v-if="rows.length > 0">
@@ -331,7 +331,7 @@ async function removeFromAccount(row: MyDevice): Promise<void> {
         <Button variant="text" @click="refresh">{{ t('remoteControl.retry') }}</Button>
       </div>
       <div class="ad-card" role="list" :aria-label="t('settings.devices.myDevices')">
-        <div v-if="shown.length === 0" class="ad-empty">{{ t('settings.devices.myDevicesEmpty', { command: 'kimi rc' }) }}</div>
+        <div v-if="shown.length === 0" class="ad-empty">{{ t('settings.devices.myDevicesEmpty', { command: 'kimi rc --background' }) }}</div>
         <div
           v-for="row in listed"
           :key="row.id"

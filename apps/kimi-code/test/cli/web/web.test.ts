@@ -37,6 +37,7 @@ import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type {
   RemoteControlCloseReason,
   RemoteControlOptions,
+  RemoteControlServer,
 } from '#/cli/sub/web/remote-control';
 import type { WebCommandDeps } from '#/cli/sub/web/run';
 import type { ParsedServerOptions } from '#/cli/sub/web/shared';
@@ -500,7 +501,7 @@ describe('kimi rc', () => {
   });
 });
 
-describe('Remote Control on the background server', () => {
+describe('Remote Control server modes', () => {
   let home: string;
 
   beforeEach(() => {
@@ -517,6 +518,8 @@ describe('Remote Control on the background server', () => {
   function makeRemoteControl(): {
     deps: WebCommandDeps;
     lease: DaemonLease & { close: ReturnType<typeof vi.fn> };
+    ownServer: RemoteControlServer & { close: ReturnType<typeof vi.fn> };
+    startRemoteControlServer: ReturnType<typeof vi.fn>;
     startServerForeground: ReturnType<typeof vi.fn>;
     startRemoteControl: ReturnType<typeof vi.fn>;
     tunnelClose: ReturnType<typeof vi.fn>;
@@ -546,9 +549,19 @@ describe('Remote Control on the background server', () => {
     }));
     let terminate: (() => void) | undefined;
     const startServerForeground = vi.fn(async () => undefined as never);
+    const ownServer = {
+      localOrigin: 'http://127.0.0.1:58627',
+      localServerToken: () => 'local-token',
+      localUrl: 'http://127.0.0.1:58627/#token=local-token',
+      background: false,
+      closed: new Promise<never>(() => {}),
+      close: vi.fn(async () => {}),
+    };
+    const startRemoteControlServer = vi.fn(async (_options: ParsedServerOptions) => ownServer);
     return {
       deps: {
         startServerForeground,
+        startRemoteControlServer,
         attachDaemon: async () => ({
           socketPath: daemonSocketPath(home),
           logPath: join(home, 'server', 'ensure-daemon.log'),
@@ -566,6 +579,8 @@ describe('Remote Control on the background server', () => {
         stderr,
       },
       lease,
+      ownServer,
+      startRemoteControlServer,
       startServerForeground,
       startRemoteControl,
       tunnelClose,
@@ -575,11 +590,32 @@ describe('Remote Control on the background server', () => {
     };
   }
 
-  it('runs `kimi rc` through the daemon socket without a foreground server and leaves the daemon on Ctrl+C', async () => {
+  it('runs `kimi rc` on its own server by default, with the local UI and its flags, and stops it on Ctrl+C', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+    const attachDaemon = vi.fn(rc.deps.attachDaemon!);
+
+    const running = handleWebCommand({ remoteControl: true, port: '59000', open: false }, { ...rc.deps, attachDaemon });
+    await vi.waitFor(() => expect(rc.startRemoteControl).toHaveBeenCalledOnce());
+    expect(attachDaemon).not.toHaveBeenCalled();
+    expect(rc.startRemoteControlServer).toHaveBeenCalledWith(expect.objectContaining({ port: 59000 }));
+    const options = rc.startRemoteControl.mock.calls[0]![0] as RemoteControlOptions;
+    expect(options.localOrigin).toBe('http://127.0.0.1:58627');
+    expect(rc.readStdout()).toContain('Local UI: http://127.0.0.1:58627/#token=local-token');
+    expect(rc.readStdout()).not.toContain('Ignoring');
+
+    rc.terminate();
+    await expect(running).resolves.toBeUndefined();
+    expect(rc.tunnelClose).toHaveBeenCalledOnce();
+    expect(rc.ownServer.close).toHaveBeenCalledOnce();
+    expect(rc.readStdout()).not.toContain('sessions keep running');
+  });
+
+  it('runs `kimi rc --background` through the daemon socket without a foreground server and leaves the daemon on Ctrl+C', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const rc = makeRemoteControl();
 
-    const running = handleWebCommand({ remoteControl: true, open: true }, rc.deps);
+    const running = handleWebCommand({ remoteControl: true, background: true, open: true }, rc.deps);
     await vi.waitFor(() => expect(rc.deps.openUrl).toHaveBeenCalledOnce());
     expect(rc.startServerForeground).not.toHaveBeenCalled();
     expect(rc.startRemoteControl).toHaveBeenCalledOnce();
@@ -597,6 +633,7 @@ describe('Remote Control on the background server', () => {
     expect(rc.tunnelClose).toHaveBeenCalledOnce();
     expect(rc.lease.close).toHaveBeenCalledOnce();
     expect(rc.readStdout()).toContain('sessions keep running in the background Kimi server');
+    expect(rc.startRemoteControlServer).not.toHaveBeenCalled();
   });
 
   it('prints one notice for flags that only configure a foreground server', async () => {
@@ -604,7 +641,7 @@ describe('Remote Control on the background server', () => {
     const rc = makeRemoteControl();
 
     const running = handleWebCommand(
-      { remoteControl: true, port: '59000', host: '0.0.0.0', open: false },
+      { remoteControl: true, background: true, port: '59000', host: '0.0.0.0', open: false },
       rc.deps,
     );
     await vi.waitFor(() => expect(rc.startRemoteControl).toHaveBeenCalledOnce());
@@ -625,7 +662,7 @@ describe('Remote Control on the background server', () => {
     const wait = vi.fn(async () => {});
     const attachDaemon = rc.deps.attachDaemon!;
     const running = handleWebCommand(
-      { remoteControl: true, open: false },
+      { remoteControl: true, background: true, open: false },
       {
         ...rc.deps,
         wait,
@@ -645,19 +682,33 @@ describe('Remote Control on the background server', () => {
     await running;
   });
 
-  it('keeps the loopback check and flags on Windows, where the background server is unavailable', async () => {
+  it('keeps the loopback check when Remote Control runs on its own server', async () => {
     const { handleWebCommand } = await import('#/cli/sub/web/run');
     const rc = makeRemoteControl();
     const attachDaemon = vi.fn(rc.deps.attachDaemon!);
 
     await expect(
-      handleWebCommand(
-        { remoteControl: true, host: '0.0.0.0', port: '59000' },
-        { ...rc.deps, attachDaemon, platform: 'win32' },
-      ),
+      handleWebCommand({ remoteControl: true, host: '0.0.0.0', port: '59000' }, { ...rc.deps, attachDaemon }),
     ).rejects.toThrow('--remote-control requires a loopback host.');
     expect(rc.readStdout()).not.toContain('Ignoring');
     expect(attachDaemon).not.toHaveBeenCalled();
+    expect(rc.startRemoteControlServer).not.toHaveBeenCalled();
+    expect(rc.startRemoteControl).not.toHaveBeenCalled();
+  });
+
+  it('rejects --background on Windows and without Remote Control', async () => {
+    const { handleWebCommand } = await import('#/cli/sub/web/run');
+    const rc = makeRemoteControl();
+    const attachDaemon = vi.fn(rc.deps.attachDaemon!);
+
+    await expect(
+      handleWebCommand({ remoteControl: true, background: true }, { ...rc.deps, attachDaemon, platform: 'win32' }),
+    ).rejects.toThrow('--background is only available on macOS and Linux.');
+    await expect(handleWebCommand({ background: true }, rc.deps)).rejects.toThrow(
+      '--background requires --remote-control.',
+    );
+    expect(attachDaemon).not.toHaveBeenCalled();
+    expect(rc.startServerForeground).not.toHaveBeenCalled();
     expect(rc.startRemoteControl).not.toHaveBeenCalled();
   });
 
@@ -666,7 +717,7 @@ describe('Remote Control on the background server', () => {
     const rc = makeRemoteControl();
     const execve = vi.spyOn(process, 'execve').mockImplementation(() => undefined as never);
     try {
-      const running = handleWebCommand({ remoteControl: true, open: false }, rc.deps);
+      const running = handleWebCommand({ remoteControl: true, background: true, open: false }, rc.deps);
       await vi.waitFor(() => expect(rc.startRemoteControl).toHaveBeenCalledOnce());
       rc.serverExits('upgraded');
       await expect(running).resolves.toBeUndefined();
@@ -693,7 +744,7 @@ describe('Remote Control on the background server', () => {
     vi.stubEnv(KIMI_CODE_RC_UPGRADED_FROM_ENV, getVersion());
 
     await expect(
-      handleWebCommand({ remoteControl: true, open: false }, { ...rc.deps, attachDaemon }),
+      handleWebCommand({ remoteControl: true, background: true, open: false }, { ...rc.deps, attachDaemon }),
     ).rejects.toThrow(`Remote Control restarted after an upgrade but still runs Kimi Code ${getVersion()}`);
     expect(attachDaemon).not.toHaveBeenCalled();
     expect(rc.startRemoteControl).not.toHaveBeenCalled();
@@ -705,7 +756,7 @@ describe('Remote Control on the background server', () => {
     const rc = makeRemoteControl();
     vi.stubEnv(KIMI_CODE_RC_UPGRADED_FROM_ENV, '0.0.1');
 
-    const running = handleWebCommand({ remoteControl: true, open: true }, rc.deps);
+    const running = handleWebCommand({ remoteControl: true, background: true, open: true }, rc.deps);
     await vi.waitFor(() => expect(rc.startRemoteControl).toHaveBeenCalledOnce());
     expect(process.env[KIMI_CODE_RC_UPGRADED_FROM_ENV]).toBeUndefined();
     expect(rc.readStdout()).toContain(`Kimi Code upgraded from 0.0.1 to ${getVersion()}`);

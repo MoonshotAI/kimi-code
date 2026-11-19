@@ -10,6 +10,7 @@ import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { getVersion } from '../../version';
 import { darkColors } from '../../../tui/theme/colors';
+import { splitTokenFragment } from './access-urls';
 import { supportsHyperlinks, toTerminalHyperlink } from '../../../utils/terminal-hyperlink';
 import {
   buildRemoteControlUrl,
@@ -62,6 +63,7 @@ type Execve = (file: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
 export interface RemoteControlServer {
   readonly localOrigin: string;
   readonly localServerToken?: () => string;
+  readonly localUrl?: string;
   readonly logPath?: string;
   readonly background: boolean;
   readonly closed: Promise<DaemonExit>;
@@ -241,6 +243,7 @@ async function serveRemoteControl(
         deviceName: remoteControl.deviceName,
         qrCode: qrCode.terminal,
         pngPath: qrCode.pngPath,
+        localUrl: server.localUrl,
         logPath: server.logPath,
       }),
     );
@@ -283,6 +286,7 @@ export interface RemoteControlOutputOptions {
   readonly deviceName: string;
   readonly qrCode: string;
   readonly pngPath: string;
+  readonly localUrl?: string;
   readonly logPath?: string;
 }
 
@@ -290,12 +294,17 @@ export function formatRemoteControlOutput(options: RemoteControlOutputOptions): 
   const title = (text: string): string => chalk.bold.hex(darkColors.primary)(text);
   const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
   const accent = (text: string): string => chalk.hex(darkColors.accent)(text);
+  const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
   const muted = (text: string): string => chalk.hex(darkColors.textMuted)(text);
   const status = (text: string): string => chalk.hex(darkColors.success)(text);
   const link = (url: string): string =>
     supportsHyperlinks() ? toTerminalHyperlink(accent(url), url) : accent(url);
   const docs = toTerminalHyperlink('docs', 'https://kimi.com/code/docs/remote-control');
   const feedback = toTerminalHyperlink('feedback', 'https://kimi.com/code/feedback');
+  const [localBase, localFragment] = splitTokenFragment(options.localUrl ?? '');
+  const localUi = options.localUrl === undefined
+    ? []
+    : [`  ${label('Local UI: ')}${accent(localBase)}${dim(localFragment)} ${muted('(LAN: --host)')}`];
   return [
     '',
     `  ${title('Kimi Remote Control ready')}  ${muted(getVersion())}`,
@@ -311,6 +320,7 @@ export function formatRemoteControlOutput(options: RemoteControlOutputOptions): 
     '',
     options.qrCode.trimEnd().replaceAll(/^/gm, '    '),
     `  ${label('QR code PNG: ')}${options.pngPath} ${muted('(open this if the QR above does not scan)')}`,
+    ...localUi,
     '',
     `  ${docs} ${muted('·')} ${feedback}`,
     `  ${label('Logs: ')}${muted(options.logPath ?? 'off (--log-level info)')} ${muted('·')} ${label('Stop: ')}${muted('Ctrl+C')}`,

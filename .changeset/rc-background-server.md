@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-kimi rc now runs Remote Control on the background Kimi server, so Ctrl+C only turns remote access off while sessions keep running; --port and --host no longer apply to Remote Control and the local UI address is no longer printed.
+Add a background mode for Remote Control that keeps running tasks going after you press Ctrl+C. Start it with kimi rc --background on macOS and Linux.

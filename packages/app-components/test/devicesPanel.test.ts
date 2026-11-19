@@ -1113,7 +1113,7 @@ describe('DevicesPanel my devices', () => {
     await flush();
 
     expect(loadRegistrations).toHaveBeenCalledOnce();
-    expect(host.querySelector('.ad-empty')?.textContent).toContain('or run kimi rc on a server');
+    expect(host.querySelector('.ad-empty')?.textContent).toContain('or run kimi rc --background on a server');
     expect(host.querySelector('.ad-usage')).toBeNull();
     expect(host.querySelector('.ad-row')).toBeNull();
   });
@@ -1237,7 +1237,7 @@ describe('DevicesPanel my devices', () => {
     });
     await flush();
 
-    expect(host.querySelector('.ad-card .ad-empty')?.textContent).toContain('or run kimi rc on a server');
+    expect(host.querySelector('.ad-card .ad-empty')?.textContent).toContain('or run kimi rc --background on a server');
     expect(host.querySelector('.ad-fold')?.textContent).toContain('1 devices offline for more than 7 days');
     expect(host.querySelector('section.ad [role="tab"]')?.textContent?.trim()).toBe('My devices');
   });

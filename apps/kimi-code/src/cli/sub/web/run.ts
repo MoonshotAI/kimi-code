@@ -66,6 +66,7 @@ export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
   json?: boolean;
   remoteControl?: boolean;
+  background?: boolean;
 }
 
 export interface StartForegroundHooks {
@@ -78,6 +79,7 @@ export interface WebCommandDeps {
     hooks?: StartForegroundHooks,
   ) => Promise<never>;
   attachDaemon?: () => Promise<AttachedDaemon>;
+  startRemoteControlServer?: (options: ParsedServerOptions) => Promise<RemoteControlServer>;
   platform?: NodeJS.Platform;
   startRemoteControl?: RemoteControlRunDeps['startRemoteControl'];
   onTerminate?: RemoteControlRunDeps['onTerminate'];
@@ -148,6 +150,11 @@ export function buildWebCommand(
       ).default(false),
     );
   }
+  withServerOptions.option(
+    '--background',
+    'Run Remote Control on the background Kimi server, so Ctrl+C only turns remote access off and sessions keep running (macOS and Linux).',
+    false,
+  );
   if (defaultOpen) {
     withServerOptions.option('--no-open', 'Do not open the web UI in the default browser.', true);
   } else {
@@ -235,6 +242,9 @@ export async function handleWebCommand(
   if (jsonMode && parsed.allowRemoteShutdown) {
     throw new Error('--json cannot be combined with --allow-remote-shutdown.');
   }
+  if (opts.background === true && opts.remoteControl !== true) {
+    throw new Error('--background requires --remote-control.');
+  }
   if (opts.remoteControl === true) {
     if (parsed.dangerousBypassAuth) {
       throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
@@ -248,7 +258,10 @@ export async function handleWebCommand(
         `Remote Control restarted after an upgrade but still runs Kimi Code ${upgradedFrom}; start it again with the upgraded kimi.`,
       );
     }
-    const background = supportsBackgroundServer(deps.platform);
+    const background = opts.background === true;
+    if (background && !supportsBackgroundServer(deps.platform)) {
+      throw new Error('--background is only available on macOS and Linux.');
+    }
     if (!background && !isLoopbackHost(parsed.host)) {
       throw new Error('--remote-control requires a loopback host.');
     }
@@ -258,7 +271,7 @@ export async function handleWebCommand(
     await runRemoteControl(
       { open: opts.open === true && upgradedFrom === undefined },
       {
-        attachServer: () => attachRemoteControlServer(parsed, deps),
+        attachServer: () => attachRemoteControlServer(parsed, { ...deps, background }),
         startRemoteControl:
           deps.startRemoteControl ?? DEFAULT_REMOTE_CONTROL_RUN_DEPS.startRemoteControl,
         onTerminate: deps.onTerminate ?? DEFAULT_REMOTE_CONTROL_RUN_DEPS.onTerminate,
@@ -441,11 +454,11 @@ async function startServerInProcess(options: ParsedServerOptions): Promise<Route
 
 export function attachRemoteControlServer(
   options: ParsedServerOptions,
-  deps: Pick<WebCommandDeps, 'attachDaemon' | 'platform'> = {},
+  deps: Pick<WebCommandDeps, 'attachDaemon' | 'startRemoteControlServer'> & { readonly background?: boolean } = {},
 ): Promise<RemoteControlServer> {
-  return supportsBackgroundServer(deps.platform)
+  return deps.background === true
     ? attachBackgroundServer(deps.attachDaemon)
-    : startRemoteControlServerInProcess(options);
+    : (deps.startRemoteControlServer ?? startRemoteControlServerInProcess)(options);
 }
 
 async function startRemoteControlServerInProcess(
@@ -455,6 +468,7 @@ async function startRemoteControlServerInProcess(
   return {
     localOrigin: running.address,
     localServerToken: () => tryResolveServerToken(getDataDir()) ?? '',
+    localUrl: buildOpenableUrl(running.address, tryResolveServerToken(getDataDir())),
     background: false,
     closed: new Promise<never>(() => {}),
     close: async () => {

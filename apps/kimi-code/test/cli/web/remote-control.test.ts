@@ -78,6 +78,17 @@ describe('Remote Control output', () => {
     expect(output.replaceAll(/\u001B\[[0-9;]*m/g, '')).toContain('Logs: off (--log-level info)');
   });
 
+  it('shows the local UI when Remote Control runs on its own server', () => {
+    const output = formatRemoteControlOutput({
+      ...outputOptions,
+      localUrl: 'http://127.0.0.1:58627/#token=local-token',
+      logPath: undefined,
+    });
+    expect(output.replaceAll(/\u001B\[[0-9;]*m/g, '')).toContain(
+      'Local UI: http://127.0.0.1:58627/#token=local-token (LAN: --host)',
+    );
+  });
+
   it('formats relay and device lifecycle states', () => {
     expect(formatRemoteControlStatus('relay_connected').toLowerCase()).toContain('connected');
     expect(formatRemoteControlStatus('relay_disconnected')).toContain('disconnected');
