@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { KIMI_REGION_PROFILES } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FEEDBACK_REASONS_CONFIG } from '../src/protocol/rest-feedback';
+import { FEEDBACK_REASONS_CONFIG } from '../src/protocol/feedback-reasons';
 import {
   clientConfigsBaseUrl,
   EFFORT_SWITCH_CONFIG_NAME,
