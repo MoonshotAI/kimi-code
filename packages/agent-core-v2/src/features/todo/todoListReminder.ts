@@ -2,6 +2,10 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 
 import { TODO_LIST_TOOL_NAME, todoProgress, type TodoItem } from './todoItem';
 
+export const TODO_LIST_GUIDANCE_REMINDER_VARIANT = 'todo_list_guidance';
+export const TODO_LIST_GUIDANCE =
+  'When you track work in `TodoList`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.';
+
 export const TODO_LIST_REMINDER_VARIANT = 'todo_list_reminder';
 
 const TODO_LIST_REMINDER_STEPS_SINCE_WRITE = 10;

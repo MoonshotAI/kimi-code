@@ -331,6 +331,7 @@ describe('AgentReminderService', () => {
     expect(seen).toEqual([true, false, true]);
     expect(context.history().map((message) => message.origin)).toEqual([
       { kind: 'compaction_summary' },
+      { kind: 'injection', variant: 'todo_list_guidance', ownerPromptId: undefined },
       { kind: 'injection', variant: 'per_turn_test' },
     ]);
   });

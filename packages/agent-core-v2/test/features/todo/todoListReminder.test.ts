@@ -1,8 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { type TodoItem } from '#/features/todo/todoItem';
-import { todoListStaleReminder, todoListWriteStatsBefore } from '#/features/todo/todoListReminder';
+import {
+  TODO_LIST_GUIDANCE,
+  TODO_LIST_GUIDANCE_REMINDER_VARIANT,
+  todoListStaleReminder,
+  todoListWriteStatsBefore,
+} from '#/features/todo/todoListReminder';
+import { createTestAgent, type TestAgentContext } from '../../harness';
 
 function assistantMessage(): ContextMessage {
   return {
@@ -183,5 +190,58 @@ describe('todoListWriteStatsBefore', () => {
     expect(todoListWriteStatsBefore(history, 'call_first')).toEqual({
       remindedSinceLastWrite: false,
     });
+  });
+});
+
+describe('TodoList guidance reminder', () => {
+  let ctx: TestAgentContext;
+
+  beforeEach(async () => {
+    ctx = createTestAgent();
+    await ctx.restorePersisted();
+  });
+
+  afterEach(async () => {
+    await ctx.dispose();
+  });
+
+  async function runPrompt(text: string): Promise<void> {
+    ctx.mockNextResponse({ type: 'text', text: `answer to ${text}` });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text }] });
+    await ctx.untilTurnEnd();
+  }
+
+  function guidanceCount(callIndex: number): number {
+    const call = ctx.llmCalls[callIndex];
+    if (call === undefined) return 0;
+    return JSON.stringify(call).split(TODO_LIST_GUIDANCE).length - 1;
+  }
+
+  function guidanceReminders(): readonly ContextMessage[] {
+    return ctx.get(IAgentLoopService).history().filter((message) =>
+      message.origin?.kind === 'injection' &&
+      message.origin.variant === TODO_LIST_GUIDANCE_REMINDER_VARIANT
+    );
+  }
+
+  it('injects the guidance into the first request without repeating it in the next turn', async () => {
+    await runPrompt('first');
+    await runPrompt('second');
+
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(guidanceCount(0)).toBe(1);
+    expect(guidanceCount(1)).toBe(1);
+    expect(JSON.stringify(ctx.llmCalls[0])).toContain('<system-reminder>');
+    expect(guidanceReminders()).toHaveLength(1);
+    expect(guidanceReminders()[0]?.role).toBe('user');
+  });
+
+  it('does not inject the guidance when TodoList is inactive', async () => {
+    ctx.get(IAgentLoopService).update({ activeToolNames: ['Read'] });
+
+    await runPrompt('first');
+
+    expect(guidanceCount(0)).toBe(0);
+    expect(guidanceReminders()).toHaveLength(0);
   });
 });

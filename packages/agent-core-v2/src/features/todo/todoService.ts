@@ -21,7 +21,12 @@ import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { TODO_LIST_TOOL_NAME, readTodoItems, todoProgress, type TodoItem } from './todoItem';
-import { TODO_LIST_REMINDER_VARIANT, todoListStaleReminder } from './todoListReminder';
+import {
+  TODO_LIST_GUIDANCE,
+  TODO_LIST_GUIDANCE_REMINDER_VARIANT,
+  TODO_LIST_REMINDER_VARIANT,
+  todoListStaleReminder,
+} from './todoListReminder';
 import { ToolsUpdateStore, type TodoState } from './todoOps';
 
 
@@ -47,13 +52,24 @@ const todoReminder = fromCallback(({
   };
 }) => {
   const runtime = input.runtime;
-  if (runtime.agent.agentId !== MAIN_AGENT_ID) return;
   const memory = runtime.get(IAgentLoopService);
   const toolPolicy = runtime.get(IAgentToolPolicyService);
+  const reminders = runtime.get(IAgentReminderService);
+  const guidanceHook = memory?.hooks?.onWillBeginStep?.register('todo-list-guidance', async (context, next) => {
+    if (
+      context.turnId === 0 &&
+      context.firstStepOfTurn &&
+      toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin')
+    ) {
+      reminders.notify(TODO_LIST_GUIDANCE, { variant: TODO_LIST_GUIDANCE_REMINDER_VARIANT });
+    }
+    await next();
+  });
+  if (runtime.agent.agentId !== MAIN_AGENT_ID) return () => { guidanceHook?.dispose(); };
   const telemetry = runtime.get(ITelemetryService);
   const bus = runtime.get(IEventBus);
   let updatedInTurn = false;
-  const registration = runtime.get(IAgentReminderService).register(TODO_LIST_REMINDER_VARIANT, () => {
+  const registration = reminders.register(TODO_LIST_REMINDER_VARIANT, () => {
     const todos = runtime.getState();
     const reminder = todoListStaleReminder({
       active: toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
@@ -85,6 +101,7 @@ const todoReminder = fromCallback(({
     });
   });
   return () => {
+    guidanceHook?.dispose();
     ended.dispose();
     started.dispose();
     change.dispose();
