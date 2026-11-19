@@ -1,6 +1,6 @@
 # Feedback and uploads
 
-Set `KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK=1` before starting the desktop app or `kimi web` to enable feedback.
+Set `KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK=1` before starting the desktop app or `kimi web` to enable the general feedback form and ratings for local replies. For an SSH conversation, the remote host's setting controls reply ratings and whether its history can be attached.
 
 Sign in to Kimi Code and choose **Send feedback** in the sidebar, or enter `/feedback` in the message input. To rate an individual reply, use the thumbs-up or thumbs-down button beneath it. Feedback helps the team diagnose issues and improve Kimi Code.
 

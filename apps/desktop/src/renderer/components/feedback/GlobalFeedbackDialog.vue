@@ -15,7 +15,7 @@ import FeedbackGuideLink from './FeedbackGuideLink.vue';
 import GlobalFeedbackMedia from './GlobalFeedbackMedia.vue';
 import { addFeedbackMedia, FEEDBACK_MEDIA_LIMIT, type FeedbackMedia } from './feedbackMedia';
 
-const props = defineProps<{ target: GlobalFeedbackTarget | null }>();
+const props = defineProps<{ target: GlobalFeedbackTarget | null; sessionUploadEnabled: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 const { t, locale } = useI18n();
 const { fontPrefs } = useFontPrefs();
@@ -40,6 +40,7 @@ function blankDraft(sessionId?: string): FeedbackDraft {
 }
 
 const draft = ref(blankDraft());
+const availableSessionId = computed(() => props.sessionUploadEnabled ? props.target?.sessionId : undefined);
 const hasDraft = computed(() => draft.value.category !== 'bug' || draft.value.description.length > 0
   || draft.value.media.length > 0 || draft.value.includeDiagnostics || draft.value.uploadSessionId !== undefined);
 const overLimit = computed(() => draft.value.description.length > FEEDBACK_DESCRIPTION_LIMIT);
@@ -64,11 +65,10 @@ onBeforeUnmount(() => {
   clearDraft();
 });
 
-watch(() => props.target, target => {
-  if (target !== null) {
-    if (draft.value.uploadSessionId !== target.sessionId) draft.value.uploadSessionId = undefined;
-    if (!hasDraft.value) draft.value = blankDraft(target.sessionId);
-  }
+watch([() => props.target, availableSessionId], ([target, sessionId], [previousTarget]) => {
+  if (target !== null && draft.value.uploadSessionId !== sessionId) draft.value.uploadSessionId = undefined;
+  if (target === previousTarget) return;
+  if (target !== null && !hasDraft.value) draft.value = blankDraft(target.sessionId);
   dragDepth.value = 0;
   resetMediaErrors();
   submission.value = { kind: 'editing' };
@@ -126,7 +126,7 @@ async function submit(): Promise<void> {
   const target = props.target;
   const content = editing.description.trim();
   if (!target || busy.value || !content || overLimit.value || !feedback?.requireLogin()) return;
-  const uploadSessionId = editing.uploadSessionId === target.sessionId ? editing.uploadSessionId : undefined;
+  const uploadSessionId = editing.uploadSessionId === availableSessionId.value ? editing.uploadSessionId : undefined;
   const attachments = editing.media.map<FeedbackAttachment>(({ file }) => ({ kind: 'media', file }));
   if (uploadSessionId !== undefined) attachments.push({ kind: 'session', sessionId: uploadSessionId });
   if (editing.includeDiagnostics) attachments.push({ kind: 'diagnostics' });
@@ -215,12 +215,12 @@ async function submit(): Promise<void> {
           @remove="removeMedia"
         />
         <div class="global-feedback-upload">
-          <div v-if="target?.sessionId !== undefined || canIncludeDiagnostics" class="global-feedback-options">
+          <div v-if="availableSessionId !== undefined || canIncludeDiagnostics" class="global-feedback-options">
             <Checkbox
-              v-if="target?.sessionId !== undefined"
-              :model-value="draft.uploadSessionId === target.sessionId"
+              v-if="availableSessionId !== undefined"
+              :model-value="draft.uploadSessionId === availableSessionId"
               :disabled="busy"
-              @update:model-value="draft.uploadSessionId = $event ? target?.sessionId : undefined"
+              @update:model-value="draft.uploadSessionId = $event ? availableSessionId : undefined"
             >{{ t('feedback.includeSession') }}</Checkbox>
             <Checkbox v-if="canIncludeDiagnostics" v-model="draft.includeDiagnostics" :disabled="busy">{{ t('feedback.includeDiagnostics') }}</Checkbox>
           </div>

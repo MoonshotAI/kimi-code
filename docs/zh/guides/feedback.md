@@ -1,6 +1,6 @@
 # 反馈与上传内容
 
-启动桌面应用或 `kimi web` 前，设置 `KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK=1` 以开启反馈。
+启动桌面应用或 `kimi web` 前，设置 `KIMI_CODE_EXPERIMENTAL_DESKTOP_FEEDBACK=1` 可开启全局反馈表单和本机回复评价。对于 SSH 会话，能否评价回复、是否可以附带会话记录，由远程主机上的同一开关决定。
 
 登录 Kimi Code 后，可以在侧栏选择「发送反馈」，或在输入框输入 `/feedback`。如果要评价某条回复，可以直接在回复下方点赞或点踩。反馈用于排查问题和改进 Kimi Code。
 
