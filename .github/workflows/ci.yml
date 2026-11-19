@@ -62,12 +62,14 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run test --shard=${{ matrix.shard }}/5 --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=.vitest-reports/blob-${{ matrix.shard }}.json
+      - run: pnpm run test --shard=${{ matrix.shard }}/5 --reporter=default --reporter=github-actions --reporter=./scripts/vitest-l0-gate.mjs
+        env:
+          KIMI_L0_RESULTS: .vitest-reports/l0-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: vitest-blob-${{ matrix.shard }}
-          path: .vitest-reports/blob-${{ matrix.shard }}.json
+          name: l0-results-${{ matrix.shard }}
+          path: .vitest-reports/l0-${{ matrix.shard }}.json
           if-no-files-found: error
           retention-days: 3
 
@@ -108,11 +110,11 @@ jobs:
       - run: node --test scripts/protected-smoke.test.mjs
       - uses: actions/download-artifact@v8
         with:
-          pattern: vitest-blob-*
+          pattern: l0-results-*
           path: .vitest-reports
           merge-multiple: true
-      - name: Check every L0 test in the merged results
-        run: pnpm exec vitest --mergeReports=.vitest-reports --reporter=./scripts/vitest-l0-gate-reporter.mjs
+      - name: Check every L0 test in the shard results
+        run: node scripts/vitest-l0-gate.mjs .vitest-reports
 
   # pi-tui's suite runs on node:test (not vitest), so the root `pnpm run test`
   # does not execute it; it needs its own job.

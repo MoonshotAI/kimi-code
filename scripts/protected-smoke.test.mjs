@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import { test } from 'node:test';
 import { stringify } from 'yaml';
 
 import DesktopSmokeReporter from '../apps/desktop/e2e/fixtures/smoke-reporter.ts';
-import L0GateReporter from './vitest-l0-gate-reporter.mjs';
+import L0ResultsReporter, { L0_RESULTS_ENV } from './vitest-l0-gate.mjs';
 import VitestSmokeReporter from './vitest-smoke-reporter.mjs';
 import { checkProtectedExecutions, gateScope, protectedCases, readProtectedManifest } from './protected-smoke.ts';
 
@@ -170,11 +171,9 @@ await test('Playwright L0 entries must be smoke, and a PR cannot drop a project 
   assert.throws(() => protectedCases(head, base), /No L0 smoke registered for cli/);
 });
 
-await test('the merged-run gate decides its own exit code from L0 results only', async t => {
-  const messages = [];
-  t.mock.method(process.stderr, 'write', message => { messages.push(String(message)); return true; });
-  t.mock.method(process.stdout, 'write', message => { messages.push(String(message)); return true; });
-  const savedExit = process.exitCode;
+await test('each shard records its results, and the gate decides from L0 results only', t => {
+  const dir = withTempDir(t);
+  const results = join(dir, 'results');
   const moduleOf = (entry, state = 'passed') => ({
     project: { name: entry.project }, moduleId: absolute(entry.file),
     children: { allTests: () => [{ name: `[L0:${entry.id}] case`, tags: ['smoke'], options: {}, result: () => ({ state }), diagnostic: () => ({ retryCount: 0 }) }] },
@@ -183,21 +182,36 @@ await test('the merged-run gate decides its own exit code from L0 results only',
     project: { name: 'scenarios' }, moduleId: absolute('tests/scenarios/other.test.ts'),
     children: { allTests: () => [{ name: 'an unrelated failure', tags: [], options: {}, result: () => ({ state: 'failed' }), diagnostic: () => ({ retryCount: 0 }) }] },
   };
+  const savedResults = process.env[L0_RESULTS_ENV];
+  const record = (name, modules) => {
+    if (name === undefined) delete process.env[L0_RESULTS_ENV];
+    else process.env[L0_RESULTS_ENV] = join(results, name);
+    new L0ResultsReporter().onTestRunEnd(modules);
+  };
+  const gate = directory => spawnSync(process.execPath, [fileURLToPath(new URL('./vitest-l0-gate.mjs', import.meta.url)), directory], { cwd: dir, encoding: 'utf8' });
   const vitestEntries = manifest.filter(entry => entry.runner === 'vitest');
   try {
-    process.exitCode = 1;
-    new L0GateReporter().onTestRunEnd([...vitestEntries.map(entry => moduleOf(entry)), unrelatedFailure]);
-    assert.equal(process.exitCode, 0);
-    assert.ok(messages.some(message => message.startsWith('✓ L0 gate:')));
-    new L0GateReporter().onTestRunEnd(vitestEntries.slice(1).map(entry => moduleOf(entry)));
-    assert.equal(process.exitCode, 1);
-    assert.ok(messages.some(message => message.includes(`L0 ${vitestEntries[0].id} (smoke)`) && message.includes('missing from runner results')));
-    process.exitCode = 0;
-    new L0GateReporter().onTestRunEnd([]);
-    assert.equal(process.exitCode, 1);
+    record('l0-1.json', [moduleOf(vitestEntries[0]), unrelatedFailure]);
+    record('l0-2.json', vitestEntries.slice(1).map(entry => moduleOf(entry)));
+    assert.throws(() => record(undefined, []), /Set KIMI_L0_RESULTS/);
   } finally {
-    process.exitCode = savedExit;
+    if (savedResults === undefined) delete process.env[L0_RESULTS_ENV];
+    else process.env[L0_RESULTS_ENV] = savedResults;
   }
+  assert.equal(JSON.parse(readFileSync(join(results, 'l0-1.json'), 'utf8'))[0].file, vitestEntries[0].file);
+
+  const passed = gate(results);
+  assert.equal(passed.status, 0, passed.stderr);
+  assert.match(passed.stdout, /✓ L0 gate: .* from 2 shard files/);
+
+  rmSync(join(results, 'l0-2.json'));
+  const missing = gate(results);
+  assert.equal(missing.status, 1);
+  assert.ok(missing.stderr.includes(`L0 ${vitestEntries[1].id} (${vitestEntries[1].kind})`) && missing.stderr.includes('missing from runner results'), missing.stderr);
+
+  const none = gate(join(dir, 'absent'));
+  assert.equal(none.status, 1);
+  assert.match(none.stderr, /No Vitest results reached the L0 gate/);
 });
 
 await test('the desktop reporter rejects a misspelled gate scope instead of narrowing it', async () => {

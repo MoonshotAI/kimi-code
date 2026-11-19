@@ -132,7 +132,7 @@ export function checkProtectedExecutions(runner: ProtectedRunner, executions: Pr
       errors.push(`${label}: duplicate ID on ${matches.length} tests`);
     } else {
       const result = matches[0]!;
-      const file = relative(root, result.file).split(sep).join('/');
+      const file = relative(root, resolve(root, result.file)).split(sep).join('/');
       if (file !== entry.file || result.project !== entry.project) errors.push(`${label}: found at ${result.project}/${file}`);
       else if (!result.passed) errors.push(`${label}: did not pass on its first attempt (${result.status})`);
       else if (entry.kind === 'smoke' && !result.tags.includes(SMOKE_TAG[runner])) errors.push(`${label}: registered as smoke but lacks the ${SMOKE_TAG[runner]} tag`);
