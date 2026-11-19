@@ -14,6 +14,7 @@ import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
@@ -84,51 +85,88 @@ describe('core LoopService integration', () => {
   });
 
   it('previews the request content that the next turn sends to the provider', async () => {
+    await ctx.dispose();
+    ctx = createTestAgent();
+    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
+    ctx.configure({ modelCapabilities: {
+      image_in: false,
+      video_in: false,
+      audio_in: false,
+      thinking: false,
+      tool_use: true,
+      maxContextSize: 128_000,
+      dynamically_loaded_tools: true,
+    } });
+    const deferredTool: ExecutableTool<Record<string, unknown>> = {
+      name: 'DeferredPreview',
+      description: 'Deferred preview tool.',
+      parameters: { type: 'object', properties: {} },
+      resolveExecution: () => ({
+        description: 'Deferred preview tool.',
+        approvalRule: 'DeferredPreview',
+        execute: async () => ({ output: 'ok' }),
+      }),
+    };
+    ctx.get(IAgentToolRegistryService)
+      .register(deferredTool, { source: 'mcp', disclosure: 'deferred' });
+    await ctx.restorePersisted();
     const loop = ctx.get(IAgentLoopService);
-    const assistant = (content: ContentPart[], id: string, name: string): Message => ({
-      role: 'assistant',
-      content,
-      toolCalls: [{ type: 'function', id, name, arguments: '{}' }],
-      attributes: { usage: emptyUsage() },
-    });
-    loop.replaceHistory([
-      { role: 'user', content: [{ type: 'text', text: 'run it' }] },
-      assistant([{ type: 'text', text: 'Running.' }, { type: 'text', text: ' ' }], 'call_bash', 'Bash'),
-      { role: 'user', content: [{ type: 'text', text: 'sent while the tool ran' }] },
-      {
-        role: 'tool',
-        toolCallId: 'call_bash',
-        content: [{ type: 'text', text: 'ok' }],
-        attributes: { durationMs: 1500, note: 'Output truncated.' },
-      },
-      assistant([{ type: 'text', text: 'Reading.' }], 'call_read', 'Read'),
-      {
-        role: 'tool',
-        toolCallId: 'call_read',
-        content: [{ type: 'text', text: 'missing file' }],
-        attributes: { isError: true },
-      },
-      assistant([{ type: 'text', text: 'Looking.' }], 'call_media', 'ReadMediaFile'),
-      { role: 'tool', toolCallId: 'call_media', content: [{ type: 'text', text: '<image path="/tmp/shot.png"></image>' }] },
-      assistant([{ type: 'text', text: 'Trying again.' }], 'call_lost', 'Bash'),
-      { role: 'user', content: [{ type: 'text', text: 'continue' }] },
-    ], 'fork');
-    const preview = loop.previewRequestContent();
+    try {
+      const assistant = (content: ContentPart[], id: string, name: string): Message => ({
+        role: 'assistant',
+        content,
+        toolCalls: [{ type: 'function', id, name, arguments: '{}' }],
+        attributes: { usage: emptyUsage() },
+      });
+      loop.replaceHistory([
+        { role: 'user', content: [{ type: 'text', text: 'run it' }] },
+        assistant([{ type: 'text', text: 'Running.' }, { type: 'text', text: ' ' }], 'call_bash', 'Bash'),
+        { role: 'user', content: [{ type: 'text', text: 'sent while the tool ran' }] },
+        {
+          role: 'tool',
+          toolCallId: 'call_bash',
+          content: [{ type: 'text', text: 'ok' }],
+          attributes: { durationMs: 1500, note: 'Output truncated.' },
+        },
+        assistant([{ type: 'text', text: 'Reading.' }], 'call_read', 'Read'),
+        {
+          role: 'tool',
+          toolCallId: 'call_read',
+          content: [{ type: 'text', text: 'missing file' }],
+          attributes: { isError: true },
+        },
+        assistant([{ type: 'text', text: 'Looking.' }], 'call_media', 'ReadMediaFile'),
+        { role: 'tool', toolCallId: 'call_media', content: [{ type: 'text', text: '<image path="/tmp/shot.png"></image>' }] },
+        assistant([{ type: 'text', text: 'Trying again.' }], 'call_lost', 'Bash'),
+        { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+      ], 'fork');
+      const preview = loop.previewRequestContent();
 
-    ctx.mockNextResponse({ type: 'text', text: 'done' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next' }] });
-    await ctx.untilTurnEnd();
+      expect(loop.baselineTools().find((tool) => tool.name === 'DeferredPreview')?.deferred).toBe(true);
+      expect(preview.tools.some((tool) => tool.name === 'DeferredPreview')).toBe(false);
+      expect(preview.messages[0]).toMatchObject({ role: 'user' });
+      expect(preview.messages[0]?.content).toContainEqual({
+        type: 'text',
+        text: expect.stringContaining('<tools_added>\nDeferredPreview\n</tools_added>'),
+      });
 
-    const sent = ctx.llmCalls.at(-1)!;
-    const previewed = normalizeGenerateInput({
-      systemPrompt: preview.systemPrompt,
-      tools: preview.tools
-        .filter((tool) => tool.deferred !== true)
-        .map(({ name, description, parameters }) => ({ name, description, parameters })),
-      history: preview.messages.map(({ attributes: _attributes, ...message }) => message),
-    });
-    expect(findGenerateCallPrefixBreak(previewed, sent)).toBeUndefined();
-    expect(sent.history.length).toBeGreaterThan(previewed.history.length);
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'next' }] });
+      await ctx.untilTurnEnd();
+
+      const sent = ctx.llmCalls.at(-1)!;
+      const previewed = normalizeGenerateInput({
+        systemPrompt: preview.systemPrompt,
+        tools: preview.tools
+          .filter((tool) => tool.deferred !== true)
+          .map(({ name, description, parameters }) => ({ name, description, parameters })),
+        history: preview.messages.map(({ attributes: _attributes, ...message }) => message),
+      });
+      expect(findGenerateCallPrefixBreak(previewed, sent)).toBeUndefined();
+      expect(sent.history.length).toBeGreaterThan(previewed.history.length);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('executes a tool batch and continues with a second core step', async () => {
