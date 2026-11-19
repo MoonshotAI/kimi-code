@@ -160,6 +160,7 @@
                   ./package.json
                   ./pnpm-lock.yaml
                   ./pnpm-workspace.yaml
+                  ./tsconfig.base.json
                   ./tsconfig.json
                   ./vitest.config.ts
                   ./LICENSE
