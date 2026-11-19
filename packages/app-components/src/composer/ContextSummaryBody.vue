@@ -206,7 +206,7 @@ const rows = computed(() => {
 .ctx-composition-free {
   display: block;
   height: 100%;
-  border-radius: var(--radius-context-segment);
+  border-radius: 1px;
 }
 .ctx-composition-seg {
   flex: none;
