@@ -503,7 +503,6 @@ function resolveWith(
     readonly tools?: readonly Tool[];
     readonly capabilities?: ModelCapability;
     readonly inferredCapabilities?: ModelCapability;
-    readonly dynamic?: boolean;
   },
 ): Promise<LlmRequest> {
   const request: LlmRequest = {
@@ -518,7 +517,7 @@ function resolveWith(
     profile: { tools: input.tools },
     content: { messages: input.messages },
   };
-  return createToolSelectResolver(h.sut, input.dynamic).resolve(request, {
+  return createToolSelectResolver(h.sut).resolve(request, {
     signal: new AbortController().signal,
     appliedRecoveries: [],
     report: () => {},
@@ -608,7 +607,6 @@ async function announce(h: Harness, step = 1): Promise<string | undefined> {
     messages: h.contextMemory.history(),
     tools: h.contextMemory.baselineTools(),
     inferredCapabilities: makeCapabilities({ tool_use: true, dynamically_loaded_tools: true }),
-    dynamic: true,
   });
   if (announcement === undefined) return undefined;
   return announcementText(announcement);
@@ -620,7 +618,6 @@ async function resolveInitialAnnouncement(h: Harness): Promise<string | undefine
     messages: h.contextMemory.history(),
     tools: baseline,
     inferredCapabilities: makeCapabilities({ tool_use: true, dynamically_loaded_tools: true }),
-    dynamic: true,
   });
   const first = resolved.content.messages[0];
   return first !== undefined && isNewAnnouncement(first) ? announcementText(first) : undefined;
@@ -713,7 +710,11 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     }, userMessage('continue'));
     const history = structuredClone(current.contextMemory.history());
     const capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
-    const resolved = await resolveWith(current, { messages: current.contextMemory.history(), capabilities });
+    const resolved = await resolveWith(current, {
+      messages: current.contextMemory.history(),
+      tools: current.sut.initialTools(),
+      capabilities,
+    });
     expect(resolved.profile?.tools?.map((tool) => tool.name)).toEqual(['SchemaTool', 'Unchanged']);
     expect(resolved.profile?.tools?.find((tool) => tool.name === updated.name)?.parameters).toEqual(old.parameters);
     expect(resolved.content.messages).toEqual([userMessage('continue')]);
@@ -727,7 +728,11 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     expect(baseline.find((tool) => tool.name === old.name)?.parameters).toEqual(old.parameters);
     expect(baseline.some((tool) => tool.name === 'LateTool')).toBe(false);
     activeToolNames = new Set(['Unchanged']);
-    const filtered = await resolveWith(current, { messages: current.contextMemory.history(), capabilities });
+    const filtered = await resolveWith(current, {
+      messages: current.contextMemory.history(),
+      tools: current.sut.initialTools(),
+      capabilities,
+    });
     expect(filtered.profile?.tools?.map((tool) => tool.name)).toEqual(['Unchanged']);
   });
 
@@ -839,19 +844,22 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     );
     expect(messages).toHaveLength(7);
 
+    const baseline = h.sut.initialTools();
     const inline = await resolveWith(h, {
       messages,
+      tools: baseline,
       capabilities: makeCapabilities({ tool_use: true, dynamically_loaded_tools: false }),
     });
-    expect(inline.profile?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
-    expect(inline.profile?.tools?.[0]?.deferred).toBeUndefined();
+    expect(inline.profile?.tools).toBe(baseline);
+    expect(inline.profile?.tools?.[0]?.deferred).toBe(true);
 
     const withoutToolUse = await resolveWith(h, {
       messages,
+      tools: baseline,
       capabilities: makeCapabilities({ tool_use: false, dynamically_loaded_tools: false }),
     });
-    expect(withoutToolUse.profile?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
-    expect(withoutToolUse.profile?.tools?.[0]?.deferred).toBeUndefined();
+    expect(withoutToolUse.profile?.tools).toBe(baseline);
+    expect(withoutToolUse.profile?.tools?.[0]?.deferred).toBe(true);
   });
 
   it('missing-tool wording falls back to the default message', async () => {
@@ -908,12 +916,16 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     restored.contextMemory.messages.push(...structuredClone(h.contextMemory.history()));
 
     for (const current of [h, restored]) {
-      const resolved = await resolveWith(current, { messages: current.contextMemory.history(), capabilities });
+      const resolved = await resolveWith(current, {
+        messages: current.contextMemory.history(),
+        tools: current.sut.initialTools(),
+        capabilities,
+      });
       const top = resolved.profile?.tools ?? [];
       expect(top.find((tool) => tool.name === name)).toEqual({ ...schema, deferred: undefined });
       expect(top.find((tool) => tool.name === 'Unchanged')).toEqual(before.find((tool) => tool.name === 'Unchanged'));
       expect(top.some((tool) => tool.name === 'LateTool')).toBe(false);
-      expect(top.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBe(true);
+      expect(top.some((tool) => tool.name === MCP_ALPHA)).toBe(false);
       expect(current.sut.load([name])).toMatchObject({ alreadyCallable: [name], toLoad: [], schemas: [] });
       const announcement = current.sut.loadableToolsAnnouncement(firstAnnouncement?.disclosure);
       expect(announcement?.content).toContain('LateTool');
@@ -983,7 +995,6 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       messages: h.contextMemory.history(),
       tools: [],
       capabilities,
-      dynamic: true,
     });
     expect(resolved.profile?.tools).toEqual([]);
     expect(resolved.content.messages).toHaveLength(4);
@@ -1026,7 +1037,6 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       messages: h.contextMemory.history(),
       tools: [],
       capabilities,
-      dynamic: true,
     });
     expect(reverted.content.messages[0]).toBe(originalSchemaMessage);
     expect(reverted.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
@@ -1048,7 +1058,7 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       deferred: mode === 'deferred' ? true : undefined,
     }];
     const resolved = await resolveWith(h, { messages: h.contextMemory.history(), tools, capabilities });
-    expect(resolved.profile?.tools).toBe(tools);
+    expect(resolved.profile?.tools).toEqual(mode === 'deferred' ? [] : tools);
     expect(resolved.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.name))
       .toEqual(mode === 'inline' ? [] : [MCP_ALPHA]);
     expect(h.contextMemory.history()).toHaveLength(1);
@@ -1070,7 +1080,6 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       messages,
       tools: baseline,
       inferredCapabilities: makeCapabilities({ tool_use: true, dynamically_loaded_tools: true }),
-      dynamic: true,
     });
 
     const shaped = resolved.profile?.tools ?? [];
@@ -1092,7 +1101,6 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       messages: resolved.content.messages,
       tools: baseline,
       inferredCapabilities: makeCapabilities({ tool_use: true, dynamically_loaded_tools: true }),
-      dynamic: true,
     });
     expect(replayed.content.messages).toEqual(resolved.content.messages);
 
@@ -1115,16 +1123,15 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       (message.tools as Array<{ function: { name: string } }>).some((tool) => tool.function.name === MCP_ALPHA))).toBe(true);
 
     const frozen = shaped.filter((tool) => tool.name !== 'Echo' && tool.name !== MCP_ALPHA);
-    expect(h.sut.requestTools(undefined, true, true)).toEqual([]);
-    expect(h.sut.requestTools([], true, true)).toEqual([]);
-    expect(h.sut.requestTools(frozen, true, false)).toBe(frozen);
-    expect(h.sut.requestTools(frozen, true, true)).toEqual(frozen);
-    const staticTools = h.sut.requestTools(baseline, false, true, messages);
+    expect(h.sut.requestTools(undefined, true)).toEqual([]);
+    expect(h.sut.requestTools([], true)).toEqual([]);
+    expect(h.sut.requestTools(frozen, true)).toBe(frozen);
+    const staticTools = h.sut.requestTools(baseline, false);
     expect(staticTools.map((tool) => tool.name)).toEqual(['Echo', MCP_ALPHA, MCP_BETA]);
-    expect(staticTools.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBeUndefined();
-    expect(staticTools.find((tool) => tool.name === MCP_BETA)?.deferred).toBeUndefined();
+    expect(staticTools.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBe(true);
+    expect(staticTools.find((tool) => tool.name === MCP_BETA)?.deferred).toBe(true);
     expect(staticTools.find((tool) => tool.name === SELECT_TOOLS_TOOL_NAME)).toBeUndefined();
-    expect(h.sut.requestTools(shaped, true, true, messages)).toEqual(shaped);
+    expect(h.sut.requestTools(shaped, true)).toBe(shaped);
     expect(shaped.find((tool) => tool.name === SELECT_TOOLS_TOOL_NAME)).toBeDefined();
   });
 

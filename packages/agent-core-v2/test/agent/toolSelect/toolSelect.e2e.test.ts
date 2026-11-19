@@ -324,10 +324,8 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(ctx.get(IAgentLoopService).data().activeToolNames).toBeUndefined();
     expect(ctx.get(IAgentToolSelectService).defaultTools(false).map((tool) => tool.name))
       .toContain(MCP_ALPHA);
-    expect(toolNames(switchWire.tools)).toContain(MCP_ALPHA);
-    expect(toolNames(switchWire.tools)).toContain(inlineName);
-    expect(switchWire.tools.find((tool) => tool.name === inlineName)?.description)
-      .toBe(`${inlineName} desc`);
+    expect(toolNames(switchWire.tools)).not.toContain(MCP_ALPHA);
+    expect(toolNames(switchWire.tools)).not.toContain(inlineName);
     expect(toolNames(switchWire.tools)).not.toContain(runtimeTool);
     expect(toolNames(switchWire.tools)).not.toContain('select_tools');
     expect(historyText(switchWire.history)).toContain(runtimeTool);
