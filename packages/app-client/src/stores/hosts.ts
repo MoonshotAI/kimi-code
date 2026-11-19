@@ -8,6 +8,8 @@ import { clientPinia } from './pinia';
 
 export type { HostDisplayState };
 
+const HOST_FLAGS_RETRY_DELAY_MS = 1_000;
+
 export type HostProviderCopy =
   | { readonly status: 'copying' | 'failed' }
   | { readonly status: 'done'; readonly result: AppProviderCopyResult };
@@ -66,13 +68,12 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
       if (byId.value[hostId]?.status !== 'ready') setAccount(hostId, undefined);
     }
     if (loginHostId.value !== null && byId.value[loginHostId.value]?.status !== 'ready') loginHostId.value = null;
-    for (const hostId of experimentalFlags.keys()) {
-      if (byId.value[hostId]?.status !== 'ready') experimentalFlags.delete(hostId);
+    for (const hostId of removed) experimentalFlags.delete(hostId);
+    for (const { id } of list) {
+      if (displayState(id) !== 'ready') experimentalFlags.delete(id);
+      else if (!experimentalFlags.has(id)) void loadExperimentalFlags(id);
     }
-    for (const hostId of becameReady) {
-      void loadAccount(hostId);
-      void loadExperimentalFlags(hostId);
-    }
+    for (const hostId of becameReady) void loadAccount(hostId);
     for (const hostId of Object.keys(providerCopies.value)) {
       if (byId.value[hostId] === undefined) setProviderCopy(hostId, undefined);
     }
@@ -148,14 +149,22 @@ export const useHostsStore = defineStore('kimi.hosts', () => {
     }
   }
 
-  async function loadExperimentalFlags(hostId: string): Promise<void> {
+  async function loadExperimentalFlags(hostId: string, retry = true): Promise<void> {
     const pending = {};
     experimentalFlags.set(hostId, pending);
     try {
       const meta = await getDeviceApi(hostId).getMeta();
       if (experimentalFlags.get(hostId) === pending) experimentalFlags.set(hostId, meta.experimentalFlags);
     } catch (error) {
-      if (experimentalFlags.get(hostId) === pending) logWarn('[kimi-code] loading SSH host flags failed', hostId, error);
+      if (experimentalFlags.get(hostId) !== pending) return;
+      if (retry) {
+        setTimeout(() => {
+          if (experimentalFlags.get(hostId) === pending) void loadExperimentalFlags(hostId, false);
+        }, HOST_FLAGS_RETRY_DELAY_MS);
+      } else {
+        experimentalFlags.delete(hostId);
+        logWarn('[kimi-code] loading SSH host flags failed', hostId, error);
+      }
     }
   }
 
