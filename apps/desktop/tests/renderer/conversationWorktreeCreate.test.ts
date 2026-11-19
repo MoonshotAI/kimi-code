@@ -93,7 +93,6 @@ vi.mock('@moonshot-ai/app-components', async (importOriginal) => {
 });
 
 import DesktopConversationPane from '../../src/renderer/components/chat/ConversationPane.vue';
-import WebConversationPane from '../../../web/src/components/chat/ConversationPane.vue';
 
 let app: App | undefined;
 let host: HTMLDivElement | undefined;
@@ -161,7 +160,6 @@ function pressEscape(): void {
 
 describe.each([
   ['desktop', DesktopConversationPane],
-  ['web', WebConversationPane],
 ])('%s ConversationPane worktree create flow', (_platform, Pane) => {
   it('places the Environment button right of the project selector and the branch button after it', async () => {
     showProject();

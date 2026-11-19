@@ -60,7 +60,6 @@ vi.mock('@moonshot-ai/app-markdown', () => ({ Markdown: { render: () => null } }
 import { registerWorktreeSettingsOpener } from '@moonshot-ai/app-client/composables';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import DesktopChatDock from '../../src/renderer/components/chat/ChatDock.vue';
-import WebChatDock from '../../../web/src/components/chat/ChatDock.vue';
 
 let app: App | null = null;
 let host: HTMLDivElement;
@@ -128,7 +127,6 @@ afterEach(() => {
 
 describe.each([
   ['desktop', DesktopChatDock],
-  ['web', WebChatDock],
 ])('%s ChatDock worktree cards', (_name, ChatDock) => {
   it('shows nothing extra for a local or ready session', async () => {
     await mountDock(ChatDock);

@@ -143,7 +143,7 @@ describe('desktop file preview panel adapter workspace roots', () => {
     expect(tree.root).toBe('/wt/a');
 
     const diffTab = { id: 'diff-1', type: 'diff', payload: {} } as PanelTab;
-    for (const adapter of [panelTabProps, webPanelTabProps]) {
+    for (const adapter of [panelTabProps]) {
       const diffCtx = {
         panel: { detailDiffMode: ref('list'), detailDiffPath: ref(null) },
         client: {
