@@ -57,13 +57,13 @@ Vitest 夹具收尾时会调用 `model.verify()`，检查未消费的脚本、�
 
 L0 表示维护者选择长期保护的一条行为。按入选理由分三类，都放在最适合验收该行为的测试层。
 
-| 类别 | 入选标准 | 首批候选 |
+| 类别 | 入选标准 | 已登记的例子 |
 |---|---|---|
-| **基础冒烟（smoke）** | 从产品默认入口完成最短的核心任务，成功与否能由用户直接观察。用受控模型稳定驱动旅程，断言聚焦这条基础体验。 | 桌面用户在新工作区发出第一问，看到完整回答，运行状态结束。已有 spec 还验证了重启恢复，提名范围只到首轮完成。[Desktop 首轮对话](../apps/desktop/e2e/core-turn.spec.ts) |
+| **基础冒烟（smoke）** | 从产品默认入口完成最短的核心任务，成功与否能由用户直接观察。用受控模型稳定驱动旅程，断言聚焦这条基础体验。 | 桌面用户在新工作区发出第一问，看到完整回答，运行状态结束。已有 spec 还验证了重启恢复，登记的行为只到首轮完成。[Desktop 首轮对话](../apps/desktop/e2e/core-turn.spec.ts) |
 | **重大回归（regression）** | 有可追溯的缺陷和修复，能说清用户损失、触发顺序和预期结果。用同一验收在修复前后对照，确认旧版因原故障失败、修复版通过。 | 长对话先遇限流，重试又遇上下文超限，原回合曾直接失败。保护自动压缩后继续完成这一问的行为。[core #4950 修复](https://github.com/MoonshotAI/kimi-code/pull/4950) · [现有引擎用例](../packages/agent-core-v2/test/agent/fullCompaction/fullCompaction.test.ts) |
-| **对外契约（contract）** | 客户端、外部 agent 或旧版本数据依赖的约定：协议文档、录制回放、冷恢复、KAP 与 ACP 共有行为。删掉或放宽它，使用方不会立刻察觉。 | [协议字段检查](../packages/kap-server/test/apiSurface.test.ts)、[首轮录制](scenarios/replay.test.ts)、[冷恢复](scenarios/cold-recovery.test.ts) |
+| **对外契约（contract）** | 客户端、外部 agent 或旧版本数据依赖的约定：协议文档、录制回放、冷恢复、KAP 与 ACP 共有行为。删掉或放宽它，使用方不会立刻察觉。 | [协议字段检查](../packages/kap-server/test/apiSurface.test.ts)、[首轮录制](scenarios/replay.test.ts)及其[客户端回放](../packages/app-core/test/replay/first-turn.test.ts)、[冷恢复](scenarios/cold-recovery.test.ts) |
 
-四条首轮 smoke 已登记，regression 和 contract 的候选待人工确认后登记。登记时在[清单](protected.yaml)写明 ID、`kind`、`runner`（`vitest` 或 `playwright`）、项目、文件、行为、来源和负责人，在单条测试标题开头写 `[L0:同一ID]`；smoke 还要保留 smoke 标签，其他两类不需要。`require_smoke` 列出必须各有一条 smoke 的项目。
+已登记的是四条首轮 smoke、表中的一条 regression 和四条 contract，全部条目见[清单](protected.yaml)。新增时在清单里写明 ID、`kind`、`runner`（`vitest` 或 `playwright`）、项目、文件、行为、来源和负责人，在单条测试标题开头写 `[L0:同一ID]`；smoke 还要保留 smoke 标签，其他两类不需要。`require_smoke` 列出必须各有一条 smoke 的项目。
 
 两个检查核对实际通过记录，其他用例通过也无法代替该 ID：
 
@@ -104,7 +104,7 @@ pnpm --filter kimi-code-app run e2e:headless --quarantine --retries=0
 
 ## 冷恢复、协议和规模门禁
 
-从根目录运行 `pnpm qa:layers` 验证已有协议快照、回放、历史数据、KAP/ACP 共有行为及客户端分页预算。[分层检查工作流](../.github/workflows/layered-qa.yml)在修改这些测试基建的 PR、夜间和手动触发时，均在 Linux、macOS 和 Windows 上运行。冷恢复对 `tests/scenarios/fixtures/released-*` 下的每份语料各跑一遍，每份都是一个已发布 CLI 写出的原始格式，例如 [2.6.3](scenarios/fixtures/released-2.6.3/README.md)。新版本用 `pnpm qa:capture-released <版本>` 生成：它从 npm 下载已发布的包，核对 integrity，在离线环境里跑出同一轮对话，再生成新目录。已入库的语料不再改写，完整性检查会核对清单里的每个文件和摘要。`:wait` 报告空闲时，会话记录已经写入磁盘，这是 [KAP 指南](../packages/kap-server/docs/kap.md) 的承诺，由[慢磁盘下的等待](../packages/kap-server/test/waitDurability.test.ts)守护；所以冷恢复在 `waitIdle` 返回后立即强杀进程。WebSocket 的 `turn.ended` 帧不带这个保证。
+从根目录运行 `pnpm qa:layers` 验证已有协议快照、回放、历史数据、KAP/ACP 共有行为及客户端分页预算。[分层检查工作流](../.github/workflows/layered-qa.yml)在修改这些测试基建的 PR、夜间和手动触发时，均在 Linux、macOS 和 Windows 上运行。冷恢复的 L0 用例对 `tests/scenarios/fixtures/released-*` 下的每份语料各跑一遍，新增语料不用另外登记 ID；每份都是一个已发布 CLI 写出的原始格式，例如 [2.6.3](scenarios/fixtures/released-2.6.3/README.md)。新版本用 `pnpm qa:capture-released <版本>` 生成：它从 npm 下载已发布的包，核对 integrity，在离线环境里跑出同一轮对话，再生成新目录。已入库的语料不再改写，完整性检查会核对清单里的每个文件和摘要。`:wait` 报告空闲时，会话记录已经写入磁盘，这是 [KAP 指南](../packages/kap-server/docs/kap.md) 的承诺，由[慢磁盘下的等待](../packages/kap-server/test/waitDurability.test.ts)守护；所以冷恢复在 `waitIdle` 返回后立即强杀进程。WebSocket 的 `turn.ended` 帧不带这个保证。
 
 - [协议字段检查](../packages/kap-server/test/apiSurface.test.ts)重新读取真实服务的 OpenAPI 和 AsyncAPI，与[入库文档](../packages/kap-server/schema/)比较。评审时看 [contract.txt](../packages/kap-server/schema/contract.txt)：一行一个字段，带类型、约束和默认值，多处共用的结构只列一次。有差异时，检查会列出每个变化，并按方向分成破坏、非破坏和未分类三类，例如请求新增必填字段属于破坏，响应新增字段属于非破坏；默认值变了归为未分类，由人判断不传该字段的客户端会不会受影响。测试宿主版本固定以隔离包版本变更，KAP 协议版本取实际值。显式更新用 `pnpm qa:refresh schema`，它同时重写两份文档和摘要。同一文件还用契约哈希钉住 `HOST_API_LEVEL`：字段、操作或消息变化后哈希改变，测试失败，由人判断新客户端连接旧版远程宿主是否会出错，需要时升级级别，再更新文件里的哈希；只改描述不影响哈希。内部调试路由不属于契约，单独列出。[契约工具](../packages/testkit/src/contract/)
 - [能力表](scenarios/capabilities/conversation.json)登记 KAP 与 ACP 实际公布的能力，以及两边共有的行为场景：首轮回答、回合中取消、拒绝写文件。[对照入口](../packages/acp-server/test/kap-parity.test.ts)把每个场景用两种协议各跑一遍，结果先换成同一套词，例如 KAP 的 `interrupted` 和 ACP 的 `cancelled` 都记为取消，再分别与场景的期望比较。已知分歧写进 `divergences` 并附原因，这条场景改为断言分歧仍在；两边都符合期望后它会失败，提醒删掉条目。公布的每项能力都要出现在某个场景里，或在 `exempt` 里写明原因；能力增减而表没跟上时，守卫用例失败。

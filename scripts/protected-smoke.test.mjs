@@ -66,7 +66,7 @@ for (const runner of ['vitest', 'playwright']) {
 
 await test('regression and contract IDs are enforced on the full run from any project, without a smoke tag', () => {
   const contract = { ...regression, id: 'kap.schema', kind: 'contract', project: 'kap-server', file: 'packages/kap-server/test/apiSurface.test.ts' };
-  const all = [...manifest, regression, contract];
+  const all = [...manifest.filter(entry => entry.kind === 'smoke'), regression, contract];
   const smokeRuns = all.filter(entry => entry.runner === 'vitest' && entry.kind === 'smoke').map(entry => executionOf(entry));
   assert.deepEqual(checkProtectedExecutions('vitest', smokeRuns, { manifest: all, scope: 'smoke' }), []);
   const missing = checkProtectedExecutions('vitest', smokeRuns, { manifest: all, scope: 'all' }).join('\n');
@@ -75,6 +75,8 @@ await test('regression and contract IDs are enforced on the full run from any pr
   const full = [...smokeRuns, executionOf(regression), executionOf(contract)];
   assert.deepEqual(checkProtectedExecutions('vitest', full, { manifest: all, scope: 'all' }), []);
   assert.deepEqual(checkProtectedExecutions('vitest', full, { manifest: all, scope: 'smoke' }), []);
+  const retried = [...smokeRuns, executionOf(regression, { status: 'passed (retry count=1)', passed: false }), executionOf(contract)];
+  assert.match(checkProtectedExecutions('vitest', retried, { manifest: all, scope: 'all' }).join('\n'), /L0 core\.retry-after-overflow \(regression\) .* did not pass on its first attempt/);
   assert.match(
     checkProtectedExecutions('vitest', [...full, executionOf({ ...regression, id: 'core.unknown' })], { manifest: all, scope: 'all' }).join('\n'),
     /Unregistered L0 core\.unknown/,
@@ -141,13 +143,14 @@ await test('both runner adapters reject a protected test which passed only on re
     const assertRetryReported = entry => assert.ok(messages.some(message =>
       message.includes(`L0 ${entry.id} (smoke) [${entry.project}]`) && message.includes('retry count=1')));
     manifest.filter(entry => entry.runner === 'playwright').forEach(assertRetryReported);
-    new VitestSmokeReporter().onTestRunEnd(manifest.filter(e => e.runner === 'vitest').map(entry => ({
+    const vitestSmoke = manifest.filter(entry => entry.runner === 'vitest' && entry.kind === 'smoke');
+    new VitestSmokeReporter().onTestRunEnd(vitestSmoke.map(entry => ({
       project: { name: entry.project }, moduleId: absolute(entry.file),
       children: { allTests: () => [{ name: `[L0:${entry.id}] case`, tags: ['smoke'], options: {},
         result: () => ({ state: 'passed' }), diagnostic: () => ({ retryCount: 1 }) }] },
     })));
     assert.equal(process.exitCode, 1);
-    manifest.filter(entry => entry.runner === 'vitest').forEach(assertRetryReported);
+    vitestSmoke.forEach(assertRetryReported);
     process.exitCode = undefined;
     new VitestSmokeReporter().onTestRunEnd([]);
     assert.equal(process.exitCode, 1);

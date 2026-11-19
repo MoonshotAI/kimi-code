@@ -37,7 +37,7 @@ function views(recording: KapRecording, stream: string): ConversationView[] {
   return replayKapRecording(recording, stream, productionReducer).map(checkpoint => checkpoint.view);
 }
 
-it('replays the captured server frames offline, including the partial answer before completion', async () => {
+it('[L0:app-core.replay-recording] replays the captured server frames offline, including the partial answer before completion', async () => {
   const recording = await readKapRecording(recordingFile);
   const checkpoints = replayKapRecording(recording, 'primary', productionReducer);
   expect(checkpoints.map(c => c.name)).toEqual(['subscribed', 'partial', 'late-subscribed', 'completed']);

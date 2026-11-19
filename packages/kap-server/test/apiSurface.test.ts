@@ -77,7 +77,7 @@ describe('KAP API surface', () => {
     return surface;
   };
 
-  it('publishes the reviewed REST and WebSocket contracts', async () => {
+  it('[L0:kap.api-contract] publishes the reviewed REST and WebSocket contracts', async () => {
     const { openapi, asyncapi } = started();
     await expectContractGolden(
       { openapi: schemaFile('openapi.json'), asyncapi: schemaFile('asyncapi.json'), summary: schemaFile('contract.txt') },

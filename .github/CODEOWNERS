@@ -12,3 +12,6 @@
 /tests/scenarios/conversation.test.ts @RealKai42 @wbxl2000 @liruifengv
 /apps/kimi-code/test/e2e/tui/conversation/first-turn.test.ts @RealKai42 @wbxl2000 @liruifengv
 /apps/desktop/e2e/core-turn.spec.ts @RealKai42 @wbxl2000 @liruifengv
+/tests/scenarios/replay.test.ts @RealKai42 @wbxl2000 @liruifengv
+/packages/app-core/test/replay/first-turn.test.ts @RealKai42 @wbxl2000 @liruifengv
+/tests/scenarios/cold-recovery.test.ts @RealKai42 @wbxl2000 @liruifengv
