@@ -1,5 +1,6 @@
 import type { LlmRecovery } from '#/llm/policy/recovery';
 import type { LlmCredentialProvider } from '#/llm/request';
+import { log } from '#/utils/log';
 
 export async function runWithCredentialRecovery<T>(
   credentialProvider: LlmCredentialProvider | undefined,
@@ -10,6 +11,7 @@ export async function runWithCredentialRecovery<T>(
     return await run();
   } catch (error) {
     if (signal?.aborted === true || credentialProvider?.canRecover?.(error) !== true) throw error;
+    log.debug('llm credential recovery: refreshing credential and retrying once');
     credentialProvider.invalidate?.();
     return run();
   }

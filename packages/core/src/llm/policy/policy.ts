@@ -4,6 +4,7 @@ import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
 import type { LlmOutcome, LlmRunEvent, LlmRunStarted } from '#/llm/response';
 import { sha256Hex } from '#/utils/hash';
+import { log } from '#/utils/log';
 
 import {
   createRecoveryLedger,
@@ -146,6 +147,15 @@ export async function runLlmRequest(
       outcome = { type: 'aborted', message: null, usage: undefined };
     } else {
       const llmError = toLlmErrorMessage(error);
+      log.error(
+        {
+          kind: llmError.kind,
+          message: llmError.message,
+          provider: request.model.spec.provider,
+          model: request.model.spec.name,
+        },
+        'llm request threw before completion',
+      );
       outcome = {
         type: 'failed',
         error: llmError,
@@ -154,7 +164,9 @@ export async function runLlmRequest(
       };
     }
   }
-  control.onEvent?.({ type: 'llm.ended', outcome });
+  const ended: LlmRunEvent = { type: 'llm.ended', outcome };
+  log.info({ ...ended }, 'llm event');
+  control.onEvent?.(ended);
   return outcome;
 }
 
@@ -173,7 +185,9 @@ async function runAttempts(
   const start = (resolvedRequest: LlmRequest): void => {
     if (started) return;
     started = true;
-    onEvent?.(llmStartedEvent(resolvedRequest));
+    const startedEvent = llmStartedEvent(resolvedRequest);
+    log.info({ ...startedEvent }, 'llm event');
+    onEvent?.(startedEvent);
     for (const event of pendingNotices) onEvent?.(event);
     pendingNotices.length = 0;
   };
@@ -192,6 +206,7 @@ async function runAttempts(
               type: 'llm.notice',
               notice: { ...notice, source: resolver.id },
             };
+            log.info({ ...event }, 'llm event');
             if (started) onEvent?.(event);
             else pendingNotices.push(event);
           },
@@ -209,6 +224,16 @@ async function runAttempts(
 
     start(resolvedRequest);
     control.onAttempt?.(resolvedRequest, { appliedRecoveries: ledger.applied });
+    log.debug(
+      {
+        attempt,
+        maxAttempts,
+        provider: resolvedRequest.model.spec.provider,
+        model: resolvedRequest.model.spec.name,
+        recoveries: ledger.applied.length,
+      },
+      'llm attempt',
+    );
     const result = await settleLlmRequest(resolvedRequest, { signal, onEvent });
     if (result.type === 'done' || result.type === 'aborted') {
       return result;
@@ -225,7 +250,7 @@ async function runAttempts(
       ledger.record(proposal);
       recoveries.record(request, proposal);
       attempt = 1;
-      onEvent?.({
+      const retrying: LlmRunEvent = {
         type: 'llm.retrying',
         reason: 'recovery',
         strategy: proposal.strategy,
@@ -238,13 +263,15 @@ async function runAttempts(
         messageId: result.messageId,
         requestId: result.requestId,
         timing: result.timing,
-      });
+      };
+      log.info({ ...retrying }, 'llm event');
+      onEvent?.(retrying);
       continue;
     }
 
     if (shouldRetry(policy.retry, attempt, result.error, listOf(policy.retryables))) {
       const delayMs = readRetryAfterMs(result.error) ?? retryBackoffDelay(attempt - 1);
-      onEvent?.({
+      const retrying: LlmRunEvent = {
         type: 'llm.retrying',
         reason: 'backoff',
         failedAttempt: attempt,
@@ -259,7 +286,9 @@ async function runAttempts(
         messageId: result.messageId,
         requestId: result.requestId,
         timing: result.timing,
-      });
+      };
+      log.info({ ...retrying }, 'llm event');
+      onEvent?.(retrying);
       if (!(await delay(delayMs, signal))) {
         return abortedOf(result, signal.reason);
       }
@@ -267,6 +296,18 @@ async function runAttempts(
       continue;
     }
 
+    log.error(
+      {
+        kind: result.error.kind,
+        message: result.error.message,
+        provider: resolvedRequest.model.spec.provider,
+        model: resolvedRequest.model.spec.name,
+        attempts: attempt,
+        recoveries: ledger.applied.length,
+        requestId: result.requestId ?? null,
+      },
+      'llm request failed',
+    );
     return result;
   }
 

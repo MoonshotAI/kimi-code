@@ -1124,6 +1124,10 @@ importers:
       undici:
         specifier: ^7.27.1
         version: 7.27.1
+    devDependencies:
+      pino:
+        specifier: ^9.5.0
+        version: 9.14.0
 
   packages/kap-server:
     dependencies:

@@ -1,5 +1,5 @@
 ---
-"kimi-code-app": patch
+"@moonshot-ai/kimi-code": patch
 ---
 
-Expose `KIMI_CODE_SESSION_ID` and `KIMI_CODE_WORKSPACE_ID` to shell tool subprocesses.
+Expose `KIMI_CODE_SESSION_ID` and `KIMI_CODE_WORKSPACE_ID` in `Bash` tool child processes.

@@ -59,6 +59,7 @@ interface ApiV1RouteHost {
 }
 
 export interface RegisterApiV1RoutesOptions {
+  readonly serverId?: string;
   readonly serverVersion: string;
   readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
@@ -89,7 +90,8 @@ export async function registerApiV1Routes(
 
       registerMetaRoute(apiV1, {
         serverVersion: opts.serverVersion,
-        serverId: ulid(),
+        product: opts.hostIdentity.productName,
+        serverId: opts.serverId ?? ulid(),
         startedAt: new Date().toISOString(),
         dangerousBypassAuth: opts.dangerousBypassAuth === true,
         webTitle: opts.webTitle,

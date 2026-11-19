@@ -10,6 +10,8 @@ export const metaCapabilitiesSchema = z.object({
   fs_query: z.literal(true),
   mcp: z.literal(true),
   tasks: z.literal(true),
+  interactions_list: z.literal(true),
+  session_wait: z.literal(true),
 });
 
 export type MetaCapabilities = z.infer<typeof metaCapabilitiesSchema>;
@@ -33,6 +35,7 @@ export type MetaFeature = z.infer<typeof metaFeatureSchema>;
 export const metaResponseSchema = z.object({
   kimi_agent_protocol_version: z.string().min(1),
   server_version: z.string().min(1),
+  product: z.string().min(1).optional(),
   capabilities: metaCapabilitiesSchema,
   server_id: z.string().min(1),
   started_at: isoDateTimeSchema,

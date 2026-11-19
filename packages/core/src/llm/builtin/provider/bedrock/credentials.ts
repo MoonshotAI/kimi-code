@@ -2,12 +2,12 @@ import { getTokenProvider } from '@aws/bedrock-token-generator';
 
 import { errorStatusCode } from '#/llm/protocol/errors';
 import type { LlmCredential, LlmCredentialProvider } from '#/llm/request';
+import { now } from '#/utils/now';
 
 export interface BedrockTokenProviderOptions {
   readonly region?: string;
   readonly profile?: string;
   readonly expiresInSeconds?: number;
-  readonly now?: () => number;
   readonly createProvideToken?: (config: {
     readonly region?: string;
     readonly profile?: string;
@@ -21,7 +21,6 @@ const EXPIRY_MARGIN_MS = 15 * 60 * 1000;
 export function createBedrockTokenProvider(
   options: BedrockTokenProviderOptions = {},
 ): LlmCredentialProvider {
-  const now = options.now ?? (() => Date.now());
   const ttlMs = (options.expiresInSeconds ?? DEFAULT_TTL_SECONDS) * 1000;
   const provideToken = (options.createProvideToken ?? defaultProvideToken)({
     region: options.region,

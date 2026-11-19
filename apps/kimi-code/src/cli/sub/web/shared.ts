@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ServerLogLevel } from '@moonshot-ai/kap-server';
+import type {
+  IAuthTokenService,
+  ServerLogLevel,
+} from '@moonshot-ai/kap-server';
 
 export const LOCAL_SERVER_HOST = '127.0.0.1';
 export const DEFAULT_LAN_HOST = '0.0.0.0';
@@ -36,6 +39,9 @@ export interface ParsedServerOptions {
   webTitle?: string;
   socketPath?: string;
   managedBy?: string;
+  authTokenService?: IAuthTokenService;
+  skipInstanceRegistry?: boolean;
+  logToStderr?: boolean;
 }
 
 export interface ServerCliOptions {
