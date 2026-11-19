@@ -18,6 +18,7 @@ import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/h
 import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { ErrorCode } from '../src/protocol/error-codes';
 import type {
   ContextItemDetail,
   ContextItemsResponse,
@@ -160,24 +161,43 @@ describe('context routes on restored sessions and dynamic tools', () => {
     }
   });
 
-  async function getJson<T>(path: string): Promise<T> {
+  async function getEnvelope<T>(path: string): Promise<{ code: number; data: T; msg: string }> {
     const res = await fetch(`${base}${path}`, {
       headers: authHeaders(server!),
     } as never);
-    const body = (await res.json()) as { code: number; data: T; msg: string };
+    return (await res.json()) as { code: number; data: T; msg: string };
+  }
+
+  async function getJson<T>(path: string): Promise<T> {
+    const body = await getEnvelope<T>(path);
     expect(body.code, body.msg).toBe(0);
     return body.data;
   }
 
-  it('preserves system prompt sections after session close/resume and surfaces dynamic tool schemas', async () => {
-    const createRes = await fetch(`${base}/api/v1/sessions`, {
+  async function createSession(): Promise<string> {
+    const res = await fetch(`${base}/api/v1/sessions`, {
       method: 'POST',
       headers: authHeaders(server!, { 'content-type': 'application/json' }),
       body: JSON.stringify({ metadata: { cwd: home! } }),
     } as never);
-    const created = (await createRes.json()) as { code: number; data: { id: string } };
+    const created = (await res.json()) as { code: number; data: { id: string } };
     expect(created.code).toBe(0);
-    const sid = created.data.id;
+    return created.data.id;
+  }
+
+  it('rejects item ids that the listing never produces', async () => {
+    const sid = await createSession();
+    const toolDetail = await getJson<ContextItemDetail>(`/api/v1/sessions/${sid}/context/items/tool-0`);
+    expect(toolDetail.id).toBe('tool-0');
+
+    for (const id of ['tool-0junk', 'tool-01', 'tool--1', 'message-0-extra']) {
+      const body = await getEnvelope<null>(`/api/v1/sessions/${sid}/context/items/${id}`);
+      expect(body.code, id).toBe(ErrorCode.MESSAGE_NOT_FOUND);
+    }
+  });
+
+  it('preserves system prompt sections after session close/resume and surfaces dynamic tool schemas', async () => {
+    const sid = await createSession();
 
     const live = getLiveSessionById(server!.core.accessor, sid)!;
     await live.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
@@ -242,12 +262,20 @@ describe('context routes on restored sessions and dynamic tools', () => {
 
     const dynamicMsgItem = page.items.find((entry) => entry.name === 'mcp__demo__search');
     expect(dynamicMsgItem).toBeDefined();
+    expect(dynamicMsgItem!.role).toBe('definition');
     expect(dynamicMsgItem!.chars).toBeGreaterThan(0);
     expect(dynamicMsgItem!.preview).toContain('Search demo records');
+    expect(summary.groups.find((g) => g.role === 'definition')?.count).toBe(page.tools.length + 1);
+
+    const definitions = await getJson<ContextItemsResponse>(
+      `/api/v1/sessions/${sid}/context/items?role=definition`,
+    );
+    expect(definitions.items.map((entry) => entry.id)).toContain(dynamicMsgItem!.id);
 
     const dynamicDetail = await getJson<ContextItemDetail>(
       `/api/v1/sessions/${sid}/context/items/${dynamicMsgItem!.id}`,
     );
+    expect(dynamicDetail.role).toBe('definition');
     expect(dynamicDetail.parts).toEqual([
       {
         kind: 'definition',
@@ -265,15 +293,71 @@ describe('context routes on restored sessions and dynamic tools', () => {
     ]);
   });
 
+  it('redacts media payloads without touching long plain text', async () => {
+    const sid = await createSession();
+    const live = getLiveSessionById(server!.core.accessor, sid)!;
+    const lifecycle = live.accessor.get(IAgentLifecycleService);
+    await lifecycle.create({ agentId: 'main' });
+    const main = lifecycle.handleOf('main')!;
+    const minified = JSON.stringify(
+      Object.fromEntries(Array.from({ length: 80 }, (_, index) => [`key${index}`, index])),
+    );
+    const imageData = `data:image/png;base64,${'A'.repeat(800)}`;
+    main.accessor.get(IAgentLoopService).replaceHistory(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: minified },
+            { type: 'image_url', imageUrl: { url: imageData } },
+          ],
+        },
+      ],
+      'fork',
+    );
+    await main.accessor.get(IEventDispatcher).flush();
+    await main.accessor.get(IWireService).flush();
+
+    const detail = await getJson<ContextItemDetail>(`/api/v1/sessions/${sid}/context/items/message-0`);
+    const raw = detail.raw as { content: [{ text: string }, { imageUrl: { url: string } }] };
+    expect(minified.length).toBeGreaterThan(512);
+    expect(raw.content[0].text).toBe(minified);
+    expect(raw.content[1].imageUrl.url).toBe(`[encoded media · ${imageData.length} chars]`);
+  });
+
+  it('restores a persisted subagent before reading its context', async () => {
+    const sid = await createSession();
+
+    const live = getLiveSessionById(server!.core.accessor, sid)!;
+    const lifecycle = live.accessor.get(IAgentLifecycleService);
+    await lifecycle.create({ agentId: 'main' });
+    await lifecycle.create({ agentId: 'agent-7' });
+    const sub = lifecycle.handleOf('agent-7')!;
+    const loop = sub.accessor.get(IAgentLoopService);
+    await loop.setProfile({
+      modelAlias: 'kimi-code/k3',
+      profileName: 'agent',
+      thinkingLevel: 'high',
+      systemPrompt: 'You are a subagent.',
+    });
+    loop.replaceHistory([{ role: 'user', content: [{ type: 'text', text: 'inspect me' }] }], 'fork');
+    await sub.accessor.get(IEventDispatcher).flush();
+    await sub.accessor.get(IWireService).flush();
+
+    await closeSessionById(server!.core.accessor, sid);
+
+    const summary = await getJson<ContextSummary>(
+      `/api/v1/sessions/${sid}/context/summary?agent_id=agent-7`,
+    );
+    expect(summary.agent_id).toBe('agent-7');
+    const page = await getJson<ContextItemsResponse>(
+      `/api/v1/sessions/${sid}/context/items?agent_id=agent-7`,
+    );
+    expect(page.items.some((entry) => entry.preview.includes('inspect me'))).toBe(true);
+  });
+
   it('shows messages the way the model receives them', async () => {
-    const createRes = await fetch(`${base}/api/v1/sessions`, {
-      method: 'POST',
-      headers: authHeaders(server!, { 'content-type': 'application/json' }),
-      body: JSON.stringify({ metadata: { cwd: home! } }),
-    } as never);
-    const created = (await createRes.json()) as { code: number; data: { id: string } };
-    expect(created.code).toBe(0);
-    const sid = created.data.id;
+    const sid = await createSession();
 
     const live = getLiveSessionById(server!.core.accessor, sid)!;
     await live.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });

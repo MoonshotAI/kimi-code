@@ -1,8 +1,8 @@
 import {
   Error2,
   ErrorCodes,
+  getOrRestoreAgent,
   IAgentLoopService,
-  IAgentLifecycleService,
   IAgentProfileService,
   resumeSessionById,
   type IAgentScopeHandle,
@@ -64,11 +64,13 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 
 const DEFAULT_ITEMS_LIMIT = 100;
 const PREVIEW_MAX_CHARS = 240;
+const MEDIA_PAYLOAD_MIN_CHARS = 512;
 const MEDIA_TYPES = new Set([
   'image',
   'image_url',
   'input_image',
   'audio',
+  'audio_url',
   'input_audio',
   'video',
   'video_url',
@@ -85,6 +87,17 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function contextMessageRole(message: unknown): string {
+  const data = asRecord(message);
+  const role = typeof data['role'] === 'string' ? data['role'] : 'unknown';
+  return role === 'system' && asArray(data['tools']).length > 0 ? 'definition' : role;
+}
+
+function contextItemIndex(itemId: string, prefix: string): number | undefined {
+  const suffix = itemId.slice(prefix.length);
+  return /^(0|[1-9]\d*)$/.test(suffix) ? Number(suffix) : undefined;
 }
 
 function isMediaPart(value: Record<string, unknown>): boolean {
@@ -191,7 +204,7 @@ async function resolveAgent(
   if (resolvedAgentId === MAIN_AGENT_ID) {
     return { agent: mainHandle, resolvedAgentId };
   }
-  const agent = session.accessor.get(IAgentLifecycleService).handleOf(resolvedAgentId);
+  const agent = await getOrRestoreAgent(session, resolvedAgentId);
   if (agent === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `Agent not found: ${resolvedAgentId}`);
   }
@@ -265,10 +278,10 @@ function buildContextSummary(
   const groupMap = new Map<string, ContextGroup>();
   let totalChars = 0;
 
-  const addGroup = (role: string, chars: number): void => {
+  const addGroup = (role: string, chars: number, count = 1): void => {
     totalChars += chars;
     const existing = groupMap.get(role) ?? { role, count: 0, chars: 0 };
-    existing.count += 1;
+    existing.count += count;
     existing.chars += chars;
     groupMap.set(role, existing);
   };
@@ -280,9 +293,9 @@ function buildContextSummary(
     addGroup('definition', estimateValueChars(tool));
   }
   for (const message of sources.messages) {
-    const role = typeof message.role === 'string' ? message.role : 'unknown';
+    const role = contextMessageRole(message);
     const { chars } = measureMessage(message, false);
-    addGroup(role, chars);
+    addGroup(role, chars, role === 'definition' ? asArray(asRecord(message)['tools']).length : 1);
   }
 
   return {
@@ -296,22 +309,27 @@ function buildContextSummary(
   };
 }
 
-function sanitizeMediaValue(value: unknown): unknown {
+function redactMediaPayload(value: unknown): unknown {
   if (typeof value === 'string') {
-    if (value.length > 512 && (value.startsWith('data:') || !/\s/.test(value.slice(0, 256)))) {
-      return `[encoded media · ${value.length} chars]`;
-    }
-    return value;
+    return value.length > MEDIA_PAYLOAD_MIN_CHARS ? `[encoded media · ${value.length} chars]` : value;
   }
-  if (Array.isArray(value)) return value.map(sanitizeMediaValue);
+  if (Array.isArray(value)) return value.map(redactMediaPayload);
   if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = sanitizeMediaValue(v);
-    }
-    return out;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, redactMediaPayload(entry)]),
+    );
   }
   return value;
+}
+
+function sanitizeMediaValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeMediaValue);
+  if (value === null || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  if (isMediaPart(record)) return redactMediaPayload(record);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [key, sanitizeMediaValue(entry)]),
+  );
 }
 
 function inspectContentParts(part: unknown): ContextItemPart[] {
@@ -490,7 +508,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
           const declaredToolNames = messageTools
             .map((tool) => asRecord(tool)['name'])
             .filter((name): name is string => typeof name === 'string');
-          const role = typeof data['role'] === 'string' ? data['role'] : 'unknown';
+          const role = contextMessageRole(message);
           const name =
             typeof data['toolCallId'] === 'string'
               ? (toolNames.get(data['toolCallId']) ?? data['toolCallId'])
@@ -568,8 +586,8 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
             raw: sources.systemPrompt,
           };
         } else if (item_id.startsWith('tool-')) {
-          const index = Number.parseInt(item_id.slice('tool-'.length), 10);
-          const tool = Number.isFinite(index) ? sources.tools[index] : undefined;
+          const index = contextItemIndex(item_id, 'tool-');
+          const tool = index === undefined ? undefined : sources.tools[index];
           if (tool !== undefined) {
             const data = asRecord(tool);
             detail = {
@@ -584,9 +602,9 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
             };
           }
         } else if (item_id.startsWith('message-')) {
-          const index = Number.parseInt(item_id.slice('message-'.length), 10);
-          const message = Number.isFinite(index) ? sources.messages[index] : undefined;
-          if (message !== undefined) {
+          const index = contextItemIndex(item_id, 'message-');
+          const message = index === undefined ? undefined : sources.messages[index];
+          if (index !== undefined && message !== undefined) {
             const data = asRecord(message);
             const calls = asArray(data['toolCalls']);
             const messageTools = asArray(data['tools']);
@@ -644,7 +662,7 @@ export function registerContextRoutes(app: ContextRouteHost, core: Scope): void 
             ];
             detail = {
               id: item_id,
-              role: typeof data['role'] === 'string' ? data['role'] : 'unknown',
+              role: contextMessageRole(message),
               name: resolvedToolName,
               sequence: index + 1,
               chars: measured.chars,
