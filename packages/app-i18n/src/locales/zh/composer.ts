@@ -45,7 +45,7 @@ export default {
   slashSheetTitle: '命令',
   slashSearchPlaceholder: '搜索命令…',
   mentionSheetTitle: '提及',
-  mentionSearchPlaceholder: '搜索附件、文件、技能或会话…',
+  mentionSearchPlaceholder: '搜索附件、文件或技能…',
   addSlash: '命令',
   addSlashDesc: '内置命令或技能',
   addMention: '提及',

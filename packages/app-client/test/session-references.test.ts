@@ -8,11 +8,15 @@ vi.stubGlobal('localStorage', {
   clear: () => memStorage.clear(),
 });
 
-import type { AppSession } from '@moonshot-ai/app-core/api';
+import { useSessionMentions } from '@moonshot-ai/app-core';
+import type { AppSession, KimiWebApi } from '@moonshot-ai/app-core/api';
 import { serializeMention } from '@moonshot-ai/app-composer/model';
+import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
+import { useKimiWebClient } from '../src/client/useKimiWebClient';
 import { buildPromptContent } from '../src/lib/browserReferenceSubmission';
 import { sessionLogPath, sessionMentionCandidates, withSessionReferences } from '../src/lib/sessionReferences';
 import { configStore } from '../src/stores/config';
+import { sessionsStore } from '../src/stores/sessions';
 
 const APP_WORKSPACE = 'wd_app_0123456789ab';
 const API_WORKSPACE = 'wd_api_0123456789ab';
@@ -82,6 +86,33 @@ describe('sessionMentionCandidates', () => {
       formatTime: () => '',
     });
     expect(candidates.map((candidate) => candidate.title)).toEqual(['Fix the login', 'bare']);
+  });
+});
+
+describe('session mentions lab switch', () => {
+  afterEach(() => {
+    useSessionMentions().setSessionMentions(false);
+    sessionsStore().setSessions([]);
+    resetKimiClientDeps();
+  });
+
+  it('offers no sessions and skips the server search until the switch is on', async () => {
+    const listSessions = vi.fn(async () => ({ items: [session('found')], hasMore: false, nextPageToken: null, total: 1 }));
+    setKimiClientDeps({ api: () => ({ listSessions }) as unknown as KimiWebApi, t: (key) => key });
+    sessionsStore().setSessions([session('loaded')]);
+    const client = useKimiWebClient();
+    const signal = new AbortController().signal;
+
+    expect(client.sessionMentionCandidates.value).toEqual([]);
+    expect(await client.searchSessionMentions('found', { signal })).toEqual([]);
+    expect(listSessions).not.toHaveBeenCalled();
+
+    useSessionMentions().setSessionMentions(true);
+
+    expect(localStorage.getItem('kimi-web.session-mentions')).toBe('1');
+    expect(client.sessionMentionCandidates.value.map((candidate) => candidate.id)).toEqual(['loaded']);
+    expect((await client.searchSessionMentions('found', { signal })).map((candidate) => candidate.id)).toEqual(['found']);
+    expect(listSessions).toHaveBeenCalledWith(expect.objectContaining({ query: 'found', localOnly: true }), { signal });
   });
 });
 

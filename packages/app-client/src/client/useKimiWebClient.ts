@@ -73,7 +73,7 @@ import {
   type ConversationTurn,
   type ConversationTurnHeader,
 } from '@moonshot-ai/app-core/conversation';
-import { useAppearance, useSidebarTabs } from '@moonshot-ai/app-core';
+import { useAppearance, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
 import { shouldNotifyCompletion } from '../composables/useNotification';
 import { notificationsStore } from '../stores/notifications';
 import { promptAttachmentToTurnAttachment } from './attachmentsToContent';
@@ -2418,14 +2418,18 @@ function mentionCandidatesFrom(sessions: readonly AppSession[]): SessionMentionC
   });
 }
 
+const sessionMentionsAvailable = computed(
+  () => useSessionMentions().sessionMentions.value && visibleWorkspace.value?.hostId === undefined,
+);
+
 const sessionMentionCandidates = computed<SessionMentionCandidate[]>(() => {
-  if (visibleWorkspace.value?.hostId !== undefined) return [];
+  if (!sessionMentionsAvailable.value) return [];
   void sessionViewsStore().sessionTimeClock;
   return mentionCandidatesFrom(rawState.sessions);
 });
 
 async function searchSessionMentions(query: string, options: { signal: AbortSignal }): Promise<SessionMentionCandidate[]> {
-  if (visibleWorkspace.value?.hostId !== undefined) return [];
+  if (!sessionMentionsAvailable.value) return [];
   const page = await getKimiWebApi().listSessions(
     { query, pageSize: SESSION_MENTION_SEARCH_PAGE_SIZE, hasPrompt: true, localOnly: true },
     options,
