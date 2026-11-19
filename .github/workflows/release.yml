@@ -107,6 +107,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
+      actions: read
     uses: ./.github/workflows/desktop-build.yml
     with:
       retention-days: 7
