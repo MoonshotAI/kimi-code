@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { KimiResponsesTransportFixture } from '../types';
 
 export default {
-  name: 'kimi-responses-trace-id',
+  name: 'as a Kimi Responses user, I want trace ids preserved from streaming responses',
   module: testModule(),
   endpoint: { baseUrl: 'https://example.test/v1', apiKey: 'test-key' },
   response: {
@@ -19,7 +19,7 @@ export default {
   },
   expected: {
     url: 'https://example.test/v1/responses',
-    body: { stream: true, store: false },
+    body: { stream: true },
     outcome: {
       type: 'done',
       requestId: 'trace-responses',

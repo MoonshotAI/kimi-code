@@ -1,0 +1,212 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Local file probe</title>
+  <link rel="stylesheet" href="style.css">
+  <link id="sibling-sheet" rel="stylesheet" href="secret.css">
+  <link id="outside-sheet" rel="stylesheet" href="../outside-secret.css">
+  <script src="app.js"></script>
+  <script src="../shared.js"></script>
+</head>
+<body>
+  <h1 id="styled">Local file probe</h1>
+  <pre id="report">running</pre>
+  <img id="sibling-image" src="pixel.png" alt="">
+  <img id="outside-image" src="../outside.png" alt="">
+  <script>
+    const LIMIT = 3000;
+    const targets = {
+      sibling: { text: 'secret.txt', json: './secret.json', sheet: 'sibling-sheet', image: 'sibling-image' },
+      outside: { text: '../outside-secret.txt', json: '../outside-secret.json', sheet: 'outside-sheet', image: 'outside-image' },
+    };
+    const describe = (error) => `blocked: ${error && error.name ? `${error.name}: ${error.message}` : String(error)}`.slice(0, 160);
+    const verdict = (text) => typeof text === 'string' && text.includes('SECRET') ? 'read' : `blocked: ${String(text).slice(0, 60)}`;
+    const withTimeout = (work) => Promise.race([work, new Promise((resolve) => setTimeout(() => resolve('blocked: timed out'), LIMIT))]);
+    const loaded = (element) => new Promise((resolve) => {
+      element.addEventListener('load', () => resolve(true), { once: true });
+      element.addEventListener('error', () => resolve(false), { once: true });
+    });
+
+    const channels = {
+      async fetch(target) {
+        try { return verdict(await (await fetch(target.text)).text()); } catch (error) { return describe(error); }
+      },
+      async xhr(target) {
+        return new Promise((resolve) => {
+          try {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', target.text);
+            xhr.onload = () => resolve(verdict(xhr.responseText));
+            xhr.onerror = () => resolve(`blocked: network error, status ${xhr.status}`);
+            xhr.send();
+          } catch (error) { resolve(describe(error)); }
+        });
+      },
+      async iframe(target) {
+        const frame = document.createElement('iframe');
+        frame.hidden = true;
+        frame.src = target.text;
+        document.body.append(frame);
+        await loaded(frame);
+        try { return verdict(frame.contentDocument?.body?.textContent ?? 'no document'); } catch (error) { return describe(error); }
+        finally { frame.remove(); }
+      },
+      async object(target) {
+        const element = document.createElement('object');
+        element.data = target.text;
+        element.type = 'text/plain';
+        element.style.cssText = 'width:1px;height:1px';
+        document.body.append(element);
+        await loaded(element);
+        try { return verdict(element.contentDocument?.body?.textContent ?? 'no document'); } catch (error) { return describe(error); }
+        finally { element.remove(); }
+      },
+      async embed(target) {
+        const element = document.createElement('embed');
+        element.src = target.text;
+        element.type = 'text/plain';
+        element.style.cssText = 'width:1px;height:1px';
+        document.body.append(element);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        try { return verdict(element.getSVGDocument?.()?.documentElement?.textContent ?? 'no document'); } catch (error) { return describe(error); }
+        finally { element.remove(); }
+      },
+      async canvas(target) {
+        const image = document.getElementById(target.image);
+        if (!image.complete || image.naturalWidth === 0) await loaded(image);
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 1; canvas.height = 1;
+          const context = canvas.getContext('2d');
+          context.drawImage(image, 0, 0);
+          const pixel = context.getImageData(0, 0, 1, 1).data;
+          canvas.toDataURL();
+          return `read: pixel ${Array.from(pixel).join(',')}`;
+        } catch (error) { return describe(error); }
+      },
+      async cssRules(target) {
+        const sheet = document.getElementById(target.sheet).sheet;
+        try { return verdict(Array.from(sheet.cssRules, (rule) => rule.cssText).join('\n')); } catch (error) { return describe(error); }
+      },
+      async importJson(target) {
+        try { return verdict(JSON.stringify((await import(target.json, { with: { type: 'json' } })).default)); } catch (error) { return describe(error); }
+      },
+      async windowOpen(target) {
+        try {
+          const opened = window.open(target.text, '_blank');
+          if (!opened) return 'blocked: window.open returned null';
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          try { return verdict(opened.document.body.textContent); } finally { opened.close(); }
+        } catch (error) { return describe(error); }
+      },
+      async navigateBack(target) {
+        const frame = document.createElement('iframe');
+        frame.hidden = true;
+        frame.src = 'helper.html';
+        document.body.append(frame);
+        await loaded(frame);
+        try {
+          frame.contentWindow.location.href = new URL(target.text, location.href).href;
+          await loaded(frame);
+          let afterNavigation;
+          try { afterNavigation = verdict(frame.contentDocument?.body?.textContent ?? 'no document'); } catch (error) { afterNavigation = describe(error); }
+          if (afterNavigation === 'read') return 'read';
+          frame.contentWindow.history.back();
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          try { return verdict(frame.contentDocument?.body?.textContent ?? 'no document'); } catch (error) { return describe(error); }
+        } catch (error) { return describe(error); }
+        finally { frame.remove(); }
+      },
+    };
+
+    const BLOB_WORKER_BODY = `
+async function tryFetch(url) {
+  try { const text = await (await fetch(url)).text(); return text.includes('SECRET') ? 'read' : 'blocked: no secret'; }
+  catch (error) { return 'blocked: ' + String(error); }
+}
+function tryXhr(url) {
+  try { const xhr = new XMLHttpRequest(); xhr.open('GET', url, false); xhr.send(); return xhr.responseText.includes('SECRET') ? 'read' : 'blocked: status ' + String(xhr.status); }
+  catch (error) { return 'blocked: ' + String(error); }
+}
+(async () => {
+  const result = {};
+  for (const [key, url] of Object.entries(secrets)) result[key] = { fetch: await tryFetch(url), xhr: tryXhr(url) };
+  self.postMessage(result);
+})();
+`;
+
+    const workerChannels = {
+      async blobWorker() {
+        try {
+          const secrets = { sibling: new URL('secret.txt', location.href).href, outside: new URL('../outside-secret.txt', location.href).href };
+          const source = `const secrets = ${JSON.stringify(secrets)};\n${BLOB_WORKER_BODY}`;
+          const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+          return await new Promise((resolve) => {
+            worker.onmessage = (event) => resolve(event.data);
+            worker.onerror = (event) => resolve(`blocked: blob worker error ${event.message || ''}`.trim());
+          });
+        } catch (error) { return describe(error); }
+      },
+      async worker() {
+        try {
+          const worker = new Worker('worker.js');
+          return await new Promise((resolve) => {
+            worker.onmessage = (event) => resolve(event.data);
+            worker.onerror = (event) => resolve(`blocked: worker error ${event.message || ''}`.trim());
+          });
+        } catch (error) { return describe(error); }
+      },
+      async sharedWorker() {
+        try {
+          const worker = new SharedWorker('worker.js');
+          return await new Promise((resolve) => {
+            worker.port.onmessage = (event) => resolve(event.data);
+            worker.onerror = () => resolve('blocked: shared worker error');
+            worker.port.start();
+          });
+        } catch (error) { return describe(error); }
+      },
+      async serviceWorker() {
+        try {
+          if (!navigator.serviceWorker) return 'blocked: navigator.serviceWorker is unavailable';
+          await navigator.serviceWorker.register('worker.js');
+          return 'read: registered';
+        } catch (error) { return describe(error); }
+      },
+    };
+
+    const allowed = async () => {
+      const frame = document.createElement('iframe');
+      frame.src = 'frame.html';
+      const framed = new Promise((resolve) => {
+        addEventListener('message', (event) => { if (event.data === 'frame-loaded') resolve(true); });
+        setTimeout(() => resolve(false), LIMIT);
+      });
+      document.body.append(frame);
+      const siblingImage = document.getElementById('sibling-image');
+      const outsideImage = document.getElementById('outside-image');
+      return {
+        script: window.appLoaded === true,
+        parentScript: window.sharedLoaded === true,
+        style: getComputedStyle(document.getElementById('styled')).color === 'rgb(1, 2, 3)',
+        image: siblingImage.naturalWidth === 1,
+        parentImage: outsideImage.naturalWidth === 1,
+        frame: await framed,
+      };
+    };
+
+    window.__probe = (async () => {
+      await new Promise((resolve) => (document.readyState === 'complete' ? resolve() : addEventListener('load', resolve, { once: true })));
+      const report = { allowed: await allowed(), channels: {} };
+      for (const [name, run] of Object.entries(channels)) {
+        report.channels[name] = {};
+        for (const [where, target] of Object.entries(targets)) report.channels[name][where] = await withTimeout(run(target));
+      }
+      for (const [name, run] of Object.entries(workerChannels)) report.channels[name] = await withTimeout(run());
+      document.getElementById('report').textContent = JSON.stringify(report, null, 2);
+      return report;
+    })();
+  </script>
+</body>
+</html>

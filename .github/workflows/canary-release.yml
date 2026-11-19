@@ -135,11 +135,11 @@ jobs:
         run: |
           if gh release view "$CANARY_TAG" >/dev/null 2>&1; then
             gh release upload "$CANARY_TAG" dist-canary/* --clobber
-            gh release edit "$CANARY_TAG" --prerelease --latest=false --draft=false
+            gh release edit "$CANARY_TAG" --title "Kimi Code CLI ${CANARY_VERSION}" --prerelease --latest=false --draft=false
           else
             gh release create "$CANARY_TAG" dist-canary/* \
               --target "$CANARY_SHA" \
-              --title "$CANARY_TAG" \
+              --title "Kimi Code CLI ${CANARY_VERSION}" \
               --generate-notes \
               --prerelease \
               --latest=false

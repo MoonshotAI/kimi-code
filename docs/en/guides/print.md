@@ -94,6 +94,6 @@ kimi --add-dir ../shared-types -p "Align API request/response types"
 
 ## Next steps
 
-- [Using in Other Agents](./other-agents.md) — delegate tasks and hand off sessions from Claude Code, Codex, and Cursor
+- [Using in Other Agents (Agent to Agent)](./other-agents.md) — delegate tasks and hand off sessions from Claude Code, Codex, and Cursor
 - [Agents and Subagents](../customization/agents.md#custom-agents) — author custom `--agent` / `--agent-file` profiles
 - [`kimi` command reference](../reference/kimi-command.md) — full CLI option reference

@@ -1,0 +1,1781 @@
+@import './markdown-tokens.css';
+
+:root {
+  --dim: var(--color-text-muted);
+  --muted: var(--color-text-faint);
+  --faint: var(--color-text-quaternary);
+  /* Legacy hairline aliases — kept for one version cycle; new work references
+     --color-line / --color-subtle directly. Declared only here so they follow
+     the dark overrides of their targets automatically. */
+  --line: var(--color-line);
+  --line2: var(--color-subtle);
+  --canvas: #f9fbfc;
+  --sh: 0 1px 3px rgba(28, 40, 66, 0.05), 0 6px 18px rgba(28, 40, 66, 0.06);
+  --shc: 0 1px 2px rgba(28, 40, 66, 0.05);
+  --panel: #f5f5f5;
+  --panel2: rgba(0, 0, 0, 0.05);
+  --bg: #ffffff;
+  /* Brand blue = Kimi KMBlue (#1783ff), matched to kimi.com's palette.
+     --blue2 is a darker press/hover shade; --soft/--bd/--bluebg/--blueln are
+     the light-blue fills + borders derived from the same hue. */
+  --blue: #1783ff;
+  --blue2: #167ff7;
+  --soft: #e8f3ff;
+  --bd: rgba(23, 131, 255, 0.25);
+  --logo: #1783ff;
+  /* Soft-blue bubble fill + border (mobile user message bubble). */
+  --bluebg: #e8f3ff;
+  --blueln: rgba(23, 131, 255, 0.25);
+  /* Status hues deliberately stay on the app's own WCAG-tuned ramp (≥4.5:1 on
+     the neutral surfaces) — the production palette's status colours
+     (positiveGreen / orange / danger red) are too bright against it. Keep in
+     sync with --color-success / --color-warning / --color-danger in the v2
+     token layer below (dark overrides live in the data-color-scheme blocks). */
+  --ok: #0e7a38;
+  --warn: #a9610a;
+  --star: #eab308;
+  --err: #c0392b;
+  /* Subtle hover wash for icon buttons (toast close, etc.). */
+  --hover: var(--color-hover);
+  /* Legacy aliases over the font-scale tokens (see the type-scale block
+     below): chrome sizes stay relative to --ui-b2 so everything keeps shifting
+     together, and chat prose rides --md-b1 (2px up from UI body by design). */
+  --ui-font-size: var(--ui-b2);
+  --ui-font-size-sm: calc(var(--ui-font-size) - 1px);
+  --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
+  --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
+  --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
+  --content-font-size: var(--md-b1);
+  /* Standalone code surfaces (diff view, file preview, tool cards): one step
+     below body text, 12px at Medium. Prose-embedded code (markdown blocks)
+     stays on the --md-* ramp. */
+  --code-font-size: calc(var(--content-font-size) - 2px);
+  --mono: var(--font-mono);
+  /* Body/UI font follows the canonical UI font token. Mirrors --font-ui
+     so the legacy alias can never drift from the current text face. */
+  --sans: var(--font-ui);
+  color-scheme: light dark;
+}
+
+/* color-scheme drives UA-rendered parts (scrollbars, form controls, etc.).
+   An explicit choice must pin it to a single value — otherwise a dark-mode
+   user on a light OS gets light scrollbars floating on the dark UI. */
+html[data-color-scheme="light"] {
+  color-scheme: light;
+}
+html[data-color-scheme="system"] {
+  color-scheme: light dark;
+}
+
+/* Dark mode variables — applied when explicitly chosen or via system preference. */
+html[data-color-scheme="dark"] {
+  color-scheme: dark;
+  --panel: #1f1f1f;
+  --panel2: #121212;
+  --bg: #121212;
+  --blue: #1a88ff;
+  --blue2: #258eff;
+  --soft: rgba(26, 136, 255, 0.1);
+  --bd: rgba(26, 136, 255, 0.28);
+  --logo: #1a88ff;
+  --bluebg: #292929;
+  --blueln: rgba(255, 255, 255, 0.05);
+  --ok: #3fb950;
+  --warn: #d29922;
+  --star: #facc15;
+  --err: #f85149;
+  --hover: var(--color-hover);
+  --canvas: #161717;
+  --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
+  --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] {
+    --panel: #1f1f1f;
+    --panel2: #121212;
+    --bg: #121212;
+    --blue: #1a88ff;
+    --blue2: #258eff;
+    --soft: rgba(26, 136, 255, 0.1);
+    --bd: rgba(26, 136, 255, 0.28);
+    --logo: #1a88ff;
+    --bluebg: #292929;
+    --blueln: rgba(255, 255, 255, 0.05);
+    --ok: #3fb950;
+    --warn: #d29922;
+    --star: #facc15;
+    --err: #f85149;
+    --hover: var(--color-hover);
+    --canvas: #161717;
+    --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
+    --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
+}
+
+:root {
+  /* -- semantic colour layer (light) — the kimi.com production palette
+     (production design tokens): neutral-gray surfaces,
+     alpha-based labels.* / fills.* / separator.* ramp, KMBlue accent. The
+     status hues are the ONE deliberate exception — they keep the app's own
+     WCAG-tuned ramp (the production status colours are too bright). ------- */
+  --color-bg: #ffffff;                 /* background.primary */
+  --color-surface: #f5f5f5;            /* background.secondary */
+  --color-surface-raised: #ffffff;     /* background.tertiary */
+  /* Field-control fill on raised cards (selects, steppers) — the top rung of
+     the ladder. Light tops out at white (the level is expressed by the
+     control's border there); dark steps one rung above raised so a field
+     reads lighter than the card it sits on. Floating layers (dialog / menu /
+     toast) stay at --color-surface-raised: their elevation is carried by
+     shadow + hairline, not by a lighter fill. */
+  --color-surface-overlay: #ffffff;
+  --color-surface-sunken: #f5f5f5;
+  /* Inline-code chip fill — fills.f1; dark needs a translucent lift because
+     sunken == --color-bg there (the chip vanishes). */
+  --color-inline-code-bg: rgba(0, 0, 0, 0.03);
+  /* Content well — the primary content carriers that sit directly on the page
+     (code blocks, tool-output panels, match/file lists, media thumbnails).
+     Light reuses the sunken recess; dark lifts one rung ABOVE the page (the
+     --color-surface rung): a true recess vanishes into the page there, and in
+     dark the content must read lighter than the canvas, never deeper
+     (elevation = lighter). */
+  --color-well: #f5f5f5;
+  /* Deep chrome plane one step BELOW --color-bg (panel headers, diff gutters).
+     Light stays on the flat-surface rung; dark drops under the page so the
+     chrome framing a pane is darker than the content inside it. */
+  --color-surface-deep: #f5f5f5;
+  /* Checkerboard canvas behind <img> so transparent PNGs keep white/black
+     content visible and read as transparent. Squares are mixed from the
+     theme's bg/text (≈#858585/#6b6b6b light, ≈#76797e/#8c8f93 dark), each
+     ≥3:1 against both white and black; opaque images simply cover it. */
+  --color-media-alpha-bg-1: color-mix(in srgb, var(--color-bg) 52%, var(--color-text) 48%);
+  --color-media-alpha-bg-2: color-mix(in srgb, var(--color-bg) 42%, var(--color-text) 58%);
+  --media-alpha-canvas: conic-gradient(
+    var(--color-media-alpha-bg-1) 25%,
+    var(--color-media-alpha-bg-2) 0 50%,
+    var(--color-media-alpha-bg-1) 0 75%,
+    var(--color-media-alpha-bg-2) 0
+  ) 0 0 / 16px 16px;
+  /* Foreground text colours (labels.*). `--color-text` is the default solid
+     body / UI colour (headings and emphasis share it); strong steps up for
+     hover emphasis; muted / faint step down for secondary and tertiary copy;
+     on-accent is text drawn on the accent fill. */
+  --color-text: rgba(0, 0, 0, 0.9);    /* labels.primary */
+  --color-text-strong: #000000;
+  --color-text-muted: rgba(0, 0, 0, 0.6);   /* labels.secondary */
+  --color-text-faint: rgba(0, 0, 0, 0.45);  /* labels.tertiary */
+  --color-text-on-accent: #ffffff;
+  --color-line: rgba(0, 0, 0, 0.2);        /* separator.s1 */
+  /* Subtle hairline — tertiary separators (diff-gutter column rules, quiet
+     dividers inside wells) that must read below --color-line. */
+  --color-subtle: rgba(0, 0, 0, 0.05);      /* fills.f2 */
+  --color-line-strong: rgba(0, 0, 0, 0.24); /* fills.f3 */
+  /* Modal scrim — the dark veil behind dialogs/lightboxes (mask.base). The
+     on-scrim text colour is likewise constant. The strong variant backs
+     full-screen media previews (mask.strong). */
+  --color-scrim: rgba(0, 0, 0, 0.4);
+  --color-scrim-strong: rgba(0, 0, 0, 0.6);
+  --color-text-on-scrim: #ffffff;
+  /* Neutral selected fill (sidebar rows, list pickers) — deliberately NOT
+     accent-tinted, so selection reads as "where I am", not as an action. */
+  --color-selected: rgba(0, 0, 0, 0.05);    /* fills.f2 */
+  /* Hover of a control RESTING at the selected fill (work cards): one rung
+     above f2, still below f3 — hover deepens, never lightens. */
+  --color-selected-hover: rgba(0, 0, 0, 0.08);
+  --panel-tab-selected-bg: rgba(0, 0, 0, 0.12);
+  /* Row hover wash — lighter than the selected fill (hover < selected); both
+     are translucent black so they sit naturally on any light surface. */
+  --color-hover: rgba(0, 0, 0, 0.03);       /* fills.f1 */
+  /* Sidebar surface — one step off --color-bg so the session column reads as
+     its own plane. Light: warm off-white just under white; dark: one step
+     BELOW the page — elevation = lighter in dark, so the chrome plane sits
+     under the reading surface, never above it. */
+  --color-sidebar-bg: #f9fbfc;
+  /* Sent chat bubble fill (kimiwork BubbleGray: neutral gray, no border —
+     background.groundPc, the PC chat ground). */
+  --color-user-bubble-bg: #f5f5f5;
+  /* Brand accent = Kimi KMBlue (#1783ff), the single accent for the app. */
+  --color-accent: #1783ff;
+  --color-accent-hover: #167ff7;
+  --color-accent-soft: #e8f3ff;        /* others.lightBlueBg */
+  --color-accent-bd: rgba(23, 131, 255, 0.25);
+  /* Status hues: the app's own WCAG-tuned ramp (≥4.5:1 on the light
+     surfaces), NOT the production palette's brighter versions. */
+  --color-success: #0e7a38;
+  --color-success-soft: #e7f6ee;
+  --color-success-bd: #bfe3cc;
+  --color-warning: #a9610a;
+  --color-warning-soft: #fbf1e0;
+  --color-warning-bd: #f0d9b8;
+  --color-orange: #bc4c00;
+  --color-orange-soft: #fff1e5;
+  --color-danger: #c0392b;
+  --color-danger-soft: #fbeaea;
+  --color-danger-bd: #f0cccc;
+  --color-diff-add-bg: rgba(22, 196, 86, 0.1);
+  --color-diff-del-bg: rgba(255, 77, 77, 0.1);
+  --color-diff-add-fg: #16c456;
+  --color-diff-del-fg: #ff4756;
+  --color-fill-1: rgba(0, 0, 0, 0.03);
+  --color-fill-2: rgba(0, 0, 0, 0.05);
+  --color-fill-4: rgba(0, 0, 0, 0.25);
+  --favicon-dark-ink-filter: none;
+  --favicon-light-ink-filter: invert(0.88);
+  --color-text-quaternary: rgba(0, 0, 0, 0.3);
+  --color-bg-translucent: rgba(255, 255, 255, 0.7);
+  --color-fill-on-inverted: rgba(255, 255, 255, 0.05);
+  --color-attention: #ff9f0a;
+  /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
+  --color-done: #8250df;
+  --color-done-soft: #f3e8ff;
+  --color-done-bd: #e0ccff;
+  --color-context-definition: #84649a;
+  --color-context-assistant: #087f8c;
+  --color-syntax-string: #0a3069;
+  --color-syntax-number: #0550ae;
+  --color-syntax-keyword: #cf222e;
+  --color-info: #1783ff;
+  /* Terminal ANSI hues the status ramp doesn't carry (desktop xterm). */
+  --color-term-magenta: #8250df;
+  --color-term-cyan: #1b7c83;
+  --color-term-black: #24292f;
+
+  /* -- spacing (4px grid) -------------------------------------------------- */
+  --space-05: 2px; /* segmented-group inner padding/gap (DockIconPicker) */
+  --space-1: 4px;
+  --space-1-5: 6px; /* workbar pill icon ↔ label gap (1.5 档；CSS ident 不允许小数点) */
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-context-segment: 2px;
+  --browser-annotation-label-max-width: 360px;
+  --browser-annotation-popover-width: 26rem;
+  --browser-annotation-popover-preview-height: 180px;
+  --browser-annotation-preview-max-height: 30vh;
+
+  /* -- radius -------------------------------------------------------------- */
+  --browser-permission-border-width: var(--p-hairline);
+  --browser-permission-border-color: var(--color-warning-bd);
+  --browser-permission-breathe-duration: 2.8s;
+  --browser-permission-glow-gutter: var(--space-1);
+  --browser-permission-glow-color: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --browser-permission-glow-rest: 0 0 2px 0 var(--browser-permission-glow-color);
+  --browser-permission-glow-peak: 0 0 4px 0 var(--browser-permission-glow-color);
+  --browser-shot-max-height: 360px;
+  --browser-shot-mark-color: var(--color-accent);
+  --browser-shot-mark-width: 2px;
+  --browser-shot-mark-fill: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  --browser-shot-mark-halo: 0 0 0 1px white, 0 1px 4px rgb(0 0 0 / .5);
+  --browser-shot-mark-halo-color: white;
+  --browser-shot-point-size: 18px;
+  --browser-receipt-thumb-width: 32px;
+  --browser-receipt-thumb-height: 20px;
+  --browser-receipt-frame-width: 120px;
+  --browser-receipt-frame-height: 75px;
+  --browser-receipt-frame-min-width: 72px;
+  --browser-receipt-pending-width: 480px;
+  --browser-live-dot-halo: 1px;
+  --browser-sources-favicon-size: 16px;
+  --browser-sources-fallback-icon-size: 11px;
+  --browser-sources-list-max-height: 320px;
+  --browser-control-edge: 2px;
+  --browser-control-target-fill: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  --browser-control-scan-height: 120px;
+  --browser-control-scan-duration: 1.1s;
+  --browser-control-scan-fill: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  --browser-control-scan-edge: color-mix(in srgb, var(--color-accent) 70%, transparent);
+  --browser-control-button-height: 32px;
+  --browser-control-pointer-shadow: drop-shadow(0 2px 4px rgb(0 0 0 / .22)) drop-shadow(0 5px 10px rgb(0 0 0 / .18));
+  --browser-control-ring-size: 32px;
+  --browser-control-ring-width: 3px;
+  --browser-control-ring-fill: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  --browser-control-ring-shadow: 0 0 0 2px white, 0 2px 8px rgb(0 0 0 / .65);
+  --browser-control-pointer-width: 20px;
+  --browser-control-pointer-height: 28px;
+  --browser-control-pointer-label-width: 128px;
+  --browser-control-glow-line: 2px;
+  --browser-control-glow-band: 12px;
+  --browser-control-glow-blur: 20px;
+  --browser-control-glow-bloom: .8;
+  --browser-control-glow-core: .4;
+  --browser-control-glow-duration: 8s;
+  --browser-control-glow-cyan: color-mix(in oklch, var(--color-accent) 40%, #22d3ee);
+  --browser-control-glow-violet: color-mix(in oklch, var(--color-accent) 40%, #8b5cf6);
+  --browser-control-glow-magenta: color-mix(in oklch, var(--color-accent) 55%, #d946ef);
+  --browser-control-glow-spectrum: conic-gradient(var(--color-accent), var(--browser-control-glow-cyan), var(--browser-control-glow-violet), var(--browser-control-glow-magenta), var(--color-accent));
+  --browser-agent-dialog-breathe-duration: 2.4s;
+  --browser-agent-dialog-halo-rest: 0 0 calc(var(--browser-control-glow-blur) * .4) color-mix(in oklch, var(--color-accent) 28%, transparent), 0 0 var(--browser-control-glow-blur) color-mix(in oklch, var(--browser-control-glow-violet) 12%, transparent);
+  --browser-agent-dialog-halo-peak: 0 0 calc(var(--browser-control-glow-blur) * .6) color-mix(in oklch, var(--color-accent) 55%, transparent), 0 0 var(--browser-control-glow-blur) color-mix(in oklch, var(--browser-control-glow-violet) 32%, transparent);
+  --browser-agent-dialog-tab-inset: 16px;
+  --browser-control-popover-width: 360px;
+  --browser-control-popover-max-height: 420px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  /* Large-radius scale: lg (12) covers menus, toasts, bubbles and floating
+     cards; xl (16) is the container baseline — dialogs, settings cards and
+     sheets; 2xl (20) rounds the workspace attachment card under the composer;
+     the composer shell stays the product-specific 32px superellipse. */
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-composer: 32px;
+  --radius-dock-pill: 10px;
+  --radius-composer-media: calc(var(--radius-composer) - var(--p-composer-media-inset) - var(--p-hairline));
+  --radius-composer-media-control: calc(var(--radius-composer-media) - var(--space-1) - var(--p-hairline));
+  --corner-shape-composer: superellipse(1.5);
+  /* Menu rows: concentric with the menu frame (--radius-lg minus the 6px hug). */
+  --radius-menu-row: var(--radius-sm);
+  /* Menu frame and its rows share one curve — single-sourced from the
+     composer's superellipse so they never drift apart. */
+  --corner-shape-menu: var(--corner-shape-composer);
+  --dialog-pad-x: 22px;
+  /* dropdown menu (Menu/MenuItem) geometry — the trigger-dropdown family,
+     distinct from the composer autocomplete rows above: the panel insets its
+     items by --menu-pad (3.5px, so border + inset lands on the 4px grid), and
+     the item corner arc shares the frame's corner center — concentric:
+     --radius-lg − hairline border − --menu-pad = 8px. */
+  --menu-pad: 3.5px;
+  --radius-menu-item: calc(var(--radius-lg) - var(--menu-pad) - var(--p-hairline));
+  /* Select-family options (Select listbox, SecondaryModelPicker menus):
+     --radius-md frame + --space-1 pad + hairline border — concentric:
+     8px − 4px − 0.5px = 3.5px. */
+  --radius-select-option: calc(var(--radius-md) - var(--space-1) - var(--p-hairline));
+  /* Composer dropdown (model / permission) and workspace picker rows:
+     --radius-lg frame + --space-1 pad + hairline border — concentric:
+     12px − 4px − 0.5px = 7.5px. */
+  --radius-dropdown-row: calc(var(--radius-lg) - var(--space-1) - var(--p-hairline));
+  /* The autocomplete family's frostier surface: 70% page background over
+     the shared blur. */
+  --color-menu-bg-frost: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  --color-dock-panel-bg: color-mix(in srgb, var(--color-bg) 90%, transparent);
+  /* TopBar .frost — the sticky-nav frosted-glass recipe (78% surface over
+     a saturated 12px blur), the sole glassmorphism exception beside the menu
+     family. Tokenized so the TopBar primitive and the mobile top bar can
+     never drift. */
+  --color-topbar-bg-frost: color-mix(in srgb, var(--color-surface) 78%, transparent);
+  --p-topbar-backdrop: saturate(150%) blur(12px);
+  /* Overlay scroll thumb on the autocomplete menus: 16% ink at rest, 48% on
+     hover. */
+  --color-menu-scrollbar: color-mix(in srgb, var(--color-text) 16%, transparent);
+  --color-menu-scrollbar-hover: color-mix(in srgb, var(--color-text) 48%, transparent);
+  --color-chat-scrollbar: color-mix(in srgb, var(--color-text) 12%, transparent);
+  --color-chat-scrollbar-hover: color-mix(in srgb, var(--color-text) 25%, transparent);
+  --chat-scroll-edge-size: 13px;
+  --chat-block-placeholder-h: 120px;
+  --color-chat-scroll-edge-strong: color-mix(in srgb, var(--color-text) 1.5%, transparent);
+  --color-chat-scroll-edge-medium: color-mix(in srgb, var(--color-text) 1%, transparent);
+  --color-chat-scroll-edge-soft: color-mix(in srgb, var(--color-text) 0.75%, transparent);
+  --radius-full: 999px;
+
+  /* macOS window corner for hidden-titlebar (toolbar-free) windows — measured
+     on macOS 26 Tahoe from a window screenshot (calibrated against the 20pt
+     traffic-light spacing). Never used directly; chrome nested into a window
+     corner references it through calc(). */
+  --radius-window: 14px;
+  /* Sidebar footer chip (UserMenu trigger): the footer's row inset
+     (--sb-inset) and block padding (--space-2) both resolve to 8px, so the
+     chip sits 8px from the window's left and bottom edges and its
+     bottom-left arc shares the window corner's center — concentric:
+     --radius-window − 8px inset = 6px, exactly --radius-sm. */
+  --radius-window-chip: calc(var(--radius-window) - var(--space-2));
+
+  /* Scroll-edge mask fade distance — referenced from JS-built gradients via
+     var(), so the dock panels and the composer menus track the spacing
+     scale. */
+  --menu-scroll-fade: var(--space-5);
+
+  /* -- Right-panel tab strip + focus-composer geometry (the desktop panel
+     container, components/panel/*) — component metrics with no rung on the
+     global spacing scale, single-sourced here so a density pass lands on
+     every consumer at once instead of hunting local re-declarations. */
+  --panel-tab-pad-x: 10px; /* tab pill's leading inset (the × side hugs --space-1-5) */
+  --panel-tab-max-w: 168px; /* tab pill width cap before the title ellipsizes */
+  --panel-tab-x-size: 18px; /* tab close affordance square */
+  --panel-tab-h: 28px; /* tab pill height — slim inside the 48px --panel-head-h strip whose hairline the strip shares */
+  --panel-launcher-w: 288px; /* empty-state launcher's fixed-width quick-open column — the rows keep the label left and the shortcut hint on the right edge */
+  /* Pre-paint seed of the panel column's --preview-w: the ResizeHandle /
+     container applies the persisted or computed width before first paint, so
+     this value only needs to be a sane never-flashed default. */
+  --panel-default-w: 460px;
+
+  --file-tree-row-h: 28px;
+  --file-tree-row-radius: 10px;
+  --file-tree-base-indent: var(--space-2);
+  --file-tree-indent-step: var(--space-3);
+  --file-tree-panel-w: 224px;
+  --file-tree-panel-min-w: 160px;
+  --file-tree-panel-max-w: 400px;
+
+  /* -- §03 MenuItem md inset --------------------------------------------------
+     The standard dropdown row's padding (MenuItem primitive). Custom panel
+     content that must sit on the same row rhythm (e.g. the UserMenu usage
+     flyout) reads these tokens instead of copying the pixels, so a density
+     change lands everywhere at once. */
+  --menu-item-padding-block: 5px;
+  --menu-item-padding-inline: 9px;
+
+  /* -- composer menu row geometry (slash / mention / add menus) ---------------
+     The frame pads --space-1-5 × --space-3; rows hug the frame's block edge
+     while their content lands on the composer's --space-4 text column, and
+     each row's 0.5px transparent border (the Chromium corner-shape
+     workaround) is absorbed into the padding so neither the text column nor
+     the row height moves. */
+  --menu-row-hug: var(--space-1-5); /* row box hugs this far from the frame edge */
+  --menu-rows-seam: 1px; /* stacked-row seam */
+  --menu-row-gap-icon: 7px; /* row icon ↔ label */
+  /* 2px — densest menu rows: the menus cap how many rows are visible, and
+     row height, not the cap, is what limits density. */
+  --menu-row-padding-block: var(--space-05);
+  /* 10px = text column (--space-4) − frame padding (--space-3) + hug. */
+  --menu-row-padding-inline: calc(var(--space-4) - var(--space-3) + var(--menu-row-hug));
+  --menu-row-touch-padding-block: 11px; /* pads the row to the 44px touch hit height */
+  /* Overlay scroll thumb (slash / mention / add menus): floats at the frame's
+     right edge with its OUTER side on the rows' hug line — never in the
+     layout, so rows keep their full width — and its travel clamps to the
+     straight band past the frame's corner arc (the scrollport already starts
+     --space-1-5 in, so the inset is radius − that padding). */
+  --menu-scrollbar-width: 3px;
+  /* Thumb's right offset: hug + frame hairline − width = outer side on the
+     hug line (6.5px from the frame's outer edge). */
+  --menu-scrollbar-edge: calc(var(--menu-row-hug) + var(--p-hairline) - var(--menu-scrollbar-width));
+  --menu-scrollbar-track-inset: calc(var(--radius-lg) - var(--space-1-5));
+  /* Overlay thumb's minimum height (short lists would shrink it below a
+     readable nub otherwise) — read from JS via getComputedStyle. */
+  --menu-scrollbar-thumb-min: 24px;
+
+  /* Workbar-mode pill close button: sized to the pill's right-end reserve —
+     below the IconButton sm default so the hover wash never outgrows the
+     pill's rounded end. The desktop hit ring reaches this far past the box on
+     each side, staying inside the first-line reserve the pill makes. Both
+     track the icon/spacing scales — no ad-hoc numbers. */
+  --wm-x-size: calc(var(--p-ic-sm) + var(--space-1)); /* 18px at the default scale */
+  --wm-x-ring: var(--space-1-5);
+
+  /* -- elevation / z-index ------------------------------------------------- */
+  --z-base: 0;
+  /* In-component local stacking: an element pinned just above its own
+     siblings (menu scroll thumbs, strip badges, floating pills) — never a
+     global layer, so it starts at 1 and stays off the 100s scale. */
+  --z-raised: 1;
+  --z-sticky: 100;
+  --z-dropdown: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+  /* Menus / popovers that open ABOVE a modal dialog (teleported to <body>,
+     e.g. the Select listbox and the settings SecondaryModelPicker cascade). */
+  --z-modal-dropdown: 500;
+  --z-toast: 600;
+  /* Tooltips sit above everything else — they are transient, pointer-events
+     none, and must stay visible inside dialogs (modal) and over toasts. */
+  --z-tooltip: 650;
+  --z-max: 9999;
+
+  /* -- shadows (light) ----------------------------------------------------- */
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  /* Dropdown menu / popover panels: three-layer neutral ramp, ≤4% opacity. */
+  --shadow-menu:
+    0 6px 18px lch(0% 0 0 / 0.02),
+    0 3px 9px lch(0% 0 0 / 0.04),
+    0 1px 1px lch(0% 0 0 / 0.04);
+  /* Floating menu surfaces (Menu.vue, composer dropdowns, dock panel,
+     slash/mention popups): frosted glass — translucent fill over a blurred,
+     saturated backdrop. The hairline + --shadow-menu still carry the edge. */
+  --color-menu-bg: rgba(255, 255, 255, 0.95);
+  --p-menu-backdrop: blur(24px) saturate(1.8);
+  --p-card-backdrop: blur(12px);
+  /* Chat-input elevation (effect.shadow.inputDefault): kept identical in
+     dark — the hairline carries the edge there. */
+  --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.07), 0 2px 4px rgba(16, 24, 40, 0.05);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12), 0 4px 10px rgba(16, 24, 40, 0.08);
+  --shadow-xl: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
+
+  /* -- motion -------------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --duration-slow: 260ms;
+  --side-width-anim: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-hover-intent: 250ms;
+  /* Tooltip show delay (mention-tip; mirrors TooltipBubble's hover gate). */
+  --duration-tooltip: 300ms;
+  /* Spinner rotation period (the mention-tip probe spinner). */
+  --duration-spin: 700ms;
+  /* Attention flashes: one-shot accent washes that linger then fade (search
+     locate, provider-row added). Long by design — way past the show/hide
+     ramp, closer to a highlight timeout than a transition. */
+  --duration-flash: 1200ms;
+  /* Dock work panel enter/leave geometry (the panel pops above the composer). */
+  --motion-panel-shift: 2px;
+  --motion-panel-scale: 0.97;
+
+  /* Composer card, per the production recipe (kimiwork .chat-input__shell):
+     fill = groupedBackground.secondary, rest border = separator.s1 hairline,
+     hover/focus edge = fills.f4 — neutral, never accent-tinted. The neutral
+     inputDefault shadow deliberately remains unchanged between rest and focus
+     (and identical in dark — the hairline carries the edge there). */
+  --color-composer-bg: #ffffff;
+  --color-composer-line: rgba(0, 0, 0, 0.13);
+  --color-composer-focus-line: rgba(0, 0, 0, 0.25);
+  /* Send button, same recipe (kimiwork .chat-input__send): neutral
+     labels.primary fill with the production lift shadow — never accent — and
+     a fills.f2 / labels.quaternary disabled state at full opacity, so a
+     persistently-disabled button (empty draft) never reads as enabled. */
+  --color-send-bg: rgba(0, 0, 0, 0.9);
+  --color-send-bg-hover: #252525;
+  --color-send-icon: #ffffff;
+  /* Stop button glyph: full danger in light, softened to 72% alpha in dark. */
+  --color-stop-glyph: var(--color-danger);
+  --color-send-bg-disabled: rgba(0, 0, 0, 0.05);
+  --color-send-icon-disabled: rgba(0, 0, 0, 0.27);
+  --opacity-send-disabled: 1;
+  --shadow-send: 0 7px 16px -13px rgba(0, 0, 0, 0.38), 0 1px 2px rgba(0, 0, 0, 0.07);
+  --shadow-send-hover: 0 8px 18px -13px rgba(0, 0, 0, 0.42), 0 1px 3px rgba(0, 0, 0, 0.09);
+  /* Send/stop glyph size — the production kimi.com size, outside --p-ic-*. */
+  --composer-send-icon-size: 28px;
+
+  /* -- type families ------------------------------------------------------- */
+  --font-ui-system: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", system-ui, "Ubuntu Sans", Ubuntu, "Adwaita Sans", Cantarell,
+    "Noto Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI",
+    "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC",
+    "WenQuanYi Micro Hei", sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  --font-ui: var(--user-font-ui, -apple-system), var(--font-ui-system);
+  --font-display: var(--font-ui);
+  --font-kbd: var(--font-ui);
+  /* Kbd keycap geometry — single source for the Kbd
+     primitive and every hand-rolled keycap (e.g. the composer's rich sibling
+     placeholder overlay). Border width stays on --p-hairline. */
+  --kbd-height: 18px;
+  --kbd-min-width: 18px;
+  --kbd-padding-x: 5px;
+  --kbd-font-size: 12px;
+  --font-mono-system: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono",
+    Consolas, monospace;
+  --font-mono: var(--user-font-mono, ui-monospace), var(--font-mono-system);
+  --font-terminal: var(--user-font-terminal, ui-monospace), var(--font-mono-system);
+  --p-font-preview-height: 140px;
+  --terminal-line-height: 1.1;
+  --terminal-font-size: var(--user-terminal-size, var(--md-b2));
+  --font-transcript: var(--user-font-transcript, -apple-system), var(--font-ui-system);
+
+  /* -- type scale (6 levels) -------------------------------------------------
+     Legacy ramp, aliased into the font-scale tokens below so every existing
+     consumer follows the user's font-scale step. Medium resolves to exactly
+     11/12/13/14/16/18/22px as before; the named --ui-* levels carry the shift
+     (and the t0/t1 caps). New code should use the --ui-* or --md-* tokens. */
+  --text-2xs: calc(var(--ui-c1) - 1px); /* caption under grouped icon options (DockIconPicker) */
+  --text-xs: var(--ui-c1);
+  --text-sm: calc(var(--ui-b2) - 1px);
+  --text-base: var(--ui-b2);
+  --text-lg: var(--ui-t2);
+  --text-xl: var(--ui-t1);
+  --text-2xl: var(--ui-t0);
+  --leading-solid: 1; /* tight single-line headings (dock panel titles) */
+  --leading-tight: 1.25;
+  /* Two-line clamped descriptions (cards/tool rows) — between tight and
+     normal on purpose. */
+  --leading-caption: 1.4;
+  --leading-normal: 1.5;
+  /* Chat prose (Markdown message bodies). */
+  --leading-prose: 1.6;
+  --leading-relaxed: 1.7;
+  --weight-regular: 400;
+  --weight-caption: 450; /* caption labels (DockIconPicker options) */
+  --weight-option-label: 475;
+  --weight-medium: 500;
+  --weight-ui-strong: 525;
+  --weight-section-label: 600;
+  --weight-semibold: 700;
+
+  --ui-shift: calc(var(--base-font, 14px) - 14px);
+  --md-shift: var(--ui-shift);
+  --ui-t0: min(calc(20px + var(--ui-shift)), 24px);
+  --ui-t1: min(calc(18px + var(--ui-shift)), 22px);
+  --ui-t2: calc(16px + var(--ui-shift));
+  --ui-b1: calc(15px + var(--ui-shift));
+  --ui-b2: calc(14px + var(--ui-shift));
+  --ui-c1: calc(12px + var(--ui-shift));
+  --ui-c2: calc(10px + var(--ui-shift));
+  --md-h1: calc(22px + var(--md-shift));
+  --md-h2: calc(20px + var(--md-shift));
+  --md-h3: calc(18px + var(--md-shift));
+  /* Body levels anchor to the UI body (14px @ Medium), not the spec's +2px;
+     the MD group keeps only its looser line-height ratios. b2/b3 sit one rung
+     below body so quotes/tables/code stay secondary. */
+  --md-b1: calc(14px + var(--md-shift));
+  --md-b2: calc(13px + var(--md-shift));
+  --md-b3: calc(13px + var(--md-shift));
+
+  /* -- focus ring ----------------------------------------------------------- */
+  /* The ring's spread width as its own token: anything that must reserve
+     room for the ring (e.g. clip protection) derives from here, so a ring
+     retune can never strand a hardcoded offset. */
+  --p-focus-ring-w: 3px;
+  --p-focus-ring: 0 0 0 var(--p-focus-ring-w) var(--color-accent-soft);
+  --p-focus-ring-strong: 0 0 0 var(--p-focus-ring-w) var(--color-accent-soft), 0 0 0 1px var(--color-accent);
+
+  /* -- selection (others.textSelected) -------------------------------------- */
+  --p-selection: rgba(23, 131, 255, 0.2);
+
+  --color-code-selection: rgba(23, 131, 255, 0.346);
+  --color-code-selection-text: currentColor;
+  /* Code block vertical padding = half the inter-line gap ((leading − 1) / 2
+     × font size ≈ 3.25px at 13px/1.5), so the space above the first line
+     reads exactly like half the spacing between two lines. */
+  --code-pad-block: calc(var(--text-sm) * (var(--leading-normal) - 1) / 2);
+  /* Diff sign-column width (rendered ```diff blocks): the sign cell, the
+     wrap hanging indent, and the line-number counter gutter all derive from
+     here, so a rescale can never strand a hardcoded value. */
+  --diff-sign-col: 14px;
+
+  /* -- icon sizes ------------------------------------------------------------ */
+  --p-ic-sm: 14px;
+  --p-ic-md: 16px;
+  /* Rendered stroke shared by the todo pending ring and the xs Spinner's
+     arc (the ring family's glyph-row status rings). */
+  --p-ring-stroke: 1.5px;
+  --p-ic-lg: 20px;
+  --p-ic-dock: 18px;
+  /* Decorative empty-state glyph (plan/todo panels) — larger than any inline
+     icon rung on purpose. */
+  --p-empty-ico: 28px;
+
+  /* -- the single hairline width ---------------------------------------------- */
+  --p-hairline: 0.5px;
+  --browser-settings-row-min-height: 52px;
+  --browser-settings-control-width: 200px;
+  --browser-settings-control-min-width: 160px;
+  /* -- current-match outline ring width (find bar) ------------------------------ */
+  --p-findring-w: 2px;
+  --p-pill-excerpt-max: 24em;
+  --p-quote-pill-excerpt-max: 12em;
+  /* -- mentionTooltip scroll caps (line units, so the cap tracks the font) --
+     the quote tooltip's full text and the bundled comment's second block.
+     Half-line caps: an overflowing block cuts its last visible line at half,
+     a built-in "there is more" cue on top of the always-on scrollbar. */
+  --p-tip-quote-lines: 8.5lh;
+  --p-tip-comment-lines: 4.5lh;
+
+  /* -- scroll-linked seam height (sidebar lists, approval card scrollers) ----
+     The soft top-edge shadow that fades in once a scroller moves — one
+     height shared by every seam so the language reads identically
+     everywhere; the negative margin that lifts it out of the layout flow
+     derives from it. */
+  --p-scroll-seam-h: 18px;
+  /* The SIDEBAR session list's seam (Sidebar's head/footer veils and the
+     pinned section's edge veils) runs shorter than the chat scroller seam
+     above — a 13px wash that stays subtle against the compact list rows. */
+  --p-sidebar-seam-h: 13px;
+
+  /* -- IconButton box sizes --------------------------------------------------- */
+  --icon-button-sm: 26px;
+  --icon-button-xs: 20px;
+  /* -- minimum touch hit area (WCAG 2.5.5 / Apple HIG 44×44) ----------------
+     Every (hover: none) enlargement derives from this, so the touch baseline
+     moves in one place. */
+  --touch-target-min: 44px;
+
+  /* -- resize-handle keyboard steps (separator model) --------------------------
+     ←/→ (or ↑/↓ on the terminal's horizontal handle) resize by the base step,
+     ⇧ by the large one — read from JS via getComputedStyle. */
+  --resize-handle-step: 16px;
+  --resize-handle-step-lg: 48px;
+
+  /* -- decision-card number chip --------------------------------------------- */
+  --p-chip-num: 20px;
+
+  /* -- layout & breakpoints -------------------------------------------------- */
+  --p-sidebar-w: 264px;
+  --p-content-max: 760px;
+  --p-content-wide: 920px;
+  --p-table-cell-max: 700px;
+  --p-table-wide-max: 1440px;
+  --p-findbar-w: 340px;
+  /* Right-aligned chat column cap — the user bubble, the cron notice and the
+     task-notification notice all snap to this width. */
+  --p-bubble-max: 78%;
+  /* Subagent grid's minimum card column width. */
+  --p-subagent-card-min: 180px;
+  /* Slash / mention menu scrollport caps. */
+  --p-slash-menu-h: 228px;
+  --p-mention-menu-h: 296px;
+  /* Mention tooltip (hover card) width cap. */
+  --p-mention-tip-w: 320px;
+  /* Media attachment popover: preview caps (the JS builder reads these via
+     tokenPx — a landscape shot fills the width cap, a portrait one narrows
+     toward the floor), the checkerboard cell, and the progress ring/spinner
+     sizes. */
+  --p-mention-tip-media-w: 300px;
+  --p-mention-tip-media-h: 220px;
+  --p-mention-tip-media-min-w: 190px;
+  --p-mention-tip-media-preview-min-h: 64px;
+  --p-mention-tip-media-check: 12px;
+  --p-mention-tip-media-ring: 12px;
+  --p-mention-tip-media-spin: 10px;
+  --p-composer-media-inset: var(--space-4);
+  --p-composer-media-thumb: 72px;
+  --p-composer-media-control: var(--space-5);
+  --p-composer-media-action: 28px;
+  /* The transparency checkerboard as one token (token defs are exempt from
+     the no-gradient-text rule — the pattern is a design primitive, not
+     gradient text): Photoshop-classic, dark-skin adapted low-contrast grays. */
+  --p-mention-tip-media-check-bg: linear-gradient(45deg, color-mix(in srgb, var(--color-bg) 7%, transparent) 25%, transparent 25%), linear-gradient(-45deg, color-mix(in srgb, var(--color-bg) 7%, transparent) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--color-bg) 7%, transparent) 75%), linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--color-bg) 7%, transparent) 75%);
+  /* Selection quote bubble (划词浮窗) width in its comment state. */
+  --p-selection-bubble-w: 280px;
+  --p-selection-comment-max-h: 160px;
+  /* Plain tooltip bubble width cap (code-block action hints; mirrors
+     TooltipBubble's default maxWidth). */
+  --p-tip-max-w: 280px;
+  /* The fixed-position mention tooltip's minimum distance from the viewport
+     edge — single-sourced: position() reads it via tokenPx, and the width
+     cap below folds it in. */
+  --p-mention-tip-vmargin: var(--space-3);
+  /* The probe spinner's optical baseline lift inside the path text — em-based
+     so it tracks the tooltip's font size instead of a frozen pixel. */
+  --p-mention-tip-spinner-lift: -0.1em;
+  /* Dim level for stale candidates (mention menu rows kept from the previous
+     query while its re-search is pending). */
+  --opacity-stale: 0.55;
+  --opacity-hint: 0.55;
+  /* Add menu's scrollport cap — shared with the slash menu's (above this
+     its rows scroll with the overlay thumb, same as the slash/mention menus). */
+  --p-add-menu-h: var(--p-slash-menu-h);
+  --p-bp-sm: 640px;
+  --p-bp-md: 980px;
+}
+
+@media (max-resolution: 1.1dppx) {
+  :root { --p-hairline: 1px; }
+}
+
+/* Font-scale steps — the only state the type system switches on. :root doubles
+   as the Medium fallback, so an unknown/missing value degrades to Medium. */
+:root,
+html[data-font-scale="medium"]  { --base-font: 14px; }
+html[data-font-scale="small"]   { --base-font: 12px; }
+html[data-font-scale="large"]   { --base-font: 16px; }
+html[data-font-scale="xlarge"]  { --base-font: 18px; }
+
+/* Type-scale utility classes: font-size from the token, line-height locked to
+   an integer px via round(size × ratio). UI group is for
+   chrome only, MD group for Markdown content + composer — do not mix. */
+.text-ui-t0 { font-size: var(--ui-t0); line-height: round(calc(var(--ui-t0) * 1.40), 1px); }
+.text-ui-t1 { font-size: var(--ui-t1); line-height: round(calc(var(--ui-t1) * 1.44), 1px); }
+.text-ui-t2 { font-size: var(--ui-t2); line-height: round(calc(var(--ui-t2) * 1.50), 1px); }
+.text-ui-b1 { font-size: var(--ui-b1); line-height: round(calc(var(--ui-b1) * 1.47), 1px); }
+.text-ui-b2 { font-size: var(--ui-b2); line-height: round(calc(var(--ui-b2) * 1.42), 1px); }
+.text-ui-c1 { font-size: var(--ui-c1); line-height: round(calc(var(--ui-c1) * 1.50), 1px); }
+.text-ui-c2 { font-size: var(--ui-c2); line-height: round(calc(var(--ui-c2) * 1.40), 1px); }
+.text-md-h1 { font-size: var(--md-h1); line-height: round(calc(var(--md-h1) * 1.63), 1px); }
+.text-md-h2 { font-size: var(--md-h2); line-height: round(calc(var(--md-h2) * 1.60), 1px); }
+.text-md-h3 { font-size: var(--md-h3); line-height: round(calc(var(--md-h3) * 1.56), 1px); }
+.text-md-b1 { font-size: var(--md-b1); line-height: round(calc(var(--md-b1) * 1.625), 1px); }
+.text-md-b2 { font-size: var(--md-b2); line-height: round(calc(var(--md-b2) * 1.60), 1px); }
+.text-md-b3 { font-size: var(--md-b3); line-height: round(calc(var(--md-b3) * 1.57), 1px); }
+
+/* Design tokens v2 — dark values (explicit choice). Surfaces run on the
+   production #121212 / #1f1f1f / #292929 ladder; the deep chrome plane and
+   sidebar drop one step below the page (#0d0d0d, derived — the palette has
+   nothing darker than primary) so dark elevation still reads lighter-is-
+   closer. Status hues keep the app's own ramp (see the light block). */
+html[data-color-scheme="dark"] {
+  --color-bg: #121212;                 /* background.primary */
+  --color-surface: #1f1f1f;            /* background.secondary */
+  --color-surface-raised: #292929;     /* background.tertiary */
+  --color-surface-overlay: rgba(255, 255, 255, 0.1);  /* fills.f2 — field fill on raised cards */
+  --color-surface-sunken: #121212;
+  --color-inline-code-bg: rgba(255, 255, 255, 0.1);   /* fills.f2 */
+  --color-well: #1f1f1f;
+  --color-surface-deep: #0d0d0d;
+  --color-text: rgba(255, 255, 255, 0.84);  /* labels.primary */
+  --color-text-strong: #ffffff;
+  --color-text-muted: rgba(255, 255, 255, 0.56);  /* labels.secondary */
+  --color-text-faint: rgba(255, 255, 255, 0.42);  /* labels.tertiary */
+  --color-line: rgba(255, 255, 255, 0.18);        /* separator.s1 */
+  --color-subtle: rgba(255, 255, 255, 0.05);      /* fills.f1 */
+  --color-line-strong: rgba(255, 255, 255, 0.26); /* fills.f3 */
+  --color-scrim: rgba(0, 0, 0, 0.6);          /* mask.base (dark) */
+  --color-scrim-strong: rgba(0, 0, 0, 0.75);  /* mask.strong (dark) */
+  --color-selected: rgba(255, 255, 255, 0.1);     /* fills.f2 */
+  /* Hover of a control RESTING at the selected fill — one rung above f2,
+     below f3 (18%): hover brightens a step, never drops below the rest. */
+  --color-selected-hover: rgba(255, 255, 255, 0.14);
+  --panel-tab-selected-bg: rgba(255, 255, 255, 0.18);
+  --color-hover: rgba(255, 255, 255, 0.05);       /* fills.f1 */
+  --color-sidebar-bg: #0d0d0d;
+  /* Sent chat bubble fill (kimiwork BubbleGray: neutral gray, no border). */
+  --color-user-bubble-bg: #292929;
+  --color-accent: #1a88ff;             /* status.kimiBlue (dark) */
+  --color-accent-hover: #258eff;
+  --color-accent-soft: rgba(26, 136, 255, 0.1);   /* others.kimiBlue10 */
+  --color-accent-bd: rgba(26, 136, 255, 0.28);
+  --p-selection: rgba(26, 136, 255, 0.2);    /* others.textSelected */
+  --color-code-selection: rgba(26, 136, 255, 0.27);
+  --color-code-selection-text: currentColor;
+  --color-success: #3fb950;
+  --color-success-soft: rgba(63, 185, 80, 0.14);
+  --color-success-bd: rgba(63, 185, 80, 0.28);
+  --color-warning: #d29922;
+  --color-warning-soft: rgba(210, 153, 34, 0.14);
+  --color-warning-bd: rgba(210, 153, 34, 0.28);
+  --color-orange: #f0883e;
+  --color-orange-soft: rgba(240, 136, 62, 0.14);
+  --color-danger: #f85149;
+  --color-danger-soft: rgba(248, 81, 73, 0.14);
+  --color-danger-bd: rgba(248, 81, 73, 0.28);
+  /* Diff bands: the 14% soft fills already read well on dark surfaces. */
+  --color-diff-add-bg: rgba(63, 185, 80, 0.14);
+  --color-diff-del-bg: rgba(248, 81, 73, 0.14);
+  --color-fill-1: rgba(255, 255, 255, 0.05);
+  --color-fill-2: rgba(255, 255, 255, 0.1);
+  --color-fill-4: rgba(255, 255, 255, 0.25);
+  --favicon-dark-ink-filter: invert(0.88);
+  --favicon-light-ink-filter: none;
+  --color-text-quaternary: rgba(255, 255, 255, 0.26);
+  --color-bg-translucent: rgba(18, 18, 18, 0.7);
+  /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
+  --color-done: #a371f7;
+  --color-done-soft: rgba(163, 113, 247, 0.14);
+  --color-done-bd: rgba(163, 113, 247, 0.28);
+  --color-context-definition: #b59cc8;
+  --color-context-assistant: #54bdc5;
+  --color-syntax-string: #a5d6ff;
+  --color-syntax-number: #79c0ff;
+  --color-syntax-keyword: #ff7b72;
+  --color-info: #1a88ff;
+  /* Terminal ANSI hues the status ramp doesn't carry (desktop xterm). */
+  --color-term-magenta: #d2a8ff;
+  --color-term-cyan: #76e3ea;
+  --color-term-black: #484f58;
+  /* Composer + send button (kimiwork .chat-input__shell / .chat-input__send):
+     fill one rung above the page, separator.s1 hairline, fills.f4 focus edge;
+     send is a near-white labels.primary circle with a dark glyph, disabled =
+     fills.f2 / labels.quaternary. */
+  --color-composer-bg: #1f1f1f;
+  --color-composer-line: rgba(255, 255, 255, 0.12);
+  --color-composer-focus-line: rgba(255, 255, 255, 0.25);
+  --color-send-bg: rgba(255, 255, 255, 0.84);
+  --color-send-bg-hover: rgba(255, 255, 255, 0.848);
+  --color-send-icon: #1f1f1f;
+  --color-stop-glyph: color-mix(in srgb, var(--color-danger) 72%, transparent);
+  --color-send-bg-disabled: rgba(255, 255, 255, 0.1);
+  --color-send-icon-disabled: rgba(255, 255, 255, 0.28);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  /* Dropdown menu / popover panels: three-layer neutral ramp, dark strength
+     matching the scale. */
+  --shadow-menu:
+    0 6px 18px rgba(0, 0, 0, 0.2),
+    0 3px 9px rgba(0, 0, 0, 0.24),
+    0 1px 1px rgba(0, 0, 0, 0.24);
+  /* Frosted menu fill — the raised rung at 95% over the shared blur. */
+  --color-menu-bg: rgba(41, 41, 41, 0.95);
+  --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
+}
+
+/* Design tokens v2 — dark values (follow OS preference; same ladder as the
+   explicit-choice block above). */
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] {
+    --color-bg: #121212;
+    --color-surface: #1f1f1f;
+    --color-surface-raised: #292929;
+    --color-surface-overlay: rgba(255, 255, 255, 0.1);
+    --color-surface-sunken: #121212;
+    --color-inline-code-bg: rgba(255, 255, 255, 0.1);
+    --color-well: #1f1f1f;
+    --color-surface-deep: #0d0d0d;
+    --color-text: rgba(255, 255, 255, 0.84);
+    --color-text-strong: #ffffff;
+    --color-text-muted: rgba(255, 255, 255, 0.56);
+    --color-text-faint: rgba(255, 255, 255, 0.42);
+    --color-line: rgba(255, 255, 255, 0.18);
+    --color-subtle: rgba(255, 255, 255, 0.05);
+    --color-line-strong: rgba(255, 255, 255, 0.26);
+    --color-scrim: rgba(0, 0, 0, 0.6);
+    --color-scrim-strong: rgba(0, 0, 0, 0.75);
+    --color-selected: rgba(255, 255, 255, 0.1);
+    --color-selected-hover: rgba(255, 255, 255, 0.14);
+    --panel-tab-selected-bg: rgba(255, 255, 255, 0.18);
+    --color-hover: rgba(255, 255, 255, 0.05);
+    --color-sidebar-bg: #0d0d0d;
+    --color-user-bubble-bg: #292929;
+    --color-accent: #1a88ff;
+    --color-accent-hover: #258eff;
+    --color-accent-soft: rgba(26, 136, 255, 0.1);
+    --color-accent-bd: rgba(26, 136, 255, 0.28);
+    --p-selection: rgba(26, 136, 255, 0.2);
+    /* Code-surface selection — dark values (rationale on the light block). */
+    --color-code-selection: rgba(26, 136, 255, 0.27);
+    --color-code-selection-text: currentColor;
+    --color-success: #3fb950;
+    --color-success-soft: rgba(63, 185, 80, 0.14);
+    --color-success-bd: rgba(63, 185, 80, 0.28);
+    --color-warning: #d29922;
+    --color-warning-soft: rgba(210, 153, 34, 0.14);
+    --color-warning-bd: rgba(210, 153, 34, 0.28);
+    --color-orange: #f0883e;
+    --color-orange-soft: rgba(240, 136, 62, 0.14);
+    --color-danger: #f85149;
+    --color-danger-soft: rgba(248, 81, 73, 0.14);
+    --color-danger-bd: rgba(248, 81, 73, 0.28);
+    --color-diff-add-bg: rgba(63, 185, 80, 0.14);
+    --color-diff-del-bg: rgba(248, 81, 73, 0.14);
+  --color-fill-1: rgba(255, 255, 255, 0.05);
+  --color-fill-2: rgba(255, 255, 255, 0.1);
+  --color-fill-4: rgba(255, 255, 255, 0.25);
+  --favicon-dark-ink-filter: invert(0.88);
+  --favicon-light-ink-filter: none;
+  --color-text-quaternary: rgba(255, 255, 255, 0.26);
+  --color-bg-translucent: rgba(18, 18, 18, 0.7);
+    --color-done: #a371f7;
+    --color-done-soft: rgba(163, 113, 247, 0.14);
+    --color-done-bd: rgba(163, 113, 247, 0.28);
+    --color-term-magenta: #d2a8ff;
+    --color-term-cyan: #76e3ea;
+    --color-term-black: #484f58;
+    --color-context-definition: #b59cc8;
+    --color-context-assistant: #54bdc5;
+    --color-syntax-string: #a5d6ff;
+    --color-syntax-number: #79c0ff;
+    --color-syntax-keyword: #ff7b72;
+    --color-info: #1a88ff;
+    --color-composer-bg: #1f1f1f;
+    --color-composer-line: rgba(255, 255, 255, 0.12);
+    --color-composer-focus-line: rgba(255, 255, 255, 0.25);
+    --color-send-bg: rgba(255, 255, 255, 0.84);
+    --color-send-bg-hover: rgba(255, 255, 255, 0.848);
+    --color-send-icon: #1f1f1f;
+    --color-stop-glyph: color-mix(in srgb, var(--color-danger) 72%, transparent);
+    --color-send-bg-disabled: rgba(255, 255, 255, 0.1);
+    --color-send-icon-disabled: rgba(255, 255, 255, 0.28);
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+    /* Dropdown menu / popover panels: three-layer neutral ramp, dark
+       strength matching the scale. */
+    --shadow-menu:
+      0 6px 18px rgba(0, 0, 0, 0.2),
+      0 3px 9px rgba(0, 0, 0, 0.24),
+      0 1px 1px rgba(0, 0, 0, 0.24);
+    /* Frosted menu fill — the raised rung at 95% over the shared blur. */
+    --color-menu-bg: rgba(41, 41, 41, 0.95);
+    --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+    --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
+  }
+}
+
+/* macOS desktop vibrancy tint. The sidebar column on the desktop app is
+   otherwise unpainted so the window's native vibrancy material ('menu',
+   pinned to visualEffectState 'active' — see apps/desktop/src/main/window/main-window.ts)
+   reads through with the desktop showing behind it; this single translucent
+   wash presses that material one small step in each scheme (a shade darker
+   in dark mode, a shade brighter in light) so ink stays legible over the
+   see-through material. Keep the alpha LOW — the wash is what flattens the
+   material's see-through look: 0.4/0.25 (light/dark) read as a solid panel,
+   so it stays a whisper and the resulting tone follows the wallpaper.
+   Consumed only by .side.macos-desktop; web keeps the opaque --color-sidebar-bg. */
+:root { --color-sidebar-tint: rgba(255, 255, 255, 0.35); }
+html[data-color-scheme="dark"] { --color-sidebar-tint: rgba(0, 0, 0, 0.22); }
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] { --color-sidebar-tint: rgba(0, 0, 0, 0.22); }
+}
+
+@media (max-resolution: 1.1dppx) {
+  :root {
+    --color-text: rgba(0, 0, 0, 0.95);
+    --color-text-muted: rgba(0, 0, 0, 0.68);
+    --color-text-faint: rgba(0, 0, 0, 0.53);
+  }
+  html[data-color-scheme="dark"] {
+    --color-text: rgba(255, 255, 255, 0.9);
+    --color-text-muted: rgba(255, 255, 255, 0.64);
+    --color-text-faint: rgba(255, 255, 255, 0.5);
+  }
+}
+@media (max-resolution: 1.1dppx) and (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] {
+    --color-text: rgba(255, 255, 255, 0.9);
+    --color-text-muted: rgba(255, 255, 255, 0.64);
+    --color-text-faint: rgba(255, 255, 255, 0.5);
+  }
+}
+
+/* Transcript find bar (Cmd/Ctrl+F, the apps' components/chat/TranscriptSearch.vue):
+   match ink. The find bar mutates no DOM — it registers one Range per
+   occurrence with the CSS Custom Highlight API under the two registry names
+   below (::highlight pseudos are document-global, so these rules can't be
+   component-scoped). All matches get a vivid yellow wash, the current match a
+   deeper one. The current match additionally carries a 2px outline ring —
+   box properties don't exist on highlight pseudos, so the component overlays
+   the ring as a positioned element colored by --color-warning. */
+:root {
+  --color-search-match: #ffe066;
+  --color-search-match-current: #ffc531;
+}
+html[data-color-scheme="dark"] {
+  --color-search-match: rgba(255, 197, 49, 0.3);
+  --color-search-match-current: rgba(255, 197, 49, 0.55);
+}
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] {
+    --color-search-match: rgba(255, 197, 49, 0.3);
+    --color-search-match-current: rgba(255, 197, 49, 0.55);
+  }
+}
+::highlight(kimi-transcript-search) {
+  background-color: var(--color-search-match);
+}
+::highlight(kimi-transcript-search-current) {
+  background-color: var(--color-search-match-current);
+}
+
+::highlight(kimi-selection-comment-keep) {
+  background-color: Highlight;
+  color: HighlightText;
+}
+
+.mention-pill,
+.attachment-pill,
+.quote-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-05);
+  color: var(--color-text-muted);
+  font-weight: var(--weight-ui-strong);
+  white-space: nowrap;
+  text-decoration: none;
+  vertical-align: baseline;
+  /* A hair of air around every pill: CJK autospacing can't cross element
+     boundaries, and the separation also sets the pill apart from the
+     surrounding text. */
+  padding-inline: var(--space-05);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.composer-text .quote-pill {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+.mention-pill:hover,
+.attachment-pill:hover,
+.quote-pill:hover {
+  color: var(--color-text);
+}
+.mention-pill:hover .mention-pill-icon,
+.attachment-pill:hover .attachment-pill-icon,
+.quote-pill:hover .quote-pill-icon {
+  color: inherit;
+}
+.mention-pill.mention-file,
+.mention-pill.mention-skill,
+.attachment-pill[role="button"],
+button.attachment-pill[data-attachment-url] {
+  cursor: pointer;
+}
+.mention-pill.mention-file:hover,
+.mention-pill.mention-skill:hover,
+.attachment-pill[role="button"]:hover,
+button.attachment-pill[data-attachment-url]:hover {
+  text-decoration: underline;
+}
+/* Message-side file pills carry tabindex + role="button" (stamped by
+   ComposerText), and so do openable attachment pills (interactive inline ones
+   and ChatPane's legacy .u-atts row); the ring follows the shared
+   :focus-visible rule. Composer pills are text atoms, never focusable, so
+   no override is needed below. */
+.mention-pill:focus-visible,
+.attachment-pill:focus-visible,
+.quote-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+  border-radius: var(--radius-sm);
+}
+.ProseMirror .mention-pill,
+.ProseMirror .mention-pill:hover,
+.ProseMirror .attachment-pill,
+.ProseMirror .attachment-pill:hover,
+.ProseMirror .quote-pill,
+.ProseMirror .quote-pill:hover {
+  cursor: text;
+  text-decoration: none;
+}
+.ProseMirror .attachment-pill.attachment-image,
+.ProseMirror .attachment-pill.attachment-image:hover,
+.ProseMirror .attachment-pill.attachment-video,
+.ProseMirror .attachment-pill.attachment-video:hover {
+  cursor: default;
+}
+a.mention-folder {
+  cursor: default;
+}
+/* A skill pill that resolved to nothing (skill uninstalled, or the host
+   can't open files) is display-only — stripped of its button affordance
+   (mentionTooltip degrades the tabindex/role alongside). */
+.mention-pill.mention-skill.mention-inert,
+.mention-pill.mention-skill.mention-inert:hover {
+  cursor: default;
+  text-decoration: none;
+}
+
+/* The 32-grapheme truncation counts CHARACTERS, not width — a CJK/full-width
+   name can still outgrow a narrow bubble (the pill is nowrap), so the label
+   also caps by inline size and ellipsizes instead of stretching the message
+   column. The full name stays in the data attributes and the tooltip. */
+.mention-pill-name,
+.attachment-pill-name {
+  max-width: var(--p-pill-excerpt-max);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quote-pill-name {
+  max-width: var(--p-quote-pill-excerpt-max);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mention-pill-icon,
+.attachment-pill-icon,
+.quote-pill-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  color: var(--muted);
+  align-self: center;
+  flex-shrink: 0;
+}
+.mention-pill-icon svg,
+.attachment-pill-icon svg,
+.quote-pill-icon svg {
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  display: block;
+  /* The registry glyphs are fill-based; a hairline stroke in the same ink
+     reads as real weight at this size. */
+  stroke: currentColor;
+  stroke-width: var(--p-hairline);
+}
+
+.mention-pill.pill-in-selection,
+.attachment-pill.pill-in-selection,
+.quote-pill.pill-in-selection {
+  background: var(--p-selection);
+  border-radius: var(--radius-sm);
+}
+
+.quote-pill:focus-visible {
+  box-shadow:
+    0 0 0 1px var(--color-text-muted),
+    0 0 0 var(--p-focus-ring-w) var(--color-accent-soft);
+}
+.quote-pill-comment {
+  max-width: var(--p-quote-pill-excerpt-max);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-muted);
+  font-weight: var(--weight-regular);
+}
+.quote-pill-comment::before {
+  content: '❘';
+  color: var(--color-text-faint);
+  margin-inline: var(--space-1-5) var(--space-1);
+}
+.quote-pill-comment-full {
+  display: none;
+}
+@media (max-width: 640px) {
+  .composer-text .quote-pill[data-quote-text][data-quote-comment] {
+    display: grid;
+    grid-template-columns: var(--p-ic-sm) minmax(0, 1fr);
+    gap: var(--space-1) var(--space-05);
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .composer-text .quote-pill[data-quote-text][data-quote-comment] .quote-pill-comment-summary {
+    display: none;
+  }
+  .composer-text .quote-pill[data-quote-text][data-quote-comment] .quote-pill-comment-full {
+    display: block;
+    grid-column: 1 / -1;
+    max-width: none;
+    overflow: visible;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .composer-text .quote-pill[data-quote-text][data-quote-comment] .quote-pill-comment-full::before {
+    content: none;
+  }
+}
+.composer-text .q-sep {
+  font-size: 0;
+  white-space: normal;
+}
+
+.mention-tip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  /* Width cap with the narrow-viewport clamp folded in — position() only
+     reads the resulting box. */
+  max-width: min(var(--p-mention-tip-w), calc(100vw - 2 * var(--p-mention-tip-vmargin)));
+  /* Same inset as TooltipBubble (4px × 8px). */
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-text);
+  color: var(--color-bg);
+  /* Ink levels ON THE INVERTED SKIN (currentColor = --color-bg here): the
+     quote tooltip's hairline divider, its muted comment block, and the
+     fainter provenance header — one semantic home so a theme tune reaches
+     every quote row at once. */
+  --p-tip-line: color-mix(in srgb, currentColor 18%, transparent);
+  --p-tip-ink: color-mix(in srgb, currentColor 80%, transparent);
+  --p-tip-ink-weak: color-mix(in srgb, currentColor 55%, transparent);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  /* Mirror the .text-ui-c1 utility's integer-px line height (token, never a
+     unitless ratio). */
+  line-height: round(calc(var(--text-xs) * 1.5), 1px);
+  overflow-wrap: anywhere;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.mention-tip:not(.positioned) {
+  pointer-events: none;
+}
+.mention-tip.positioned {
+  opacity: 1;
+}
+.mention-tip:has(.mention-tip-path) {
+  padding-right: var(--space-1);
+}
+.mention-tip::before,
+.mention-tip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--space-1-5);
+}
+.mention-tip::before { bottom: 100%; }
+.mention-tip::after { top: 100%; }
+.mention-tip > * {
+  max-height: calc(100vh - 2 * var(--p-mention-tip-vmargin) - 2 * var(--space-2));
+  overflow-y: auto;
+}
+/* The anchor caret: a 12×6 triangle in the bubble's own ink, pinned to the
+   anchor's center (position() sets --tip-caret-x) on the facing edge and
+   flipped with the placement side. A real element — ::before/::after above
+   are taken by the hover-bridge gap strips. */
+.mention-tip-caret {
+  position: absolute;
+  left: var(--tip-caret-x, 50%);
+  width: 12px;
+  height: 6px;
+  background: var(--color-text);
+  transform: translateX(-50%);
+}
+.mention-tip[data-side='top'] > .mention-tip-caret {
+  top: 100%;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+.mention-tip[data-side='bottom'] > .mention-tip-caret {
+  bottom: 100%;
+  clip-path: polygon(50% 0, 0 100%, 100% 100%);
+}
+/* Path tooltip row: the wrapping path text on the left, the copy-path
+   button pinned top-right. */
+.mention-tip-path {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.mention-tip-path-text {
+  min-width: 0;
+}
+.mention-tip-sep {
+  color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.mention-tip-base {
+  font-weight: var(--weight-semibold);
+}
+.mention-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.mention-tip-name {
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+.mention-tip-open,
+.mention-tip-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: var(--space-05);
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+.mention-tip-open:hover,
+.mention-tip-copy:hover {
+  color: var(--color-bg);
+  background: color-mix(in srgb, var(--color-bg) 14%, transparent);
+}
+/* The bubble is raw DOM (its anchors live in ProseMirror NodeViews and
+   pillified spans a Vue component can't wrap), so these buttons re-implements
+   the Button primitive's contract by hand — the focus ring included. */
+.mention-tip-open:focus-visible,
+.mention-tip-copy:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.mention-tip-open svg,
+.mention-tip-copy svg {
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  display: block;
+}
+/* Attachment tooltip: the leading paperclip glyph — one text line tall, so
+   it stays first-line-aligned on wrapping paths AND its glyph is vertically
+   centered with the text line. */
+.mention-tip-att-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--p-ic-sm);
+  height: 1lh;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+}
+.mention-tip-att-icon svg {
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  display: block;
+}
+.mention-tip-att-size {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+}
+.mention-tip:has(.mention-tip-quote-card) {
+  padding: var(--space-2);
+}
+.mention-tip:has(.mention-tip-browser) { padding: var(--space-2); }
+.mention-tip-browser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(var(--p-mention-tip-media-w), calc(100vw - var(--space-8)));
+}
+.mention-tip-browser-source,
+.mention-tip-browser-target { color: var(--p-tip-ink-weak); overflow-wrap: anywhere; }
+.mention-tip-browser-target { font-family: var(--font-mono); }
+.mention-tip-browser-preview {
+  width: 100%;
+  height: var(--p-mention-tip-media-h);
+  object-fit: contain;
+  border-radius: var(--radius-xs);
+}
+.mention-tip-browser-comment { color: var(--p-tip-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mention-tip-quote-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+.mention-tip-quote-block {
+  min-width: 0;
+  padding: var(--space-1) var(--space-1-5);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+/* The quote block's label row doubles as its copy button's home (no
+   lone-button header row when the pill carries no provenance); the button
+   pulls 4px right so its glyph hugs the block's inner edge. */
+.mention-tip-quote-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-05);
+}
+.mention-tip-quote-block-head .mention-tip-copy {
+  margin-right: calc(-1 * var(--space-1));
+  /* Each block's copy button appears only while that block is hovered (or
+     its button is tabbed to — an invisible focusable control would
+     otherwise be a keyboard trap). */
+  opacity: 0;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+.mention-tip-quote-block:hover .mention-tip-copy,
+.mention-tip-quote-block:focus-within .mention-tip-copy {
+  opacity: 1;
+}
+/* Touch devices have no hover to reveal the buttons with — on (hover: none)
+   the per-block copy buttons stay visible instead of being undiscoverable. */
+@media (hover: none) {
+  .mention-tip-quote-block-head .mention-tip-copy {
+    opacity: 1;
+  }
+}
+.mention-tip-quote-block-head .mention-tip-quote-block-label {
+  margin-bottom: 0;
+}
+.mention-tip-quote-block-label {
+  margin-bottom: var(--space-05);
+  color: var(--p-tip-ink-weak);
+  font-size: var(--text-2xs);
+  line-height: round(calc(var(--text-2xs) * 1.5), 1px);
+}
+.mention-tip-quote-text {
+  min-width: 0;
+  max-height: var(--p-tip-quote-lines);
+  /* overflow-y:scroll (not auto): forces the classic, ALWAYS-ON scrollbar —
+     the macOS overlay auto-hide would otherwise leave users no way to tell
+     the quote is scrollable. The thin faint thumb below keeps it quiet. */
+  overflow-y: scroll;
+  white-space: pre-wrap;
+}
+/* The bundled comment rides the second block, muted; the blocks' own gap
+   and grounds separate it from the quote (no hairline of its own). */
+.mention-tip-quote-comment {
+  color: var(--p-tip-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: var(--p-tip-comment-lines);
+  overflow-y: scroll;
+}
+/* The scroll areas' scrollbar: ALWAYS visible when the block can scroll
+   (overflow-y:scroll above forces the classic scrollbar — the macOS overlay
+   auto-hide would leave users no way to tell the area scrolls), a 6px
+   subdued ink wash on the inverted dark skin, transparent track. */
+.mention-tip-quote-text,
+.mention-tip-quote-comment {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, currentColor 40%, transparent) transparent;
+}
+.mention-tip-quote-text::-webkit-scrollbar,
+.mention-tip-quote-comment::-webkit-scrollbar {
+  width: var(--space-1-5);
+}
+.mention-tip-quote-text::-webkit-scrollbar-thumb,
+.mention-tip-quote-comment::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, currentColor 40%, transparent);
+  border-radius: var(--radius-xs);
+}
+.mention-tip-quote-text::-webkit-scrollbar-track,
+.mention-tip-quote-comment::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* The preview quote's provenance: the file path (and line range) as a faint
+   single line above the blocks, ellipsized. */
+.mention-tip-quote-source {
+  min-width: 0;
+  color: var(--p-tip-ink-weak);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The attachment tooltip's error line (a failed/interrupted upload): danger
+   lifted toward the bubble's own ink so it reads on the inverted skin. */
+.mention-tip-att-error {
+  margin-top: var(--space-05);
+  color: color-mix(in srgb, var(--color-danger) 70%, currentColor);
+}
+.mention-tip--media,
+.mention-tip--actions {
+  padding: var(--space-1-5);
+  border-radius: var(--radius-lg);
+}
+.mention-tip-media {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+.mention-tip-media-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  align-self: center; /* a narrower-than-popover frame centers, never hugs left */
+  min-height: var(--p-mention-tip-media-preview-min-h);
+  border: 1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);
+  border-radius: var(--radius-sm);
+  /* Photoshop-classic transparency checkerboard, dark-skin adapted: two
+     low-contrast grays — an opaque WHITE image and a transparent area can no
+     longer be mistaken for each other (the plain wash could). */
+  background-color: color-mix(in srgb, var(--color-bg) 8%, transparent);
+  background-image: var(--p-mention-tip-media-check-bg);
+  background-size: var(--p-mention-tip-media-check) var(--p-mention-tip-media-check);
+  background-position: 0 0, 0 calc(var(--p-mention-tip-media-check) / 2), calc(var(--p-mention-tip-media-check) / 2) calc(var(--p-mention-tip-media-check) / -2), calc(var(--p-mention-tip-media-check) / -2) 0;
+  overflow: hidden;
+}
+.mention-tip-media-el::-webkit-media-controls-fullscreen-button,
+.mention-tip-media-el::-webkit-media-controls-overflow-button {
+  display: none !important;
+}
+/* The media element sizes ITSELF: max caps + object-fit contain preserve
+   the natural ratio with zero JS (a 4K shot caps at the width token, a tall
+   one at the height token, a small one stays 1:1). The frame and the bubble
+   just wrap the result — no measurement, no provisional sizing. */
+.mention-tip-media-el {
+  display: block;
+  max-width: var(--p-mention-tip-media-w);
+  max-height: var(--p-mention-tip-media-h);
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+}
+.mention-tip-media-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.mention-tip-media-placeholder svg {
+  width: var(--p-ic-lg);
+  height: var(--p-ic-lg);
+  display: block;
+}
+/* The placeholder's state hint (loading / uploading / unavailable) — the
+   preview frame never sits blank without saying why. */
+.mention-tip-media-hint {
+  padding: 0 var(--space-2) var(--space-2);
+  color: color-mix(in srgb, currentColor 60%, transparent);
+  text-align: center;
+}
+.mention-tip-media-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+/* The overflow fix: the name is ONE line — nowrap with the builder's
+   width-adaptive middle ellipsis in the text (tail ellipsis as the CSS
+   backstop); it can shrink but never wraps. The size hugs the name (the
+   slack goes AFTER it), never stranded at the row's far edge with a
+   hair of room to the border. */
+.mention-tip-media-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: var(--weight-semibold);
+}
+/* The failure reason rides a LIFTED banner just above the footer — plain
+   text on the bubble read as metadata, not a problem. */
+.mention-tip-media-error {
+  padding: var(--space-1) var(--space-1-5);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg) 8%, transparent);
+  color: color-mix(in srgb, var(--color-danger) 70%, currentColor);
+}
+/* Footer (always last): upload state at the left, actions at the right. */
+.mention-tip-media-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.mention-tip-media-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  flex: 1 0 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font-weight: var(--weight-medium);
+  padding-left: var(--space-05);
+}
+.mention-tip-media-state.is-danger {
+  color: color-mix(in srgb, var(--color-danger) 70%, currentColor);
+}
+/* Determinate progress ring; the arc's dasharray is driven inline. */
+.mention-tip-media-ring,
+.mention-tip-media-ring svg {
+  width: var(--p-mention-tip-media-ring);
+  height: var(--p-mention-tip-media-ring);
+  display: block;
+  flex: none;
+}
+.mention-tip-media-ring-track {
+  stroke: color-mix(in srgb, currentColor 18%, transparent);
+}
+.mention-tip-media-ring-arc {
+  stroke: color-mix(in srgb, currentColor 78%, transparent);
+}
+/* Indeterminate spinner (uploading without a byte reading yet). */
+.mention-tip-media-spin {
+  flex: none;
+  width: var(--p-mention-tip-media-spin);
+  height: var(--p-mention-tip-media-spin);
+  border-radius: var(--radius-full);
+  border: 1.5px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-top-color: color-mix(in srgb, currentColor 78%, transparent);
+  animation: mention-tip-media-rot var(--duration-slow) linear infinite;
+}
+@keyframes mention-tip-media-rot {
+  to { transform: rotate(360deg); }
+}
+.mention-tip-media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  justify-content: flex-end;
+  gap: var(--space-1-5);
+  margin-left: auto;
+  flex: none;
+}
+/* Footer action buttons (copy path / fullscreen): the menu-row ink recipe —
+   the label starts muted, the glyph one step muter, hover lifts the whole
+   button to the brightest tier. Compact, radius concentric with the popover. */
+.mention-tip-media-open {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-05) var(--space-1-5);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg) 10%, transparent);
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+.mention-tip-media-open:hover {
+  background: color-mix(in srgb, var(--color-bg) 18%, transparent);
+  color: var(--color-bg);
+}
+.mention-tip-media-open:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.mention-tip-media-open svg {
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  display: block;
+  color: color-mix(in srgb, currentColor 45%, transparent);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.mention-tip-media-open:hover svg {
+  color: var(--color-bg);
+}
+.mention-tip-pasted-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-05);
+}
+.mention-tip-pasted-text-meta {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+}
+.mention-tip-pasted-text .mention-tip-media-actions {
+  justify-content: flex-start;
+  margin-top: var(--space-1);
+  margin-left: 0;
+}
+.mention-tip--actions .mention-tip-pasted-text > :not(.mention-tip-media-actions) {
+  padding-inline: var(--space-05);
+}
+.mention-tip-desc {
+  margin-top: var(--space-05);
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+/* Inline probe indicator at the tail of a path tooltip. */
+.mention-tip-spinner {
+  display: inline-block;
+  /* 10px via tokens (8 + 2); the baseline lift rides its own token (em so it
+     tracks the tooltip's font size); the stroke rides the ring family's
+     shared token (todo pending ring, xs Spinner). */
+  width: calc(var(--space-2) + var(--space-05));
+  height: calc(var(--space-2) + var(--space-05));
+  margin-left: var(--space-1);
+  vertical-align: var(--p-mention-tip-spinner-lift);
+  border-radius: 50%;
+  border: var(--p-ring-stroke) solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  animation: mention-tip-spin var(--duration-spin) linear infinite;
+}
+@keyframes mention-tip-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* A mention whose target no longer exists (the tooltip probe returned a
+   definitive not-found): faded ink + strike-through. Placed last so the
+   strike survives both the message hover underline and the composer's
+   editing-semantics overrides — clicks stay enabled regardless. */
+.mention-pill.mention-missing,
+.mention-pill.mention-missing:hover {
+  color: color-mix(in srgb, var(--color-text-muted) 55%, transparent);
+  text-decoration: line-through;
+}
+.mention-pill.mention-missing .mention-pill-icon {
+  color: inherit;
+}
+/* An attachment pill the composer registry no longer knows (an undo
+   resurrected the pill without its entry) or whose probe came back
+   not-found: the same faded + strike recipe, on the shared pill ink. */
+.attachment-pill.attachment-missing,
+.attachment-pill.attachment-missing:hover,
+.attachment-pill.attachment-missing .attachment-pill-icon,
+.attachment-pill.attachment-missing:hover .attachment-pill-icon {
+  color: color-mix(in srgb, var(--color-text-muted) 55%, transparent);
+  text-decoration: line-through;
+}
+/* An attachment pill whose upload failed (or was interrupted by a reload —
+   the draft sidecar's 'upload-interrupted' marker): the danger ink flags it
+   in place. The tooltip names the reason, the send gate refuses to silently
+   drop it, and re-dropping the same file restarts the upload (clearing the
+   state). Composer-only state — message-side pills have no registry behind
+   them and never mark. */
+.attachment-pill.attachment-error,
+.attachment-pill.attachment-error:hover,
+.attachment-pill.attachment-error .attachment-pill-icon,
+.attachment-pill.attachment-error:hover .attachment-pill-icon {
+  color: var(--color-danger);
+}
+.resize-drag-shield {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-max);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-app-region: no-drag;
+}

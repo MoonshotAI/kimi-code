@@ -117,5 +117,5 @@ When the default port is busy, `kimi web` automatically retries on the next port
 ## Next steps
 
 - [Using in Scripts and CI](./print.md) — one-shot non-interactive runs and structured JSONL output
-- [Using in Other Agents](./other-agents.md) — drive and hand off sessions from Claude Code, Codex, and Cursor
+- [Using in Other Agents (Agent to Agent)](./other-agents.md) — drive and hand off sessions from Claude Code, Codex, and Cursor
 - [kimi command](../reference/kimi-command.md#kimi-web) — all `kimi web` and `kimi rc` options

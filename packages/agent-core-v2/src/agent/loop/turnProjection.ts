@@ -521,7 +521,7 @@ export class AgentTurnProjection {
         }));
         return;
       }
-      case 'llm.sent': {
+      case 'llm.requested': {
         const turn = this.active;
         if (turn === undefined || (turn.retry === undefined && turn.current !== undefined)) return;
         const stepNumber = turn.current?.number ?? turn.gatedSteps;
@@ -537,7 +537,7 @@ export class AgentTurnProjection {
         }));
         return;
       }
-      case 'llm.streaming.part': {
+      case 'llm.delta.part': {
         const turn = this.active;
         if (turn === undefined) return;
         const part = event.part;
@@ -578,12 +578,12 @@ export class AgentTurnProjection {
             return;
         }
       }
-      case 'llm.streaming.usage': {
+      case 'llm.delta.usage': {
         const step = this.active?.current;
         if (step !== undefined) step.usage = mergeUsage(step.usage, event.usage);
         return;
       }
-      case 'llm.streaming.finish': {
+      case 'llm.delta.finish': {
         const step = this.active?.current;
         if (step !== undefined) {
           step.providerFinishReason = event.finish.finishReason ?? undefined;
@@ -591,15 +591,23 @@ export class AgentTurnProjection {
         }
         return;
       }
-      case 'llm.streaming.message_id': {
+      case 'llm.delta.message_id': {
         const step = this.active?.current;
         if (step !== undefined) step.messageId = event.messageId;
         return;
       }
-      case 'llm.retrying': {
+      case 'llm.retry': {
         const turn = this.active;
         if (turn === undefined) return;
         const step = turn.current;
+        if (step !== undefined) {
+          void this.options.dispatcher.dispatch(new TurnStepStreamReset({
+            agentId: this.options.scopeContext.agentId,
+            turnId: turn.id,
+            step: step.number,
+            stepId: step.uuid,
+          }));
+        }
         if (event.reason === 'recovery') {
           turn.current = undefined;
           return;
@@ -613,14 +621,6 @@ export class AgentTurnProjection {
           errorName: fields.errorName,
           statusCode: fields.statusCode,
         };
-        if (step !== undefined) {
-          void this.options.dispatcher.dispatch(new TurnStepStreamReset({
-            agentId: this.options.scopeContext.agentId,
-            turnId: turn.id,
-            step: step.number,
-            stepId: step.uuid,
-          }));
-        }
         void this.options.dispatcher.dispatch(new TurnStepRetrying({
           agentId: this.options.scopeContext.agentId,
           turnId: turn.id,

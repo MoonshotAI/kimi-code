@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.kimi.code.desktop</id>
+  <name>Kimi Code</name>
+  <summary>Everything you love about Kimi Code, now on desktop</summary>
+  <developer id="ai.moonshot">
+    <name>Moonshot AI</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <launchable type="desktop-id">kimi-code.desktop</launchable>
+  <url type="homepage">https://kimi.com/code</url>
+  <icon type="stock">kimi-code</icon>
+  <categories>
+    <category>Development</category>
+  </categories>
+  <keywords>
+    <keyword>kimi</keyword>
+    <keyword>code</keyword>
+    <keyword>coding</keyword>
+    <keyword>agent</keyword>
+  </keywords>
+  <description>
+    <p>Kimi Code Desktop — Everything you love about Kimi Code, now on desktop.</p>
+  </description>
+  <releases>
+    <release version="@APP_VERSION@" date="@RELEASE_DATE@"/>
+  </releases>
+</component>

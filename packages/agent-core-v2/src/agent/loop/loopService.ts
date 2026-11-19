@@ -10,7 +10,7 @@ import { abortError, isUserCancellation, userCancellationReason } from '#/_base/
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { AgentLoopRequestObserver } from './requestObservation';
-import { createAgentMediaPolicy, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
+import { createAgentMediaPolicy, hideReadMediaFile, type AgentMediaPolicy, type AgentMediaPolicyFactory } from './mediaPolicy';
 import {
   agentLLMRequestLogFields,
   type CoreLoopRequester,
@@ -21,6 +21,7 @@ import {
   type ResolvedRequestContext,
 } from './requesterContract';
 import { AgentLoopProjector } from './projector';
+import { project } from './projection';
 import { createStructureRecovery, createStructureResolver } from './projectionPolicy';
 import { createToolSelectResolver } from './toolSelectPolicy';
 import { RequestMetadataTracker, requestMetadataHeaders } from './requestMetadata';
@@ -120,6 +121,7 @@ import {
   type LoopNotify,
   type LoopNotifyMessage,
   type LoopNotifyHandle,
+  type LoopRequestContent,
   type LoopSnapshot,
   type LoopSubmitResult,
   type PromptHandle,
@@ -430,6 +432,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return this.turns.history(source);
   }
 
+  previewRequestContent(): LoopRequestContent {
+    const capabilities = this.data().modelCapabilities;
+    const disclosure = this.toolSelect.enabled(capabilities);
+    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
+    const tools = this.toolSelect.requestTools(this.baselineTools(), disclosure, true, source);
+    const messages = this.toolSelect.shapeHistory(source, disclosure, tools);
+    const mediaInput = capabilities.image_in || capabilities.video_in;
+    return {
+      systemPrompt: this.loop?.state.profile.systemPrompt || this.getSystemPrompt(),
+      tools: mediaInput ? tools : tools.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
+      messages: project(mediaInput ? messages : hideReadMediaFile(messages)),
+    };
+  }
+
   historyRevision(): number {
     return this.loop?.historyRevision ?? 0;
   }
@@ -537,10 +553,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     loop.subscribe((event) => {
       const enriched = this.turns.enrich(event, this.toolExecutor);
       this.notifications.project(event);
-      if (event.type === 'llm.retrying') this.journal.append(enriched);
+      if (event.type === 'llm.retry') this.journal.append(enriched);
       this.turns.project(enriched, loop);
       this.projectTaskEvent(enriched);
-      if (event.type !== 'llm.retrying') this.journal.append(enriched);
+      if (event.type !== 'llm.retry') this.journal.append(enriched);
       if ((event.type === 'tool.async_ended' || (event.type === 'tool.ended' && !event.detached)) && event.taskId !== undefined) {
         this.toolExecutor.release(event.taskId);
       }

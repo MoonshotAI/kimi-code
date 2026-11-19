@@ -383,7 +383,7 @@ export class SshDeviceBridge implements DeviceBridge {
   }
 
   private async establish(): Promise<DeviceSession> {
-    if (this.statusValue !== 'ready') this.update('connecting');
+    if (this.statusValue !== 'ready') this.update('connecting', this.failureValue, this.errorValue);
     try {
       const active = await this.openSession();
       await this.identify(active);
@@ -523,7 +523,7 @@ export class SshDeviceBridge implements DeviceBridge {
           if (this.sessionValue !== activeSession) return;
           this.sessionValue = undefined;
           if (this.disposed || this.statusValue !== 'ready' || code === 0) return;
-          this.update('connecting');
+          this.update('connecting', this.failureValue, this.errorValue);
           void this.reconnect();
         }
       });

@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { KimiOpenAITransportFixture } from '../types';
 
 export default {
-  name: 'kimi-openai-trace-id',
+  name: 'as a Kimi OpenAI user, I want trace ids preserved from streaming responses',
   module: testModule(),
   endpoint: { baseUrl: 'https://example.test/v1', apiKey: 'test-key' },
   response: {

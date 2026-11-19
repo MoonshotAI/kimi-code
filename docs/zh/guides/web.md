@@ -117,5 +117,5 @@ Web 界面和 CLI 共享同一份登录态、配置（`config.toml`）和会话�
 ## 下一步
 
 - [在脚本与 CI 中使用](./print.md) — 单次非交互执行与结构化输出
-- [在其他 Agent 中使用](./other-agents.md) — 从 Claude Code、Codex、Cursor 等 Agent 驱动与交接会话
+- [在其他 Agent 中使用（Agent to Agent）](./other-agents.md) — 从 Claude Code、Codex、Cursor 等 Agent 驱动与交接会话
 - [kimi 命令](../reference/kimi-command.md#kimi-web) — `kimi web` 与 `kimi rc` 的全部命令行选项

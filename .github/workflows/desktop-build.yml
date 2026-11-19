@@ -1,0 +1,490 @@
+name: Desktop build
+run-name: Build ${{ inputs.preview && 'Preview' || (inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))) && 'Canary' || 'Stable' }} · ${{ github.ref_name }}
+
+# 桌面端（Electron）安装包流水线：macOS arm64/x64、Windows x64、Linux x64。
+#
+# 需要的 secrets（Settings -> Secrets and variables -> Actions）：
+#   APPLE_CERTIFICATE_P12          base64 编码的 Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD     .p12 导出密码
+#   APPLE_NOTARIZATION_KEY_P8      base64 编码的 App Store Connect API Key (.p8)
+#   APPLE_NOTARIZATION_KEY_ID      API Key ID
+#   APPLE_NOTARIZATION_ISSUER_ID   Issuer ID (UUID)
+#   AZURE_TENANT_ID                Entra 租户 ID（Windows 签名的服务主体）
+#   AZURE_CLIENT_ID                Entra 应用（客户端）ID，须在工件签名帐户上分配
+#                                  Artifact Signing Certificate Profile Signer 角色
+#   AZURE_CLIENT_SECRET            应用客户端密钥
+# 需要的 variables（同页 Variables 标签）：
+#   AZURE_TRUSTED_SIGNING_ENDPOINT                  工件签名帐户区域端点（如 https://eus.codesigning.azure.net）
+#   AZURE_TRUSTED_SIGNING_ACCOUNT_NAME              工件签名帐户名
+#   AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME  证书配置文件名
+on:
+  push:
+    branches: ['release/**']
+  workflow_dispatch:
+    inputs:
+      canary:
+        description: 'Kimi Code Canary 内测构建：macOS arm64、Windows x64 和 Linux x64，使用目标正式版的 Canary 版本，发布 GitHub prerelease'
+        required: false
+        type: boolean
+        default: false
+      target-version:
+        description: 'Canary 目标正式版；release 分支自动计算，其他分支必须填写'
+        type: string
+        required: false
+      preview:
+        description: '独立 Preview 体验包：macOS arm64 和 Windows x64，只上传 Artifact，不发布更新；与 canary 互斥'
+        required: false
+        type: boolean
+        default: false
+      retention-days:
+        description: 'Artifact 保留天数'
+        required: false
+        type: number
+        default: 7
+      upload-artifact-prefix:
+        description: 'Artifact 名前缀（留空自动带构建类型和分支名）'
+        required: false
+        type: string
+        default: ''
+  # release.yml 通过 workflow_call 调用本 workflow 打发版产物。
+  workflow_call:
+    inputs:
+      retention-days:
+        required: false
+        type: number
+        default: 7
+      upload-artifact-prefix:
+        required: false
+        type: string
+        default: 'kimi-code-app'
+    secrets:
+      APPLE_CERTIFICATE_P12:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+      APPLE_NOTARIZATION_KEY_P8:
+        required: false
+      APPLE_NOTARIZATION_KEY_ID:
+        required: false
+      APPLE_NOTARIZATION_ISSUER_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  # hotfix 补丁分支不出 canary：weekly 放行、hotfix 跳过、unknown fail-closed
+  #（人工 gh workflow run -f canary=true 兜底）；只拦直推（workflow 同名才是直推——
+  # release.yml 经 workflow_call 调用时 event_name 仍是 push，不能拦正式发布）。
+  branch-kind:
+    name: Gate canary on branch kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      kind: ${{ steps.judge.outputs.kind }}
+    steps:
+      - id: judge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GATE_ACTIVE: ${{ github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/') }}
+        run: |
+          set -euo pipefail
+          if [ "$GATE_ACTIVE" != "true" ]; then
+            echo "kind=na" >> "$GITHUB_OUTPUT"
+            echo "非 release 分支直推（event=${{ github.event_name }}, workflow=${{ github.workflow }}），闸门不生效，kind=na。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # 无需 checkout：判据脚本走 GitHub API，从当前 push 的 commit 拉单文件。
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github.raw" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/scripts/release_branch_kind.py?ref=${{ github.sha }}" \
+            -o /tmp/release_branch_kind.py
+          set +e
+          python3 /tmp/release_branch_kind.py \
+            --repo "${{ github.repository }}" --branch "${{ github.ref_name }}" \
+            --no-cache --format json | tee /tmp/kind.json
+          rc=${PIPESTATUS[0]}
+          set -e
+          kind="$(jq -r .kind /tmp/kind.json)"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Branch kind gate"
+            echo "- branch: \`${{ github.ref_name }}\`"
+            echo "- kind: **${kind}**"
+            echo "- base_tag: $(jq -r '.base_tag // "—"' /tmp/kind.json)"
+            echo "- merge_base: $(jq -r '.merge_base_sha // "—"' /tmp/kind.json)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::分支性质判定 unknown（fail-closed：canary 不构建；如需出包可人工 gh workflow run -f canary=true）"
+            exit "$rc"
+          fi
+          if [ "$kind" = "hotfix" ]; then
+            echo "::notice::hotfix 补丁分支：跳过本次 push 的 canary 构建"
+          fi
+
+  # nightly 只拦同仓 changeset-release/release/* -> release/* 且确含 Desktop
+  # 版本变化的 PR；CLI-only 不阻断，版本证据不可判读时 fail-closed。
+  nightly-guard:
+    name: Skip nightly during Desktop release window
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/desktop-nightly-guard.mjs
+
+  # 动态矩阵：jobs.<id>.if 在 matrix 展开前求值、拿不到 matrix 上下文
+  #（之前 job 级 if 引用 matrix.target 把整个文件判了无效，push 全是 0s
+  # 幻影失败），所以平台过滤改走 fromJSON 动态矩阵。
+  matrix-source:
+    name: Prepare build
+    needs: [nightly-guard, branch-kind]
+    if: |
+      always() &&
+      needs.nightly-guard.result == 'success' &&
+      needs.nightly-guard.outputs.skip != 'true' &&
+      (github.event_name != 'push' || github.workflow != 'Desktop build' || needs.branch-kind.outputs.kind == 'weekly')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      targets: ${{ steps.matrix.outputs.targets }}
+      artifact-prefix: ${{ steps.artifact-name.outputs.prefix }}
+      canary-version: ${{ steps.canary.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fetch Changesets base branch
+        if: startsWith(github.ref, 'refs/heads/release/') && (inputs.canary || github.event_name == 'push')
+        run: git fetch --no-tags origin main:refs/heads/main
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+        if: inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))
+      - name: Resolve Canary version
+        id: canary
+        if: inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))
+        env:
+          CANARY_TARGET_VERSION: ${{ inputs.target-version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          node scripts/canary-version.mjs >> "$GITHUB_OUTPUT"
+      - name: Resolve artifact prefix
+        id: artifact-name
+        env:
+          ARTIFACT_PREFIX: ${{ inputs.upload-artifact-prefix }}
+          PREVIEW: ${{ inputs.preview }}
+          CANARY: ${{ (inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))) }}
+        run: node scripts/desktop-artifact-prefix.mjs >> "$GITHUB_OUTPUT"
+      - id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ (inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))) }}" = "true" ] && [ "${{ inputs.preview }}" = "true" ]; then
+            echo 'Canary and Preview builds are mutually exclusive' >&2
+            exit 1
+          fi
+          if [ "${{ (inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))) }}" = "true" ]; then
+            echo 'targets=[{"os":"macos-15","target":"darwin-arm64"},{"os":"windows-2025","target":"win32-x64"},{"os":"ubuntu-24.04","target":"linux-x64"}]' >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.preview }}" = "true" ]; then
+            echo 'targets=[{"os":"macos-15","target":"darwin-arm64"},{"os":"windows-2025","target":"win32-x64"}]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'targets=[{"os":"macos-15","target":"darwin-arm64"},{"os":"macos-15-intel","target":"darwin-x64"},{"os":"windows-2025","target":"win32-x64"},{"os":"ubuntu-24.04","target":"linux-x64"}]' >> "$GITHUB_OUTPUT"
+          fi
+
+  package:
+    name: Build installers (${{ matrix.target }})
+    needs: matrix-source
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix-source.outputs.targets) }}
+
+    steps:
+      - name: Checkout (with kimi-code submodule)
+        # desktop 经 workspace import kimi-code 的 packages 源码，必须拉
+        # submodule；kimi-code 是公开仓，默认 GITHUB_TOKEN 即可。
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        # postinstall 会自动跑 electron-rebuild。
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup macOS keychain (Developer ID)
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/macos-keychain-setup
+        with:
+          certificate-p12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Prepare CSC_NAME for electron-builder (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # electron-builder 不认 CSC_NAME 里的 "Developer ID Application: "
+          # 前缀，剥掉后按团队名 + Team ID 匹配证书。
+          name="${APPLE_SIGNING_IDENTITY}"
+          name="${name#Developer ID Application: }"
+          echo "CSC_NAME=$name" >> "$GITHUB_ENV"
+
+      - name: Prepare notarization API key (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/notary-AuthKey.p8"
+          printf '%s' "$APPLE_NOTARIZATION_KEY_P8" | base64 -d > "$key_path"
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
+
+      - name: Stamp Canary version
+        if: inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))
+        env:
+          CANARY_VERSION: ${{ needs.matrix-source.outputs.canary-version }}
+        run: node scripts/canary-version.mjs --stamp
+
+      - name: Stamp Preview version
+        if: inputs.preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const p = "apps/desktop/package.json";
+            const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+            pkg.version = pkg.version.split("-")[0] + "-preview." + process.env.GITHUB_RUN_NUMBER + "." + process.env.GITHUB_RUN_ATTEMPT + ".g" + process.env.GITHUB_SHA.slice(0, 8);
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "Preview version: `" + pkg.version + "`\n\nSource commit: `" + process.env.GITHUB_SHA + "`\n");
+          '
+
+      - name: Build & package desktop app
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && 'true' || 'false' }}
+          CSC_KEYCHAIN: ${{ env.APPLE_KEYCHAIN_PATH }}
+          KIMI_DESKTOP_NOTARIZE: ${{ runner.os == 'macOS' && 'true' || 'false' }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+          # canary=true 时 electron-builder 切到 Kimi Code Canary 身份
+          #（独立 appId/productName/黄图标，electron-builder.config.cjs）。
+          KIMI_DESKTOP_CANARY: ${{ (inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))) && 'true' || 'false' }}
+          KIMI_DESKTOP_PREVIEW: ${{ inputs.preview && 'true' || 'false' }}
+          # Windows 固定走 Azure Artifact Signing（electron-builder.config.cjs 的
+          # azureSignOptions）；Entra 服务主体凭据即 EnvironmentCredential 三件套。
+          KIMI_DESKTOP_AZURE_TRUSTED_SIGNING: ${{ runner.os == 'Windows' && 'true' || 'false' }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: pnpm --filter kimi-code-app run dist --publish never
+
+      - name: Set macOS updater minimum system version
+        if: runner.os == 'macOS' && !inputs.preview
+        run: node scripts/set-mac-update-minimum-system-version.mjs apps/desktop/dist-app
+
+      - name: Verify Canary Linux installers
+        if: runner.os == 'Linux' && (inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/')))
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm cpio
+          bash scripts/verify-canary-linux.sh apps/desktop/dist-app
+
+      - name: Verify signed macOS installers
+        if: runner.os == 'macOS'
+        run: bash scripts/verify-macos-installers.sh apps/desktop/dist-app
+
+      - name: Verify signed Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = Get-Item "apps/desktop/dist-app/*.exe" | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          Write-Output "$($exe.Name): $($sig.Status) | $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "Windows installer signature check failed: $($sig.Status) $($sig.StatusMessage)" }
+
+      - name: Rename mac updater metadata per arch (macOS)
+        if: runner.os == 'macOS' && !inputs.preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 两个 mac leg 各自产出 <channel>-mac.yml（channel 固定 latest，
+          # 预发版不隔离通道；canary/preview 按版本号推导），release.yml 合并
+          # 下载 artifact 时同名文件 last-writer-wins，会丢掉一个 arch 的更新
+          # feed。这里按 arch 改名避让；release.yml 发布前再把两份合并回单个
+          # <channel>-mac.yml（electron-updater 在 files 列表里按 arch 自选 zip）。
+          cd apps/desktop/dist-app
+          arch="${{ matrix.target }}"
+          arch="${arch##*-}"
+          channel_yml=$(ls *-mac.yml)
+          channel="${channel_yml%-mac.yml}"
+          mv "$channel_yml" "${channel}-mac-${arch}.yml"
+
+      - name: Cleanup macOS keychain
+        if: always() && runner.os == 'macOS'
+        uses: ./.github/actions/macos-keychain-cleanup
+
+      - name: Upload DMG
+        if: runner.os == 'macOS'
+        id: upload-dmg
+        uses: actions/upload-artifact@v7
+        with:
+          path: apps/desktop/dist-app/*.dmg
+          archive: false
+          retention-days: ${{ inputs.retention-days || 7 }}
+          if-no-files-found: error
+
+      - name: Add DMG download link
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          DMG_URL: ${{ steps.upload-dmg.outputs.artifact-url }}
+          BUILD_TARGET: ${{ matrix.target }}
+        run: printf '\n[Download DMG (%s)](%s)\n' "$BUILD_TARGET" "$DMG_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Windows Preview installer
+        if: runner.os == 'Windows' && inputs.preview
+        id: upload-preview-exe
+        uses: actions/upload-artifact@v7
+        with:
+          path: apps/desktop/dist-app/*.exe
+          archive: false
+          retention-days: ${{ inputs.retention-days || 7 }}
+          if-no-files-found: error
+
+      - name: Add Windows Preview download link
+        if: runner.os == 'Windows' && inputs.preview
+        shell: bash
+        env:
+          INSTALLER_URL: ${{ steps.upload-preview-exe.outputs.artifact-url }}
+        run: printf '\n[Download EXE (win32-x64)](%s)\n' "$INSTALLER_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release bundle
+        if: ${{ !inputs.preview }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.matrix-source.outputs.artifact-prefix }}-${{ matrix.target }}
+          retention-days: ${{ inputs.retention-days || 7 }}
+          path: |
+            apps/desktop/dist-app/*.dmg
+            apps/desktop/dist-app/*.zip
+            apps/desktop/dist-app/*.exe
+            apps/desktop/dist-app/*.AppImage
+            apps/desktop/dist-app/*.deb
+            apps/desktop/dist-app/*.rpm
+            # electron-updater 元数据（latest*.yml + 差分用的 blockmap），
+            # 自动更新与 CDN 发布（publish-desktop.sh）都依赖它们。
+            apps/desktop/dist-app/*.yml
+            apps/desktop/dist-app/*.blockmap
+          if-no-files-found: error
+
+  publish-canary:
+    name: Publish GitHub prerelease
+    needs: [matrix-source, package]
+    if: (inputs.canary || github.event_name == 'schedule' || (github.event_name == 'push' && github.workflow == 'Desktop build' && startsWith(github.ref, 'refs/heads/release/'))) && !inputs.preview
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create / upload
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ needs.matrix-source.outputs.artifact-prefix }}-*
+          merge-multiple: true
+          path: dist-desktop-canary
+
+      - name: Rename canary update metadata to the channel name
+        # electron-builder 按 arch 产出 canary-mac-arm64.yml，electron-updater
+        # 查的是无 arch 后缀的 canary-mac.yml（差分下载的入口元数据）。
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist-desktop-canary
+          [ -f canary-mac-arm64.yml ] && mv canary-mac-arm64.yml canary-mac.yml
+          ls -la
+
+      - name: Create GitHub prerelease and upload installers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANARY_VERSION: ${{ needs.matrix-source.outputs.canary-version }}
+        run: |
+          set -euo pipefail
+          version="$CANARY_VERSION"
+          tag="kimi-code-desktop@${version}"
+          title="Kimi Code Desktop ${version}"
+          echo "==> canary tag: ${tag}"
+          ls -la dist-desktop-canary
+          release_json=""
+          if release_json=$(gh release view "$tag" --json tagName,targetCommitish,name,isDraft,isPrerelease,assets 2>&1); then
+            printf '%s' "$release_json" | jq -e \
+              --arg tag "$tag" \
+              --arg target "$GITHUB_SHA" \
+              --arg title "$title" \
+              '.tagName == $tag and .targetCommitish == $target and .name == $title and .isDraft == false and .isPrerelease == true' >/dev/null \
+              || { echo "error: existing ${tag} does not match this build" >&2; exit 1; }
+          else
+            printf '%s' "$release_json" | grep -qiE 'release not found|HTTP 404' \
+              || { printf '%s\n' "$release_json" >&2; exit 1; }
+            gh release create "$tag" \
+              --target "${GITHUB_SHA}" \
+              --title "Kimi Code Desktop ${version}" \
+              --notes "目标版本：${version%%-canary.*}；来源：${GITHUB_REF_NAME} @ ${GITHUB_SHA}。CDN 需手动发布。" \
+              --prerelease
+            release_json='{"assets":[]}'
+          fi
+          mapfile -t existing < <(printf '%s' "$release_json" | jq -r '.assets[]?.name')
+          missing=()
+          while IFS= read -r -d '' file; do
+            name="${file##*/}"
+            found=0
+            for current in "${existing[@]}"; do
+              if [ "$current" = "$name" ]; then
+                found=1
+                break
+              fi
+            done
+            if [ "$found" -eq 0 ]; then missing+=("$file"); fi
+          done < <(find dist-desktop-canary -maxdepth 1 -type f -print0 | sort -z)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            gh release upload "$tag" "${missing[@]}"
+          fi

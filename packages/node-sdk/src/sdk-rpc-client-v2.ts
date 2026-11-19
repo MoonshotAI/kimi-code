@@ -2393,6 +2393,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         input: input.input,
         skills: input.skills,
         steerIfActive: input.steerIfActive,
+        promptId: input.promptId,
       });
       return promptSubmissionResult(result);
     });
@@ -2407,7 +2408,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async steer(input: SessionPromptRpcInput): Promise<PromptSubmissionResult> {
     return this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentFacade(input.sessionId);
-      const result = await agent.steer({ input: input.input });
+      const result = await agent.steer({ input: input.input, promptId: input.promptId });
       return promptSubmissionResult(result);
     });
   }

@@ -17,6 +17,7 @@ interface MetaBody {
   code: number;
   data: {
     kimi_agent_protocol_version?: string;
+    home_dir?: string;
     experimental_flags?: Record<string, boolean>;
   };
 }
@@ -77,6 +78,13 @@ describe('/api/v1/meta experimental_flags', () => {
     const base = await boot();
     const flags = await getMetaFlags(base);
     expect(flags['tool-select']).toBe(false);
+  });
+
+  it('reports the data directory the server runs on as home_dir', async () => {
+    const base = await boot();
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    const body = (await res.json()) as MetaBody;
+    expect(body.data.home_dir).toBe(home);
   });
 
   it('reports a config-enabled flag from the very first response', async () => {

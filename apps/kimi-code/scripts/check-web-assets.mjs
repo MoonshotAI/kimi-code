@@ -13,12 +13,12 @@ async function assertWebAssets() {
     }
   } catch {
     throw new Error(
-      `未找到已提交的 web 产物 ${target}/index.html。web 产物由 code-app 仓同步（见根 AGENTS.md），` +
-        '请从该仓运行 `KIMI_CODE_REPO=<此 checkout> pnpm run sync:web` 并提交 dist-web。',
+      `未找到 web 产物 ${target}/index.html。dist-web 不再入库，由 desktop renderer 的 web 变体构建：` +
+        '运行 `pnpm sync:web`（或完整 `pnpm build`，其 prebuild 会自动同步）。详见 apps/kimi-code/AGENTS.md。',
     );
   }
 }
 
 await assertWebAssets();
 const files = await readdir(target, { recursive: true });
-console.log(`Web assets OK: ${target} (${files.length} entries, synced from code-app)`);
+console.log(`Web assets OK: ${target} (${files.length} entries, built from the desktop renderer web variant)`);

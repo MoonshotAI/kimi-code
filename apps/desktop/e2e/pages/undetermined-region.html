@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<style>html{background:#fff;color:#111}</style>
+<title>Shipping region</title>
+<h1>Shipping region</h1>
+<label for="region">Region</label>
+<select id="region">
+  <option value="us">United States</option>
+  <option value="eu">Europe</option>
+  <option value="asia">Asia</option>
+</select>
+<p id="result">No region change yet</p>
+<script>
+  let changes = 0;
+  const region = document.getElementById('region');
+  region.addEventListener('change', () => {
+    if (region.value === 'asia') {
+      const until = Date.now() + 17000;
+      while (Date.now() < until) continue;
+    } else {
+      alert(`Shipping to ${region.selectedOptions[0].text} changes the delivery date`);
+    }
+    changes += 1;
+    document.getElementById('result').textContent = `Region changes: ${changes}`;
+  });
+</script>
+</html>

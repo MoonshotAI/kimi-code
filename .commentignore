@@ -1,8 +1,5 @@
 # Paths exempt from scripts/check-comments.mjs. Same syntax as .gitignore.
 
-# Prebuilt web UI bundle synced from code-app.
-apps/kimi-code/dist-web/
-
 # Vendored upstream code that carries license headers.
 packages/pi-tui/
 
@@ -19,3 +16,9 @@ packages/acp-server/src/replay.ts
 packages/acp-server/src/session.ts
 packages/klient/src/contract/agent/schemas.ts
 packages/klient/test/facade.test.ts
+# Core tool tests document their issue/PR provenance at the user's request.
+packages/core/test/tool/*.test.ts
+
+# User-requested issue/PR provenance in LLM behavior tests.
+packages/core/test/llm/lifecycle/
+packages/core/test/llm/delta/

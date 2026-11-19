@@ -5,60 +5,57 @@ description: Use when generating changesets in the kimi-code repository — deci
 
 # Generate Changesets
 
-The only user-facing published package is the CLI: `@moonshot-ai/kimi-code`. All other `@moonshot-ai/*` packages (sdk, oauth, telemetry, and so on) are internal.
+## Products And Libraries
 
-## 1. Whether to Write
+Three user-facing products live under `apps/`. Every workspace package under `packages/` is a dependency library.
 
-Rule of thumb: **if users cannot perceive the change, write no changeset.** A changeset is a user-facing changelog entry, not a shipping gate — internal changes merged to main ship with the next release anyway, so skipping loses nothing.
+| Product | Package | Path | Ships via |
+|---|---|---|---|
+| CLI | `@moonshot-ai/kimi-code` | `apps/kimi-code` | npm + GitHub Release |
+| Desktop | `kimi-code-app` | `apps/desktop` | GitHub Release + CDN |
+| VS Code extension | `kimi-code` | `apps/vscode` | VS Marketplace + Open VSX |
 
-Do not write:
-- Docs-only or tests-only changes that never enter the shipped artifact.
-- Purely internal core/server refactors — internal architecture, wire/journal mechanics, or hidden first-party endpoints (`hide: true`) — unless they fix a bug users care about or change public KAP behavior.
-- When you are unsure whether users can perceive a change, ask first.
+Product changesets are user-facing changelog entries (they feed release notes, update dialogs, and marketplace changelogs). Library changesets are technical entries for the library's own changelog.
 
-Do write: user-perceivable new features or behavior changes, CLI subcommands/flags (`kimi web --json`, etc.), public KAP core conversation/session capabilities perceptible to external KAP callers, and internal-package changes that fix a user-useful bug or change CLI output/behavior (list `@moonshot-ai/kimi-code` for those).
+## 1. Whether To Write
 
-## 2. What to Write
+- **Changed a product's code and users can perceive it** → write for that product.
+- **Changed a library's source code** → always write for that library, even for internal refactors; the library's own changelog is the honest record of what changed. Test-only and docs-only changes are exempt.
+- **Changed public KAP (HTTP API) behavior that external callers can perceive** → write for the owning package (for example `kap-server`); hidden first-party endpoints (`hide: true`) are exempt.
+- **A library change flows into a product and is user-perceivable there** → also write for the product, as a separate file with a user-facing sentence.
+  - Changed `kap-server`'s session-list behavior → a `kap-server` entry; desktop embeds kap-server and users feel the change → a `kimi-code-app` entry too.
+  - `agent-core-v2` internal refactor (wire / journal / lifecycle plumbing) → an `agent-core-v2` entry only.
+- The packages ignored in `.changeset/config.json` (the `app-*` UI layers, `vite-preset`, the vis packages, and `kimi-inspect`) never appear in a changeset. Changes to the `app-*` UI layers are written as `kimi-code-app` product entries instead.
+- When unsure whether users can perceive a change, ask first.
 
-Create a short kebab-case file under `.changeset/`:
+## 2. Which Package
 
-```markdown
----
-"@moonshot-ai/kimi-code": patch
----
+- `apps/kimi-code/**` → `@moonshot-ai/kimi-code`
+- `apps/desktop/**` → `kimi-code-app`
+- `apps/vscode/**` → `kimi-code`
+- `packages/<lib>/**` → `<lib>`, plus one entry per affected product when the change is user-perceivable there.
 
-Fix occasional loss of tool call results in long conversations.
-```
+To judge whether a library change reaches a product, check its consumers (`pnpm why <pkg>`). Common flows: `kap-server` → CLI (`kimi web`) and desktop (embedded server); `agent-core` / `pi-tui` → CLI; `oauth` → all three products.
 
-Wording:
-- One short, user-facing English sentence that states only what changed. Drop trailing clauses that explain the cause, the benefit, or the mechanism.
-- When a default flips or an existing behavior is removed, name the behavior users lose, not only the new default. State the escape hatch if one exists, e.g. `Stop hot-reloading config, skills, and AGENTS.md by default; set [watch] enabled = true or KIMI_CODE_WATCH=1 to turn it back on.`; if there is none, say plainly that the old behavior is no longer available.
-- New features: say plainly what it is plus one line on how to use it, e.g. `Add the /foo slash command to list active sessions. Run /foo to see them.`
-- Experimental features: also state how to enable them (the flag, config key, or env var).
-- No file, class, or function names, and no PR numbers. No vague words like refactor, optimize, or improve. No real internal identifiers — use neutral placeholders such as `example.com` or `YOUR_API_KEY`.
-- Internal packages' own changelogs (such as the sdk) are not curated for end users — write those entries honestly and technically.
-- One logical change per changeset; split unrelated changes into separate files.
+One PR may carry several changesets — a library plus affected products, or several products changed at once. Never mix packages ignored in the config with non-ignored packages in one frontmatter.
 
 ## 3. Bump Level
 
-- `patch`: bug fixes, small improvements, configuration additions to existing features — when in doubt, use this.
-- `minor`: a real new capability users could not do before (a new slash command, a new subcommand, a new mode).
+- `patch`: bug fixes, small improvements — when in doubt, use this.
+- `minor`: a real new capability users could not do before (a new slash command, a new mode, a new settings surface).
 - `major`: **never write it.** If you think a change qualifies, stop and ask the user; without explicit approval fall back to `minor`, or to `patch` if `minor` is also unclear.
+- A product entry written because of a library change takes its level from the user-perceivable impact (usually `patch`).
 
-## 4. Which Package
+## 4. Wording
 
-- An internal change enters the CLI bundle and is user-perceivable → list `@moonshot-ai/kimi-code`.
-- An internal change does not enter the CLI or is not user-perceivable → write nothing; if it is written, list only that internal package.
-- Never mix packages ignored in `.changeset/config.json` with non-ignored packages in one frontmatter.
-- pi-tui exception: pi-tui-only changes list `@moonshot-ai/pi-tui`; if the same change is also visible to CLI users, write a separate CLI changeset (two files, never mixed).
-- The vis packages never appear in a changeset.
+- **Product entries**: one short, user-facing English sentence that states only what changed. Drop trailing clauses that explain the cause, the benefit, or the mechanism. New features: say plainly what it is plus one line on how to use it, e.g. `Add the /foo slash command to list active sessions. Run /foo to see them.` Experimental features: also state how to enable them (the flag, config key, or env var).
+- **Library entries**: honest, technical descriptions for the library's own changelog.
+- No file, class, or function names, and no PR numbers. No vague words like refactor, optimize, or improve. No real internal identifiers — use neutral placeholders such as `example.com` or `YOUR_API_KEY`.
+- One logical change per changeset; split unrelated changes into separate files.
 
 ## 5. Workflow
 
 1. Run `git status` / `git diff --name-only` to see which packages actually changed.
 2. Apply section 1; if no changeset is needed, stop.
-3. Pick the package and the bump, and write the one sentence.
+3. Pick the package(s) and bump level(s), and write the sentence(s).
 4. **Show the changeset text to whoever requested the work and get their confirmation before committing.**
-5. Do not guess at changes you do not understand: finish the parts that are clear, then list what is unclear and ask whether you may dig into the code.
-
-Before a release, review the accumulated `.changeset/` entries and delete the non-user-facing ones — the release PR regenerates from `.changeset/` on the selected release branch, so deleting a file removes its changelog entry without touching shipped code.

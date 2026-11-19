@@ -17,6 +17,8 @@ export type {
 
 export interface GoogleGenAIOptions {
   readonly vertexai?: boolean;
+  readonly project?: string;
+  readonly location?: string;
   readonly extras?: GoogleGenAIExtraParams;
 }
 
@@ -53,6 +55,8 @@ function createClient(
   const client = new GenAIClient({
     apiKey: endpoint.apiKey,
     vertexai: vertexai ? true : undefined,
+    project: endpoint.apiKey === undefined ? options?.project : undefined,
+    location: endpoint.apiKey === undefined ? options?.location : undefined,
     httpOptions: Object.keys(httpOptions).length > 0 ? httpOptions : undefined,
   });
   if (endpoint.fetch !== undefined) {

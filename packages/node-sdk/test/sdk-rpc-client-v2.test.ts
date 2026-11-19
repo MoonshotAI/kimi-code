@@ -805,7 +805,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const main = getLiveSessionById(client.engineAccessor, 'ses_steer_result')!
         .accessor.get(IAgentLifecycleService)
         .handleOf('main')!;
-      vi.spyOn(main.accessor.get(IAgentLoopService), 'notifyClient').mockResolvedValue({
+      const notifyClient = vi.spyOn(main.accessor.get(IAgentLoopService), 'notifyClient').mockResolvedValue({
         prompt_id: 'prompt-steer',
         created_at: '2026-01-01T00:00:00.000Z',
         state: 'queued',
@@ -814,6 +814,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await expect(client.steer({
         sessionId: 'ses_steer_result',
         input: [{ type: 'text', text: 'steer' }],
+        promptId: 'prompt-client-steer',
       })).resolves.toEqual({
         promptId: 'prompt-steer',
         createdAt: '2026-01-01T00:00:00.000Z',
@@ -821,7 +822,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         steered: false,
       });
 
-      vi.spyOn(main.accessor.get(IAgentSkillService), 'promptWithSkills').mockResolvedValue({
+      const promptWithSkills = vi.spyOn(main.accessor.get(IAgentSkillService), 'promptWithSkills').mockResolvedValue({
         turn_id: 3,
         prompt_id: 'prompt-skill',
         created_at: '2026-01-01T00:00:00.000Z',
@@ -833,6 +834,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         input: [{ type: 'text', text: 'skill steer' }],
         skills: [{ name: 'review' }],
         steerIfActive: true,
+        promptId: 'prompt-client-skill',
       })).resolves.toEqual({
         turnId: 3,
         promptId: 'prompt-skill',
@@ -840,6 +842,12 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         state: 'running',
         steered: true,
       });
+      expect(notifyClient).toHaveBeenCalledWith(expect.objectContaining({
+        attributes: expect.objectContaining({ promptId: 'prompt-client-steer' }),
+      }));
+      expect(promptWithSkills).toHaveBeenCalledWith(expect.objectContaining({
+        promptId: 'prompt-client-skill',
+      }));
     } finally {
       await client.close();
     }

@@ -213,6 +213,26 @@ describe('sessions across devices', () => {
     expect(requests.filter((path) => path.startsWith('/api/v1/sessions'))).toEqual([]);
   });
 
+  it('forwards the text query to the local listing and every device', async () => {
+    const requests: string[] = [];
+    const localQueries: Array<Omit<ListSessionsQuery, 'devices'>> = [];
+    const devices = sourcesOf([{ id: 'dev', session: fakeDevice(projects, remote, requests) }]);
+    const outcome = await listSessionsAcrossDevices(
+      { devices: 'include', page_size: 50, query: 'login' } as ListSessionsQuery,
+      devices,
+      (query) => {
+        localQueries.push(query);
+        return localList(local)(query);
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(localQueries.map((query) => query.query)).toEqual(['login']);
+    const deviceListings = requests.filter((path) => path.startsWith('/api/v1/sessions'));
+    expect(deviceListings).not.toEqual([]);
+    expect(deviceListings.map((path) => parseQuery(path).query['query'])).toEqual(deviceListings.map(() => 'login'));
+  });
+
   it('reports devices that are offline or failing and still answers with the rest', async () => {
     const failing = { ...devices.sources()[0]!.session!, request: async () => { throw new Error('tunnel closed'); } };
     const unavailableDevices = sourcesOf([{ id: 'off', session: undefined }, { id: 'broken', session: failing }, ...devices.sources()]);

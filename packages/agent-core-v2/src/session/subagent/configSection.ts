@@ -291,6 +291,11 @@ export function buildSubagentModelDescriptions(config: IConfigService): string |
   return poolDescriptionLines(resolveSubagentModelPool(config)!).join('\n');
 }
 
+export function buildSubagentPoolModelDescriptions(config: IConfigService): string | undefined {
+  const pool = resolveSubagentModelPool(config);
+  return pool === undefined ? undefined : poolDescriptionLines(pool).join('\n');
+}
+
 export function buildSubagentModelSummary(config: IConfigService): string | undefined {
   if (!exposesSubagentModelChoice(config)) return undefined;
   const pool = resolveSubagentModelPool(config)!;
