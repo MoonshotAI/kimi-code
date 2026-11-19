@@ -14,6 +14,7 @@ function getNonce(): string {
 
 export class KimiWebviewProvider implements vscode.WebviewViewProvider {
   private webviews = new Map<string, vscode.Webview>();
+  private activePanelId: string | undefined;
   private bridgeHandler: BridgeHandler;
 
   constructor(
@@ -64,10 +65,16 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
     });
 
     this.setupWebview(webviewId, panel.webview);
+    this.setPanelActive(webviewId, panel.active);
+
+    panel.onDidChangeViewState(({ webviewPanel }) => {
+      this.setPanelActive(webviewId, webviewPanel.active);
+    });
 
     panel.onDidDispose(() => {
       void this.bridgeHandler.disposeView(webviewId);
       this.webviews.delete(webviewId);
+      if (this.activePanelId === webviewId) this.setPanelActive(webviewId, false);
     });
 
     return panel;
@@ -75,6 +82,12 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
 
   broadcast(event: string, data: unknown): void {
     this.broadcastInternal(event, data);
+  }
+
+  newConversationInActivePanel(): void {
+    if (this.activePanelId !== undefined) {
+      this.broadcastInternal(Events.NewConversation, {}, this.activePanelId);
+    }
   }
 
   async insertEditorMention(documentUri: vscode.Uri, selection: vscode.Selection): Promise<boolean> {
@@ -115,6 +128,12 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
         void webview.postMessage(msg);
       });
     }
+  }
+
+  private setPanelActive(webviewId: string, active: boolean): void {
+    if (active) this.activePanelId = webviewId;
+    else if (this.activePanelId === webviewId) this.activePanelId = undefined;
+    void vscode.commands.executeCommand('setContext', 'kimi.panelActive', this.activePanelId !== undefined);
   }
 
   private reloadWebview(webviewId: string): void {
