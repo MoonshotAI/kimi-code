@@ -62,7 +62,7 @@ Tower 可能把未提交和未跟踪的文件快照到 worker branch 中；创�
 
 2. **发送开发目标。** 像平常对话一样输入任务，例如 "把结算文档更新拆成相互独立的 mission，分别测试，只合并通过独立 review 的 branch。" 最好同时说明如何验证、什么情况下算完成。Tower 会初始化 `.tower/`、规划 mission，并在后台启动依赖已经满足的 worker。worker 完成任务或 Tower 收到 inbox 消息时，Tower 就会自动继续处理，不用你反复查询。
 
-3. **让任务在后台推进。** worker 会在各自的 branch 上提交改动。对于 build mission，Tower 会安排独立 reviewer；对于 artifact mission，Tower 会等待你明确验收。必要时 Tower 会 rebase，并按依赖顺序合并通过审核的 mission。如果出现审批提示，或 Tower 询问任务范围和优先级，请及时处理。
+3. **让任务在后台推进。** worker 会在各自的 branch 上提交改动。对于 build mission，Tower 会安排独立 reviewer；对于 artifact mission，Tower 会展示交付物供你验收。必要时 Tower 会 rebase，并按依赖顺序合并通过审核的 mission。如果出现审批提示，或 Tower 询问任务范围和优先级，请及时处理。
 
 4. **验收合并结果。** 检查 `git status`、base branch 的提交历史和最终 diff，并运行你关心的测试或验收命令。这些检查只能作为基础保障，不能替代人工验收。
 
@@ -73,12 +73,12 @@ Tower 可能把未提交和未跟踪的文件快照到 worker branch 中；创�
 Tower 支持三种 mission 类型。可以根据 worker 能否写入产物以及关闭 mission 前需要哪些检查来选择。
 
 - **Build（`kind: "build"`）**：为代码改动预留 scope，要求有已提交的 Diff 和独立 clean review，最后执行实际合并。
-- **Artifact（`kind: "artifact"`）**：为渲染结果、训练结果、分析报告等业务产物预留 scope。不要求独立 reviewer，但必须指定已提交的关键产物，并由你明确验收整个已提交的 tip，然后执行实际合并。
+- **Artifact（`kind: "artifact"`）**：常用于模型训练、行业分析等的临时产物交付。交付物先提交，人类确认后即可合入，无需独立 reviewer。
 - **Survey（`kind: "survey"`）**：scope 仅用于说明调查范围，全程只读，最终以 zero-diff 关闭，不需要 review，也不执行 Git merge。
 
 当工作需要读取业务输入并写出交付物时，使用 `artifact`。例如："创建一个 artifact mission 生成季度分析，提交 `reports/q3/summary.html` 和 `reports/q3/data.csv`，然后把这些文件交给我验收。"
 
-worker 会在预留的 scope 内提交所有交付物，并将 `reports/q3/summary.html` 和 `reports/q3/data.csv` 标记为关键产物；未提交的文件不会参与验收或合并。Tower 展示关键产物和其他已提交文件的数量，需要查看细节时也可以打开完整清单。你的批准覆盖当前整个 tip，包括未列入关键产物清单的改动。你提出修改时会进入返工，任何新 commit 或 rebase 后都需要重新验收。在自动或其他非交互场景中，Tower 会让产物保持等待，不会替你自行验收。
+worker 会在预留的 scope 内提交所有交付物，并将 `reports/q3/summary.html` 和 `reports/q3/data.csv` 标记为关键产物；未提交的文件不会参与验收或合并。Tower 展示关键产物和其他已提交文件的数量，需要查看细节时也可以打开完整清单。验收覆盖当前整个 tip，包括未列入关键产物清单的改动。你提出修改时会进入返工，任何新 commit 或 rebase 后都需要重新验收。能否验收合并取决于用户的 merge 意图；权限模式只影响意图不明时 Tower 如何收尾。
 
 ## 查看状态并干预
 
@@ -93,7 +93,7 @@ worker 会在预留的 scope 内提交所有交付物，并将 `reports/q3/summa
 
 ## 合并与 rebase 规则
 
-合并 mission 前，Tower 会确认 mission 已完成，并且 branch 已跟上 base。build mission 需要有效的 clean review 和 merge 批准，通常来自独立 reviewer。artifact mission 则需要你在当前 branch tip 上明确验收，独立 review 不能替代。survey 始终保持 zero-diff，不需要 review。改动必须属于 mission 范围，主 checkout 必须位于记录的 base，且不能有与合并内容冲突的未提交改动。
+合并 mission 前，Tower 会确认 mission 已完成，并且 branch 已跟上 base。build mission 需要有效的 clean review 和 merge 批准，通常来自独立 reviewer。artifact mission 则需要 Tower 在当前 branch tip 上记录验收，独立 review 不能替代。survey 始终保持 zero-diff，不需要 review。改动必须属于 mission 范围，主 checkout 必须位于记录的 base，且不能有与合并内容冲突的未提交改动。
 
 对于 build 或 artifact mission，base 更新后，如果 worker 空闲且 worktree 干净，Tower 可以在对应 worktree 中把 mission branch rebase 到新 base。无冲突时，build mission 原有 clean review 的绑定会保留；artifact mission 在 tip 变化后总是需要重新验收。发生冲突时，rebase 会中止，并交回 worker 处理。
 
@@ -115,16 +115,16 @@ kimi-code 重启后，如果改由另一个会话接管当前项目，原会话�
 
 Tower 与 Goal、Plan 和 swarm 模式互斥。进入 Tower 会退出 Plan 或 swarm，并暂停正在运行的 goal；启用 goal、Plan 或 swarm 也会退出 Tower。Tower 的状态会保留在磁盘上，之后可以用 `/tower on` 返回。
 
-worker 和 reviewer 与 Agent、AgentSwarm 使用相同的模型选择规则。未配置 `[secondary_model]` 时，二者都继承 Tower 当前模型。配置后，新派生的 worker 和 reviewer 都使用 `default_model`。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
+未配置 `[secondary_model]` 时，worker 继承 Tower 当前模型；配置后，新派生的 worker 使用 `default_model`。reviewer 则始终默认继承 Tower 当前模型，让合并门禁的评审与 Tower 保持同一模型；只有显式指定池中别名时，reviewer 才改用其他模型。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
 
 你也可以通过普通消息为某次新派生明确指定模型。例如，假设 `smart/slow` 已在池内配置：
 
 - "让 worker agent-docs 使用 smart/slow。"
 - "让审查 feat/build-gemm 的 reviewer 使用 smart/slow。"
 
-可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。模型池有两个及以上条目时才提供 `model` 参数。选择只作用于本次新派生的 Agent：不会修改正在运行或已恢复的 Agent，也不会保存给后续派生。
+可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。配置模型池后即提供 `model` 参数（含单条目池），reviewer 可用它显式沿用池中模型。
 
-如果希望控制 token 开支，可以将池默认值设为成本较低的模型；worker 和 reviewer 默认使用它，单次派生也可以通过显式指定池中别名覆盖。
+如果希望控制 token 开支，可以把池默认值设为成本较低的模型：worker 默认使用它；worker 和 reviewer 都可以在单次派生时显式指定池中别名，覆盖各自的默认选择。
 
 ## 安全边界与资源开销
 

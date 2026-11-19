@@ -12,7 +12,7 @@ export const TowerCompleteToolInputSchema = z
     key_artifacts: z
       .array(z.string())
       .optional()
-      .describe('Required for artifact missions: committed paths of the key deliverables for human acceptance. Approval covers the entire completion tip, not only these paths'),
+      .describe('Required for artifact missions: committed paths of the key deliverables for acceptance. Approval covers the entire completion tip, not only these paths'),
   })
   .strict();
 
