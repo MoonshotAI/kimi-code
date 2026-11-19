@@ -24,9 +24,7 @@ const { t } = useI18n();
 const panelApi = inject(panelApiKey, undefined);
 const expanded = ref(true);
 
-const snapshot = computed(() =>
-  props.state && props.state.status !== 'error' ? props.state.value ?? null : null,
-);
+const snapshot = computed(() => props.state?.value ?? null);
 const loading = computed(() => props.state?.status === 'loading');
 const error = computed(() => props.state?.status === 'error' ? props.state.message : '');
 const canOpenDetail = computed(() => Boolean(panelApi?.openContext));

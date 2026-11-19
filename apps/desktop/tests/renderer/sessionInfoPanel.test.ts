@@ -540,6 +540,28 @@ describe('SessionInfoPanel', () => {
     expect(store.unobserveContext).toHaveBeenCalledWith('s1');
   });
 
+  it('keeps showing the last summary with a notice after a refresh fails', async () => {
+    mount(SessionInfoContext, {
+      canCompact: true,
+      state: {
+        status: 'error',
+        message: 'offline',
+        value: {
+          session_id: 's1',
+          agent_id: 'main',
+          captured_at: 1000,
+          tokens: { used: 1000, max: 10000 },
+          total_chars: 100,
+          groups: [{ role: 'user', count: 1, chars: 100 }],
+        },
+      },
+    });
+    await nextTick();
+    expect(host!.querySelectorAll('.ctx-role-row')).toHaveLength(1);
+    expect(host!.querySelector('.ctx-summary-stale')?.textContent?.trim()).toBe('刷新失败，显示的是上次读取的数据');
+    expect(host!.querySelector('.ctx-summary-error')).toBeNull();
+  });
+
   it('hides the view-details button when openContext is not provided', async () => {
     mount(SessionInfoContext, {
       canCompact: true,

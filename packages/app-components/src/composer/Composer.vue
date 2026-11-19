@@ -16,7 +16,7 @@ import type { NativeMenuItem } from '@moonshot-ai/app-core/native-menu';
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { SessionContextSummary } from '@moonshot-ai/app-core/api';
+import type { ReadRequestOptions, SessionContextSummary } from '@moonshot-ai/app-core/api';
 import { analyzeLeadingSlashCommand, basename, buildSlashItems, formatShortcutText, formatTokens, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { placeholderText } from '@moonshot-ai/app-core/lib';
 import { useAppearance, useContextInspector } from '@moonshot-ai/app-core';
@@ -76,7 +76,7 @@ import {
   type SubmitDecision,
   type AttachmentInputSource,
 } from '@moonshot-ai/app-client/lib';
-import { getKimiWebApi } from '@moonshot-ai/app-client/client';
+import { getKimiWebApi, sessionObservationOptions } from '@moonshot-ai/app-client/client';
 import { composerSessionScope } from '@moonshot-ai/app-core/lib';
 import type { PromptAttachment } from '@moonshot-ai/app-client/client';
 import {
@@ -2465,7 +2465,7 @@ const ctxUsageLabel = computed(() => {
 
 const canOpenContextDetail = computed(() => Boolean(panelApi?.openContext));
 
-async function refreshCtxSnapshot(): Promise<void> {
+async function refreshCtxSnapshot(options?: ReadRequestOptions): Promise<void> {
   const sid = sessionId.value;
   if (!ctxCardOpen.value || !sid) {
     ctxLoading.value = false;
@@ -2478,11 +2478,12 @@ async function refreshCtxSnapshot(): Promise<void> {
   ctxLoading.value = true;
   ctxError.value = '';
   try {
-    const next = await getKimiWebApi().getSessionContextSummary(sid);
+    const next = await getKimiWebApi().getSessionContextSummary(sid, undefined, options);
     if (token !== ctxFetchToken || !ctxCardOpen.value || sessionId.value !== sid) return;
     ctxSnapshot.value = next;
   } catch (err) {
     if (token !== ctxFetchToken || !ctxCardOpen.value || sessionId.value !== sid) return;
+    if (err instanceof Error && err.name === 'AbortError') return;
     ctxError.value = err instanceof Error ? err.message : String(err);
   } finally {
     if (token === ctxFetchToken) ctxLoading.value = false;
@@ -2498,12 +2499,12 @@ watch(sessionId, () => {
 
 watch(
   [ctxCardOpen, sessionId, () => status.value?.ctxUsed, () => running.value],
-  ([open]) => {
+  ([open], [wasOpen]) => {
     if (!open) {
       ctxLoading.value = false;
       return;
     }
-    void refreshCtxSnapshot().then(() => {
+    void refreshCtxSnapshot(wasOpen ? sessionObservationOptions(sessionId.value ?? undefined) : undefined).then(() => {
       if (ctxCardOpen.value) void nextTick(clampCtxCardToViewport);
     });
   },
@@ -2520,11 +2521,10 @@ function handleOpenContextDetail(): void {
 }
 
 function onCtxCardKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    closeCtxCard();
-    ctxBtnRef.value?.focus();
-  }
+  if (event.key !== 'Escape' || !ctxCardOpen.value) return;
+  event.preventDefault();
+  closeCtxCard();
+  ctxBtnRef.value?.focus();
 }
 
 const currentModel = computed(() =>
@@ -3362,6 +3362,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
                 :aria-expanded="ctxCardOpen"
                 :aria-label="ctxTooltip"
                 @click.stop="toggleCtxCard"
+                @keydown="onCtxCardKeydown"
               >
                 <ContextRing :pct="pct" />
               </button>
@@ -4587,6 +4588,9 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   gap: var(--space-2);
   transform-origin: bottom center;
   font-family: var(--font-ui);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .ctx-card.flip-down {
   top: calc(100% + var(--space-1));

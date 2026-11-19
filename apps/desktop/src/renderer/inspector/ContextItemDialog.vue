@@ -52,7 +52,13 @@ function resetCopyState(): void {
   clearTimeout(copyResetTimer);
 }
 
-watch([() => props.sessionId, () => props.item.id, () => props.item.chars], () => {
+watch([
+  () => props.sessionId,
+  () => props.item.id,
+  () => props.item.role,
+  () => props.item.chars,
+  () => props.item.preview,
+], () => {
   detail.value = null;
   resetCopyState();
   void loadDetail();
@@ -174,7 +180,10 @@ function onKeydown(event: KeyboardEvent): void {
         </div>
       </div>
       <div v-if="loading && !detail" class="message-loading"><Spinner size="sm" /></div>
-      <div v-else-if="error && !detail" class="message-error" role="alert">{{ error }}</div>
+      <div v-else-if="error && !detail" class="message-error" role="alert">
+        <span>{{ error }}</span>
+        <Button size="sm" variant="ghost" @click="loadDetail()">{{ t('inspector.retry') }}</Button>
+      </div>
       <ScrollArea v-else-if="detail && mode === 'parsed'" class="message-body">
         <div v-if="toolDefinition" class="tool-view">
           <div v-if="toolDefinition.description" class="tool-section"><div class="prose">{{ toolDefinition.description }}</div></div>
@@ -206,7 +215,6 @@ function onKeydown(event: KeyboardEvent): void {
 <style scoped>
 .context-message { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text); }
 .context-message:focus { outline: none; }
-.context-message :deep(.ui-icon-button:focus-visible), .context-message :deep(.ui-button:focus-visible), .context-message :deep(.ui-seg__item:focus-visible), .context-message :deep(summary:focus-visible) { outline: none; box-shadow: none; }
 .context-message[data-role="system"] { --context-color: var(--color-text-muted); }
 .context-message[data-role="definition"] { --context-color: var(--color-context-definition); }
 .context-message[data-role="user"] { --context-color: var(--color-info); }
@@ -220,7 +228,7 @@ function onKeydown(event: KeyboardEvent): void {
 .message-actions { display: flex; align-items: center; gap: var(--space-1); }
 .message-chars { color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
 .message-loading { display: flex; align-items: center; justify-content: center; flex: 1; }
-.message-error { padding: var(--space-3); color: var(--color-danger); }
+.message-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3); color: var(--color-danger); }
 .message-body { flex: 1; min-height: 0; }
 .part-list, .tool-view { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); }
 .tool-section { border: var(--p-hairline) solid var(--color-line); border-radius: var(--radius-sm); overflow: hidden; background: var(--color-bg); }

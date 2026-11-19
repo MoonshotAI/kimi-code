@@ -4,6 +4,8 @@ export default {
   currentContextHint: 'System prompt, tools, and messages held by this chat at the displayed time. Refresh to update.',
   selectSession: 'Select a chat to view its context',
   refresh: 'Refresh',
+  retry: 'Retry',
+  staleSummary: 'Refresh failed. Showing the last loaded data',
   loadFailed: 'Couldn’t load context',
   noContext: 'No context items yet',
   compactContext: 'Compact context',

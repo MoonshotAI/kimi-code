@@ -4,7 +4,7 @@ import { createApp, nextTick, ref, type App } from 'vue';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
 import { getIcon, type IconName } from '@moonshot-ai/app-client/icons';
-import type { SessionContextItemsResponse } from '@moonshot-ai/app-core/api';
+import type { SessionContextItemSummary, SessionContextItemsResponse } from '@moonshot-ai/app-core/api';
 
 const TOTAL_ITEMS = 650;
 
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   getSessionContextItems: vi.fn(),
   getSessionContextItem: vi.fn(),
   client: null as unknown,
+  observation: { background: true, signal: new AbortController().signal },
 }));
 
 vi.mock('@moonshot-ai/app-client/client', () => ({
@@ -20,6 +21,7 @@ vi.mock('@moonshot-ai/app-client/client', () => ({
     getSessionContextItem: mocks.getSessionContextItem,
   }),
   useKimiWebClient: () => mocks.client,
+  sessionObservationOptions: (sessionId: string | undefined) => (sessionId ? mocks.observation : undefined),
 }));
 
 import ContextPanel from '../../src/renderer/inspector/ContextPanel.vue';
@@ -106,6 +108,7 @@ describe('ContextPanel live refresh', () => {
   it('keeps loaded pages and the open item when context usage changes', async () => {
     const root = await mountPanel();
     expect(lastQuery()).toMatchObject({ offset: 0, limit: 100 });
+    expect(mocks.getSessionContextItems.mock.calls[0]![2]).toBeUndefined();
     await loadMore(root);
     expect(lastQuery()).toMatchObject({ offset: 100, limit: 100 });
     expect(root.querySelectorAll('.context-row')).toHaveLength(200);
@@ -123,12 +126,16 @@ describe('ContextPanel live refresh', () => {
     await settle();
 
     expect(lastQuery()).toMatchObject({ offset: 0, limit: 200 });
+    expect(mocks.getSessionContextItems.mock.calls.at(-1)![2]).toBe(mocks.observation);
     expect(root.querySelectorAll('.context-row')).toHaveLength(200);
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
     expect(mocks.getSessionContextItem).toHaveBeenCalledTimes(1);
   });
 
-  it('reloads the open item when its slot holds different content after a refresh', async () => {
+  it.each([
+    { change: 'a different size', edit: (item: SessionContextItemSummary) => ({ ...item, chars: item.chars + 5 }) },
+    { change: 'the same size', edit: (item: SessionContextItemSummary) => ({ ...item, preview: `${item.preview} edited` }) },
+  ])('reloads the open item when its slot holds different content of $change', async ({ edit }) => {
     const root = await mountPanel();
     root.querySelectorAll<HTMLButtonElement>('.context-row')[20]!.click();
     await settle();
@@ -136,12 +143,51 @@ describe('ContextPanel live refresh', () => {
 
     mocks.getSessionContextItems.mockImplementation(async (_sid: string, query: { offset: number; limit: number }) => {
       const response = itemsResponse(query);
-      return { ...response, items: response.items.map((item) => ({ ...item, chars: item.chars + 5 })) };
+      return { ...response, items: response.items.map(edit) };
     });
     status.value = { ctxUsed: 500, ctxMax: 10000 };
     await settle();
 
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(mocks.getSessionContextItem).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads the next page when the item dialog steps past the loaded range', async () => {
+    const root = await mountPanel();
+    const rows = root.querySelectorAll<HTMLButtonElement>('.context-row');
+    expect(rows).toHaveLength(100);
+    rows[99]!.click();
+    await settle();
+    expect(document.body.querySelector('.message-position')?.textContent).toBe(`100 / ${TOTAL_ITEMS}`);
+
+    document.body.querySelector<HTMLButtonElement>('[aria-label="下一条"]')!.click();
+    await settle();
+
+    expect(lastQuery()).toMatchObject({ offset: 100, limit: 100 });
+    expect(document.body.querySelector('.message-position')?.textContent).toBe(`101 / ${TOTAL_ITEMS}`);
+    expect(mocks.getSessionContextItem.mock.calls.at(-1)![1]).toBe('message-100');
+  });
+
+  it('offers a retry when the first list or item read fails', async () => {
+    mocks.getSessionContextItems.mockRejectedValueOnce(new Error('daemon offline'));
+    const root = await mountPanel();
+    expect(root.querySelector('.current-error')?.textContent).toContain('daemon offline');
+    expect(root.querySelector('.context-row')).toBeNull();
+
+    root.querySelector<HTMLButtonElement>('.current-error button')!.click();
+    await settle();
+    expect(root.querySelector('.current-error')).toBeNull();
+    expect(root.querySelectorAll('.context-row')).toHaveLength(100);
+
+    mocks.getSessionContextItem.mockRejectedValueOnce(new Error('item offline'));
+    root.querySelectorAll<HTMLButtonElement>('.context-row')[3]!.click();
+    await settle();
+    const dialogError = document.body.querySelector('.message-error');
+    expect(dialogError?.textContent).toContain('item offline');
+
+    dialogError!.querySelector<HTMLButtonElement>('button')!.click();
+    await settle();
+    expect(document.body.querySelector('.message-error')).toBeNull();
     expect(mocks.getSessionContextItem).toHaveBeenCalledTimes(2);
   });
 

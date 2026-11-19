@@ -4,6 +4,8 @@ export default {
   currentContextHint: '读取时会话保留的系统提示、工具定义与消息，按需从服务端获取。点击刷新可更新',
   selectSession: '选择一个会话查看上下文',
   refresh: '重新读取',
+  retry: '重试',
+  staleSummary: '刷新失败，显示的是上次读取的数据',
   loadFailed: '读取失败',
   noContext: '暂无上下文内容',
   compactContext: '压缩上下文',

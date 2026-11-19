@@ -836,6 +836,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
   async getSessionContextItems(
     sessionId: string,
     query?: { agentId?: string; role?: string; roles?: readonly string[]; offset?: number; limit?: number },
+    options?: ReadRequestOptions,
   ): Promise<SessionContextItemsResponse> {
     return this.http.get<SessionContextItemsResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/context/items`,
@@ -845,6 +846,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
         offset: query?.offset !== undefined ? String(query.offset) : undefined,
         limit: query?.limit !== undefined ? String(query.limit) : undefined,
       },
+      options,
     );
   }
 

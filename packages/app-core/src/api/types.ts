@@ -1182,6 +1182,7 @@ export interface KimiWebApi {
   getSessionContextItems(
     sessionId: string,
     query?: { agentId?: string; role?: string; roles?: readonly string[]; offset?: number; limit?: number },
+    options?: ReadRequestOptions,
   ): Promise<SessionContextItemsResponse>;
   getSessionContextItem(
     sessionId: string,

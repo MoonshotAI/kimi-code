@@ -287,4 +287,27 @@ describe('sessionInfoStore', () => {
     await sessionInfoStore().refresh('s1');
     expect(getSessionContextSummary).toHaveBeenCalledTimes(2);
   });
+
+  it('keeps the last summary but reports the error when a context refresh fails', async () => {
+    const summary = {
+      session_id: 's1',
+      agent_id: 'main',
+      captured_at: 1,
+      tokens: { used: 1200, max: 10000 },
+      total_chars: 400,
+      groups: [{ role: 'user', count: 1, chars: 400 }],
+    };
+    const getSessionContextSummary = vi.fn()
+      .mockResolvedValueOnce(summary)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(summary);
+    getKimiWebApiMock.mockReturnValue({ getSessionContextSummary });
+
+    await sessionInfoStore().observeContext('s1');
+    await sessionInfoStore().refreshContext('s1');
+    expect(sessionInfoStore().contextState('s1')).toEqual({ status: 'error', message: 'offline', value: summary });
+
+    await sessionInfoStore().refreshContext('s1');
+    expect(sessionInfoStore().contextState('s1')).toEqual({ status: 'ready', value: summary });
+  });
 });

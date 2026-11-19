@@ -227,6 +227,25 @@ describe('Composer context ring', () => {
     await nextTick();
     expect(host.querySelector('.ctx-card')).toBeNull();
   });
+
+  it('closes the card with Escape while focus stays on the ring', async () => {
+    isMobileViewport = false;
+    await setContextInspectorEnabled(true);
+    await mountComposer(1200, 820);
+
+    const ring = host.querySelector<HTMLButtonElement>('.ctx-group')!;
+    ring.click();
+    await nextTick();
+    expect(ring.getAttribute('aria-expanded')).toBe('true');
+
+    ring.focus();
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    ring.dispatchEvent(escape);
+    await nextTick();
+    expect(escape.defaultPrevented).toBe(true);
+    expect(ring.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(ring);
+  });
 });
 
 describe('Composer toolbar popup viewport clamping', () => {

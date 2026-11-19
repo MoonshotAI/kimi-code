@@ -2,9 +2,10 @@
 import { computed, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, EmptyState, Icon, IconButton, ScrollArea, Spinner, Tooltip } from '@moonshot-ai/app-ui';
-import { getKimiWebApi, useKimiWebClient } from '@moonshot-ai/app-client/client';
+import { getKimiWebApi, sessionObservationOptions, useKimiWebClient } from '@moonshot-ai/app-client/client';
 import { formatTokens } from '@moonshot-ai/app-core/lib';
 import type {
+  ReadRequestOptions,
   SessionContextGroup,
   SessionContextItemSummary,
   SessionContextItemsResponse,
@@ -53,7 +54,12 @@ const definitionOnly = computed(() =>
   selectedRoles.value.length === 1 && selectedRoles.value[0] === 'definition',
 );
 
-async function requestItems(sid: string, offset: number, count: number): Promise<SessionContextItemsResponse> {
+async function requestItems(
+  sid: string,
+  offset: number,
+  count: number,
+  options?: ReadRequestOptions,
+): Promise<SessionContextItemsResponse> {
   const roles = filtering.value ? selectedRoles.value : undefined;
   const starts: number[] = [];
   for (let start = offset; start < offset + count; start += MAX_REQUEST_LIMIT) starts.push(start);
@@ -62,12 +68,12 @@ async function requestItems(sid: string, offset: number, count: number): Promise
       roles,
       offset: start,
       limit: Math.min(MAX_REQUEST_LIMIT, offset + count - start),
-    }),
+    }, options),
   ));
   return { ...pages.at(-1)!, items: pages.flatMap((page) => page.items) };
 }
 
-async function fetchContext(mode: FetchMode): Promise<void> {
+async function fetchContext(mode: FetchMode, options?: ReadRequestOptions): Promise<void> {
   const sid = props.sessionId;
   if (!sid) {
     summary.value = null;
@@ -86,7 +92,7 @@ async function fetchContext(mode: FetchMode): Promise<void> {
   if (mode === 'more') loadingMore.value = true;
   error.value = '';
   try {
-    const res = await requestItems(sid, offset, count);
+    const res = await requestItems(sid, offset, count, options);
     if (seq !== requestSeq || props.sessionId !== sid) return;
     summary.value = res.summary;
     tools.value = res.tools;
@@ -95,6 +101,7 @@ async function fetchContext(mode: FetchMode): Promise<void> {
     hasMore.value = res.has_more;
   } catch (err) {
     if (seq !== requestSeq || props.sessionId !== sid) return;
+    if (err instanceof Error && err.name === 'AbortError') return;
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
     if (seq === requestSeq) {
@@ -120,7 +127,7 @@ watch(
 watch(
   () => [client.status.value?.ctxUsed, client.activity.value] as const,
   () => {
-    if (props.sessionId) void fetchContext('refresh');
+    if (props.sessionId) void fetchContext('refresh', sessionObservationOptions(props.sessionId));
   },
 );
 
@@ -171,6 +178,9 @@ const navigableItems = computed<SessionContextItemSummary[]>(() => {
   return items.value;
 });
 
+const navigableTotal = computed(() =>
+  total.value + (showGroupedTools.value && toolsOpen.value ? tools.value.length : 0),
+);
 const selectedIndex = computed(() =>
   navigableItems.value.findIndex((item) => item.id === selectedId.value),
 );
@@ -178,8 +188,12 @@ const selectedItem = computed(() =>
   selectedIndex.value >= 0 ? navigableItems.value[selectedIndex.value] : undefined,
 );
 
-function navigateItem(direction: number): void {
-  const next = navigableItems.value[selectedIndex.value + direction];
+async function navigateItem(direction: number): Promise<void> {
+  const target = selectedIndex.value + direction;
+  if (target >= navigableItems.value.length && hasMore.value && !loadingMore.value) {
+    await fetchContext('more');
+  }
+  const next = navigableItems.value[target];
   if (next) selectedId.value = next.id;
 }
 
@@ -188,7 +202,10 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
 
 <template>
   <section class="model-inspector" :aria-label="t('inspector.title')">
-    <div v-if="error" class="current-error" role="alert">{{ error }}</div>
+    <div v-if="error" class="current-error" role="alert">
+      <span>{{ error }}</span>
+      <Button v-if="!summary" size="sm" variant="ghost" @click="fetchContext('reset')">{{ t('inspector.retry') }}</Button>
+    </div>
     <div v-if="loading && !summary" class="current-loading"><Spinner size="sm" /></div>
     <EmptyState v-else-if="!sessionId" :title="t('inspector.selectSession')" />
     <ScrollArea v-else-if="summary" class="context-scroll" :class="{ refreshing: loading }" orientation="both">
@@ -360,9 +377,9 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
       :session-id="sessionId"
       :item="selectedItem"
       :index="selectedIndex"
-      :total="navigableItems.length"
+      :total="navigableTotal"
       @close="selectedId = ''"
-      @navigate="navigateItem"
+      @navigate="(direction) => void navigateItem(direction)"
     />
   </section>
 </template>
@@ -379,7 +396,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
 .current-chars { color: var(--color-text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .current-time { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-text-faint); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .current-time:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-.current-error { padding: var(--space-2) var(--space-3); color: var(--color-danger); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.current-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); color: var(--color-danger); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .current-loading { display: flex; align-items: center; justify-content: center; flex: 1; }
 .context-scroll { flex: 1; min-height: 0; }
 .refreshing { opacity: .5; }

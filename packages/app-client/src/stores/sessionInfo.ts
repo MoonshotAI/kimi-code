@@ -28,7 +28,7 @@ export interface SessionFolderInfoRow extends WorkspaceFolder {
 export type SessionContextInfoState =
   | { status: 'loading'; value?: SessionContextSummary }
   | { status: 'ready'; value: SessionContextSummary }
-  | { status: 'error'; message: string };
+  | { status: 'error'; message: string; value?: SessionContextSummary };
 
 export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
   const observedBySession = ref<Record<string, readonly WorkspaceFolder[]>>({});
@@ -197,8 +197,7 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
   }
 
   function existingContextValue(sessionId: string): SessionContextSummary | undefined {
-    const current = contextBySession.value[sessionId];
-    return current && current.status !== 'error' ? current.value : undefined;
+    return contextBySession.value[sessionId]?.value;
   }
 
   function isContextCurrent(sessionId: string, generation: number, options?: ReadRequestOptions): boolean {
@@ -230,14 +229,10 @@ export const useSessionInfoStore = defineStore('kimi.sessionInfo', () => {
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') return;
         if (!isContextCurrent(sessionId, generation, options)) return;
-        const previous = existingContextValue(sessionId);
-        if (previous !== undefined) {
-          contextBySession.value[sessionId] = { status: 'ready', value: previous };
-          return;
-        }
         contextBySession.value[sessionId] = {
           status: 'error',
           message: error instanceof Error ? error.message : String(error),
+          value: existingContextValue(sessionId),
         };
       }
     })().finally(() => {

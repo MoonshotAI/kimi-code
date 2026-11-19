@@ -92,6 +92,9 @@ function groupTooltip(group: SessionContextGroup): string {
         <div class="ctx-composition-bar" />
         <span class="ctx-empty-text">{{ t('inspector.noContext') }}</span>
       </div>
+      <div v-if="error && snapshot" class="ctx-summary-stale" role="status">
+        {{ t('inspector.staleSummary') }}
+      </div>
     </div>
 
     <div v-if="showDivider" class="ctx-summary-divider" />
@@ -150,6 +153,10 @@ function groupTooltip(group: SessionContextGroup): string {
   font-size: var(--text-xs);
   color: var(--color-danger);
   overflow-wrap: anywhere;
+}
+.ctx-summary-stale {
+  font-size: var(--text-xs);
+  color: var(--color-warning);
 }
 .ctx-summary-empty {
   display: flex;
