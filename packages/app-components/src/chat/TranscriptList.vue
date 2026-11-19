@@ -273,7 +273,9 @@ function measureFresh(): void {
   if (!host || !fresh.size) return;
   for (const key of fresh) {
     const el = rows.get(key);
-    if (el?.isConnected) host.model.measure(key, el.getBoundingClientRect().height);
+    if (!el?.isConnected) continue;
+    const height = el.getBoundingClientRect().height;
+    if (height > 0) host.model.measure(key, height);
   }
   fresh.clear();
   host.model.refreshEstimates();

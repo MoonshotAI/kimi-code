@@ -299,6 +299,21 @@ describe('TranscriptList', () => {
     expect(fresh.length).toBeGreaterThan(0);
     for (const key of fresh) expect(model.height(model.indexOf(key)!)).toBe(400);
   });
+
+  it('skips zero-height rows when measuring newly mounted rows', async () => {
+    const measured = new Set(renderedKeys());
+    const model = scroll.host.model;
+    const before = new Map(props.items.map(key => [key, model.height(model.indexOf(key)!)]));
+    for (const key of props.items) rowHeights.set(key, 0);
+    scroll.onInput(new WheelEvent('wheel', { deltaY: -100 }));
+    rawTop = Math.max(0, rawTop - 1500);
+    scroll.onScroll();
+    await nextTick();
+    await nextTick();
+    const fresh = renderedKeys().filter(key => !measured.has(key));
+    expect(fresh.length).toBeGreaterThan(0);
+    for (const key of fresh) expect(model.height(model.indexOf(key)!)).toBe(before.get(key));
+  });
 });
 
 describe('useTranscriptScroll', () => {
