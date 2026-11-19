@@ -243,6 +243,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
               @click="toggleRole(group.role)"
             />
           </Tooltip>
+          <span class="composition-free" />
         </div>
         <div class="composition-legend">
           <Tooltip
@@ -404,8 +405,9 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
 .context-scroll { flex: 1; min-height: 0; }
 .refreshing { opacity: .5; }
 .context-overview { padding: var(--space-3); border-bottom: var(--p-hairline) solid var(--color-line); }
-.composition-bar { display: flex; height: var(--space-3); overflow: hidden; border-radius: var(--radius-context-segment); background: var(--color-fill-2); }
-.composition-bar button { flex: none; border: 0; background: var(--context-color, var(--color-text-faint)); min-width: var(--space-1); padding: 0; cursor: pointer; }
+.composition-bar { display: flex; gap: var(--space-05); height: var(--space-3); overflow: hidden; }
+.composition-bar button { flex: none; border: 0; border-radius: var(--radius-context-segment); background: var(--context-color, var(--color-text-faint)); min-width: var(--space-1); padding: 0; cursor: pointer; }
+.composition-free { flex: 1; min-width: 0; border-radius: var(--radius-context-segment); background: var(--color-fill-2); }
 .composition-bar button:hover { opacity: .8; }
 .composition-bar .dimmed { opacity: .25; }
 .composition-legend { display: flex; gap: var(--space-2); margin-top: var(--space-2); overflow-x: auto; scrollbar-width: thin; white-space: nowrap; }

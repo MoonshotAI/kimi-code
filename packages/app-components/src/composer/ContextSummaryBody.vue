@@ -86,6 +86,7 @@ const rows = computed(() => {
           <Tooltip v-for="row in rows" :key="row.role" :text="`${row.name} · ${row.tokens}`">
             <span class="ctx-composition-seg" :data-role="row.role" :style="{ width: row.width }" />
           </Tooltip>
+          <span class="ctx-composition-free" />
         </div>
         <div class="ctx-role-list">
           <div v-for="row in rows" :key="row.role" class="ctx-role-row" :data-role="row.role">
@@ -99,7 +100,7 @@ const rows = computed(() => {
         </div>
       </template>
       <div v-else class="ctx-summary-empty">
-        <div class="ctx-composition-bar" />
+        <div class="ctx-composition-bar"><span class="ctx-composition-free" /></div>
         <span class="ctx-empty-text">{{ t('inspector.noContext') }}</span>
       </div>
       <div v-if="error && snapshot" class="ctx-summary-stale" role="status">
@@ -197,17 +198,25 @@ const rows = computed(() => {
 
 .ctx-composition-bar {
   display: flex;
+  gap: var(--space-05);
   height: var(--space-1-5);
   overflow: hidden;
+}
+.ctx-composition-seg,
+.ctx-composition-free {
+  display: block;
+  height: 100%;
   border-radius: var(--radius-context-segment);
-  background: var(--color-fill-2);
 }
 .ctx-composition-seg {
-  display: block;
   flex: none;
-  height: 100%;
   min-width: var(--space-1);
   background: var(--context-color, var(--color-text-faint));
+}
+.ctx-composition-free {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-fill-2);
 }
 
 .ctx-role-list {
