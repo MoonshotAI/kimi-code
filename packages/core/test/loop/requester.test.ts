@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createLoop } from '#/loop/index';
-import type { LoopToolExecutor } from '#/loop/create-loop';
+import type { LoopToolContext, LoopToolExecutor } from '#/loop/create-loop';
 import { createAssistantMessage, createUserMessage, extractText } from '#/llm/message';
 import type { LlmRunControl } from '#/llm/policy/policy';
 import type { LlmRequest } from '#/llm/request';
@@ -14,6 +14,7 @@ import {
   type LlmRequestPart,
 } from '#/llm/requester';
 import type { LlmOutcome } from '#/llm/response';
+import { ToolExecutor } from '#/tool/tool-executor';
 import type { FullLoopLlmRequester, LoopLlmRequester } from '#/loop/request';
 
 type Fields = Readonly<Record<string, unknown>>;
@@ -172,6 +173,68 @@ describe('loop side requester', () => {
     expect(() => loop.requester.request({})).toThrow('loop has no full core requester');
     expect((await loop.runTurn(createUserMessage('legacy'))).type).toBe('done');
     expect(loop.state.messages.map((message) => extractText(message))).toEqual(['legacy', 'legacy response']);
+    await loop.close();
+  });
+});
+
+describe('turn requester decoration', () => {
+  it('decorates once per turn, freezes the current turn, and keeps side requests raw', async () => {
+    const seen: { readonly base: string; readonly request: LlmRequest }[] = [];
+    let firstCalls = 0;
+    const first = fullRequester((request) => {
+      seen.push({ base: 'first', request });
+      firstCalls += 1;
+      if (firstCalls === 1) {
+        return {
+          type: 'done',
+          message: createAssistantMessage([], [
+            { type: 'function', id: 'call-work', name: 'work', arguments: '{}' },
+          ]),
+        };
+      }
+      return done('first response');
+    });
+    const second = fullRequester((request) => {
+      seen.push({ base: 'second', request });
+      return done('second response');
+    });
+    const decorated: FullLoopLlmRequester[] = [];
+    const tools = new ToolExecutor<LoopToolContext>([{
+      name: 'work',
+      description: 'switch the next turn base',
+      parameters: { type: 'object' },
+      execute: async () => {
+        loop.setRequester(second);
+        return { content: [] };
+      },
+    }]);
+    const loop = createLoop({
+      requester: first,
+      decorateTurnRequester: (requester) => {
+        decorated.push(requester);
+        return requester.with({ endpoint: { headers: { 'x-turn-requester': 'true' } } });
+      },
+      executor: tools,
+    });
+
+    expect((await loop.runTurn(createUserMessage('first turn'))).type).toBe('done');
+    expect(decorated).toHaveLength(1);
+    expect(decorated[0]).toBe(first);
+    expect(seen.map((entry) => entry.base)).toEqual(['first', 'first']);
+    expect(seen.every((entry) => entry.request.endpoint?.headers?.['x-turn-requester'] === 'true')).toBe(true);
+    expect(loop.baseRequester).toBe(second);
+
+    expect((await loop.runTurn(createUserMessage('second turn'))).type).toBe('done');
+    expect(decorated).toHaveLength(2);
+    expect(decorated[1]).toBe(second);
+    expect(seen.map((entry) => entry.base)).toEqual(['first', 'first', 'second']);
+    expect(seen[2]?.request.endpoint?.headers?.['x-turn-requester']).toBe('true');
+
+    await loop.requester.generate({}, { signal: new AbortController().signal });
+    expect(seen.map((entry) => entry.base)).toEqual(['first', 'first', 'second', 'second']);
+    expect(seen[3]?.request.endpoint?.headers?.['x-turn-requester']).toBeUndefined();
+    expect(decorated).toHaveLength(2);
+    expect(loop.baseRequester).toBe(second);
     await loop.close();
   });
 });

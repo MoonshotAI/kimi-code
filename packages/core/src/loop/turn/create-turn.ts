@@ -15,7 +15,7 @@ import {
   type StepStartingRun,
   type ToolBatchStartingRun,
 } from '#/hook/loop/run';
-import { runLoopRequest, type LoopLlmRequester, type LoopRequester, type LoopRequestProgress } from '../request';
+import { isFullLoopRequester, runLoopRequest, type LoopLlmRequester, type LoopRequester, type LoopRequestProgress } from '../request';
 import type {
   Turn,
   TurnEmitted,
@@ -205,7 +205,10 @@ class ActorTurn implements Turn {
       };
       try {
         const template = this.runtime.requester();
-        this.requester = (template as LoopLlmRequester | undefined)?.snapshot?.() ?? template;
+        const requester = (template as LoopLlmRequester | undefined)?.snapshot?.() ?? template;
+        this.requester = isFullLoopRequester(requester)
+          ? (this.runtime.decorateTurnRequester?.(requester) ?? requester)
+          : requester;
       } catch (error) {
         this.requester = undefined;
         this.requesterError = error;

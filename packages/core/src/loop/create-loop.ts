@@ -30,6 +30,7 @@ export interface LoopToolExecutor {
 
 export interface CreateLoopOptions {
   readonly requester?: LoopRequester;
+  readonly decorateTurnRequester?: (requester: FullLoopLlmRequester) => FullLoopLlmRequester;
   readonly executor: LoopToolExecutor;
   readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'origin' | 'turnId'>;
   readonly hook?: Partial<LoopHooks>;

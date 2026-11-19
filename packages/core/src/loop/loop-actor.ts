@@ -303,6 +303,7 @@ class LoopActor implements Loop {
   private readonly actor: Actor<LoopActorState, LoopEmitted>;
   private mailbox: LoopMailbox;
   private readonly toolContext?: CreateLoopOptions['toolContext'];
+  private readonly decorateTurnRequester?: CreateLoopOptions['decorateTurnRequester'];
   private readonly completionFactory?: CreateLoopOptions['completionMessage'];
   private readonly shouldQueueTaskNotification?: CreateLoopOptions['shouldQueueTaskNotification'];
   private readonly abortGraceMs: number;
@@ -344,6 +345,7 @@ class LoopActor implements Loop {
     this.requesterTemplate = options.requester;
     this.executor = options.executor;
     this.toolContext = options.toolContext;
+    this.decorateTurnRequester = options.decorateTurnRequester;
     this.completionFactory = options.completionMessage;
     this.shouldQueueTaskNotification = options.shouldQueueTaskNotification;
     this.abortGraceMs = options.abortGraceMs ?? 2_500;
@@ -396,6 +398,7 @@ class LoopActor implements Loop {
     const rootSignal = this.actor.act((ctrl) => ctrl.rootSignal);
     this.turnRuntime = {
       requester: () => this.requesterTemplate,
+      decorateTurnRequester: this.decorateTurnRequester,
       policy: this.policy,
       executeBatch: (batch) => this.actor.act(() => this.executeToolBatch(batch)),
       abortBatch: (batch, reason, options) => this.actor.act(() => this.abortToolBatch(batch, reason, options)),
