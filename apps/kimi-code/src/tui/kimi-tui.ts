@@ -1453,7 +1453,7 @@ export class KimiTUI {
     const historyText = wasBashMode ? `!${text}` : text;
     void this.persistInputHistory(historyText);
     if (wasBashMode) {
-      if (this.state.appState.streamingPhase !== 'idle') {
+      if (this.state.appState.streamingPhase !== 'idle' || this.state.appState.isCompacting) {
         this.enqueueMessage(text, undefined, 'bash');
         this.updateQueueDisplay();
         this.state.ui.requestRender();
@@ -1470,7 +1470,7 @@ export class KimiTUI {
     if (session === undefined) {
       session = await this.ensureSession();
       if (session === undefined) return;
-      if (this.state.appState.streamingPhase !== 'idle') {
+      if (this.state.appState.streamingPhase !== 'idle' || this.state.appState.isCompacting) {
         this.enqueueMessage(command, undefined, 'bash');
         this.updateQueueDisplay();
         this.state.ui.requestRender();
@@ -2088,6 +2088,7 @@ export class KimiTUI {
 
   failSessionRequest(message: string): void {
     this.streamingUI.timeline.turnEnded();
+    this.streamingUI.setTurnId(undefined);
     this.programStatus.failRequest(message);
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
@@ -2409,6 +2410,7 @@ export class KimiTUI {
     const { session, error, entries, retried, retry, restore } = args;
     if (this.session?.id !== session.id || !isSessionOccupiedError(error)) return false;
     this.streamingUI.timeline.turnEnded();
+    this.streamingUI.setTurnId(undefined);
     if (entries !== undefined) this.removeTranscriptEntries(entries);
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();

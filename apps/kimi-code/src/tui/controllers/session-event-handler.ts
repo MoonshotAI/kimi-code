@@ -920,6 +920,7 @@ export class SessionEventHandler {
       (session === undefined || this.host.session === session) &&
       !this.host.aborted &&
       this.host.state.appState.streamingPhase === 'idle' &&
+      !this.host.state.appState.isCompacting &&
       this.host.state.queuedMessages.length === 0 &&
       !this.host.state.queuedMessageDispatchPending
     );
@@ -1169,12 +1170,8 @@ export class SessionEventHandler {
   private handleCompactionBegin(event: CompactionStartedEvent): void {
     this.compactionFailed = false;
     this.host.lastCompactionTrigger = event.trigger;
-    this.host.streamingUI.finalizeLiveTextBuffers('waiting');
-    this.host.setAppState({
-      isCompacting: true,
-      streamingPhase: 'waiting',
-      streamingStartTime: Date.now(),
-    });
+    this.host.streamingUI.finalizeLiveTextBuffers(this.host.state.livePane.mode);
+    this.host.setAppState({ isCompacting: true });
     this.host.streamingUI.beginCompaction(event.instruction);
   }
 
