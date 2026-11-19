@@ -123,6 +123,7 @@ const sessionId = client.activeSessionId;
 const scopeId = computed(() => props.draftScopeKey ?? sessionId.value);
 const running = computed(() => client.activity.value !== 'idle');
 const working = client.working;
+const stoppable = computed(() => working.value || client.activeSessionEnvironment.value === 'settingUp');
 const starting = client.isStartingFirstPrompt;
 const queued = client.queued;
 const searchFiles = client.searchFiles;
@@ -2650,7 +2651,7 @@ watch(
     towerOn,
     thinkingSuffix,
     () => status.value?.model,
-    () => working.value,
+    () => stoppable.value,
     gateVerdict,
     () => models.value?.length,
     fontScale,
@@ -3254,7 +3255,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           </button>
           </Tooltip>
           <span v-if="statusNote" class="status-note">{{ statusNote }}</span>
-          <Tooltip v-if="working && !isSideChat" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
+          <Tooltip v-if="stoppable && !isSideChat" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
             <button
               class="stop"
               :aria-label="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interrupt')"

@@ -100,6 +100,7 @@ export { default as AddWorkspaceDialog } from './dialogs/AddWorkspaceDialog.vue'
 export { default as BottomSheet } from './dialogs/BottomSheet.vue';
 export { default as ConfirmDialog } from './dialogs/ConfirmDialog.vue';
 export { default as ConfirmDialogHost } from './dialogs/ConfirmDialogHost.vue';
+export type { ConfirmDialogCancelSource, ConfirmDialogRow, ConfirmDialogRowTone } from './dialogs/confirmDialogRow';
 export { default as PastedTextDialog } from './dialogs/PastedTextDialog.vue';
 export { openPastedTextDialog, usePastedTextStats } from './dialogs/pastedTextDialog';
 export { default as ModelSwitchConfirmDialog } from './dialogs/ModelSwitchConfirmDialog.vue';
@@ -132,6 +133,8 @@ export { default as ProviderForm } from './settings/ProviderForm.vue';
 export { default as ProvidersPanel } from './settings/ProvidersPanel.vue';
 export { default as PluginsPanel } from './settings/PluginsPanel.vue';
 export { default as HostsPanel } from './settings/HostsPanel.vue';
+export { default as WorktreesPanel } from './settings/WorktreesPanel.vue';
+export { default as WorktreeManageDialogHost } from './worktree/ManageDialogHost.vue';
 export { default as SecondaryModelPicker } from './settings/SecondaryModelPicker.vue';
 
 export * from './chatTurnRendering';
@@ -175,3 +178,5 @@ export { default as PanelTabLabel } from './panel/PanelTabLabel.vue';
 export { default as FontOptionPreview } from './settings/FontOptionPreview.vue';
 export { default as FontSettingsPreview } from './settings/FontSettingsPreview.vue';
 export { default as InspectorPane } from './panel/InspectorPane.vue';
+export * from './worktree/session';
+export * from './worktree/create';

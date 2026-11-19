@@ -20,6 +20,7 @@ const fakes = vi.hoisted(() => ({
   workspaces: null as unknown as {
     workspaces: Array<{ id: string; root: string; name: string; additionalDirs: string[] }>;
     mergedWorkspaces: Array<{ id: string; root: string; name: string; additionalDirs: string[] }>;
+    directoryRootsFor: (sessionId: string | null, workspaceId: string | null) => string[];
   },
   preview: null as unknown as Record<string, unknown> & {
     openFilePreview: ReturnType<typeof vi.fn>;
@@ -88,6 +89,7 @@ let app: App | null = null;
 let host: HTMLDivElement;
 let previews: Map<string, { path: string }>;
 let selectedRoots: Record<string, string>;
+let sessionWorktreeRoots: Record<string, string>;
 
 beforeEach(() => {
   host = document.createElement('div');
@@ -97,6 +99,7 @@ beforeEach(() => {
     ['workspace:w2', { path: '/extra-b/b.txt' }],
   ]);
   selectedRoots = reactive({});
+  sessionWorktreeRoots = reactive({});
   fakes.client = {
     activeSessionId: ref(null),
     activeWorkspaceId: ref('w1'),
@@ -127,6 +130,12 @@ beforeEach(() => {
   fakes.workspaces = {
     workspaces: items,
     mergedWorkspaces: items,
+    directoryRootsFor: (sessionId, workspaceId) => {
+      const workspace = items.find((item) => item.id === workspaceId);
+      if (workspace === undefined) return [];
+      const main = sessionId !== null && sessionWorktreeRoots[sessionId] !== undefined ? sessionWorktreeRoots[sessionId] : workspace.root;
+      return [main, ...workspace.additionalDirs];
+    },
   };
   fakes.preview = {
     previewTarget: ref(null),
@@ -224,6 +233,18 @@ describe('FilesPanel draft preview scope', () => {
 
     expect(sidebar.getAttribute('data-workspace-id')).toBe('w1');
     expect(sidebar.getAttribute('data-root')).toBe('/extra-a');
+  });
+
+  it('roots the tree at the worktree directory of a worktree session', async () => {
+    sessionWorktreeRoots.s1 = '/worktrees/s1';
+    fakes.client.activeSessionId.value = 's1';
+    fakes.client.status.value = { cwd: '/worktrees/s1' };
+    selectedRoots.w1 = '/repo';
+    await mountPanel();
+
+    const sidebar = host.querySelector<HTMLElement>('.tree-sidebar')!;
+    expect(sidebar.getAttribute('data-root')).toBe('/worktrees/s1');
+    expect(fakes.files.resolveFileTreeRoot).toHaveBeenLastCalledWith('w1', ['/worktrees/s1', '/extra-a'], '/worktrees/s1');
   });
 
   it('does not treat a derived workspace ID as registered', async () => {

@@ -36,10 +36,11 @@ const fileTreeKey = computed(() => {
 });
 const workspaceName = computed(() => workspace.value?.name ?? cwd.value.split(/[\\/]/).filter(Boolean).at(-1) ?? '');
 
-const treeRoots = computed<string[]>(() => {
-  const ws = workspace.value;
-  return ws === undefined ? [] : [ws.root, ...ws.additionalDirs];
-});
+const treeRoots = computed<string[]>(() =>
+  workspace.value === undefined
+    ? []
+    : workspacesStore().directoryRootsFor(sessionId.value, client.activeWorkspaceId.value),
+);
 
 const treeRoot = computed(() =>
   filesStore().resolveFileTreeRoot(client.activeWorkspaceId.value, treeRoots.value, cwd.value),
