@@ -24,7 +24,11 @@ for (const pkg of plan.packages) {
   }
 }
 const packages = plan.packages.filter((pkg) => pkg.name === 'kimi-code-app');
-if (packages.length !== 1) throw new Error('Release plan must contain kimi-code-app');
+if (packages.length > 1) throw new Error('Release plan lists kimi-code-app more than once');
+if (packages.length === 0) {
+  if (command === 'prepare') appendFileSync(process.env.GITHUB_OUTPUT, 'build=false\n');
+  process.exit(0);
+}
 
 function api(endpoint, args = []) {
   return JSON.parse(execFileSync('gh', ['api', `repos/${repo}/${endpoint}`, ...args], { encoding: 'utf8' }));
@@ -48,7 +52,7 @@ function findRelease(tag) {
 }
 
 function tagFor(pkg) {
-  return `v${pkg.version}`;
+  return `kimi-code-desktop@${pkg.version}`;
 }
 
 function verifyTag(tag) {

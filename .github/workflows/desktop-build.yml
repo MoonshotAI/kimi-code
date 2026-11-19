@@ -174,6 +174,7 @@ jobs:
       canary-version: ${{ steps.canary.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+        with:
           fetch-depth: 0
       - name: Fetch Changesets base branch
         if: startsWith(github.ref, 'refs/heads/release/') && (inputs.canary || github.event_name == 'push')
@@ -453,7 +454,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$CANARY_VERSION"
-          tag="v${version}"
+          tag="kimi-code-desktop@${version}"
           echo "==> canary tag: ${tag}"
           ls -la dist-desktop-canary
           gh release create "$tag" \
