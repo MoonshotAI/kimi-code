@@ -30,6 +30,7 @@ export * from './useRunningSendMode';
 export * from './useActivityRunFolding';
 export * from './useTranscriptEngine';
 export * from './useTranscriptScroll';
+export * from './usePanelScroll';
 export * from './useWorkspaceTrust';
 export * from './useWorkspaceFolderPicker';
 export * from './usePlugins';
