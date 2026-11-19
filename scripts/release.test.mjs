@@ -15,7 +15,7 @@ const otherSha = 'b'.repeat(40);
 const branch = 'release/test';
 const name = desktop ? 'kimi-code-app' : '@moonshot-ai/kimi-code';
 const path = desktop ? 'apps/desktop' : 'apps/kimi-code';
-const tag = desktop ? 'v1.0.1' : `${name}@1.0.1`;
+const tag = desktop ? `kimi-code-desktop@1.0.1` : `${name}@1.0.1`;
 
 function fixture(overrides = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'release-test-'));
@@ -190,6 +190,22 @@ test('the next release cycle discards the old package plan', () => {
   const next = JSON.parse(readFileSync(planFile, 'utf8'));
   assert.equal(next.packages.length, 1);
   assert.deepEqual(next.changesets, ['fix.md']);
+});
+
+void test('skips desktop publication when the plan has no desktop package', () => {
+  const f = fixture();
+  mkdirSync(join(f.dir, 'packages/sdk'), { recursive: true });
+  writeFileSync(join(f.dir, 'packages/sdk/package.json'), JSON.stringify({ name: '@example/sdk', version: '2.0.0' }));
+  writeFileSync(join(f.dir, '.changeset/release-plan.json'), JSON.stringify({
+    branch,
+    packages: [{ name: '@example/sdk', path: 'packages/sdk', version: '2.0.0', private: false }],
+  }));
+  assert.equal(run(f, 'check').status, 0);
+  assert.equal(run(f, 'prepare').status, 0);
+  assert.match(readFileSync(join(f.dir, 'output'), 'utf8'), /build=false/);
+  assert.equal(run(f, 'finish').status, 0);
+  assert.deepEqual(f.state().tags, {});
+  assert.deepEqual(f.state().releases, {});
 });
 
 test('publishes the triggering commit even when the branch has newer CI runs', () => {
