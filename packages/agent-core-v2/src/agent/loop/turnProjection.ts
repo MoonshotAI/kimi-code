@@ -32,7 +32,7 @@ import {
   type StepStoppingEvent,
   type TurnTrigger,
 } from '@moonshot-ai/core/loop/index';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import type { FinishReason, LlmTiming } from '@moonshot-ai/core/llm/response';
 import type { ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import { emptyUsage, type TokenUsage } from '@moonshot-ai/core/llm/usage';

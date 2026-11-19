@@ -4,7 +4,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import type { LlmSampling, ThinkingEffort } from '@moonshot-ai/core/llm/request';
-import { fromLlmModelSpec, UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
+import { fromLlmModelSpec, UNKNOWN_CAPABILITY, type ModelCapability } from '#/provider-catalog/capability';
 import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
 import {
   modelSupportsThinkingEffort,
@@ -15,7 +15,7 @@ import {
 } from '@moonshot-ai/core/llm/thinking';
 import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
 import { type ModelOverrides } from '#/provider-catalog/model/model.types';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { IProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocol';
 import {
   drivesThinkingThroughTraits,
   requiresStrictThinkingValidation,

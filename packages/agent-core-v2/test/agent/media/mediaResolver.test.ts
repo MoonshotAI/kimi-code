@@ -42,7 +42,7 @@ import { type GetResult, IFileService } from '#/app/file/fileService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '@moonshot-ai/core/llm/message';
 import type { LlmOutcome, LlmRunEvent } from '@moonshot-ai/core/llm/response';
-import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import type { Protocol } from '#/provider-catalog/protocol/protocol';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -51,7 +51,7 @@ import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 
 import { registerStateServices } from '../../state/stubs';
 import { createStaticCredentialProvider } from '#human/credentials/credentials';
-import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
+import { ImageUploadUnsupportedError } from '#/provider-catalog/errors';
 
 const FILE_ID = 'file_abc';
 const VIDEO_BYTES = Buffer.from('tiny fake mp4 bytes');

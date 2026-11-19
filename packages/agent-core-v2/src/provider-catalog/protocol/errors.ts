@@ -9,9 +9,9 @@ import {
   PROVIDER_OVERLOADED_ERROR_CODE,
   PROVIDER_RATE_LIMIT_ERROR_CODE,
   throwIfAbortError,
-} from '../contract/errors';
+} from '../errors';
 
-export { sanitizeStatusErrorMessage } from '../contract/errors';
+export { sanitizeStatusErrorMessage } from '../errors';
 
 export const ProtocolErrors = {
   codes: {

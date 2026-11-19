@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import { ProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocolAdapterRegistry';
 import {
   drivesThinkingThroughTraits,
   requiresStrictThinkingValidation,

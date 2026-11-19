@@ -7,8 +7,8 @@ import { IConfigService } from '#/app/config/config';
 import { ConfigErrors } from '#/app/config/errors';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
-import '#/llm-adapter/protocol/protocolAdapterRegistry';
+import { IProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocol';
+import '#/provider-catalog/protocol/protocolAdapterRegistry';
 import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import {
   IProviderService,

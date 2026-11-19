@@ -32,7 +32,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { IModelCatalog, type Model } from '#/provider-catalog/model/catalog';
-import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
+import { IProtocolAdapterRegistry, type Protocol } from '#/provider-catalog/protocol/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';

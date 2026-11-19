@@ -3,13 +3,13 @@ import { Service } from "#/_base/di/service";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { estimateTokensForMessage } from "#/llm-adapter/contract/tokens";
+import { estimateTokensForMessage } from "#/session/tokenCounting/tokens";
 import { buildCompactionSummaryText, buildContextCompactionShape, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
 import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import { llmErrorName, llmErrorRequestId, type LlmOutcome } from '@moonshot-ai/core/llm/response';
 import { retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
@@ -36,7 +36,7 @@ import {
   errorFromLlmMessage,
   isLlmErrorMessage,
   isRetryableGenerateError,
-} from '#/llm-adapter/contract/errors';
+} from '#/provider-catalog/errors';
 import { createUserMessage, type Message } from '@moonshot-ai/core/llm/message';
 import { emptyUsage, grandTotal, inputTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
 import { IEventBus } from '#/app/event/eventBus';

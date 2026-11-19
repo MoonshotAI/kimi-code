@@ -1,5 +1,5 @@
 import type { Message, ToolDescription as Tool } from '@moonshot-ai/core/llm/message';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 import type { AgentLLMRequestLogFields, AgentLLMRequestSource } from '#/agent/usage/usage';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
 import type { LlmPolicy } from '@moonshot-ai/core/llm/policy/policy';

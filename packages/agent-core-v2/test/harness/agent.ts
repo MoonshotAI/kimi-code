@@ -111,7 +111,7 @@ import type { StateKey } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { EVENT2_REGISTRY, event2FromRecord } from '#/app/event/event2';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { IProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocol';
 import { IProviderRequesterFactory, ProviderRequesterFactory } from '#/provider-catalog/requester';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
 import { type ModelCapability, type ThinkingEffort } from '@moonshot-ai/core/llm/request';

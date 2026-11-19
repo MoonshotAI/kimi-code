@@ -10,7 +10,7 @@ import type {
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
 import { toCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
-import { toLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
+import { toLlmMessage } from '@moonshot-ai/agent-core-v2/wire/message';
 import {
   RPCError,
   type AgentEventPayloads,

@@ -9,7 +9,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import { toCoreMessage } from '#human/message';
-import { toLlmMessage, type Message as LegacyMessage } from '#/llm-adapter/contract/message';
+import { toLlmMessage, type Message as LegacyMessage } from '#/wire/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';

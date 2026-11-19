@@ -17,14 +17,13 @@ import type { LlmRequest, ThinkingEffort } from '@moonshot-ai/core/llm/request';
 import type { LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
 import { llmErrorRequestId, type LlmOutcome, type LlmRunEvent, type LlmTiming } from '@moonshot-ai/core/llm/response';
 import { emptyUsage, grandTotal, inputTotal, type TokenUsage } from '@moonshot-ai/core/llm/usage';
-import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import {
   APIStatusError,
   classifyApiError,
   errorDiagnostics,
   isLlmErrorMessage,
   isRetryableGenerateError,
-} from '#/llm-adapter/contract/errors';
+} from '#/provider-catalog/errors';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
@@ -39,6 +38,10 @@ import {
   type RequestConfigSnapshot,
   type ResolvedRequestContext,
 } from './requesterContract';
+
+export interface LLMRequestTrace {
+  readonly requestId: string | undefined;
+}
 
 const CACHE_BREAK_MIN_DROP_TOKENS = 2000;
 const CACHE_BREAK_DROP_RATIO = 0.95;

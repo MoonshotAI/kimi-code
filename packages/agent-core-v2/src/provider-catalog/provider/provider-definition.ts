@@ -25,7 +25,7 @@ import { kimiRequesters } from '@moonshot-ai/core/llm/builtin/provider/kimi/inde
 import type { ModelCapability } from '@moonshot-ai/core/llm/request';
 import type { LlmRequester } from '@moonshot-ai/core/llm/requester';
 
-import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import type { Protocol } from '#/provider-catalog/protocol/protocol';
 import type { ModelSource } from './provider';
 
 export interface ProviderDefinition<N extends Protocol = Protocol> {

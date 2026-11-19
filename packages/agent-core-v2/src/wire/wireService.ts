@@ -18,7 +18,7 @@ import {
   fromLlmMessage,
   toLlmMessage,
   type Message as LegacyContractMessage,
-} from '#/llm-adapter/contract/message';
+} from '#/wire/message';
 import {
   type AppendLogTruncation,
   IAppendLogStore,

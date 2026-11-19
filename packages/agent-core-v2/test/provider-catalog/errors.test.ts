@@ -20,7 +20,7 @@ import {
   llmMessageFromError,
   normalizeAPIStatusError,
   throwIfAbortError,
-} from '#/llm-adapter/contract/errors';
+} from '#/provider-catalog/errors';
 
 class APIUserAbortError extends Error {
   constructor(message = 'Request was aborted.') {

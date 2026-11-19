@@ -12,7 +12,7 @@ import { WarningIssued } from '#/agent/profile/profileOps';
 import { IFileService } from '#/app/file/fileService';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
+import { ImageUploadUnsupportedError } from '#/provider-catalog/errors';
 import {
   mediaOmissionOf,
   mediaPlaceholderText,

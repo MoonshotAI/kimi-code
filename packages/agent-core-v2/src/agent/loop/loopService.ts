@@ -75,7 +75,7 @@ import type {
 
   ThinkingEffort,
 } from '@moonshot-ai/core/llm/request';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelCapability } from '#/provider-catalog/capability';
 import {
   contentsOf,
   mergeFields,

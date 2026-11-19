@@ -1,4 +1,4 @@
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelCapability } from '#/provider-catalog/capability';
 import type { ProviderType } from '#/provider-catalog/provider/provider';
 
 import { wireHasProtocolThinkingDisable } from '#/provider-catalog/model/thinking';

@@ -119,8 +119,8 @@ export * from '#/session/state/sessionState';
 import '#/session/state/sessionStateService';
 export * from '#/agent/state/agentState';
 import '#/agent/state/agentStateService';
-export * from '#/llm-adapter/contract/capability';
-export * from '#/llm-adapter/contract/errors';
+export * from '#/provider-catalog/capability';
+export * from '#/provider-catalog/errors';
 export {
   createAssistantMessage,
   createToolMessage,
@@ -128,7 +128,7 @@ export {
   isToolDeclarationOnlyMessage,
   mergeInPlace,
   type Message,
-} from '#/llm-adapter/contract/message';
+} from '#/wire/message';
 export {
   extractText,
   getTextContent,
@@ -159,7 +159,7 @@ export type { ThinkingEffort, ThinkingRequestOptions } from '@moonshot-ai/core/l
 export type { VideoUploadInput } from '#human/media/upload';
 export type { ToolCallIdPolicy } from '@moonshot-ai/core/llm/protocol/rules/tool-call-ids';
 export type { LlmSampling as SamplingOptions } from '@moonshot-ai/core/llm/request';
-export * from '#/llm-adapter/contract/request-trace';
+export type { LLMRequestTrace } from '#/agent/loop/requestObservation';
 export type { KimiThinkingConfig } from '@moonshot-ai/core/llm/builtin/provider/kimi/protocol';
 
 export * from '#/app/sessionIndex/sessionIndex';
@@ -190,16 +190,16 @@ export * from '#/provider-catalog/provider/provider';
 export * from '#/provider-catalog/provider/provider-service';
 export * from '#/provider-catalog/provider/provider-definition';
 export * from '#/provider-catalog/requester';
-export * from '#/llm-adapter/protocol/protocolAdapterRegistry';
+export * from '#/provider-catalog/protocol/protocolAdapterRegistry';
 import '#/features/skill/catalog/configSection';
 import '#/app/agentIdentity/configSection';
 export * from '#/app/agentIdentity/configSection';
 export * from '#/app/agentIdentity/agentIdentity';
 export * from '#/app/agentIdentity/agentIdentityService';
-import '#/llm-adapter/protocol/errors';
-export * from '#/llm-adapter/protocol/errors';
-export * from '#/llm-adapter/protocol/protocol';
-export * from '#/llm-adapter/protocol/protocol-base';
+import '#/provider-catalog/protocol/errors';
+export * from '#/provider-catalog/protocol/errors';
+export * from '#/provider-catalog/protocol/protocol';
+export * from '#/provider-catalog/protocol/protocol-base';
 import '#/app/kosongConfig/envOverlay';
 export * from '#/provider-catalog/model/completion-budget';
 export * from '#/provider-catalog/model/host-request-headers';

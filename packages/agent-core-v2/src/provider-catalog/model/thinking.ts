@@ -1,4 +1,4 @@
-import type { IProtocolAdapterRegistry, Protocol } from '#/llm-adapter/protocol/protocol';
+import type { IProtocolAdapterRegistry, Protocol } from '#/provider-catalog/protocol/protocol';
 import { getProviderDefinitions } from '../provider/provider-definition';
 
 export interface ThinkingConfig {

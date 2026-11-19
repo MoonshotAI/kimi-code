@@ -3,7 +3,7 @@ import { Error2 } from '#/_base/errors/errors';
 
 import type { ConfigEffectiveOverlay } from '#/app/config/config';
 import { registerConfigOverlay } from '#/app/config/configOverlayContributions';
-import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
+import { CONFIG_INVALID_ERROR_CODE } from '#/provider-catalog/errors';
 import { resolveProviderEndpoint } from '#/provider-catalog/provider/provider-definition';
 
 import { ENV_MODEL_PROVIDER_KEY } from './configSection';

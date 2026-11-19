@@ -15,8 +15,8 @@ import {
   stripBedrockInferenceProfilePrefix,
 } from '@moonshot-ai/core/llm/builtin/provider/bedrock/routing';
 
-import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
-import { ProtocolSchema, type Protocol } from '#/llm-adapter/protocol/protocol';
+import { CONFIG_INVALID_ERROR_CODE } from '#/provider-catalog/errors';
+import { ProtocolSchema, type Protocol } from '#/provider-catalog/protocol/protocol';
 import type { IProviderService, ProviderConfig, ProvidersSection } from '../provider/provider';
 import { explainProviderEndpoint, getProviderDefinition } from '../provider/provider-definition';
 

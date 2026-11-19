@@ -51,7 +51,7 @@ import { AgentReminderService, IAgentReminderService } from '#/features/reminder
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { SubagentSuspended } from '#/features/swarm/session/sessionSwarmService';
 import { IModelCatalog } from '#/provider-catalog/model/catalog';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { IProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocol';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IHostClock } from '#/os/interface/hostClock';

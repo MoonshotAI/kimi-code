@@ -24,7 +24,7 @@ import {
 } from '#/provider-catalog/model/model';
 import type { ThinkingConfig } from '#/provider-catalog/model/thinking';
 import type { OAuthRef, ProviderConfig, ProvidersSection } from '#/provider-catalog/provider/provider';
-import { ProtocolSchema } from '#/llm-adapter/protocol/protocol';
+import { ProtocolSchema } from '#/provider-catalog/protocol/protocol';
 
 export const PROVIDERS_SECTION = 'providers';
 

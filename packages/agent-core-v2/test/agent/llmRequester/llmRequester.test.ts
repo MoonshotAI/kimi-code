@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentLLMRequestSource } from '#/agent/usage/usage';
 import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
-import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
+import { errorFromLlmMessage } from '#/provider-catalog/errors';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';

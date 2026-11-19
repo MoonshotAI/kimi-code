@@ -5,7 +5,7 @@ import { contentsOf } from '@moonshot-ai/core/llm/requester';
 import { streamLlmRequest } from '@moonshot-ai/core/llm/stream';
 import { supportsLlmUpload } from '#/provider-catalog/model/media';
 import type { Model } from '#/provider-catalog/model/catalog';
-import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import { ProtocolAdapterRegistry } from '#/provider-catalog/protocol/protocolAdapterRegistry';
 import { ProviderRequesterFactory } from '#/provider-catalog/requester';
 import {
   getProviderDefinition,

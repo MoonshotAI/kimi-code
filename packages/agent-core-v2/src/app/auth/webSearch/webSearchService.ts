@@ -11,7 +11,7 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
+import { CONFIG_INVALID_ERROR_CODE } from '#/provider-catalog/errors';
 import { IModelService, type ModelRecord } from '#/provider-catalog/model/model';
 import {
   resolveActiveModelProvider,

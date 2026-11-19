@@ -4,7 +4,7 @@ import {
   IProtocolAdapterRegistry,
   ProtocolSchema,
   type ProtocolAdapterConfig,
-} from '#/llm-adapter/protocol/protocol';
+} from '#/provider-catalog/protocol/protocol';
 
 describe('ProtocolSchema', () => {
   it('accepts the four real wire protocols', () => {

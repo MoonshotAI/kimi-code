@@ -16,7 +16,7 @@ import {
   isToolExchangeAdjacencyError,
   normalizeAPIStatusError,
   parseRetryAfterMs,
-} from '#/llm-adapter/contract/errors';
+} from '#/provider-catalog/errors';
 import { describe, expect, it } from 'vitest';
 
 describe('ChatProviderError', () => {

@@ -11,12 +11,12 @@ import {
   APITimeoutError,
   ChatProviderError,
   createAbortError,
-} from '#/llm-adapter/contract/errors';
+} from '#/provider-catalog/errors';
 import {
   ProtocolErrors,
   sanitizeStatusErrorMessage,
   translateProviderError,
-} from '#/llm-adapter/protocol/errors';
+} from '#/provider-catalog/protocol/errors';
 
 class APIUserAbortError extends Error {
   constructor(message = 'Request was aborted.') {

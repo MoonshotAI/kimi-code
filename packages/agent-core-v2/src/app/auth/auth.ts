@@ -12,7 +12,7 @@ import type {
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 
-import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
+import { CONFIG_INVALID_ERROR_CODE } from '#/provider-catalog/errors';
 import type { OAuthRef } from '#/provider-catalog/provider/provider';
 
 import { AuthErrors } from './errors';

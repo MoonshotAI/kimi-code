@@ -12,7 +12,7 @@ import type { LlmCredentialProvider } from '@moonshot-ai/core/llm/request';
 import type { Model } from '#/provider-catalog/model/catalog';
 import { contentsOf } from '@moonshot-ai/core/llm/requester';
 import type { InitializedLlmRequester } from '@moonshot-ai/core/llm/requester';
-import { ImageUploadUnsupportedError, VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
+import { ImageUploadUnsupportedError, VideoUploadUnsupportedError } from '#/provider-catalog/errors';
 
 export type ImageUploader = (
   input: ImageUploadInput,

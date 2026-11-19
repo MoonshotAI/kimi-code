@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRequesterBinder } from '#/agent/loop/requesterBinder';
 import { IConfigService } from '#/app/config/config';
 import { IProviderCatalogRuntime } from '#/provider-catalog/model/catalog-runtime';
-import { errorFromLlmMessage } from '#/llm-adapter/contract/errors';
+import { errorFromLlmMessage } from '#/provider-catalog/errors';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelRecord } from '#/provider-catalog/model/model';
