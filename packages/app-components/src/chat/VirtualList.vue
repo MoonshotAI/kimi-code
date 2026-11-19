@@ -41,7 +41,7 @@ const layout = computed<{ entries: Entry[]; spaceAfter: number }>(() => {
   }
   const entries: Entry[] = [];
   let previous = -1;
-  for (const index of [...chosen].sort((a, b) => a - b)) {
+  for (const index of [...chosen].toSorted((a, b) => a - b)) {
     const space = previous < 0 ? index * stride.value : index > previous + 1 ? (index - previous) * stride.value - props.itemSize : 0;
     entries.push({ key: keys.value[index]!, index, space });
     previous = index;
