@@ -42,6 +42,8 @@
 - `packages/product`：客户端和宿主共用的 Kimi Code 产品逻辑。
 - `packages/migration-legacy`：把 kimi-cli 的数据（`~/.kimi/`）迁移到 kimi-code（`~/.kimi-code/`）。
 - `packages/pi-tui`：终端 UI 库，从上游 `earendil-works/pi` 的 `packages/tui` 引入的 fork。
+- `packages/testkit`：假模型与 KAP 夹具。
+- `tests/scenarios`：真实 KAP 场景测试。
 
 ## 结束前的验证
 

@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "experimentalDecorators": true
+  },
+  "include": ["**/*.test.ts", "support/**/*.ts", "../../packages/kap-server/src/env.d.ts"],
+  "exclude": ["node_modules"]
+}

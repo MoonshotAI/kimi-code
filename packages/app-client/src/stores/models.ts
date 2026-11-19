@@ -99,6 +99,30 @@ export const useModelsStore = defineStore('kimi.models', () => {
     defaultModelByHost.value = { ...defaultModelByHost.value, [hostId]: id };
   }
 
+  function removeHosts(hostIds: readonly string[]): void {
+    if (hostIds.length === 0) return;
+    const removed = new Set(hostIds);
+    if (activeHostId.value !== undefined && removed.has(activeHostId.value)) {
+      activeHostId.value = undefined;
+    }
+    let modelsChanged = false;
+    const nextModels = { ...modelsByHost.value };
+    let defaultsChanged = false;
+    const nextDefaults = { ...defaultModelByHost.value };
+    for (const hostId of removed) {
+      if (Object.prototype.hasOwnProperty.call(nextModels, hostId)) {
+        delete nextModels[hostId];
+        modelsChanged = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(nextDefaults, hostId)) {
+        delete nextDefaults[hostId];
+        defaultsChanged = true;
+      }
+    }
+    if (modelsChanged) modelsByHost.value = nextModels;
+    if (defaultsChanged) defaultModelByHost.value = nextDefaults;
+  }
+
   function setModels(next: AppModel[]): void {
     models.value = next;
   }
@@ -248,6 +272,7 @@ export const useModelsStore = defineStore('kimi.models', () => {
     setActiveHost,
     loadHostCatalog,
     setHostDefaultModel,
+    removeHosts,
     resolveSendModel,
     catalogProviders,
     catalogState,
