@@ -119,6 +119,16 @@ describe('follow mode', () => {
     expect(s.distanceFromBottom()).toBe(0);
     expect(s.controller.state.following).toBe(true);
   });
+
+  it('keeps following when layout moves the position up slightly and grows again before the scroll event', () => {
+    const s = setup();
+    s.userScroll(s.scrollTop - 11);
+    s.setChildHeight('r11', 'md', 3, 120);
+    s.flushResize();
+    s.frame();
+    expect(s.controller.state.following).toBe(true);
+    expect(s.distanceFromBottom()).toBe(0);
+  });
 });
 
 describe('anchored mode', () => {

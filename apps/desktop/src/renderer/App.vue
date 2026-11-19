@@ -57,7 +57,6 @@ import type { ColorScheme, FontScale, PromptAttachment, ChatGateVerdict } from '
 import type { OpenMediaRequest, ToolMedia, TurnAttachment, WorkspaceView } from './types';
 import { usePageTitle } from '@moonshot-ai/app-client/composables';
 import { useSidebarLayout } from '@moonshot-ai/app-client/composables';
-import { useTranscriptEngine } from '@moonshot-ai/app-client/composables';
 import { useFilePreview } from '@moonshot-ai/app-client/composables';
 import { usePanelTabs } from '@moonshot-ai/app-client/composables';
 import { panelApiKey, type PanelApi, type BrowserTabPayload, type BtwTabPayload, type CompactionTabPayload, type FileTabPayload, type PanelLauncherType, type TermTabPayload, type TurnDiffTabPayload, DRAFT_CONTEXT_KEY_PREFIX } from '@moonshot-ai/app-client/panel';
@@ -1291,7 +1290,6 @@ function onTerminalWindowResize(): void {
 }
 
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
-const { transcriptEngine } = useTranscriptEngine();
 const panelTabsRef = ref<InstanceType<typeof PanelTabs> | null>(null);
 
 function openSessionInfoTab(type: PanelLauncherType): void {
@@ -2374,7 +2372,6 @@ function openPr(url: string): void {
 
     <ConversationPane
       ref="conversationPaneRef"
-      :key="transcriptEngine"
       v-show="mainView === 'chat'"
       :mobile="isMobile"
       :right-panel-open="panel.panelVisible.value"
