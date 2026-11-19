@@ -33,7 +33,8 @@
     {
       "env": null,
       "files": [
-        "apps/desktop/e2e/*.spec.ts"
+        "apps/desktop/e2e/*.spec.ts",
+        "apps/desktop/test/e2e/**/*.spec.ts"
       ],
       "globals": null,
       "plugins": null,

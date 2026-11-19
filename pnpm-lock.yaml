@@ -101,6 +101,9 @@ importers:
       vitest:
         specifier: 4.1.4
         version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@26.1.0)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.9.1))
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.1
 
   apps/desktop:
     dependencies:
@@ -316,6 +319,9 @@ importers:
       '@moonshot-ai/session-import':
         specifier: workspace:^
         version: link:../../packages/session-import
+      '@moonshot-ai/testkit':
+        specifier: workspace:^
+        version: link:../../packages/testkit
       '@moonshot-ai/tree-sitter-bash':
         specifier: workspace:^
         version: link:../../packages/tree-sitter-bash

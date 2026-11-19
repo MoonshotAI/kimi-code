@@ -51,3 +51,5 @@ test('writes manual permissions to the test config', async ({ testHome }) => {
 比较一组帧或多个快照时，在**同一个测试**里复用 `createNormalizer({ idKeys: ['session_id'], paths: { '<workspace>': testHome.workspace } })` 返回的函数。它按首次出现的顺序为 ID 编号，所以同一个会话在前后两份数据里仍对应同一个标记。`paths` 的键是要显示的占位符，值是测试机上的实际路径。单份数据可以直接调用 `normalize(value, options)`。如果要验证两个真实 ID 是否相同，直接比较原始值即可。[快照规范化用例](../test/fixtures.test.ts)
 
 构造图片输入时，`dataUrl('image/png', solidPng(2, 2))` 可以生成完整的 PNG。需要区分损坏的 Base64 和无法解码的图片时，从 `BROKEN_DATA_URLS` 选择对应样本。`mp4Header()` 只构造 MP4 的文件类型头，适合格式识别测试。[媒体样本](../src/fixtures/media.ts)
+
+对子进程做强制清理时，`killProcessTree(pid)` 在 POSIX 优先终止该子进程的进程组，在 Windows 使用系统进程树终止命令。传入测试自己启动的子进程 PID，POSIX 启动时使用 `detached: true`，并等待进程退出。[TUI 的正常退出和强制回收](../../../apps/kimi-code/test/e2e/tui/support/terminal-session.ts)

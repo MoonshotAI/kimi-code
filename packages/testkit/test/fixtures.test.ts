@@ -17,7 +17,38 @@ import { createTestHome } from '#/fixtures/home';
 import { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 import { installNetworkGuard, isLoopback, tcpTargetOf } from '#/fixtures/network';
 import { createNormalizer, normalize } from '#/fixtures/normalize';
+import { killProcessTree } from '#/fixtures/process';
 import { deferred, gate, until, waitForEvent } from '#/fixtures/wait';
+
+describe('killProcessTree', () => {
+  it.each([0, 1, -1, NaN])('rejects an invalid child PID %s', pid => {
+    expect(() => killProcessTree(pid)).toThrow(RangeError);
+  });
+
+  it('reaps a process group even when a grandchild holds its output pipe open', async () => {
+    const grandchildCode = "process.stdout.write(String(process.pid) + '\\n'); setInterval(() => {}, 60_000)";
+    const parentCode = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchildCode)}], { stdio: ['ignore', 1, 2] })`;
+    const child = spawn(process.execPath, ['-e', parentCode], {
+      detached: process.platform !== 'win32',
+      stdio: 'pipe',
+    });
+    const stdout = child.stdout.setEncoding('utf8');
+    let grandchildPid: number | undefined;
+    try {
+      const [data] = await once(stdout, 'data', { signal: AbortSignal.timeout(5_000) });
+      grandchildPid = Number(String(data).trim());
+      expect(grandchildPid).toBeGreaterThan(1);
+      const closed = once(child, 'close', { signal: AbortSignal.timeout(5_000) });
+      killProcessTree(child.pid!);
+      const [code, signal] = await closed;
+      expect(code !== 0 || signal !== null).toBe(true);
+      grandchildPid = undefined;
+    } finally {
+      if (grandchildPid !== undefined && grandchildPid > 1) killProcessTree(grandchildPid);
+      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) killProcessTree(child.pid);
+    }
+  }, 15_000);
+});
 
 describe('testEnv', () => {
   it('drops KIMI_ variables, vendor keys and proxies, then applies the test defaults', () => {

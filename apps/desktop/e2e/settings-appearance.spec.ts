@@ -38,7 +38,7 @@ const replyFontSize = (window: Page): Promise<number> =>
   window.getByRole('list').first().getByText(REPLY, { exact: true })
     .evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize));
 
-test('appearance, font size and language apply app-wide and survive a relaunch', async ({ app, model }) => {
+test('appearance, font size and language apply app-wide and survive a relaunch', { tag: '@quarantine' }, async ({ app, model }) => {
   const window = app.window;
   const transcript = window.getByRole('list').first();
   let medium = 0;

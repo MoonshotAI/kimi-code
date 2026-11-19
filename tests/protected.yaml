@@ -1,0 +1,25 @@
+smoke:
+  - id: core.first-turn
+    project: agent-core-v2
+    file: packages/agent-core-v2/test/integration/conversation/first-turn.test.ts
+    behavior: 引擎完成首轮对话，追问带上前一轮的提问和回答。
+    source: 引擎会话 RPC 基础冒烟
+    owner: '@RealKai42'
+  - id: kap.first-turn
+    project: scenarios
+    file: tests/scenarios/conversation.test.ts
+    behavior: 回合完成前可读到部分回答，最终 WebSocket 历史与 REST 一致。
+    source: KAP 首轮对话契约
+    owner: '@RealKai42'
+  - id: tui.first-turn
+    project: cli
+    file: apps/kimi-code/test/e2e/tui/conversation/first-turn.test.ts
+    behavior: 终端用户键入首问并按 Enter 后能看到回答。
+    source: 默认 TUI 首轮旅程
+    owner: '@RealKai42'
+  - id: desktop.first-turn
+    project: smoke
+    file: apps/desktop/e2e/core-turn.spec.ts
+    behavior: 用户在新工作区发送首问，看到流式回复，回合结束后可以继续输入。
+    source: Electron 新工作区首轮旅程
+    owner: '@RealKai42'

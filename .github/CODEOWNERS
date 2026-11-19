@@ -1,0 +1,13 @@
+/.github/CODEOWNERS @RealKai42
+/.github/workflows/e2e-smoke.yml @RealKai42
+/package.json @RealKai42
+/tests/protected.yaml @RealKai42
+/scripts/protected-smoke* @RealKai42
+/scripts/vitest-smoke-reporter.mjs @RealKai42
+/apps/desktop/e2e/fixtures/smoke-reporter.ts @RealKai42
+/apps/desktop/e2e/playwright.config.ts @RealKai42
+/apps/desktop/e2e/run.mjs @RealKai42
+/packages/agent-core-v2/test/integration/conversation/first-turn.test.ts @RealKai42
+/tests/scenarios/conversation.test.ts @RealKai42
+/apps/kimi-code/test/e2e/tui/conversation/first-turn.test.ts @RealKai42
+/apps/desktop/e2e/core-turn.spec.ts @RealKai42

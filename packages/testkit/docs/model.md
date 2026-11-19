@@ -84,16 +84,13 @@ test('reads a reply from the side lane', async ({ model }) => {
 
 ## 在桌面端接入假模型
 
-在 Playwright 测试进程中用 `await startFakeModel({ apiKey })` 启动模型服务，Electron 内嵌的 KAP 会通过回环 HTTP 访问它。用 `writeKimiConfig` 把 provider 配置写入桌面夹具的 `KIMI_CODE_HOME`。现有 `app` 夹具已启动应用时，写入 `join(scratch, 'home')` 后调用 `await app.relaunch()` 让内嵌 KAP 读取配置。[桌面应用夹具](../../../apps/desktop/e2e/fixtures/app.ts)
-
-桌面配置里的三个名字各有用途。用 `fakeModelConfig(model, { type: 'openai', providerAlias: 'e2e', alias: 'e2e/stub', modelName: 'stub', apiKey, maxContextSize: 128000 })`，设置页读到的 provider 是 `e2e`，默认模型是 `e2e/stub`，模型服务收到的请求里 `view.model` 是 `stub`。配置多个需要验证不同密钥的 provider 时，可以为每个 provider 启动独立的假模型。
-
+从[桌面应用夹具](../../../apps/desktop/e2e/fixtures/app.ts)导入 `testWithProvider`。它在 Electron 首次启动前为内嵌 KAP 配置严格模型，用例可直接使用 `{ app, provider }`。设置里的 provider 为 `e2e`，默认模型为 `e2e/stub`，请求中的模型名为 `stub`。teardown 自动验证和关闭模型，失败时保留诊断。原有 `test` 导出继续提供旧 stub。
 | 要在桌面验证的行为 | 用例怎么写 |
 |---|---|
 | 流式输出与用户取消 | 用 `held('partial', say(['第一块', '第二块']), 1)` 安排回复。用 `app.submit()` 发送消息，等 `hold('partial').reached()` 和界面出现第一块，再点击 Interrupt。检查该请求的 `state` 变为 `aborted`，随后在同一会话发第二条消息并断言回复。旧夹具的 `app.startTurn()` 等待的是它自己的 stub。 |
 | 工作区提示和消息历史 | OpenAI 请求用 `request.texts('system')` 按原顺序读取每条 system 或 developer 消息。跨协议读取整段提示用 `view.system`。插话或取消后的下一步可分别检查 `userTextsSinceReply` 和 `remindersSinceReply`。 |
 | 后台请求、子 agent 与工具结果 | 桌面的 OpenAI 配置没有 Kimi 路由元数据。按 `model.lane('main').waitForRequest(n)` 等主通道，避免全局序号被无工具的 `side` 请求占用。自定义子 agent 路由可同时匹配 `request.tools.length > 0` 和 `firstUserText`。工具结果与实际请求中的调用 ID 配对。 |
-| 需要让未编排回合保持运行 | 在对应通道显式设置 `unscripted('hang')`，模型发出第一块后挂起。用 `waitForHeldTurn()` 等请求就位；`releaseHeld()` 放行已经到达的挂起点。用例结束前调用 `verify()`，在 `finally` 中 `await model.close()`。 |
+| 需要让未编排回合保持运行 | 在对应通道显式设置 `unscripted('hang')`，模型发出第一块后挂起。用 `waitForHeldTurn()` 等请求就位；`releaseHeld()` 放行已经到达的挂起点。由桌面夹具验证并关闭模型。 |
 
 Electron 窗口、原生对话框、剪贴板、Browser MCP、重启后的用户数据和失败 trace 由桌面夹具管理。测 renderer 与 KAP 的重连时，在 Playwright 端切断 REST 或 WebSocket；测 provider 回复中断时，使用模型的 `hold.cut()`。这两种断连发生在不同的连接上。[桌面重连用例](../../../apps/desktop/e2e/turn-reconnect.spec.ts) · [KAP 场景指南](kap-scenarios.md)
 

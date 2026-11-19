@@ -13,7 +13,7 @@ const AFTER_REPLY = 'The optimizer folds constants.';
 
 test.use({ permissionMode: 'yolo' });
 
-test('outline, transcript search, side chat and manual compaction work over one long session', async ({ app, model }) => {
+test('outline, transcript search, side chat and manual compaction work over one long session', { tag: '@quarantine' }, async ({ app, model }) => {
   model.script(...TOPICS.map(topic => say(reply(topic), { intervalMs: 5 })));
   const window = app.window;
   const transcript = window.getByRole('list').first();

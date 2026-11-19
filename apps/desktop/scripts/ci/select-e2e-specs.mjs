@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 
-const specPattern = /^apps\/desktop\/e2e\/(?!fixtures\/)[A-Za-z0-9._/-]+\.spec\.ts$/;
+const specPattern = /^apps\/desktop\/(?:test\/)?e2e\/(?!fixtures\/)[A-Za-z0-9._/-]+\.spec\.ts$/;
 const desktopPrefix = 'apps/desktop/';
 
 const changed = [...new Set(readFileSync(0, 'utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean))];

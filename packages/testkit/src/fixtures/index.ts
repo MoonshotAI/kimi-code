@@ -12,6 +12,7 @@ export { isolateProcessEnv, TEST_ENV_DEFAULTS, testEnv, type TestEnvOptions } fr
 export { createTestHome, removeDirectory, type TestHome } from '#/fixtures/home';
 export { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
 export { installNetworkGuard, type NetworkGuard, type NetworkGuardOptions } from '#/fixtures/network';
+export { killProcessTree } from '#/fixtures/process';
 export { createNormalizer, normalize, type NormalizeOptions, type Normalizer } from '#/fixtures/normalize';
 export { TIMEOUTS } from '#/fixtures/timeouts';
 export {
