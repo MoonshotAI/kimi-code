@@ -6,6 +6,8 @@ import type { LlmOutcome, LlmRunEvent } from '@moonshot-ai/core/llm/response';
 import { contentsOf, requesterContents } from '@moonshot-ai/core/llm/requester';
 import type { FullLoopLlmRequester, Loop } from '@moonshot-ai/core/loop/index';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
+import type { LlmPolicy } from '@moonshot-ai/core/llm/policy/policy';
+import type { LlmRecovery, LlmRecoveryRecord } from '@moonshot-ai/core/llm/policy/recovery';
 import { call, held, reply, say, think, thinkSigned } from '@moonshot-ai/testkit/model';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -173,6 +175,12 @@ describe('Agent loop', () => {
           ],
         };
       }
+      if (
+        request.content.usedTokens === 456 &&
+        request.content.messages.length === (requests[2]?.content.messages.length ?? 0) + 1
+      ) {
+        return providerHttpError(503, 'recover comparison');
+      }
       return {
         ...(requests.length > 3 ? { id: 'comparison' } : {}),
         parts: [{ type: 'text', text: 'done' }],
@@ -241,6 +249,7 @@ describe('Agent loop', () => {
       const internals = localLoop as unknown as {
         readonly loop?: Loop;
         readonly requesterBinder: AgentRequesterBinder;
+        readonly requesterExecution: { readonly recoveries: { clear(): void } };
         readonly observer: AgentLoopRequestObserver;
         decorateRequester(
           requester: FullLoopLlmRequester,
@@ -313,6 +322,7 @@ describe('Agent loop', () => {
         'agent-media',
       ]);
 
+      localLoop.update({ activeToolNames: [], systemPrompt: 'loop-default-system' });
       const raw = coreLoop.baseRequester;
       if (raw === undefined || !('with' in raw)) throw new Error('Expected a full raw requester');
       const { config, binding } = internals.requesterBinder.turnSnapshot(raw);
@@ -322,6 +332,14 @@ describe('Agent loop', () => {
         const observation = startObservation(source, snapshot, onTrace);
         observations.push(observation);
         return observation;
+      });
+      const observedAttempts: [LlmRequest, readonly LlmRecoveryRecord[]][] = [];
+      const attemptOrder: string[] = [];
+      const recordAttempt = internals.observer.recordAttempt.bind(internals.observer);
+      vi.spyOn(internals.observer, 'recordAttempt').mockImplementation((observation, request, appliedRecoveries) => {
+        attemptOrder.push('observer');
+        observedAttempts.push([request, appliedRecoveries]);
+        recordAttempt(observation, request, appliedRecoveries);
       });
       const outcomeSources: unknown[] = [];
       const options: BoundCoreLoopRequesterOptions = {
@@ -336,8 +354,6 @@ describe('Agent loop', () => {
       const legacySnapshot = legacy.snapshot?.() ?? legacy;
       const decorated = internals.decorateRequester(raw, options);
       expect(decorated[requesterContents]).toEqual(contentsOf(raw));
-      const derived = decorated.with({ model: { sampling: { temperature: 0.5 } } });
-      expect(contentsOf(derived).model?.sampling).toMatchObject({ temperature: 0.5 });
       expect(decorated.request({
         content: { messages: [createUserMessage('preview')] },
         profile: { systemPrompt: 'preview-system', tools: [] },
@@ -346,16 +362,92 @@ describe('Agent loop', () => {
       const events: LlmRunEvent[][] = [[], []];
       const outcomes: LlmOutcome[] = [];
       const loopResolver = { id: 'loop-policy', resolve: async (request: LlmRequest) => request };
-      const rest = {
-        content: { messages: requests[2]!.content.messages },
-        profile: requests[2]!.profile,
-        policy: { resolvers: [loopResolver] },
+      const restResolver = { id: 'rest-policy', resolve: async (request: LlmRequest) => request };
+      const derivedRetryable = () => false;
+      const restRetryable = () => false;
+      const loopRecovery: LlmRecovery = {
+        propose: ({ error, appliedRecoveries }) => {
+          if (!error.message.includes('recover comparison') || appliedRecoveries.some((recovery) => recovery.strategy === 'loop-policy')) {
+            return undefined;
+          }
+          return {
+            strategy: 'loop-policy',
+            action: 'append-message',
+            rewrite: (request) => ({
+              ...request,
+              content: {
+                ...request.content,
+                messages: [...request.content.messages, createUserMessage('recovered-message')],
+              },
+            }),
+          };
+        },
       };
-      for (const [index, requester] of [legacySnapshot, decorated].entries()) {
-        outcomes.push(await requester.generate(rest, {
+      const derivedPolicy: LlmPolicy = {
+        retry: { maxAttemptsPerStep: 3 },
+        recoveries: [loopRecovery],
+        resolvers: [loopResolver],
+        retryables: [derivedRetryable],
+      };
+      const restPolicy: LlmPolicy = {
+        retry: { infiniteRetry: false },
+        resolvers: [restResolver],
+        retryables: [restRetryable],
+      };
+      const derivedMessages = [
+        ...requests[2]!.content.messages,
+        createUserMessage('derived-message'),
+      ];
+      const derivedTools = [...(requests[2]?.profile?.tools ?? [])];
+      const derived = decorated.with({
+        model: { sampling: { temperature: 0.5 } },
+        content: { messages: derivedMessages, usedTokens: 456 },
+        profile: { systemPrompt: 'turn-system', tools: derivedTools },
+        policy: derivedPolicy,
+      });
+      expect(contentsOf(derived).model?.sampling).toMatchObject({ temperature: 0.5 });
+      const derivedRest = { policy: restPolicy };
+      expect(derived.request({}).profile?.systemPrompt).toBe('turn-system');
+      const preview = derived.request({ ...derivedRest, profile: { systemPrompt: 'rest-system' } });
+      expect(preview.content).toMatchObject({ messages: derivedMessages, usedTokens: 456 });
+      expect(preview.profile).toEqual({ systemPrompt: 'rest-system', tools: derivedTools });
+
+      const legacyRest = {
+        model: { sampling: { temperature: 0.5 } },
+        content: { messages: derivedMessages, usedTokens: 456 },
+        profile: { systemPrompt: 'turn-system', tools: derivedTools },
+        policy: {
+          retry: { ...derivedPolicy.retry, ...restPolicy.retry },
+          recoveries: [loopRecovery],
+          resolvers: [loopResolver, restResolver],
+          retryables: [derivedRetryable, restRetryable],
+        },
+      };
+      const callerAttempts: [LlmRequest, readonly LlmRecoveryRecord[]][][] = [[], []];
+      const callerRecoverySnapshots: (readonly LlmRecoveryRecord[])[][] = [[], []];
+      const runs = [
+        () => legacySnapshot.generate(legacyRest, {
           signal: new AbortController().signal,
-          onEvent: (event) => events[index]?.push(event),
-        }));
+          onAttempt: (request, { appliedRecoveries }) => {
+            attemptOrder.push('caller');
+            callerAttempts[0]?.push([request, appliedRecoveries]);
+            callerRecoverySnapshots[0]?.push([...appliedRecoveries]);
+          },
+          onEvent: (event) => events[0]?.push(event),
+        }),
+        () => derived.generate(derivedRest, {
+          signal: new AbortController().signal,
+          onAttempt: (request, { appliedRecoveries }) => {
+            attemptOrder.push('caller');
+            callerAttempts[1]?.push([request, appliedRecoveries]);
+            callerRecoverySnapshots[1]?.push([...appliedRecoveries]);
+          },
+          onEvent: (event) => events[1]?.push(event),
+        }),
+      ];
+      for (const run of runs) {
+        internals.requesterExecution.recoveries.clear();
+        outcomes.push(await run());
       }
 
       const outcomeValue = (outcome: LlmOutcome) => {
@@ -371,8 +463,28 @@ describe('Agent loop', () => {
       }));
       expect(eventValues[1]).toEqual(eventValues[0]);
       expect(outcomeSources).toEqual([options.source(), options.source()]);
-      expect(requests).toHaveLength(5);
-      expect(requests[4]?.protocol).toMatchObject(requests[3]!.protocol);
+      expect(attemptOrder).toEqual([
+        'observer', 'caller', 'observer', 'caller',
+        'observer', 'caller', 'observer', 'caller',
+      ]);
+      expect(callerRecoverySnapshots).toEqual([
+        [[], [{ strategy: 'loop-policy', action: 'append-message' }]],
+        [[], [{ strategy: 'loop-policy', action: 'append-message' }]],
+      ]);
+      for (const [index, [request, appliedRecoveries]] of callerAttempts.flat().entries()) {
+        expect(observedAttempts[index]?.[0]).toBe(request);
+        expect(observedAttempts[index]?.[1]).toBe(appliedRecoveries);
+        expect(requests[index + 3]).toBe(request);
+      }
+      expect(requests).toHaveLength(7);
+      expect(requests[3]?.content).toMatchObject({ messages: derivedMessages, usedTokens: 456 });
+      expect(requests[3]?.profile).toEqual({ systemPrompt: 'turn-system', tools: derivedTools });
+      expect(requests[4]?.content).toMatchObject({
+        messages: [...derivedMessages, createUserMessage('recovered-message')],
+        usedTokens: 456,
+      });
+      expect(requests[5]?.protocol).toMatchObject(requests[3]!.protocol);
+      expect(requests[6]?.protocol).toMatchObject(requests[4]!.protocol);
       const endpointValues = requests.slice(3).map((request) => ({
         baseUrl: request.endpoint?.baseUrl,
         defaultBaseUrl: request.endpoint?.defaultBaseUrl,
@@ -382,20 +494,33 @@ describe('Agent loop', () => {
         hasClientFactory: request.endpoint?.clientFactory !== undefined,
         hasFetch: request.endpoint?.fetch !== undefined,
       }));
-      expect(endpointValues[1]).toEqual(endpointValues[0]);
-      expect(requests[4]?.model).toMatchObject(requests[3]!.model);
-      expect(requests[4]?.content).toMatchObject(requests[3]!.content);
-      expect(requests[4]?.profile).toEqual(requests[3]!.profile);
-      expect(requests[4]?.policy?.retry).toEqual(requests[3]?.policy?.retry);
-      expect(requests[4]?.policy?.retry).toEqual({ maxAttemptsPerStep: 2, infiniteRetry: false });
+      expect(endpointValues[2]).toEqual(endpointValues[0]);
+      expect(endpointValues[3]).toEqual(endpointValues[1]);
+      expect(requests[5]?.model).toMatchObject(requests[3]!.model);
+      expect(requests[6]?.model).toMatchObject(requests[4]!.model);
+      expect(requests[5]?.content).toMatchObject(requests[3]!.content);
+      expect(requests[6]?.content).toMatchObject(requests[4]!.content);
+      expect(requests[5]?.profile).toEqual(requests[3]!.profile);
+      expect(requests[6]?.profile).toEqual(requests[4]!.profile);
       const resolverIds = requests.slice(3).map((request) => {
         const resolvers = request.policy?.resolvers;
         return (typeof resolvers === 'function' ? resolvers() : resolvers)?.map((resolver) => resolver.id);
       });
-      expect(resolverIds).toEqual([
-        ['tool-select', 'agent-media-tools', 'structure', 'agent-media', 'loop-policy'],
-        ['tool-select', 'agent-media-tools', 'structure', 'agent-media', 'loop-policy'],
-      ]);
+      expect(resolverIds).toEqual(Array.from({ length: 4 }, () => [
+        'tool-select', 'agent-media-tools', 'structure', 'agent-media', 'loop-policy', 'rest-policy',
+      ]));
+      for (const request of requests.slice(3)) {
+        const recoveries = request.policy?.recoveries;
+        const resolvedRecoveries = typeof recoveries === 'function' ? recoveries() : recoveries;
+        expect(resolvedRecoveries).toHaveLength(4);
+        expect(resolvedRecoveries?.[3]).toBe(loopRecovery);
+        const retryables = request.policy?.retryables;
+        expect(typeof retryables === 'function' ? retryables() : retryables).toEqual([
+          derivedRetryable,
+          restRetryable,
+        ]);
+        expect(request.policy?.retry).toEqual({ maxAttemptsPerStep: 3, infiniteRetry: false });
+      }
       const observed = observations.map((observation) => ({
         source: observation.source,
         config: observation.config,
@@ -431,7 +556,7 @@ describe('Agent loop', () => {
       expect(failure.error).toMatchObject({
         message: expect.stringContaining('Provider "other" referenced by model "second-model" is not configured.'),
       });
-      expect(requests).toHaveLength(5);
+      expect(requests).toHaveLength(7);
     } finally {
       await local.dispose();
     }

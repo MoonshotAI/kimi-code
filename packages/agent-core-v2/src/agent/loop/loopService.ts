@@ -733,17 +733,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const resolved = this.resolveRequest(options, rest, source, config, requester);
     const mediaPolicy = this.mediaPolicyFactory(resolved.model, resolved.request);
     const hostPolicy = this.corePolicy(resolved, mediaPolicy);
-    const base = mergeFields(contentsOf(resolved.request) as Fields, {
+    const defaults = {
       profile: { systemPrompt: resolved.systemPrompt, tools: resolved.tools },
       content: { messages: resolved.messages, usedTokens: resolved.usedContextTokens },
-    } as Fields);
+    } as Fields;
+    const base = mergeFields(defaults, contentsOf(resolved.request) as Fields);
     const request = mergeFields(base, rest as Fields) as unknown as CoreLlmRequest;
+    const derivedPolicy = requester === undefined ? undefined : contentsOf(requester).policy;
     return {
       resolved,
       request: {
         ...request,
-        profile: { ...request.profile, tools: resolved.tools },
-        policy: mergeCorePolicies(hostPolicy, rest.policy),
+        policy: mergeCorePolicies(mergeCorePolicies(hostPolicy, derivedPolicy), rest.policy),
       },
     };
   }
@@ -809,6 +810,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           signal: control.signal,
           onAttempt: (attemptRequest, { appliedRecoveries }) => {
             this.observer.recordAttempt(observation, attemptRequest, appliedRecoveries);
+            control.onAttempt?.(attemptRequest, { appliedRecoveries });
           },
           onEvent: (event) => {
             this.observer.reportEvent(observation, event, this.infiniteRetryEnabled);
@@ -839,13 +841,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): ResolvedRequestContext {
     const resolved = config.resolved;
     const binding = options.binding ?? this.requesterBinder.bindRequester(options, config);
+    const supplied = mergeFields(
+      requester === undefined ? undefined : contentsOf(requester) as Fields,
+      rest as Fields,
+    ) as unknown as CoreRequestRest;
     const usedContextTokens =
-      rest.content?.usedTokens ??
-      (rest.content?.messages === undefined
+      supplied.content?.usedTokens ??
+      (supplied.content?.messages === undefined
         ? this.tokenCounting.get(this.scopeContext.agentContext).size
         : undefined);
-    const messages = rest.content?.messages ?? this.rawHistory();
-    const tools = rest.profile?.tools ?? options.tools;
+    const messages = supplied.content?.messages ?? this.rawHistory();
+    const tools = supplied.profile?.tools ?? options.tools;
     const baseRequest = requester ?? binding.request;
     return {
       request: binding.requestMetadata
@@ -856,7 +862,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       model: binding.model,
       modelAlias: resolved.modelAlias,
       thinkingEffort: resolved.thinkingLevel,
-      systemPrompt: rest.profile?.systemPrompt ?? config.systemPrompt,
+      systemPrompt: supplied.profile?.systemPrompt ?? config.systemPrompt,
       tools: tools === undefined ? undefined : [...tools],
       messages: [...messages],
       usedContextTokens,
