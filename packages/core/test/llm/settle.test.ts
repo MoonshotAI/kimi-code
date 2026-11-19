@@ -249,15 +249,11 @@ describe('LLM request settlement', () => {
     });
   });
 
-  it('rejects incomplete streams without rejecting a completed non-streaming response', async () => {
-    const incomplete = failedOutcome((await runGenerate(fakeProtocol({
-      chunks: [{ text: 'incomplete text' }],
+  it('accepts usable output when a stream ends without a finish event', async () => {
+    const streaming = doneOutcome((await runGenerate(fakeProtocol({
+      chunks: [{ text: 'streamed text' }],
     }), { module: testModule() })).outcome);
-    expect(incomplete.error).toMatchObject({
-      kind: 'provider',
-      retryable: true,
-      message: expect.stringContaining('without a finish event'),
-    });
+    expect(streaming.message.content).toEqual([{ type: 'text', text: 'streamed text' }]);
 
     const nonStreaming = doneOutcome((await runGenerate(fakeProtocol({
       chunks: [{ text: 'completed text' }],

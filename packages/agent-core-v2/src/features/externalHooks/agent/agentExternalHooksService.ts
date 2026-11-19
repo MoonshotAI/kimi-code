@@ -428,7 +428,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     }
     if (event.reason !== 'completed' || facts === undefined) return;
     if (this.loop.snapshot().hasPendingRequests) return;
-    this.stopHookQueue = this.stopHookQueue
+    const task = this.stopHookQueue
       .then(() => this.runStop(facts, stopHookContinuation))
       .catch((error: unknown) => {
         if (this.stopHookAbortController.signal.aborted) return;
@@ -438,6 +438,8 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
           message: toKimiErrorPayload(error).message,
         });
       });
+    this.stopHookQueue = task;
+    this.loop.trackSettlement(task);
   }
 
   private notifyStopFailure(error: unknown, signal: AbortSignal): void {

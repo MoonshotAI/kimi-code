@@ -188,10 +188,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private quiescenceDepth = 0;
   private historySnapshotDepth = 0;
   private taskReconciliation: Promise<void> | undefined;
+  private readonly settlementTasks = new Set<Promise<void>>();
   private loop: Loop | undefined;
   private initialized = false;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
+  private closing = false;
   private readonly batchStartingHooks = new Map<string, HookRegistration>();
   private readonly journal: LoopJournal;
   private readonly prompts: AgentPromptProjection;
@@ -567,7 +569,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     for (let attempt = 0; ; attempt += 1) {
       try {
         const snapshot = this.journal.snapshot();
-        this.profileAdapter.restore(snapshot);
         const taskHistory = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentTaskHistoryService));
         await taskHistory.reconcile();
         completions = await restoreTaskCompletions({
@@ -919,24 +920,38 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   close(): Promise<void> {
     if (this.closePromise !== undefined) return this.closePromise;
-    this.disposing = true;
-    const reason = abortError('Agent loop disposed');
-    this.prompts.close();
-    this.notifications.close();
-    this.pendingSubmissions.length = 0;
-    this.pendingNotifications.length = 0;
-    this.turns.close(reason);
+    this.closing = true;
     this.closePromise = (async () => {
+      const waitForStop = this.settlementTasks.size > 0;
       try {
-        await this.taskReconciliation;
+        if (waitForStop) {
+          await this.taskReconciliation;
+          await this.settleTrackedTasks();
+          if (this.hasPendingRequests()) {
+            await this.loop?.waitForIdle();
+            await this.turns.drain();
+          }
+        }
       } finally {
-        this.loop?.flushReminders();
-        await this.loop?.close();
-        await this.turns.drain();
-        await this.journal.settled();
-        await this.wire.drainPersisted();
-        await this.wire.flush();
-        this.maybeSettle();
+        this.disposing = true;
+        const reason = abortError('Agent loop disposed');
+        this.prompts.close();
+        this.notifications.close();
+        this.pendingSubmissions.length = 0;
+        this.pendingNotifications.length = 0;
+        this.turns.close(reason);
+        try {
+          await this.taskReconciliation;
+          await this.settleTrackedTasks();
+        } finally {
+          this.loop?.flushReminders();
+          await this.loop?.close();
+          await this.turns.drain();
+          await this.journal.settled();
+          await this.wire.drainPersisted();
+          await this.wire.flush();
+          this.maybeSettle();
+        }
       }
     })();
     return this.closePromise;
@@ -1017,6 +1032,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private admit(input: UserMessage): { readonly id: string; readonly entry: UserMessage } {
     if (this.disposing) throw abortError('Agent loop disposed');
+    const origin = (input.attributes?.origin ?? (input as ContextMessage).origin) as PromptOrigin | undefined;
+    const stopHook = origin?.kind === 'system_trigger' && origin.name === 'stop_hook';
+    if (this.closing && !stopHook) throw abortError('Agent loop disposed');
     this.runGate.begin();
     const snapshot = this.snapshot();
     return this.prompts.admit(input, snapshot.state === 'running' || snapshot.paused || snapshot.queue.length > 0);
@@ -1374,19 +1392,41 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
+  trackSettlement(task: Promise<void>): void {
+    this.settlementTasks.add(task);
+    void task.then(
+      () => this.settlementTasks.delete(task),
+      () => this.settlementTasks.delete(task),
+    );
+  }
+
+  private async settleTrackedTasks(): Promise<void> {
+    while (this.settlementTasks.size > 0) await Promise.all(this.settlementTasks);
+  }
+
   async settled(): Promise<TurnResult | undefined> {
     await this.startPromise;
-    await this.taskReconciliation;
-    const loop = this.loop;
-    if (loop === undefined) {
-      if (!this.hasPendingRequests()) return this.turns.lastResult;
-      await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
+    while (true) {
+      await this.taskReconciliation;
+      const loop = this.loop;
+      if (loop === undefined) {
+        await this.settleTrackedTasks();
+        if (!this.hasPendingRequests()) return this.turns.lastResult;
+        await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
+        continue;
+      }
+      await loop.waitForIdle();
+      await this.turns.drain();
+      const hadSettlementTasks = this.settlementTasks.size > 0;
+      await this.settleTrackedTasks();
+      if (this.loop !== loop) continue;
+      if (hadSettlementTasks && this.quiescenceDepth === 0 && this.historySnapshotDepth === 0 && this.hasPendingRequests()) {
+        await new Promise<void>((resolve) => this.settleWaiters.push(resolve));
+        continue;
+      }
+      await this.wire.flush();
       return this.turns.lastResult;
     }
-    await loop.waitForIdle();
-    await this.turns.drain();
-    await this.wire.flush();
-    return this.turns.lastResult;
   }
 
   async retry(): Promise<TurnResult | undefined> {
@@ -1398,7 +1438,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private maybeSettle(): void {
-    if (this.hasPendingRequests() || this.settleWaiters.length === 0) return;
+    if (this.hasPendingRequests() || this.settlementTasks.size > 0 || this.settleWaiters.length === 0) return;
     const waiters = this.settleWaiters.splice(0);
     for (const resolve of waiters) resolve();
   }

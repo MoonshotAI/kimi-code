@@ -1488,7 +1488,7 @@ describe('FileSessionIndex (read model)', () => {
     expect(all.items.map((s) => s.id)).toEqual(['a', 'c', 'b']);
   });
 
-  it('reuses a settled shared scan for fallback reads inside the reuse window', async () => {
+  it('never serves a settled shared scan to a fallback read', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
@@ -1548,13 +1548,13 @@ describe('FileSessionIndex (read model)', () => {
 
     await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
     const second = await store.listRecent({ workspaceIds: [workspaceId] });
-    expect(second.items.map((s) => s.id)).toEqual(['b', 'a']);
-    expect(docs.gets).toBe(4);
+    expect(second.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+    expect(docs.gets).toBe(6);
 
     (queryStore as GatedQueryStore).release();
     const status = await preparing;
     expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
-    expect(docs.gets).toBe(4);
+    expect(docs.gets).toBe(6);
   });
 
   it('status() walks the read-model lifecycle and stays diagnosable through degradation', async () => {
@@ -1901,12 +1901,18 @@ describe('FileSessionIndex (read model)', () => {
     expect(scans).toBe(1);
     const second = await store.listRecent({ workspaceIds: [workspaceId] });
     expect(second.items.map((s) => s.id)).toEqual(['b', 'a']);
-    expect(scans).toBe(1);
+    expect(scans).toBe(2);
     expect(store.status()).toEqual(status);
     expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toMatchObject({
       seq: 4,
       schemaVersion: 1,
     });
+
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+    await store.reprojectNow();
+    const third = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(third.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+    expect(scans).toBe(3);
   });
 
   it('reconciliation reads only the journaled sessions and refreshes the checkpoint', async () => {

@@ -85,13 +85,11 @@ export class SessionIndexProjector {
 
   sharedScanForRead(): Promise<AuthoritativeScan> {
     const slot = this.scanSlot;
-    if (slot !== undefined && (!slot.settled || Date.now() < slot.reusableUntil)) {
-      return slot.promise;
-    }
-    return this.startScan();
+    if (slot !== undefined && !slot.settled) return slot.promise;
+    return this.startScan(true);
   }
 
-  private startScan(): Promise<AuthoritativeScan> {
+  private startScan(clearOnSettle = false): Promise<AuthoritativeScan> {
     const slot: ScanSlot = {
       promise: this.scanAuthoritative(),
       reusableUntil: Date.now() + SHARED_SCAN_REUSE_MS,
@@ -99,6 +97,7 @@ export class SessionIndexProjector {
     };
     const markSettled = (): void => {
       slot.settled = true;
+      if (clearOnSettle && this.scanSlot === slot) this.scanSlot = undefined;
     };
     void slot.promise.then(markSettled, markSettled);
     this.scanSlot = slot;
