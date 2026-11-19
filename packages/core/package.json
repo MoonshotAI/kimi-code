@@ -27,6 +27,10 @@
       "types": "./package.json",
       "default": "./package.json"
     },
+    "./hook": {
+      "types": "./src/hook/index.ts",
+      "default": "./src/hook/index.ts"
+    },
     "./*": {
       "types": "./src/*.ts",
       "default": "./src/*.ts"

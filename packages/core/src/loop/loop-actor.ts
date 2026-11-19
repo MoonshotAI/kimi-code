@@ -8,19 +8,18 @@ import { waitEvent, type WaitOpts } from '#/utils/wait';
 import type { CreateLoopOptions, Loop, LoopToolContext, LoopToolExecutor } from './create-loop';
 import type { LoopCommand, LoopInput, UnfinishedTurn } from './contract/command';
 import { llmMessageTiming, type LoopAck, type LoopEmitted } from './contract/emitted';
-import type { HookLifecycleEvent, HookPoint } from './contract/hook';
+import type { HookPoint, LoopHooks } from './contract/hook';
 import type { Inbox, QueuedItem, RemindMessage } from './contract/inbox';
 import { CLOSED, CRASHED, STEERED, type AsyncToolOutcome, type StepOutcome, type TurnOutcome } from './contract/outcome';
 import type { LoopProfile } from './contract/profile';
 import { isMessage, isObject } from './guards';
-import { createHookRegistry, type HookRegistry } from './hook/registry';
 import {
   hookFailedEvent,
   hookFailureMessage,
   hookFailureReports,
   runtimeFailure,
   type HookFailureReport,
-} from './hook/failure';
+} from '#/hook/loop/failure';
 import {
   runMessageAppending,
   runStepEnding as runStepEndingHooks,
@@ -32,7 +31,7 @@ import {
   type StepStartingRun,
   type ToolBatchStartingRun,
   type TurnStartingRun,
-} from './hook/run';
+} from '#/hook/loop/run';
 import {
   runLoopRequest,
   type LoopLlmRequester,
@@ -290,11 +289,10 @@ type ActorMessage =
 
 class LoopActor implements Loop {
   readonly executor: LoopToolExecutor;
-  readonly hooks: HookRegistry;
   readonly policy: PolicyRegistry;
   readonly waitForTasks: WaitForTasks;
 
-  private readonly registry: ReturnType<typeof createHookRegistry>;
+  private readonly hook: Partial<LoopHooks>;
   private readonly root: AbortScope = createAbortScope();
   private readonly projection = loopProjection();
   private requestId: string | undefined;
@@ -357,20 +355,11 @@ class LoopActor implements Loop {
     this.shouldQueueTaskNotification = options.shouldQueueTaskNotification;
     this.abortGraceMs = options.abortGraceMs ?? 2_500;
     this.onListenerError = options.onListenerError;
-    this.registry = createHookRegistry();
-    for (const registration of options.hooks ?? []) this.registry.add(registration);
+    this.hook = options.hook ?? {};
     this.policy = createPolicyRegistry();
-    this.hooks = {
-      add: (registration) => this.registry.add(registration),
-      pause: (id) => this.registry.pause(id),
-      resume: (id) => this.registry.resume(id),
-      remove: (id) => this.registry.remove(id),
-      list: () => this.registry.list(),
-    };
     this.waitForTasks = createWaitForTasks(() =>
       Array.from(this.tools.values()).filter((slot) => slot.detached && !slot.done),
     );
-    this.registry.attach((event) => this.hookChanged(event));
   }
 
   get state(): LoopState {
@@ -714,12 +703,6 @@ class LoopActor implements Loop {
       case 'close.failed':
         this.failClose(message.error);
     }
-  }
-
-  private hookChanged(event: HookLifecycleEvent): void {
-    if (!this.open()) return;
-    this.record(event);
-    this.kick();
   }
 
   submit(message: UserMessage): LoopAck<'prompt.submitted'> | undefined {
@@ -1067,7 +1050,7 @@ class LoopActor implements Loop {
       this.record(hookFailedEvent(point, turn.id, turn.step, failure));
       this.record({ type: 'prompt.notified', message });
       messages.push(message);
-      if (failure.paused && failure.hookId !== undefined) this.registry.suspend(failure.hookId);
+      failure.suspend?.();
     }
     if (notify) {
       this.mailbox.queue(messages);
@@ -1198,7 +1181,7 @@ class LoopActor implements Loop {
   private async turnStarting(turn: LiveTurn): Promise<TurnStartingRun> {
     try {
       return await runTurnStarting(
-        this.registry,
+        this.hook,
         { turnId: turn.id, trigger: turn.trigger, pending: turn.pending },
         turn.scope.signal,
       );
@@ -1234,7 +1217,7 @@ class LoopActor implements Loop {
     try {
       for (const item of items) {
         const run = await runMessageAppending(
-          this.registry,
+          this.hook,
           { turnId: turn.id, step: turn.step, item },
           turn.scope.signal,
         );
@@ -1307,7 +1290,7 @@ class LoopActor implements Loop {
   private async stepStarting(turn: LiveTurn, step: StepState): Promise<StepStartingRun> {
     try {
       return await runStepStarting(
-        this.registry,
+        this.hook,
         {
           turnId: turn.id,
           step: turn.step,
@@ -1481,7 +1464,7 @@ class LoopActor implements Loop {
   private async batchStarting(turn: LiveTurn, step: StepState): Promise<ToolBatchStartingRun> {
     try {
       return await runToolBatchStarting(
-        this.registry,
+        this.hook,
         {
           turnId: turn.id,
           step: turn.step,
@@ -1807,10 +1790,10 @@ class LoopActor implements Loop {
 
   private startStepEnding(turn: LiveTurn, step: StepState): void {
     if (!this.isCurrentStep(turn, step, 'ending')) return;
-    this.complete(turn, this.stepEnding(turn, step), (run) => ({ type: 'step.ended', turn, step, run }));
+    this.complete(turn, Promise.resolve(this.stepEnding(turn, step)), (run) => ({ type: 'step.ended', turn, step, run }));
   }
 
-  private async stepEnding(turn: LiveTurn, step: StepState): Promise<StepEndingRun> {
+  private stepEnding(turn: LiveTurn, step: StepState): StepEndingRun | Promise<StepEndingRun> {
     const draft = draftOutcome(step);
     try {
       const input: StepEndingInput = {
@@ -1819,7 +1802,7 @@ class LoopActor implements Loop {
         draft,
         messages: this.durable.messages,
       };
-      return await runStepEndingHooks(this.registry, input, turn.scope.signal);
+      return runStepEndingHooks(this.hook, input, turn.scope.signal);
     } catch (error) {
       return {
         outcome: draft,

@@ -3,12 +3,11 @@ export * from './contract/hook';
 export * from './contract/inbox';
 export * from './contract/outcome';
 export * from './contract/profile';
-export { createMaxStepsHook, MAX_STEPS_REASON } from './builtin/hooks';
+export { createMaxStepsHook, MAX_STEPS_REASON } from '#/hook/loop/builtin';
 export type {
   LoopLlmRequester,
   LoopRequestRuntime,
 } from './request';
-export type { HookRegistry } from './hook/registry';
 export type { PolicyRegistry } from '#/llm/policy/registry';
 export type { LoopInput, UnfinishedTurn } from './contract/command';
 export type { TaskWaitInput, TaskWaitOutcome, WaitForTasks } from './tool/tasks';

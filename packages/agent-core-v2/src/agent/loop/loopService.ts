@@ -136,7 +136,6 @@ import { EMPTY_LOOP_PROMPT, historyEntryFromContext } from './history';
 import {
   createLoop,
   createMaxStepsHook,
-  type HookRegistration,
   type Loop,
   type LoopEmitted,
   type LoopLlmRequester,
@@ -144,6 +143,7 @@ import {
   type MessageAppendingEvent,
   type TurnStartingEvent,
 } from '@moonshot-ai/core/loop/index';
+import { createLoopHookRegistry } from '@moonshot-ai/core/hook/loop/registry';
 import { LoopJournal, type LoopJournalSnapshot } from './journal';
 import { AgentPromptProjection } from './promptProjection';
 import { AgentTurnProjection, loopLastRequestIdKey } from './turnProjection';
@@ -194,7 +194,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private initialized = false;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
-  private readonly batchStartingHooks = new Map<string, HookRegistration>();
+  private readonly loopHooks = createLoopHookRegistry();
   private readonly journal: LoopJournal;
   private readonly prompts: AgentPromptProjection;
   private readonly turns: AgentTurnProjection;
@@ -272,6 +272,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       maxSteps: () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
       cancel: (turnId, reason) => this.cancelActiveTurn(turnId, reason),
       recordStreamPart: (turnId, step, block) => this.journal.recordStreamPart(turnId, step, block),
+    });
+    this.loopHooks.addLoopHook(createMaxStepsHook(
+      () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
+      (event) => this.loop?.state.turn?.bypassMaxSteps === true && event.step === 1,
+    ));
+    this.loopHooks.addLoopHook({
+      point: 'turn.starting',
+      hook: (event, signal) => this.turnStarting(event, signal),
+    });
+    this.loopHooks.addLoopHook({
+      point: 'message.appending',
+      hook: (event, signal) => this.messageAppending(event, signal),
+    });
+    this.loopHooks.addLoopHook({
+      point: 'step.starting',
+      hook: (event) => this.turns.stepStarting(event),
+    });
+    this.loopHooks.addLoopHook({
+      point: 'step.stopping',
+      hook: (event) => this.turns.stepStopping(event),
     });
     this.profileAdapter = new AgentLoopProfileAdapter(
       profile,
@@ -536,17 +556,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId),
         historyRevision,
       },
-      hooks: [
-        ...this.batchStartingHooks.values(),
-        createMaxStepsHook(
-          () => this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn,
-          (event) => loop.state.turn?.bypassMaxSteps === true && event.step === 1,
-        ),
-        { point: 'turn.starting', hook: (event, signal) => this.turnStarting(event, signal) },
-        { point: 'message.appending', hook: (event, signal) => this.messageAppending(event, signal) },
-        { point: 'step.starting', hook: (event) => this.turns.stepStarting(event) },
-        { point: 'step.stopping', hook: (event) => this.turns.stepStopping(event) },
-      ],
+      hook: this.loopHooks.hook,
     });
     loop.setRequester(this.createLoopRequester(loop));
     this.loop = loop;
@@ -1284,12 +1294,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   registerToolBatchStarting(hook: LoopHooks['tool.batch-starting']): IDisposable {
-    const registration = { point: 'tool.batch-starting' as const, id: randomUUID(), hook };
-    this.batchStartingHooks.set(registration.id, registration);
-    this.loop?.hooks.add(registration);
+    const id = randomUUID();
+    this.loopHooks.addLoopHook({ point: 'tool.batch-starting', hook, id });
     return toDisposable(() => {
-      this.batchStartingHooks.delete(registration.id);
-      this.loop?.hooks.remove(registration.id);
+      this.loopHooks.remove(id);
     });
   }
 
