@@ -81,13 +81,13 @@ describe('loop.wait', () => {
       executor: noopExecutor,
       abortGraceMs: 5,
     });
-    const firstRequest = aborting.wait('llm.streaming.part');
+    const firstRequest = aborting.wait('llm.delta.part');
     const graceful = aborting.runTurn(prompt('graceful'));
     await firstRequest;
     aborting.abort('grace');
     expect((await graceful).type).toBe('aborted');
 
-    const secondRequest = aborting.wait('llm.streaming.part');
+    const secondRequest = aborting.wait('llm.delta.part');
     const forced = aborting.runTurn(prompt('forced'));
     await secondRequest;
     aborting.abort('first');

@@ -48,6 +48,7 @@
     "undici": "^7.27.1"
   },
   "devDependencies": {
+    "@copilotkit/aimock": "1.47.0",
     "pino": "^9.5.0"
   }
 }

@@ -20,5 +20,5 @@ describe('Anthropic decode fixtures', () => {
 });
 
 describe('Anthropic transport fixtures', () => {
-  runTransportFixtures(anthropicProtocol, anthropicTransportFixtures);
+  runTransportFixtures(anthropicProtocol, anthropicTransportFixtures, 'anthropic');
 });

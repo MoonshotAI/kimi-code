@@ -404,7 +404,7 @@ describe('actor interruption', () => {
       });
     });
     const loop = createLoop({ requester: scripted, executor });
-    const pendingRequest = loop.wait('llm.streaming.part', {
+    const pendingRequest = loop.wait('llm.delta.part', {
       match: (event) => event.part.type === 'text' && event.part.text === 'pending',
     });
     const turn = loop.runTurn(prompt());

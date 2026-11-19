@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { GoogleGenAITransportFixture } from '../types';
 
 export default {
-  name: 'rate-limit',
+  name: 'as a Gemini user, I want rate-limit errors to preserve retry metadata',
   module: testModule(),
   endpoint: { baseUrl: 'https://example.test/v1beta', apiKey: 'test-key' },
   stream: false,

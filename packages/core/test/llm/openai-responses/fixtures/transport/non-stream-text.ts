@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { OpenAIResponsesTransportFixture } from '../types';
 
 export default {
-  name: 'non-stream-text',
+  name: 'as a Responses API user, I want non-streaming text and usage to use the real HTTP transport',
   module: testModule(),
   endpoint: { baseUrl: 'https://example.test/v1', apiKey: 'test-key' },
   stream: false,
@@ -27,7 +27,7 @@ export default {
   },
   expected: {
     url: 'https://example.test/v1/responses',
-    body: { model: 'test-model', store: false, stream: false },
+    body: { model: 'test-model', stream: false },
     outcome: {
       type: 'done',
       requestId: 'req-responses-non-stream',
