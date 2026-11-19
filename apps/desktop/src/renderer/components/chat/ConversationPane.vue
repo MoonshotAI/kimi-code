@@ -597,8 +597,6 @@ function bindChatDock(el: RefArg): void {
   bindDock(node);
 }
 
-void bindChatDock;
-
 function handleComposerSubmit(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }): void {
   followAfterUserAction();
   emit('submit', payload);
@@ -1180,6 +1178,8 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
   flex: 1;
   min-height: 0;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .content-wrap {
@@ -1487,16 +1487,6 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
 .ws-action:hover { background: var(--color-hover); color: var(--color-text); }
 .ws-action:hover > .kw-icon { color: var(--dim); }
 .ws-action:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-
-.chat-scroll {
-  display: flex;
-  flex-direction: column;
-}
-
-.mobile .panes:has(> .chat-layout) {
-  overflow: hidden;
-  scrollbar-gutter: auto;
-}
 
 .newmsg-pill {
   position: absolute;
