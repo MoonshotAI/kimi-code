@@ -1,9 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 
-// Only schedule runs use this guard. A same-repository release/* version PR
-// blocks nightly only when its package diff or release plan changes kimi-code-app.
-// Missing, malformed or contradictory evidence fails the job and therefore the build.
 const DESKTOP_PACKAGE = 'apps/desktop/package.json';
 const RELEASE_PLAN = '.changeset/release-plan.json';
 const repo = process.env.GITHUB_REPOSITORY;
@@ -14,13 +11,13 @@ function gh(args, stage, parseJson = true) {
     stdout = execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
   } catch (error) {
     const detail = error.stderr?.trim() || error.message;
-    throw new Error(`${stage}: ${detail}`);
+    throw new Error(`${stage}: ${detail}`, { cause: error });
   }
   if (!parseJson) return stdout;
   try {
     return JSON.parse(stdout);
   } catch (error) {
-    throw new Error(`${stage}: invalid JSON: ${error.message}`);
+    throw new Error(`${stage}: invalid JSON: ${error.message}`, { cause: error });
   }
 }
 
@@ -38,7 +35,7 @@ function jsonContent(path, ref, stage) {
   try {
     return JSON.parse(text);
   } catch (error) {
-    throw new Error(`${stage}: ${path} at ${ref} is invalid JSON: ${error.message}`);
+    throw new Error(`${stage}: ${path} at ${ref} is invalid JSON: ${error.message}`, { cause: error });
   }
 }
 
