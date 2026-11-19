@@ -58,6 +58,73 @@ function createApi(origin = 'http://daemon.test'): DaemonKimiWebApi {
   });
 }
 
+it('submits feedback and attachments without tracing text or local filenames', async () => {
+  const request = vi.fn()
+    .mockResolvedValueOnce(envelope({ feedback_id: 42 }))
+    .mockResolvedValueOnce(envelope({ feedback_id: 42 }))
+    .mockResolvedValueOnce(envelope({ upload_id: 9 }))
+    .mockResolvedValueOnce(envelope({ upload_id: 10 }));
+  vi.stubGlobal('fetch', request);
+  const firstTrace = tracedRequests.length;
+  try {
+    const api = createApi();
+    await expect(api.createFeedback({ kind: 'global', source: 'command', category: 'bug', content: 'Private description' })).resolves.toEqual({ feedback_id: 42 });
+    await expect(api.updateFeedback(42, { kind: 'details', reasons: ['other'], content: 'Private details' })).resolves.toEqual({ feedback_id: 42 });
+    await expect(api.uploadFeedbackAttachment(42, { kind: 'media', file: new Blob(['file']), fileName: 'private.png' })).resolves.toEqual({ upload_id: 9 });
+
+    await expect(api.uploadFeedbackSession(42, 'example-session')).resolves.toEqual({ upload_id: 10 });
+
+    expect(request.mock.calls.map(([url, options]) => [url, options.method])).toEqual([
+      ['http://daemon.test/api/v1/feedback', 'POST'],
+      ['http://daemon.test/api/v1/feedback/42', 'PATCH'],
+      ['http://daemon.test/api/v1/feedback/42/attachments?kind=media', 'POST'],
+      ['http://daemon.test/api/v1/feedback/42/attachments/session', 'POST'],
+    ]);
+    expect(JSON.parse(request.mock.calls[0]?.[1].body).content).toBe('Private description');
+    expect(request.mock.calls[2]?.[1].body.get('file').name).toBe('private.png');
+    expect(request.mock.calls.map(([, options]) => options.redirect)).toEqual(['error', 'error', 'error', 'error']);
+    expect(tracedRequests.slice(firstTrace).map((entry) => entry.body)).toEqual([undefined, undefined, undefined, undefined]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it('keeps feedback content out of tracing when the host returns an invalid response', async () => {
+  const restFailure = vi.fn();
+  const restResponse = vi.fn();
+  const api = new DaemonKimiWebApi({ origin: 'http://daemon.test', tracer: { restFailure, restResponse } });
+  const content = 'Example feedback';
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(new Response(content))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ code: 40001, msg: content, details: content }))));
+  try {
+    await expect(api.createFeedback({ kind: 'global', source: 'sidebar', category: 'bug', content })).rejects.toBeInstanceOf(DaemonNetworkError);
+    const [failure] = restFailure.mock.calls[0]!;
+    expect(failure.bodyPreview).toBeUndefined();
+    expect(String(failure.error)).not.toContain(content);
+    await expect(api.uploadFeedbackAttachment(7, { kind: 'media', file: new Blob([content]), fileName: 'example.png' })).rejects.toBeInstanceOf(DaemonApiError);
+    expect(JSON.stringify(restResponse.mock.calls)).not.toContain(content);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it('opens daemon authentication only for server credentials and not Kimi login errors', async () => {
+  const markAuthRequired = vi.fn();
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => new Response(JSON.stringify({
+    code: Number(JSON.parse(init.body).content), msg: 'Authentication required', data: null,
+  }), { status: 401 })));
+  try {
+    const api = new DaemonKimiWebApi({ origin: 'http://daemon.test', credentialStore: { markAuthRequired, getToken: () => undefined } });
+    for (const code of [40111, 40112, 40101]) {
+      await expect(api.createFeedback({ kind: 'global', source: 'sidebar', category: 'other', content: String(code) })).rejects.toMatchObject({ code });
+    }
+    expect(markAuthRequired).toHaveBeenCalledOnce();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 describe('DaemonKimiWebApi lists across hosts', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());

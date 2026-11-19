@@ -1,4 +1,4 @@
-import type { Component } from 'vue';
+import type { Component, FunctionalComponent } from 'vue';
 import type { AppNoticeCopyLink, AppNoticeDetail, AppNoticePosition } from '@moonshot-ai/app-core/api';
 
 export type ToastVariant = 'info' | 'success' | 'warning' | 'danger';
@@ -18,6 +18,7 @@ export interface ToastOptions {
   copyLink?: AppNoticeCopyLink;
   actions?: ToastAction[];
   body?: Component;
+  presentation?: FunctionalComponent<{ dismiss: () => void }>;
   duration?: number;
   position?: ToastPosition;
   mode?: 'stack' | 'replace';

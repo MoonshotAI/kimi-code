@@ -52,6 +52,7 @@ import type {
   BrowserOverlayMenuRequest,
 } from '../../shared/browser-overlay';
 import { isBrowserUiRequest, isBrowserUiResponse, type BrowserUiRequest, type BrowserUiResponse } from '../../shared/browser-automation-ui';
+import type { FeedbackDiagnosticsArchive } from '../../shared/feedback-diagnostics';
 
 export type DialogOptions = Record<string, unknown>;
 
@@ -393,6 +394,7 @@ export type KimiDesktopApi = {
   onShortcut: (cb: (accel: string) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
   writeClipboardText: (text: string) => Promise<boolean>;
+  collectFeedbackDiagnostics: () => Promise<FeedbackDiagnosticsArchive>;
   onFailureToast: (cb: (kind: DesktopFailureKind, url?: string) => void) => () => void;
   updateServerCredential: (token: string) => Promise<void>;
   showOpenDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePaths: string[] }>;
@@ -583,6 +585,7 @@ export const api: KimiDesktopApi = {
   },
   openExternal: (url) => ipcRenderer.invoke('kimi:open-external', url),
   writeClipboardText: (text) => ipcRenderer.invoke('kimi:write-clipboard-text', text),
+  collectFeedbackDiagnostics: () => ipcRenderer.invoke('kimi:feedback-diagnostics-collect'),
   onFailureToast: (cb) => {
     const listener = (_event: unknown, kind: unknown, url: unknown) => {
       if (!isDesktopFailureKind(kind)) return;

@@ -1,4 +1,5 @@
 import common from './zh/common';
+import feedback from './zh/feedback';
 import app from './zh/app';
 import sidebar from './zh/sidebar';
 import admin from './zh/admin';
@@ -43,6 +44,7 @@ import inspector from './zh/inspector';
 
 export default {
   common,
+  feedback,
   app,
   sidebar,
   admin,
