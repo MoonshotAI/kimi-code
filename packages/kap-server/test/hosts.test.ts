@@ -4,7 +4,7 @@ import { createConnection } from 'node:net';
 import { Duplex } from 'node:stream';
 import type { OutgoingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -34,7 +34,7 @@ import {
 import {
   attachRpcStream,
   HOST_RPC_MAX_BODY_BYTES,
-  startUnixRpcServer,
+  startIpcRpcServer,
 } from '../src/transport/stdioRpc';
 
 function thrown(run: () => unknown): HostConnectError {
@@ -50,11 +50,35 @@ function thrown(run: () => unknown): HostConnectError {
 async function withFakeSsh(
   script: string | ((dir: string) => string),
   run: (ssh: string, dir: string) => Promise<void>,
+  platform: 'posix' | 'windows' | 'powershell' = 'posix',
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'kimi-fake-ssh-'));
   try {
     const ssh = join(dir, 'ssh');
-    writeFileSync(ssh, typeof script === 'function' ? script(dir) : script);
+    const probe = `powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from("[Console]::WriteLine('KIMI_WINDOWS')", 'utf16le').toString('base64')}`;
+    const body = typeof script === 'function' ? script(dir) : script;
+    const nodeScript = body.startsWith('#!/usr/bin/env node');
+    const prelude = nodeScript
+      ? `#!/usr/bin/env node
+if (process.argv.at(-1) === 'uname -s') {
+  ${platform === 'powershell' ? 'process.exit(127)' : `process.stdout.write('${platform === 'windows' ? 'MSYS_NT-10.0' : 'Linux'}\\n'); process.exit(0)`}
+}
+if (process.argv.at(-1) === ${JSON.stringify(probe)}) {
+  process.stdout.write('KIMI_WINDOWS\\r\\n');
+  process.exit(0);
+}
+`
+      : `#!/bin/sh
+for _ssh_last_arg; do :; done
+if [ "$_ssh_last_arg" = "uname -s" ]; then
+  ${platform === 'powershell' ? 'exit 127' : `echo ${platform === 'windows' ? 'MSYS_NT-10.0' : 'Linux'}; exit 0`}
+fi
+if [ "$_ssh_last_arg" = '${probe}' ]; then
+  printf 'KIMI_WINDOWS\\r\\n'
+  exit 0
+fi
+`;
+    writeFileSync(ssh, `${prelude}${body.replace(/^#![^\n]*\n/, '')}`);
     chmodSync(ssh, 0o755);
     await run(ssh, dir);
   } finally {
@@ -127,6 +151,20 @@ describe('ssh bootstrap', () => {
     expect(remoteKimiCommand('kimi', 'server ensure-daemon')).toBe('kimi --version; kimi server ensure-daemon');
   });
 
+  it('builds PowerShell commands for Windows paths and the default kimi.exe', () => {
+    for (const [remoteBin, expected] of [
+      [undefined, `($env:USERPROFILE + '/.kimi-code/bin/kimi.exe')`],
+      ['kimi', `'kimi'`],
+      ['C:\\Program Files\\Kimi\\kimi.exe', `'C:\\Program Files\\Kimi\\kimi.exe'`],
+    ] as const) {
+      const command = remoteKimiCommand(remoteBin, 'server ensure-daemon --probe', 'windows');
+      expect(command).toMatch(/^powershell -NoLogo -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+      const script = Buffer.from(command.split(' ').at(-1)!, 'base64').toString('utf16le');
+      expect(script).toContain(`& ${expected} --version`);
+      expect(script).toContain(`& ${expected} server ensure-daemon --probe`);
+    }
+  });
+
   it('finds the marker line among shell startup noise', () => {
     const stdout = `welcome\n1.0.0\n__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.0.0"}\n`;
     expect(checkBootstrapOutput(stdout)).toBe(true);
@@ -171,6 +209,54 @@ describe('ssh bootstrap', () => {
     expect(checkBootstrapOutput(`__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"2.0.0"}\n`)).toBe(true);
   });
 
+  it('requires Windows IPC support only for Windows remotes', () => {
+    const marker = (windowsIpc: boolean | undefined): string =>
+      `__KIMI_ENSURE_DAEMON__${JSON.stringify({ protocol: HOST_PROTOCOL_VERSION, api_level: HOST_API_LEVEL, version: '2.5.2', windows_ipc: windowsIpc })}\n`;
+    for (const windowsIpc of [undefined, false]) {
+      const error = thrown(() => checkBootstrapOutput(marker(windowsIpc), 'windows'));
+      expect(error.failure).toBe('executor_outdated');
+      expect(error.remoteVersion).toBe('2.5.2');
+    }
+    expect(checkBootstrapOutput(marker(true), 'windows')).toBe(true);
+    expect(checkBootstrapOutput(marker(undefined))).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32').each(['windows', 'powershell'] as const)('connects to a Windows host using %s platform detection', async (platform) => {
+    await withFakeSsh(
+      `echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3","windows_ipc":true}'
+while IFS= read -r line; do
+  printf '{"type":"http.res","id":"1","status":200,"headers":{},"body":"e30="}\\n'
+done
+`,
+      async (ssh) => {
+        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        try {
+          const session = await bridge.connect();
+          const response = await session.request({ method: 'GET', path: '/healthz', headers: {} });
+          expect(response.status).toBe(200);
+        } finally {
+          bridge.dispose();
+        }
+      },
+      platform,
+    );
+  });
+
+  it.skipIf(process.platform === 'win32')('reports an older Windows remote without Windows IPC support as outdated', () =>
+    withFakeSsh(
+      `echo '__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}'
+`,
+      async (ssh) => {
+        const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
+        const error = await bridge.probe().catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(HostConnectError);
+        expect((error as HostConnectError).failure).toBe('executor_outdated');
+        expect((error as HostConnectError).remoteVersion).toBe('1.2.3');
+      },
+      'windows',
+    ),
+  );
+
   it.skipIf(process.platform === 'win32')('reports an older kimi without the probe as outdated with its version', () =>
     withFakeSsh("#!/bin/sh\necho 'motd line'\necho '0.40.0'\necho \"error: unknown option '--probe'\" >&2\nexit 1\n", async (ssh) => {
       const bridge = new SshKapBridge({ host: 'dev' }, { sshProgram: ssh });
@@ -188,6 +274,7 @@ describe('ssh bootstrap', () => {
     ['user@dev: Permission denied (publickey).', 255, 'authentication_failed'],
     ['Host key verification failed.', 255, 'host_key_changed'],
     ['bash: kimi: command not found', 127, 'executor_not_found'],
+    ["powershell : The term 'kimi' is not recognized as the name of a cmdlet", 1, 'executor_not_found'],
     ["error: unknown command 'ensure-daemon'", 1, 'executor_outdated'],
     ['`kimi server` has been deprecated and no longer works.', 1, 'executor_outdated'],
     ["error: unknown command 'web'. See 'kimi --help'.", 1, 'executor_outdated'],
@@ -972,7 +1059,7 @@ describe('stdio rpc transport', () => {
       });
     });
 
-    const rpcServer = await startUnixRpcServer(socketPath, { app, wssV1 });
+    const rpcServer = await startIpcRpcServer(socketPath, { app, wssV1 });
     const client = rpcClient(socketPath);
     try {
       client.send({
@@ -1002,6 +1089,39 @@ describe('stdio rpc transport', () => {
     }
   });
 
+  it('authenticates IPC clients before forwarding request frames', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-auth-'));
+    const socketPath = process.platform === 'win32'
+      ? `\\\\.\\pipe\\kimi-rpc-auth-${basename(dir)}`
+      : join(dir, 'daemon.sock');
+    const app = Fastify();
+    app.get('/api/v1/meta', async () => ({ data: { server_version: '1.2.3' } }));
+    await app.ready();
+    const rpcServer = await startIpcRpcServer(socketPath, {
+      app,
+      wssV1: new WebSocketServer({ noServer: true }),
+      validateCredential: async (candidate) => candidate === 'test-ipc-secret',
+    });
+    const rejected = rpcClient(socketPath);
+    const accepted = rpcClient(socketPath);
+    try {
+      rejected.send({ type: 'ipc.auth', token: 'wrong' });
+      expect(await rejected.next()).toEqual({ type: 'ipc.auth.error' });
+      accepted.send({ type: 'ipc.auth', token: 'test-ipc-secret' });
+      expect(await accepted.next()).toEqual({ type: 'ipc.auth.ok' });
+      accepted.send({ type: 'http.req', id: 'meta', method: 'GET', path: '/api/v1/meta', headers: {} });
+      const response = await accepted.next();
+      expect(response['type']).toBe('http.res');
+      expect(response['status']).toBe(200);
+    } finally {
+      rejected.socket.destroy();
+      accepted.socket.destroy();
+      await rpcServer.close();
+      await app.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform === 'win32')('drops a cancelled response and keeps serving later requests', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-cancel-'));
     const app = Fastify();
@@ -1013,7 +1133,7 @@ describe('stdio rpc transport', () => {
       return { done: true };
     });
     app.get('/next', async () => ({ done: true }));
-    const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), {
+    const rpcServer = await startIpcRpcServer(join(dir, 'daemon.sock'), {
       app,
       wssV1: new WebSocketServer({ noServer: true }),
     });
@@ -1038,7 +1158,7 @@ describe('stdio rpc transport', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-limit-'));
     const app = Fastify();
     app.get('/large', async () => Buffer.alloc(HOST_RPC_MAX_BODY_BYTES + 1));
-    const rpcServer = await startUnixRpcServer(join(dir, 'daemon.sock'), {
+    const rpcServer = await startIpcRpcServer(join(dir, 'daemon.sock'), {
       app,
       wssV1: new WebSocketServer({ noServer: true }),
     });

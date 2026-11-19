@@ -67,7 +67,7 @@ import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcast
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
-import { startUnixRpcServer } from './transport/stdioRpc';
+import { startIpcRpcServer } from './transport/stdioRpc';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -680,7 +680,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   try {
     if (opts.socketPath !== undefined) {
       await app.ready();
-      rpcServer = await startUnixRpcServer(opts.socketPath, { app, wssV1, wssDebug });
+      rpcServer = await startIpcRpcServer(opts.socketPath, {
+        app,
+        wssV1,
+        wssDebug,
+        validateCredential: process.platform === 'win32' ? validateCredential : undefined,
+      });
       boundPort = 0;
     } else {
       await listenWithPortRetry({

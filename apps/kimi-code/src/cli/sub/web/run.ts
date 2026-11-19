@@ -424,6 +424,7 @@ async function runServerInProcess(
     webTitle: options.webTitle,
     socketPath: options.socketPath,
     managedBy: options.managedBy,
+    rpcToken: options.socketPath !== undefined && process.platform === 'win32' ? process.env['KIMI_CODE_IPC_TOKEN'] : undefined,
     telemetry: true,
     webAssetsDir,
   });

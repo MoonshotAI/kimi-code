@@ -1,4 +1,5 @@
 import { lstatSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -13,8 +14,11 @@ import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
+  connectUnixSocket,
   daemonSocketPath,
   ensureDaemon,
+  loadWindowsIpcToken,
+  windowsDaemonLaunchScript,
   type DaemonConnection,
   type EnsureDaemonDeps,
 } from '#/cli/sub/web/ensure-daemon';
@@ -1155,6 +1159,93 @@ describe('`kimi server ensure-daemon`', () => {
       ...overrides,
     };
   }
+
+  it('uses a stable named pipe and persistent IPC token on Windows', async () => {
+    const first = daemonSocketPath(homeDir, 'win32');
+    expect(first).toMatch(/^\\\\\.\\pipe\\kimi-daemon-[a-f0-9]{16}$/);
+    expect(daemonSocketPath(homeDir, 'win32')).toBe(first);
+
+    const token = await loadWindowsIpcToken(homeDir);
+    expect(token).toMatch(/^[A-Za-z0-9_-]{40,50}$/);
+    expect(await loadWindowsIpcToken(homeDir)).toBe(token);
+    expect(readFileSync(join(homeDir, 'server', 'ensure-daemon.token'), 'utf8')).toBe(token);
+  });
+
+  it('builds a hidden CIM launch that escapes the SSH job and preserves environment', () => {
+    const { commandLine, environment, cimScript } = windowsDaemonLaunchScript(
+      ['C:\\Users\\test\\kimi.exe', 'server', '--socket', '\\\\.\\pipe\\kimi-test', '--managed-by', 'ensure-daemon'],
+      'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.log',
+      'test-ipc-secret',
+      'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.launch.json',
+      {
+        SystemRoot: 'C:\\Windows',
+        PATH: 'C:\\Tools',
+        KIMI_CODE_HOME: 'C:\\Users\\test\\.kimi-code',
+        SSH_AUTH_SOCK: '\\\\.\\pipe\\ssh-agent',
+      },
+    );
+    expect(commandLine.startsWith('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo')).toBe(true);
+    expect(commandLine).toContain(' -Command "');
+    expect(commandLine).not.toContain('-EncodedCommand');
+    const marker = ' -Command "';
+    const daemonScript = commandLine.slice(commandLine.indexOf(marker) + marker.length, -1);
+    expect(daemonScript).toContain(`& 'C:\\Users\\test\\kimi.exe'`);
+    expect(daemonScript).toContain(`'server' '--socket' '\\\\.\\pipe\\kimi-test'`);
+    expect(daemonScript).toContain(`*> 'C:\\Users\\test\\.kimi-code\\server\\ensure-daemon.log'`);
+    expect(cimScript).toContain('CreateFlags=16778240');
+    expect(cimScript).toContain('ShowWindow=0');
+    expect(cimScript).toContain('Get-Content -Raw -Encoding UTF8 -LiteralPath');
+    expect(cimScript).toContain('ensure-daemon.launch.json');
+    expect(cimScript).not.toContain('test-ipc-secret');
+    expect(environment).toContain('KIMI_CODE_IPC_TOKEN=test-ipc-secret');
+    expect(environment).toContain('KIMI_CODE_HOME=C:\\Users\\test\\.kimi-code');
+    expect(environment).toContain('PATH=C:\\Tools');
+    expect(environment.some((entry) => entry.startsWith('SSH_AUTH_SOCK='))).toBe(false);
+  });
+
+  it('passes the Windows IPC token to daemon connection probes', async () => {
+    const conn = connection();
+    const connectSocket = vi.fn(async () => conn);
+    const deps = makeDeps({ ipcToken: 'test-ipc-secret', connectSocket });
+    await ensureDaemon(deps);
+    expect(connectSocket).toHaveBeenCalledWith(daemonSocketPath(homeDir), 'test-ipc-secret');
+  });
+
+  it.skipIf(process.platform === 'win32')('authenticates the IPC client before reading daemon metadata', async () => {
+    const socketPath = join(homeDir, 'daemon.sock');
+    const server = createServer((socket) => {
+      let pending = '';
+      socket.on('data', (chunk: Buffer) => {
+        pending += chunk.toString('utf8');
+        while (pending.includes('\n')) {
+          const newline = pending.indexOf('\n');
+          const frame = JSON.parse(pending.slice(0, newline)) as { type: string; id?: string; token?: string };
+          pending = pending.slice(newline + 1);
+          if (frame.type === 'ipc.auth') {
+            expect(frame.token).toBe('test-ipc-secret');
+            socket.write('{"type":"ipc.auth.ok"}\n');
+          } else if (frame.type === 'http.req') {
+            const body = Buffer.from(JSON.stringify({ data: { server_version: '1.2.3' } })).toString('base64');
+            socket.write(`${JSON.stringify({ type: 'http.res', id: frame.id, status: 200, headers: {}, body })}\n`);
+          }
+        }
+      });
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(socketPath, resolve);
+    });
+    try {
+      const daemon = await connectUnixSocket(socketPath, 'test-ipc-secret');
+      expect(daemon?.version).toBe('1.2.3');
+      daemon?.close();
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
+  });
 
   it('reuses a live daemon socket of the same version without spawning', async () => {
     const conn = connection();
