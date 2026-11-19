@@ -57,6 +57,15 @@ export function setComposerPlaceholderOverlayText(element: HTMLElement, text: st
   element.innerHTML = placeholderHtml(text);
 }
 
+export function buildPromptPredictionOverlay(text: string): HTMLElement {
+  const span = document.createElement('span');
+  span.className = 'composer-prompt-prediction-overlay';
+  span.setAttribute('aria-hidden', 'true');
+  span.hidden = true;
+  span.textContent = text;
+  return span;
+}
+
 export function composerPlaceholderLayout(
   anchor: ComposerPlaceholderRect,
   host: ComposerPlaceholderRect,

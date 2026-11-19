@@ -57,6 +57,8 @@ const ROUTES = {
   forkSession: 'session',
   startBtw: 'session',
   closeAgent: 'session',
+  predictNextPrompt: 'session',
+  cancelPromptPrediction: 'session',
   respondApproval: 'session',
   respondQuestion: 'session',
   dismissQuestion: 'session',

@@ -199,7 +199,7 @@
     "packages/kap-server/test/rpc.test.ts": 1,
     "packages/kap-server/test/search/searchService.test.ts": 1,
     "packages/kap-server/test/sessionEventBroadcaster.test.ts": 2,
-    "packages/kap-server/test/sessions.test.ts": 4,
+    "packages/kap-server/test/sessions.test.ts": 3,
     "packages/kap-server/test/workspaceFs.test.ts": 2,
     "packages/klient/test/contract-parity.ts": 1,
     "packages/migration-legacy/test/marker.test.ts": 1,

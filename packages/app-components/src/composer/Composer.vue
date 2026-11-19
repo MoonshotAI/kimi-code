@@ -241,6 +241,40 @@ const browserCaptures = ref<BrowserCapture[]>([]);
 
 const towerEnabled = computed(() => client.experimentalFlags.value['tower'] === true);
 
+const promptPredictionText = computed(() => {
+  const suggestion = client.promptPrediction.value;
+  if (
+    isSideChat.value ||
+    running.value ||
+    suggestion === null ||
+    suggestion.accepted ||
+    suggestion.parked ||
+    suggestion.sessionId !== sessionId.value ||
+    text.value.length > 0 ||
+    activeAttachmentEntries.value.length > 0
+  ) return undefined;
+  return suggestion.text;
+});
+const promptPredictionRecallText = computed(() => {
+  const suggestion = client.promptPrediction.value;
+  if (
+    isSideChat.value ||
+    running.value ||
+    suggestion === null ||
+    suggestion.accepted ||
+    !suggestion.parked ||
+    suggestion.sessionId !== sessionId.value ||
+    text.value.length > 0 ||
+    activeAttachmentEntries.value.length > 0
+  ) return undefined;
+  return suggestion.text;
+});
+const promptPredictionA11yId = useId();
+const promptPredictionA11yText = computed(() => {
+  const prediction = promptPredictionText.value;
+  return prediction === undefined ? '' : t('composer.promptPredictionHint', { prediction });
+});
+
 const { text, editorRef, loadForEdit: loadTextForEdit, clearDraft, loadDraftAttachments, saveDraftAttachments, saveDraft, loadRestorableDraftSnapshot, saveDraftSnapshot } = useComposerDraft({
   sessionId: () => scopeId.value,
   onBeforeSessionSave: (sid) => {
@@ -654,6 +688,9 @@ onMounted(() => {
   watchEffect(() => {
     editor?.setPlaceholder(commandArgumentPlaceholder.value || placeholder.value);
   });
+  watchEffect(() => {
+    editor?.setPromptPrediction(promptPredictionText.value);
+  });
 
   function restoreSessionState(sid: string | undefined): void {
     if (!editor) return;
@@ -737,7 +774,11 @@ onMounted(() => {
     if (!dom) return;
     dom.setAttribute('aria-label', t('composer.inputLabel'));
     dom.setAttribute('aria-placeholder', placeholderText(placeholder.value));
-    if (commandArgumentDescription.value) dom.setAttribute('aria-describedby', commandArgumentDescriptionId);
+    const descriptionIds = [
+      commandArgumentDescription.value ? commandArgumentDescriptionId : '',
+      promptPredictionA11yText.value ? promptPredictionA11yId : '',
+    ].filter((id) => id !== '').join(' ');
+    if (descriptionIds) dom.setAttribute('aria-describedby', descriptionIds);
     else dom.removeAttribute('aria-describedby');
     dom.setAttribute('aria-expanded', String(!!menuAriaControls.value));
     const controls = menuAriaControls.value;
@@ -750,6 +791,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  if (!isSideChat.value) client.dismissPromptPrediction('shutdown');
   releaseBrowserTarget?.();
   window.removeEventListener('online', recoverOnlineMedia);
   for (const timer of remintRetryTimers.values()) window.clearTimeout(timer);
@@ -1039,6 +1081,7 @@ function handleEditorBlur(): void {
 function handleInput(): void {
   resetHistoryBrowse();
   if (!isSideChat.value) {
+    client.handlePromptPredictionInput();
     updateSlashMenu();
     updateMentionMenu();
   }
@@ -1866,6 +1909,7 @@ function handleSubmit(): void {
     decision.kind === 'prompt-command' ||
     (decision.kind === 'builtin-command' && decision.leave === true);
   if (sessionBound && !passSubmitGate()) return;
+  if (!isSideChat.value) client.handlePromptPredictionSubmit(text.value);
   const snapshot = editor?.getSnapshot();
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
@@ -1993,6 +2037,15 @@ function isComposingKeyEvent(e: KeyboardEvent): boolean {
   return isComposingText || e.isComposing || e.keyCode === 229;
 }
 
+function acceptPromptPrediction(key: 'tab' | 'right'): boolean {
+  if (isSideChat.value || (promptPredictionText.value === undefined && promptPredictionRecallText.value === undefined)) return false;
+  const prediction = client.acceptPromptPrediction(key);
+  if (prediction === null) return false;
+  loadTextForEdit(prediction);
+  handleInput();
+  return true;
+}
+
 function handleKeydown(e: KeyboardEvent): boolean {
   if (isComposingKeyEvent(e)) return false;
 
@@ -2097,6 +2150,23 @@ function handleKeydown(e: KeyboardEvent): boolean {
         return true;
       }
     }
+  }
+
+  if (e.key === 'Escape' && !isSideChat.value && client.dismissPromptPrediction('escape')) {
+    e.preventDefault();
+    return true;
+  }
+
+  if (
+    (e.key === 'Tab' || e.key === 'ArrowRight') &&
+    !e.shiftKey &&
+    !e.altKey &&
+    !e.metaKey &&
+    !e.ctrlKey &&
+    acceptPromptPrediction(e.key === 'Tab' ? 'tab' : 'right')
+  ) {
+    e.preventDefault();
+    return true;
   }
 
   if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
@@ -3304,6 +3374,16 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           </div>
         </Transition>
 
+        <div v-if="promptPredictionRecallText" class="prompt-prediction-recall" role="status">
+          <Icon name="sparkles" size="sm" />
+          <span class="prompt-prediction-recall-label">{{ t('composer.promptPredictionLabel') }}</span>
+          <span class="prompt-prediction-recall-text">{{ promptPredictionRecallText }}</span>
+          <span class="prompt-prediction-recall-action">
+            <kbd>Tab</kbd><span>/</span><kbd>→</kbd><span>{{ t('composer.promptPredictionRecall') }}</span>
+            <span>·</span><kbd>Esc</kbd><span>{{ t('composer.promptPredictionDismiss') }}</span>
+          </span>
+        </div>
+
         <div class="input-row">
           <div
             ref="editorHostRef"
@@ -3312,6 +3392,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
             :data-wm="workMode ? 'true' : 'false'"
           ></div>
           <span :id="commandArgumentDescriptionId" class="composer-sr-only" role="status">{{ commandArgumentDescription }}</span>
+          <span :id="promptPredictionA11yId" class="composer-sr-only" role="status">{{ promptPredictionA11yText }}</span>
           <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
           <button
             v-if="expanded || isGrown"
@@ -3999,6 +4080,53 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   padding-top: var(--p-composer-media-inset);
 }
 
+.prompt-prediction-recall {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+  padding: 0 var(--space-1) var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-solid);
+}
+
+.prompt-prediction-recall-label {
+  flex: none;
+  font-weight: var(--weight-ui-strong);
+}
+
+.prompt-prediction-recall-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-prediction-recall-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.prompt-prediction-recall-action kbd {
+  padding: var(--space-05) var(--space-1);
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-kbd);
+  font-size: var(--kbd-font-size);
+}
+
+@media (max-width: 640px) {
+  .prompt-prediction-recall-label,
+  .prompt-prediction-recall-action {
+    display: none;
+  }
+}
+
 .input-row {
   position: relative;
   display: flex;
@@ -4188,7 +4316,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   padding-left: var(--space-05);
 }
 
-.ph :deep(.composer-placeholder-overlay) {
+.ph :deep(.composer-placeholder-overlay),
+.ph :deep(.composer-prompt-prediction-overlay) {
   position: absolute;
   z-index: 1;
   top: 0;
@@ -4202,7 +4331,8 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
   user-select: none;
 }
 
-.ph :deep(.composer-placeholder-overlay[hidden]) {
+.ph :deep(.composer-placeholder-overlay[hidden]),
+.ph :deep(.composer-prompt-prediction-overlay[hidden]) {
   display: none;
 }
 

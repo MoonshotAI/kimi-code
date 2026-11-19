@@ -131,6 +131,7 @@ curl -sf "${ORIGIN}/api/v1/sessions/${SID}/agents/main/turns?page_size=5" \
 | `POST /api/v1/sessions/{session_id}:wait` | `session_wait` | Wait until `activity !== "turn"`, a pending interaction appears, or `timeout_ms` (`0..60000`, default `15000`) |
 | `POST /api/v1/sessions/{session_id}:cancel` | `baseline` | Cancel active turn (`agent_id?`, `include_background?`) |
 | `POST /api/v1/sessions/{session_id}:continue` | `session_continue` | Continue after an interrupted, non-blocked failed, or crash-settled latest turn (`40940` if not continuable) |
+| `POST /api/v1/sessions/{session_id}:predict-prompt` / `:cancel-prompt-prediction` | `experimental` | Generate or cancel a next-prompt prediction (`prediction_id`, `expected_turn_id`, optional `reason`) |
 | `POST /api/v1/sessions/{session_id}:fork` / `:undo` / `:compact` / `:btw` | `baseline` | Branch session (`turn_index?`), undo from `turn_id`, compact context, or spawn read-only side-chat (`{ agent_id }`) |
 | `POST /api/v1/sessions/{session_id}/agents/{agent_id}:close` | `agent_close` | Close and remove a `btw` side-chat agent (`40939` if not closable) |
 | `POST /api/v1/sessions/{session_id}:archive` / `:restore` / `:delete` / `:reload` / `:takeover` | `baseline` | Single-session lifecycle actions (plus batch `POST /api/v1/sessions:archive` & `:restore` by `ids`) |

@@ -51,6 +51,7 @@ export interface ComposerEditorApi extends TextFieldLike {
   setText(text: string, opts?: { entries?: AttachmentEntry[] }): void;
   setWorkMode(spec: WorkModePillSpec | null): void;
   setPlaceholder(text: string): void;
+  setPromptPrediction(text: string | undefined): void;
   setSlashCommands(commands: ReadonlyArray<SlashCommand>): void;
   insertNewlineAtCaret(): void;
   insertMention(attrs: MentionAttrs, range: { start: number; end: number }): void;

@@ -1,5 +1,5 @@
 
-import { computed, h, reactive, ref, watch, type Component } from 'vue';
+import { computed, h, reactive, ref, watch, watchEffect, type Component } from 'vue';
 import { formatDuration as formatTaskDuration } from '@moonshot-ai/app-core/lib';
 import {
   getKimiWebApi,
@@ -54,7 +54,8 @@ import {
   safeSetString,
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
-import { discardStashedEditorState } from '@moonshot-ai/app-composer/runtime';
+import { discardStashedEditorState, liveComposerEditorFor } from '@moonshot-ai/app-composer/runtime';
+import { createPromptPrediction } from './promptPrediction';
 import { sessionTasksToAppTasks, subagentDisplayName } from '@moonshot-ai/app-core/client';
 import {
   conversationTurnError,
@@ -480,6 +481,8 @@ if (typeof document !== 'undefined') {
     if (document.visibilityState === 'visible') {
       clearActiveUnread();
       recoverStaleConnection();
+    } else {
+      promptPredictionController.dismiss('visibility');
     }
   });
 }
@@ -489,6 +492,7 @@ if (typeof window !== 'undefined') {
 }
 
 function setActiveSessionId(id: string | undefined): void {
+  if (rawState.activeSessionId !== id) promptPredictionController.dismiss('session', rawState.activeSessionId);
   sessionReadScope.activate(id);
   consumeDraftPromotionOnSessionChange(id);
   if (id === undefined) permissionsStore().enterDraft();
@@ -707,6 +711,44 @@ function hasPendingLocalWork(sessionId: string): boolean {
     (promptStore().optimisticMessagesBySession[sessionId] ?? []).length > 0
   );
 }
+
+function hasEmptyPromptPredictionInput(sessionId: string): boolean {
+  const editor = liveComposerEditorFor(composerSessionScope(sessionId));
+  if (editor !== undefined) {
+    return editor.getText().length === 0 && editor.getAttachmentInventory().activeIds.size === 0;
+  }
+  if ((safeGetString(draftStorageKey(sessionId)) ?? '').length > 0) return false;
+  const snapshot = safeGetJson<{ attachmentOrder?: unknown }>(draftSnapshotStorageKey(sessionId));
+  return !Array.isArray(snapshot?.attachmentOrder) || snapshot.attachmentOrder.length === 0;
+}
+
+function canUsePromptPrediction(sessionId: string): boolean {
+  return (
+    rawState.experimentalFlags?.['prompt_prediction'] === true &&
+    sessionId === rawState.activeSessionId &&
+    rawState.mainView === 'chat' &&
+    !rawState.sessionLoading &&
+    typeof document !== 'undefined' &&
+    document.visibilityState === 'visible' &&
+    !modeStore().planMode &&
+    !modeStore().planArmed &&
+    !modeStore().goalMode &&
+    !hasPendingLocalWork(sessionId) &&
+    (rawState.approvalsBySession[sessionId] ?? []).length === 0 &&
+    (rawState.questionsBySession[sessionId] ?? []).length === 0 &&
+    hasEmptyPromptPredictionInput(sessionId)
+  );
+}
+
+const promptPredictionController = createPromptPrediction({
+  api: getKimiWebApi,
+  canPredict: canUsePromptPrediction,
+  hasEmptyInput: hasEmptyPromptPredictionInput,
+});
+
+watchEffect(() => {
+  promptPredictionController.refresh();
+});
 
 function conversationConnection(): ReturnType<typeof getEventConn> {
   connectEventsIfNeeded();
@@ -1778,6 +1820,7 @@ const canContinue = computed<boolean>(() => {
 watch(
   [() => rawState.activeSessionId, working],
   ([sid, isWorking]) => {
+    if (isWorking) promptPredictionController.dismiss('queue');
     if (sid !== undefined && isWorking) openSessionBusyWindow(sid);
     else closeSessionBusyWindow();
   },
@@ -1860,6 +1903,7 @@ function onMainTurnsRemoved(entry: ConversationEntry, turnIds: readonly string[]
 }
 
 function onMainTurnStarted(entry: ConversationEntry, turn: ConversationTurn): void {
+  promptPredictionController.handleTurnStarted(entry.sessionId);
   turnPhasesOf(entry).set(turn.turn_id, 'running');
   scheduleSessionRowRefresh(entry.sessionId);
 }
@@ -1880,6 +1924,8 @@ function settleMainTurnEnd(entry: ConversationEntry, turn: ConversationTurn): vo
     firstTurn: turn.ordinal === 0,
     promptId: openerPromptId(turn),
     ratingTurnId: turn.turn_id,
+    predictionSourceId: turn.turn_id,
+    predictionTurnId: turn.ordinal,
   });
 }
 
@@ -2940,6 +2986,7 @@ const sessionAdmin = useSessionAdmin({
 watch(
   () => rawState.mainView,
   (view) => {
+    if (view !== 'chat') promptPredictionController.dismiss('dialog');
     if (view === 'sessionAdmin') sessionAdmin.ensureSeeded();
   },
 );
@@ -3143,7 +3190,7 @@ function isWindowHidden(): boolean {
 function onMainTurnEnd(
   sid: string,
   status: 'idle' | 'aborted',
-  opts: { firstTurn: boolean; promptId?: string; ratingTurnId?: string },
+  opts: { firstTurn: boolean; promptId?: string; ratingTurnId?: string; predictionSourceId?: string; predictionTurnId?: number },
 ): void {
   const goalActive = rawState.goalBySession[sid]?.status === 'active';
 
@@ -3182,6 +3229,10 @@ function onMainTurnEnd(
         void sessionSelection.selectSession(sid, { source: 'notification' });
       },
     });
+  }
+
+  if (opts.predictionSourceId !== undefined && opts.predictionTurnId !== undefined && Number.isSafeInteger(opts.predictionTurnId)) {
+    promptPredictionController.handleTurnEnded(sid, opts.predictionSourceId, opts.predictionTurnId, status === 'idle');
   }
 }
 
@@ -3329,6 +3380,15 @@ export function useKimiWebClient() {
     towerMode,
     goalMode,
     queued,
+    promptPrediction: computed(() => {
+      const current = promptPredictionController.suggestion.value;
+      return current !== null && canUsePromptPrediction(current.sessionId) ? current : null;
+    }),
+    acceptPromptPrediction: (key: 'tab' | 'right') => promptPredictionController.accept(key),
+    handlePromptPredictionInput: () => promptPredictionController.handleInput(),
+    handlePromptPredictionSubmit: (text: string) => promptPredictionController.handleSubmit(text),
+    dismissPromptPrediction: (reason: Parameters<typeof promptPredictionController.dismiss>[0], sessionId?: string) =>
+      promptPredictionController.dismiss(reason, sessionId),
     warnings,
     questions,
     activity,

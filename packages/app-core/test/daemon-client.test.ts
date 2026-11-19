@@ -791,13 +791,25 @@ describe('DaemonKimiWebApi request timeout budgets', () => {
 
   it('ordinary session actions keep the default 30s budget', async () => {
     vi.mocked(fetch).mockImplementation(timeoutRejection);
+    const api = createApi();
 
-    const caught = await createApi()
-      .undoSession('sess_1', 't_1')
+    const caught = await api.undoSession('sess_1', 't_1').catch((error: unknown) => error);
+    const predictionError = await api.predictNextPrompt('sess/1', {
+      predictionId: 'prediction-1',
+      expectedTurnId: 7,
+    }).catch((error: unknown) => error);
+    const cancelError = await api.cancelPromptPrediction('sess/1', 'prediction-1', 'visibility')
       .catch((error: unknown) => error);
 
-    expect(caught).toMatchObject({ timeoutMs: 30_000 });
-    expect(isDaemonTimeoutError(caught)).toBe(true);
+    for (const error of [caught, predictionError, cancelError]) {
+      expect(error).toMatchObject({ timeoutMs: 30_000 });
+      expect(isDaemonTimeoutError(error)).toBe(true);
+    }
+    expect(vi.mocked(fetch).mock.calls.map(([url, init]) => [url, init?.body])).toEqual([
+      ['http://daemon.test/api/v1/sessions/sess_1:undo', JSON.stringify({ turn_id: 't_1' })],
+      ['http://daemon.test/api/v1/sessions/sess%2F1:predict-prompt', JSON.stringify({ prediction_id: 'prediction-1', expected_turn_id: 7 })],
+      ['http://daemon.test/api/v1/sessions/sess%2F1:cancel-prompt-prediction', JSON.stringify({ prediction_id: 'prediction-1', reason: 'visibility' })],
+    ]);
   });
 
   it('a connect failure is not reported as a timeout', async () => {

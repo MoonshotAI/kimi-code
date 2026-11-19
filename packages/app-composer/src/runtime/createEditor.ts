@@ -25,7 +25,7 @@ import { buildAttachmentPill } from '../features/attachment/pill';
 import { buildQuotePill } from '../features/quote/pill';
 import { setAttachmentTooltipResolver } from '../features/attachment/tooltipResolver';
 import { buildWorkModePill, workModePillLayout, type WorkModePillSpec } from './workModePill';
-import { buildComposerPlaceholderOverlay, commandArgumentPlaceholderAnchor, composerPlaceholderAnchor, composerPlaceholderLayout, isEmptyComposerDoc, setComposerPlaceholderOverlayText } from './composerPlaceholder';
+import { buildComposerPlaceholderOverlay, buildPromptPredictionOverlay, commandArgumentPlaceholderAnchor, composerPlaceholderAnchor, composerPlaceholderLayout, isEmptyComposerDoc, setComposerPlaceholderOverlayText } from './composerPlaceholder';
 import { stashEditorState, takeEditorState } from './editorStateCache';
 import type { ComposerEditorApi, ComposerEditorOptions } from './contracts';
 import { notifyAttachmentEntryWatchers, notifyComposerSelectionWatchers, registerComposerEditorView } from './editorRegistry';
@@ -209,6 +209,8 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
   let workModePillElement: HTMLElement | null = null;
   let placeholderText = '';
   let placeholderElement: HTMLElement | null = null;
+  let promptPredictionText = '';
+  let promptPredictionElement: HTMLElement | null = null;
   let composerChromeFrame = 0;
   let observedWorkModePill: Element | null = null;
   let composerResizeObserver: ResizeObserver | null = null;
@@ -232,18 +234,21 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
     if (destroyed) return;
 
     const element = placeholderElement;
+    const predictionElement = promptPredictionElement;
+    const predictionVisible = predictionElement !== null && promptPredictionText !== '' && isEmptyComposerDoc(view.state.doc);
     const commandMatch = leadingSlashCommand(view.state);
     const commandHasArgument = commandMatch
       ? docText(view.state.doc).slice(commandMatch.argumentRange.start, commandMatch.argumentRange.end).trim() !== ''
       : false;
     const commandHint = commandMatch?.item.argHint && !commandHasArgument ? placeholderText : '';
     const commandPlaceholderVisible = element !== null && commandHint !== '';
-    const emptyPlaceholderVisible = element !== null && placeholderText !== '' && isEmptyComposerDoc(view.state.doc);
+    const emptyPlaceholderVisible = element !== null && placeholderText !== '' && !predictionVisible && isEmptyComposerDoc(view.state.doc);
     const placeholderVisible = commandPlaceholderVisible || emptyPlaceholderVisible;
     const pill = workModePillElement;
-    if (!pill && !placeholderVisible) {
+    if (!pill && !placeholderVisible && !predictionVisible) {
       clearWorkModeReserves();
       if (element) element.hidden = true;
+      if (predictionElement) predictionElement.hidden = true;
       return;
     }
 
@@ -251,6 +256,7 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
     if (!paragraph) {
       clearWorkModeReserves();
       if (element) element.hidden = true;
+      if (predictionElement) predictionElement.hidden = true;
       return;
     }
 
@@ -303,6 +309,14 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
     const placeholderLayout = placeholderVisible
       ? composerPlaceholderLayout(placeholderAnchor, frame, scroll, clientWidth)
       : undefined;
+    const predictionLayout = predictionVisible
+      ? composerPlaceholderLayout(
+          composerPlaceholderAnchor(paragraphRect, pillLayout?.box, pillMargins),
+          frame,
+          scroll,
+          clientWidth,
+        )
+      : undefined;
 
     if (element) {
       element.hidden = !placeholderVisible;
@@ -320,6 +334,13 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
         }
         element.style.transform = `translate3d(${placeholderLayout.left}px, ${placeholderLayout.top}px, 0)`;
         element.style.maxWidth = `${placeholderLayout.maxWidth}px`;
+      }
+    }
+    if (predictionElement) {
+      predictionElement.hidden = !predictionVisible;
+      if (predictionLayout) {
+        predictionElement.style.transform = `translate3d(${predictionLayout.left}px, ${predictionLayout.top}px, 0)`;
+        predictionElement.style.maxWidth = `${predictionLayout.maxWidth}px`;
       }
     }
   };
@@ -498,6 +519,8 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
   });
   placeholderElement = buildComposerPlaceholderOverlay(placeholderText);
   host.append(placeholderElement);
+  promptPredictionElement = buildPromptPredictionOverlay(promptPredictionText);
+  host.append(promptPredictionElement);
   if (typeof ResizeObserver === 'function') {
     composerResizeObserver = new ResizeObserver(scheduleComposerChromeUpdate);
     composerResizeObserver.observe(host);
@@ -663,6 +686,12 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       scheduleComposerChromeUpdate();
     },
 
+    setPromptPrediction(text: string | undefined): void {
+      promptPredictionText = text ?? '';
+      if (promptPredictionElement) promptPredictionElement.textContent = promptPredictionText;
+      scheduleComposerChromeUpdate();
+    },
+
     insertMention(attrs: MentionAttrs, range: { start: number; end: number }): void {
       view.dispatch(buildMentionInsertion(view.state, attrs, range));
       view.focus();
@@ -825,6 +854,8 @@ export function createComposerEditor(host: HTMLElement, options: ComposerEditorO
       workModePillElement = null;
       placeholderElement?.remove();
       placeholderElement = null;
+      promptPredictionElement?.remove();
+      promptPredictionElement = null;
       view.dom.removeEventListener('compositionstart', onCompositionStart);
       view.dom.removeEventListener('compositionend', onCompositionEnd);
       releaseAttachmentTooltipResolver();
