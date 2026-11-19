@@ -8,6 +8,7 @@ export interface AnchorCandidate {
   path: AnchorPath;
   el: HTMLElement;
   offset: number;
+  rowOffset?: number;
 }
 
 export interface PickOptions {
@@ -27,6 +28,12 @@ export const MARKDOWN_ROOT_SELECTOR = '.markdown-renderer';
 const ROW_SELECTOR = `[${ROW_KEY_ATTRIBUTE}]`;
 const BLOCK_SELECTOR = `[${BLOCK_KEY_ATTRIBUTE}]`;
 const OWNER_SELECTOR = `${BLOCK_SELECTOR},${ROW_SELECTOR}`;
+
+export function resolvedExactly(el: Element, path: AnchorPath): boolean {
+  if (path.child !== undefined) return !el.hasAttribute(BLOCK_KEY_ATTRIBUTE) && !el.hasAttribute(ROW_KEY_ATTRIBUTE);
+  if (path.block !== undefined) return !el.hasAttribute(ROW_KEY_ATTRIBUTE);
+  return true;
+}
 
 export function sameAnchorPath(a: AnchorPath | null | undefined, b: AnchorPath | null | undefined): boolean {
   if (!a || !b) return a === b;
@@ -76,9 +83,8 @@ export function createDomAnchors(root: HTMLElement): DomAnchors {
     const target = row ?? below;
     if (!target) return null;
     const rowKey = target.getAttribute(ROW_KEY_ATTRIBUTE)!;
-    if (!row || options.rowOnly) {
-      return { path: { row: rowKey }, el: target, offset: target.getBoundingClientRect().top - viewTop };
-    }
+    const rowOffset = target.getBoundingClientRect().top - viewTop;
+    if (!row || options.rowOnly) return { path: { row: rowKey }, el: target, offset: rowOffset, rowOffset };
     let block: HTMLElement | null = null;
     for (const candidate of row.querySelectorAll<HTMLElement>(BLOCK_SELECTOR)) {
       if (rowOf(candidate) === row && intersects(candidate.getBoundingClientRect(), viewTop)) block = candidate;
@@ -96,7 +102,7 @@ export function createDomAnchors(root: HTMLElement): DomAnchors {
         break;
       }
     }
-    return { path, el, offset: el.getBoundingClientRect().top - viewTop };
+    return { path, el, offset: el.getBoundingClientRect().top - viewTop, rowOffset };
   }
 
   function resolve(path: AnchorPath): HTMLElement | null {

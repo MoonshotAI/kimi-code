@@ -5,6 +5,7 @@ export function usePanelSlide(options: {
   enabled: Ref<boolean>;
   element: Ref<HTMLElement | null>;
   onGeometryChange?: () => void;
+  context?: () => unknown;
 }) {
   const contentVisible = ref(options.visible.value);
   const sliding = ref(false);
@@ -12,6 +13,8 @@ export function usePanelSlide(options: {
   let frame: number | undefined;
   let disposed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let switching = false;
+  let switchFrame: number | undefined;
 
   function stopFrame(): void {
     if (frame !== undefined) cancelAnimationFrame(frame);
@@ -37,8 +40,19 @@ export function usePanelSlide(options: {
     void nextTick(() => { if (!disposed && current === revision) options.onGeometryChange?.(); });
   }
 
+  if (options.context !== undefined) {
+    watch(options.context, () => {
+      switching = true;
+      if (switchFrame !== undefined) cancelAnimationFrame(switchFrame);
+      switchFrame = requestAnimationFrame(() => {
+        switchFrame = undefined;
+        switching = false;
+      });
+    }, { flush: 'sync' });
+  }
+
   watch([options.visible, options.enabled], async ([visible, enabled], [wasVisible, wasEnabled]) => {
-    if (!enabled || !wasEnabled || visible === wasVisible || options.element.value === null) {
+    if (switching || !enabled || !wasEnabled || visible === wasVisible || options.element.value === null) {
       finish();
       return;
     }
@@ -62,6 +76,12 @@ export function usePanelSlide(options: {
     if (event.target === options.element.value && event.propertyName === 'width') finish();
   }
 
-  onScopeDispose(() => { disposed = true; revision += 1; stopFrame(); clearTimeout(timer); });
+  onScopeDispose(() => {
+    disposed = true;
+    revision += 1;
+    stopFrame();
+    clearTimeout(timer);
+    if (switchFrame !== undefined) cancelAnimationFrame(switchFrame);
+  });
   return { contentVisible, sliding, onTransitionEnd };
 }

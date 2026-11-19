@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatTurn, ToolCall } from '@moonshot-ai/app-core/client/types';
 
-import { editedFileMarkers, isStaleSince, turnFileEditCounts } from '../src/lib/fileStaleness';
+import { editedFileCount, editedFileMarkers, isStaleSince, turnFileEditCounts } from '../src/lib/fileStaleness';
 import { normalizePathKey } from '../src/chatTurnRendering';
 
 function tool(over: Partial<ToolCall> = {}): ToolCall {
@@ -125,5 +125,23 @@ describe('isStaleSince', () => {
       ['src/a.ts', 'turn-0:1'],
     ]);
     expect(isStaleSince(markers, snapshot, [path, 'src/a.ts'])).toBe(true);
+  });
+});
+
+describe('editedFileCount', () => {
+  it('counts distinct files written by completed edit tools across a turn group', () => {
+    const group = [
+      turn({ tools: [tool({ id: 'a' }), tool({ id: 'b', name: 'MultiEdit', arg: JSON.stringify({ file_path: 'src/a.ts', edits: [] }) })] }),
+      turn({
+        id: 'turn-2',
+        tools: [
+          tool({ id: 'c', name: 'write', arg: JSON.stringify({ path: 'src/b.ts', content: '' }) }),
+          tool({ id: 'd', name: 'Edit', status: 'error' }),
+          tool({ id: 'e', name: 'Read', arg: JSON.stringify({ path: 'src/c.ts' }) }),
+        ],
+      }),
+    ];
+    expect(editedFileCount(group, '/repo')).toBe(2);
+    expect(editedFileCount([turn({ tools: [tool({ name: 'Bash', arg: 'sed -i s/a/b/ x.ts' })] })])).toBe(0);
   });
 });

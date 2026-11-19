@@ -1,5 +1,5 @@
 import { nextJumpPillVisible } from '../followScroll';
-import { createDomAnchors, type AnchorCandidate, type AnchorPath, type PickOptions } from './anchor';
+import { createDomAnchors, resolvedExactly, ROW_KEY_ATTRIBUTE, type AnchorCandidate, type AnchorPath, type PickOptions } from './anchor';
 import { isUnexpectedScroll, readScrollIntent } from './intent';
 import type { LayoutModel } from './layoutModel';
 
@@ -10,12 +10,24 @@ export type ScrollAlign = 'start' | 'center';
 
 export type ScrollMode =
   | { kind: 'follow' }
-  | { kind: 'anchored'; anchor: AnchorPath; offset: number }
-  | { kind: 'navigating'; target: AnchorPath; align: ScrollAlign; animation?: boolean };
+  | { kind: 'anchored'; anchor: AnchorPath; offset: number; rowOffset?: number }
+  | { kind: 'navigating'; target: AnchorPath; align: ScrollAlign; shift?: number; animation?: boolean };
+
+export type AuxKind = 'tail' | 'dock' | 'content';
+
+export interface NavigateOptions {
+  align?: ScrollAlign;
+  smooth?: boolean;
+  shift?: number;
+}
+
+export interface RestoreOptions {
+  defer?: boolean;
+}
 
 export type ScrollSnapshot =
   | { mode: 'follow' }
-  | { mode: 'anchored'; anchor: AnchorPath; offset: number };
+  | { mode: 'anchored'; anchor: AnchorPath; offset: number; rowOffset?: number };
 
 export type ScrollWriteReason =
   | 'resize'
@@ -25,7 +37,8 @@ export type ScrollWriteReason =
   | 'restore'
   | 'drag-end'
   | 'touch-end'
-  | 'scroll-end';
+  | 'scroll-end'
+  | 'sync';
 
 export interface TranscriptLayout {
   dockHeight: number;
@@ -83,14 +96,15 @@ export interface ScrollOptions {
 export interface ScrollController {
   readonly state: Readonly<ScrollState>;
   observeRow(key: string, el: HTMLElement | null): void;
-  observeAux(kind: 'tail' | 'dock', el: HTMLElement | null): void;
+  observeAux(kind: AuxKind, el: HTMLElement | null, id?: string): void;
   onScroll(): void;
   onInput(event: Event): void;
+  sync(): void;
   follow(options?: { smooth?: boolean }): void;
-  navigate(path: AnchorPath, options?: { align?: ScrollAlign; smooth?: boolean }): Promise<void>;
+  navigate(path: AnchorPath, options?: NavigateOptions): Promise<void>;
   hold(el: HTMLElement): void;
   snapshot(): ScrollSnapshot;
-  restore(snapshot: ScrollSnapshot | null): void;
+  restore(snapshot: ScrollSnapshot | null, options?: RestoreOptions): void;
   dispose(): void;
 }
 
@@ -108,7 +122,20 @@ export function createDomScrollAdapter(options: DomScrollAdapterOptions): Scroll
     scroller,
     model,
     resolveAnchor: anchors.resolve,
-    pickAnchor: anchors.pick,
+    pickAnchor(viewTop, pickOptions) {
+      const candidate = anchors.pick(viewTop, pickOptions);
+      if (candidate && candidate.offset <= 0) return candidate;
+      const list = options.list();
+      if (!list) return candidate;
+      const listTop = list.getBoundingClientRect().top;
+      const y = viewTop - listTop;
+      if (y < 0 || y >= model.total()) return candidate;
+      const index = model.indexAt(y);
+      const key = model.keyAt(index);
+      if (key === undefined || candidate?.path.row === key) return candidate;
+      const offset = listTop + model.top(index) - viewTop;
+      return { path: { row: key }, el: list, offset, rowOffset: offset };
+    },
     pathOf: anchors.pathOf,
     rowTop(key) {
       const index = model.indexOf(key);
@@ -147,7 +174,7 @@ function easeOutCubic(progress: number): number {
   return 1 - (1 - progress) ** 3;
 }
 
-type Target = { kind: 'row'; key: string } | { kind: 'tail' } | { kind: 'dock' };
+type Target = { kind: 'row'; key: string } | { kind: AuxKind };
 type Animation = { frame: number };
 
 export function createScrollController(adapter: ScrollAdapter, overrides: Partial<ScrollOptions> = {}): ScrollController {
@@ -158,7 +185,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   const rows = new Map<string, HTMLElement>();
   const targets = new Map<Element, Target>();
   const retiring = new Set<Element>();
-  const aux: Record<'tail' | 'dock', HTMLElement | null> = { tail: null, dock: null };
+  const aux = new Map<string, HTMLElement>();
   let dockHeight = 0;
   let expectedTop = scroller.scrollTop;
   let held: { el: HTMLElement; offset: number } | null = null;
@@ -166,6 +193,8 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   let touchActive = false;
   let touching = false;
   let touchScrolled = false;
+  let scrollInput = false;
+  let restoring = false;
   let animation: Animation | null = null;
   let settleNavigation: (() => void) | null = null;
   let disposed = false;
@@ -183,6 +212,17 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
 
   function docTop(el: Element): number {
     return scroller.scrollTop + el.getBoundingClientRect().top - viewTop();
+  }
+
+  function anchoredAt(anchor: AnchorPath, offset: number, rowOffset?: number): ScrollMode {
+    let resolvedRowOffset = rowOffset;
+    if (resolvedRowOffset === undefined) {
+      const row = anchor.block === undefined && anchor.child === undefined ? null : adapter.resolveAnchor({ row: anchor.row });
+      resolvedRowOffset = row ? row.getBoundingClientRect().top - viewTop() : undefined;
+    }
+    return resolvedRowOffset === undefined
+      ? { kind: 'anchored', anchor, offset }
+      : { kind: 'anchored', anchor, offset, rowOffset: resolvedRowOffset };
   }
 
   function setMode(mode: ScrollMode): void {
@@ -222,7 +262,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   function anchorHere(): void {
     held = null;
     const candidate = adapter.pickAnchor(viewTop());
-    if (candidate) setMode({ kind: 'anchored', anchor: candidate.path, offset: candidate.offset });
+    if (candidate) setMode(anchoredAt(candidate.path, candidate.offset, candidate.rowOffset));
     else if (state.mode.kind === 'navigating') setMode({ kind: 'follow' });
   }
 
@@ -234,9 +274,10 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
 
   function write(top: number, reason: ScrollWriteReason): void {
     const next = Math.min(Math.max(0, top), maxTop());
-    if (Math.abs(next - scroller.scrollTop) < 0.5) return;
+    if (Math.abs(next - scroller.scrollTop) <= 0.5) return;
     scroller.scrollTop = next;
     expectedTop = scroller.scrollTop;
+    scrollInput = false;
     options.onWrite?.(expectedTop, reason);
   }
 
@@ -247,12 +288,13 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   }
 
   function navigationTarget(mode: Extract<ScrollMode, { kind: 'navigating' }>, settle: boolean): number | null {
+    const shift = mode.shift ?? 0;
     const el = adapter.resolveAnchor(mode.target);
     if (el) {
-      const offset = alignOffset(el.getBoundingClientRect().height, mode.align);
+      const offset = alignOffset(el.getBoundingClientRect().height, mode.align) - shift;
       const top = docTop(el) - offset;
       if (settle) {
-        setMode({ kind: 'anchored', anchor: mode.target, offset });
+        setMode(anchoredAt(mode.target, offset));
         finishNavigation();
       }
       return top;
@@ -266,7 +308,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
       return null;
     }
     const index = model.indexOf(mode.target.row);
-    return rowTop - alignOffset(index === undefined ? 0 : model.height(index), mode.align);
+    return rowTop - alignOffset(index === undefined ? 0 : model.height(index), mode.align) + shift;
   }
 
   function solve(): number | null {
@@ -278,39 +320,85 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
       held = null;
     }
     const el = adapter.resolveAnchor(mode.anchor);
-    if (el) return docTop(el) - mode.offset;
+    if (el) {
+      if (mode.rowOffset === undefined || (mode.anchor.block === undefined && mode.anchor.child === undefined)) return docTop(el) - mode.offset;
+      const row = el.closest<HTMLElement>(`[${ROW_KEY_ATTRIBUTE}]`) ?? el;
+      if (!resolvedExactly(el, mode.anchor)) return docTop(row) - mode.rowOffset;
+      const top = docTop(el) - mode.offset;
+      mode.rowOffset = docTop(row) - top;
+      return top;
+    }
     const rowTop = adapter.rowTop(mode.anchor.row);
-    return rowTop === null ? null : rowTop - mode.offset;
+    return rowTop === null ? null : rowTop - (mode.rowOffset ?? mode.offset);
   }
 
   function correct(reason: ScrollWriteReason): void {
     if (disposed) return;
-    if (isUnexpectedScroll(scroller.scrollTop, expectedTop)) handleScroll();
+    if (isUnexpectedScroll(scroller.scrollTop, expectedTop) && !adoptClamp()) handleScroll(true);
     if (!animation && !dragging && !touching) {
+      const wasRestoring = restoring;
+      restoring = false;
       const top = solve();
-      if (top !== null) write(top, reason);
+      if (top !== null) {
+        write(top, reason);
+        if (!wasRestoring) adoptTopClamp(top);
+      }
     }
     updateIndicators();
     emit();
   }
 
-  function handleScroll(): void {
+  function adoptTopClamp(top: number): void {
+    const delta = scroller.scrollTop - top;
+    if (top >= 0 || delta <= 0.5) return;
+    if (held) {
+      held.offset -= delta;
+      return;
+    }
+    const mode = state.mode;
+    if (mode.kind !== 'anchored') return;
+    mode.offset -= delta;
+    if (mode.rowOffset !== undefined) mode.rowOffset -= delta;
+  }
+
+  function adoptClamp(): boolean {
+    if ((!restoring && state.mode.kind !== 'navigating') || scrollInput || dragging || touching) return false;
+    expectedTop = scroller.scrollTop;
+    return true;
+  }
+
+  function pendingShift(): number {
+    const mode = state.mode;
+    if (dragging || touching || mode.kind !== 'anchored') return 0;
+    if (!held && !adapter.resolveAnchor(mode.anchor)) return 0;
+    const target = solve();
+    return target === null ? 0 : target - expectedTop;
+  }
+
+  function followClamp(top: number): boolean {
+    return state.mode.kind === 'follow' && !scrollInput && !touching && expectedTop - top <= options.followThreshold;
+  }
+
+  function handleScroll(layout = false): void {
     const top = scroller.scrollTop;
-    if (!isUnexpectedScroll(top, expectedTop)) return;
+    if (!isUnexpectedScroll(top, expectedTop) || adoptClamp()) return;
     if (touching) touchScrolled = true;
     const max = maxTop();
-    if (top < expectedTop && top >= max - 1 && !dragging) {
+    if (top < expectedTop && !dragging && (top >= max - 1 || (layout && followClamp(top)))) {
       expectedTop = top;
       return;
     }
+    const shift = pendingShift();
     const direction = top > expectedTop ? 1 : -1;
     expectedTop = top;
+    scrollInput = false;
     if (animation || state.mode.kind === 'navigating') {
       cancelAnimation();
       finishNavigation();
     }
     held = null;
-    const distance = max - top;
+    if (Math.abs(shift) > 0.5) write(top + shift, 'resize');
+    const distance = maxTop() - scroller.scrollTop;
     if (state.mode.kind === 'follow') {
       if (direction < 0 || distance > options.followThreshold) anchorHere();
     } else if (direction > 0 && distance <= options.followThreshold) {
@@ -331,6 +419,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     if (disposed) return;
     const intent = readScrollIntent(event, scroller);
     if (!intent) return;
+    if (intent.kind === 'scroll' || intent.kind === 'drag-start' || intent.kind === 'touch-start') scrollInput = true;
     switch (intent.kind) {
       case 'scroll':
         if (intent.source === 'touch') touching = touchActive = true;
@@ -372,8 +461,9 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
 
   function onResize(entries: readonly ResizeEntryLike[]): void {
     if (disposed) return;
+    const widthSource = aux.get('content') ?? scroller;
     let width: number | undefined;
-    for (const entry of entries) if (entry.target === scroller) width = inlineSize(entry);
+    for (const entry of entries) if (entry.target === widthSource) width = inlineSize(entry);
     model.setEnvironment(width === undefined ? { fontScale: options.fontScale() } : { width, fontScale: options.fontScale() });
     for (const entry of entries) {
       const target = targets.get(entry.target);
@@ -392,6 +482,10 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     model.refreshEstimates();
     adapter.applyLayout({ dockHeight });
     correct('resize');
+  }
+
+  function sync(): void {
+    correct('sync');
   }
 
   function animate(target: () => number | null, done: () => void): void {
@@ -431,15 +525,17 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     observer.observe(el, { box: 'border-box' });
   }
 
-  function observeAux(kind: 'tail' | 'dock', el: HTMLElement | null): void {
-    const previous = aux[kind];
+  function observeAux(kind: AuxKind, el: HTMLElement | null, id?: string): void {
+    const slot = id === undefined ? kind : `${kind}:${id}`;
+    const previous = aux.get(slot) ?? null;
     if (previous === el) return;
     if (previous) {
       observer.unobserve(previous);
       targets.delete(previous);
+      aux.delete(slot);
     }
-    aux[kind] = el;
     if (el) {
+      aux.set(slot, el);
       targets.set(el, { kind });
       observer.observe(el, { box: 'border-box' });
     } else if (kind === 'dock') {
@@ -461,14 +557,20 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     }
   }
 
-  function navigate(path: AnchorPath, opts: { align?: ScrollAlign; smooth?: boolean } = {}): Promise<void> {
+  function navigate(path: AnchorPath, opts: NavigateOptions = {}): Promise<void> {
     if (disposed) return Promise.resolve();
     cancelAnimation();
     finishNavigation();
     held = null;
     if (!adapter.resolveAnchor(path) && model.indexOf(path.row) === undefined) return Promise.resolve();
     const smooth = opts.smooth === true && !options.reducedMotion();
-    const mode: ScrollMode = { kind: 'navigating', target: path, align: opts.align ?? 'start', ...(smooth ? { animation: true } : {}) };
+    const mode: ScrollMode = {
+      kind: 'navigating',
+      target: path,
+      align: opts.align ?? 'start',
+      ...(opts.shift ? { shift: opts.shift } : {}),
+      ...(smooth ? { animation: true } : {}),
+    };
     setMode(mode);
     const done = new Promise<void>(resolve => {
       settleNavigation = resolve;
@@ -496,7 +598,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     finishNavigation();
     const top = viewTop();
     const resolved = adapter.resolveAnchor(path) ?? el;
-    setMode({ kind: 'anchored', anchor: path, offset: resolved.getBoundingClientRect().top - top });
+    setMode(anchoredAt(path, resolved.getBoundingClientRect().top - top));
     held = { el, offset: el.getBoundingClientRect().top - top };
     emit();
   }
@@ -504,19 +606,27 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
   function snapshot(): ScrollSnapshot {
     const mode = state.mode;
     if (mode.kind === 'follow') return { mode: 'follow' };
-    if (mode.kind === 'anchored') return { mode: 'anchored', anchor: { ...mode.anchor }, offset: mode.offset };
+    if (mode.kind === 'anchored') {
+      const current = anchoredAt(mode.anchor, mode.offset) as Extract<ScrollMode, { kind: 'anchored' }>;
+      const rowOffset = current.rowOffset ?? mode.rowOffset;
+      return { mode: 'anchored', anchor: { ...mode.anchor }, offset: mode.offset, ...(rowOffset === undefined ? {} : { rowOffset }) };
+    }
     const candidate = adapter.pickAnchor(viewTop());
-    return candidate ? { mode: 'anchored', anchor: candidate.path, offset: candidate.offset } : { mode: 'follow' };
+    if (!candidate) return { mode: 'follow' };
+    return { mode: 'anchored', anchor: candidate.path, offset: candidate.offset, ...(candidate.rowOffset === undefined ? {} : { rowOffset: candidate.rowOffset }) };
   }
 
-  function restore(next: ScrollSnapshot | null): void {
+  function restore(next: ScrollSnapshot | null, opts: RestoreOptions = {}): void {
     if (disposed) return;
     cancelAnimation();
     finishNavigation();
     held = null;
-    setMode(!next || next.mode === 'follow' ? { kind: 'follow' } : { kind: 'anchored', anchor: { ...next.anchor }, offset: next.offset });
+    setMode(!next || next.mode === 'follow' ? { kind: 'follow' } : anchoredAt({ ...next.anchor }, next.offset, next.rowOffset));
     expectedTop = scroller.scrollTop;
-    correct('restore');
+    scrollInput = false;
+    restoring = opts.defer === true;
+    if (opts.defer) emit();
+    else correct('restore');
   }
 
   function dispose(): void {
@@ -528,6 +638,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     rows.clear();
     targets.clear();
     retiring.clear();
+    aux.clear();
   }
 
   return {
@@ -538,6 +649,7 @@ export function createScrollController(adapter: ScrollAdapter, overrides: Partia
     observeAux,
     onScroll,
     onInput,
+    sync,
     follow,
     navigate,
     hold,
