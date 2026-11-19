@@ -5,7 +5,16 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron, expect, test as base, type ElectronApplication, type Page, type TestInfo } from '@playwright/test';
 
-import { killProcessTree, osHomeEnv } from '@moonshot-ai/testkit/fixtures';
+import {
+  KIMI_SERVICE_URL,
+  killProcessTree,
+  kimiServiceStubs,
+  NETWORK_GUARD_PRELOAD,
+  networkGuardEnv,
+  osHomeEnv,
+  readNetworkViolations,
+  testEnv,
+} from '@moonshot-ai/testkit/fixtures';
 import { startFakeModel, type FakeModel } from '@moonshot-ai/testkit/model';
 
 import { connectBrowserAgent, type BrowserAgent } from './agent';
@@ -16,6 +25,8 @@ import { saveSnapshot } from './snapshot';
 
 const DESKTOP_DIR = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const MAIN_SHIM = fileURLToPath(new URL('./main-shim.cjs', import.meta.url));
+const NETWORK_GUARD = fileURLToPath(NETWORK_GUARD_PRELOAD);
+const OFFLINE_MODELS_DEV = { method: 'GET', url: 'https://models.dev/api.json', status: 404 };
 const PAGE_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = process.platform === 'win32' ? 90_000 : 30_000;
 const AUXILIARY_PAGES = /^app:\/\/renderer\/(browser-overlay|browser-control|screenshot|pin|capture-host)\b/;
@@ -167,22 +178,26 @@ export const test = base.extend<Options & Fixtures>({
     await Promise.all([home, osHome, userData, downloads, workspace].map(dir => mkdir(dir, { recursive: true })));
     await writeFile(join(home, 'config.toml'), stubModelConfig(modelServer.baseUrl, permissionMode, 'verify' in modelServer ? 'test-key' : 'sk-e2e') + extraConfig);
     const token = randomBytes(24).toString('base64url');
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined && !/^(KIMI_|ELECTRON_RUN_AS_NODE$)/.test(key)) env[key] = value;
-    }
-    Object.assign(env, {
-      ...osHomeEnv(osHome),
-      KIMI_CODE_HOME: home,
-      KIMI_BROWSER_MCP_TEST_TOKEN: token,
-      KIMI_DISABLE_TELEMETRY: '1',
-      KIMI_MCP_RECONNECT_INITIAL_DELAY_MS: '600000',
-      KIMI_MCP_RECONNECT_MAX_DELAY_MS: '600000',
-      KIMI_DESKTOP_NO_SHELL_ENV: '1',
-      KIMI_DESKTOP_E2E: quietMode ? 'quiet' : '1',
-      KIMI_E2E_DOWNLOADS_DIR: downloads,
-      LANG: 'en_US.UTF-8',
-    }, appEnv);
+    const networkLog = join(scratch, 'network.log');
+    const env = testEnv({
+      set: {
+        ELECTRON_RUN_AS_NODE: undefined,
+        KIMI_CODE_SEARCH_WORKER: undefined,
+        KIMI_CODE_PERSISTENCE_MINIDB_READMODEL: undefined,
+        ...osHomeEnv(osHome),
+        ...networkGuardEnv(networkLog, [...kimiServiceStubs(), OFFLINE_MODELS_DEV]),
+        KIMI_CODE_HOME: home,
+        KIMI_CODE_BASE_URL: KIMI_SERVICE_URL,
+        KIMI_BROWSER_MCP_TEST_TOKEN: token,
+        KIMI_MCP_RECONNECT_INITIAL_DELAY_MS: '600000',
+        KIMI_MCP_RECONNECT_MAX_DELAY_MS: '600000',
+        KIMI_DESKTOP_NO_SHELL_ENV: '1',
+        KIMI_DESKTOP_E2E: quietMode ? 'quiet' : '1',
+        KIMI_E2E_DOWNLOADS_DIR: downloads,
+        LANG: 'en_US.UTF-8',
+        ...appEnv,
+      },
+    });
 
     const output: string[] = [];
     const rendererErrors: string[] = [];
@@ -195,7 +210,7 @@ export const test = base.extend<Options & Fixtures>({
 
     const launchElectron = async (): Promise<Launch> => {
       const electron = await _electron.launch({
-        args: ['-r', MAIN_SHIM, DESKTOP_DIR, `--user-data-dir=${userData}`, '--lang=en-US'],
+        args: ['-r', MAIN_SHIM, '-r', NETWORK_GUARD, DESKTOP_DIR, `--user-data-dir=${userData}`, '--lang=en-US'],
         cwd: workspace,
         env,
       });
@@ -382,8 +397,14 @@ export const test = base.extend<Options & Fixtures>({
       modelServer.releaseTurns();
     }
     await Promise.allSettled(agents.map(agent => agent.close()));
-    const passed = failure === undefined && testInfo.status === testInfo.expectedStatus;
     record(await shutdown(current, testInfo.outputPath(launches > 1 ? `trace-launch-${launches}.zip` : 'trace.zip')));
+    let blockedConnections: readonly string[] = [];
+    try {
+      blockedConnections = await readNetworkViolations(networkLog, 'The desktop main process');
+    } catch (error) {
+      failure ??= error;
+    }
+    const passed = failure === undefined && testInfo.status === testInfo.expectedStatus && blockedConnections.length === 0;
     for (const trace of traces) {
       if (passed && trace.clean && rendererErrors.length === 0) await rm(trace.path, { force: true });
     }
@@ -401,6 +422,9 @@ export const test = base.extend<Options & Fixtures>({
       await writeFile(testInfo.outputPath('electron-output.log'), output.join('')).catch(() => undefined);
     }
     if (failure !== undefined) throw failure;
+    if (blockedConnections.length > 0) {
+      throw new Error(`The desktop main process tried to reach non-loopback addresses; e2e runs must stay offline:\n${blockedConnections.map(target => `- ${target}`).join('\n')}`);
+    }
     if (rendererErrors.length > 0 && 'verify' in modelServer) throw new Error(rendererErrors.join('\n'));
     if (nativeCalls.length > 0) {
       throw new Error(`The app requested native UI during the test; e2e runs must never show it:\n${nativeCalls.map(call => `- ${call.api}: ${call.detail}`).join('\n')}`);

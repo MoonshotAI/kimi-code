@@ -6,11 +6,10 @@ import { join } from 'node:path';
 import type { Writable } from 'node:stream';
 
 import { TestkitError } from '#/errors';
-import { FETCH_STUBS_ENV, NETWORK_LOG_ENV, type FetchStub } from '#/fixtures/network';
+import { NETWORK_GUARD_PRELOAD, networkGuardEnv, type FetchStub } from '#/fixtures/network';
 import { TIMEOUTS } from '#/fixtures/timeouts';
 import { waitForEvent } from '#/fixtures/wait';
 
-const NETWORK_GUARD_PRELOAD = new URL('./network-preload.ts', import.meta.url).href;
 const TAIL_CHARACTERS = 16 * 1024;
 const LINE_HISTORY = 1_000;
 const LONGEST_LINE = 64 * 1024;
@@ -77,8 +76,7 @@ export class TestProcess {
   private constructor(options: StartTestProcessOptions) {
     this.label = options.label;
     this.networkLog = join(options.logDir, `network-${randomUUID()}.log`);
-    const imports = [...(options.command.imports ?? []), NETWORK_GUARD_PRELOAD].flatMap((specifier) => ['--import', specifier]);
-    const stubs = options.fetchStubs ?? [];
+    const imports = [...(options.command.imports ?? []), NETWORK_GUARD_PRELOAD.href].flatMap((specifier) => ['--import', specifier]);
     this.child = spawn(process.execPath, [...imports, options.command.entry, ...(options.args ?? [])], {
       cwd: options.cwd,
       detached: process.platform !== 'win32',
@@ -87,8 +85,7 @@ export class TestProcess {
       env: {
         ...options.env,
         ...options.command.env,
-        [NETWORK_LOG_ENV]: this.networkLog,
-        ...(stubs.length === 0 ? {} : { [FETCH_STUBS_ENV]: JSON.stringify(stubs) }),
+        ...networkGuardEnv(this.networkLog, options.fetchStubs),
       },
     });
     const recordError = (error: Error): void => {

@@ -15,11 +15,16 @@ export interface NetworkGuardOptions {
 
 export const NETWORK_LOG_ENV = 'TESTKIT_NETWORK_LOG';
 export const FETCH_STUBS_ENV = 'TESTKIT_FETCH_STUBS';
+export const NETWORK_GUARD_PRELOAD = new URL('./network-preload.ts', import.meta.url);
 
 export interface FetchStub {
   readonly method: string;
   readonly url: string;
   readonly status: number;
+}
+
+export function networkGuardEnv(log: string, stubs: readonly FetchStub[] = []): Record<string, string> {
+  return { [NETWORK_LOG_ENV]: log, ...(stubs.length === 0 ? {} : { [FETCH_STUBS_ENV]: JSON.stringify(stubs) }) };
 }
 
 type Connect = (this: Socket, ...args: unknown[]) => Socket;

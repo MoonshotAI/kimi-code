@@ -22,7 +22,14 @@ export {
 } from '#/fixtures/golden';
 export { createTestHome, osHomeEnv, removeDirectory, type TestHome } from '#/fixtures/home';
 export { BROKEN_DATA_URLS, dataUrl, mp4Header, ONE_PIXEL_PNG_BASE64, solidPng } from '#/fixtures/media';
-export { installNetworkGuard, type FetchStub, type NetworkGuard, type NetworkGuardOptions } from '#/fixtures/network';
+export {
+  installNetworkGuard,
+  NETWORK_GUARD_PRELOAD,
+  networkGuardEnv,
+  type FetchStub,
+  type NetworkGuard,
+  type NetworkGuardOptions,
+} from '#/fixtures/network';
 export {
   killProcessTree,
   readNetworkViolations,

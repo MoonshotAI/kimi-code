@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { KIMI_SERVICE_URL } from '@moonshot-ai/testkit/fixtures';
 import { say } from '@moonshot-ai/testkit/model';
 
 import { expect, testWithProvider } from '../../../e2e/fixtures/app';
@@ -38,4 +39,30 @@ test('the desktop discovers skills only in its isolated user home', async ({ app
   const modelInput = [history.system, ...history.messages.map(message => message.text)].join('\n');
   expect(modelInput).toContain('isolated-only-marker');
   expect(modelInput).not.toContain('ambient-only-marker');
+});
+
+const HOST_ONLY = { OPENAI_API_KEY: 'sk-host-only', HTTPS_PROXY: 'http://proxy.example.test:8080' };
+
+const withHostSecrets = testWithProvider.extend({
+  scratch: async ({ scratch }, use) => {
+    const saved = Object.fromEntries(Object.keys(HOST_ONLY).map(key => [key, process.env[key]]));
+    Object.assign(process.env, HOST_ONLY);
+    try {
+      await use(scratch);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  },
+});
+
+withHostSecrets('the desktop never inherits host model keys or proxies, and reaches Kimi services only through the test host', async ({ app }) => {
+  const seen = await app.electron.evaluate(() => ({
+    key: process.env['OPENAI_API_KEY'] ?? null,
+    proxy: process.env['HTTPS_PROXY'] ?? null,
+    kimi: process.env['KIMI_CODE_BASE_URL'] ?? null,
+  }));
+  expect(seen).toEqual({ key: null, proxy: null, kimi: KIMI_SERVICE_URL });
 });
