@@ -1,3 +1,4 @@
+import { sendRawError } from '../lib/rawError';
 import { ErrorCode } from '../protocol/error-codes';
 import type { z } from 'zod';
 
@@ -9,6 +10,7 @@ interface ValidationRequest {
 }
 
 interface ValidationReply {
+  code(status: number): { send(payload: unknown): unknown };
   send(payload: unknown): unknown;
 }
 
@@ -67,11 +69,13 @@ export function validateBody<T>(schema: z.ZodType<T>): PreHandlerHook {
   };
 }
 
-export function validateQuery<T>(schema: z.ZodType<T>): PreHandlerHook {
+export function validateQuery<T>(schema: z.ZodType<T>, rawErrorStatus = false): PreHandlerHook {
   return (req, reply, done) => {
     const result = schema.safeParse(req.query);
     if (!result.success) {
-      reply.send(buildValidationEnvelope(zodIssuesToDetails(result.error), req.id));
+      const envelope = buildValidationEnvelope(zodIssuesToDetails(result.error), req.id);
+      if (rawErrorStatus) sendRawError(reply, envelope);
+      else reply.send(envelope);
       return;
     }
     req.query = result.data;
@@ -79,11 +83,13 @@ export function validateQuery<T>(schema: z.ZodType<T>): PreHandlerHook {
   };
 }
 
-export function validateParams<T>(schema: z.ZodType<T>): PreHandlerHook {
+export function validateParams<T>(schema: z.ZodType<T>, rawErrorStatus = false): PreHandlerHook {
   return (req, reply, done) => {
     const result = schema.safeParse(req.params);
     if (!result.success) {
-      reply.send(buildValidationEnvelope(zodIssuesToDetails(result.error), req.id));
+      const envelope = buildValidationEnvelope(zodIssuesToDetails(result.error), req.id);
+      if (rawErrorStatus) sendRawError(reply, envelope);
+      else reply.send(envelope);
       return;
     }
     req.params = result.data;

@@ -1,25 +1,5 @@
-/**
- * Sliding window for the TUI transcript.
- *
- * The transcript grows unbounded as the conversation goes on. To keep the TUI
- * responsive and bounded, we only keep the most recent N *turns* (a turn = a
- * user prompt plus everything the assistant does in response, identified by a
- * shared `turnId`), and destroy older turns wholesale (component + entry).
- * Within a kept turn, older steps — and assistant messages beyond a cap — are
- * folded into a collapsed summary line so a single long turn cannot grow the
- * mounted component tree without bound.
- *
- * All threshold logic here is pure so it can be unit-tested in isolation; the
- * constants are the production defaults passed in by the TUI.
- */
-
 import type { TranscriptEntry } from '../types';
 
-/**
- * Read a non-negative integer env var, falling back to `fallback` when it is
- * unset, empty, negative, or not an integer. `0` is a valid value (call sites
- * treat it as "feature disabled").
- */
 export function readEnvInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') return fallback;
@@ -28,29 +8,18 @@ export function readEnvInt(name: string, fallback: number): number {
   return value;
 }
 
-/** Master switch for the sliding window. */
 export const TRANSCRIPT_WINDOW_ENABLED = true;
 
-/** Keep the most recent N turns. `0` disables trimming. */
 export const TRANSCRIPT_MAX_TURNS = readEnvInt('KIMI_CODE_TUI_MAX_TURNS', 15);
 
-/** Only the most recent E turns are allowed to expand (Ctrl+O). `0` disables expanding. */
 export const TRANSCRIPT_EXPAND_TURNS = readEnvInt('KIMI_CODE_TUI_EXPAND_TURNS', 3);
 
-/** Only trim once the window exceeds maxTurns by this much (avoids churn). */
 export const TRANSCRIPT_HYSTERESIS = readEnvInt('KIMI_CODE_TUI_HYSTERESIS', 5);
 
-/** Keep this many recent steps untouched inside a turn; older steps are merged into a summary. `0` disables merging. */
 export const TRANSCRIPT_KEEP_RECENT_STEPS = readEnvInt('KIMI_CODE_TUI_KEEP_RECENT_STEPS', 30);
 
-/** Keep this many recent assistant messages mounted inside the active turn; older ones fold into the step summary. `0` disables folding. */
 export const TRANSCRIPT_KEEP_RECENT_ASSISTANT = readEnvInt('KIMI_CODE_TUI_KEEP_RECENT_ASSISTANT', 20);
 
-/**
- * Once a turn ends, fold all but its last few assistant messages into the
- * step summary — intermediate chatter is rarely re-read, while the tail
- * usually holds the conclusion. `0` disables folding.
- */
 export const TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED = readEnvInt(
   'KIMI_CODE_TUI_KEEP_RECENT_ASSISTANT_COMPLETED',
   2,
@@ -110,12 +79,6 @@ export function groupTurns(entries: readonly TranscriptEntry[]): TranscriptTurn[
   return turns;
 }
 
-/**
- * Decide which entries to destroy so the remaining turns fit within
- * `maxTurns`. Returns an empty set when the turn count is within
- * `maxTurns + hysteresis`. Oldest turns are removed first; the most recent
- * turn is never removed (it is the active / just-finished turn).
- */
 export function turnsToTrim(
   turns: readonly TranscriptTurn[],
   maxTurns: number,
@@ -126,7 +89,6 @@ export function turnsToTrim(
   if (turns.length <= maxTurns + hysteresis) return toRemove;
 
   let remaining = turns.length;
-  // `turns.length - 1` keeps the most recent turn off-limits.
   for (let i = 0; i < turns.length - 1 && remaining > maxTurns; i++) {
     const turn = turns[i]!;
     for (const entry of turn.entries) toRemove.add(entry);
@@ -135,12 +97,6 @@ export function turnsToTrim(
   return toRemove;
 }
 
-/**
- * Index of the first transcript child ctrl+o may expand: the start of the
- * (turns - expandTurns)-th turn, given the child indexes of the turn
- * boundaries. `expandTurns <= 0` disables expanding (the cutoff is past the
- * last child); fewer boundaries than `expandTurns` means everything expands.
- */
 export function expandCutoffIndex(
   childCount: number,
   boundaries: readonly number[],

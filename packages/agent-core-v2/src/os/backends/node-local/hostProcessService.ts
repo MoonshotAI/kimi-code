@@ -1,6 +1,8 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import type { Readable, Writable } from 'node:stream';
+
+import spawn from 'cross-spawn';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
 
@@ -40,19 +42,63 @@ function buildEnv(overrides: Record<string, string> | undefined): Record<string,
   return { ...(process.env as Record<string, string>), ...overrides };
 }
 
-function waitForSpawn(child: ChildProcess): Promise<void> {
+function waitForSpawn(child: ChildProcess, mergeStderr: boolean): Promise<IHostProcess> {
   return new Promise((resolve, reject) => {
+    const streams = [child.stdin, child.stdout, child.stderr].filter(
+      (stream): stream is Readable | Writable => stream !== null,
+    );
+    let streamError: Error | undefined;
+    const onStreamError = (error: Error): void => {
+      streamError ??= error;
+    };
+    const releaseStreams = streams.map((stream) => {
+      const onClose = (): void => {
+        stream.off('error', onStreamError);
+      };
+      stream.on('error', onStreamError);
+      stream.once('close', onClose);
+      return (): void => {
+        stream.off('error', onStreamError);
+        stream.off('close', onClose);
+      };
+    });
     const onSpawn = (): void => {
-      child.off('error', onError);
-      resolve();
+      try {
+        if (streamError !== undefined) throw streamError;
+        const proc = new HostProcess(child, mergeStderr);
+        child.off('error', onError);
+        for (const release of releaseStreams) release();
+        resolve(proc);
+      } catch (error) {
+        onError(error as Error);
+      }
     };
     const onError = (err: Error): void => {
       child.off('spawn', onSpawn);
+      child.off('error', onError);
+      for (const stream of streams) stream.destroy();
       reject(err);
     };
     child.once('spawn', onSpawn);
     child.once('error', onError);
   });
+}
+
+function spawnFailedError(
+  command: string,
+  args: readonly string[],
+  cwd: string | undefined,
+  error: unknown,
+): HostProcessError {
+  const err = error as NodeJS.ErrnoException;
+  return new HostProcessError(
+    HostProcessErrorCode.SpawnFailed,
+    `Failed to spawn "${command}": ${err.message}`,
+    {
+      details: { command, args: [...args], cwd, errno: err.code },
+      cause: error,
+    },
+  );
 }
 
 class HostProcess implements IHostProcess {
@@ -116,7 +162,7 @@ class HostProcess implements IHostProcess {
 
     if (isWindows) {
       const taskkillArgs = ['/T', '/F', '/PID', String(this.pid)];
-      const killer = spawn('taskkill', taskkillArgs, {
+      const killer = nodeSpawn('taskkill', taskkillArgs, {
         stdio: 'ignore',
         windowsHide: true,
       });
@@ -199,20 +245,13 @@ export class HostProcessService implements IHostProcessService {
       }
     }
     const spawnOptions = buildSpawnOptions(options);
-    const child = spawn(command, args as string[], spawnOptions);
+    const spawnImpl = isWindows && options.shell === undefined ? spawn : nodeSpawn;
+    let child: ChildProcess;
     try {
-      await waitForSpawn(child);
+      child = spawnImpl(command, [...args], spawnOptions);
+      return await waitForSpawn(child, options.mergeStderr ?? false);
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      throw new HostProcessError(
-        HostProcessErrorCode.SpawnFailed,
-        `Failed to spawn "${command}": ${err.message}`,
-        {
-          details: { command, args: [...args], cwd: options.cwd, errno: err.code },
-          cause: error,
-        },
-      );
+      throw spawnFailedError(command, args, options.cwd, error);
     }
-    return new HostProcess(child, options.mergeStderr ?? false);
   }
 }

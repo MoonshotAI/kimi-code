@@ -3,12 +3,6 @@ import { computeWorkdirBucket, oldMd5BucketName } from '../../src/sessions/workd
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { createHash } from 'node:crypto';
 
-/**
- * `computeWorkdirBucket` now aliases agent-core-v2's `encodeWorkDirKey`, so the
- * migrator and the running app share one implementation. The `byte-identical`
- * suite below guards against regressing back to a divergent local copy.
- */
-
 describe('computeWorkdirBucket', () => {
   it('produces wd_<slug>_<sha256-12> for a normal path', () => {
     const bucket = computeWorkdirBucket('/Users/me/Developer/proj');
@@ -24,7 +18,6 @@ describe('computeWorkdirBucket', () => {
 
   it('handles unicode basename by replacing with a stable safe form', () => {
     const bucket = computeWorkdirBucket('/Users/me/项目');
-    // We don't require any specific slug, but we require it's bucket-safe
     expect(bucket).toMatch(/^wd_[a-z0-9-]+_[0-9a-f]{12}$/i);
   });
 });
@@ -32,11 +25,11 @@ describe('computeWorkdirBucket', () => {
 describe('computeWorkdirBucket matches kimi-core encodeWorkDirKey', () => {
   it.each([
     '/Users/example/proj',
-    '/Users/example/proj/', // trailing slash
-    '/Users/example/proj/../proj', // .. segment
-    '/Users/example//proj', // double slash
-    '/Users/example/proj/.', // trailing dot
-    '/Users/example/Some Folder', // spaces
+    '/Users/example/proj/',
+    '/Users/example/proj/../proj',
+    '/Users/example//proj',
+    '/Users/example/proj/.',
+    '/Users/example/Some Folder',
   ])('byte-identical for %s', (p) => {
     expect(computeWorkdirBucket(p)).toBe(encodeWorkDirKey(p));
   });

@@ -28,6 +28,7 @@ import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { parseRangeHeader, pickHeader } from '../lib/httpRange';
+import { sendRawError } from '../lib/rawError';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
@@ -123,6 +124,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
         200: { type: 'string', format: 'binary' },
         206: { type: 'string', format: 'binary' },
       },
+      rawErrorStatus: true,
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
@@ -205,8 +207,27 @@ function sendAcquireError(
   reply: { send(payload: unknown): unknown },
   requestId: string,
   err: unknown,
+  rawResponse = false,
 ): void {
+  if (rawResponse) {
+    const rawReply = reply as FsContentReply;
+    reply = {
+      send: (payload) => sendRawError(rawReply, payload as { code: ErrorCode }),
+    };
+  }
   if (sendEnvironmentError(reply, requestId, err)) return;
+  if (rawResponse) {
+    sendRawError(
+      reply as FsContentReply,
+      errEnvelope(
+        ErrorCode.INTERNAL_ERROR,
+        err instanceof Error ? err.message : String(err),
+        requestId,
+        err instanceof Error ? err.stack : undefined,
+      ),
+    );
+    return;
+  }
   throw err;
 }
 
@@ -218,7 +239,8 @@ async function handleFsContent(
   const requestId = req.id;
   const { path } = req.query;
   if (!isAbsolute(path)) {
-    reply.send(
+    sendRawError(
+      reply,
       errEnvelope(ErrorCode.VALIDATION_FAILED, `path must be absolute: ${path}`, requestId),
     );
     return;
@@ -228,7 +250,7 @@ async function handleFsContent(
   try {
     source = await acquireFsSource(core, req.query.environment_id ?? 'local');
   } catch (error) {
-    sendAcquireError(reply, requestId, error);
+    sendAcquireError(reply, requestId, error, true);
     return;
   }
 
@@ -242,18 +264,20 @@ async function handleFsContent(
       abs = await hostFs.realpath(path);
       st = await hostFs.stat(abs);
     } catch (error) {
-      sendOsFsError(reply, requestId, error, path);
+      sendOsFsError(reply, requestId, error, path, true);
       return;
     }
 
     if (st.isDirectory) {
-      reply.send(
+      sendRawError(
+        reply,
         errEnvelope(ErrorCode.FS_IS_DIRECTORY, `path is a directory: ${path}`, requestId),
       );
       return;
     }
     if (!st.isFile) {
-      reply.send(
+      sendRawError(
+        reply,
         errEnvelope(
           ErrorCode.VALIDATION_FAILED,
           `path is not a regular file: ${path}`,
@@ -271,7 +295,7 @@ async function handleFsContent(
       const classification = classifyTextSample(sample);
       isBinary = classification.isBinary || classification.encoding !== 'utf-8';
     } catch (error) {
-      sendOsFsError(reply, requestId, error, path);
+      sendOsFsError(reply, requestId, error, path, true);
       return;
     }
 
@@ -370,26 +394,34 @@ function sendOsFsError(
   requestId: string,
   err: unknown,
   path: string,
+  rawResponse = false,
 ): void {
+  const send = (envelope: { code: number }): unknown =>
+    rawResponse ? sendRawError(reply as FsContentReply, envelope) : reply.send(envelope);
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.OS_FS_NOT_FOUND:
       case ErrorCodes.OS_FS_NOT_DIRECTORY:
-        reply.send(
-          errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `path not found: ${path}`, requestId),
-        );
+        send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `path not found: ${path}`, requestId));
         return;
       case ErrorCodes.OS_FS_ALREADY_EXISTS:
-        reply.send(
-          errEnvelope(ErrorCode.FS_ALREADY_EXISTS, `path already exists: ${path}`, requestId),
-        );
+        send(errEnvelope(ErrorCode.FS_ALREADY_EXISTS, `path already exists: ${path}`, requestId));
         return;
       case ErrorCodes.OS_FS_PERMISSION_DENIED:
-        reply.send(
-          errEnvelope(ErrorCode.FS_PERMISSION_DENIED, `permission denied: ${path}`, requestId),
-        );
+        send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, `permission denied: ${path}`, requestId));
         return;
     }
+  }
+  if (rawResponse) {
+    send(
+      errEnvelope(
+        ErrorCode.INTERNAL_ERROR,
+        err instanceof Error ? err.message : String(err),
+        requestId,
+        err instanceof Error ? err.stack : undefined,
+      ),
+    );
+    return;
   }
   throw err;
 }
@@ -400,15 +432,15 @@ function sendMappedError(
   err: unknown,
 ): void {
   if (err instanceof HostFolderNotAbsoluteError) {
-    reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId));
     return;
   }
   if (err instanceof HostFolderNotFoundError) {
-    reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId));
     return;
   }
   if (err instanceof HostFolderPermissionError) {
-    reply.send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, err.message, requestId, err.stack));
+    reply.send(errEnvelope(ErrorCode.FS_PERMISSION_DENIED, err.message, requestId));
     return;
   }
   throw err;

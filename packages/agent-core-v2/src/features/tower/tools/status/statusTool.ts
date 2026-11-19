@@ -1,7 +1,7 @@
 import type { TowerMission, TowerRosterEntry } from '#/features/tower/protocol/index';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -41,7 +41,7 @@ export class TowerStatusTool implements ITowerStatusTool {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITowerRateLimitService private readonly rateLimit: ITowerRateLimitService,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentToolExecutorService private readonly tasks: IAgentToolExecutorService,
   ) {}
 
   resolveExecution(args: TowerStatusToolInput): ToolExecution {
@@ -55,7 +55,7 @@ export class TowerStatusTool implements ITowerStatusTool {
             active: true,
             cwd: this.sessionContext.cwd,
             agentId: this.scopeContext.agentId,
-            tasks: this.tasks,
+            toolExecutor: this.tasks,
             concurrency: () => this.rateLimit.snapshot(),
           });
           if (!status.initialized) {

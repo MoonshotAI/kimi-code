@@ -49,8 +49,6 @@ describe('renderDiffLines', () => {
     expect(text).not.toContain('-2');
     expect(text).not.toContain('C');
     expect(text).not.toContain('D');
-    // When trailing deletes are suppressed, only context lines remain;
-    // renderDiffLines only emits changed lines, so the body is empty.
     expect(text).not.toContain('A');
     expect(text).not.toContain('B');
   });
@@ -80,7 +78,6 @@ describe('renderDiffLinesClustered', () => {
   });
 
   it('shows context lines around a single change cluster', () => {
-    // Five lines, change line 3 only — context is 1 each side.
     const oldText = ['L1', 'L2', 'L3', 'L4', 'L5'].join('\n');
     const newText = ['L1', 'L2', 'L3X', 'L4', 'L5'].join('\n');
     const text = stripAnsi(
@@ -98,8 +95,8 @@ describe('renderDiffLinesClustered', () => {
     const oldLines: string[] = [];
     for (let i = 1; i <= 30; i++) oldLines.push(`L${String(i)}`);
     const newLines = oldLines.slice();
-    newLines[1] = 'L2X'; // change near top
-    newLines[28] = 'L29X'; // change near bottom
+    newLines[1] = 'L2X';
+    newLines[28] = 'L29X';
     const text = stripAnsi(
       renderDiffLinesClustered(oldLines.join('\n'), newLines.join('\n'), 'f.ts', {
         contextLines: 2,
@@ -108,7 +105,6 @@ describe('renderDiffLinesClustered', () => {
     expect(text).toContain('L2X');
     expect(text).toContain('L29X');
     expect(text).toMatch(/… \d+ unchanged lines? …/);
-    // Middle untouched lines (e.g. L15) should not appear.
     expect(text).not.toContain('L15');
   });
 
@@ -117,7 +113,7 @@ describe('renderDiffLinesClustered', () => {
     for (let i = 1; i <= 10; i++) oldLines.push(`L${String(i)}`);
     const newLines = oldLines.slice();
     newLines[2] = 'L3X';
-    newLines[5] = 'L6X'; // gap of 2 lines between change indices 2 and 5 → merges with contextLines=2 (mergeGap=4)
+    newLines[5] = 'L6X';
     const out = renderDiffLinesClustered(oldLines.join('\n'), newLines.join('\n'), 'f.ts', {
       contextLines: 2,
     }).join('\n');
@@ -128,9 +124,6 @@ describe('renderDiffLinesClustered', () => {
   });
 
   it('emits a partial body even when a single cluster exceeds maxLines', () => {
-    // Worst case from prod: 100 lines fully replaced inline → single huge
-    // cluster of ~200 diff entries. With maxLines=10 the renderer must
-    // still emit ~10 leading body rows, not just the truncation footer.
     const oldLines: string[] = [];
     const newLines: string[] = [];
     for (let i = 1; i <= 100; i++) {
@@ -146,7 +139,6 @@ describe('renderDiffLinesClustered', () => {
         maxLines: 10,
       },
     );
-    // header + 10 body rows + truncation footer
     expect(out.length).toBe(12);
     const text = stripAnsi(out.join('\n'));
     expect(text).toContain('+100');
@@ -163,8 +155,6 @@ describe('renderDiffLinesClustered', () => {
         newStart: 20,
       }).join('\n'),
     );
-    // Context lines keep the new (post-edit) line numbers from newStart;
-    // deleted lines use oldStart; added lines use newStart.
     expect(text).toContain('  20   A');
     expect(text).toContain('  11 - B');
     expect(text).toContain('  21 + X');

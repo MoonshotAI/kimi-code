@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ISessionEventBus } from '#/app/event/eventBus';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import '#/agent/contextMemory/conversationTime';
+import '#/agent/loop/turnOps';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { AgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { AgentEnvironmentService, type IAgentEnvironmentOverlay } from '#/agent/environmentBinding/agentEnvironment';
 import { AgentEnvironmentBindingService, PROJECT_CONTEXT_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';
 import { environmentBindingKey, EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -209,7 +209,10 @@ function setup(options: {
     );
     return {
       binding: agentBinding,
-      agentEnvironment: new AgentEnvironmentService(agentScopeContext, agentBinding, registry as unknown as IEnvironmentService, eventBus, session, workspaceInfo),
+      agentEnvironment: new AgentEnvironmentService(agentScopeContext, agentBinding, registry as unknown as IEnvironmentService, eventBus, session, workspaceInfo, {
+        _serviceBrand: undefined,
+        decorate: (lease) => lease,
+      } satisfies IAgentEnvironmentOverlay),
       state: agentState,
     };
   };

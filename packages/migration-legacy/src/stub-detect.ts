@@ -1,14 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { parse as parseToml } from 'smol-toml';
 
-// Verbatim from packages/kimi-core/src/harness/configs/toml.ts:42
 export const DEFAULT_CONFIG_FILE_TEXT =
   '# ~/.kimi-code/config.toml\n' +
   '# Runtime settings for Kimi Code.\n' +
   '# This file starts empty so built-in defaults can apply.\n' +
   '# Login will populate managed Kimi provider and model entries.\n';
 
-// Verbatim from apps/kimi-code/src/tui/config.ts:renderTuiConfig(DEFAULT_TUI_CONFIG)
 export const DEFAULT_TUI_RENDER =
   '# ~/.kimi-code/tui.toml\n' +
   '# Terminal UI preferences for kimi-code.\n' +
@@ -28,7 +26,7 @@ export async function isConfigStubOrMissing(configPath: string): Promise<boolean
   try {
     text = await readFile(configPath, 'utf-8');
   } catch {
-    return true; // missing = ok to overwrite
+    return true;
   }
   return text === DEFAULT_CONFIG_FILE_TEXT;
 }
@@ -42,7 +40,6 @@ export async function isTuiStubOrMissing(tuiPath: string): Promise<boolean> {
   }
   if (text === DEFAULT_TUI_RENDER) return true;
 
-  // Fallback: parse and compare fields semantically
   try {
     const parsed = parseToml(text) as Record<string, unknown>;
     const theme = parsed['theme'];
@@ -63,6 +60,6 @@ export async function isTuiStubOrMissing(tuiPath: string): Promise<boolean> {
 
     return themeOk && editorOk && notifEnabledOk && notifCondOk;
   } catch {
-    return false; // unparseable = treat as user-modified, do not overwrite
+    return false;
   }
 }

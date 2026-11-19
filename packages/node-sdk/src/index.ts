@@ -1,4 +1,3 @@
-import type { KimiHarnessEnvironmentOptions } from '#/kimi-harness';
 export { KimiHarness } from '#/kimi-harness';
 export type { KimiHarnessEnvironmentOptions, KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
@@ -137,16 +136,13 @@ export type {
 } from '@moonshot-ai/agent-core-v2/agent/media/mediaRef';
 
 export type {
-  KimiAuthCompleteFeedbackUploadInput,
-  KimiAuthCompleteFeedbackUploadPart,
-  KimiAuthCreateFeedbackUploadUrlInput,
-  KimiAuthCreateFeedbackUploadUrlOk,
-  KimiAuthCreateFeedbackUploadUrlResult,
-  KimiAuthFeedbackUploadPart,
-  KimiAuthLoginResult,
-  KimiAuthLogoutResult,
-  KimiAuthSubmitFeedbackInput,
-} from '#/auth';
+  FeedbackAttachmentLevel,
+  FeedbackAvailability,
+  FeedbackSessionPreview,
+  FeedbackSubmitInput,
+  FeedbackSubmitResult,
+} from '@moonshot-ai/agent-core-v2/app/auth/feedback';
+export type { KimiAuthLoginResult, KimiAuthLogoutResult } from '#/auth';
 
 export * from '#/events';
 export type * from '#/types';

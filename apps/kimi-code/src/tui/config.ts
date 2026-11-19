@@ -1,15 +1,9 @@
-/**
- * Client-owned preferences.
- *
- * Agent/runtime settings live in core's `config.toml`; this file owns
- * kimi-code client preferences such as terminal UI and update behavior.
- */
-
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { MAX_ANIMATION_FRAME_RATE } from '@moonshot-ai/pi-tui';
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 
@@ -105,6 +99,23 @@ export function resolveTuiMode(
   return { mode: preferred, config };
 }
 
+export interface AnimationFrameRateResolution {
+  readonly fps?: number;
+  readonly warning?: string;
+}
+
+export function resolveAnimationFrameRate(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): AnimationFrameRateResolution {
+  const value = env['KIMI_CODE_TUI_ANIMATION_FPS']?.trim();
+  if (value === undefined || value.length === 0) return {};
+  const fps = Number(value);
+  if (/^\d+$/.test(value) && fps >= 1 && fps <= MAX_ANIMATION_FRAME_RATE) return { fps };
+  return {
+    warning: `Ignored KIMI_CODE_TUI_ANIMATION_FPS=${JSON.stringify(value)}: expected a whole number from 1 to ${String(MAX_ANIMATION_FRAME_RATE)}.`,
+  };
+}
+
 export const TuiThemeSchema = z.string();
 
 export const NotificationConditionSchema = z.enum(['unfocused', 'always']);
@@ -127,9 +138,7 @@ export const StatusLineFileConfigSchema = z.object({
 });
 
 export const StatusLineConfigSchema = z.object({
-  /** Ordered built-in slots for footer line 1; null means the default layout. */
   items: z.array(z.enum(STATUS_LINE_ITEMS)).nullable(),
-  /** User command whose first stdout line replaces footer line 1; null disables. */
   command: z.string().nullable(),
 });
 export type StatusLineConfig = z.infer<typeof StatusLineConfigSchema>;
@@ -171,7 +180,7 @@ export interface ToolCallDensityRule {
 }
 
 export const DENSITY: Readonly<Record<ToolCallDensity, ToolCallDensityRule>> = {
-  compact: { folding: 'all', unfolded: 'card' },
+  compact: { folding: 'all', unfolded: 'row' },
   balanced: { folding: 'readonly', unfolded: 'row' },
   detailed: { folding: 'readonly', unfolded: 'card' },
   ungrouped: { folding: 'none', unfolded: 'card' },
@@ -189,6 +198,25 @@ export function transcriptGroupingActive(options: TranscriptPresentationOptions)
 export const TuiModeSchema = z.enum(['regular', 'fullscreen']);
 export type TuiMode = z.infer<typeof TuiModeSchema>;
 
+export const FollowUpBehaviorSchema = z.enum(['queue', 'steer']);
+export type FollowUpBehavior = z.infer<typeof FollowUpBehaviorSchema>;
+export const DEFAULT_FOLLOW_UP_BEHAVIOR: FollowUpBehavior = 'queue';
+
+export type FollowUpDelivery = 'default' | 'steer-draft' | 'queue';
+
+export type SubmitKey = 'enter' | 'mod-enter' | 'ctrl-q';
+
+export const FOLLOW_UP_KEYMAP: Readonly<
+  Record<FollowUpBehavior, Readonly<Record<SubmitKey, FollowUpDelivery>>>
+> = {
+  queue: { enter: 'default', 'mod-enter': 'steer-draft', 'ctrl-q': 'queue' },
+  steer: { enter: 'steer-draft', 'mod-enter': 'queue', 'ctrl-q': 'queue' },
+};
+
+export function resolveFollowUpBehavior(value: FollowUpBehavior | undefined): FollowUpBehavior {
+  return value ?? DEFAULT_FOLLOW_UP_BEHAVIOR;
+}
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   tui_mode: z.string().optional(),
@@ -198,6 +226,7 @@ export const TuiConfigFileSchema = z.object({
   cache_expiry_hint: z.boolean().optional(),
   disable_feedback_survey: z.boolean().optional(),
   auto_session_title: z.boolean().optional(),
+  follow_up_behavior: z.unknown().optional(),
   editor: z
     .object({
       command: z.string().optional(),
@@ -232,25 +261,16 @@ export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
   tuiMode: TuiModeSchema.optional(),
   copyOnSelect: z.boolean().optional(),
-  /** LaTeX math rendering in Markdown; optional only so older hand-built test
-   * fixtures still typecheck. */
   renderLatex: z.boolean().optional(),
   disablePasteBurst: z.boolean(),
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   cacheExpiryHint: z.boolean().optional(),
   disableFeedbackSurvey: z.boolean().optional(),
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   autoSessionTitle: z.boolean().optional(),
+  followUpBehavior: FollowUpBehaviorSchema.optional(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   statusLine: StatusLineConfigSchema.optional(),
-  /** Present in every normalized config; optional only so hand-built test
-   * fixtures from before this field existed still typecheck. */
   markdown: MarkdownConfigSchema.optional(),
   transcript: TranscriptConfigSchema,
 });
@@ -284,12 +304,6 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   transcript: DEFAULT_TRANSCRIPT_CONFIG,
 });
 
-/**
- * Thrown by `loadTuiConfig` when the on-disk TOML cannot be parsed.
- * Carries `fallback` so the caller can recover without re-running the
- * I/O, and use `message` (== `INVALID_TUI_CONFIG_MESSAGE`) as a
- * user-facing notice.
- */
 export class TuiConfigParseError extends Error {
   override readonly name = 'TuiConfigParseError';
   readonly fallback: TuiConfig;
@@ -411,6 +425,17 @@ export function normalizeTuiConfig(
     warn(`[tui.toml] ignoring unknown transcript.${key} value: ${shown}`);
     return fallback;
   };
+  const followUpValue = config.follow_up_behavior;
+  let followUpBehavior: FollowUpBehavior | undefined;
+  if (followUpValue !== undefined) {
+    const parsed = FollowUpBehaviorSchema.safeParse(followUpValue);
+    if (parsed.success) {
+      followUpBehavior = parsed.data;
+    } else {
+      const shown = typeof followUpValue === 'string' ? followUpValue : JSON.stringify(followUpValue);
+      warn(`[tui.toml] ignoring unknown follow_up_behavior value: ${shown}`);
+    }
+  }
   const tuiModeValue = config.tui_mode;
   let tuiMode: TuiMode | undefined;
   if (tuiModeValue !== undefined) {
@@ -430,6 +455,7 @@ export function normalizeTuiConfig(
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
     disableFeedbackSurvey: config.disable_feedback_survey,
     autoSessionTitle: config.auto_session_title ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
+    followUpBehavior,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
       enabled: config.notifications?.enabled ?? DEFAULT_NOTIFICATIONS_CONFIG.enabled,
@@ -467,11 +493,6 @@ export function normalizeTuiConfig(
 }
 
 export function renderTuiConfig(config: TuiConfig): string {
-  // An active status_line must round-trip: any preference save rewrites the
-  // whole file, so the section is emitted live when set and left as a
-  // commented-out guide when unset. The [markdown] section follows the same
-  // pattern: live when mermaid rendering is turned off, commented guide at
-  // the default.
   const statusItems = config.statusLine?.items;
   const statusCommand = config.statusLine?.command;
   const statusLines: string[] = [];
@@ -481,6 +502,7 @@ export function renderTuiConfig(config: TuiConfig): string {
   if (statusCommand) {
     statusLines.push(`command = "${escapeTomlBasicString(statusCommand)}"`);
   }
+  const followUpLine = `follow_up_behavior = "${resolveFollowUpBehavior(config.followUpBehavior)}" # "queue" | "steer"`;
   const tuiModeLine =
     config.tuiMode === undefined
       ? '# tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)'
@@ -525,6 +547,7 @@ render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math 
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
 ${config.disableFeedbackSurvey === undefined ? '' : `disable_feedback_survey = ${String(config.disableFeedbackSurvey)}\n`}auto_session_title = ${String(config.autoSessionTitle !== false)} # false stops the TUI from auto-generating a session title after the first turn
+${config.followUpBehavior === undefined ? `# ${followUpLine}` : followUpLine}
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR

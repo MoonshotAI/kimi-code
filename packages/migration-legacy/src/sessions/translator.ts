@@ -11,35 +11,15 @@ export interface NormalizedMessage {
     readonly function: { readonly name: string; readonly arguments: string };
   }>;
   readonly toolCallId?: string;
-  /** UI-only display metadata recovered from legacy wire.jsonl. */
   readonly toolCallDisplays?: Record<string, ToolInputDisplay>;
 }
 
 const DROPPED_ROLES = new Set(['_system_prompt', '_checkpoint', '_usage']);
 
-// The roles `translateContextLines` keeps — the inverse of the markers it
-// drops. A context with none of these has no migratable conversation.
 const USABLE_ROLES: ReadonlySet<string> = new Set(['user', 'assistant', 'tool']);
 
-/**
- * The three meaningful outcomes for a session's `context.jsonl`.
- *
- *  - `'real'`    — has at least one `user` / `assistant` / `tool` row →
- *                  migratable conversation.
- *  - `'empty'`   — parses, but only carries markers (`_system_prompt`,
- *                  `_checkpoint`, `_usage`) or is genuinely blank → an unused
- *                  session, or one the user cleared in kimi-cli.
- *  - `'corrupt'` — every non-blank line failed to parse → disk damage,
- *                  truncated write, etc. Must NOT be conflated with `empty`
- *                  or its data problem disappears into the skip count.
- */
 export type ContextContent = 'real' | 'empty' | 'corrupt';
 
-/**
- * Classify a `context.jsonl`'s payload by scanning its lines. Distinguishes a
- * cleared/empty session from a corrupt one — the latter is a data problem
- * users need visibility into. Early-exits on the first usable row.
- */
 export function analyzeContextContent(lines: readonly string[]): ContextContent {
   let hadParseableLine = false;
   let hadAnyNonBlank = false;
@@ -62,20 +42,10 @@ export function analyzeContextContent(lines: readonly string[]): ContextContent 
   return 'empty';
 }
 
-/**
- * Convenience wrapper: `true` iff the context has at least one translatable
- * message. Equivalent to `analyzeContextContent(...) === 'real'`.
- */
 export function containsUsableMessage(lines: readonly string[]): boolean {
   return analyzeContextContent(lines) === 'real';
 }
 
-/**
- * The last `_usage` row's cumulative `token_count` — kimi-cli's own measured
- * context size at the end of the session. Used to seed a
- * `token_counting.measured` anchor so a resumed session shows a measured
- * context size instead of an estimate until the engine re-measures.
- */
 export function extractLastUsageTokenCount(lines: readonly string[]): number | undefined {
   let last: number | undefined;
   for (const rawLine of lines) {
@@ -127,15 +97,11 @@ export function translateContextLines(
     } else if (role === 'tool') {
       out.push(buildTool(obj));
     }
-    // else: unknown role, skip
   }
   return out;
 }
 
 function normalizeContent(raw: unknown): NormalizedContentPart[] {
-  // A legacy row may legitimately omit `content` (e.g. an assistant message
-  // that only carries tool calls). kimi's message shape allows `content: []`;
-  // stringifying nullish here would emit a phantom text part holding `""`.
   if (raw === null || raw === undefined) {
     return [];
   }
@@ -145,7 +111,6 @@ function normalizeContent(raw: unknown): NormalizedContentPart[] {
   if (Array.isArray(raw)) {
     return raw.map(normalizeContentPart);
   }
-  // Fallback: stringify any other scalar/object shape into a text part.
   return [{ type: 'text', text: JSON.stringify(raw) }];
 }
 

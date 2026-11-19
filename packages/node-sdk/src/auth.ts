@@ -17,9 +17,6 @@ import {
   type AuthManagedUsageResult,
   type AuthStatus,
   type BearerTokenProvider,
-  type FetchCompleteFeedbackUploadResult,
-  type FetchFeedbackUploadError,
-  type FetchSubmitFeedbackResult,
   type KimiHostIdentity,
   type KimiOAuthLoginOptions,
   type KimiRegion,
@@ -28,50 +25,6 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 
 import { mapOAuthTokenError } from '#/oauth-error';
-
-export interface KimiAuthSubmitFeedbackInput {
-  readonly content: string;
-  readonly sessionId: string;
-  readonly version: string;
-  readonly os: string;
-  readonly model: string | null;
-  readonly contact?: string;
-  readonly info?: Record<string, unknown>;
-}
-
-export interface KimiAuthCreateFeedbackUploadUrlInput {
-  readonly feedbackId: number;
-  readonly filename: string;
-  readonly size: number;
-  readonly sha256: string;
-}
-
-export interface KimiAuthCompleteFeedbackUploadPart {
-  readonly partNumber: number;
-  readonly etag: string;
-}
-
-export interface KimiAuthCompleteFeedbackUploadInput {
-  readonly uploadId: number;
-  readonly parts: readonly KimiAuthCompleteFeedbackUploadPart[];
-}
-
-export interface KimiAuthFeedbackUploadPart {
-  readonly partNumber: number;
-  readonly url: string;
-  readonly method: string;
-  readonly size: number;
-}
-
-export interface KimiAuthCreateFeedbackUploadUrlOk {
-  readonly kind: 'ok';
-  readonly uploadId: number;
-  readonly parts: readonly KimiAuthFeedbackUploadPart[];
-}
-
-export type KimiAuthCreateFeedbackUploadUrlResult =
-  | KimiAuthCreateFeedbackUploadUrlOk
-  | FetchFeedbackUploadError;
 
 export type KimiAuthLoginOptions = Omit<KimiOAuthLoginOptions, 'provisionConfig'> & {
   /**
@@ -117,8 +70,6 @@ export class KimiAuthFacade {
       onRefresh: options.onRefresh,
       configAdapter: {
         configPath: options.configPath,
-        // Write-path base read: strict (a salvaged base would drop the user's
-        // broken-but-fixable sections on rewrite) with an actionable message.
         read: () => readConfigFileForUpdate(options.configPath) as SDKManagedConfig,
         write: async (config) => {
           await writeConfigFile(options.configPath, config);
@@ -129,7 +80,7 @@ export class KimiAuthFacade {
     });
   }
 
-  async status(providerName?: string | undefined): Promise<AuthStatus> {
+  async status(providerName?: string): Promise<AuthStatus> {
     return this.toolkit.status(providerName, this.resolveRuntimeManagedAuth(providerName).oauthRef);
   }
 
@@ -167,7 +118,7 @@ export class KimiAuthFacade {
     };
   }
 
-  async logout(providerName?: string | undefined): Promise<KimiAuthLogoutResult> {
+  async logout(providerName?: string): Promise<KimiAuthLogoutResult> {
     const result = await this.toolkit.logout(
       providerName,
       this.resolveRuntimeManagedAuth(providerName).oauthRef,
@@ -180,7 +131,7 @@ export class KimiAuthFacade {
     };
   }
 
-  async getManagedUsage(providerName?: string | undefined): Promise<AuthManagedUsageResult> {
+  async getManagedUsage(providerName?: string): Promise<AuthManagedUsageResult> {
     const auth = this.resolveRuntimeManagedAuth(providerName);
     return this.toolkit.getManagedUsage(providerName, {
       oauthRef: auth.oauthRef,
@@ -188,81 +139,9 @@ export class KimiAuthFacade {
     });
   }
 
-  async submitFeedback(
-    input: KimiAuthSubmitFeedbackInput,
-    providerName?: string | undefined,
-  ): Promise<FetchSubmitFeedbackResult> {
-    const auth = this.resolveRuntimeManagedAuth(providerName);
-    return this.toolkit.submitFeedback(
-      {
-        session_id: input.sessionId,
-        content: input.content,
-        version: input.version,
-        os: input.os,
-        model: input.model,
-        contact: input.contact,
-        info: input.info,
-      },
-      providerName,
-      {
-        oauthRef: auth.oauthRef,
-        baseUrl: auth.baseUrl,
-      },
-    );
-  }
-
-  async createFeedbackUploadUrl(
-    input: KimiAuthCreateFeedbackUploadUrlInput,
-    providerName?: string | undefined,
-  ): Promise<KimiAuthCreateFeedbackUploadUrlResult> {
-    const auth = this.resolveRuntimeManagedAuth(providerName);
-    const result = await this.toolkit.createFeedbackUploadUrl(
-      {
-        file_hash: input.sha256,
-        file_name: input.filename,
-        file_size: input.size,
-        feedback_id: input.feedbackId,
-      },
-      providerName,
-      {
-        oauthRef: auth.oauthRef,
-        baseUrl: auth.baseUrl,
-      },
-    );
-    if (result.kind !== 'ok') return result;
-    return {
-      kind: 'ok',
-      uploadId: result.upload_id,
-      parts: result.parts.map((part) => ({
-        partNumber: part.part_number,
-        url: part.url,
-        method: part.method,
-        size: part.size,
-      })),
-    };
-  }
-
-  async completeFeedbackUpload(
-    input: KimiAuthCompleteFeedbackUploadInput,
-    providerName?: string | undefined,
-  ): Promise<FetchCompleteFeedbackUploadResult> {
-    const auth = this.resolveRuntimeManagedAuth(providerName);
-    return this.toolkit.completeFeedbackUpload(
-      {
-        upload_id: input.uploadId,
-        parts: input.parts.map((part) => ({ part_number: part.partNumber, etag: part.etag })),
-      },
-      providerName,
-      {
-        oauthRef: auth.oauthRef,
-        baseUrl: auth.baseUrl,
-      },
-    );
-  }
-
   async getCachedAccessToken(
     providerName?: string,
-    oauthRef?: OAuthRef | undefined,
+    oauthRef?: OAuthRef,
   ): Promise<string | undefined> {
     return this.toolkit.getCachedAccessToken(
       providerName,
@@ -272,7 +151,7 @@ export class KimiAuthFacade {
 
   readonly resolveOAuthTokenProvider = (
     providerName: string,
-    oauthRef?: OAuthRef | undefined,
+    oauthRef?: OAuthRef,
   ): BearerTokenProvider => {
     const provider = this.toolkit.tokenProvider(
       providerName,
@@ -283,22 +162,17 @@ export class KimiAuthFacade {
         try {
           return await provider.getAccessToken(options);
         } catch (error) {
-          // Classify OAuth token failures into the public KimiError protocol;
-          // unrecognized errors are rethrown raw (see mapOAuthTokenError).
           throw mapOAuthTokenError(error, providerName) ?? error;
         }
       },
     };
   };
 
-  private resolveManagedAuth(providerName?: string | undefined): {
+  private resolveManagedAuth(providerName?: string): {
     readonly oauthRef?: OAuthRef | undefined;
     readonly baseUrl?: string | undefined;
   } {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    // Read path: token/status resolution must work off a degraded config
-    // instead of failing the session when an unrelated section is broken.
-    // Write paths (the toolkit's configAdapter.read) stay strict.
     const config = loadRuntimeConfigSafe(this.options.configPath).config;
     const provider = config.providers[name];
     return {
@@ -307,7 +181,7 @@ export class KimiAuthFacade {
     };
   }
 
-  private resolveRuntimeManagedAuth(providerName?: string | undefined): {
+  private resolveRuntimeManagedAuth(providerName?: string): {
     readonly oauthRef: OAuthRef;
     readonly baseUrl?: string | undefined;
   } {
@@ -320,7 +194,7 @@ export class KimiAuthFacade {
 
   private runtimeOAuthRef(
     providerName: string | undefined,
-    oauthRef?: OAuthRef | undefined,
+    oauthRef?: OAuthRef,
   ): OAuthRef | undefined {
     if ((providerName ?? KIMI_CODE_PROVIDER_NAME) !== KIMI_CODE_PROVIDER_NAME) return oauthRef;
     const auth = this.resolveManagedAuth(providerName);

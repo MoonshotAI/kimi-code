@@ -9,6 +9,9 @@ export {
   rotateServerToken,
   serverTokenPath,
 } from './services/auth/persistentToken';
+export { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from './services/hosts/hostProtocol';
+export { KIMI_AGENT_PROTOCOL_VERSION } from './routes/meta';
+export type { IAuthTokenService } from './services/auth/authTokenService';
 export { createServerLogger } from './services/pinoLoggerService';
 export type {
   CreateLoggerOptions,

@@ -1,12 +1,3 @@
-/**
- * Low-profile transcript markers for the autonomous goal loop.
- *
- * Lifecycle changes (paused / resumed / cancelled) and `no_progress` verdicts
- * render as a single dim line — `◦ Goal paused` — that expands (ctrl+o, shared
- * with tool output) to show the reason when there is one. Terminal outcomes use
- * the richer completion card (the `/goal` box), not this marker.
- */
-
 import { truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 import type { GoalChange } from '@moonshot-ai/kimi-code-sdk';
 
@@ -100,11 +91,6 @@ export class GoalMarkerComponent implements Component {
   }
 }
 
-/**
- * Builds a marker for a lifecycle change (paused / resumed / blocked), or `null`
- * when the change should be silent (a `completion` change posts its own message,
- * not a marker). `expanded` seeds the initial ctrl+o state.
- */
 export function buildGoalMarker(
   change: GoalChange,
   expanded: boolean,
@@ -138,13 +124,12 @@ function markerSpec(
       case 'active':
         return prominentMarker(resumedHeadline(actor), 'primary');
       case 'blocked':
-        // The system stopped pursuing the goal; resumable via `/goal resume`.
         return { headline: 'Goal blocked', accentToken: 'warning' };
       default:
         return null;
     }
   }
-  return null; // completion -> posts its own message, not a marker
+  return null;
 }
 
 function prominentMarker(headline: string, accentToken: ColorToken) {

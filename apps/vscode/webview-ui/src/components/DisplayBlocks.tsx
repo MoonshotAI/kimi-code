@@ -40,7 +40,6 @@ function renderDiffLine(parts: DiffPart[], type: "added" | "removed"): React.Rea
   });
 }
 
-// Extract diff computation to a pure function for memoization
 function computeDiffLines(oldText: string, newText: string): { oldLines: DiffPart[][]; newLines: DiffPart[][] } {
   const diffParts = Diff.diffWords(oldText, newText);
 

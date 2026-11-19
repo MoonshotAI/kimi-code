@@ -130,7 +130,7 @@ To control token costs, set the pool default to a cheaper model; workers and rev
 
 Worktrees isolate writes, but they are not a security sandbox. Workers can read repository content and run tools with your permissions. In Never Ask mode, workers and reviewers do not request your approval for individual actions. Tower workers do not have the `Agent` tool and cannot spawn subagents. Mission scopes and merge checks are process constraints, not security boundaries.
 
-Each worker and reviewer has an independent model context and consumes tokens separately. Tower's planning, message routing, recovery, and merge turns also consume tokens. More agents increase pressure on quota, CPU, and disk. [`max_running_tasks`](../configuration/config-files.md#task) limits concurrently running Tower workers and reviewers. Without a configured value, Tower caps their combined total at 256. `/tower status` shows the current numeric budget and running count without starting a model turn. Start with a small number of independent missions and remove finished worktrees to reclaim disk space.
+Each worker and reviewer has an independent model context and consumes tokens separately. Tower's planning, message routing, recovery, and merge turns also consume tokens. More agents increase pressure on quota, CPU, and disk. Tower caps concurrently running workers and reviewers at a combined total of 256. `/tower status` shows the current numeric budget and running count without starting a model turn. Start with a small number of independent missions and remove finished worktrees to reclaim disk space.
 
 ## Next steps
 

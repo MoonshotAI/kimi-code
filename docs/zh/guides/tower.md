@@ -130,7 +130,7 @@ worker 和 reviewer 与 Agent、AgentSwarm 使用相同的模型选择规则。�
 
 worktree 只能隔离写入，不能当作安全沙箱。worker 可以读取仓库内容，并以你的权限运行工具；在 Never Ask 模式下，worker 和 reviewer 不会逐项向你请求审批。Tower worker 没有 `Agent` 工具，不能再派发 subagent。不过，mission 范围和合并检查只是流程约束，不是安全边界。
 
-worker 和 reviewer 都有独立的模型上下文，也会分别消耗 token。Tower 的规划、消息路由、故障恢复和合并轮次还会产生额外消耗。Agent 越多，配额、CPU 和磁盘压力越大。[`max_running_tasks`](../configuration/config-files.md#task) 限制同时运行的 Tower worker 和 reviewer 数量。未配置时，worker 和 reviewer 合计最多运行 256 个。`/tower status` 会显示当前数值预算和运行数量，而且不会启动模型轮次。建议先拆少量相互独立的 mission，完成后及时清理 worktree，释放磁盘空间。
+worker 和 reviewer 都有独立的模型上下文，也会分别消耗 token。Tower 的规划、消息路由、故障恢复和合并轮次还会产生额外消耗。Agent 越多，配额、CPU 和磁盘压力越大。Tower 同时运行的 worker 和 reviewer 合计最多 256 个。`/tower status` 会显示当前数值预算和运行数量，而且不会启动模型轮次。建议先拆少量相互独立的 mission，完成后及时清理 worktree，释放磁盘空间。
 
 ## 下一步
 

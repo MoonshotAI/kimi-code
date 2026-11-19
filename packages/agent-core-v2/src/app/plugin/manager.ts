@@ -17,8 +17,8 @@ import { parseManifest, type ParsedManifestResult } from './manifest';
 import { PluginPackageCache } from './packageCache';
 import { resolveInstallSource } from './source';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
-import type { PluginAgentRoot } from './types';
 import {
+  type PluginAgentRoot,
   normalizePluginId,
   type EnabledPluginSessionStart,
   type EnabledPluginSystemPrompt,

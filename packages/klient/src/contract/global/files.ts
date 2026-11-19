@@ -1,15 +1,3 @@
-/**
- * `fileService` — process-global upload store. Mirrors
- * `agent-core-v2/app/file/fileService.ts`.
- *
- * The wire cannot carry the engine's streams (every value JSON round-trips),
- * so bytes cross base64-encoded: `save`'s `Readable` source becomes a base64
- * string as the first argument, and `get`'s result stream is buffered
- * server-side and returned as `{ meta, data }` with `data` base64-encoded.
- * The dispatcher performs the stream ⇄ base64 adaptation; the facade encodes
- * and decodes the caller's `Uint8Array`s.
- */
-
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';
@@ -30,7 +18,6 @@ export const fileSaveOptionsSchema = z.object({
   expiresInSec: z.number().optional(),
 });
 
-/** Wire result of `get` — the engine's `GetResult.stream` buffered to base64. */
 export const fileGetResultSchema = z.object({
   meta: fileMetaSchema,
   data: z.string(),

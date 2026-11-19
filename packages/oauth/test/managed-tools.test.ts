@@ -1,11 +1,3 @@
-/**
- * Scenario: the managed `/tools` chat_title request contract, including
- * response validation, API failures, timeouts, and transport errors.
- * Wiring: the real request builder with only the external fetch boundary
- * stubbed. Run with:
- * `pnpm exec vitest run packages/oauth/test/managed-tools.test.ts`.
- */
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchChatTitle, kimiCodeToolsUrl } from '../src/managed-tools';

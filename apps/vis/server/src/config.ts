@@ -1,7 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-/** Resolve KIMI_CODE_HOME (env > ~/.kimi-code). */
 export function resolveKimiCodeHome(): string {
   const envHome = process.env['KIMI_CODE_HOME'];
   if (envHome !== undefined && envHome.length > 0) {
@@ -10,7 +9,6 @@ export function resolveKimiCodeHome(): string {
   return join(homedir(), '.kimi-code');
 }
 
-/** HTTP port for the vis API server. */
 export function resolvePort(): number {
   const raw = process.env['PORT'];
   if (raw !== undefined && raw.length > 0) {
@@ -22,7 +20,6 @@ export function resolvePort(): number {
   return 3001;
 }
 
-/** HTTP host for the vis API server. Defaults to loopback. */
 export function resolveHost(): string {
   const raw = process.env['VIS_HOST'] ?? process.env['HOST'];
   const host = raw?.trim();
@@ -39,10 +36,6 @@ export function isLoopbackHost(host: string): boolean {
   );
 }
 
-/** Format a host for embedding in a URL authority. Bare IPv6 literals (which
- *  contain ':') must be bracketed, e.g. `::1` → `[::1]`, otherwise
- *  `http://::1:3001/` is an invalid URL. Already-bracketed literals, IPv4
- *  addresses, and hostnames are returned unchanged. */
 export function hostForUrl(host: string): string {
   if (host.includes(':') && !host.startsWith('[')) return `[${host}]`;
   return host;

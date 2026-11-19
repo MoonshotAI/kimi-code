@@ -12,8 +12,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventService } from '#/app/event/event';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
-import type { ContentPart } from '#human/llm/message';
-import { skillActivationPart } from '#human/agent/origin';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
+import { skillActivationPart } from '@moonshot-ai/core/llm/origin';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -156,29 +156,21 @@ export class AgentSkillService implements IAgentSkillService {
       void this.recordActivation(activation.origin);
     }
     const status = this.loop.snapshot();
-    const steerable =
-      input.steerIfActive === true &&
-      status.state === 'running' &&
-      status.activePromptId !== undefined;
-    const { id } = this.loop.submit(
-      {
-        message: {
-          role: 'user',
-          content: [...prepared.map((activation) => activation.part), ...input.input],
-        },
-        meta: {
-          promptId: input.promptId,
-          origin: {
-            kind: 'user',
-            skillActivations: prepared.map((activation) => activation.entry),
-            clientMetadata: input.clientMetadata,
-            attachments: input.attachments,
-          } as PromptOrigin,
-          tracked: true,
-        },
+    const steerable = input.steerIfActive === true && status.state === 'running';
+    const submission = {
+      role: 'user' as const,
+      content: [...prepared.map((activation) => activation.part), ...input.input],
+      attributes: {
+        promptId: input.promptId,
+        origin: {
+          kind: 'user',
+          skillActivations: prepared.map((activation) => activation.entry),
+          clientMetadata: input.clientMetadata,
+          attachments: input.attachments,
+        } as PromptOrigin,
       },
-      { steerIfActive: input.steerIfActive },
-    );
+    };
+    const { id } = steerable ? this.loop.sendNow(submission) : this.loop.submit(submission);
     const handle = this.loop.promptHandle(id)!;
     if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
       if (prepared.length === 1) {
@@ -203,7 +195,7 @@ export class AgentSkillService implements IAgentSkillService {
       prompt_id: id,
       created_at: handle.createdAt,
       state: handle.state === 'blocked' ? 'blocked' : 'running',
-      steered: steerable && turn?.id === status.activeTurnId,
+      steered: steerable,
     };
   }
 
@@ -309,14 +301,14 @@ export class AgentSkillService implements IAgentSkillService {
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;
-    const steer = this.loop.snapshot().state === 'running';
-    const { id } = this.loop.submit(
-      {
-        message: { role: 'user', content: [...input] },
-        meta: { promptId, origin, tracked: !steer },
-      },
-      { steerIfActive: steer },
-    );
+    const status = this.loop.snapshot();
+    const running = status.state === 'running';
+    const submission = {
+      role: 'user' as const,
+      content: [...input],
+      attributes: { promptId, origin },
+    };
+    const { id } = running ? this.loop.sendNow(submission) : this.loop.submit(submission);
     return this.loop.promptHandle(id)!.launched;
   }
 

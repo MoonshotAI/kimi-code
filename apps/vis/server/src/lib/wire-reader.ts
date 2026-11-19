@@ -20,12 +20,6 @@ export interface WireReadResult {
   warnings: string[];
 }
 
-/** Best-effort fallback for a wire file whose declared `protocol_version` is
- *  below the known migration chain (below 1.0, or otherwise unrecognized-low):
- *  `resolveWireMigrations` threw for it. We retry from the oldest known version
- *  (1.0) and warn the caller; if even that fails we pass records through
- *  unchanged. (Versions at/above the current 1.5 never reach here — they
- *  resolve to an empty chain and are passed through directly.) */
 function bestEffortMigrations(): readonly WireMigration[] {
   try {
     return resolveWireMigrations('1.0');
@@ -34,19 +28,6 @@ function bestEffortMigrations(): readonly WireMigration[] {
   }
 }
 
-/** Read a single agent's `wire.jsonl`.
- *
- *  Each record is returned as a `WireEntry` containing both the on-disk parsed
- *  form (`raw`) and the migrated, persistent-decoded runtime form (`data`). The reader
- *  never rejects a file over its `protocol_version`:
- *    - below-1.0 (or otherwise unrecognized-low) — `resolveWireMigrations`
- *      throws, so records run through the 1.0-onwards best-effort chain and a
- *      warning is added to `warnings[]` so the UI can surface the caveat;
- *    - no metadata header — mirrors core-v2's recovery path by treating the
- *      journal as v1.4 and applying the v1.4 → v1.5 migration in memory;
- *    - at/above the current 1.5 (including future versions) — resolves to an
- *      empty chain, so records are passed through unchanged, with no migration
- *      and no warning. */
 export async function readAgentWire(path: string): Promise<WireReadResult> {
   const stream = createReadStream(path, { encoding: 'utf8' });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
@@ -112,8 +93,6 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
               migrations,
             ) as Record<string, unknown>);
     } catch (error) {
-      // A single record that won't migrate is not fatal — keep the raw
-      // payload so the UI can still render whatever fields it understands.
       warnings.push(
         `line ${lineNo}: migration failed (${(error as Error).message}); using raw record`,
       );

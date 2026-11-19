@@ -1,0 +1,77 @@
+{
+  "invocations": [
+    {
+      "run": "node scripts/check-comments.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "AGENTS.md forbids comments in JS/TS code, and this check is what enforces it."
+    },
+    {
+      "run": "oxlint --type-aware --deny-warnings",
+      "in": "package.json#scripts.lint",
+      "why": "This is the lint gate itself. Without it nothing in .oxlintrc.json is enforced, and any extra path argument would narrow what gets linted."
+    },
+    {
+      "run": "node packages/agent-core-v2/scripts/check-import-boundaries.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "AGENTS.md states that the agent-core-v2 layering, including the light remote executor, is enforced by this check."
+    },
+    {
+      "run": "node scripts/checks/guards.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "The guards keep the oxlint config and the wiring of these checks from changing unnoticed."
+    },
+    {
+      "run": "node scripts/checks/ratchet.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "It freezes rules that already have findings at their current count per file and reports suppressions that no longer suppress anything; without it new code could add to that debt unnoticed."
+    },
+    {
+      "run": "pnpm run lint",
+      "in": ".github/workflows/ci.yml#jobs.lint",
+      "why": "CI is the only place where lint blocks a merge; local runs and git hooks can be skipped."
+    },
+    {
+      "run": "node --test 'scripts/checks/*.test.mjs'",
+      "in": ".github/workflows/ci.yml#jobs.lint",
+      "why": "The guards are code too. Their tests keep a broken guard from silently passing everything."
+    },
+    {
+      "run": "node --test scripts/check-comments.test.mjs",
+      "in": ".github/workflows/ci.yml#jobs.lint",
+      "why": "The comment check is code too. Its tests keep a broken check from silently passing every file."
+    },
+    {
+      "run": "pnpm run sherif",
+      "in": ".github/workflows/ci.yml#jobs.lint",
+      "why": "Sherif keeps dependency versions and manifests consistent across the workspace."
+    },
+    {
+      "run": "pnpm lint-staged",
+      "in": ".husky/pre-commit",
+      "why": "The pre-commit hook gives the earliest lint feedback, before CI."
+    },
+    {
+      "run": "node scripts/check-comments.mjs",
+      "in": "package.json#lint-staged",
+      "why": "The pre-commit hook rejects comments in staged files before CI does."
+    },
+    {
+      "run": "oxlint --type-aware --deny-warnings",
+      "in": "package.json#lint-staged",
+      "why": "The pre-commit hook lints staged files with the same rules CI enforces."
+    },
+    {
+      "run": "node scripts/check-nix-workspace.mjs",
+      "in": ".github/workflows/nix-build.yml",
+      "contains": true,
+      "why": "It keeps flake.nix in sync with the pnpm workspace; a package missing from flake.nix breaks the Nix build."
+    }
+  ],
+  "forbidden": [
+    {
+      "flags": ["--fix", "--fix-suggestions", "--fix-dangerously"],
+      "in": "package.json#lint-staged",
+      "why": "lint-staged commits whatever its commands change. Some oxlint fixes change behavior (for example `unicorn/no-unnecessary-await` removes an `await`, which changes when the code after it runs), so the hook would rewrite code without telling anyone."
+    }
+  ]
+}

@@ -1,16 +1,3 @@
-/**
- * MigrationScreenComponent — native pi-tui first-launch migration experience.
- *
- * A single mounted Container & Focusable that runs a 3-phase state machine:
- *   ask (2-step choice wizard) -> progress -> result
- *
- * Pure decision mapping (choices -> MigrationScope) is delegated to the
- * package's `resolveMigrationScope`. Rendering follows the `ChoicePicker`
- * conventions in `apps/kimi-code/src/tui/components/dialogs/choice-picker.ts`.
- *
- * This file implements the ask, progress, and result phases. `beginMigration`
- * drives the real runMigration flow (injectable for tests).
- */
 import { Container, matchesKey, Key, truncateToWidth, type Focusable } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
@@ -33,7 +20,6 @@ type Phase = 'ask1' | 'ask2' | 'progress' | 'result';
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
 
-/** Spinner frame cadence — one full braille cycle every ~800ms. */
 const SPINNER_INTERVAL_MS = 80;
 
 const STEP_LABELS: ReadonlyArray<readonly [string, string]> = [
@@ -48,26 +34,15 @@ export interface MigrationScreenOptions {
   readonly sourceHome: string;
   readonly targetHome: string;
   readonly colors?: ColorPalette;
-  /** Called once the screen is finished; the host then restores the editor. */
   readonly onComplete: (result: MigrationScreenResult) => void;
-  /** Triggers a re-render; the host wires this to `ui.requestRender()`. */
   readonly requestRender?: () => void;
-  /** Injectable for tests; defaults to the package's runMigration. */
   readonly runMigration?: (input: RunMigrationInput) => Promise<MigrationReport>;
-  /**
-   * When true, the screen starts at the scope question and skips the
-   * now/later/never gate — used by the explicit `kimi migrate` command, where
-   * invoking the command is itself the decision to migrate.
-   */
   readonly skipDecisionStep?: boolean;
 }
 
-/** What the screen reports back to the host when finished. */
 export interface MigrationScreenResult {
   readonly decision: 'now' | 'later' | 'never';
-  /** Resolved migration scope; present only when decision === 'now'. */
   readonly scope?: MigrationScope;
-  // present only when decision === 'now' and migration ran
   readonly migrated?: boolean;
 }
 
@@ -100,21 +75,17 @@ export class MigrationScreenComponent extends Container implements Focusable {
     super();
     this.opts = opts;
     if (opts.skipDecisionStep === true) {
-      // Explicit `kimi migrate`: the now/later/never gate is meaningless, so
-      // start at the scope question with the decision already fixed to 'now'.
       this.phase = 'ask2';
       this.choices.push('now');
     }
   }
 
-  /** Host calls this once runMigration resolves. */
   showResult(report: MigrationReport): void {
     this.report = report;
     this.phase = 'result';
     this.stopSpinner();
   }
 
-  /** Host calls this if runMigration threw. */
   showFailure(error?: unknown): void {
     this.migrationFailed = true;
     this.migrationFailureReason = formatMigrationFailureReason(error);
@@ -122,35 +93,26 @@ export class MigrationScreenComponent extends Container implements Focusable {
     this.stopSpinner();
   }
 
-  /** Host calls this when migration starts. */
   enterProgress(): void {
     this.phase = 'progress';
   }
 
-  /** Host wires this to runMigration's onProgress (step-level messages). */
   reportStep(msg: string): void {
-    // msg is like 'config done', 'mcp done', 'sessions done'
     const key = msg.replace(/ done$/, '');
     if (this.stepStatus.has(key)) this.stepStatus.set(key, 'done');
   }
 
-  /** Host wires this to runMigration's onSessionProgress. */
   reportSessionProgress(done: number, total: number): void {
     this.progressDone = done;
     this.progressTotal = total;
   }
 
-  // The braille spinner advances on its own timer so the progress screen stays
-  // visibly alive even while a single step (e.g. session translation) runs for
-  // a while without emitting progress events. Runs only for the progress
-  // phase: started on entering it, stopped the moment it ends.
   private startSpinner(): void {
     this.stopSpinner();
     this.spinnerTimer = setInterval(() => {
       this.spinnerFrame = (this.spinnerFrame + 1) % SPINNER_FRAMES.length;
       this.opts.requestRender?.();
     }, SPINNER_INTERVAL_MS);
-    // A decorative timer must never keep the process alive on its own.
     this.spinnerTimer.unref();
   }
 
@@ -161,7 +123,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
     }
   }
 
-  // test hooks (thin aliases so tests don't depend on host wiring)
   _testEnterProgress(): void {
     this.enterProgress();
   }
@@ -186,7 +147,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
       }
       return;
     }
-    // progress phase: ignore input
   }
 
   private currentStep(): StepDef {
@@ -204,7 +164,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.escape)) {
-      // Esc anywhere in ask == "later"
       this.opts.onComplete({ decision: 'later' });
       return;
     }
@@ -216,7 +175,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
     }
   }
 
-  /** Apply a chosen value and move the state machine forward. */
   private advance(value: AnyChoice): void {
     this.choices.push(value);
     this.selectedIndex = 0;
@@ -227,15 +185,12 @@ export class MigrationScreenComponent extends Container implements Focusable {
         this.phase = 'ask2';
         return;
       }
-      // 'later' | 'never'
       this.opts.onComplete({ decision: value as 'later' | 'never' });
       return;
     }
-    // ask2 — either choice resolves the full scope; run migration immediately.
     this.beginMigration(result);
   }
 
-  /** Enter the progress phase and run the migration to completion. */
   private beginMigration(result: MigrationPromptResult): void {
     if (result.decision !== 'now' || result.scope === undefined) {
       this.opts.onComplete({ decision: 'later' });
@@ -307,8 +262,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
       if (sum.plans.copied > 0) {
         lines.push(chalk.hex(colors.success)(`  ✓ ${sum.plans.copied} plan files copied`));
       }
-      // Only claim a data class was migrated when the summary says it was —
-      // a skipped/failed step (e.g. malformed config.toml) must not show ✓.
       const migratedKinds: string[] = [];
       if (sum.config.migrated) migratedKinds.push('config');
       if (sum.config.migratedHooks > 0) migratedKinds.push('hooks');
@@ -335,10 +288,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
       if (r.notices.plansCopiedNotice !== null) {
         lines.push(chalk.hex(colors.textMuted)(`  ⓘ ${r.notices.plansCopiedNotice}`));
       }
-      // OAuth credentials are deliberately not migrated (refresh tokens cannot
-      // safely be held by two installs at once). kimi-code's normal auth flow
-      // will prompt for /login when the user first picks a model — surfacing a
-      // separate notice here reads as a migration limitation, which it is not.
       if (sum.config.droppedHooks > 0) {
         lines.push(
           chalk.hex(colors.warning)(
@@ -346,9 +295,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
           ),
         );
       }
-      // Conflicts and partial failures: the report records them, so surface
-      // them here too — otherwise "✓ config / MCP" hides that the data only
-      // landed in a *.migrated-from-kimi-cli.* sibling or that sessions failed.
       if (sum.config.configConflicts.length > 0) {
         lines.push(
           chalk.hex(colors.warning)(
@@ -357,12 +303,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
         );
       }
       if (sum.config.wroteSiblingDueToConflict) {
-        // Sibling mode: the live config.toml could not be parsed, so the
-        // migrated content went to `config.migrated-from-kimi-cli.toml` and
-        // the user must merge it by hand. Show the enumeration of contents
-        // on a SEPARATE line below — a single-line message with the contents
-        // appended would overflow 80 columns and be truncated, silently
-        // hiding the very info we want users to see.
         lines.push(
           chalk.hex(colors.warning)(
             '  ⚠ config.toml could not be parsed — review config.migrated-from-kimi-cli.toml',
@@ -418,8 +358,6 @@ export class MigrationScreenComponent extends Container implements Focusable {
           ),
         );
       }
-      // Empty / user-cleared sessions carry no conversation — neutral info,
-      // not a failure, so it is shown muted rather than as a ⚠ warning.
       if (sum.sessions.sessionsSkippedEmpty > 0) {
         lines.push(
           chalk.hex(colors.textMuted)(
@@ -566,9 +504,6 @@ function stepFor(phase: Phase, plan: MigrationPlan): StepDef {
       ],
     };
   }
-  // ask2 — the second option carries the actual session count so users can see
-  // the cost they are signing up for. Falls back to the singular "sessions"
-  // word only (no count) when no sessions were detected.
   const sessionsLabel =
     plan.totalSessions > 0
       ? `Config + ${plan.totalSessions} sessions`

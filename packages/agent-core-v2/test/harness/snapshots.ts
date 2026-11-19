@@ -1,4 +1,4 @@
-import type { Message, ToolDescription as LLMTool } from '#human/llm/message';
+import type { Message, ToolDescription as LLMTool } from '@moonshot-ai/core/llm/message';
 import { expect } from 'vitest';
 
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
@@ -62,6 +62,10 @@ export function eventSnapshot(
         ...event,
         args: { ...args, hash: '<tools-hash>', tools: args.tools.map((tool) => tool.name) },
       };
+    }
+    if (event.type === '[rpc]' && event.event === 'tool.updated') {
+      const args = event.args as { readonly taskId: string };
+      stableEvent = { ...event, args: { ...args, taskId: '<taskId>' } };
     }
     if (
       event.type === '[wire]' &&

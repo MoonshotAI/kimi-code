@@ -1,5 +1,5 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TowerProtocolError } from '#/features/tower/protocol/index';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -25,7 +25,7 @@ export class TowerTeardownTool implements ITowerTeardownTool {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionManager private readonly sessions: ISessionManager,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-    @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentToolExecutorService private readonly tasks: IAgentToolExecutorService,
   ) {}
 
   resolveExecution(args: TowerTeardownToolInput): ToolExecution {
@@ -55,9 +55,11 @@ export class TowerTeardownTool implements ITowerTeardownTool {
             );
           }
           const liveAgentIds = new Set(
-            this.tasks
-              .list(true)
-              .map((task) => (task.kind === 'agent' ? task.agentId : undefined))
+            this.tasks.handlers()
+              .map((handler) => {
+                const task = handler.snapshot().fields.task;
+                return task?.kind === 'agent' ? task.agentId : undefined;
+              })
               .filter((agentId): agentId is string => agentId !== undefined),
           );
           const report = await store.teardown({

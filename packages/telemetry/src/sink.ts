@@ -114,9 +114,7 @@ export class EventSink {
     this.buffer = [];
     try {
       this.transport.saveToDisk(events);
-    } catch {
-      // Telemetry must never make shutdown fail.
-    }
+    } catch {}
   }
 }
 

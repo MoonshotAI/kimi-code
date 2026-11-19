@@ -27,8 +27,6 @@ export async function readSourceConfig(sourceHome: string): Promise<SourceConfig
   try {
     tomlText = await readFile(tomlPath, 'utf-8');
   } catch (error) {
-    // Only a missing file falls through to the JSON-era config; any other read
-    // failure (permissions, I/O) is a data problem the report must surface.
     if (!isEnoent(error)) return { kind: 'unreadable', path: tomlPath };
   }
   if (tomlText !== undefined) {

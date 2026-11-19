@@ -1,9 +1,3 @@
-/**
- * `flagService` — experimental-flag resolution. Mirrors
- * `agent-core-v2/app/flag/flag.ts`. The `registry` property and
- * `setConfigOverrides` are excluded (not part of the read-only wire surface).
- */
-
 import { z } from 'zod';
 
 import { maybe } from '../helpers.js';

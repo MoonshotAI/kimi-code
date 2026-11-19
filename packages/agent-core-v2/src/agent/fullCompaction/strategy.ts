@@ -1,4 +1,4 @@
-import type { Message } from '#human/llm/message';
+import type { Message } from '@moonshot-ai/core/llm/message';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { CompactionSource } from './types';
 import { estimateTokensForMessage } from '#/llm-adapter/contract/tokens';
@@ -74,7 +74,7 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
   private delegate(): DefaultCompactionStrategy {
     const model = this.context();
     return new DefaultCompactionStrategy(
-      () => model.modelCapabilities.max_input_tokens ?? model.modelCapabilities.max_context_tokens,
+      () => model.model.maxInputSize ?? model.model.maxContextSize ?? 0,
       this.config(model),
       this.estimateMessage,
     );
@@ -82,7 +82,7 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
 
   private windowDelegate(): DefaultCompactionStrategy {
     return new DefaultCompactionStrategy(
-      () => this.context().modelCapabilities.max_input_tokens ?? this.context().modelCapabilities.max_context_tokens,
+      () => this.context().model.maxInputSize ?? this.context().model.maxContextSize ?? 0,
       DEFAULT_COMPACTION_CONFIG,
       this.estimateMessage,
     );

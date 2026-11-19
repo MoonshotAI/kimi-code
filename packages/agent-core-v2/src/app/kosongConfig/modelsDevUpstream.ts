@@ -1,6 +1,5 @@
 import { CoreErrors } from '#/_base/errors/codes';
 import { BugIndicatingError, Error2 } from '#/_base/errors/errors';
-import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import type { ModelRecord } from '#/llm-adapter/model/model';
 
 import { BUILT_IN_MODELS_DEV_JSON } from './builtInModelsDev';
@@ -9,6 +8,7 @@ import {
   modelsDevProviderModels,
   resolveModelsDevImport,
   type ModelsDevCatalog,
+  type ModelsDevCapability,
   type ModelsDevModel,
   type ModelsDevProviderEntry,
 } from './modelsDev';
@@ -111,7 +111,7 @@ export function modelsDevEntry(
   return Object.prototype.hasOwnProperty.call(catalog, id) ? catalog[id] : undefined;
 }
 
-function capabilityToStrings(capability: ModelCapability): string[] | undefined {
+function capabilityToStrings(capability: ModelsDevCapability): string[] | undefined {
   const caps: string[] = [];
   if (capability.image_in) caps.push('image_in');
   if (capability.video_in) caps.push('video_in');
@@ -129,7 +129,7 @@ function toModelItem(model: ModelsDevModel): ModelsDevModelItem {
     ...(caps !== undefined ? { capabilities: caps } : {}),
     id: model.id,
     max_context_size: model.capability.max_context_tokens,
-    reasoning: model.capability.thinking,
+    reasoning: model.capability.thinking === true,
   };
 }
 

@@ -18,9 +18,9 @@ import { pushEventSchema } from './events-zod';
 import { interactionEventMessageSchema } from './interaction';
 import {
   agentEventMessageSchema,
+  contextEventMessageSchema,
   goalEventMessageSchema,
   todoEventMessageSchema,
-  usageEventMessageSchema,
 } from './ws-agent';
 import {
   taskBackgroundMessageSchema,
@@ -73,7 +73,7 @@ export const pongMessageSchema = z.object({
   type: z.literal('pong'),
 });
 
-export const sessionEventMessageSchema = wsEventEnvelopeSchema(pushEventSchema);
+export const sessionEventMessageSchema = pushEventSchema;
 
 export type WsOperationDirection = 'client_to_server' | 'server_to_client';
 
@@ -168,7 +168,7 @@ export const sessionEventOperation = {
   kind: 'event',
   messageSchema: sessionEventMessageSchema,
   description:
-    'Global push event envelope sent to every connection; frame type is the payload event type.',
+    'Flat global event sent to every connection with event_created_at and its full state.',
 } as const satisfies WsOperationDefinition;
 
 export const interactionEventOperation = {
@@ -216,11 +216,11 @@ export const agentEventOperation = {
     'Status (idle, running or compacting), model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy. Request retries ride on the running turn.',
 } as const satisfies WsOperationDefinition;
 
-export const usageEventOperation = {
-  type: 'usage',
+export const contextEventOperation = {
+  type: 'context',
   direction: 'server_to_client',
   kind: 'event',
-  messageSchema: usageEventMessageSchema,
+  messageSchema: contextEventMessageSchema,
   description:
     'Context window usage of one subscribed agent, sent when a connection starts receiving that agent and then at most a few times per second while it changes; only the latest value matters.',
 } as const satisfies WsOperationDefinition;
@@ -334,7 +334,7 @@ export const wsOperations = [
   taskEventOperation,
   taskOutputEventOperation,
   agentEventOperation,
-  usageEventOperation,
+  contextEventOperation,
   goalEventOperation,
   todoEventOperation,
   ...conversationEventOperations,

@@ -1,3 +1,4 @@
+import KAP_SPEC_MARKDOWN from '../../docs/kap.md?raw';
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
@@ -9,13 +10,14 @@ interface RouteHost {
     options: { schema?: Record<string, unknown> },
     handler: (
       req: { id: string },
-      reply: { send(payload: unknown): void },
+      reply: { type?(contentType: string): unknown; send(payload: unknown): void },
     ) => Promise<void> | void,
   ): unknown;
 }
 
 export interface MetaRouteOptions {
   readonly serverVersion: string;
+  readonly product?: string;
   readonly serverId: string;
   readonly startedAt: string;
   readonly dangerousBypassAuth: boolean;
@@ -24,21 +26,27 @@ export interface MetaRouteOptions {
   readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
 }
 
+export const KIMI_AGENT_PROTOCOL_VERSION = '1.0.0';
+
 export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void {
+  const product = opts.product !== undefined && opts.product.length > 0 ? opts.product : undefined;
   const staticData = Object.freeze({
+    kimi_agent_protocol_version: KIMI_AGENT_PROTOCOL_VERSION,
     server_version: opts.serverVersion,
+    product,
     capabilities: Object.freeze({
       websocket: true as const,
       file_upload: true as const,
       fs_query: true as const,
       mcp: true as const,
       tasks: true as const,
+      interactions_list: true as const,
+      session_wait: true as const,
     }),
     server_id: opts.serverId,
     started_at: opts.startedAt,
     open_in_apps: [],
     dangerous_bypass_auth: opts.dangerousBypassAuth,
-    backend: 'v2' as const,
     web_title: opts.webTitle,
   });
 
@@ -60,4 +68,20 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
     },
   );
   app.get(route.path, route.options, route.handler as Parameters<RouteHost['get']>[2]);
+
+  const kapSpecBytes = Buffer.from(KAP_SPEC_MARKDOWN, 'utf8');
+  app.get(
+    '/kap.md',
+    {
+      schema: {
+        description: 'Get the built-in Kimi Agent Protocol (KAP) Markdown specification matching this server version',
+        tags: ['meta'],
+        operationId: 'getKapSpec',
+      },
+    },
+    async (_req, reply) => {
+      reply.type?.('text/markdown; charset=utf-8');
+      reply.send(kapSpecBytes);
+    },
+  );
 }

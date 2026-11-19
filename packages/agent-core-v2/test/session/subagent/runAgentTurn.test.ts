@@ -6,8 +6,8 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
 import { LifecycleScope } from '#/app/scopes';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import {
   createMaxStepsExceededError,
   IAgentLoopService,
@@ -111,12 +111,60 @@ function retrying(turnId: number, stepId: string): TurnStepRetrying {
   });
 }
 
+interface TaskFixture {
+  readonly info: AgentTaskInfo;
+  readonly wait?: Promise<AgentTaskInfo | undefined>;
+  readonly stop?: Promise<AgentTaskInfo | undefined>;
+}
+
+class TaskServiceStub {
+  private readonly fixtures = new Map<string, TaskFixture>();
+  readonly waits: string[] = [];
+  readonly stops: Array<{ readonly taskId: string; readonly reason: string | undefined }> = [];
+  readonly service = {
+    list: (activeOnly = false) => activeOnly ? [...this.fixtures.values()].map((fixture) => fixture.info) : [],
+    wait: (taskId: string) => {
+      this.waits.push(taskId);
+      const fixture = this.fixtures.get(taskId);
+      return fixture?.wait ?? Promise.resolve(fixture?.info);
+    },
+    stop: async (taskId: string, reason?: string) => {
+      this.stops.push({ taskId, reason });
+      const fixture = this.fixtures.get(taskId);
+      if (fixture?.stop !== undefined) await fixture.stop;
+      this.fixtures.delete(taskId);
+      return fixture?.info;
+    },
+  } as unknown as IAgentTaskService;
+
+  add(taskId: string, fixture: Partial<Omit<TaskFixture, 'info'>> = {}): void {
+    this.fixtures.set(taskId, {
+      info: { taskId, status: 'running' } as AgentTaskInfo,
+      ...fixture,
+    });
+  }
+
+  finish(taskId: string): void {
+    this.fixtures.delete(taskId);
+  }
+}
+
 function handleWith(
   turn: Turn | Promise<Turn>,
   messages: readonly ContextMessage[],
   events = new EventBusStub(),
-): { readonly handle: IAgentScopeHandle; readonly prompts: unknown[] } {
+  retry?: () => Promise<TurnResult>,
+  settled?: () => Promise<TurnResult | undefined>,
+  tasks = new TaskServiceStub(),
+): {
+  readonly handle: IAgentScopeHandle;
+  readonly prompts: unknown[];
+  readonly cancellations: Array<{ readonly target: unknown; readonly reason: unknown }>;
+  readonly suppressions: readonly string[][];
+} {
   const prompts: unknown[] = [];
+  const cancellations: Array<{ readonly target: unknown; readonly reason: unknown }> = [];
+  const suppressions: string[][] = [];
   const services = new Map<unknown, unknown>([
     [
       IAgentLoopService,
@@ -126,10 +174,20 @@ function handleWith(
           return { id: 'p' };
         },
         promptHandle: () => ({ launched: Promise.resolve(turn) }),
-        cancel: () => true,
+        retry,
+        settled: settled ?? (async () => (await turn).result),
+        cancel: (target?: unknown, reason?: unknown) => {
+          cancellations.push({ target, reason });
+          return true;
+        },
+        suppressTaskNotifications: (taskIds: readonly string[]) => {
+          suppressions.push([...taskIds]);
+        },
+        get: () => messages,
+        history: () => messages,
       },
     ],
-    [IAgentContextMemoryService, { get: () => messages }],
+    [IAgentTaskService, tasks.service],
     [IEventBus, events.bus],
   ]);
   const handle: IAgentScopeHandle = {
@@ -140,7 +198,7 @@ function handleWith(
     },
     dispose: () => {},
   };
-  return { handle, prompts };
+  return { handle, prompts, cancellations, suppressions };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
@@ -155,14 +213,43 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 describe('runAgentTurn', () => {
   const signal = new AbortController().signal;
 
-  it('returns a short final message as is without a continuation prompt', async () => {
+  it('returns the final message only after the loop and background tasks are quiescent', async () => {
+    const events = new EventBusStub();
+    const messages = [assistant('')];
+    const continuation = createControlledPromise<TurnResult | undefined>();
+    const taskWait = createControlledPromise<AgentTaskInfo | undefined>();
+    const tasks = new TaskServiceStub();
+    tasks.add('bash-background', { wait: taskWait });
     const { handle, prompts } = handleWith(
       makeTurn({ type: 'completed', steps: 1, truncated: false }),
-      [assistant('src/a.ts:12')],
+      messages,
+      events,
+      undefined,
+      () => continuation,
+      tasks,
     );
     const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
+    let didSettle = false;
+    void run.completion.then(
+      () => { didSettle = true; },
+      () => { didSettle = true; },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(didSettle).toBe(false);
+
+    messages.push(assistant('src/a.ts:12'));
+    continuation.resolve({ type: 'completed', steps: 1, truncated: false });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(didSettle).toBe(false);
+    expect(tasks.waits).toEqual(['bash-background']);
+
+    tasks.finish('bash-background');
+    taskWait.resolve(undefined);
     await expect(run.completion).resolves.toMatchObject({ summary: 'src/a.ts:12' });
     expect(prompts).toHaveLength(1);
+
+    events.emit(delta(1, ' late text'));
+    expect(events.listenerCount()).toBe(0);
   });
 
   it('carries the loop stop reason alongside the handoff text', async () => {
@@ -236,15 +323,30 @@ describe('runAgentTurn', () => {
       }),
       { statusCode: 429 },
     );
-    const { handle } = handleWith(makeTurn({ type: 'failed', steps: 1, error: failure }), [
-      assistant('partial work'),
-    ]);
-
-    const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
+    const events = new EventBusStub();
+    const { handle, prompts } = handleWith(
+      makeTurn({ type: 'completed', steps: 1, truncated: false }),
+      [assistant('partial work')],
+      events,
+      async () => ({ type: 'failed', steps: 1, error: failure }),
+    );
+    let ready = false;
+    const run = await runAgentTurn(handle, { kind: 'retry' }, {
+      signal,
+      onReady: () => {
+        ready = true;
+      },
+    });
+    events.emit(stepStarted(1, 'step-retry'));
+    events.emit(delta(1, 'partial work'));
     const error = await rejection(run.completion);
 
     expect(error).toBe(failure);
     expect(error).toMatchObject({ statusCode: 429 });
+    expect(prompts).toHaveLength(0);
+    expect(run.turn).toBeUndefined();
+    expect(ready).toBe(true);
+    expect(run.partialOutput()).toBe('partial work');
   });
 });
 
@@ -354,22 +456,41 @@ describe('runAgentTurn partial output', () => {
     expect(kept).not.toMatch(/[\uD800-\uDFFF]/u);
   });
 
-  it('stops listening once the run settles', async () => {
-    const events = new EventBusStub();
-    const { turn, finish } = pendingTurn(1);
-    const run = await runAgentTurn(
-      handleWith(turn, [assistant('Done.')], events).handle,
-      { kind: 'prompt', prompt: 'find it' },
-      { signal },
+  it('waits for task cleanup and loop unwinding before completing a cancellation', async () => {
+    const continuation = createControlledPromise<TurnResult | undefined>();
+    const taskStop = createControlledPromise<AgentTaskInfo | undefined>();
+    const controller = new AbortController();
+    const reason = userCancellationReason();
+    const tasks = new TaskServiceStub();
+    tasks.add('bash-background', { stop: taskStop });
+    const { handle, cancellations, suppressions } = handleWith(
+      makeTurn({ type: 'completed', steps: 1, truncated: false }),
+      [assistant('')],
+      new EventBusStub(),
+      undefined,
+      () => continuation,
+      tasks,
     );
-    expect(events.listenerCount()).toBe(3);
+    const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, {
+      signal: controller.signal,
+    });
+    let didSettle = false;
+    void run.completion.then(
+      () => { didSettle = true; },
+      () => { didSettle = true; },
+    );
 
-    events.emit(delta(1, 'Done.'));
-    finish({ type: 'completed', steps: 1, truncated: false });
-    await run.completion;
-    events.emit(delta(1, ' late text'));
+    controller.abort(reason);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(didSettle).toBe(false);
+    expect(cancellations).toContainEqual({ target: undefined, reason });
+    expect(suppressions).toContainEqual(['bash-background']);
+    expect(tasks.stops).toEqual([{ taskId: 'bash-background', reason: reason.message }]);
 
-    expect(events.listenerCount()).toBe(0);
-    expect(run.partialOutput()).toBe('Done.');
+    tasks.finish('bash-background');
+    taskStop.resolve(undefined);
+    continuation.resolve({ type: 'cancelled', steps: 1, reason });
+    const error = await rejection(run.completion);
+    expect(error).toBe(reason);
   });
 });

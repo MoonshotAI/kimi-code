@@ -1,12 +1,6 @@
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 
-// cmd.exe / CreateProcess search the current directory before PATH, so on
-// Windows a bare command name can execute a binary planted in the workspace
-// the user just opened (binary planting). Resolving through PATH ourselves —
-// and refusing any hit inside the cwd — keeps that from happening before the
-// workspace trust gate has run.
-
 const DEFAULT_WIN32_PATHEXT = ['.COM', '.EXE', '.BAT', '.CMD'];
 
 function pathExtensions(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): readonly string[] {
@@ -22,7 +16,6 @@ function pathExtensions(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): read
 function candidateNames(command: string, extensions: readonly string[]): readonly string[] {
   if (extensions.length === 1 && extensions[0] === '') return [command];
   const lower = command.toLowerCase();
-  // An explicitly suffixed name (npm.cmd) is tried as-is first, like cmd.exe.
   if (extensions.some((ext) => lower.endsWith(ext.toLowerCase()))) {
     return [command, ...extensions.map((ext) => command + ext)];
   }
@@ -32,7 +25,6 @@ function candidateNames(command: string, extensions: readonly string[]): readonl
 function isExecutableFile(candidate: string, platform: NodeJS.Platform): boolean {
   try {
     if (!statSync(candidate).isFile()) return false;
-    // Windows has no executable bit; file existence is enough there.
     if (platform !== 'win32') accessSync(candidate, constants.X_OK);
     return true;
   } catch {
@@ -49,8 +41,6 @@ function physicalPath(path: string): string {
 }
 
 function isInsideCwd(candidate: string, cwd: string, platform: NodeJS.Platform): boolean {
-  // Compare physical paths: process.cwd() has symlinks resolved, while a PATH
-  // entry may reach the same workspace through a symlinked alias.
   let resolvedCandidate = join(physicalPath(dirname(resolve(candidate))), basename(candidate));
   let resolvedCwd = physicalPath(cwd);
   if (resolvedCwd === parse(resolvedCwd).root) return false;
@@ -62,12 +52,6 @@ function isInsideCwd(candidate: string, cwd: string, platform: NodeJS.Platform):
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-/**
- * Resolve a bare command name to an absolute executable path by searching
- * PATH (PATHEXT-aware on Windows). Returns undefined when the command is not
- * found — or when the only hit lives inside `cwd`, since executing that would
- * run whatever a malicious workspace planted there.
- */
 export function resolveCommandPath(command: string, cwd: string = process.cwd()): string | undefined {
   const platform = process.platform;
   const env = process.env;
@@ -76,8 +60,6 @@ export function resolveCommandPath(command: string, cwd: string = process.cwd())
   const pathValue = env['PATH'] ?? '';
   const separator = platform === 'win32' ? ';' : ':';
   for (const dir of pathValue.split(separator)) {
-    // An empty PATH entry means the current directory on POSIX — anything it
-    // could produce would be rejected by the cwd check anyway, so skip it.
     if (dir === '') continue;
     for (const name of names) {
       const candidate = join(dir, name);

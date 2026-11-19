@@ -1,184 +1,54 @@
-/**
- * Scripted LLM provider seam for "real" ACP turn tests.
- *
- * Boots the full engine + ACP wire but replaces the wire `ChatProvider` with a
- * deterministic one that replays a FIFO queue of scripted responses. This keeps
- * the entire real stack — JSON-RPC, `AcpSession`, the agent turn loop,
- * `ModelImpl.request`, the real `generate()` stream-merge, `IEventBus`
- * `assistant.delta` → ACP `session/update`, tool execution, and the
- * approval / question bridge — and fakes only the network LLM call.
- *
- * Usage:
- *   const { seed, mockNextResponse } = createScriptedProvider();
- *   mockNextResponse({ type: 'text', text: 'hi' });
- *   const client = await createTestClient({ homeDir, extraSeeds: [seed] });
- *
- * The seed shadows the App-scope `IProtocolAdapterRegistry`, so every Model the
- * resolver builds routes its `createChatProvider()` call into the scripted
- * provider regardless of protocol.
- */
-
 import {
   IProtocolAdapterRegistry,
   type IProtocolAdapterRegistry as IProtocolAdapterRegistryType,
   type Model,
   ProtocolAdapterRegistry,
-  type ProtocolAdapterConfig,
-  type TokenUsage,
-  type Tool,
 } from '@moonshot-ai/agent-core-v2';
-import type { Message, StreamedMessagePart } from '@moonshot-ai/agent-core-v2/human/llm/message';
-import type { FinishReason } from '@moonshot-ai/agent-core-v2/human/llm-requester/finish-reason';
-import type { LlmRequester } from '@moonshot-ai/agent-core-v2/human/llm-requester/requester';
-import { coreRequesterFromA } from '../../../agent-core-v2/test/harness/scripted-generate.js';
-
-interface ScriptedResponse {
-  readonly parts: readonly StreamedMessagePart[];
-  readonly finishReason?: FinishReason | null;
-  readonly rawFinishReason?: string | null;
-}
-
-const ZERO_USAGE: TokenUsage = {
-  inputOther: 0,
-  output: 0,
-  inputCacheRead: 0,
-  inputCacheCreation: 0,
-};
-
-/**
- * Async-iterable `StreamedMessage` backed by a fixed part list. Terminal fields
- * (`id` / `usage` / `finishReason` / `rawFinishReason`) are populated when the
- * iterator completes — matching the real `generate()` driver, which reads them
- * after its `for await` loop drains the stream.
- */
-class ScriptedStream {
-  id: string | null = null;
-  usage: TokenUsage | null = null;
-  finishReason: FinishReason | null = null;
-  rawFinishReason: string | null = null;
-
-  constructor(
-    private readonly parts: readonly StreamedMessagePart[],
-    private readonly response: ScriptedResponse,
-    private readonly index: number,
-  ) {}
-
-  async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
-    for (const part of this.parts) {
-      yield part;
-    }
-    const hasToolCall = this.parts.some((p) => p.type === 'function');
-    this.id = `scripted-${String(this.index)}`;
-    this.usage = { ...ZERO_USAGE, output: this.parts.length };
-    this.finishReason =
-      this.response.finishReason ?? (hasToolCall ? 'tool_calls' : 'completed');
-    this.rawFinishReason =
-      this.response.rawFinishReason ?? (this.finishReason === 'completed' ? 'stop' : this.finishReason);
-  }
-}
-
-class ScriptedChatProvider {
-  readonly name = 'scripted';
-  readonly modelName = 'scripted';
-  readonly thinkingEffort = null;
-
-  constructor(
-    private readonly queue: ScriptedResponse[],
-    private readonly calls: Array<readonly Message[]>,
-  ) {}
-
-  async generate(
-    _systemPrompt: string,
-    _tools: readonly Tool[],
-    history: readonly Message[],
-    options?: { signal?: AbortSignal },
-  ): Promise<ScriptedStream> {
-    options?.signal?.throwIfAborted();
-    const response = this.queue.shift();
-    if (response === undefined) {
-      throw new Error(
-        `scriptedProvider: unexpected generate() call #${String(this.calls.length + 1)} — ` +
-          `queue exhausted. Push another response via mockNextResponse().`,
-      );
-    }
-    this.calls.push(history);
-    return new ScriptedStream(response.parts, response, this.calls.length);
-  }
-
-  withThinking(): ScriptedChatProvider {
-    return this;
-  }
-
-  withMaxCompletionTokens(): ScriptedChatProvider {
-    return this;
-  }
-}
+import type { Message, StreamedMessagePart } from '@moonshot-ai/core/llm/message';
+import type { FinishReason } from '@moonshot-ai/core/llm/response';
+import {
+  createMockProvider,
+  withMockProvider,
+  type MockProviderResponse,
+} from '../../../agent-core-v2/test/harness/scripted-generate.js';
 
 export interface ScriptedProvider {
-  /** App-scope seed tuple to pass as `extraSeeds: [seed]`. */
   readonly seed: readonly [typeof IProtocolAdapterRegistry, IProtocolAdapterRegistryType];
-  /** Push a text-only assistant response onto the queue. */
   mockNextText(text: string): void;
-  /** Push a response assembled from arbitrary streamed parts. */
   mockNextResponse(...parts: StreamedMessagePart[]): void;
-  /** Push a response with an explicit finish reason. */
   mockNextProviderResponse(response: {
     readonly parts?: readonly StreamedMessagePart[];
     readonly finishReason?: FinishReason | null;
     readonly rawFinishReason?: string | null;
   }): void;
-  /** Number of `generate()` calls the engine has made so far. */
   callCount(): number;
-  /** The `history` argument of every `generate()` call so far, in order. */
   callHistory(): ReadonlyArray<readonly Message[]>;
 }
 
 export function createScriptedProvider(): ScriptedProvider {
-  const queue: ScriptedResponse[] = [];
+  const queue: MockProviderResponse[] = [];
   const calls: Array<readonly Message[]> = [];
-  // Single shared provider so every ModelImpl in the process (main agent,
-  // sub-agents) draws from the same FIFO queue.
-  const provider = new ScriptedChatProvider(queue, calls);
-  const requester: LlmRequester = {
-    async generate(config, content, control) {
-      control.onEvent?.({ type: 'llm.sent' });
-      try {
-        const stream = await provider.generate(
-          config.systemPrompt ?? '',
-          [...(config.tools ?? [])],
-          content.messages,
-          { signal: control.signal },
-        );
-        for await (const part of stream) {
-          control.onEvent?.({ type: 'llm.streaming.part', part });
-          control.signal.throwIfAborted();
-        }
-        control.onEvent?.({ type: 'llm.streaming.usage', usage: stream.usage ?? ZERO_USAGE });
-        control.onEvent?.({
-          type: 'llm.streaming.finish',
-          finish: {
-            finishReason: stream.finishReason,
-            rawFinishReason: stream.rawFinishReason,
-          },
-        });
-        if (stream.id !== null) {
-          control.onEvent?.({ type: 'llm.streaming.message_id', messageId: stream.id });
-        }
-        control.onEvent?.({ type: 'llm.done' });
-      } catch (error) {
-        control.onEvent?.({
-          type: 'llm.failed.remote',
-          error: {
-            kind: 'unknown',
-            message: error instanceof Error ? error.message : String(error),
-            retryable: false,
-          },
-        });
-      }
-    },
-  };
-  // Identity/capability/model resolution delegates to the real registry; only
-  // the core requester is scripted.
+  const provider = createMockProvider((request, signal) => {
+    signal.throwIfAborted();
+    const response = queue.shift();
+    if (response === undefined) {
+      throw new Error(
+        `scriptedProvider: unexpected generate() call #${String(calls.length + 1)} — ` +
+          'queue exhausted. Push another response via mockNextResponse().',
+      );
+    }
+    calls.push(structuredClone(request.content.messages));
+    return {
+      ...response,
+      id: response.id ?? `scripted-${String(calls.length)}`,
+      usage: response.usage ?? {
+        inputOther: 0,
+        output: response.parts?.length ?? 0,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      },
+    };
+  });
   const real = new ProtocolAdapterRegistry();
   const registry: IProtocolAdapterRegistryType = {
     _serviceBrand: undefined,
@@ -186,11 +56,8 @@ export function createScriptedProvider(): ScriptedProvider {
     resolveAdapterIdentity: real.resolveAdapterIdentity.bind(real),
     resolveProviderBaseId: real.resolveProviderBaseId.bind(real),
     resolveCapability: real.resolveCapability.bind(real),
-    request: (model: Model) => coreRequesterFromA(real.request(model), requester),
-    // `createChatProvider` is called by `ModelImpl` (a package-internal method
-    // not on the public interface); present at runtime, cast for the type gap.
-    createChatProvider: (_input: ProtocolAdapterConfig) => provider,
-  } as unknown as IProtocolAdapterRegistryType;
+    request: (model: Model) => withMockProvider(real.request(model), provider),
+  };
 
   return {
     seed: [IProtocolAdapterRegistry, registry],
@@ -201,11 +68,7 @@ export function createScriptedProvider(): ScriptedProvider {
       queue.push({ parts: structuredClone(parts) });
     },
     mockNextProviderResponse: (response) => {
-      queue.push({
-        parts: structuredClone(response.parts ?? []),
-        finishReason: response.finishReason,
-        rawFinishReason: response.rawFinishReason,
-      });
+      queue.push({ ...response, parts: structuredClone(response.parts ?? []) });
     },
     callCount: () => calls.length,
     callHistory: () => calls,

@@ -42,7 +42,7 @@ interface RangeIndex {
   type: 'range';
   unique: boolean;
   sparse: boolean;
-  list: SkipList<number, string>;
+  list: SkipList;
   byPk: Map<string, number[]>; // array fields index every element
 }
 
@@ -248,7 +248,7 @@ export class IndexManager {
           type,
           unique,
           sparse,
-          list: new SkipList<number, string>({ compareKey: cmpNumber, compareVal: cmpString }),
+          list: new SkipList<number>({ compareKey: cmpNumber, compareVal: cmpString }),
           byPk: new Map(),
         }
       : { name, field, type, unique, sparse, map: new Map(), byPk: new Map() };
@@ -457,7 +457,7 @@ export class IndexManager {
     for (const idx of this.indexes.values()) {
       const next: AnyIndex =
         idx.type === 'range'
-          ? { ...idx, list: new SkipList<number, string>({ compareKey: cmpNumber, compareVal: cmpString }), byPk: new Map() }
+          ? { ...idx, list: new SkipList<number>({ compareKey: cmpNumber, compareVal: cmpString }), byPk: new Map() }
           : { ...idx, map: new Map(), byPk: new Map() };
       staged.push({ idx, next });
     }

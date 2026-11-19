@@ -63,6 +63,7 @@
       workspacePaths = [
         ./packages/acp-server
         ./packages/agent-core-v2
+        ./packages/core
         ./packages/kap-server
         ./packages/klient
         ./packages/migration-legacy
@@ -86,6 +87,7 @@
       workspaceNames = [
         "@moonshot-ai/acp-server"
         "@moonshot-ai/agent-core-v2"
+        "@moonshot-ai/core"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/minidb"
@@ -153,7 +155,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 5;
-              hash = "sha256-Ufuz0jPfe8R3jOtkEn4VxgkqfLJ2xanDRbcdqYlbx4M=";
+              hash = "sha256-CSe6uqTDxjuljspokul3gdNOeHAv9tsQwnoj8WmxAVI=";
             };
 
             nativeBuildInputs = [

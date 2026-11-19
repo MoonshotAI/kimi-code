@@ -32,15 +32,6 @@ interface SubagentEventLink {
   readonly firstPrompt?: string;
 }
 
-/**
- * Migrate every legacy `subagents/<agent_id>/` under a source session dir into
- * v2 per-agent wires at `<targetDir>/agents/<agentId>/wire.jsonl`, and return
- * the info needed to register them in meta.agents and to synthesize matching
- * task records in the main agent's wire. The legacy agent ids are kept as-is —
- * they are the keys the main agent's records (SubagentEvent payloads, tool
- * results) reference. A subagent whose wire already exists in the target is
- * reported but not rewritten, so re-runs stay idempotent.
- */
 export async function migrateLegacySubagents(
   sourceSessionDir: string,
   targetDir: string,
@@ -178,9 +169,6 @@ function mapSubagentStatus(status: string): 'completed' | 'failed' | 'lost' {
   return 'lost';
 }
 
-// The main wire's SubagentEvent records are the only place that links a
-// subagent run to the Agent tool call that spawned it (parent_tool_call_id)
-// and carries its launch prompt (first TurnBegin user_input).
 async function extractSubagentEventLinks(
   sourceSessionDir: string,
 ): Promise<ReadonlyMap<string, SubagentEventLink>> {
@@ -284,10 +272,6 @@ async function writeSubagentWire(
   await writeFile(join(wireDir, 'wire.jsonl'), lines.join('\n') + '\n', 'utf-8');
 }
 
-/**
- * The task.started/task.terminated records that make a migrated subagent show
- * up in the main agent's task list, exactly as a native run would leave them.
- */
 export function buildSubagentTaskRecords(
   info: LegacySubagentInfo,
 ): { readonly started: WireRecord; readonly terminated: WireRecord } {

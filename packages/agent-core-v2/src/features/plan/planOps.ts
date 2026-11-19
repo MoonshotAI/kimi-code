@@ -1,4 +1,4 @@
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -6,7 +6,7 @@ import { AgentEvent2 } from '#/app/event/event2';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { defineState } from '#/state/state';
 
-import '#/agent/contextMemory/conversationTime';
+import '#/agent/loop/turnOps';
 
 export interface PlanState {
   readonly active: boolean;

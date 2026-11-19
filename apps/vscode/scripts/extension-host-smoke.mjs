@@ -19,9 +19,6 @@ export async function runExtensionHostSmoke(options = {}) {
   await access(vsixPath);
   await mkdir(cacheRoot, { recursive: true });
 
-  // A stable request must never reuse an older stable download. @vscode/test-electron
-  // falls back to a cached build when version discovery fails, which would turn an
-  // offline run into a false green. Exact versions remain cached by version.
   const disposableCache = version === "stable";
   const cachePath = disposableCache
     ? await mkdtemp(join(cacheRoot, "stable-"))

@@ -1,5 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+import type {
+  FeedbackAvailability,
+  FeedbackSubmitInput,
+  FeedbackSubmitResult,
+} from '@moonshot-ai/agent-core-v2/app/auth/feedback';
+import type { PromptPredictionCancelReason } from '@moonshot-ai/agent-core-v2/features/promptPrediction/promptPrediction';
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 
 import type { AgentContextData } from '#/context';
@@ -238,6 +244,16 @@ export abstract class SDKRpcClientBase {
 
   abstract exportSession(input: ExportSessionInput): Promise<ExportSessionResult>;
 
+  abstract feedbackAvailability(
+    modelAlias?: string,
+    sessionId?: string,
+  ): Promise<FeedbackAvailability>;
+
+  abstract submitFeedback(
+    input: FeedbackSubmitInput,
+    modelAlias?: string,
+  ): Promise<FeedbackSubmitResult>;
+
   abstract getConfig(input?: GetConfigOptions): Promise<KimiConfig>;
 
   abstract getConfigDiagnostics(): Promise<ConfigDiagnostics>;
@@ -362,6 +378,22 @@ export abstract class SDKRpcClientBase {
   abstract addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult>;
 
   abstract startBtw(input: SessionIdRpcInput): Promise<string>;
+
+  async predictNextPrompt(_input: {
+    sessionId: string;
+    predictionId: string;
+    expectedTurnId: number;
+  }): Promise<string | null> {
+    return null;
+  }
+
+  async cancelPromptPrediction(_input: {
+    sessionId: string;
+    predictionId: string;
+    reason?: PromptPredictionCancelReason;
+  }): Promise<boolean> {
+    return false;
+  }
 
   abstract cancel(input: SessionIdRpcInput): Promise<void>;
 

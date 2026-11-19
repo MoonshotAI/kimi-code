@@ -203,10 +203,23 @@ describe('SessionRunGateService', () => {
     serviceB.release(SID);
   });
 
-  it('releases a directly held lock only after the session becomes idle', async () => {
+  it('reports an occupied session without acquiring the lock', async () => {
+    await readAll();
+    serviceB.hold(SID);
+    expect(gate().tryAcquire()).toBeUndefined();
+    expect(serviceA.held(SID)).toBe(false);
+    serviceB.release(SID);
+    const lease = gate().tryAcquire();
+    lease?.release();
+    expect(serviceA.held(SID)).toBe(true);
+    serviceA.release(SID);
+    expect(serviceA.held(SID)).toBe(false);
+  });
+
+  it('releases a direct hold when idle but retains an operation lease until released', async () => {
     vi.useFakeTimers();
     try {
-      gate();
+      const runGate = gate();
       serviceA.hold(SID);
       await vi.advanceTimersByTimeAsync(3_000);
       expect(serviceA.held(SID)).toBe(true);
@@ -214,6 +227,13 @@ describe('SessionRunGateService', () => {
       await vi.advanceTimersByTimeAsync(2_999);
       expect(serviceA.held(SID)).toBe(true);
       await vi.advanceTimersByTimeAsync(1);
+      expect(serviceA.held(SID)).toBe(false);
+
+      const lease = runGate.acquire();
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(serviceA.held(SID)).toBe(true);
+      expect(() => serviceB.hold(SID)).toThrow();
+      lease.release();
       expect(serviceA.held(SID)).toBe(false);
     } finally {
       vi.useRealTimers();

@@ -32,16 +32,11 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
     const normalizedArgs = normalizeBudgetInput(args);
     const budget = budgetLimitsFromInput(normalizedArgs);
     const goalAtResolution = this.goal.getGoal().goal;
-    const overBudgetAfterSet =
-      budget !== null &&
-      goalAtResolution !== null &&
-      this.wouldExceedBudget(goalAtResolution, budget);
     return {
       description: `Setting goal budget: ${formatBudget(
         normalizedArgs.value,
         normalizedArgs.unit,
       )}`,
-      stopBatchAfterThis: overBudgetAfterSet,
       approvalRule: this.name,
       execute: async ({ turnId }) => {
         const currentGoal = this.goal.getGoal().goal;
@@ -67,7 +62,6 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
             output:
               `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}. ` +
               'The goal has already reached this budget and will stop now.',
-            stopTurn: true,
           };
         }
         return {

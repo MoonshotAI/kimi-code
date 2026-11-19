@@ -7,7 +7,6 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPermissionModeService,
-  IAgentProfileService,
   IBootstrapService,
   IConfigService,
   IEventBus,
@@ -340,7 +339,7 @@ function resumedAgentSeeds(
 function modelRouteOf(agent: IAgentScopeHandle, alias: string): RatingEnvironment['model'] {
   try {
     const model = agent.accessor.get(IModelCatalog).get(alias);
-    return { modelId: model.name, baseUrl: model.baseUrl };
+    return { modelId: model.spec.name, baseUrl: model.endpoint.baseUrl };
   } catch {
     return { modelId: undefined, baseUrl: undefined };
   }
@@ -365,7 +364,7 @@ function readEnvironment(
     };
   }
   const context = agentContextOf(agent);
-  const profile = agent.accessor.get(IAgentProfileService);
+  const profile = agent.accessor.get(IAgentLoopService);
   const alias = profile.getModel();
   const total = agent.accessor.get(ISessionUsageService).status(context).total;
   return {

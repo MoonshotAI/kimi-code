@@ -1,6 +1,8 @@
 import {
+  getLiveSessionById,
   INTERACTION_TAG_SESSION_ID,
   interactions,
+  ISessionIndex,
   resumeSessionById,
   type ApprovalResponse,
   type QuestionAnswers,
@@ -17,13 +19,24 @@ import {
   interactionRespondParamsSchema,
   interactionRespondRequestSchema,
   interactionRespondResultSchema,
+  listInteractionsParamsSchema,
+  listInteractionsResponseSchema,
   type InteractionOutcome,
   type InteractionRespondRequest,
 } from '../protocol/interaction';
+import { listPendingInteractions } from '../protocol/interaction-wire';
 import { type QuestionItem } from '../protocol/question';
 import { toWireQuestion } from '../protocol/question-wire';
 
 interface InteractionRouteHost {
+  get(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
   post(
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
@@ -39,6 +52,40 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 type QuestionRespondRequest = Extract<InteractionRespondRequest, { kind: 'question' }>;
 
 export function registerInteractionsRoutes(app: InteractionRouteHost, core: Scope): void {
+  const listRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/interactions',
+      params: listInteractionsParamsSchema,
+      success: { data: listInteractionsResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description: 'List pending approval and question interactions for a session',
+      tags: ['interactions'],
+      operationId: 'listSessionInteractions',
+    },
+    async (req, reply) => {
+      const { session_id } = req.params;
+      const exists =
+        getLiveSessionById(core.accessor, session_id) !== undefined ||
+        (await core.accessor.get(ISessionIndex).get(session_id)) !== undefined;
+      if (!exists) {
+        reply.send(
+          errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
+        );
+        return;
+      }
+      reply.send(okEnvelope({ items: listPendingInteractions(session_id) }, req.id));
+    },
+  );
+  app.get(
+    listRoute.path,
+    listRoute.options,
+    listRoute.handler as Parameters<InteractionRouteHost['get']>[2],
+  );
+
   const respondRoute = defineRoute(
     {
       method: 'POST',

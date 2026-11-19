@@ -1,5 +1,3 @@
-// Public API surface for the kimi-cli → kimi-code migration tool.
-
 export * from './types.js';
 export { detectMigration } from './detect.js';
 export {

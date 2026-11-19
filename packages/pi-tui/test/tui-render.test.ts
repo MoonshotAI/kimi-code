@@ -170,7 +170,7 @@ class ManualClock implements AnimationClock {
 	}
 }
 
-function animatedTui(): { clock: ManualClock; tui: TUI } {
+function animatedTui(): { clock: ManualClock; tui: TuiMainScreen } {
 	const clock = new ManualClock();
 	return { clock, tui: new TuiMainScreen(new VirtualTerminal(40, 10), undefined, undefined, clock) };
 }
@@ -276,6 +276,59 @@ describe("TUI animation frames", () => {
 		clock.advance(1);
 		assert.deepStrictEqual(times, [120, 1200]);
 		tui.stop();
+	});
+
+	it("runs frames at the rate the host sets", () => {
+		const { clock, tui } = animatedTui();
+		const times: number[] = [];
+		const step = (time: number): void => {
+			times.push(time);
+			if (times.length < 3) tui.requestAnimationFrame(step);
+		};
+		tui.requestAnimationFrame(step);
+		tui.setAnimationFrameRate(20);
+
+		clock.advance(49);
+		assert.deepStrictEqual(times, []);
+		clock.advance(1);
+		assert.deepStrictEqual(times, [50]);
+		clock.advance(100);
+		assert.deepStrictEqual(times, [50, 100, 150]);
+		assert.strictEqual(clock.pendingTimers, 0);
+	});
+
+	it("waits one new interval after the last frame when the rate changes, however often it changes", () => {
+		const { clock, tui } = animatedTui();
+		const times: number[] = [];
+		const step = (time: number): void => {
+			times.push(time);
+			if (times.length < 3) tui.requestAnimationFrame(step);
+		};
+		tui.requestAnimationFrame(step);
+		clock.advance(130);
+		assert.deepStrictEqual(times, [120]);
+
+		for (const fps of [1, 2, 1, 20]) tui.setAnimationFrameRate(fps);
+		clock.advance(39);
+		assert.deepStrictEqual(times, [120]);
+		clock.advance(1);
+		assert.deepStrictEqual(times, [120, 170]);
+		clock.advance(50);
+		assert.deepStrictEqual(times, [120, 170, 220]);
+		assert.strictEqual(clock.pendingTimers, 0);
+	});
+
+	it("accepts whole frame rates from 1 to 60 and rejects the rest without changing the current one", () => {
+		const { clock, tui } = animatedTui();
+		tui.setAnimationFrameRate(60);
+		tui.setAnimationFrameRate(1);
+		for (const fps of [0, 61, 0.5, 30.5, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+			assert.throws(() => tui.setAnimationFrameRate(fps), RangeError, `accepted ${fps}`);
+		}
+		const times: number[] = [];
+		tui.requestAnimationFrame((time) => times.push(time));
+		clock.advance(1000);
+		assert.deepStrictEqual(times, [1000]);
 	});
 
 	it("runs the other callbacks and later frames when a callback throws, then rethrows the first error", (t) => {

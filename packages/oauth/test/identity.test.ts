@@ -147,8 +147,6 @@ describe('Kimi identity factories', () => {
   });
 });
 
-// HTTP header values must be plain ASCII without leading/trailing whitespace.
-// The public factories surface the sanitizer used for User-Agent and X-Msh-*.
 describe('ascii header value sanitization', () => {
   it('strips a trailing newline from a header value', () => {
     const ua = createKimiUserAgent({ productName: 'kimi-code-cli', version: '6.8.0-101\n' });
@@ -221,8 +219,6 @@ describe('ascii header value sanitization', () => {
       type: () => 'Darwin',
       arch: () => 'arm64',
     }));
-    // Pin the SystemVersion.plist read so the test is deterministic on every
-    // host; other reads (the device id file) still hit the real filesystem.
     vi.doMock('node:fs', async () => {
       const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
       const readFileSync = ((path: unknown, ...rest: unknown[]) => {

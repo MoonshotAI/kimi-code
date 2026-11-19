@@ -45,8 +45,6 @@ describe('UserMessageComponent', () => {
   it('does not truncate inline image escape sequences', () => {
     setCapabilities({ images: 'kitty', trueColor: true, hyperlinks: true });
 
-    // Minimal 2000x1302 PNG bytes so the inline Kitty sequence is long enough
-    // to exceed a typical terminal width if treated as visible text.
     const pngSignature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const ihdrLength = new Uint8Array([0x00, 0x00, 0x00, 0x0d]);
     const ihdrType = new Uint8Array([0x49, 0x48, 0x44, 0x52]);
@@ -89,7 +87,7 @@ describe('UserMessageComponent', () => {
     expect(imageLine).toBeDefined();
     expect(imageLine).not.toContain('\u001B[0m');
     expect(imageLine).not.toContain('…');
-    expect(imageLine).toContain('\u001B\\'); // intact Kitty terminator
+    expect(imageLine).toContain('\u001B\\');
   });
 
   it('omits the sparkles bullet when an empty bullet is provided', () => {
@@ -103,7 +101,6 @@ describe('UserMessageComponent', () => {
     const contentLine = lines.find((l) => l.includes('$ ls'));
     expect(contentLine).toBeDefined();
     expect(stripAnsi(lines.join('\n'))).not.toContain('❯');
-    // The `$` sits at the leading column where the bullet used to be.
     expect(contentLine?.startsWith('$ ls')).toBe(true);
   });
 
@@ -235,7 +232,6 @@ describe('userMessageLineHeights', () => {
   });
 
   it('counts wrapped rows for long logical lines at the bullet-adjusted width', () => {
-    // Width 12 minus the 2-cell bullet leaves 10 columns for text.
     expect(userMessageLineHeights('a'.repeat(25), 12)).toEqual([3]);
   });
 

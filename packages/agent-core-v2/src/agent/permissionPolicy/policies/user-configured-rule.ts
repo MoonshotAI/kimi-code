@@ -2,13 +2,13 @@ import type {
   PermissionRule,
   PermissionRuleDecision,
   PermissionRuleScope,
+  IAgentPermissionRulesService,
 } from '#/agent/permissionRules/permissionRules';
 import {
   matchPermissionRule,
   type PermissionRuleMatch,
 } from '#/agent/permissionRules/matchesRule';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import type { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import type { PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 
 const USER_CONFIGURED_SCOPES = new Set<PermissionRuleScope>([

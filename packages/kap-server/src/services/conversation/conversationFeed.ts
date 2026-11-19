@@ -18,7 +18,6 @@ import {
   type DurableAgentRuntimeParticipant,
   type IAgentScopeHandle,
   type IDisposable,
-  type ToolUpdate,
 } from '@moonshot-ai/agent-core-v2';
 import {
   ContextAppendLoopEvent,
@@ -32,13 +31,15 @@ import {
   ToolCallDelta,
   TurnStepInterrupted,
   TurnStepRetrying,
+  TurnStepStarted,
   TurnStepStreamReset,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
-import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { isMediaPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { TaskStarted } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
+import { ToolUpdated } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import { isMediaPart } from '@moonshot-ai/core/llm/message';
 
 import type {
   AssistantMessageItem,
@@ -79,11 +80,12 @@ interface LiveItem {
   item: AssistantMessageItem | ReasoningItem | ToolCallItem;
 }
 
-type LiveToolFields = Pick<ToolCallItem, 'output' | 'progress'>;
+type LiveToolFields = Pick<ToolCallItem, 'output' | 'fields'>;
 
 interface LiveTool {
   readonly turnId: string;
   readonly fields: LiveToolFields;
+  readonly outputOffset: number;
 }
 
 const RECORD_EVENTS = [
@@ -94,11 +96,13 @@ const RECORD_EVENTS = [
   TurnCancel,
   TurnStepInterrupted,
   TurnStepRetrying,
+  TurnStepStarted,
   TurnEnded,
   PromptCompleted,
   InteractionRequestEvent,
   InteractionResolvedEvent,
   SubagentSpawned,
+  TaskStarted,
   FullCompactionBegin,
   ContextApplyCompaction,
   FullCompactionComplete,
@@ -128,6 +132,7 @@ export class ConversationFeed implements IDisposable {
   private readonly tools = new Map<string, LiveTool>();
   private readonly listeners = new Set<ConversationListener>();
   private readonly disposables: IDisposable[] = [];
+  private undoQueue: Promise<unknown> = Promise.resolve();
   readonly ready: Promise<ConversationFeed>;
 
   constructor(
@@ -148,7 +153,13 @@ export class ConversationFeed implements IDisposable {
     return this.state.turns;
   }
 
-  async undo(turnId: string): Promise<readonly string[]> {
+  undo(turnId: string): Promise<readonly string[]> {
+    const run = this.undoQueue.then(() => this.undoNow(turnId));
+    this.undoQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async undoNow(turnId: string): Promise<readonly string[]> {
     const turns = this.state.turns;
     const index = turns.findIndex((turn) => turn.turn_id === turnId);
     if (index === -1) throw new Error2(ErrorCodes.TURN_NOT_FOUND, `turn not found: ${turnId}`);
@@ -168,6 +179,7 @@ export class ConversationFeed implements IDisposable {
   }
 
   async page(before: number | undefined, limit: number): Promise<ConversationTurnsPage> {
+    this.flushPending();
     const turns = (this.beforeReplay ?? this.state).turns;
     const end = before === undefined ? turns.length : turns.findIndex((turn) => turn.ordinal >= before);
     const stop = end === -1 ? turns.length : end;
@@ -187,8 +199,13 @@ export class ConversationFeed implements IDisposable {
     return { turns: page, has_more: start > 0 || page.length < selected.length };
   }
 
+  flushPending(): void {
+    if (this.flushQueued) this.flush();
+  }
+
   dispose(): void {
     if (this.disposed) return;
+    this.flushPending();
     this.disposed = true;
     for (const disposable of this.disposables.splice(0)) disposable.dispose();
     this.listeners.clear();
@@ -208,8 +225,8 @@ export class ConversationFeed implements IDisposable {
       bus.subscribe(ToolCallDelta, (event) => {
         this.onToolCallDelta(event.turnId, event.toolCallId, event.name, event.argumentsPart);
       }),
-      bus.subscribe(ToolProgress, (event) => {
-        this.onToolProgress(event.toolCallId, event.update);
+      bus.subscribe(ToolUpdated, (event) => {
+        this.onToolUpdated(event);
       }),
       bus.subscribe(TurnStepStreamReset, (event) => {
         this.flushPending();
@@ -230,6 +247,7 @@ export class ConversationFeed implements IDisposable {
       id: 'kap.conversation',
       events: RECORD_EVENTS,
       undoable: true,
+      mutableReplay: true,
       transition: (draft, event) => {
         applyConversationRecord(draft, event.serialize());
       },
@@ -293,10 +311,6 @@ export class ConversationFeed implements IDisposable {
     });
   }
 
-  private flushPending(): void {
-    if (this.flushQueued) this.flush();
-  }
-
   private flush(): void {
     this.flushQueued = false;
     if (this.disposed || this.beforeReplay !== undefined) return;
@@ -346,6 +360,10 @@ export class ConversationFeed implements IDisposable {
 
   private emitItemChanges(before: ConversationTurn | undefined, turn: ConversationTurn): void {
     const previous = new Map(before?.items.map((item) => [item.item_id, item]));
+    const kept = new Set(turn.items.map((item) => item.item_id));
+    for (const itemId of previous.keys()) {
+      if (!kept.has(itemId)) this.emit({ type: 'item.removed', turn_id: turn.turn_id, item_id: itemId });
+    }
     for (const item of turn.items) {
       const old = previous.get(item.item_id);
       if (old === item) continue;
@@ -433,25 +451,25 @@ export class ConversationFeed implements IDisposable {
     this.emit({ type: 'item.started', turn_id: target.turn.turn_id, item });
   }
 
-  private onToolProgress(toolCallId: string, update: ToolUpdate): void {
+  private onToolUpdated(event: ToolUpdated): void {
     if (this.beforeReplay !== undefined) return;
     this.flushPending();
-    const target = this.runningTool(toolCallId);
+    const target = this.runningTool(event.toolCallId);
     if (target === undefined) return;
-    const fields = this.tools.get(toolCallId)?.fields ?? {};
-    if ((update.kind === 'stdout' || update.kind === 'stderr') && update.replace !== true) {
-      const text = update.text ?? '';
-      if (text.length === 0) return;
-      this.tools.set(toolCallId, { turnId: target.turn.turn_id, fields: { ...fields, output: (fields.output ?? '') + text } });
-      this.emit({ type: 'item.delta', turn_id: target.turn.turn_id, item_id: toolCallId, field: 'output', delta: text });
-      return;
-    }
-    const next: LiveToolFields = update.kind === 'stdout' || update.kind === 'stderr'
-      ? { ...fields, output: update.text ?? '' }
-      : { ...fields, progress: nextProgress(fields.progress, update) };
+    const current = this.tools.get(event.toolCallId);
+    const outputOffset = current?.outputOffset ?? 0;
     const before = this.withLiveFields(target.item);
-    this.tools.set(toolCallId, { turnId: target.turn.turn_id, fields: next });
+    const fields: LiveToolFields = { output: current?.fields.output, fields: event.fields };
+    this.tools.set(event.toolCallId, { turnId: target.turn.turn_id, fields, outputOffset });
     this.emitItemChange(target.turn.turn_id, before, this.withLiveFields(target.item));
+    if (event.output === undefined || event.output.offset !== outputOffset || event.output.text.length === 0) return;
+    const text = event.output.text;
+    this.tools.set(event.toolCallId, {
+      turnId: target.turn.turn_id,
+      fields: { ...fields, output: (fields.output ?? '') + text },
+      outputOffset: outputOffset + Buffer.byteLength(text),
+    });
+    this.emit({ type: 'item.delta', turn_id: target.turn.turn_id, item_id: event.toolCallId, field: 'output', delta: text });
   }
 
   private notify(notice: Notice): void {
@@ -580,17 +598,6 @@ function withLoadedUrls(item: ConversationItem, loaded: ReadonlyMap<string, stri
 
 function turnBytes(turn: ConversationTurn): number {
   return Buffer.byteLength(JSON.stringify(turn)) + 1;
-}
-
-function nextProgress(progress: ToolCallItem['progress'], update: ToolUpdate): NonNullable<ToolCallItem['progress']> {
-  switch (update.kind) {
-    case 'progress':
-      return { ...progress, percent: update.percent ?? progress?.percent, status: update.text ?? progress?.status };
-    case 'status':
-      return { ...progress, status: update.text ?? progress?.status };
-    default:
-      return { ...progress, custom_kind: update.customKind, custom_data: update.customData };
-  }
 }
 
 function changedFields<T extends object>(before: T, after: T): Partial<T> {

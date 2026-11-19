@@ -103,7 +103,6 @@ describe('AgentGroupComponent', () => {
     expect(renderText(group)).toContain('explore · inspect project · 0 tools');
 
     running.updateSubagentMetrics({ modelDisplay: 'Kimi K2.5' });
-    // Non-phase updates are throttled; flush the pending refresh.
     vi.runOnlyPendingTimers();
     expect(renderText(group)).toContain('explore · inspect project · Kimi K2.5 · 0 tools');
 
@@ -231,7 +230,6 @@ describe('AgentGroupComponent', () => {
     group.attach('call_agent_1', a);
     group.attach('call_agent_2', b);
 
-    // Detach `a` (Ctrl+B), then its spawn-success ToolResult lands.
     a.markBackgrounded();
     a.setResult({
       tool_call_id: 'call_agent_1',
@@ -240,10 +238,8 @@ describe('AgentGroupComponent', () => {
     }, { known: false });
 
     const out = renderText(group);
-    // `a` must show as backgrounded, NOT completed.
     expect(out).toContain('◐ backgrounded');
     expect(out).not.toContain('✓ Completed');
-    // `b` is still running.
     expect(out).toContain('Running');
 
     group.dispose();

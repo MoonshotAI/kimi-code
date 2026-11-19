@@ -17,17 +17,13 @@ import { subagentsRoute } from './routes/subagents';
 import { tasksRoute } from './routes/tasks';
 import { wireRoute } from './routes/wire';
 
-/** Resolve the SPA bundle directory next to the compiled server.mjs, if it
- * exists. Returns `null` in dev mode where the web bundle lives elsewhere. */
 async function resolvePublicDir(): Promise<string | null> {
   try {
     const here = import.meta.dirname;
     const candidate = resolve(here, 'public');
     const s = await stat(candidate);
     if (s.isDirectory()) return candidate;
-  } catch {
-    // not present
-  }
+  } catch {}
   return null;
 }
 
@@ -59,8 +55,6 @@ function mimeFor(path: string): string {
 export interface CreateAppOptions {
   readonly authToken?: string;
   readonly homeDir?: string;
-  /** When provided, serve this single-file SPA from memory and skip the
-   *  filesystem `public/` lookup. */
   readonly webAsset?: WebAsset;
 }
 
@@ -76,11 +70,9 @@ function tokenMatches(actual: string, expected: string): boolean {
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
-/** Build a Hono app mounting /api/* routes, plus SPA static fallback. */
 export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
   const app = new Hono();
 
-  // /api/* handlers.
   const api = new Hono();
   const authToken = options.authToken;
   const home = options.homeDir ?? KIMI_CODE_HOME;
@@ -104,34 +96,26 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
   api.route('/sessions', cronRoute(home));
   api.route('/sessions', logsRoute(home));
   api.route('/imports', importsRoute(home));
-  // Mount contextRoute last because it currently uses a catch-all stub
-  // (Phase C scope) that would otherwise shadow more specific routes
-  // registered below it.
   api.route('/sessions', contextRoute(home));
 
   app.route('/api', api);
 
-  // Static + SPA fallback.
   if (options.webAsset !== undefined) {
-    // Serve the embedded single-file SPA from memory for any non-/api GET.
     const asset = options.webAsset;
     app.get('*', (c) => {
       const pathname = new URL(c.req.url).pathname;
       if (pathname.startsWith('/api')) {
-        // Should have been routed above; 404 here.
         return c.json({ error: `api route not found: ${pathname}`, code: 'NOT_FOUND' }, 404);
       }
       return serveWebAsset(asset);
     });
   } else {
-    // Filesystem static serving (production standalone only).
     const publicDir = await resolvePublicDir();
     if (publicDir !== null) {
       app.get('*', async (c) => {
         const url = new URL(c.req.url);
         let pathname = decodeURIComponent(url.pathname);
         if (pathname.startsWith('/api')) {
-          // Should have been routed above; 404 here.
           return c.json({ error: `api route not found: ${pathname}`, code: 'NOT_FOUND' }, 404);
         }
         if (pathname === '/' || pathname === '') pathname = '/index.html';
@@ -148,11 +132,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
               headers: { 'content-type': mimeFor(resolved) },
             });
           }
-        } catch {
-          // fall through to SPA fallback
-        }
-        // SPA fallback — index.html for any unknown GET so client-side
-        // React Router can resolve the route.
+        } catch {}
         try {
           const indexHtml = await readFile(join(publicDir, 'index.html'));
           const body = new Uint8Array(indexHtml.buffer, indexHtml.byteOffset, indexHtml.byteLength);

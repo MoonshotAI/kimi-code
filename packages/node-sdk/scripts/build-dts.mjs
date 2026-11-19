@@ -12,9 +12,10 @@ const providerClientShimPath = path.join(dtsRoot, 'provider-clients.d.ts');
 const tscBinPath = packageBinPath('typescript', 'bin/tsc');
 const apiExtractorBinPath = packageBinPath('@microsoft/api-extractor', 'bin/api-extractor');
 
-const packageDirs = new Set(['agent-core-v2', 'klient', 'node-sdk', 'oauth']);
+const packageDirs = new Set(['agent-core-v2', 'core', 'klient', 'node-sdk', 'oauth']);
 const workspacePackages = new Map([
   ['@moonshot-ai/agent-core-v2', 'agent-core-v2'],
+  ['@moonshot-ai/core', 'core'],
   ['@moonshot-ai/kimi-code-oauth', 'oauth'],
   ['@moonshot-ai/klient', 'klient'],
 ]);
@@ -112,7 +113,7 @@ async function rewriteWorkspaceSpecifiers() {
           `import type { GoogleGenAI as GenAIClient } from '${providerClientSpecifier}';`,
         );
       const updated = providerClientText.replaceAll(
-        /(["'])(#(?:human)?\/[^"']+|@moonshot-ai\/(?:agent-core-v2|kimi-code-oauth|klient)(?:\/[^"']+)?)\1/g,
+        /(["'])(#(?:human)?\/[^"']+|@moonshot-ai\/(?:agent-core-v2|core|kimi-code-oauth|klient)(?:\/[^"']+)?)\1/g,
         (_match, quote, specifier) => {
           const resolved = resolveSpecifier({
             currentFile: file,

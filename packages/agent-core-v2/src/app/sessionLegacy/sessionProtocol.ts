@@ -30,9 +30,6 @@ export type SessionMetadata = z.infer<typeof sessionMetadataSchema>;
 
 export const sessionAgentConfigSchema = z.object({
   model: z.string(),
-  system_prompt: z.string().optional(),
-  tools: z.array(z.string()).optional(),
-  mcp_servers: z.array(z.string()).optional(),
   thinking: promptThinkingSchema.optional(),
   permission_mode: promptPermissionModeSchema.optional(),
   plan_mode: z.boolean().optional(),
@@ -40,7 +37,7 @@ export const sessionAgentConfigSchema = z.object({
   tower_mode: z.boolean().optional(),
   tower_base: z.string().min(1).optional(),
   goal_objective: z.string().optional(),
-  goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
+  goal_control: z.enum(['pause', 'resume', 'cancel', 'edit']).optional(),
 });
 export type SessionAgentConfig = z.infer<typeof sessionAgentConfigSchema>;
 
@@ -67,7 +64,6 @@ export const updateSessionProfileRequestSchema = z.object({
   title: z.string().min(1).optional(),
   metadata: sessionMetadataSchema.partial().optional(),
   agent_config: sessionAgentConfigPartialSchema.optional(),
-  permission_rules: z.array(permissionRuleSchema).optional(),
 });
 export type UpdateSessionProfileRequest = z.infer<typeof updateSessionProfileRequestSchema>;
 

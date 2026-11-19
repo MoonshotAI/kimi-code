@@ -28,7 +28,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--agent-file <path>` | | Load a custom agent from a Markdown file for the new session and select it. Cannot be repeated or combined with `--agent`, `--session`, or `--continue` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
-`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#picking-an-environment-for-one-launch)).
+`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#kimi-environment-and-environment-cwd)).
 
 ::: warning
 `--yolo` skips human approval for regular tool calls, including file writes and shell command execution. Use it only in trusted working directories. Plan mode exit approval is not bypassed by `--yolo`; `Bash` inside Plan mode is handled under the regular allow rules.
@@ -133,7 +133,7 @@ When you need to parse output programmatically, use the `stream-json` format —
 kimi -p "List changed files" --output-format stream-json
 ```
 
-In `stream-json` mode, regular replies produce an Assistant message; when the model calls a tool, an Assistant message with `tool_calls` is emitted first, followed by the corresponding Tool message, then subsequent Assistant messages. Thinking content is not written to JSONL; tool progress and "resuming session" notices are still written to stderr.
+In `stream-json` mode, regular replies produce an Assistant message; when the model calls a tool, an Assistant message with `tool_calls` is emitted first, followed by the corresponding Tool message, then subsequent Assistant messages. Thinking content is not written to JSONL; tool progress and "resuming session" notices are still written to stderr. For common scripting patterns, see [Using in Scripts and CI](../guides/print.md).
 
 ## Subcommands
 
@@ -161,7 +161,7 @@ kimi acp
 
 Run the local Kimi server in the foreground of the current terminal — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin — and open the web UI in the default browser once it is ready. The command stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM` (e.g. `Ctrl-C`).
 
-When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For an end-to-end walkthrough of driving sessions over the API, see [Server API: Drive a session over the API](./server-api.md#drive-a-session-over-the-api); for the protocol details, see the [Server API](./server-api.md) reference.
+When the server is running, `GET /api/v1/kap.md` returns the version-matched KAP runtime guide, `GET /openapi.json` returns the REST OpenAPI document, and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For interacting with or handing off sessions from other agents, see [Using in Other Agents](../guides/other-agents.md).
 
 ```sh
 kimi web                 # run the server in the foreground and open the browser
@@ -181,12 +181,9 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
 | `--web-title <title>` | Custom browser tab title for the web UI; defaults to the workspace directory name |
 | `--no-open` | Do not open the browser once the server is ready |
+| `--json` | Machine-readable startup mode: skips opening the browser, mints an in-memory bearer token for this process, prints a single JSON line (`{ origin, ws_url, token, kimi_agent_protocol_version }`) on `stdout` once ready, and routes logs to `stderr` |
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
-
-::: info
-The `kimi server` command tree is deprecated: any `kimi server …` invocation (including all legacy subcommands) only prints a deprecation notice and exits with code 1 — use `kimi web` instead. The one exception is `kimi server kill`, which stays functional for stopping servers started by a version before 0.28.0. The notice will be removed in the next major version of Kimi Code.
-:::
 
 ::: danger
 `--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and stop the server with `Ctrl+C` when you are done.

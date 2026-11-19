@@ -32,7 +32,6 @@ interface SubagentReplayIndex {
   readonly byParentCall: ReadonlyMap<string, readonly SubagentReplayInvocation[]>;
 }
 
-/** Projects a complete resumed SDK session, including persisted subagent steps. */
 export function replaySessionToWebviewEvents(
   state: ResumedSessionState,
   sessionId: string,
@@ -42,7 +41,6 @@ export function replaySessionToWebviewEvents(
   return replayAgentToWebviewEvents(main, sessionId, buildSubagentReplayIndex(state));
 }
 
-/** Projects the public SDK resume replay into the released Webview protocol. */
 export function replayToWebviewEvents(
   agent: ResumedAgentState,
   sessionId: string,

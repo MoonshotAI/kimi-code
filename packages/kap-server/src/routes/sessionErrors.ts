@@ -21,7 +21,6 @@ export function sendMappedError(
       msg: error.message,
       data: error.details ?? null,
       request_id: req.id,
-      stack: error.stack,
     });
     return;
   }

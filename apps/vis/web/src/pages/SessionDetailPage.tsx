@@ -52,7 +52,6 @@ export function SessionDetailPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Header */}
       <div className="shrink-0 border-b border-border bg-surface-1 px-4 py-3">
         <div className="flex items-center gap-3">
           <span className="font-mono text-[14px] text-fg-0">{session.sessionId}</span>

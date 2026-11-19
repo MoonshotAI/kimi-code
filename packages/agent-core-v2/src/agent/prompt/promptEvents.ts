@@ -1,9 +1,9 @@
-import type { UserPromptOrigin } from '#/agent/contextMemory/types';
-/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+import type { PromptOrigin, UserPromptOrigin } from '#/agent/contextMemory/types';
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart } from '@moonshot-ai/core/llm/message';
 import type { MessageContent } from '#/agent/prompt/messageContent';
 
 export interface PromptCompletedPayload {
@@ -65,6 +65,7 @@ export interface PromptSubmittedEvent {
   readonly userMessageId: string;
   readonly status: 'running' | 'queued' | 'blocked';
   readonly content: readonly MessageContent[];
+  readonly origin: PromptOrigin;
   readonly createdAt: string;
 }
 
@@ -123,6 +124,7 @@ export interface PromptSubmittedPayload {
   readonly userMessageId: string;
   readonly status: 'running' | 'queued';
   readonly content: ContentPart[];
+  readonly origin: PromptOrigin;
   readonly createdAt: string;
   readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
 }

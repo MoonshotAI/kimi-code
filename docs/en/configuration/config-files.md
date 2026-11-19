@@ -63,7 +63,6 @@ max_attempts_per_step = 10
 reserved_context_size = 50000
 
 [task]
-max_running_tasks = 4
 keep_alive_on_exit = false
 
 [services.moonshot_search]
@@ -108,7 +107,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`providers`](#providers) | `table` | `{}` | API provider table |
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
-| [`loop_control`](#loop_control) | `table` | — | Agent loop control parameters |
+| [`loop_control`](#loop-control) | `table` | — | Agent loop control parameters |
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
@@ -125,10 +124,12 @@ Each entry in the `providers` table defines an API provider, keyed by a unique n
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `type` | `string` | Yes | Provider type: `kimi`, `anthropic`, `openai`, `openai_responses`, `google-genai`, `vertexai` |
+| `type` | `string` | Yes | Provider type: `kimi`, `anthropic`, `openai`, `openai_responses`, `bedrock`, `google-genai`, `vertexai` |
 | `api_key` | `string` | No | API key, written in plain text in the config file |
 | `api_key_env` | `string` | No | Name of a shell environment variable to read the API key from instead of storing it in the config file; re-read on every request. Mutually exclusive with `api_key` and `oauth`; an unset or empty variable fails the request with an error naming the variable |
 | `base_url` | `string` | No | API base URL |
+| `search_url` | `string` | No | Optional `WebSearch` endpoint URL for models under this provider (authenticated with this provider's credential) |
+| `feedback_url` | `string` | No | Optional `/feedback` endpoint URL for models under this provider (authenticated with this provider's credential) |
 | `oauth` | `table` | No | OAuth credential reference (`storage` and `key` fields); injected automatically by the login flow, so you normally never write this by hand |
 | `env` | `table<string, string>` | No | Fallback source for provider credentials; see the `env` sub-table |
 | `custom_headers` | `table<string, string>` | No | Custom HTTP headers attached to each request |
@@ -190,7 +191,7 @@ display_name = "Kimi for Coding (custom)"
 
 `[models."<alias>".overrides]` accepts ordinary model fields such as `max_context_size`, `max_input_size`, `max_output_size`, `capabilities`, `display_name`, `reasoning_key`, `adaptive_thinking`, `support_efforts`, `default_effort`, and `off_effort`. It does not accept identity / routing fields (`provider`, `model`, `protocol`, `beta_api`, and `base_url`) or registry-managed `upgrade` metadata.
 
-You can also switch models temporarily without touching the config file: setting `KIMI_MODEL_*` environment variables synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model_).
+You can also switch models temporarily without touching the config file: setting `KIMI_MODEL_*` environment variables synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
 
 ## `secondary_model`
 
@@ -342,7 +343,6 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `max_running_tasks` | `integer` | — | Maximum number of background tasks running concurrently; also caps Tower workers and reviewers (default Tower cap: 256) |
 | `keep_alive_on_exit` | `boolean` | `false` | Whether to keep still-running background tasks when the session closes; in print mode only a fallback when `print_background_mode` is unset (`true` = `drain`) |
 | `kill_grace_period_ms` | `integer` | `5000` | Grace period in milliseconds after a task is asked to terminate; still-running tasks are force-stopped when it elapses |
 | `bash_auto_background_on_timeout` | `boolean` | `true` | Move a foreground `Bash` command to a background task on timeout instead of killing it; set to `false` to kill timed-out foreground commands instead |
@@ -351,9 +351,7 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 | `print_wait_ceiling_s` | `integer` | `2147483` | Wall-clock ceiling (seconds) for the print-mode wait/steer loop; no effect outside print mode or with `"exit"` |
 | `print_max_turns` | `integer` | `100000` | Maximum number of new turns triggered by background-task completions in `"steer"` mode; keeps the steering loop bounded |
 
-For Tower, `max_running_tasks` limits workers and reviewers together. If neither configuration section nor `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` sets a value, Tower uses a default combined limit of 256.
-
-`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, `max_running_tasks` by `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`, `bash_task_timeout_s` by `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S`, and `print_background_mode`, `print_wait_ceiling_s`, and `print_max_turns` by `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`, `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`, and `KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS`; all take higher priority than either configuration section.
+`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, `bash_task_timeout_s` by `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S`, and `print_background_mode`, `print_wait_ceiling_s`, and `print_max_turns` by `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`, `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`, and `KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS`; all take higher priority than either configuration section.
 
 In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent's turn as long as background tasks are still pending: each completion is fed back to the main agent as a synthetic user message, steering it into a new turn (`print_background_mode = "steer"` by default), and the run exits once a turn ends with nothing pending. The loop is bounded by `print_wait_ceiling_s` and `print_max_turns`, both effectively unbounded by default. Background work is never killed by a wall-clock cap in print mode either: background `Bash` tasks default to no timeout (`bash_task_timeout_s = 0`), and subagents run without a timeout (`[subagent] timeout_ms` and `[swarm] timeout_ms` both default to `0` unless explicitly set), so only the model itself stops a task. Set `print_background_mode` to `"drain"` to wait for tasks without feeding results back, or `"exit"` to end the run as soon as the main agent finishes.
 
@@ -542,6 +540,8 @@ api_key = "sk-xxx"
 
 User rules are loaded from the user `config.toml` at session startup. For compatibility, legacy `turn-override` and `session-runtime` rules in the user config are silently ignored without a warning.
 
+If the user `config.toml` cannot be read, parsed, or validated, sessions continue with default or last-known-good validated values, and error or warning diagnostics remain visible in config diagnostics and non-interactive outputs. Config writes remain blocked while the file cannot be read or parsed.
+
 Project rules are read from `.kimi-code/local.toml` only in the local environment when the workspace is trusted, with an omitted `scope` defaulting to `project`. Remote project rules are not supported. Project rule changes take effect in a new session and are not hot-reloaded.
 
 You can also set `dangerous_command_guard = false` under `[permission]` to turn off every built-in guard confirmation policy entirely: dangerous commands, access to sensitive files such as `.env` or `id_rsa`, and access to git control paths no longer ask for confirmation in Always Ask and Ask When Needed mode (these policies are never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting. With all built-in guards off, only `ask` rules you configured yourself can still prompt in Ask When Needed mode; in Always Ask mode, tools that are not auto-approved continue to prompt as before. The hard block that stops `Read`/`Write`/`Edit` from touching secret files stays in effect. Use this switch only for environments that already gate commands outside the agent.
@@ -583,9 +583,11 @@ MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project
 
 Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
 
-Remote working directories must be absolute POSIX paths or Windows drive paths; relative paths and `~` are not expanded. See [Windows target environments](../guides/remote-environment.md#windows-target-environments) for the Git Bash and launcher requirements.
+Remote working directories must be absolute POSIX paths or Windows drive paths; relative paths and `~` are not expanded. See [Windows targets](../guides/remote-environment.md#windows-targets) for the Git Bash and launcher requirements.
 
 The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without a `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
+
+If the environment section is invalid, implicit session creation uses the last valid declarations when available instead of failing, or falls back to the local environment with a warning otherwise. This can change where commands run; check config diagnostics before relying on a configured remote environment.
 
 ### SSH entries
 
@@ -657,6 +659,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |
 | `auto_session_title` | `boolean` | `true` | Let the TUI automatically generate a session title after the first completed turn; `false` opts out the TUI only, without affecting the global `auto_session_title` gate in `config.toml` |
+| `follow_up_behavior` | `string` | `queue` | Whether `Enter` queues follow-ups (`queue`) or steers them into the running turn (`steer`) while the agent is working |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
@@ -682,6 +685,7 @@ render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit
 auto_session_title = true # false stops the TUI from auto-generating a session title after the first turn
+# follow_up_behavior = "queue" # "queue" | "steer"
 
 [editor]
 command = "" # empty uses $VISUAL / $EDITOR
@@ -708,7 +712,7 @@ Changes apply on the next start, or immediately with `/reload-tui` (which reload
 
 In addition to the user-level files under `~/.kimi-code`, Kimi Code reads a project-local configuration file at `<project-root>/.kimi-code/local.toml`. It holds settings that are specific to one project checkout and typically should not be shared with teammates.
 
-Earlier versions of [`/add-dir`](../reference/slash-commands.md) wrote remembered directories to this file; current versions write them to the workspace registry in `~/.kimi-code/projects.json` instead, and `local.toml` is now a read-only legacy field that nothing writes to. Sessions of implicit workspaces (entered by directory in the terminal) still merge its `additional_dir` into the additional directories; sessions of explicitly created (managed) workspaces no longer read it. To move legacy entries into the registry, use the import action in the client's create/edit workspace dialog (backed by [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api.md#get-apiv1workspacesproject-config-dirs)); imported entries are registry-managed and removals take effect immediately.
+Earlier versions of [`/add-dir`](../reference/slash-commands.md) wrote remembered directories to this file; current versions write them to the workspace registry in `~/.kimi-code/projects.json` instead, and `local.toml` is now a read-only legacy field that nothing writes to. Sessions of implicit workspaces (entered by directory in the terminal) still merge its `additional_dir` into the additional directories; sessions of explicitly created (managed) workspaces no longer read it. To move legacy entries into the registry, use the import action in the client's create/edit workspace dialog (backed by the local server's `GET /api/v1/workspaces/project-config-dirs`); imported entries are registry-managed and removals take effect immediately.
 
 ### `[workspace]`
 

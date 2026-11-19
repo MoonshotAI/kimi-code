@@ -1,5 +1,5 @@
 import { Service } from '#/_base/di/service';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentPlanService } from '#/features/plan/plan';
@@ -25,7 +25,7 @@ export class PlanModeInjection extends Service {
   constructor(
     injector: IAgentReminderService,
     @IAgentPlanService private readonly plan: IAgentPlanService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
   ) {
     super();
@@ -47,7 +47,7 @@ export class PlanModeInjection extends Service {
           }
           return fullReminder(planFilePath);
         }
-        const variant = planModeReminderVariant(injectedAt, this.context.get());
+        const variant = planModeReminderVariant(injectedAt, this.context.history());
         if (variant === 'full') return fullReminder(planFilePath);
         if (variant === 'sparse') return sparseReminder(planFilePath);
         return undefined;

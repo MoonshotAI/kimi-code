@@ -97,7 +97,10 @@ function setup(options: {
       agentContext: stubAgentContext(agentId, 1),
       scope: (subKey?: string) => subKey ?? '',
     };
-    const environment = new AgentEnvironmentService(scopeContext, binding, registry as unknown as IEnvironmentService, eventBus, session, workspaceInfo);
+    const environment = new AgentEnvironmentService(scopeContext, binding, registry as unknown as IEnvironmentService, eventBus, session, workspaceInfo, {
+      _serviceBrand: undefined,
+      decorate: (lease) => lease,
+    });
     const shadow = new AgentWorkspaceContextService(sessionState, {
       current: environment,
       onDidChange: () => ({ dispose: () => {} }),
