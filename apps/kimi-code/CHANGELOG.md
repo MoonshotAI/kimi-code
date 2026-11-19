@@ -1,5 +1,61 @@
 # @moonshot-ai/kimi-code
 
+## 2.7.0
+
+### Minor Changes
+
+- [#4895](https://github.com/MoonshotAI/kimi-code/pull/4895) [`88e3c20`](https://github.com/MoonshotAI/kimi-code/commit/88e3c20739a20a9a4003e366db7ecad9b88e10bd) Thanks [@sailist](https://github.com/sailist)! - Add support for Amazon Bedrock providers, configured with `type = "bedrock"` and `AWS_REGION`.
+
+- [#4754](https://github.com/MoonshotAI/kimi-code/pull/4754) [`482936a`](https://github.com/MoonshotAI/kimi-code/commit/482936afceaec4d513aa28f7b7e6b461e35e105f) Thanks [@sailist](https://github.com/sailist)! - Add experimental next-prompt predictions in the TUI after completed turns. Enable with KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1 and press Tab or Right Arrow to accept.
+
+- [#5042](https://github.com/MoonshotAI/kimi-code/pull/5042) [`7e2c565`](https://github.com/MoonshotAI/kimi-code/commit/7e2c565e31fb81169a30bc924ff0f88a36f88c66) Thanks [@7Sageer](https://github.com/7Sageer)! - The feedback dialog accepts multiple lines, and thanks you for helping improve Kimi.
+
+- [#4890](https://github.com/MoonshotAI/kimi-code/pull/4890) [`90d3a66`](https://github.com/MoonshotAI/kimi-code/commit/90d3a66c644d56f2e3a9d4ae9e55e59375fb750d) Thanks [@Grapedge](https://github.com/Grapedge)! - Add a Follow-up behavior setting under /settings; pick Steer to make Enter steer your message into the running turn instead of queueing it.
+
+- [#5049](https://github.com/MoonshotAI/kimi-code/pull/5049) [`a09bf85`](https://github.com/MoonshotAI/kimi-code/commit/a09bf8573cdfaa611366b7ca8c7bfefb1727409b) Thanks [@Grapedge](https://github.com/Grapedge)! - View running foreground agents and their activity in `/tasks`.
+
+- [#4966](https://github.com/MoonshotAI/kimi-code/pull/4966) [`84439d5`](https://github.com/MoonshotAI/kimi-code/commit/84439d5f4ec7bcf69f3e1a5ba0e3145d8dddff08) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Add `kimi web --json`, `GET /api/v1/sessions/{session_id}/interactions`, `POST /api/v1/sessions/{session_id}:wait`, and `GET /api/v1/kap.md` for HTTP-driven KAP automation.
+
+- [#4784](https://github.com/MoonshotAI/kimi-code/pull/4784) [`13d363e`](https://github.com/MoonshotAI/kimi-code/commit/13d363e1800152daecffd80b67f0986d492df811) Thanks [@7Sageer](https://github.com/7Sageer)! - Run the local server without opening a browser with `kimi server` (pass `--open` to open the web UI).
+
+### Patch Changes
+
+- [#4910](https://github.com/MoonshotAI/kimi-code/pull/4910) [`6130601`](https://github.com/MoonshotAI/kimi-code/commit/61306018717cc45caa73ce591f4ef51f41981a29) Thanks [@7Sageer](https://github.com/7Sageer)! - Allow resuming sessions that are open in another client.
+
+- [#4886](https://github.com/MoonshotAI/kimi-code/pull/4886) [`1fc7be4`](https://github.com/MoonshotAI/kimi-code/commit/1fc7be400100695a93ee5d12d812e626b608280d) Thanks [@pvzheroes125](https://github.com/pvzheroes125)! - Fix corrupted characters in the truncated output of background Bash tasks.
+
+- [#5053](https://github.com/MoonshotAI/kimi-code/pull/5053) [`50ec3c3`](https://github.com/MoonshotAI/kimi-code/commit/50ec3c3940a3f265cf1b99123d6d2ebf9c23aaa0) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Expose `KIMI_CODE_SESSION_ID` and `KIMI_CODE_WORKSPACE_ID` in `Bash` tool child processes.
+
+- [#5096](https://github.com/MoonshotAI/kimi-code/pull/5096) [`cab0c0e`](https://github.com/MoonshotAI/kimi-code/commit/cab0c0e5ad031cbdb172f1337bbebbceaebe2cba) Thanks [@sailist](https://github.com/sailist)! - Prevent compaction requests from exceeding the output limits of Claude Opus 5 and Haiku 5 models.
+
+- [#4844](https://github.com/MoonshotAI/kimi-code/pull/4844) [`4108143`](https://github.com/MoonshotAI/kimi-code/commit/410814349d4677fc2844ad79069b0ad4a751303a) Thanks [@Grapedge](https://github.com/Grapedge)! - Show CronCreate, CronDelete, and MCP authorization calls on their own line instead of in the compact tool call summary, with the authorization link shown while it waits and the reason shown if it fails.
+
+- [#4891](https://github.com/MoonshotAI/kimi-code/pull/4891) [`f538d53`](https://github.com/MoonshotAI/kimi-code/commit/f538d534cc9f4e96f4bacfdf02e28df682a4f611) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Remove `/api/v2/mcp/*` and `POST /api/v1/mcp/servers/{id}:restart`, serving MCP server and OAuth management on `/api/v1/mcp/*` instead of the live-session `/api/v1/mcp/servers` list.
+
+- [#4891](https://github.com/MoonshotAI/kimi-code/pull/4891) [`f538d53`](https://github.com/MoonshotAI/kimi-code/commit/f538d534cc9f4e96f4bacfdf02e28df682a4f611) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Remove `/api/v2/sessions*` and serve grouped views, git metadata, id projections, and batch `:archive`/`:restore` on `/api/v1/sessions*`, replacing `include_archive`, `archived_only`, and `exclude_empty` with `archived` and `has_prompt`.
+
+- [#4979](https://github.com/MoonshotAI/kimi-code/pull/4979) [`fec7428`](https://github.com/MoonshotAI/kimi-code/commit/fec742878d73678082b304c887e4fb1564088c54) Thanks [@7Sageer](https://github.com/7Sageer)! - Restore the original environment and tools after closing an ACP session preview.
+
+- [#5021](https://github.com/MoonshotAI/kimi-code/pull/5021) [`5ae9739`](https://github.com/MoonshotAI/kimi-code/commit/5ae973905cb3b2f80e3a781ec21f7bc5e76ee205) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix /btw failing when another client has updated the current session.
+
+- [#5013](https://github.com/MoonshotAI/kimi-code/pull/5013) [`2931c7e`](https://github.com/MoonshotAI/kimi-code/commit/2931c7efd542a7cb2486faec0fc35bc2fde0f533) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix session list loading for grouped sessions across SSH hosts.
+
+- [#5015](https://github.com/MoonshotAI/kimi-code/pull/5015) [`de1fdaa`](https://github.com/MoonshotAI/kimi-code/commit/de1fdaa89d34800e6f37af88987c9adc9baab8c4) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix unpaginated session ID lists across SSH hosts and honor the requested sort order.
+
+- [#4868](https://github.com/MoonshotAI/kimi-code/pull/4868) [`68b849c`](https://github.com/MoonshotAI/kimi-code/commit/68b849c90d38f08fd1e11fdb37694e6b856eb90a) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Fix subagents timing out immediately in `kimi -p` and when `[subagent] timeout_ms = 0` is set.
+
+- [#4866](https://github.com/MoonshotAI/kimi-code/pull/4866) [`0ea324c`](https://github.com/MoonshotAI/kimi-code/commit/0ea324cafb4b1754ae5b1737147a141a618d4a4e) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Fix conversation history disappearing during live trimming, long-turn folding, and replay of damaged session journals.
+
+- [#5056](https://github.com/MoonshotAI/kimi-code/pull/5056) [`b37c9bb`](https://github.com/MoonshotAI/kimi-code/commit/b37c9bb857d556034afcb0004beaba6e2c2bb15a) Thanks [@huangzheng2016](https://github.com/huangzheng2016)! - Fix Vertex AI authentication with Google ADC and honor the configured project and location.
+
+- [#5102](https://github.com/MoonshotAI/kimi-code/pull/5102) [`0b73b62`](https://github.com/MoonshotAI/kimi-code/commit/0b73b629dea1a8918813d2e3eb46bb597a5dad32) Thanks [@7Sageer](https://github.com/7Sageer)! - Keep local projects visible when an SSH host stops responding and fix loading older project sessions in the Web sidebar.
+
+- [#5045](https://github.com/MoonshotAI/kimi-code/pull/5045) [`baa7b4b`](https://github.com/MoonshotAI/kimi-code/commit/baa7b4bcfcb86f558318f220686c60eddd9ab4a4) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Include the host `product` name in `~/.kimi-code/server/instances/*.json` and `GET /api/v1/meta`.
+
+- [#4784](https://github.com/MoonshotAI/kimi-code/pull/4784) [`13d363e`](https://github.com/MoonshotAI/kimi-code/commit/13d363e1800152daecffd80b67f0986d492df811) Thanks [@7Sageer](https://github.com/7Sageer)! - Support configuring SSH hosts for Kimi Code projects, with each host using its own Kimi login and optional copied custom model providers.
+
+  Fix missing or out-of-order sessions when paging projects across SSH hosts.
+
 ## 2.6.3
 
 ### Patch Changes

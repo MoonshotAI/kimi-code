@@ -1,5 +1,79 @@
 # kimi-code-app
 
+## 1.4.0
+
+### Minor Changes
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Connect external agents such as Claude Code, Codex, and Cursor to this desktop app to hand off sessions, review history, and collaborate across turns.
+
+### Patch Changes
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Show background task notifications as collapsible rows styled like tool calls, with correct task duration and status.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Expose `KIMI_CODE_SESSION_ID` and `KIMI_CODE_WORKSPACE_ID` to shell tool subprocesses.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix annotations not working on local HTML files in the built-in browser.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix the built-in browser being flagged as insecure when signing in on some websites.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Browser tabs (including the remote control page) now show a dynamic favicon, and the tab title displays the project and current session, configurable in Settings > Appearance.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Select regions, rows, or columns in Markdown tables and copy them via right-click or keyboard shortcuts.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Move the browser tab title preview below the setting and show a single tab.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Shrink the screenshot magnifier and color picker so they cover less of the screen.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Add Qwen Coding Plan (global and China sites) as selectable providers.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix image load failures potentially triggering auth rate limits.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix the model and permission popups overflowing the screen on narrow and mobile layouts.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix duplicate unread/read state on earlier steered messages when steering multiple times in a row.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix known issues in session resume, background notifications, model responses, and Windows WebBridge updates.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix repeated cryptic "action failed" toasts when opening the model picker with an expired provider credential.
+
+- [#5098](https://github.com/MoonshotAI/kimi-code/pull/5098) [`63b94bc`](https://github.com/MoonshotAI/kimi-code/commit/63b94bc4c0169bf362dac2071990596933f6c959) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Fix table action buttons being clipped when the side chat is open.
+
+- [#5102](https://github.com/MoonshotAI/kimi-code/pull/5102) [`0b73b62`](https://github.com/MoonshotAI/kimi-code/commit/0b73b629dea1a8918813d2e3eb46bb597a5dad32) Thanks [@7Sageer](https://github.com/7Sageer)! - Keep local projects visible when an SSH host stops responding and fix loading older project sessions in the sidebar.
+
+- [#5090](https://github.com/MoonshotAI/kimi-code/pull/5090) [`08997af`](https://github.com/MoonshotAI/kimi-code/commit/08997afe2b49b67f790cecb7c2c6a8fab86c40af) Thanks [@liruifengv](https://github.com/liruifengv)! - Show the update button when the browser extension reports an update while in the partial state.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix the bottom edge of CJK subscripts being clipped in block math.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Highlight the "send while running" setting when jumping to it from the composer hint bar.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Add mark as unread/read to the session context menu.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix the hover tooltip collapsing into a small dot when renaming a pinned session.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Support pinning projects in the sidebar's pinned section, with single-row display and drag-to-reorder alongside pinned sessions.
+
+- [#5037](https://github.com/MoonshotAI/kimi-code/pull/5037) [`3a05a7e`](https://github.com/MoonshotAI/kimi-code/commit/3a05a7ec93f30b7771c101661d21ce1f5b2f2435) Thanks [@sailist](https://github.com/sailist)! - Fix remote control connections ignoring the system HTTP/HTTPS proxy environment variables.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Restore the directory row and action buttons in the new project dialog; the full path now shows on hover.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Messages sent while the agent is running now steer the current turn immediately by default, with a first-time hint; switch back to queueing in Settings.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix the macOS IME candidate window being hidden behind the screenshot overlay.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Connect to SSH hosts and create projects on them. Each host uses its own Kimi account, and remote sessions keep running while this machine is asleep or offline.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Show the current session ID in the session status dialog.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Use square stop icons for background tasks and keep completed, failed, and stopped states in the task bar.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix stopping a session waking up sessions that were already closed.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Unify button styles and interactions across the app.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Unify the style of undo, archive, delete, and export toasts and show them centered at the top.
+
+- [#5079](https://github.com/MoonshotAI/kimi-code/pull/5079) [`5db75e0`](https://github.com/MoonshotAI/kimi-code/commit/5db75e0c20dd74fa92225f26c95116fcc4594cb1) Thanks [@liruifengv](https://github.com/liruifengv)! - Support creating a new folder directly while picking a directory when adding a project.
+
 ## 1.3.7
 
 ### 新功能
