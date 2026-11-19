@@ -1213,6 +1213,7 @@ describe('`kimi server ensure-daemon`', () => {
 
   it.skipIf(process.platform === 'win32')('authenticates the IPC client before reading daemon metadata', async () => {
     const socketPath = join(homeDir, 'daemon.sock');
+    let receivedToken: string | undefined;
     const server = createServer((socket) => {
       let pending = '';
       socket.on('data', (chunk: Buffer) => {
@@ -1222,7 +1223,7 @@ describe('`kimi server ensure-daemon`', () => {
           const frame = JSON.parse(pending.slice(0, newline)) as { type: string; id?: string; token?: string };
           pending = pending.slice(newline + 1);
           if (frame.type === 'ipc.auth') {
-            expect(frame.token).toBe('test-ipc-secret');
+            receivedToken = frame.token;
             socket.write('{"type":"ipc.auth.ok"}\n');
           } else if (frame.type === 'http.req') {
             const body = Buffer.from(JSON.stringify({ data: { server_version: '1.2.3' } })).toString('base64');
@@ -1236,6 +1237,7 @@ describe('`kimi server ensure-daemon`', () => {
     });
     try {
       const daemon = await connectUnixSocket(socketPath, 'test-ipc-secret');
+      expect(receivedToken).toBe('test-ipc-secret');
       expect(daemon?.version).toBe('1.2.3');
       daemon?.close();
     } finally {
