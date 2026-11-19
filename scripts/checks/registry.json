@@ -31,6 +31,11 @@
       "why": "New tests must script models through the shared testkit; this check freezes the legacy model doubles at their current use per file so new cases cannot add to them."
     },
     {
+      "run": "node scripts/checks/quarantine.mjs",
+      "in": "package.json#scripts.lint",
+      "why": "A quarantined Desktop journey must name an owner, a reason and an expiry date, and a protected or smoke journey can never be quarantined; without it a quarantine quietly becomes permanent."
+    },
+    {
       "run": "node scripts/checks/instructions.mjs",
       "in": "package.json#scripts.lint",
       "why": "Agents follow the paths and links in AGENTS.md files, and every session loads the root one; this check fails on a dead reference and keeps the root file within its byte budget."
