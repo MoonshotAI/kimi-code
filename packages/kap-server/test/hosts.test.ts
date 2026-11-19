@@ -1174,9 +1174,12 @@ describe('stdio rpc transport', () => {
       authTokenService: { _serviceBrand: undefined, getToken: () => webBearer, isValid: validateWebCredential },
     } as const;
     try {
-      await expect(startServer({ ...options, ipcPsk: Buffer.alloc(0) })).rejects.toThrow('32-byte key');
-      if (process.platform === 'win32') {
-        await expect(startServer(options)).rejects.toThrow('32-byte key');
+      const invalidOptions = [
+        { ...options, ipcPsk: Buffer.alloc(0) },
+        ...(process.platform === 'win32' ? [options] : []),
+      ];
+      for (const invalid of invalidOptions) {
+        await expect(startServer(invalid)).rejects.toThrow('32-byte key');
       }
       const server = await startServer({ ...options, ipcPsk });
       const client = rpcClient(socketPath, ipcPsk);

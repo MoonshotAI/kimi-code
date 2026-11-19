@@ -279,7 +279,7 @@ export async function startIpcRpcServer(
         pskCallback: (_socket, identity) => identity === IPC_PSK_IDENTITY ? psk : null,
       }, accept).on('tlsClientError', (_error, socket) => socket.destroy());
   const clients = new Set<Socket>();
-  server.on('connection', (socket) => {
+  server.on('connection', (socket: Socket) => {
     clients.add(socket);
     socket.once('close', () => clients.delete(socket));
   });
