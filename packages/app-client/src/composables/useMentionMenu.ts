@@ -415,7 +415,11 @@ export function useMentionMenu(deps: MentionMenuDeps) {
 
   function update(): void {
     const mt = getMentionToken();
-    if (mt !== null && mt.start === dismissedStart) return;
+    if (mt !== null && mt.start === dismissedStart) {
+      close();
+      dismissedStart = mt.start;
+      return;
+    }
     const search = searchFiles();
     dismissed = false;
     userNavigated = false;

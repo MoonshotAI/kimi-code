@@ -33,11 +33,13 @@ export function useSlashMenu(deps: SlashMenuDeps) {
   const active = ref(0);
 
   let dismissed = false;
+  let completed: SlashCommand | null = null;
 
   watch(
     text,
     (val) => {
       if (slashMenuQuery(val) === null) dismissed = false;
+      if (completed !== null && val !== completed.name) completed = null;
     },
     { flush: 'sync' },
   );
@@ -52,7 +54,10 @@ export function useSlashMenu(deps: SlashMenuDeps) {
     const matches = filterCommandMatches(`/${query}`, buildSlashItems(skills(), { towerEnabled: towerEnabled?.() === true }), resolveDesc);
     items.value = matches.map((match) => match.item);
     ranges.value = matches.map((match) => match.ranges);
-    active.value = 0;
+    const kept = completed;
+    active.value = kept === null
+      ? 0
+      : Math.max(0, items.value.findIndex((item) => item.name === kept.name && item.skillPath === kept.skillPath));
     open.value = val.startsWith('/') || matches.length > 0;
   }
 
@@ -71,6 +76,7 @@ export function useSlashMenu(deps: SlashMenuDeps) {
       select(item);
       return;
     }
+    completed = item;
     if (text.value === item.name) return;
     text.value = item.name;
     update();

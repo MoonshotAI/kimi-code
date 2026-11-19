@@ -2030,6 +2030,10 @@ function handleKeydown(e: KeyboardEvent): boolean {
       closeMentionMenu();
       return false;
     }
+    if (e.key === 'Enter' && mentionItems.value.length === 0 && mentionLoading.value) {
+      e.preventDefault();
+      return true;
+    }
     if (mentionItems.value.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();

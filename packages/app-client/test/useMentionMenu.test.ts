@@ -1123,6 +1123,19 @@ describe('useMentionMenu — dismiss (Esc)', () => {
     type(ctx, '@go');
     expect(ctx.mention.open.value).toBe(true);
   });
+
+  it('closes a later token\'s menu when an edit returns to the dismissed token', () => {
+    const ctx = setup('@g', undefined, { skills });
+    ctx.mention.update();
+    ctx.mention.dismiss();
+    type(ctx, '@g @go');
+    expect(ctx.mention.open.value).toBe(true);
+    type(ctx, '@g');
+    expect(ctx.mention.open.value).toBe(false);
+    expect(ctx.mention.items.value).toEqual([]);
+    type(ctx, '@go');
+    expect(ctx.mention.open.value).toBe(false);
+  });
 });
 
 describe('useMentionMenu — sessions', () => {

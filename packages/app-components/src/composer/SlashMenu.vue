@@ -157,6 +157,7 @@ const maskImage = computed(() => {
 });
 
 const scrollMaxHeight = ref('');
+const showHints = computed(() => props.layout === 'popup' && props.items.length > 0);
 
 function clampScrollToViewport(): void {
   const menu = menuEl.value;
@@ -234,6 +235,9 @@ watch(
     void nextTick(scrollActiveIntoView);
   },
 );
+watch(showHints, () => {
+  if (props.layout === 'popup') void nextTick(clampScrollToViewport);
+});
 watch(
   () => props.items,
   () => {
@@ -270,7 +274,7 @@ watch(
     </div>
     <!-- Overlay scroll indicator (the native bar is hidden — it ate row width) -->
     <div v-if="thumb && items.length > 0" class="scroll-thumb" @pointerdown="onThumbPointerDown" :style="{ top: `${thumb.top}px`, height: `${thumb.height}px` }" />
-    <ComposerMenuHints v-if="layout === 'popup' && items.length > 0" />
+    <ComposerMenuHints v-if="showHints" />
   </div>
 </template>
 

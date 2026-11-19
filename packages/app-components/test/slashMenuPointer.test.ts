@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { createApp, h, nextTick, type App } from 'vue';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createApp, h, nextTick, ref, type App } from 'vue';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import SlashMenu from '../src/composer/SlashMenu.vue';
 import slashMenuSource from '../src/composer/SlashMenu.vue?raw';
@@ -236,5 +236,70 @@ describe('skill grouping', () => {
     expect(names.map((name) => name.textContent)).toEqual(['plan', 'skill:lark-calendar']);
     expect(names.map((name) => [...name.querySelectorAll('.slash-match')].map((hit) => hit.textContent)))
       .toEqual([['pl'], ['s', 'lark']]);
+  });
+});
+
+describe('popup height clamp', () => {
+  const HINTS_HEIGHT = 30;
+  const originalOffsetParent = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetParent')!;
+  const originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')!;
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetParent', {
+      configurable: true,
+      get: () => host,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('composer-menu-hints') ? HINTS_HEIGHT : 0;
+      },
+    });
+    host.getBoundingClientRect = () => ({ top: 300, bottom: 340, left: 0, right: 600, width: 600, height: 40, x: 0, y: 300, toJSON: () => ({}) });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetParent', originalOffsetParent);
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', originalOffsetHeight);
+  });
+
+  function listMaxHeight(selector: string): number {
+    return Number.parseFloat(document.querySelector<HTMLElement>(selector)!.style.maxHeight);
+  }
+
+  it('shrinks the slash list when the key hints appear with the first matches', async () => {
+    const items = ref<Array<{ name: string; desc: string }>>([]);
+    app = createApp({ render: () => h(SlashMenu, { items: items.value, activeIndex: 0 }) });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+    const empty = listMaxHeight('.slash-scroll');
+    expect(empty).toBeGreaterThan(HINTS_HEIGHT);
+
+    items.value = [{ name: '/new', desc: 'commands.new.desc' }];
+    await nextTick();
+    expect(document.querySelector('.composer-menu-hints')).not.toBeNull();
+    await vi.waitFor(() => expect(listMaxHeight('.slash-scroll')).toBe(empty - HINTS_HEIGHT));
+  });
+
+  it('shrinks the mention list when the key hints appear with the first results', async () => {
+    const loaded = ref(false);
+    app = createApp({
+      render: () => h(MentionMenu, {
+        items: loaded.value ? [{ kind: 'file', file: { path: 'src/a.ts', name: 'a.ts' } }] : [],
+        activeIndex: 0,
+        loading: !loaded.value,
+      }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+    const searching = listMaxHeight('.mention-scroll');
+    expect(searching).toBeGreaterThan(HINTS_HEIGHT);
+
+    loaded.value = true;
+    await nextTick();
+    expect(document.querySelector('.composer-menu-hints')).not.toBeNull();
+    await vi.waitFor(() => expect(listMaxHeight('.mention-scroll')).toBe(searching - HINTS_HEIGHT));
   });
 });

@@ -7,6 +7,7 @@ const clientState = vi.hoisted(() => ({
   activity: null as null | { value: string },
   working: null as null | { value: boolean },
   visibleWorkspace: null as null | { value: { hostId?: string } | null },
+  searchFiles: null as null | ((query: string) => Promise<unknown[]>),
 }));
 
 vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
@@ -26,7 +27,9 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
       working: clientState.working!,
       isStartingFirstPrompt: vue.ref(false),
       queued: vue.ref([]),
-      searchFiles: vi.fn(async () => []),
+      searchFiles: async (query: string) => clientState.searchFiles?.(query) ?? [],
+      sessionMentionCandidates: vue.ref([]),
+      searchSessionMentions: vi.fn(async () => []),
       uploadImage: vi.fn(),
       status: vue.ref({}),
       thinking: vue.ref('high'),
@@ -359,5 +362,39 @@ describe('Composer running send mode and first-time steer tip', () => {
     expect(dialogs.showSettings.value).toBe(true);
     expect(dialogs.settingsInitialTab.value).toBe('hosts');
     expect(hostsStore().focusHostId).toBe('devbox');
+  });
+});
+
+describe('Composer mention menu while file results are pending', () => {
+  afterEach(() => {
+    clientState.searchFiles = null;
+  });
+
+  it('keeps Enter from sending the unfinished token until results arrive', async () => {
+    let resolveSearch!: (files: unknown[]) => void;
+    clientState.searchFiles = () => new Promise((resolve) => {
+      resolveSearch = resolve;
+    });
+    const { setDraft, steers } = await mountFreshComposer('en');
+    clientState.activity!.value = 'running';
+    clientState.working!.value = true;
+    await nextTick();
+    const input = host.querySelector('[aria-label="Message input"]')!;
+
+    setDraft('@read');
+    await nextTick();
+    await nextTick();
+    expect(host.querySelector('.mention-searching')).not.toBeNull();
+    expect(host.querySelectorAll('.mention-item')).toHaveLength(0);
+
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(steers).toHaveLength(0);
+
+    resolveSearch([]);
+    await vi.waitFor(() => expect(host.querySelector('.mention-searching')).toBeNull());
+    pressKey(input, { key: 'Enter' });
+    await nextTick();
+    expect(steers).toHaveLength(1);
   });
 });

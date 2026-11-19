@@ -184,6 +184,24 @@ describe('useSlashMenu — complete (Tab)', () => {
     expect(inserted).toEqual(['write goal']);
     expect(text.value).toBe('/wri');
   });
+
+  it('keeps the completed variant active when two skills share a name', () => {
+    const skills: AppSkill[] = [
+      { name: 'review', description: 'First', path: '/a/review/SKILL.md', source: 'project' },
+      { name: 'review', description: 'Second', path: '/b/review/SKILL.md', source: 'project' },
+    ];
+    const { text, slash } = setup('/rev', skills);
+    slash.update();
+    const second = slash.items.value.find((item) => item.skillPath === '/b/review/SKILL.md')!;
+    slash.complete(second);
+    expect(text.value).toBe('/skill:review');
+    expect(slash.items.value[slash.active.value]?.skillPath).toBe('/b/review/SKILL.md');
+    slash.update();
+    expect(slash.items.value[slash.active.value]?.skillPath).toBe('/b/review/SKILL.md');
+    text.value = '/skill:revie';
+    slash.update();
+    expect(slash.active.value).toBe(0);
+  });
 });
 
 describe('useSlashMenu — select', () => {
