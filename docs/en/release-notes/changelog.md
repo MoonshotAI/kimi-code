@@ -6,6 +6,28 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.7.0 (2026-11-19)
+
+### Features
+
+- Add support for Amazon Bedrock providers, configured with `type = "bedrock"` and `AWS_REGION`.
+- Add a Follow-up behavior setting under `/settings`; choose Steer to make Enter steer your message into the running turn instead of queueing it.
+- View running foreground agents and their activity in `/tasks`.
+- Add `kimi web --json`, `GET /api/v1/sessions/{session_id}/interactions`, `POST /api/v1/sessions/{session_id}:wait`, and `GET /api/v1/kap.md` for HTTP-driven KAP automation.
+- Run the local server without opening a browser with `kimi server`; pass `--open` to open the web UI.
+- Expose `KIMI_CODE_SESSION_ID` and `KIMI_CODE_WORKSPACE_ID` in `Bash` tool child processes.
+- Support configuring SSH hosts for Kimi Code projects, with each host using its own Kimi login and optional copied custom model providers.
+
+### Polish
+
+- Allow resuming sessions that are open in another client.
+- Consolidate KAP MCP and session APIs under `/api/v1`; remove the legacy v2 APIs, MCP restart endpoint, and old session filters in favor of `archived` and `has_prompt`.
+
+### Bug Fixes
+
+- Fix subagents timing out immediately in `kimi -p` and when `[subagent] timeout_ms = 0` is set.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.6.3 (2026-11-17)
 
 ### Bug Fixes
