@@ -387,7 +387,9 @@ describe('actor interruption', () => {
       return {
         parts: [{ type: 'text', text: 'pending' }],
         error: new Promise<never>((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          signal.addEventListener('abort', () => {
+            reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason)));
+          }, { once: true });
         }),
       };
     });
