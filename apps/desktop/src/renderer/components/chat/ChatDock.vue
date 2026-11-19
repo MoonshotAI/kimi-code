@@ -13,6 +13,7 @@ import { Composer } from '@moonshot-ai/app-components';
 import { GoalPanel } from '@moonshot-ai/app-components';
 import { PlanPanel } from '@moonshot-ai/app-components';
 import { QuestionCard } from '@moonshot-ai/app-components';
+import { CreateDecisionCard, CreateInvalidCard, useCreateCardActions } from '@moonshot-ai/app-components';
 import ApprovalCard from './ApprovalCard.vue';
 import { TasksPane } from '@moonshot-ai/app-components';
 import { SubagentGrid } from '@moonshot-ai/app-components';
@@ -92,6 +93,13 @@ const focusComposer = computed(
 const panelExpanded = computed(() => panelApi?.isExpanded() === true);
 const pfcHost = computed(() => panelApi?.pfcHost() ?? null);
 const hasPendingCard = computed(() => props.pendingQuestion != null || props.pendingApproval != null);
+const {
+  decisionCard: worktreeDecisionCard,
+  invalidCard: worktreeInvalidCard,
+  busyAction: worktreeBusyAction,
+  run: runWorktreeAction,
+} = useCreateCardActions();
+const composerHidden = computed(() => hasPendingCard.value || worktreeInvalidCard.value !== null);
 
 const goalStatusLabel = computed(() => {
   switch (goal.value?.status) {
@@ -221,7 +229,7 @@ function addFiles(files: File[]): boolean {
 }
 
 function hasInsertableComposer(): boolean {
-  return composerRef.value !== null && !hasPendingCard.value;
+  return composerRef.value !== null && !composerHidden.value;
 }
 
 function loadAttachmentsForEdit(atts: TurnAttachment[]): void {
@@ -307,8 +315,8 @@ watch(
   },
 );
 
-watch(hasPendingCard, (pending) => {
-  if (pending) composerRef.value?.closeOverlays?.();
+watch(composerHidden, (hidden) => {
+  if (hidden) composerRef.value?.closeOverlays?.();
 });
 
 let dockResizeObserver: ResizeObserver | null = null;
@@ -681,8 +689,20 @@ defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathM
     </Teleport>
     <slot name="notice" />
     <Teleport :to="pfcHost" :disabled="!focusComposer || pfcHost === null">
+      <CreateInvalidCard
+        v-if="!hasPendingCard && worktreeInvalidCard"
+        :view="worktreeInvalidCard"
+        :busy-action="worktreeBusyAction"
+        @action="runWorktreeAction"
+      />
+      <CreateDecisionCard
+        v-else-if="!hasPendingCard && worktreeDecisionCard"
+        :view="worktreeDecisionCard"
+        :busy-action="worktreeBusyAction"
+        @action="runWorktreeAction"
+      />
       <Composer
-        :style="hasPendingCard ? { display: 'none' } : undefined"
+        :style="composerHidden ? { display: 'none' } : undefined"
         :status-note="props.statusNote"
         :before-submit="props.beforeSubmit"
         ref="composerRef"

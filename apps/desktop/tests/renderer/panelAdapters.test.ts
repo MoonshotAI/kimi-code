@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppWorkspace, KimiWebApi } from '@moonshot-ai/app-core/api';
+import type { AppSession, AppWorkspace, KimiWebApi } from '@moonshot-ai/app-core/api';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import { resetKimiClientDeps, setKimiClientDeps } from '@moonshot-ai/app-client/client';
 import { filesStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
@@ -113,6 +113,54 @@ describe('desktop file preview panel adapter workspace roots', () => {
 
     treeProps(tab, ctx).onSelectFile('/a/next.ts');
     expect(panel.updateTabPayload).toHaveBeenCalledWith('file-1', { path: '/a/next.ts' });
+  });
+
+  it('roots a worktree session at its worktree directory instead of the project root', () => {
+    sessionsStore().setSessions([
+      {
+        id: 's1',
+        cwd: '/wt/a',
+        workspaceId: 'wm_1',
+        worktree: {
+          path: '/wt/a',
+          setup: {
+            status: 'ready',
+            purpose: 'create',
+            request: { sourceBranch: 'main' },
+            steps: [],
+            commandsRan: 0,
+            startedAt: '2026-11-18T00:00:00.000Z',
+            script: 'none',
+          },
+        },
+      } as unknown as AppSession,
+    ]);
+    const { tab, client, ctx } = makeCtx();
+    client.status.value = { cwd: '/wt/a' };
+
+    const tree = treeProps(tab, ctx);
+    expect(tree.roots).toEqual(['/wt/a', '/b']);
+    expect(tree.root).toBe('/wt/a');
+
+    const diffTab = { id: 'diff-1', type: 'diff', payload: {} } as PanelTab;
+    for (const adapter of [panelTabProps, webPanelTabProps]) {
+      const diffCtx = {
+        panel: { detailDiffMode: ref('list'), detailDiffPath: ref(null) },
+        client: {
+          ...client,
+          changes: ref([]),
+          gitInfo: ref(null),
+          fileDiff: ref([]),
+          fileDiffTexts: ref(null),
+          fileDiffEmptyFile: ref(false),
+          selectedDiffPath: ref(null),
+          fileDiffLoading: ref(false),
+          fileDiffRefreshing: ref(false),
+        },
+        diffStale: ref(false),
+      } as unknown as PanelAdapterCtx;
+      expect((adapter(diffTab, diffCtx) as { roots: string[] }).roots).toEqual(['/wt/a', '/b']);
+    }
   });
 
   it('falls back for a single root and no registered workspace', () => {
