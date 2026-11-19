@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { InMemoryStorageService } from '#/store/backend/memory';
 
 const encoder = new TextEncoder();
 
