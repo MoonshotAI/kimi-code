@@ -1,5 +1,10 @@
 {
-  "changelog": ["@changesets/changelog-github", { "repo": "MoonshotAI/kimi-code" }],
+  "changelog": [
+    "@changesets/changelog-github",
+    {
+      "repo": "MoonshotAI/kimi-code"
+    }
+  ],
   "commit": false,
   "fixed": [],
   "linked": [],
@@ -9,7 +14,13 @@
   "ignore": [
     "@moonshot-ai/vis",
     "@moonshot-ai/vis-server",
-    "@moonshot-ai/vis-web"
+    "@moonshot-ai/vis-web",
+    "@moonshot-ai/vite-preset",
+    "@moonshot-ai/app-core",
+    "@moonshot-ai/app-i18n",
+    "@moonshot-ai/app-markdown",
+    "@moonshot-ai/app-ui",
+    "@moonshot-ai/app-client"
   ],
   "snapshot": {
     "useCalculatedVersion": true,

@@ -1,0 +1,509 @@
+import { computed, getCurrentScope, nextTick, onScopeDispose, ref, watch, type Ref } from 'vue';
+import type { FileItem } from '@moonshot-ai/app-core/client';
+import type { AppSkill } from '@moonshot-ai/app-core/api';
+import { skillIdentity } from '@moonshot-ai/app-core/lib';
+import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
+import type { TextFieldLike } from '@moonshot-ai/app-composer/runtime';
+
+export interface AttachmentMentionCandidate {
+  entry: AttachmentEntry;
+  label: string;
+}
+
+export interface BrowserMentionCandidate {
+  captureId: string;
+  label: string;
+  title: string;
+  url: string;
+  thumbnail?: string;
+}
+
+export type MentionItem =
+  | { kind: 'browser'; browser: BrowserMentionCandidate }
+  | {
+      kind: 'attachment';
+      attachment: AttachmentMentionCandidate;
+      labelMatchPositions?: number[];
+      nameMatchPositions?: number[];
+    }
+  | { kind: 'file' | 'folder'; file: FileItem }
+  | {
+      kind: 'skill';
+      skill: AppSkill;
+      matchPositions?: number[];
+    };
+
+export type MentionEntry =
+  | { kind: 'browser'; captureId: string; name: string }
+  | {
+      kind: 'attachment';
+      attId: string;
+      name: string;
+      attachmentKind: AttachmentEntry['kind'];
+    }
+  | { kind: 'file' | 'folder'; path: string; name: string }
+  | { kind: 'skill'; name: string; path: string };
+
+export interface FileSearchOptions {
+  signal?: AbortSignal;
+  root?: string;
+}
+
+export type FileSearch = (
+  query: string,
+  options?: FileSearchOptions,
+) => Promise<FileItem[]>;
+
+export interface MentionMenuDeps {
+  text: Ref<string>;
+  editorRef: Ref<TextFieldLike | null>;
+  searchFiles: () => FileSearch | undefined;
+  skills?: () => AppSkill[];
+  attachments?: () => AttachmentMentionCandidate[];
+  browsers?: () => BrowserMentionCandidate[];
+  insertMention?: (entry: MentionEntry, range: { start: number; end: number }) => void;
+  completeMention?: (text: string, range: { start: number; end: number }) => void;
+}
+
+interface MentionToken {
+  token: string;
+  start: number;
+  end: number;
+}
+
+function lowerWithMap(name: string): { lower: string; map: number[] } {
+  const lower = name.toLowerCase();
+  const map: number[] = [];
+  let unit = 0;
+  for (const ch of name) {
+    const width = ch.toLowerCase().length;
+    for (let i = 0; i < width; i++) map.push(unit + Math.min(i, ch.length - 1));
+    unit += ch.length;
+  }
+  return { lower, map };
+}
+
+function subsequencePositions(nameLower: string, queryLower: string): number[] | null {
+  const positions: number[] = [];
+  let idx = 0;
+  for (const ch of queryLower) {
+    const found = nameLower.indexOf(ch, idx);
+    if (found < 0) return null;
+    for (let unit = 0; unit < ch.length; unit++) positions.push(found + unit);
+    idx = found + ch.length;
+  }
+  return positions;
+}
+
+function skillMatchTier(nameLower: string, tokenLower: string): 4 | 3 | 2 | 1 | 0 {
+  if (nameLower === tokenLower) return 4;
+  if (nameLower.startsWith(tokenLower)) return 3;
+  if (nameLower.includes(tokenLower)) return 2;
+  if ([...tokenLower].length >= 3 && subsequencePositions(nameLower, tokenLower) !== null) return 1;
+  return 0;
+}
+
+function rankSkills(skills: AppSkill[], token: string): Array<{ skill: AppSkill; tier: 1 | 2 | 3 | 4; positions: number[] }> {
+  const q = token.toLowerCase();
+  const out: Array<{ skill: AppSkill; tier: 1 | 2 | 3 | 4; positions: number[] }> = [];
+  for (const skill of skills) {
+    const { lower, map } = lowerWithMap(skill.name);
+    const tier = skillMatchTier(lower, q);
+    if (tier === 0) continue;
+    const loweredPositions =
+      tier >= 2
+        ? Array.from({ length: q.length }, (_, i) => lower.indexOf(q) + i)
+        : subsequencePositions(lower, q)!;
+    out.push({ skill, tier, positions: loweredPositions.map((i) => map[i]!) });
+  }
+  return out;
+}
+
+function fileIsStrong(file: FileItem, tokenLower: string): boolean {
+  if (tokenLower.includes('/')) return true;
+  return file.name.toLowerCase().includes(tokenLower);
+}
+
+function fileKind(file: FileItem): 'file' | 'folder' {
+  return file.kind === 'directory' || file.path.endsWith('/') ? 'folder' : 'file';
+}
+
+function contiguousMatchPositions(value: string, token: string): number[] | undefined {
+  if (token.length === 0) return undefined;
+  const index = value.toLowerCase().indexOf(token.toLowerCase());
+  if (index === -1) return undefined;
+  return Array.from({ length: token.length }, (_, offset) => index + offset);
+}
+
+function compactSearchValue(value: string): string {
+  return value.toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function attachmentMatchTier(candidate: AttachmentMentionCandidate, token: string): number {
+  if (token.length === 0) return 1;
+  const query = token.toLowerCase();
+  const compactQuery = compactSearchValue(token);
+  let tier = 0;
+  for (const value of [candidate.label, candidate.entry.name]) {
+    const lower = value.toLowerCase();
+    if (lower === query) tier = Math.max(tier, 5);
+    else if (lower.startsWith(query)) tier = Math.max(tier, 4);
+    else if (lower.includes(query)) tier = Math.max(tier, 3);
+    else if (compactQuery.length > 0 && compactSearchValue(value).includes(compactQuery)) {
+      tier = Math.max(tier, 2);
+    }
+  }
+  return tier;
+}
+
+function rankAttachments(
+  attachments: readonly AttachmentMentionCandidate[],
+  token: string,
+): MentionItem[] {
+  return attachments
+    .map((attachment, index) => ({
+      attachment,
+      index,
+      tier: attachmentMatchTier(attachment, token),
+    }))
+    .filter(({ tier }) => tier > 0)
+    .sort((left, right) => right.tier - left.tier || left.index - right.index)
+    .map(({ attachment }) => ({
+      kind: 'attachment' as const,
+      attachment,
+      labelMatchPositions: contiguousMatchPositions(attachment.label, token),
+      nameMatchPositions: contiguousMatchPositions(attachment.entry.name, token),
+    }));
+}
+
+export function useMentionMenu(deps: MentionMenuDeps) {
+  const { text, editorRef, searchFiles, skills, attachments, browsers, insertMention, completeMention } = deps;
+
+  const open = ref(false);
+  const fileItems = ref<FileItem[]>([]);
+  const fileQuery = ref('');
+  const query = ref('');
+  const fileStale = ref(false);
+  const skillItems = ref<Array<{ skill: AppSkill; tier: 1 | 2 | 3 | 4; positions: number[] }>>([]);
+  const active = ref(0);
+  const loading = ref(false);
+  const localItemsEnabled = ref(false);
+  const attachmentItems = computed<MentionItem[]>(() =>
+    localItemsEnabled.value ? rankAttachments(attachments?.() ?? [], query.value) : [],
+  );
+
+  const items = computed<MentionItem[]>(() => {
+    const q = fileQuery.value;
+    const strongFiles: MentionItem[] = [];
+    const weakFiles: MentionItem[] = [];
+    for (const file of fileItems.value) {
+      const item: MentionItem = { kind: fileKind(file), file };
+      (fileIsStrong(file, q) ? strongFiles : weakFiles).push(item);
+    }
+    const exactSkills: MentionItem[] = [];
+    const prefixSkills: MentionItem[] = [];
+    const substringSkills: MentionItem[] = [];
+    const subsequenceSkills: MentionItem[] = [];
+    for (const { skill, tier, positions } of skillItems.value) {
+      const item: MentionItem = { kind: 'skill', skill, matchPositions: positions };
+      if (tier === 4) exactSkills.push(item);
+      else if (tier === 3) prefixSkills.push(item);
+      else if (tier === 2) substringSkills.push(item);
+      else subsequenceSkills.push(item);
+    }
+    const rankedLocalItems = [
+      ...exactSkills,
+      ...prefixSkills,
+      ...strongFiles,
+      ...substringSkills,
+      ...subsequenceSkills,
+      ...weakFiles,
+    ];
+    const mediaAttachments = attachmentItems.value.filter(
+      (item) => item.kind === 'attachment' &&
+        (item.attachment.entry.kind === 'image' || item.attachment.entry.kind === 'video'),
+    );
+    const attachedFiles = attachmentItems.value.filter(
+      (item) => item.kind === 'attachment' &&
+        item.attachment.entry.kind !== 'image' && item.attachment.entry.kind !== 'video',
+    );
+    const files = [...attachedFiles, ...strongFiles, ...weakFiles];
+    const skillResults = [
+      ...exactSkills,
+      ...prefixSkills,
+      ...substringSkills,
+      ...subsequenceSkills,
+    ];
+    const groupedLocalItems = attachedFiles.length === 0 && rankedLocalItems[0]?.kind === 'skill'
+      ? [...skillResults, ...files]
+      : [...files, ...skillResults];
+    const browserItems: MentionItem[] = localItemsEnabled.value
+      ? (browsers?.() ?? []).filter((browser) => [browser.label, browser.title, browser.url].some((value) => value.toLowerCase().includes(query.value.toLowerCase()))).map((browser) => ({ kind: 'browser', browser }))
+      : [];
+    return [...mediaAttachments, ...browserItems, ...groupedLocalItems];
+  });
+
+  let searchSeq = 0;
+  let searchAbort: AbortController | null = null;
+  let lastToken: string | null = null;
+  let dismissed = false;
+
+  function getMentionToken(): MentionToken | null {
+    const val = text.value;
+    const pos = editorRef.value?.selectionStart ?? val.length;
+    const lowerBound = editorRef.value?.inlineTextRunStart?.() ?? 0;
+    let start = pos - 1;
+    while (start >= lowerBound && !/\s/.test(val[start]!)) {
+      start--;
+    }
+    start++;
+    start = Math.max(start, lowerBound);
+    const tokenPart = val.slice(start, pos);
+    if (!tokenPart.startsWith('@') && !tokenPart.startsWith('＠')) return null;
+    return { token: tokenPart.slice(1), start, end: pos };
+  }
+
+  function itemKey(item: MentionItem): string {
+    if (item.kind === 'browser') return `browser:${item.browser.captureId}`;
+    if (item.kind === 'attachment') return `attachment:${item.attachment.entry.attId}`;
+    return item.kind === 'skill' ? `skill:${skillIdentity(item.skill)}` : `${item.kind}:${item.file.path}`;
+  }
+
+  let userNavigated = false;
+  let activeGuard = false;
+  watch(
+    active,
+    () => {
+      if (!activeGuard) userNavigated = true;
+    },
+    { flush: 'sync' },
+  );
+  function setActive(index: number): void {
+    activeGuard = true;
+    active.value = index;
+    activeGuard = false;
+  }
+
+  function navigate(index: number): void {
+    userNavigated = true;
+    setActive(index);
+  }
+
+  function restoreActive(key: string | null): void {
+    if (key === null || !userNavigated) {
+      setActive(0);
+      return;
+    }
+    const idx = items.value.findIndex((item) => itemKey(item) === key);
+    setActive(idx === -1 ? 0 : idx);
+  }
+
+  function applyFileItems(next: FileItem[], token: string): void {
+    const current = items.value[active.value];
+    const key = current ? itemKey(current) : null;
+    fileStale.value = false;
+    fileQuery.value = token.toLowerCase();
+    fileItems.value = next;
+    restoreActive(key);
+  }
+
+  async function runSearch(search: FileSearch, token: string): Promise<void> {
+    const seq = ++searchSeq;
+    searchAbort?.abort();
+    const controller = new AbortController();
+    searchAbort = controller;
+    loading.value = true;
+    open.value = true;
+    const stillCurrent = () => {
+      const live = getMentionToken();
+      return seq === searchSeq && live !== null && live.token === token && open.value;
+    };
+    try {
+      const results = await search(token, { signal: controller.signal });
+      if (stillCurrent()) applyFileItems(results, token);
+    } catch {
+      if (stillCurrent()) applyFileItems([], token);
+    } finally {
+      if (searchAbort === controller) searchAbort = null;
+      if (stillCurrent()) loading.value = false;
+    }
+  }
+
+  function update(): void {
+    const mt = getMentionToken();
+    const search = searchFiles();
+    dismissed = false;
+    userNavigated = false;
+    if (!mt) {
+      lastToken = null;
+      localItemsEnabled.value = false;
+      query.value = '';
+      open.value = false;
+      loading.value = false;
+      fileStale.value = false;
+      searchAbort?.abort();
+      searchAbort = null;
+      return;
+    }
+    const token = mt.token;
+    localItemsEnabled.value = true;
+    query.value = token;
+    if (token !== lastToken) {
+      if (fileItems.value.length > 0) fileStale.value = true;
+      searchSeq += 1;
+    }
+    lastToken = token;
+    const skillList = skills?.() ?? [];
+    skillItems.value = token.length > 0 ? rankSkills(skillList, token) : [];
+    setActive(0);
+    if (!search) {
+      fileItems.value = [];
+      fileQuery.value = token.toLowerCase();
+      loading.value = false;
+      fileStale.value = false;
+      open.value = items.value.length > 0;
+      return;
+    }
+    if (token.length === 0) {
+      void runSearch(search, token);
+      return;
+    }
+    if (attachmentItems.value.length > 0 || skillItems.value.length > 0) open.value = true;
+    void runSearch(search, token);
+  }
+
+  function refreshSkillItems(): void {
+    const mt = getMentionToken();
+    if (!mt) return;
+    const current = items.value[active.value];
+    const key = current ? itemKey(current) : null;
+    const skillList = skills?.() ?? [];
+    skillItems.value = mt.token.length > 0 ? rankSkills(skillList, mt.token) : [];
+    restoreActive(key);
+  }
+
+  watch(
+    () => skills?.(),
+    () => {
+      if (!dismissed) refreshSkillItems();
+    },
+  );
+
+  watch(
+    () => [attachments?.(), browsers?.()],
+    () => {
+      if (dismissed) return;
+      const mt = getMentionToken();
+      if (!mt) return;
+      const current = items.value[active.value];
+      const key = current ? itemKey(current) : null;
+      query.value = mt.token;
+      restoreActive(key);
+      open.value = items.value.length > 0 || loading.value;
+    },
+  );
+
+  function toEntry(item: MentionItem): MentionEntry {
+    if (item.kind === 'browser') return { kind: 'browser', captureId: item.browser.captureId, name: item.browser.label };
+    if (item.kind === 'attachment') {
+      return {
+        kind: 'attachment',
+        attId: item.attachment.entry.attId,
+        name: item.attachment.label,
+        attachmentKind: item.attachment.entry.kind,
+      };
+    }
+    if (item.kind === 'skill') {
+      return { kind: 'skill', name: item.skill.name, path: item.skill.path };
+    }
+    const path = item.file.path;
+    return { kind: fileKind(item.file), path, name: item.file.name || path.split('/').filter(Boolean).pop() || path };
+  }
+
+  function close(): void {
+    dismissed = true;
+    userNavigated = false;
+    open.value = false;
+    loading.value = false;
+    fileStale.value = false;
+    fileItems.value = [];
+    fileQuery.value = '';
+    query.value = '';
+    localItemsEnabled.value = false;
+    skillItems.value = [];
+    lastToken = null;
+    searchSeq += 1;
+    searchAbort?.abort();
+    searchAbort = null;
+  }
+
+  function select(item: MentionItem): void {
+    const mt = getMentionToken();
+    if (!mt) return;
+    if ((item.kind === 'file' || item.kind === 'folder') && fileStale.value) return;
+    close();
+    if (insertMention) {
+      insertMention(toEntry(item), { start: mt.start, end: mt.end });
+      return;
+    }
+    if (item.kind === 'skill' || item.kind === 'attachment' || item.kind === 'browser') return;
+    const val = text.value;
+    text.value = val.slice(0, mt.start) + item.file.path + val.slice(mt.end);
+    void nextTick(() => {
+      const el = editorRef.value;
+      if (!el) return;
+      const newPos = mt.start + item.file.path.length;
+      el.setSelectionRange(newPos, newPos);
+      el.focus();
+    });
+  }
+
+  function alreadyCompleted(item: MentionItem, tokenQuery: string): boolean {
+    if (item.kind === 'browser') return item.browser.label === tokenQuery;
+    if (item.kind === 'attachment') return item.attachment.label === tokenQuery;
+    if (item.kind === 'skill') return item.skill.name === tokenQuery;
+    const path = item.file.path.replace(/\/+$/, '');
+    const query = tokenQuery.replace(/\/+$/, '');
+    if (path !== query) return false;
+    if (fileKind(item.file) === 'folder') return tokenQuery.endsWith('/');
+    return true;
+  }
+
+  function complete(item: MentionItem): void {
+    const mt = getMentionToken();
+    if (!mt) return;
+    if ((item.kind === 'file' || item.kind === 'folder') && fileStale.value) return;
+    if (item.kind === 'attachment' || item.kind === 'browser') {
+      select(item);
+      return;
+    }
+    const completion = item.kind === 'skill'
+      ? item.skill.name
+      : item.file.path.replace(/\/+$/, '') + (fileKind(item.file) === 'folder' ? '/' : '');
+    if (/[\s[\]\\]/u.test(completion)) {
+      select(item);
+      return;
+    }
+    if (alreadyCompleted(item, mt.token)) return;
+    const range = { start: mt.start + 1, end: mt.end };
+    if (completeMention) {
+      completeMention(completion, range);
+      return;
+    }
+    const val = text.value;
+    text.value = val.slice(0, range.start) + completion + val.slice(range.end);
+    void nextTick(() => {
+      const el = editorRef.value;
+      if (el) {
+        const newPos = range.start + completion.length;
+        el.setSelectionRange(newPos, newPos);
+        el.focus();
+      }
+      update();
+    });
+  }
+
+  if (getCurrentScope()) onScopeDispose(() => searchAbort?.abort());
+
+  return { open, items, fileItems, fileStale, skillItems, active, loading, update, close, select, complete, navigate, getToken: getMentionToken };
+}

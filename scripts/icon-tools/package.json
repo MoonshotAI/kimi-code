@@ -1,0 +1,9 @@
+{
+  "name": "kimi-code-icon-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "sharp": "0.35.3"
+  }
+}

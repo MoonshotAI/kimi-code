@@ -1,0 +1,30 @@
+<script setup lang="ts">
+defineProps<{ frost?: boolean }>();
+</script>
+
+<template>
+  <header class="ui-topbar" :class="{ 'ui-topbar--frost': frost }">
+    <span class="ui-topbar__title"><slot /></span>
+    <span class="ui-topbar__actions"><slot name="actions" /></span>
+  </header>
+</template>
+
+<style scoped>
+.ui-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 48px;
+  padding: 0 var(--space-4);
+  background: var(--color-surface-raised);
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-lg);
+}
+.ui-topbar--frost {
+  background: var(--color-topbar-bg-frost);
+  -webkit-backdrop-filter: var(--p-topbar-backdrop);
+  backdrop-filter: var(--p-topbar-backdrop);
+}
+.ui-topbar__title { flex: 1; font-weight: var(--weight-medium); font-size: var(--text-sm); color: var(--color-text); min-width: 0; }
+.ui-topbar__actions { display: inline-flex; align-items: center; gap: var(--space-1); }
+</style>
