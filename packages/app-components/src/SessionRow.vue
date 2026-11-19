@@ -26,8 +26,16 @@ const props = withDefaults(
     unread?: boolean;
     stateTag?: 'open' | 'done';
     compactPinned?: boolean;
+    showPinnedWorkspace?: boolean;
   }>(),
-  { approvalCount: 0, questionCount: 0, unread: false, stateTag: undefined, compactPinned: false },
+  {
+    approvalCount: 0,
+    questionCount: 0,
+    unread: false,
+    stateTag: undefined,
+    compactPinned: false,
+    showPinnedWorkspace: false,
+  },
 );
 
 const emit = defineEmits<{
@@ -46,17 +54,24 @@ const emit = defineEmits<{
 }>();
 
 const isFlat = computed(() => !props.compactPinned && props.session.cwdLabel !== undefined);
-const pinnedWorkspaceLabel = computed(() => {
+const resolvedPinnedWorkspaceLabel = computed(() => {
   if (!props.compactPinned) return null;
   const label = props.session.workspaceName ?? props.session.cwdLabel;
   return label && label !== '-' ? label : null;
 });
+const showPinnedSubRow = computed(
+  () => props.showPinnedWorkspace && resolvedPinnedWorkspaceLabel.value !== null,
+);
+const compactWorkspaceTooltip = computed(() => {
+  if (!props.compactPinned || props.showPinnedWorkspace || renaming.value) return null;
+  return resolvedPinnedWorkspaceLabel.value;
+});
 const subLabel = computed(() =>
   props.compactPinned
-    ? pinnedWorkspaceLabel.value
+    ? resolvedPinnedWorkspaceLabel.value
     : (props.session.workspaceName ?? props.session.cwdLabel),
 );
-const showSubRow = computed(() => isFlat.value || pinnedWorkspaceLabel.value !== null);
+const showSubRow = computed(() => isFlat.value || showPinnedSubRow.value);
 const showSubIcon = computed(() => !props.compactPinned || props.session.hostId !== undefined);
 const showCompactPr = computed(
   () => props.compactPinned && !showSubRow.value && !renaming.value && Boolean(props.session.pullRequest),
@@ -446,54 +461,56 @@ function openPullRequest(): void {
     @mouseenter="onTitleEnter"
   >
     <div class="row">
-      <div class="row-main">
-        <span v-if="!isFlat" class="lead">
-          <Icon v-if="compactPinned" class="lead-icon" name="message" />
-        </span>
+      <Tooltip :text="compactWorkspaceTooltip">
+        <div class="row-main">
+          <span v-if="!isFlat" class="lead">
+            <Icon v-if="compactPinned" class="lead-icon" name="message" />
+          </span>
 
-        <div class="left">
-          <div
-            v-if="renaming"
-            ref="renameWrapRef"
-            class="rename-wrap"
-            :class="{ generating: generatingTitle }"
-            @click.stop
-          >
-            <input
-              ref="renameInputRef"
-              v-model="renameValue"
-              class="rename-input"
-              :readonly="generatingTitle"
-              @keydown.enter.stop="onRenameEnter"
-              @keydown.esc.stop="onRenameEscape"
-              @compositionstart="handleCompositionStart"
-              @compositionend="handleCompositionEnd"
-              @blur="commitRename"
-            />
-            <span v-if="generatingTitle" class="gen-dots" aria-hidden="true"><i /><i /><i /></span>
-            <Tooltip v-if="config?.autoSessionTitle !== false" :text="t('sidebar.genTitle')">
-              <IconButton
-                class="gen-title-btn"
-                size="sm"
-                :label="t('sidebar.genTitle')"
-                :disabled="generatingTitle"
-                @mousedown.prevent.stop
-                @click.stop="onGenTitle"
-              >
-                <Icon name="gen-title" />
-              </IconButton>
-            </Tooltip>
+          <div class="left">
+            <div
+              v-if="renaming"
+              ref="renameWrapRef"
+              class="rename-wrap"
+              :class="{ generating: generatingTitle }"
+              @click.stop
+            >
+              <input
+                ref="renameInputRef"
+                v-model="renameValue"
+                class="rename-input"
+                :readonly="generatingTitle"
+                @keydown.enter.stop="onRenameEnter"
+                @keydown.esc.stop="onRenameEscape"
+                @compositionstart="handleCompositionStart"
+                @compositionend="handleCompositionEnd"
+                @blur="commitRename"
+              />
+              <span v-if="generatingTitle" class="gen-dots" aria-hidden="true"><i /><i /><i /></span>
+              <Tooltip v-if="config?.autoSessionTitle !== false" :text="t('sidebar.genTitle')">
+                <IconButton
+                  class="gen-title-btn"
+                  size="sm"
+                  :label="t('sidebar.genTitle')"
+                  :disabled="generatingTitle"
+                  @mousedown.prevent.stop
+                  @click.stop="onGenTitle"
+                >
+                  <Icon name="gen-title" />
+                </IconButton>
+              </Tooltip>
+            </div>
+            <span v-else ref="titleRef" class="t" @dblclick.stop="startRename"><span ref="titleInnerRef" class="t-inner"><button
+              v-if="emojiSplit.emoji"
+              type="button"
+              class="emoji"
+              :aria-label="t('sidebar.setEmoji')"
+              @click.stop="openPickerFromRow"
+              @dblclick.stop
+            >{{ emojiSplit.emoji }}</button>{{ displayText }}</span></span>
           </div>
-          <span v-else ref="titleRef" class="t" @dblclick.stop="startRename"><span ref="titleInnerRef" class="t-inner"><button
-            v-if="emojiSplit.emoji"
-            type="button"
-            class="emoji"
-            :aria-label="t('sidebar.setEmoji')"
-            @click.stop="openPickerFromRow"
-            @dblclick.stop
-          >{{ emojiSplit.emoji }}</button>{{ displayText }}</span></span>
         </div>
-      </div>
+      </Tooltip>
 
       <button
         v-if="showCompactPr && session.pullRequest"

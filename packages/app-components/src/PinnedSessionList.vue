@@ -2,9 +2,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PinnedEntry, Session } from '@moonshot-ai/app-core/client/types';
-import type { DropPosition, PinnedInsertTarget, SessionListRowMeasure } from '@moonshot-ai/app-core/lib';
+import type {
+  DropPosition,
+  PinnedInsertTarget,
+  PinnedSessionDisplayMode,
+  SessionListRowMeasure,
+} from '@moonshot-ai/app-core/lib';
 import {
   loadPinnedCollapsed,
+  loadPinnedSessionDisplayMode,
   isNoopGesture,
   measureSessionsListRows,
   pinnedRowsDefaultHeight,
@@ -16,14 +22,16 @@ import {
   pinnedSessionKey,
   safeGetString,
   savePinnedCollapsed,
+  savePinnedSessionDisplayMode,
   sessionsListMinHeight,
   STORAGE_KEYS,
 } from '@moonshot-ai/app-core/lib';
 import { useAppearance } from '@moonshot-ai/app-core';
 import { useResizable, useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
 import SessionRow from './SessionRow.vue';
+import { useAnchoredMenu } from './composables/useAnchoredMenu';
 import { useSessionDrag, usePinnedListDrag } from './composables/useSessionDrag';
-import { Icon, IconButton } from '@moonshot-ai/app-ui';
+import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
 
 const { t } = useI18n();
 
@@ -56,6 +64,56 @@ const emit = defineEmits<{
 }>();
 
 const collapsed = ref(loadPinnedCollapsed());
+const displayMode = ref<PinnedSessionDisplayMode>(loadPinnedSessionDisplayMode());
+const showPinnedWorkspace = computed(() => displayMode.value === 'workspace');
+
+const menuRef = ref<InstanceType<typeof Menu> | null>(null);
+const menuVia = ref<'toggle' | 'context'>('toggle');
+const {
+  open: menuOpen,
+  menuStyle,
+  showAnchored: showMenuAnchored,
+  openAt: openMenuAt,
+  close: closeMenu,
+} = useAnchoredMenu(menuRef);
+
+function toggleOptionsMenu(event: MouseEvent): void {
+  if (menuOpen.value && menuVia.value === 'toggle') {
+    closeMenu();
+    return;
+  }
+  menuVia.value = 'toggle';
+  void showMenuAnchored(event, 'right');
+}
+
+function onPinnedContextMenu(event: MouseEvent): void {
+  const target =
+    event.target instanceof Element ? event.target : ((event.target as Node | null)?.parentElement ?? null);
+  if (
+    target !== null &&
+    target.closest(
+      '.pin-row, .pin-workspace .gh, .pin-workspace .se, .pin-workspace .show-more-row, .pinned-resize',
+    ) !== null
+  ) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  menuVia.value = 'context';
+  void openMenuAt(event.clientX, event.clientY);
+}
+
+function chooseDisplayMode(mode: PinnedSessionDisplayMode): void {
+  if (displayMode.value !== mode) {
+    displayMode.value = mode;
+    savePinnedSessionDisplayMode(mode);
+    void nextTick(() => {
+      updateRowsScrollState();
+      measureSessionList();
+    });
+  }
+  closeMenu();
+}
 
 function toggleCollapsed(): void {
   collapsed.value = !collapsed.value;
@@ -422,24 +480,40 @@ const {
   <div
     ref="pinnedRootEl"
     class="pinned"
-    :class="{ 'drop-active': dropActive }"
+    :class="{ 'drop-active': dropActive, 'pinned--workspace': showPinnedWorkspace }"
+    @contextmenu="onPinnedContextMenu"
     @dragover="onContainerDragOver"
     @drop="onContainerDrop"
     @dragleave="onContainerDragLeave"
   >
     <div class="pinned-label">
       <span class="pinned-title">{{ t('sidebar.pinned') }}</span>
-      <IconButton
-        class="pinned-toggle"
-        :class="{ 'pinned-toggle--on': collapsed }"
-        size="sm"
-        :label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
-        :tooltip="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
-        @click.stop="toggleCollapsed"
-      >
-        <Icon v-if="collapsed" name="chevron-right" />
-        <Icon v-else name="chevron-down" />
-      </IconButton>
+      <div class="pinned-actions">
+        <Tooltip :text="t('sidebar.pinnedOptions')">
+          <IconButton
+            class="pinned-options"
+            :class="{ open: menuOpen && menuVia === 'toggle' }"
+            size="sm"
+            :label="t('sidebar.pinnedOptions')"
+            aria-haspopup="menu"
+            :aria-expanded="menuOpen && menuVia === 'toggle'"
+            @click.stop="toggleOptionsMenu"
+          >
+            <Icon name="view-switch" />
+          </IconButton>
+        </Tooltip>
+        <IconButton
+          class="pinned-toggle"
+          :class="{ 'pinned-toggle--on': collapsed }"
+          size="sm"
+          :label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
+          :tooltip="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
+          @click.stop="toggleCollapsed"
+        >
+          <Icon v-if="collapsed" name="chevron-right" />
+          <Icon v-else name="chevron-down" />
+        </IconButton>
+      </div>
     </div>
     <div
       v-if="!collapsed"
@@ -485,6 +559,7 @@ const {
           >
             <SessionRow
               compact-pinned
+              :show-pinned-workspace="showPinnedWorkspace"
               :session="entry.session"
               :active="entry.session.id === activeId"
               :approval-count="pendingBySession[entry.session.id]?.approvals ?? 0"
@@ -537,6 +612,34 @@ const {
     >
       <span class="pinned-resize-bar" aria-hidden="true"></span>
     </div>
+    <Teleport to="body">
+      <Transition name="menu-pop">
+        <Menu
+          v-if="menuOpen"
+          ref="menuRef"
+          class="pinned-menu"
+          :style="menuStyle"
+          @click.stop
+          @contextmenu.prevent.stop
+        >
+          <div class="pinned-menu-label">{{ t('sidebar.pinnedSessionsGroup') }}</div>
+          <MenuItem @click="chooseDisplayMode('compact')">
+            <Icon name="list" size="sm" />
+            {{ t('sidebar.pinnedDisplayCompact') }}
+            <span class="pinned-menu-check">
+              <Icon v-if="displayMode === 'compact'" name="check" size="sm" />
+            </span>
+          </MenuItem>
+          <MenuItem @click="chooseDisplayMode('workspace')">
+            <Icon name="folder-closed" size="sm" />
+            {{ t('sidebar.pinnedDisplayWorkspace') }}
+            <span class="pinned-menu-check">
+              <Icon v-if="displayMode === 'workspace'" name="check" size="sm" />
+            </span>
+          </MenuItem>
+        </Menu>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -560,22 +663,65 @@ const {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.pinned-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.pinned-options,
 .pinned-toggle {
   color: var(--faint);
   opacity: 0;
   transition: opacity var(--duration-base) var(--ease-out);
 }
+.pinned-label:hover .pinned-options,
+.pinned-label:focus-within .pinned-options,
+.pinned-options.open,
 .pinned-label:hover .pinned-toggle,
 .pinned-label:focus-within .pinned-toggle,
 .pinned-toggle--on {
   opacity: 1;
 }
+.pinned-options:hover,
 .pinned-toggle:hover {
   color: var(--dim);
 }
+.pinned-options svg,
 .pinned-toggle svg {
   width: 13px;
   height: 13px;
+}
+.pinned-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-dropdown);
+}
+.pinned-menu-label {
+  padding: var(--space-1) var(--space-2) var(--space-05);
+  font-size: var(--text-xs);
+  color: var(--faint);
+  user-select: none;
+}
+.pinned-menu-check {
+  margin-left: auto;
+  display: inline-flex;
+}
+.menu-pop-enter-active {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+.menu-pop-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+  pointer-events: none;
+}
+.menu-pop-enter-from,
+.menu-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 
 .se-locate-flash,
@@ -707,12 +853,12 @@ const {
 .pin-row :deep(.se) {
   --se-pad-x: calc(var(--sb-pad-x, 16px) - var(--sb-inset, 8px));
 }
-.pin-row + .pin-row {
+.pinned--workspace .pin-row + .pin-row {
   padding-top: var(--space-05);
 }
-.pin-row + .pin-workspace,
-.pin-workspace + .pin-row,
-.pin-workspace + .pin-workspace {
+.pinned--workspace .pin-row + .pin-workspace,
+.pinned--workspace .pin-workspace + .pin-row,
+.pinned--workspace .pin-workspace + .pin-workspace {
   padding-top: var(--space-1-5);
 }
 .pin-row.drop-before,

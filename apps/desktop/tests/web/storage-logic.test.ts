@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   loadCollapsedWorkspaces,
+  loadPinnedSessionDisplayMode,
   loadPinnedSessions,
   loadUnread,
   loadWorkspaceOrder,
   loadWorkspaceRecencyFloor,
   loadWorkspaceSort,
   saveCollapsedWorkspaces,
+  savePinnedSessionDisplayMode,
   savePinnedSessions,
   saveUnread,
   saveWorkspaceOrder,
@@ -265,6 +267,25 @@ describe('loadPinnedSessions / savePinnedSessions', () => {
 
     safeSetString(STORAGE_KEYS.pinnedSessions, '{not json');
     expect(loadPinnedSessions()).toEqual([]);
+  });
+});
+
+describe('loadPinnedSessionDisplayMode / savePinnedSessionDisplayMode', () => {
+  it("defaults to 'compact' when the key is missing", () => {
+    expect(loadPinnedSessionDisplayMode()).toBe('compact');
+  });
+
+  it("round-trips 'workspace' and 'compact'", () => {
+    savePinnedSessionDisplayMode('workspace');
+    expect(loadPinnedSessionDisplayMode()).toBe('workspace');
+
+    savePinnedSessionDisplayMode('compact');
+    expect(loadPinnedSessionDisplayMode()).toBe('compact');
+  });
+
+  it("falls back to 'compact' for an unknown stored value", () => {
+    safeSetString(STORAGE_KEYS.pinnedSessionDisplayMode, 'detailed');
+    expect(loadPinnedSessionDisplayMode()).toBe('compact');
   });
 });
 

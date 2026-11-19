@@ -22,7 +22,10 @@ function session(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-function mountRows(rows: Session[], options: { compactPinned?: boolean } = {}): void {
+function mountRows(
+  rows: Session[],
+  options: { compactPinned?: boolean; showPinnedWorkspace?: boolean } = {},
+): void {
   app = createApp({
     render: () =>
       h(
@@ -32,6 +35,7 @@ function mountRows(rows: Session[], options: { compactPinned?: boolean } = {}): 
             session: row,
             active: false,
             compactPinned: options.compactPinned,
+            showPinnedWorkspace: options.showPinnedWorkspace,
           }),
         ),
       ),
@@ -98,7 +102,31 @@ describe('SessionRow workspace label', () => {
     expect(icons[0]?.outerHTML).not.toBe(icons[1]?.outerHTML);
   });
 
-  it('shows an iconless workspace subtitle on local compact-pinned rows and places PR in the subtitle', () => {
+  it('keeps compact-pinned rows single-line with inline PR by default', () => {
+    mountRows(
+      [
+        session({
+          id: 'pinned-compact',
+          pinned: true,
+          workspaceName: 'example-project',
+          cwdLabel: 'example-project',
+          pullRequest: { number: 42, state: 'open', url: 'https://example.com/pull/42' },
+        }),
+      ],
+      { compactPinned: true },
+    );
+
+    const row = host.querySelector('.se')!;
+    expect(row.classList.contains('compact-pinned')).toBe(true);
+    expect(row.classList.contains('has-sub')).toBe(false);
+    expect(row.classList.contains('has-compact-pr')).toBe(true);
+    expect(row.classList.contains('flat')).toBe(false);
+    expect(row.querySelector('.lead-icon')).not.toBeNull();
+    expect(row.querySelector('.sub')).toBeNull();
+    expect(row.querySelector('.compact-pr')?.textContent).toContain('#42');
+  });
+
+  it('shows an iconless workspace subtitle on local compact-pinned rows when enabled and places PR in the subtitle', () => {
     mountRows(
       [
         session({
@@ -109,7 +137,7 @@ describe('SessionRow workspace label', () => {
           pullRequest: { number: 42, state: 'open', url: 'https://example.com/pull/42' },
         }),
       ],
-      { compactPinned: true },
+      { compactPinned: true, showPinnedWorkspace: true },
     );
 
     const row = host.querySelector('.se')!;
@@ -124,7 +152,7 @@ describe('SessionRow workspace label', () => {
     expect(row.querySelector('.compact-pr')).toBeNull();
   });
 
-  it('keeps the remote host icon in the subtitle for compact-pinned remote sessions', () => {
+  it('keeps the remote host icon in the subtitle for compact-pinned remote sessions when enabled', () => {
     mountRows(
       [
         session({
@@ -135,7 +163,7 @@ describe('SessionRow workspace label', () => {
           cwdLabel: 'remote-repo',
         }),
       ],
-      { compactPinned: true },
+      { compactPinned: true, showPinnedWorkspace: true },
     );
 
     const row = host.querySelector('.se')!;
@@ -158,7 +186,7 @@ describe('SessionRow workspace label', () => {
           cwdLabel: undefined,
         }),
       ],
-      { compactPinned: true },
+      { compactPinned: true, showPinnedWorkspace: true },
     );
 
     const rows = host.querySelectorAll('.se');
@@ -172,7 +200,7 @@ describe('SessionRow workspace label', () => {
 
   it('updates the compact-pinned subtitle when the workspace is renamed', async () => {
     const row = reactive(session({ pinned: true, workspaceName: 'Before', cwdLabel: 'repo' }));
-    mountRows([row], { compactPinned: true });
+    mountRows([row], { compactPinned: true, showPinnedWorkspace: true });
     row.workspaceName = 'After';
     await nextTick();
 

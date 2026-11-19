@@ -402,7 +402,7 @@ describe('SessionListPanel re-render scope', () => {
     expect(reads).toBe(readsPerPass * 2);
   });
 
-  it('renders standalone pinned sessions with message icon, iconless workspace subtitle, interleaved order and drag reordering', async () => {
+  it('renders standalone pinned sessions as compact single-line rows by default, with interleaved order and drag reordering', async () => {
     app?.unmount();
     const pinnedGroup = group(0, 1);
     const otherGroup = group(1, 1);
@@ -438,13 +438,11 @@ describe('SessionListPanel re-render scope', () => {
 
     const compactRow = host.querySelector(`.pinned [data-session-id="${pinnedSingle.id}"]`)!;
     expect(compactRow.classList.contains('compact-pinned')).toBe(true);
-    expect(compactRow.classList.contains('has-sub')).toBe(true);
+    expect(compactRow.classList.contains('has-sub')).toBe(false);
     expect(compactRow.classList.contains('flat')).toBe(false);
     expect(compactRow.querySelector('.lead .lead-icon')?.getAttribute('data-icon')).toBe('message');
-    expect(compactRow.querySelector('.sub.sub--pinned .sub-text')?.textContent).toBe('Workspace 1');
-    expect(compactRow.querySelector('.sub .sub-icon')).toBeNull();
-    expect(compactRow.querySelector('.sub .pr')?.textContent).toContain('#1279');
-    expect(compactRow.querySelector('.compact-pr')).toBeNull();
+    expect(compactRow.querySelector('.sub')).toBeNull();
+    expect(compactRow.querySelector('.compact-pr')?.textContent).toContain('#1279');
 
     const pinRowWrapper = compactRow.closest<HTMLElement>('.pin-row')!;
     const pinWsWrapper = host.querySelector<HTMLElement>('.pinned .pin-workspace')!;
@@ -483,5 +481,92 @@ describe('SessionListPanel re-render scope', () => {
       'ws:ws-0',
       'after',
     );
+  });
+
+  it('switches pinned sessions between compact and project-subtitle display via header options and blank-area context menu', async () => {
+    app?.unmount();
+    const pinnedGroup = group(0, 1);
+    const otherGroup = group(1, 1);
+    const pinnedSingle: Session = {
+      ...session(1, 1),
+      pinned: true,
+      workspaceName: 'Workspace 1',
+      cwdLabel: '1',
+      pullRequest: { number: 1279, state: 'open', url: 'https://example.com/pr/1279' },
+    };
+    fakes.views.workspaceGroups = [pinnedGroup, otherGroup];
+    fakes.views.unpinnedWorkspaceGroups = [otherGroup];
+    fakes.views.pinnedWorkspaceGroups = [pinnedGroup];
+    fakes.views.pinnedSessions = [pinnedSingle];
+    fakes.views.pinnedEntries = [
+      { key: `session:${pinnedSingle.id}`, kind: 'session', session: pinnedSingle },
+      { key: 'ws:ws-0', kind: 'workspace', group: pinnedGroup },
+    ];
+    fakes.workspaces.pinnedWorkspaceIds = ['ws-0'];
+
+    app = installTestPlugins(
+      createApp(SessionListPanel, { statusTab: 'open', canEditWorkspace: true }),
+    );
+    app.mount(host);
+    await nextTick();
+
+    const pinnedRoot = host.querySelector('.pinned')!;
+    const pinnedRow = () => host.querySelector(`.pinned [data-session-id="${pinnedSingle.id}"]`)!;
+    const openPinnedMenu = () => document.body.querySelector('.pinned-menu:not(.menu-pop-leave-active)');
+
+    expect(pinnedRoot.classList.contains('pinned--workspace')).toBe(false);
+    expect(pinnedRow().querySelector('.sub')).toBeNull();
+    expect(pinnedRow().querySelector('.compact-pr')?.textContent).toContain('#1279');
+
+    pinnedRow().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
+    await nextTick();
+    expect(openPinnedMenu()).toBeNull();
+
+    pinnedRoot.querySelector('.pin-workspace .gh')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 60 }),
+    );
+    await nextTick();
+    expect(openPinnedMenu()).toBeNull();
+
+    pinnedRoot.querySelector<HTMLButtonElement>('.pinned-options')!.click();
+    await vi.waitFor(() => expect(openPinnedMenu()).not.toBeNull());
+    const showProjectItem = [...openPinnedMenu()!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.includes('Show project'),
+    );
+    expect(showProjectItem).not.toBeUndefined();
+    showProjectItem!.click();
+    await nextTick();
+
+    expect(localStorage.getItem('kimi-web.pinned-session-display-mode')).toBe('workspace');
+    expect(pinnedRoot.classList.contains('pinned--workspace')).toBe(true);
+    expect(pinnedRow().classList.contains('has-sub')).toBe(true);
+    expect(pinnedRow().querySelector('.sub.sub--pinned .sub-text')?.textContent).toBe('Workspace 1');
+    expect(pinnedRow().querySelector('.sub .sub-icon')).toBeNull();
+    expect(pinnedRow().querySelector('.sub .pr')?.textContent).toContain('#1279');
+    expect(pinnedRow().querySelector('.compact-pr')).toBeNull();
+    expect(openPinnedMenu()).toBeNull();
+
+    pinnedRoot.querySelector('.pinned-label')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 80, clientY: 20 }),
+    );
+    await vi.waitFor(() => expect(openPinnedMenu()).not.toBeNull());
+    expect(pinnedRoot.querySelector('.pinned-options')?.classList.contains('open')).toBe(false);
+    const compactItem = [...openPinnedMenu()!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.includes('Compact'),
+    );
+    expect(compactItem).not.toBeUndefined();
+    compactItem!.click();
+    await nextTick();
+
+    expect(localStorage.getItem('kimi-web.pinned-session-display-mode')).toBe('compact');
+    expect(pinnedRoot.classList.contains('pinned--workspace')).toBe(false);
+    expect(pinnedRow().querySelector('.sub')).toBeNull();
+    expect(pinnedRow().querySelector('.compact-pr')?.textContent).toContain('#1279');
+    expect(openPinnedMenu()).toBeNull();
+
+    pinnedRoot.querySelector('.pinned-rows')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 90 }),
+    );
+    await vi.waitFor(() => expect(openPinnedMenu()).not.toBeNull());
   });
 });
