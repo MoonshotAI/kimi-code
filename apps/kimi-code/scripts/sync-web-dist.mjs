@@ -13,6 +13,7 @@ const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const build = spawnSync(pnpm, ['--filter', 'kimi-code-app', 'run', 'build:web'], {
   cwd: repoRoot,
   stdio: 'inherit',
+  shell: process.platform === 'win32',
 });
 if (build.status !== 0) {
   throw new Error(`desktop web-variant build failed (exit ${String(build.status)})`);
