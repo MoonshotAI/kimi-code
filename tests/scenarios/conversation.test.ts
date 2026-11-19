@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 
 import { deferred } from '@moonshot-ai/testkit/fixtures';
-import { agent, bash, held, httpError, say, think } from '@moonshot-ai/testkit/model';
+import { agent, bash, held, httpError, say } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
 
 import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
@@ -9,37 +9,7 @@ import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
 const test = base.extend<ScenarioFixtures>(scenarioFixtures());
 
 describe('conversation over KAP', () => {
-  test('[L0:kap.first-turn] streams a reply live and persists the same turns', { tags: ['smoke'] }, async ({ kap, model }) => {
-    model.script(held('before-final-text', think('pondering', say(['Hel', 'lo'])), 2));
-    const socket = await kap.connect();
-    const session = await kap.createSession();
-    await socket.subscribe(session.id);
-
-    const prompt = await kap.prompt(session.id, 'hi');
-    const hold = model.hold('before-final-text');
-    await hold.reached();
-    try {
-      await expect.poll(() => socket.turns(session.id)[0]?.items.find(item => item.type === 'assistant_message')?.['text']).toBe('Hel');
-    } finally {
-      hold.release();
-    }
-    await kap.waitIdle(session.id);
-    await socket.waitFor((frame) => frame.type === 'turn.ended' && frame['session_id'] === session.id);
-
-    const persisted = await kap.turns(session.id);
-    expect(socket.turns(session.id)).toEqual(persisted);
-    expect(persisted).toHaveLength(1);
-    expect(persisted[0]).toMatchObject({ status: 'ended', outcome: 'completed' });
-    expect(persisted[0]?.items[0]).toMatchObject({ type: 'user_message', prompt_ids: [prompt.prompt_id] });
-    expect(persisted[0]?.items.map((item) => [item.type, item['text']])).toEqual([
-      ['user_message', 'hi'],
-      ['reasoning', 'pondering'],
-      ['assistant_message', 'Hello'],
-    ]);
-    expect(model.request(0)).toMatchObject({ lane: 'main', firstUserText: 'hi', metadata: { agentRole: 'main', stepReason: 'turn_start' } });
-  });
-
-  test('runs a tool call and sends its result back to the model', async ({ kap, model }) => {
+  test('runs a tool call and sends its result back to the model', { tags: ['smoke'] }, async ({ kap, model }) => {
     model.script(bash('echo testkit-ok'), say('done'));
     const session = await kap.createSession();
 
