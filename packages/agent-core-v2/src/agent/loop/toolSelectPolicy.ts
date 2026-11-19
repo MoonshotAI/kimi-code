@@ -2,7 +2,7 @@ import type { LlmResolver } from '@moonshot-ai/core/llm/policy/resolver';
 import { withProtocolCapabilities } from '@moonshot-ai/core/llm/protocol/rules/model';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 
-export function createToolSelectResolver(toolSelect: IAgentToolSelectService, dynamic = false): LlmResolver {
+export function createToolSelectResolver(toolSelect: IAgentToolSelectService): LlmResolver {
   return {
     id: 'tool-select',
     recoveryRequest: 'resolved',
@@ -11,10 +11,11 @@ export function createToolSelectResolver(toolSelect: IAgentToolSelectService, dy
       const capabilities =
         withProtocolCapabilities(request.model.spec, request.protocol.base).capability ?? {};
       const disclosure = toolSelect.enabled(capabilities);
-      const deferred = dynamic
-        ? (request.profile?.tools ?? []).filter((tool) => disclosure && tool.deferred === true)
+      const base = request.profile?.tools;
+      const deferred = disclosure
+        ? (base ?? []).filter((tool) => tool.deferred === true)
         : undefined;
-      const tools = toolSelect.requestTools(request.profile?.tools, disclosure, dynamic, request.content.messages);
+      const tools = toolSelect.requestTools(base, disclosure);
       return {
         ...request,
         profile: {

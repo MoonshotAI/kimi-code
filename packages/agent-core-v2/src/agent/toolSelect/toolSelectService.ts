@@ -22,7 +22,6 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 
 import {
   collectCurrentDynamicTools,
-  collectLoadedDynamicTools,
   collectPendingSchemaUpdateNames,
   foldAnnouncedToolNames,
   isDynamicToolSchemaMessage,
@@ -157,22 +156,12 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   requestTools(
     base: readonly Tool[] | undefined,
     disclosure = this.enabled(),
-    dynamic = false,
-    messages: readonly ContextMessage[] = this.history(),
   ): readonly Tool[] {
-    if (!dynamic) return base ?? this.defaultToolsForDisclosure(disclosure);
-    if (disclosure) return (base ?? []).filter((tool) => tool.deferred !== true);
-    const loaded = collectLoadedDynamicTools(messages);
-    const tools = (base ?? [])
-      .filter((tool) => tool.name !== SELECT_TOOLS_TOOL_NAME)
-      .map((tool) => tool.deferred === true ? { ...tool, deferred: undefined } : tool);
-    const names = new Set(tools.map((tool) => tool.name));
-    for (const tool of loaded.values()) {
-      if (names.has(tool.name)) continue;
-      tools.push({ ...tool, deferred: undefined });
-      names.add(tool.name);
-    }
-    return tools.toSorted((left, right) => left.name.localeCompare(right.name));
+    const tools = base ?? [];
+    const drop = disclosure
+      ? (tool: Tool) => tool.deferred === true
+      : (tool: Tool) => tool.name === SELECT_TOOLS_TOOL_NAME;
+    return tools.some(drop) ? tools.filter((tool) => !drop(tool)) : tools;
   }
 
   shapeTools(

@@ -242,10 +242,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
         const config = this.requestConfigSnapshot();
         const baseline = options.tools ?? this.loop.state.profile.tools;
-        const visible = options.tools === undefined && baseline !== undefined
-          ? this.operationTools(baseline, config.resolved.model.capability)
-          : baseline;
-        const tools = await this.prepareTools(signal, config.resolved.model.capability, visible);
+        const tools = await this.prepareTools(signal, config.resolved.model.capability, baseline);
         return this.loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
           return requester.snapshot?.() ?? requester;
@@ -620,7 +617,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return { type: 'turn', turnId: turn.id, step: turn.step };
       },
       runtime,
-      dynamicTools: true,
       onSnapshot: (config) => {
         this.turns.thinkingEffort = config.resolved.thinkingLevel;
       },
@@ -638,15 +634,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       systemPrompt: this.getSystemPrompt(),
       maxCompletionTokensCap: this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
     };
-  }
-
-  private operationTools(
-    baseline: readonly Tool[],
-    capabilities: LlmModelCapability | undefined,
-  ): readonly Tool[] {
-    const disclosure = this.toolSelect.enabled(capabilities);
-    const active = new Set(this.toolSelect.defaultTools(disclosure).map((tool) => tool.name));
-    return baseline.filter((tool) => active.has(tool.name));
   }
 
   private async prepareTools(
@@ -719,7 +706,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         mediaPolicy.recovery,
       ],
       resolvers: [
-        createToolSelectResolver(this.toolSelect, request.dynamicTools),
+        createToolSelectResolver(this.toolSelect),
         mediaPolicy.toolResolver,
         createStructureResolver(this.projector),
         mediaPolicy.resolver,
@@ -843,7 +830,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       promptCacheProbe: options.promptCacheProbe,
       source,
       logFields: agentLLMRequestLogFields(source),
-      dynamicTools: options.dynamicTools ?? false,
       runtime: options.runtime,
     };
   }
