@@ -629,6 +629,80 @@ describe('host management routes', () => {
   });
 });
 
+describe('host aggregation after idle exit', () => {
+  it.skipIf(process.platform === 'win32').each([false, true])(
+    'uses one on-demand SSH connection for concurrent listings (slow startup: %s)',
+    (slow) => withFakeSsh(
+      (dir) => `#!/usr/bin/env node
+const { appendFileSync, existsSync } = require('node:fs');
+const { createInterface } = require('node:readline');
+const count = ${JSON.stringify(join(dir, 'count'))};
+const waking = existsSync(count);
+appendFileSync(count, 'x');
+async function serve() {
+  while (waking && existsSync(${JSON.stringify(join(dir, 'hold'))})) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  console.log('__KIMI_ENSURE_DAEMON__{"protocol":${String(HOST_PROTOCOL_VERSION)},"api_level":${String(HOST_API_LEVEL)},"version":"1.2.3"}');
+  for await (const line of createInterface({ input: process.stdin })) {
+    const frame = JSON.parse(line);
+    if (!waking) process.exit(0);
+    const items = frame.path === '/api/v1/workspaces' ? [{
+      id: 'wm_00000000-0000-4000-8000-000000000001', kind: 'managed', root: '/srv/example',
+      name: 'example', additional_dirs: [], created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z', session_count: 0,
+    }] : [];
+    const body = Buffer.from(JSON.stringify({ code: 0, data: { items, total: items.length, has_more: false } })).toString('base64');
+    console.log(JSON.stringify({ type: 'http.res', id: frame.id, status: 200, headers: {}, body }));
+  }
+}
+void serve();
+`,
+      async (ssh, dir) => {
+        const entry = { host: 'example.test' };
+        const bridge = new SshKapBridge(entry, { sshProgram: ssh });
+        const hold = join(dir, 'hold');
+        if (slow) writeFileSync(hold, '');
+        const server = await startServer({
+          hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: dir, logLevel: 'silent',
+        });
+        const list = vi.spyOn(server.hostBridges, 'list').mockReturnValue([{ id: 'example', entry, bridge }]);
+        const get = async (path: string): Promise<unknown> => {
+          const response = await fetch(`http://127.0.0.1:${server.port}${path}`, {
+            headers: { authorization: `Bearer ${server.authTokenService.getToken()}` },
+            signal: AbortSignal.timeout(5000),
+          });
+          return response.json();
+        };
+        try {
+          const session = await bridge.connect();
+          await expect(session.request({ method: 'GET', path: '/api/v1/healthz', headers: {} })).rejects.toBeInstanceOf(HostRequestError);
+          await vi.waitFor(() => expect(bridge.session).toBeUndefined());
+          const listWorkspaces = () => get('/api/v1/workspaces?hosts=include');
+          const listSessions = () => get('/api/v1/sessions?hosts=include');
+          const [workspaces, sessions] = await Promise.all([listWorkspaces(), listSessions()]);
+          if (slow) {
+            expect(workspaces).toMatchObject({ code: 0, data: { items: [] } });
+            expect(sessions).toMatchObject({ code: 0, data: { unavailable_hosts: ['example'] } });
+            expect(bridge.session).toBeUndefined();
+            rmSync(hold);
+          }
+          const [availableWorkspaces, availableSessions] = slow
+            ? await Promise.all([listWorkspaces(), listSessions()])
+            : [workspaces, sessions];
+          expect(availableWorkspaces).toMatchObject({ code: 0, data: { items: [{ name: 'example', host_id: 'example' }] } });
+          expect(availableSessions).toMatchObject({ code: 0, data: { unavailable_hosts: [] } });
+          expect(readFileSync(join(dir, 'count'), 'utf8')).toBe('xx');
+        } finally {
+          list.mockRestore();
+          bridge.dispose();
+          await server.close();
+        }
+      },
+    ),
+  );
+});
+
 describe('host HTTP proxy', () => {
   it('enforces request limits and maps timeouts to gateway responses', async () => {
     const app = Fastify();
