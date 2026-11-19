@@ -74,7 +74,7 @@ onBeforeUnmount(() => {
 
 const title = computed(() => [
   props.item.sequence !== undefined ? `#${props.item.sequence}` : '',
-  t(`inspector.role.${props.item.role}`, props.item.role),
+  props.item.segment ? t(`inspector.segment.${props.item.segment}`) : t(`inspector.role.${props.item.role}`, props.item.role),
   props.item.name ?? '',
 ].filter(Boolean).join(' · '));
 

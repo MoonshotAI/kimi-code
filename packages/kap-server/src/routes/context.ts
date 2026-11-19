@@ -24,6 +24,7 @@ import {
   type ContextGroup,
   type ContextItemDetail,
   type ContextItemPart,
+  type ContextItemSegment,
   type ContextItemSummary,
   type ContextSummary,
 } from '../protocol/rest-context';
@@ -184,12 +185,14 @@ function parseToolArguments(args: string | null): unknown {
   }
 }
 
+function contentItemPart(part: ContentPart): ContextItemPart {
+  if (part.type === 'text') return { kind: 'text', text: part.text };
+  if (part.type === 'think') return { kind: 'think', text: part.think };
+  return { kind: 'media', name: part.type, data: redactMediaPayload(part) };
+}
+
 function messageParts(message: Message): ContextItemPart[] {
-  const parts = message.content.map((part): ContextItemPart => {
-    if (part.type === 'text') return { kind: 'text', text: part.text };
-    if (part.type === 'think') return { kind: 'think', text: part.think };
-    return { kind: 'media', name: part.type, data: redactMediaPayload(part) };
-  });
+  const parts = message.content.map(contentItemPart);
   if (message.role === 'system') {
     for (const tool of message.tools ?? []) parts.push({ kind: 'definition', name: tool.name, data: tool });
   }
@@ -206,6 +209,87 @@ function redactMessageMedia(message: Message): unknown {
     ...message,
     content: message.content.map((part) => (isMediaPart(part) ? redactMediaPayload(part) : part)),
   };
+}
+
+type SegmentSource =
+  | { readonly kind: 'message' }
+  | { readonly kind: 'content'; readonly index: number }
+  | { readonly kind: 'call'; readonly index: number };
+
+interface MessageSegment {
+  readonly id: string;
+  readonly role: string;
+  readonly segment: ContextItemSegment | undefined;
+  readonly name: string | undefined;
+  readonly tokens: number;
+  readonly hasMedia: boolean;
+  readonly preview: string;
+  readonly source: SegmentSource;
+}
+
+function assistantSegments(
+  message: Extract<Message, { role: 'assistant' }>,
+  index: number,
+  estimator: Pick<ISessionTokenCountingService, 'estimateMessage'>,
+): MessageSegment[] {
+  const bare: Extract<Message, { role: 'assistant' }> = { role: 'assistant', content: [], toolCalls: [] };
+  const overhead = estimator.estimateMessage(bare);
+  const segments = [
+    ...message.content.map((part, partIndex): MessageSegment => ({
+      id: `message-${index}-part-${partIndex}`,
+      role: 'assistant',
+      segment: part.type === 'think' ? 'thinking' : 'reply',
+      name: undefined,
+      tokens: estimator.estimateMessage({ ...bare, content: [part] }) - overhead,
+      hasMedia: isMediaPart(part),
+      preview: previewOf([partPreview(part)]),
+      source: { kind: 'content', index: partIndex },
+    })),
+    ...message.toolCalls.map((call, callIndex): MessageSegment => ({
+      id: `message-${index}-call-${callIndex}`,
+      role: 'assistant',
+      segment: 'tool_call',
+      name: call.name,
+      tokens: estimator.estimateMessage({ ...bare, toolCalls: [call] }) - overhead,
+      hasMedia: false,
+      preview: previewOf([call.arguments ?? '']),
+      source: { kind: 'call', index: callIndex },
+    })),
+  ];
+  const [first, ...rest] = segments;
+  return first === undefined ? [] : [{ ...first, tokens: first.tokens + overhead }, ...rest];
+}
+
+function messageSegments(
+  message: Message,
+  index: number,
+  outline: MessageOutline,
+  estimator: Pick<ISessionTokenCountingService, 'estimateMessage'>,
+): MessageSegment[] {
+  const split = message.role === 'assistant' ? assistantSegments(message, index, estimator) : [];
+  if (split.length > 0) return split;
+  return [{
+    id: `message-${index}`,
+    role: outline.role,
+    segment: undefined,
+    name: outline.name,
+    tokens: outline.tokens,
+    hasMedia: outline.hasMedia,
+    preview: outline.preview,
+    source: { kind: 'message' },
+  }];
+}
+
+function segmentContent(message: Message, source: SegmentSource): { parts: ContextItemPart[]; raw: unknown } {
+  if (source.kind === 'content') {
+    const part = message.content[source.index]!;
+    return { parts: [contentItemPart(part)], raw: isMediaPart(part) ? redactMediaPayload(part) : part };
+  }
+  if (source.kind === 'call' && message.role === 'assistant') {
+    const call = message.toolCalls[source.index]!;
+    return { parts: [{ kind: 'function', name: call.name, data: parseToolArguments(call.arguments) }], raw: call };
+  }
+  return { parts: messageParts(message), raw: redactMessageMedia(message) };
 }
 
 function contextItemIndex(itemId: string, prefix: string): number | undefined {
@@ -282,6 +366,9 @@ function readAgentContextSources(agent: IAgentScopeHandle) {
   const systemPrompt = request.systemPrompt || profile.getSystemPrompt();
   const tools = request.tools.filter((tool) => tool.deferred !== true);
   const outlines = outlineMessages(request.messages, tokenCounting);
+  const segments = outlines.map((outline, index) =>
+    messageSegments(request.messages[index]!, index, outline, tokenCounting),
+  );
   const systemTokens = tokenCounting.estimateText(systemPrompt);
   const toolTokens = tools.map((tool) => tokenCounting.estimateTools([tool]));
   const estimatedTotal = [systemTokens, ...toolTokens, ...outlines.map((outline) => outline.tokens)]
@@ -296,6 +383,7 @@ function readAgentContextSources(agent: IAgentScopeHandle) {
     tools,
     messages: request.messages,
     outlines: outlines.map((outline) => ({ ...outline, tokens: allocate(outline.tokens) })),
+    segments: segments.map((list) => list.map((segment) => ({ ...segment, tokens: allocate(segment.tokens) }))),
     systemTokens: allocate(systemTokens),
     toolTokens: toolTokens.map(allocate),
     textTokens: (text: string): number => allocate(tokenCounting.estimateText(text)),
@@ -357,15 +445,18 @@ function listContextItems(sources: ContextSources): {
           },
         ]
       : [];
-  const messageItems = sources.outlines.map((outline, index): ContextItemSummary => ({
-    id: `message-${index}`,
-    role: outline.role,
-    name: outline.name,
-    sequence: index + 1,
-    preview: outline.preview,
-    tokens: outline.tokens,
-    has_media: outline.hasMedia,
-  }));
+  const messageItems = sources.segments.flatMap((segments, index) =>
+    segments.map((segment): ContextItemSummary => ({
+      id: segment.id,
+      role: segment.role,
+      segment: segment.segment,
+      name: segment.name,
+      sequence: index + 1,
+      preview: segment.preview,
+      tokens: segment.tokens,
+      has_media: segment.hasMedia,
+    })),
+  );
   return { toolItems, otherItems: [...systemItems, ...messageItems] };
 }
 
@@ -400,20 +491,21 @@ function readContextItem(sources: ContextSources, itemId: string): ContextItemDe
       raw: tool,
     };
   }
-  if (itemId.startsWith('message-')) {
-    const index = contextItemIndex(itemId, 'message-');
-    const message = index === undefined ? undefined : sources.messages[index];
-    const outline = index === undefined ? undefined : sources.outlines[index];
-    if (index === undefined || message === undefined || outline === undefined) return undefined;
+  const messageId = /^message-(0|[1-9]\d*)(?:-(?:part|call)-(?:0|[1-9]\d*))?$/.exec(itemId);
+  if (messageId !== null) {
+    const index = Number(messageId[1]);
+    const message = sources.messages[index];
+    const segment = sources.segments[index]?.find((entry) => entry.id === itemId);
+    if (message === undefined || segment === undefined) return undefined;
     return {
       id: itemId,
-      role: outline.role,
-      name: outline.name,
+      role: segment.role,
+      segment: segment.segment,
+      name: segment.name,
       sequence: index + 1,
-      tokens: outline.tokens,
-      has_media: outline.hasMedia,
-      parts: messageParts(message),
-      raw: redactMessageMedia(message),
+      tokens: segment.tokens,
+      has_media: segment.hasMedia,
+      ...segmentContent(message, segment.source),
     };
   }
   return undefined;

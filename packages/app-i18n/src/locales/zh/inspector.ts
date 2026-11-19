@@ -56,6 +56,11 @@ export default {
     compaction: '压缩摘要',
     unknown: '其他',
   },
+  segment: {
+    thinking: '思考',
+    reply: '回复',
+    tool_call: '工具调用',
+  },
   compositionCount: {
     system: '{n} 段系统提示词',
     definition: '{n} 个工具',

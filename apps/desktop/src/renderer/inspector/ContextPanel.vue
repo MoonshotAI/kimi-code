@@ -136,6 +136,10 @@ function selectAllRoles(): void {
   void fetchContext('reset');
 }
 
+function itemLabel(item: SessionContextItemSummary): string {
+  return item.segment ? t(`inspector.segment.${item.segment}`) : t(`inspector.role.${item.role}`, item.role);
+}
+
 const showGroupedTools = computed(() => !filtering.value && tools.value.length > 0);
 const definitionSize = computed(() =>
   tools.value.reduce((acc, item) => acc + item.tokens, 0),
@@ -280,7 +284,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
             <Icon class="open-message" name="expand" size="sm" />
             <span v-if="item.sequence !== undefined" class="block-index">{{ String(item.sequence).padStart(2, '0') }}</span>
             <span v-else class="role-marker" />
-            <span class="block-role">{{ t(`inspector.role.${item.role}`, item.role) }}</span>
+            <span class="block-role">{{ itemLabel(item) }}</span>
             <span class="block-preview">
               <span v-if="item.name" class="block-name">{{ item.name }}</span>
               <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
@@ -302,7 +306,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
             <Icon class="open-message" name="expand" size="sm" />
             <span v-if="item.sequence !== undefined" class="block-index">{{ String(item.sequence).padStart(2, '0') }}</span>
             <span v-else class="role-marker" />
-            <span class="block-role">{{ t(`inspector.role.${item.role}`, item.role) }}</span>
+            <span class="block-role">{{ itemLabel(item) }}</span>
             <span class="block-preview">
               <span v-if="item.name" class="block-name">{{ item.name }}</span>
               <template v-if="item.name && item.preview"> · </template>{{ item.preview }}

@@ -56,6 +56,11 @@ export default {
     compaction: 'Compaction summary',
     unknown: 'Other',
   },
+  segment: {
+    thinking: 'Thinking',
+    reply: 'Reply',
+    tool_call: 'Tool call',
+  },
   compositionCount: {
     system: '{n} system prompts',
     definition: '{n} tools',

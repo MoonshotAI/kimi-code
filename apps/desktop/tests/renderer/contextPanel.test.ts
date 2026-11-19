@@ -170,6 +170,24 @@ describe('ContextPanel live refresh', () => {
     expect(userRow().getAttribute('aria-pressed')).toBe('false');
   });
 
+  it('lists the parts of a model reply under the same message number', async () => {
+    mocks.getSessionContextItems.mockImplementation(async () => ({
+      ...itemsResponse({ offset: 0, limit: 0 }),
+      items: [
+        { id: 'message-1-part-0', role: 'assistant', segment: 'thinking', sequence: 2, preview: 'plan', tokens: 40, has_media: false },
+        { id: 'message-1-part-1', role: 'assistant', segment: 'reply', sequence: 2, preview: 'done', tokens: 8, has_media: false },
+        { id: 'message-1-call-0', role: 'assistant', segment: 'tool_call', name: 'Read', sequence: 2, preview: '{"path":"README.md"}', tokens: 12, has_media: false },
+      ],
+      total: 3,
+      has_more: false,
+    }));
+    const root = await mountPanel();
+    const rows = [...root.querySelectorAll('.context-row')];
+    expect(rows.map((row) => row.querySelector('.block-role')?.textContent)).toEqual(['思考', '回复', '工具调用']);
+    expect(rows.map((row) => row.querySelector('.block-index')?.textContent)).toEqual(['02', '02', '02']);
+    expect(rows[2]!.querySelector('.block-name')?.textContent).toBe('Read');
+  });
+
   it('loads the next page when the item dialog steps past the loaded range', async () => {
     const root = await mountPanel();
     const rows = root.querySelectorAll<HTMLButtonElement>('.context-row');

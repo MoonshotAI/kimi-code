@@ -1285,9 +1285,12 @@ export interface SessionContextSummary {
   groups: SessionContextGroup[];
 }
 
+export type SessionContextItemSegment = 'thinking' | 'reply' | 'tool_call';
+
 export interface SessionContextItemSummary {
   id: string;
   role: string;
+  segment?: SessionContextItemSegment;
   name?: string;
   sequence?: number;
   preview: string;
@@ -1314,6 +1317,7 @@ export interface SessionContextItemPart {
 export interface SessionContextItemDetail {
   id: string;
   role: string;
+  segment?: SessionContextItemSegment;
   name?: string;
   sequence?: number;
   tokens: number;

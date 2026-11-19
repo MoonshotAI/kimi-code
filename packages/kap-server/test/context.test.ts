@@ -514,6 +514,51 @@ describe('context routes on restored sessions and dynamic tools', () => {
     ]);
   });
 
+  it('lists a model reply as one row per thinking, reply, and tool call part', async () => {
+    const sid = await createSession();
+    const main = await seedMainAgent(sid);
+    main.accessor.get(IAgentLoopService).replaceHistory(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'read the readme' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'I should open the readme first.' },
+            { type: 'text', text: 'Reading it now.' },
+          ],
+          toolCalls: [{ type: 'function', id: 'call_1', name: 'Read', arguments: '{"path":"README.md"}' }],
+        },
+        { role: 'tool', toolCallId: 'call_1', content: [{ type: 'text', text: '# Demo' }] },
+      ],
+      'fork',
+    );
+    await main.accessor.get(IEventDispatcher).flush();
+
+    const page = await getJson<ContextItemsResponse>(`/api/v1/sessions/${sid}/context/items`);
+    expect(page.items.map((entry) => [entry.id, entry.role, entry.segment, entry.name, entry.sequence])).toEqual([
+      ['system', 'system', undefined, undefined, undefined],
+      ['message-0', 'user', undefined, undefined, 1],
+      ['message-1-part-0', 'assistant', 'thinking', undefined, 2],
+      ['message-1-part-1', 'assistant', 'reply', undefined, 2],
+      ['message-1-call-0', 'assistant', 'tool_call', 'Read', 2],
+      ['message-2', 'tool', undefined, 'Read', 3],
+    ]);
+    const assistantGroup = page.summary.groups.find((group) => group.role === 'assistant');
+    expect(assistantGroup?.count).toBe(1);
+    expect(sumTokens(page.items.filter((entry) => entry.role === 'assistant'))).toBe(assistantGroup?.tokens);
+
+    const call = await getJson<ContextItemDetail>(`/api/v1/sessions/${sid}/context/items/message-1-call-0`);
+    expect(call).toMatchObject({ role: 'assistant', segment: 'tool_call', name: 'Read', sequence: 2 });
+    expect(call.parts).toEqual([{ kind: 'function', name: 'Read', data: { path: 'README.md' } }]);
+    const thinking = await getJson<ContextItemDetail>(`/api/v1/sessions/${sid}/context/items/message-1-part-0`);
+    expect(thinking.parts).toEqual([{ kind: 'think', text: 'I should open the readme first.' }]);
+
+    for (const id of ['message-1', 'message-0-part-0', 'message-1-part-2', 'message-1-call-1', 'message-1-call-0x']) {
+      const body = await getEnvelope<null>(`/api/v1/sessions/${sid}/context/items/${id}`);
+      expect(body.code, id).toBe(ErrorCode.MESSAGE_NOT_FOUND);
+    }
+  });
+
   it('reports the estimated total before any model call is measured', async () => {
     const sid = await createSession();
     await seedMainAgent(sid);
