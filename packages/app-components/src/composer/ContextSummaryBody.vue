@@ -206,11 +206,11 @@ const rows = computed(() => {
 .ctx-composition-free {
   display: block;
   height: 100%;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-context-segment);
 }
 .ctx-composition-seg {
   flex: none;
-  min-width: var(--space-1-5);
+  min-width: var(--space-1);
   background: var(--context-color, var(--color-text-faint));
 }
 .ctx-composition-free {
