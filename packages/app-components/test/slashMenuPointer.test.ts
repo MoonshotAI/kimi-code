@@ -73,12 +73,13 @@ describe('SlashMenu pointer selection', () => {
 
 
 describe('skill source labels', () => {
-  it('renders global and built-in labels in the slash menu only for skill rows', async () => {
+  it('renders global, built-in and plugin labels in the slash menu only for skill rows', async () => {
     app = createApp({
       render: () => h(SlashMenu, {
         items: [
           { name: '/skill:global', desc: 'Global skill', isSkill: true, sourceKind: 'global' },
           { name: '/builtin', desc: 'Built-in skill', isSkill: true, sourceKind: 'builtin' },
+          { name: '/skill:from-plugin', desc: 'Plugin skill', isSkill: true, sourceKind: 'plugin' },
           { name: '/swarm', desc: 'commands.swarm.desc' },
         ],
         activeIndex: 0,
@@ -91,15 +92,17 @@ describe('skill source labels', () => {
     expect([...document.querySelectorAll('.slash-dir')].map((element) => element.textContent)).toEqual([
       'Global',
       'Built-in',
+      'Plugin',
     ]);
   });
 
-  it('renders global and built-in labels in the mention menu', async () => {
+  it('renders global, built-in and plugin labels in the mention menu', async () => {
     app = createApp({
       render: () => h(MentionMenu, {
         items: [
           { kind: 'skill', skill: { name: 'global', description: 'Global skill', source: 'user', path: '/user/global/SKILL.md' } },
           { kind: 'skill', skill: { name: 'builtin', description: 'Built-in skill', source: 'builtin', path: 'builtin://builtin' } },
+          { kind: 'skill', skill: { name: 'from-plugin', description: 'Plugin skill', source: 'plugin', path: '/plugins/demo/skills/from-plugin/SKILL.md' } },
         ],
         activeIndex: 0,
         loading: false,
@@ -112,6 +115,7 @@ describe('skill source labels', () => {
     expect([...document.querySelectorAll('.mention-dir')].map((element) => element.textContent)).toEqual([
       'Global',
       'Built-in',
+      'Plugin',
     ]);
   });
 

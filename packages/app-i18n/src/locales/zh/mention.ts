@@ -7,6 +7,7 @@ export default {
   backToMentions: '返回',
   global: '全局',
   builtin: '内置',
+  plugin: '插件',
   openSkill: '打开技能文件',
   copyPath: '复制路径',
   attachmentUploadFailed: '添加附件失败，删除该附件或重新拖入文件重试',
