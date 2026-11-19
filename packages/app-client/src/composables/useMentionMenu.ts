@@ -176,6 +176,19 @@ function rankAttachments(
     }));
 }
 
+const CJK_TEXT_END = /[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}\uFF00-\uFFEF]$/u;
+
+function isMentionTrigger(ch: string | undefined): boolean {
+  return ch === '@' || ch === '＠';
+}
+
+function triggerIndexAfterCjk(word: string): number {
+  for (let i = word.length - 1; i > 0; i--) {
+    if (isMentionTrigger(word[i]) && CJK_TEXT_END.test(word.slice(0, i))) return i;
+  }
+  return -1;
+}
+
 export function useMentionMenu(deps: MentionMenuDeps) {
   const { text, editorRef, searchFiles, skills, attachments, browsers, insertMention, completeMention } = deps;
 
@@ -183,7 +196,6 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   const fileItems = ref<FileItem[]>([]);
   const fileQuery = ref('');
   const query = ref('');
-  const fileStale = ref(false);
   const skillItems = ref<Array<{ skill: AppSkill; tier: 1 | 2 | 3 | 4; positions: number[] }>>([]);
   const active = ref(0);
   const loading = ref(false);
@@ -247,6 +259,15 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   let searchAbort: AbortController | null = null;
   let lastToken: string | null = null;
   let dismissed = false;
+  let dismissedStart: number | null = null;
+
+  watch(
+    text,
+    (val) => {
+      if (dismissedStart !== null && !isMentionTrigger(val[dismissedStart])) dismissedStart = null;
+    },
+    { flush: 'sync' },
+  );
 
   function getMentionToken(): MentionToken | null {
     const val = text.value;
@@ -258,9 +279,10 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     }
     start++;
     start = Math.max(start, lowerBound);
-    const tokenPart = val.slice(start, pos);
-    if (!tokenPart.startsWith('@') && !tokenPart.startsWith('＠')) return null;
-    return { token: tokenPart.slice(1), start, end: pos };
+    const word = val.slice(start, pos);
+    const trigger = isMentionTrigger(word[0]) ? 0 : triggerIndexAfterCjk(word);
+    if (trigger === -1) return null;
+    return { token: word.slice(trigger + 1), start: start + trigger, end: pos };
   }
 
   function itemKey(item: MentionItem): string {
@@ -301,7 +323,6 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   function applyFileItems(next: FileItem[], token: string): void {
     const current = items.value[active.value];
     const key = current ? itemKey(current) : null;
-    fileStale.value = false;
     fileQuery.value = token.toLowerCase();
     fileItems.value = next;
     restoreActive(key);
@@ -331,6 +352,7 @@ export function useMentionMenu(deps: MentionMenuDeps) {
 
   function update(): void {
     const mt = getMentionToken();
+    if (mt !== null && mt.start === dismissedStart) return;
     const search = searchFiles();
     dismissed = false;
     userNavigated = false;
@@ -340,7 +362,6 @@ export function useMentionMenu(deps: MentionMenuDeps) {
       query.value = '';
       open.value = false;
       loading.value = false;
-      fileStale.value = false;
       searchAbort?.abort();
       searchAbort = null;
       return;
@@ -349,7 +370,7 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     localItemsEnabled.value = true;
     query.value = token;
     if (token !== lastToken) {
-      if (fileItems.value.length > 0) fileStale.value = true;
+      fileItems.value = [];
       searchSeq += 1;
     }
     lastToken = token;
@@ -360,7 +381,6 @@ export function useMentionMenu(deps: MentionMenuDeps) {
       fileItems.value = [];
       fileQuery.value = token.toLowerCase();
       loading.value = false;
-      fileStale.value = false;
       open.value = items.value.length > 0;
       return;
     }
@@ -421,11 +441,11 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   }
 
   function close(): void {
+    dismissedStart = null;
     dismissed = true;
     userNavigated = false;
     open.value = false;
     loading.value = false;
-    fileStale.value = false;
     fileItems.value = [];
     fileQuery.value = '';
     query.value = '';
@@ -437,10 +457,15 @@ export function useMentionMenu(deps: MentionMenuDeps) {
     searchAbort = null;
   }
 
+  function dismiss(): void {
+    const start = getMentionToken()?.start ?? null;
+    close();
+    dismissedStart = start;
+  }
+
   function select(item: MentionItem): void {
     const mt = getMentionToken();
     if (!mt) return;
-    if ((item.kind === 'file' || item.kind === 'folder') && fileStale.value) return;
     close();
     if (insertMention) {
       insertMention(toEntry(item), { start: mt.start, end: mt.end });
@@ -472,7 +497,6 @@ export function useMentionMenu(deps: MentionMenuDeps) {
   function complete(item: MentionItem): void {
     const mt = getMentionToken();
     if (!mt) return;
-    if ((item.kind === 'file' || item.kind === 'folder') && fileStale.value) return;
     if (item.kind === 'attachment' || item.kind === 'browser') {
       select(item);
       return;
@@ -505,5 +529,5 @@ export function useMentionMenu(deps: MentionMenuDeps) {
 
   if (getCurrentScope()) onScopeDispose(() => searchAbort?.abort());
 
-  return { open, items, fileItems, fileStale, skillItems, active, loading, update, close, select, complete, navigate, getToken: getMentionToken };
+  return { open, items, fileItems, skillItems, active, loading, query, update, close, dismiss, select, complete, navigate, getToken: getMentionToken };
 }

@@ -182,7 +182,7 @@ describe('useMentionMenu — update', () => {
     expect(mention.loading.value).toBe(false);
   });
 
-  it('keeps old file candidates visible but stale-marked while the new search is pending', async () => {
+  it('drops old file candidates while the new search is pending', async () => {
     const searchFiles = vi.fn().mockImplementation((q: string) =>
       Promise.resolve(q === 'a' ? [{ path: 'src/a.ts', name: 'a.ts' }] : [{ path: 'src/b.ts', name: 'b.ts' }]),
     );
@@ -192,51 +192,20 @@ describe('useMentionMenu — update', () => {
     mention.update();
     await vi.advanceTimersByTimeAsync(200);
     expect(mention.fileItems.value).toEqual([{ path: 'src/a.ts', name: 'a.ts' }]);
-    expect(mention.fileStale.value).toBe(false);
+    expect(mention.loading.value).toBe(false);
     text.value = '@goal';
     editor.value = '@goal';
     editor.selectionStart = 5;
     mention.update();
-    expect(mention.fileItems.value).toEqual([{ path: 'src/a.ts', name: 'a.ts' }]);
-    expect(mention.fileStale.value).toBe(true);
-    expect(mention.skillItems.value.map((s) => s.skill.name)).toEqual(['goal']);
+    expect(mention.fileItems.value).toEqual([]);
+    expect(mention.loading.value).toBe(true);
+    expect(mention.query.value).toBe('goal');
+    expect(mention.items.value.map((item) => item.kind)).toEqual(['skill']);
     expect(mention.active.value).toBe(0);
     await vi.advanceTimersByTimeAsync(200);
     expect(mention.fileItems.value).toEqual([{ path: 'src/b.ts', name: 'b.ts' }]);
-    expect(mention.fileStale.value).toBe(false);
+    expect(mention.loading.value).toBe(false);
     expect(mention.active.value).toBe(0);
-  });
-
-  it('rejects selecting a stale file row (skills stay selectable)', async () => {
-    const calls: unknown[] = [];
-    const searchFiles = vi.fn().mockImplementation(
-      () => new Promise<FileItem[]>(() => {}),
-    );
-    const { text, editor, mention } = setup('@a', searchFiles, {
-      skills: [{ name: 'goal', description: '', path: '/s/goal/SKILL.md', source: 'builtin' }],
-      insertMention: (entry) => calls.push(entry),
-    });
-    mention.update();
-    await vi.advanceTimersByTimeAsync(200);
-    searchFiles.mockImplementation((q: string) =>
-      Promise.resolve(q === 'a' ? [{ path: 'src/a.ts', name: 'a.ts' }] : [{ path: 'src/b.ts', name: 'b.ts' }]),
-    );
-    text.value = '@a';
-    editor.value = '@a';
-    editor.selectionStart = 2;
-    mention.update();
-    await vi.advanceTimersByTimeAsync(200);
-    expect(mention.fileItems.value).toEqual([{ path: 'src/a.ts', name: 'a.ts' }]);
-    text.value = '@g';
-    editor.value = '@g';
-    editor.selectionStart = 2;
-    mention.update();
-    expect(mention.fileStale.value).toBe(true);
-    mention.select({ kind: 'file', file: { path: 'src/a.ts', name: 'a.ts' } });
-    expect(calls).toEqual([]);
-    expect(mention.open.value).toBe(true);
-    mention.select({ kind: 'skill', skill: { name: 'goal', description: '', path: '/s/goal/SKILL.md', source: 'builtin' } });
-    expect(calls).toEqual([{ kind: 'skill', name: 'goal', path: '/s/goal/SKILL.md' }]);
   });
 
   it('applies only the newest search when the same query is re-entered', async () => {
@@ -615,30 +584,6 @@ describe('useMentionMenu — complete (Tab)', () => {
     expect(calls).toEqual([{ text: 'goal', range: { start: 5, end: 7 } }]);
   });
 
-  it('rejects completing a stale file row', async () => {
-    const searchFiles = vi.fn().mockImplementation(() => new Promise<FileItem[]>(() => {}));
-    const { text, editor, mention } = setup('@a', searchFiles);
-    mention.update();
-    await vi.advanceTimersByTimeAsync(200);
-    searchFiles.mockImplementation((q: string) =>
-      Promise.resolve(q === 'a' ? [{ path: 'src/a.ts', name: 'a.ts' }] : [{ path: 'src/b.ts', name: 'b.ts' }]),
-    );
-    text.value = '@a';
-    editor.value = '@a';
-    editor.selectionStart = 2;
-    mention.update();
-    await vi.advanceTimersByTimeAsync(200);
-    text.value = '@ab';
-    editor.value = '@ab';
-    editor.selectionStart = 3;
-    mention.update();
-    expect(mention.fileStale.value).toBe(true);
-    mention.complete({ kind: 'file', file: { path: 'src/a.ts', name: 'a.ts' } });
-    await nextTick();
-    expect(text.value).toBe('@ab');
-    expect(mention.open.value).toBe(true);
-  });
-
   it('falls back to atomic pill insertion for names containing whitespace', () => {
     const calls: Array<{ entry: MentionEntry; range: { start: number; end: number } }> = [];
     const { text, mention } = setup('@My', undefined, {
@@ -802,7 +747,7 @@ describe('useMentionMenu — skills section', () => {
     expect(activeItem.kind === 'skill' && activeItem.skill.name).toBe('x-goal');
   });
 
-  it('captures the highlighted row before re-banding stale candidates under the new query', async () => {
+  it('keeps the highlighted row when file results land under the new query', async () => {
     const resolvers: Array<(items: FileItem[]) => void> = [];
     const searchFiles = vi.fn().mockImplementation(
       () => new Promise<FileItem[]>((resolve) => { resolvers.push(resolve); }),
@@ -823,7 +768,7 @@ describe('useMentionMenu — skills section', () => {
     editor.selectionStart = 5;
     mention.update();
     expect(mention.items.value.map((item) => (item.kind === 'skill' ? item.skill.name : item.file.name)))
-      .toEqual(['goal', 'z-goal', 'a.ts']);
+      .toEqual(['goal', 'z-goal']);
     mention.navigate(1);
 
     resolvers[1]!([{ path: 'src/b.ts', name: 'b.ts' }]);
@@ -1090,5 +1035,85 @@ describe('useMentionMenu — full-width ＠ trigger (Chinese IMEs)', () => {
       entry: { kind: 'file', path: 'src/a.ts', name: 'a.ts' },
       range: { start: 3, end: 5 },
     });
+  });
+});
+
+describe('useMentionMenu — @ typed directly after CJK text', () => {
+  it.each([
+    ['你好@a', 2],
+    ['你好，@a', 3],
+    ['こんにちは@a', 5],
+    ['안녕@a', 2],
+    ['hi 你好＠a', 5],
+  ])('detects the token in %s', (input, start) => {
+    const { mention } = setup(input);
+    expect(mention.getToken()).toEqual({ token: 'a', start, end: input.length });
+  });
+
+  it.each(['abc@a', 'user@example.com', '邮箱foo@a', 'été@a'])('detects no token in %s', (input) => {
+    const { mention } = setup(input);
+    expect(mention.getToken()).toBeNull();
+  });
+
+  it('keeps a leading @ token whole when it contains CJK and another @', () => {
+    const { mention } = setup('@文档@a');
+    expect(mention.getToken()).toEqual({ token: '文档@a', start: 0, end: 5 });
+  });
+
+  it('select replaces only the @token, not the CJK text before it', () => {
+    const calls: Array<{ entry: MentionEntry; range: { start: number; end: number } }> = [];
+    const { mention } = setup('你好@a', undefined, {
+      insertMention: (entry, range) => calls.push({ entry, range }),
+    });
+    mention.select({ kind: 'file', file: { path: 'src/a.ts', name: 'a.ts' } });
+    expect(calls[0]?.range).toEqual({ start: 2, end: 4 });
+  });
+});
+
+describe('useMentionMenu — dismiss (Esc)', () => {
+  const skills: AppSkill[] = [{ name: 'goal', description: '', path: '/s/goal/SKILL.md', source: 'builtin' }];
+
+  function type(ctx: ReturnType<typeof setup>, value: string): void {
+    ctx.text.value = value;
+    ctx.editor.value = value;
+    ctx.editor.selectionStart = value.length;
+    ctx.mention.update();
+  }
+
+  it('stays closed while the dismissed token keeps being edited', () => {
+    const ctx = setup('@g', undefined, { skills });
+    ctx.mention.update();
+    expect(ctx.mention.open.value).toBe(true);
+    ctx.mention.dismiss();
+    expect(ctx.mention.open.value).toBe(false);
+    type(ctx, '@go');
+    expect(ctx.mention.open.value).toBe(false);
+    type(ctx, '@g');
+    expect(ctx.mention.open.value).toBe(false);
+  });
+
+  it('reopens once the @ is deleted and typed again', () => {
+    const ctx = setup('@g', undefined, { skills });
+    ctx.mention.update();
+    ctx.mention.dismiss();
+    type(ctx, '');
+    type(ctx, '@g');
+    expect(ctx.mention.open.value).toBe(true);
+  });
+
+  it('opens for a different @token', () => {
+    const ctx = setup('@g', undefined, { skills });
+    ctx.mention.update();
+    ctx.mention.dismiss();
+    type(ctx, '@g @go');
+    expect(ctx.mention.open.value).toBe(true);
+  });
+
+  it('a plain close does not suppress the next keystroke', () => {
+    const ctx = setup('@g', undefined, { skills });
+    ctx.mention.update();
+    ctx.mention.close();
+    type(ctx, '@go');
+    expect(ctx.mention.open.value).toBe(true);
   });
 });

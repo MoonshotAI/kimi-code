@@ -3,6 +3,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { matchRanges, type SlashCommand, type SlashMatchRanges } from '@moonshot-ai/app-core/lib';
 import { ensurePointerTracking, isSyntheticPointerMove } from '@moonshot-ai/app-ui';
+import { mentionIconSvg } from '@moonshot-ai/app-composer/features/mention';
+import ComposerMenuHints from './ComposerMenuHints.vue';
 
 const { t } = useI18n();
 
@@ -35,6 +37,12 @@ function pieces(text: string, ranges?: [number, number][]): { text: string; hit:
   return out;
 }
 
+const skillIcon = mentionIconSvg('skill', '', '');
+
+function onMenuMouseDown(event: MouseEvent): void {
+  if (props.layout === 'popup') event.preventDefault();
+}
+
 function descText(item: SlashCommand): string {
   return item.isSkill ? item.desc : t(item.desc);
 }
@@ -49,6 +57,7 @@ const segmented = computed(() =>
       desc,
       descPieces: pieces(desc, ranges.desc),
       dir: item.workspaceLabel ?? (item.sourceKind === undefined ? undefined : t(`mention.${item.sourceKind}`)),
+      showCommandsHeader: item.isSkill !== true && i === 0,
       showSkillsHeader: item.isSkill === true && (i === 0 || props.items[i - 1]?.isSkill !== true),
     };
   }),
@@ -150,7 +159,9 @@ function clampScrollToViewport(): void {
   const menuStyle = getComputedStyle(menu);
   const gap = parseFloat(menuStyle.getPropertyValue('--space-2')) || 8;
   const margin = parseFloat(menuStyle.getPropertyValue('--space-2')) || 8;
-  const chrome = (parseFloat(menuStyle.paddingTop) || 0) + (parseFloat(menuStyle.paddingBottom) || 0);
+  const hints = menu.querySelector<HTMLElement>('.composer-menu-hints');
+  const hintsHeight = hints ? hints.offsetHeight + (parseFloat(getComputedStyle(hints).marginTop) || 0) : 0;
+  const chrome = (parseFloat(menuStyle.paddingTop) || 0) + (parseFloat(menuStyle.paddingBottom) || 0) + hintsHeight;
   const cap = parseFloat(getComputedStyle(scroll).getPropertyValue('--p-slash-menu-h')) || Number.POSITIVE_INFINITY;
   const viewportTop = window.visualViewport?.offsetTop ?? 0;
   const available = parent.getBoundingClientRect().top - viewportTop - gap - margin - chrome;
@@ -228,11 +239,12 @@ watch(
 </script>
 
 <template>
-  <div ref="menuEl" class="slash-menu" :class="{ 'is-sheet': layout === 'sheet' }" data-menu-frame>
+  <div ref="menuEl" class="slash-menu" :class="{ 'is-sheet': layout === 'sheet' }" data-menu-frame @mousedown="onMenuMouseDown">
     <div v-if="items.length === 0" class="slash-empty" role="status">{{ t('composer.noCommands') }}</div>
     <div id="composer-slash-menu" v-show="items.length > 0" ref="scrollEl" class="slash-scroll" role="listbox" :style="{ maskImage, maxHeight: scrollMaxHeight }" @scroll="onScroll">
       <template v-for="(entry, i) in segmented" :key="`${entry.item.name}-${i}`">
-        <div v-if="entry.showSkillsHeader" class="slash-section-label" role="presentation">{{ t('mention.skills') }}</div>
+        <div v-if="entry.showCommandsHeader" class="slash-section-label" role="presentation">{{ t('composer.slashCommandsGroup') }}</div>
+        <div v-if="entry.showSkillsHeader" class="slash-section-label" :class="{ 'after-section': i > 0 }" role="presentation">{{ t('mention.skills') }}</div>
         <div
           :id="`composer-slash-option-${i}`"
           class="slash-item"
@@ -242,6 +254,7 @@ watch(
           @pointermove="onRowPointerMove($event, i)"
           @mousedown.prevent="emit('select', entry.item)"
         >
+          <span v-if="entry.item.isSkill === true" class="slash-icon" aria-hidden="true" v-html="skillIcon" />
           <span class="slash-name"><template v-for="(piece, pi) in entry.namePieces" :key="pi"><span v-if="piece.hit" class="slash-match">{{ piece.text }}</span><template v-else>{{ piece.text }}</template></template></span>
           <span class="slash-desc"><template v-for="(piece, pi) in entry.descPieces" :key="pi"><span v-if="piece.hit" class="slash-desc-match">{{ piece.text }}</span><template v-else>{{ piece.text }}</template></template></span>
           <span v-if="entry.dir" class="slash-dir">{{ entry.dir }}</span>
@@ -250,6 +263,7 @@ watch(
     </div>
     <!-- Overlay scroll indicator (the native bar is hidden — it ate row width) -->
     <div v-if="thumb && items.length > 0" class="scroll-thumb" @pointerdown="onThumbPointerDown" :style="{ top: `${thumb.top}px`, height: `${thumb.height}px` }" />
+    <ComposerMenuHints v-if="layout === 'popup' && items.length > 0" />
   </div>
 </template>
 
@@ -329,6 +343,28 @@ watch(
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
+}
+
+.slash-section-label.after-section {
+  margin-top: var(--space-2);
+}
+
+.slash-icon {
+  display: inline-flex;
+  align-self: center;
+  flex: none;
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+  color: var(--muted);
+}
+.slash-icon :deep(svg) {
+  display: block;
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+}
+.slash-item:hover .slash-icon,
+.slash-item.active .slash-icon {
+  color: var(--color-text-strong);
 }
 
 .slash-item {

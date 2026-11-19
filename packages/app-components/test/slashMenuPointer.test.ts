@@ -114,6 +114,40 @@ describe('skill source labels', () => {
       'Built-in',
     ]);
   });
+
+  it('shows a searching row under a Files header while file results are pending', async () => {
+    app = createApp({
+      render: () => h(MentionMenu, {
+        items: [
+          { kind: 'skill', skill: { name: 'readme-writer', description: '', source: 'user', path: '/user/readme-writer/SKILL.md' } },
+        ],
+        activeIndex: 0,
+        loading: true,
+        query: 'readm',
+      }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    expect([...document.querySelectorAll('.mention-section-label')].map((element) => element.textContent?.trim()))
+      .toEqual(['Skills', 'Files']);
+    expect(document.querySelector('.mention-searching')?.textContent).toBe('Searching for “readm”…');
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+  });
+
+  it('shows the searching row alone when nothing else matches yet', async () => {
+    app = createApp({
+      render: () => h(MentionMenu, { items: [], activeIndex: 0, loading: true }),
+    });
+    app.use(createKimiI18n({ locale: 'en' }));
+    app.mount(host);
+    await nextTick();
+
+    expect(document.querySelector('.mention-searching')?.textContent).toBe('Searching…');
+    expect(document.querySelector('.mention-state')).toBeNull();
+    expect(document.querySelector('.composer-menu-hints')).toBeNull();
+  });
 });
 
 describe('mobile command layout', () => {
@@ -141,7 +175,7 @@ describe('mobile command layout', () => {
 });
 
 describe('skill grouping', () => {
-  it('renders one skills section after ordinary commands', async () => {
+  it('renders a commands section followed by one skills section', async () => {
     app = createApp({
       render: () => h(SlashMenu, {
         items: [
@@ -156,10 +190,13 @@ describe('skill grouping', () => {
     app.mount(host);
     await nextTick();
 
-    const section = document.querySelector('.slash-section-label');
-    expect(section?.textContent).toBe('Skills');
-    expect(section?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('/skill:lark-calendar');
-    expect(document.querySelectorAll('.slash-section-label')).toHaveLength(1);
+    const sections = [...document.querySelectorAll('.slash-section-label')];
+    expect(sections.map((section) => section.textContent)).toEqual(['Commands', 'Skills']);
+    expect(sections[0]?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('/plan');
+    expect(sections[1]?.nextElementSibling?.querySelector('.slash-name')?.textContent).toBe('/skill:lark-calendar');
+    expect([...document.querySelectorAll('.slash-item')].map((row) => row.querySelector('.slash-icon') !== null))
+      .toEqual([false, true, true]);
+    expect(document.querySelector('.composer-menu-hints')?.textContent).toContain('complete');
     expect([...document.querySelectorAll('.slash-name')].map((element) => element.textContent)).toEqual([
       '/plan',
       '/skill:lark-calendar',

@@ -1,5 +1,6 @@
 export default {
   searching: '搜索中…',
+  searchingFor: '正在搜索“{query}”…',
   noMatch: '无匹配',
   skills: '技能',
   global: '全局',

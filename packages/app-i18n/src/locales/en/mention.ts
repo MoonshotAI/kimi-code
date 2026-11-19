@@ -1,5 +1,6 @@
 export default {
   searching: 'Searching…',
+  searchingFor: 'Searching for “{query}”…',
   noMatch: 'No matches',
   skills: 'Skills',
   global: 'Global',
