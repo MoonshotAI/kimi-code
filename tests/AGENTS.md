@@ -86,3 +86,7 @@ pnpm --filter kimi-code-app run e2e --project=smoke
 pnpm --filter kimi-code-app run e2e --quarantine --no-build --list
 pnpm --filter kimi-code-app run e2e:headless --quarantine --retries=0
 ```
+
+## KAP 录制与客户端回放
+
+[首轮录制](scenarios/replay.test.ts)用真实服务分别捕获初始 REST 页、订阅基线、模型挂起时及回合结束时的 WS 帧和最终 REST 页。[客户端回放](../packages/app-core/test/replay/first-turn.test.ts)离线调用生产 reducer，业务期望由消费者独立维护。运行 `pnpm exec vitest run tests/scenarios/replay.test.ts packages/app-core/test/replay` 验证两端。只有显式运行 `pnpm qa:refresh replay` 才会刷新录制，随后评审数据差异。CI 始终只读。

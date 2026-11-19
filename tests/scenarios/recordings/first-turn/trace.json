@@ -1,0 +1,237 @@
+{
+  "checkpoints": [
+    {
+      "frames": [
+        {
+          "agent_id": "main",
+          "event_created_at": "2000-01-01T00:00:00.000Z",
+          "has_more": false,
+          "session_id": "recorded-1",
+          "turns": [],
+          "type": "turns"
+        }
+      ],
+      "name": "subscribed"
+    },
+    {
+      "frames": [
+        {
+          "agent_id": "main",
+          "event_created_at": "2000-01-01T00:00:00.000Z",
+          "session_id": "recorded-1",
+          "turn": {
+            "kind": "agent",
+            "ordinal": 0,
+            "started_at": "2000-01-01T00:00:00.000Z",
+            "status": "running",
+            "steps": [],
+            "turn_id": "recorded-2",
+            "turn_number": 0
+          },
+          "type": "turn.started"
+        },
+        {
+          "agent_id": "main",
+          "event_created_at": "2000-01-01T00:00:00.000Z",
+          "item": {
+            "attachments": [],
+            "created_at": "2000-01-01T00:00:00.000Z",
+            "item_id": "recorded-3",
+            "origin": {
+              "kind": "user"
+            },
+            "outcome": "completed",
+            "placement": "opener",
+            "prompt_ids": [
+              "recorded-3"
+            ],
+            "skills": [],
+            "status": "ended",
+            "text": "A question",
+            "type": "user_message"
+          },
+          "session_id": "recorded-1",
+          "turn_id": "recorded-2",
+          "type": "item.ended"
+        },
+        {
+          "agent_id": "main",
+          "event_created_at": "2000-01-01T00:00:00.000Z",
+          "item": {
+            "created_at": "2000-01-01T00:00:00.000Z",
+            "item_id": "recorded-4",
+            "status": "running",
+            "step_index": 1,
+            "text": "First",
+            "type": "assistant_message"
+          },
+          "session_id": "recorded-1",
+          "turn_id": "recorded-2",
+          "type": "item.started"
+        }
+      ],
+      "name": "partial"
+    },
+    {
+      "frames": [
+        {
+          "agent_id": "main",
+          "delta": " answer",
+          "event_created_at": "2000-01-01T00:00:00.000Z",
+          "field": "text",
+          "item_id": "recorded-4",
+          "session_id": "recorded-1",
+          "turn_id": "recorded-2",
+          "type": "item.delta"
+        },
+        {
+          "agent_id": "main",
+          "event_created_at": "2000-01-01T00:00:00.000Z",
+          "item": {
+            "created_at": "2000-01-01T00:00:00.000Z",
+            "item_id": "recorded-4",
+            "outcome": "completed",
+            "status": "ended",
+            "step_index": 1,
+            "text": "First answer",
+            "type": "assistant_message"
+          },
+          "session_id": "recorded-1",
+          "turn_id": "recorded-2",
+          "type": "item.ended"
+        },
+        {
+          "agent_id": "main",
+          "event_created_at": "2000-01-01T00:00:00.000Z",
+          "session_id": "recorded-1",
+          "step": {
+            "ended_at": "2000-01-01T00:00:00.000Z",
+            "finish_reason": "end_turn",
+            "index": 1,
+            "outcome": "completed",
+            "started_at": "2000-01-01T00:00:00.000Z",
+            "usage": {
+              "input_cache_creation": 0,
+              "input_cache_read": 0,
+              "input_other": 20,
+              "output": 3
+            }
+          },
+          "turn_id": "recorded-2",
+          "type": "turn.updated"
+        },
+        {
+          "agent_id": "main",
+          "event_created_at": "2000-01-01T00:00:00.000Z",
+          "session_id": "recorded-1",
+          "turn": {
+            "duration_ms": 0,
+            "ended_at": "2000-01-01T00:00:00.000Z",
+            "kind": "agent",
+            "ordinal": 0,
+            "outcome": "completed",
+            "started_at": "2000-01-01T00:00:00.000Z",
+            "status": "ended",
+            "steps": [
+              {
+                "ended_at": "2000-01-01T00:00:00.000Z",
+                "finish_reason": "end_turn",
+                "index": 1,
+                "outcome": "completed",
+                "started_at": "2000-01-01T00:00:00.000Z",
+                "usage": {
+                  "input_cache_creation": 0,
+                  "input_cache_read": 0,
+                  "input_other": 20,
+                  "output": 3
+                }
+              }
+            ],
+            "turn_id": "recorded-2",
+            "turn_number": 0,
+            "usage": {
+              "input_cache_creation": 0,
+              "input_cache_read": 0,
+              "input_other": 20,
+              "output": 3
+            }
+          },
+          "type": "turn.ended"
+        }
+      ],
+      "name": "completed"
+    }
+  ],
+  "final": {
+    "has_more": false,
+    "turns": [
+      {
+        "duration_ms": 0,
+        "ended_at": "2000-01-01T00:00:00.000Z",
+        "items": [
+          {
+            "attachments": [],
+            "created_at": "2000-01-01T00:00:00.000Z",
+            "item_id": "recorded-3",
+            "origin": {
+              "kind": "user"
+            },
+            "outcome": "completed",
+            "placement": "opener",
+            "prompt_ids": [
+              "recorded-3"
+            ],
+            "skills": [],
+            "status": "ended",
+            "text": "A question",
+            "type": "user_message"
+          },
+          {
+            "created_at": "2000-01-01T00:00:00.000Z",
+            "item_id": "recorded-4",
+            "outcome": "completed",
+            "status": "ended",
+            "step_index": 1,
+            "text": "First answer",
+            "type": "assistant_message"
+          }
+        ],
+        "kind": "agent",
+        "ordinal": 0,
+        "outcome": "completed",
+        "started_at": "2000-01-01T00:00:00.000Z",
+        "status": "ended",
+        "steps": [
+          {
+            "ended_at": "2000-01-01T00:00:00.000Z",
+            "finish_reason": "end_turn",
+            "index": 1,
+            "outcome": "completed",
+            "started_at": "2000-01-01T00:00:00.000Z",
+            "usage": {
+              "input_cache_creation": 0,
+              "input_cache_read": 0,
+              "input_other": 20,
+              "output": 3
+            }
+          }
+        ],
+        "turn_id": "recorded-2",
+        "turn_number": 0,
+        "usage": {
+          "input_cache_creation": 0,
+          "input_cache_read": 0,
+          "input_other": 20,
+          "output": 3
+        }
+      }
+    ]
+  },
+  "format": 1,
+  "initial": {
+    "has_more": false,
+    "turns": []
+  },
+  "kapVersion": "1.0.0",
+  "serverVersion": "0.3.0"
+}

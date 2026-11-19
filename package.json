@@ -29,6 +29,7 @@
     "lint:pkg": "pnpm --filter @moonshot-ai/kimi-code exec publint && npm_config_cache=${TMPDIR:-/tmp}/kimi-code-npm-cache pnpm --filter @moonshot-ai/kimi-code exec attw --pack . --profile node16",
     "sherif": "sherif -i @agentclientprotocol/sdk -i vite -i fuse.js -i jsdom -i tsdown -i typescript -i diff -i @vitejs/plugin-vue",
     "test": "vitest run",
+    "qa:refresh": "node scripts/refresh-qa-fixtures.mjs",
     "test:smoke": "vitest run --reporter=verbose --reporter=./scripts/vitest-smoke-reporter.mjs --tagsFilter=smoke packages/agent-core-v2/test/integration tests/scenarios apps/kimi-code/test/e2e/tui && pnpm --filter kimi-code-app run e2e:headless --protected --project=smoke --retries=0",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
