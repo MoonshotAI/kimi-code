@@ -2082,6 +2082,7 @@ export class KimiTUI {
 
   failSessionRequest(message: string): void {
     this.streamingUI.timeline.turnEnded();
+    this.streamingUI.setTurnId(undefined);
     this.programStatus.failRequest(message);
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
@@ -2403,6 +2404,7 @@ export class KimiTUI {
     const { session, error, entries, retried, retry, restore } = args;
     if (this.session?.id !== session.id || !isSessionOccupiedError(error)) return false;
     this.streamingUI.timeline.turnEnded();
+    this.streamingUI.setTurnId(undefined);
     if (entries !== undefined) this.removeTranscriptEntries(entries);
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();

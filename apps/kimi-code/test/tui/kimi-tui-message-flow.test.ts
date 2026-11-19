@@ -168,6 +168,7 @@ interface MessageDriver {
   appendTranscriptEntry(entry: TranscriptEntry): void;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
+  failSessionRequest(message: string): void;
   drainQueueIfIdle(): void;
   enqueueModelSwitch: KimiTUI['enqueueModelSwitch'];
   completedCompactionSerial: number;
@@ -6870,6 +6871,134 @@ command = "vim"
       expect(session.compact).toHaveBeenCalledWith({ instruction: undefined });
     });
     expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('keeps manual compaction independent of turn state and drains queued input', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = (item: QueuedMessage) => { driver.sendQueuedMessage(session, item); };
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 41, reason: 'completed' } as Event,
+      sendQueued,
+    );
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'manual' } as Event,
+      sendQueued,
+    );
+
+    expect(driver.state.appState.isCompacting).toBe(true);
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
+
+    driver.handleUserInput('after compact');
+
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'after compact', agentId: 'main' }]);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+      } as Event,
+      sendQueued,
+    );
+
+    expect(driver.streamingUI.getTurnContext().turnId).toBeUndefined();
+    expect(driver.state.appState.isCompacting).toBe(false);
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('after compact', { promptId: undefined });
+    });
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('preserves the active turn across auto compaction', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = (item: QueuedMessage) => { driver.sendQueuedMessage(session, item); };
+    driver.streamingUI.setTurnId('7');
+    driver.state.appState.streamingPhase = 'composing';
+    driver.state.livePane.mode = 'idle';
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'auto' } as Event,
+      sendQueued,
+    );
+
+    expect(driver.state.appState.isCompacting).toBe(true);
+    expect(driver.state.appState.streamingPhase).toBe('composing');
+    expect(driver.state.livePane.mode).toBe('idle');
+
+    driver.handleUserInput('queued during auto compaction');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+      } as Event,
+      sendQueued,
+    );
+
+    expect(driver.state.appState.isCompacting).toBe(false);
+    expect(driver.state.appState.streamingPhase).toBe('composing');
+    expect(driver.streamingUI.getTurnContext().turnId).toBe('7');
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'queued during auto compaction', agentId: 'main' },
+    ]);
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 7, reason: 'completed' } as Event,
+      sendQueued,
+    );
+
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
+    expect(driver.streamingUI.getTurnContext().turnId).toBeUndefined();
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('queued during auto compaction', { promptId: undefined });
+    });
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('clears a stale turn id when a session request fails locally', async () => {
+    const { driver } = await makeDriver();
+    driver.streamingUI.setTurnId('stale');
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.failSessionRequest('request failed');
+
+    expect(driver.streamingUI.getTurnContext().turnId).toBeUndefined();
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
+  });
+
+  it('clears a stale turn id when prompt occupancy recovery opens', async () => {
+    const session = makeSession({
+      prompt: vi.fn(async () => {
+        throw new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('hello');
+    driver.streamingUI.setTurnId('stale');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorReplacementMounted).toBe(true);
+    });
+    expect(driver.streamingUI.getTurnContext().turnId).toBeUndefined();
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.livePane.mode).toBe('idle');
   });
 
   it('reports a failed compact request as an error instead of staying busy', async () => {
