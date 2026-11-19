@@ -26,13 +26,15 @@ The startup banner prints the access URL — if the browser doesn't open automat
 ```text
 Local:   http://127.0.0.1:58627/#token=...
 Token:   ...
-Stop:    Ctrl+C
+Exit:    Ctrl+C  the shared server stays running
 ```
 
 ::: warning
-The `#token=` fragment is the access credential — don't share it. Stop the server with `Ctrl+C` in the terminal.
+Keep the `#token=` fragment private. It grants access to the server.
 :::
 </div>
+
+On macOS and Linux, `kimi web` and Kimi Code's SSH connection to the same machine share sessions when they use the same Kimi data directory. Pressing `Ctrl+C` exits the command and leaves the shared server running until idle. On Windows, and when you supply a server option such as `--host` or `--port`, `Ctrl+C` stops the foreground server.
 
 ### Startup options
 

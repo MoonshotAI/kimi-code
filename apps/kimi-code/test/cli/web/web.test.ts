@@ -9,12 +9,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetCapabilitiesCache, setCapabilities } from '@moonshot-ai/pi-tui';
 
-import { HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
+import { createInstanceRegistry, HOST_API_LEVEL, HOST_PROTOCOL_VERSION } from '@moonshot-ai/kap-server';
 
 import { registerWebCommand } from '#/cli/sub/web';
 import {
   daemonSocketPath,
   ensureDaemon,
+  ensureWebDaemon,
   type DaemonConnection,
   type EnsureDaemonDeps,
 } from '#/cli/sub/web/ensure-daemon';
@@ -23,7 +24,7 @@ import type {
   RemoteControlCloseReason,
   RemoteControlStatus,
 } from '#/cli/sub/web/remote-control';
-import type { WebCommandDeps } from '#/cli/sub/web/run';
+import { buildWebCommand, type WebCommandDeps } from '#/cli/sub/web/run';
 import type { ParsedServerOptions } from '#/cli/sub/web/shared';
 import { darkColors } from '#/tui/theme/colors';
 
@@ -145,6 +146,46 @@ describe('kimi web', () => {
     await program.parseAsync(['node', 'kimi', 'server', '--open']);
     expect(parsedOpts).toMatchObject({ open: true });
   });
+
+  it.skipIf(process.platform === 'win32').each([true, false])(
+    'attaches plain Web invocations to the shared daemon with open=%s',
+    async (open) => {
+      const stream = new PassThrough();
+      stream.resume();
+      stream.end();
+      const close = vi.fn();
+      const ensureWebDaemon = vi.fn(async () => ({
+        origin: 'http://127.0.0.1:58628',
+        connection: { stream, close, version: '1.0.0', serverId: 'daemon', stopIfIdle: vi.fn() },
+      }));
+      const startServerForeground = vi.fn<ForegroundRunner>();
+      const openUrl = vi.fn();
+      const io = makeIo();
+      const cmd = buildWebCommand(new Command('web'), { sharedDaemon: true }, {
+        ...io, ensureWebDaemon, startServerForeground, openUrl, resolveToken: () => 'tok',
+      });
+      await cmd.parseAsync(open ? [] : ['--no-open'], { from: 'user' });
+      expect(ensureWebDaemon).toHaveBeenCalledOnce();
+      expect(startServerForeground).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledOnce();
+      expect(stripAnsi(io.readStdout())).toContain('the shared server stays running');
+      expect(openUrl.mock.calls).toEqual(open ? [['http://127.0.0.1:58628/#token=tok']] : []);
+    },
+  );
+
+  it.each([['--port', '58627'], ['--host', '127.0.0.1'], ['--json']])(
+    'uses the foreground listener when explicitly supplied %s',
+    async (option, value?: string) => {
+      const ensureWebDaemon = vi.fn();
+      const startServerForeground = vi.fn(makeRunner().runner);
+      const cmd = buildWebCommand(new Command('web'), { sharedDaemon: true }, {
+        ...makeIo(), ensureWebDaemon, startServerForeground, openUrl: vi.fn(),
+      });
+      await cmd.parseAsync(value === undefined ? [option] : [option, value], { from: 'user' });
+      expect(ensureWebDaemon).not.toHaveBeenCalled();
+      expect(startServerForeground).toHaveBeenCalledOnce();
+    },
+  );
 });
 
 describe('`kimi web` ready banner', () => {
@@ -1139,6 +1180,7 @@ describe('`kimi server ensure-daemon`', () => {
     return {
       stream: new PassThrough(),
       version: '1.0.0',
+      serverId: 'daemon',
       stopIfIdle: async () => true,
       close: () => {},
       ...overrides,
@@ -1162,10 +1204,7 @@ describe('`kimi server ensure-daemon`', () => {
       connectSocket: async () => conn,
     });
 
-    await expect(ensureDaemon(deps)).resolves.toEqual({
-      version: '1.0.0',
-      stream: conn.stream,
-    });
+    await expect(ensureDaemon(deps)).resolves.toBe(conn);
     expect(deps.spawnServer).not.toHaveBeenCalled();
   });
 
@@ -1179,15 +1218,46 @@ describe('`kimi server ensure-daemon`', () => {
       },
     });
 
-    await expect(ensureDaemon(deps)).resolves.toEqual({
-      version: '1.0.0',
-      stream: spawned.stream,
-    });
+    await expect(ensureDaemon(deps)).resolves.toBe(spawned);
     expect(deps.spawnServer).toHaveBeenCalledWith(
       daemonSocketPath(homeDir),
       join(homeDir, 'server', 'ensure-daemon.log'),
       join(homeDir, 'server', 'forwarded-ssh-agent.sock'),
     );
+  });
+
+  it.each(['SSH', 'Web'])('discovers the same daemon when %s starts it first', async (first) => {
+    const registry = createInstanceRegistry({ instancesDir: join(homeDir, 'server', 'instances') });
+    const instance = { pid: process.pid, host: '127.0.0.1', startedAt: 1 };
+    const other = await registry.register({ ...instance, port: 58627 });
+    const daemon = await registry.register({ ...instance, port: 58628, startedAt: 2 });
+    try {
+      let started = false;
+      const deps = makeDeps({
+        connectSocket: async () => started ? connection({ serverId: daemon.serverId }) : undefined,
+        spawnServer: vi.fn(() => { started = true; }),
+      });
+      const [firstConnection, secondConnection] = first === 'SSH'
+        ? [await ensureDaemon(deps), (await ensureWebDaemon(deps)).connection]
+        : [(await ensureWebDaemon(deps)).connection, await ensureDaemon(deps)];
+      expect(firstConnection.serverId).toBe(daemon.serverId);
+      expect(secondConnection.serverId).toBe(firstConnection.serverId);
+      expect((await ensureWebDaemon(deps)).origin).toBe('http://127.0.0.1:58628');
+      expect(deps.spawnServer).toHaveBeenCalledOnce();
+    } finally {
+      await daemon.release();
+      await other.release();
+    }
+  });
+
+  it('leaves a busy socket-only daemon available to SSH', async () => {
+    const existing = connection({ serverId: 'socket', stopIfIdle: async () => false, close: vi.fn() });
+    const deps = makeDeps({ connectSocket: async () => existing });
+
+    await expect(ensureWebDaemon(deps)).rejects.toMatchObject({ code: 'web_listener_unavailable' });
+    expect(existing.close).toHaveBeenCalledOnce();
+    await expect(ensureDaemon(deps)).resolves.toBe(existing);
+    expect(deps.spawnServer).not.toHaveBeenCalled();
   });
 
   it('replaces an idle daemon of another version after its socket closes', async () => {

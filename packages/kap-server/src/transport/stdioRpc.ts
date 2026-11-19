@@ -1,6 +1,7 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import { chmod, mkdir, rm, stat } from 'node:fs/promises';
-import type { IncomingHttpHeaders, IncomingMessage, OutgoingHttpHeaders } from 'node:http';
+import { IncomingMessage, type IncomingHttpHeaders, type OutgoingHttpHeaders } from 'node:http';
 import { createServer, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 import type { Duplex } from 'node:stream';
@@ -13,6 +14,12 @@ import { WS_DEBUG_PATH } from './ws/debug/registerWsDebug';
 import { WS_PATH as WS_PATH_V1 } from './ws/v1/registerWsV1';
 
 export { HOST_RPC_MAX_BODY_BYTES } from './jsonlRpcStream';
+
+const unixRpcRequest = new AsyncLocalStorage<true>();
+
+export function isUnixRpcRequest(request: IncomingMessage): boolean {
+  return !(request instanceof IncomingMessage) && unixRpcRequest.getStore() === true;
+}
 
 export interface RpcHttpRequestFrame {
   readonly type: 'http.req';
@@ -159,13 +166,13 @@ export function attachRpcStream(stream: Duplex, opts: RpcStreamOptions): void {
           if (contentLength > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
           const body = frame.body === undefined ? Buffer.alloc(0) : Buffer.from(frame.body, 'base64');
           if (body.length > HOST_RPC_MAX_BODY_BYTES) throw new RpcBodyTooLargeError();
-          const res = await opts.app.inject({
+          const res = await unixRpcRequest.run(true, () => opts.app.inject({
             method: frame.method as 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
             url: frame.path,
             headers: { ...frame.headers, host: '127.0.0.1' },
             payload: body,
             payloadAsStream: true,
-          });
+          }));
           const responseStream = res.stream();
           requests.set(frame.id, () => responseStream.destroy());
           responseStream.once('close', finish);

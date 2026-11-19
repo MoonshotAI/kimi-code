@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { finished } from 'node:stream/promises';
 
 import {
   createServerLogger,
@@ -31,6 +32,7 @@ import {
   isLoopbackHost,
   splitTokenFragment,
 } from './access-urls';
+import { ensureWebDaemon } from './ensure-daemon';
 import { type NetworkAddress } from './networks';
 import {
   formatRemoteControlOutput,
@@ -64,6 +66,7 @@ export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
   json?: boolean;
   remoteControl?: boolean;
+  sharedDaemon?: boolean;
 }
 
 export interface ForegroundControls {
@@ -76,6 +79,7 @@ export interface StartForegroundHooks {
 }
 
 export interface WebCommandDeps {
+  ensureWebDaemon?: () => ReturnType<typeof ensureWebDaemon>;
   startServerForeground?: (
     options: ParsedServerOptions,
     hooks?: StartForegroundHooks,
@@ -94,10 +98,12 @@ export function buildWebUrl(origin: string, token: string): string {
 
 export function buildWebCommand(
   cmd: Command,
-  opts: { forceRemoteControl?: boolean; defaultOpen?: boolean } = {},
+  opts: { forceRemoteControl?: boolean; defaultOpen?: boolean; sharedDaemon?: boolean } = {},
+  deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Command {
   const forceRemoteControl = opts.forceRemoteControl === true;
   const defaultOpen = opts.defaultOpen ?? true;
+  const useSharedDaemon = opts.sharedDaemon === true && process.platform !== 'win32';
   const withServerOptions = cmd
     .option(
       '--port <port>',
@@ -141,6 +147,7 @@ export function buildWebCommand(
       'Set a custom browser tab title for this web UI instance (default: "<workspace dir> | Kimi Code").',
     );
   withServerOptions.addOption(new Option('--socket <path>').hideHelp());
+  withServerOptions.addOption(new Option('--also-listen-tcp').hideHelp());
   withServerOptions.addOption(new Option('--managed-by <owner>').hideHelp());
   if (!forceRemoteControl) {
     withServerOptions.addOption(
@@ -163,16 +170,21 @@ export function buildWebCommand(
       false,
     );
   }
-  return withServerOptions.action(async (opts: WebCliOptions) => {
-      try {
-        await handleWebCommand(
-          forceRemoteControl ? { ...opts, remoteControl: true } : opts,
-        );
-      } catch (error) {
-        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-        process.exit(1);
-      }
-    });
+  return withServerOptions.action(async (cliOptions: WebCliOptions) => {
+    try {
+      const sharedDaemon = useSharedDaemon && !withServerOptions.options.some((option) => {
+        const key = option.attributeName();
+        return key !== 'open' && withServerOptions.getOptionValueSource(key) === 'cli';
+      });
+      await handleWebCommand(
+        { ...cliOptions, sharedDaemon, remoteControl: forceRemoteControl || cliOptions.remoteControl === true },
+        deps,
+      );
+    } catch (error) {
+      deps.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(1);
+    }
+  });
 }
 
 function createEphemeralAuthTokenService(secret: string): IAuthTokenService {
@@ -220,6 +232,19 @@ export async function handleWebCommand(
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
+  if (opts.sharedDaemon === true) {
+    const { origin, connection } = await (deps.ensureWebDaemon ?? ensureWebDaemon)();
+    try {
+      const token = deps.resolveToken?.();
+      if (token === undefined) throw new Error('Unable to read the local server token.');
+      deps.stdout.write(formatReadyBanner(origin, parsed.host, { token, sharedDaemon: true }));
+      if (opts.open === true) deps.openUrl(buildWebUrl(origin, token));
+      await finished(connection.stream, { cleanup: true });
+    } finally {
+      connection.close();
+    }
+    return;
+  }
   const jsonMode = opts.json === true;
   if (jsonMode && opts.remoteControl === true) {
     throw new Error('--json cannot be combined with --remote-control.');
@@ -423,6 +448,7 @@ async function runServerInProcess(
     disableAuth: options.dangerousBypassAuth,
     webTitle: options.webTitle,
     socketPath: options.socketPath,
+    alsoListenTcp: options.alsoListenTcp,
     managedBy: options.managedBy,
     telemetry: true,
     webAssetsDir,
@@ -430,7 +456,9 @@ async function runServerInProcess(
   logger.info('serving the REST/WS API and the bundled web UI');
   running = {
     address:
-      options.socketPath === undefined ? `http://${v2.host}:${v2.port}` : `unix:${options.socketPath}`,
+      options.socketPath === undefined || options.alsoListenTcp === true
+        ? `http://${v2.host}:${v2.port}`
+        : `unix:${options.socketPath}`,
     logger,
     close: () => v2.close(),
   };
@@ -481,6 +509,7 @@ export function resolveServerWebAssetsDir(
 }
 
 interface FormatReadyBannerOptions {
+  sharedDaemon?: boolean;
   token?: string;
   networkAddresses?: NetworkAddress[];
   dangerousBypassAuth?: boolean;
@@ -532,8 +561,12 @@ export function formatReadyBanner(
     lines.push('');
   }
 
-  lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
-  lines.push(`  ${label('Stop:     ')}${muted('Ctrl+C')}`);
+  if (opts.sharedDaemon === true) {
+    lines.push(`  ${label('Exit:     ')}${muted('Ctrl+C')}${dim('  the shared server stays running')}`);
+  } else {
+    lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
+    lines.push(`  ${label('Stop:     ')}${muted('Ctrl+C')}`);
+  }
   lines.push('');
   return lines.join('\n');
 }

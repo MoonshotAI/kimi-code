@@ -9,7 +9,8 @@ export function registerWebCommand(program: Command): void {
   const web = buildWebCommand(
     program
       .command('web')
-      .description('Run the local Kimi server and open the web UI.'),
+      .description('Open the web UI and start a local Kimi server if needed.'),
+    { sharedDaemon: true },
   );
   registerRotateTokenCommand(web);
   const server = buildWebCommand(

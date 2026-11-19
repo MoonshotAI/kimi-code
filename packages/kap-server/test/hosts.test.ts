@@ -1,3 +1,4 @@
+import { once } from 'node:events';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createConnection } from 'node:net';
@@ -958,6 +959,72 @@ function rpcClient(socketPath: string) {
 }
 
 describe('stdio rpc transport', () => {
+  it.skipIf(process.platform === 'win32')('shares sessions and subscriptions with an authenticated TCP listener', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-kap-dual-'));
+    const socketPath = join(homeDir, 'daemon.sock');
+    const server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY, homeDir, port: 0, socketPath, alsoListenTcp: true, logLevel: 'silent',
+    });
+    const ssh = new StdioHostSession(createConnection(socketPath));
+    const origin = `http://127.0.0.1:${server.port}`;
+    const wsUrl = `ws://127.0.0.1:${server.port}/api/v1/ws`;
+    let web: WebSocketClient | undefined;
+    try {
+      expect((await fetch(`${origin}/api/v1/meta`)).status).toBe(401);
+      const unauthorized = new WebSocketClient(wsUrl);
+      const [error] = await once(unauthorized, 'error') as [Error];
+      expect(error.message).toContain('401');
+
+      const created = await ssh.request({
+        method: 'POST', path: '/api/v1/sessions', headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify({ metadata: { cwd: homeDir } })),
+      });
+      expect(created.status).toBeLessThan(300);
+      const { data: { id } } = JSON.parse(created.body.toString('utf8')) as { data: { id: string } };
+      const headers = { authorization: `Bearer ${server.authTokenService.getToken()}` };
+      const response = await fetch(`${origin}/api/v1/sessions/${id}`, { headers });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ data: { id } });
+
+      const webFrames: unknown[] = [];
+      const sshFrames: unknown[] = [];
+      web = new WebSocketClient(wsUrl, { headers });
+      web.on('message', (frame: Buffer) => webFrames.push(JSON.parse(frame.toString('utf8'))));
+      await once(web, 'open');
+      const channel = ssh.openWebSocket('/api/v1/ws', {
+        onMessage: (frame) => sshFrames.push(JSON.parse(frame)),
+        onClose: () => {},
+        onBackpressure: () => {},
+      });
+      const subscribe = JSON.stringify({ type: 'subscribe', request_id: 'sub', session_id: id });
+      channel.send(subscribe);
+      web.send(subscribe);
+      await vi.waitFor(() => {
+        const snapshot = expect.objectContaining({ type: 'turns', session_id: id, turns: [] });
+        expect(webFrames).toContainEqual(snapshot);
+        expect(sshFrames).toContainEqual(snapshot);
+      }, { timeout: 5_000 });
+
+      const update = await fetch(`${origin}/api/v1/sessions/${id}/profile`, {
+        method: 'POST', headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Shared session' }),
+      });
+      expect(update.status).toBe(200);
+      await vi.waitFor(() => {
+        const updated = expect.objectContaining({
+          type: 'session', change: 'updated', session: expect.objectContaining({ id, title: 'Shared session' }),
+        });
+        expect(webFrames).toContainEqual(updated);
+        expect(sshFrames).toContainEqual(updated);
+      }, { timeout: 5_000 });
+    } finally {
+      web?.terminate();
+      ssh.close();
+      await server.close();
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform === 'win32')('routes HTTP requests and WebSocket frames over a unix domain socket', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-rpc-sock-'));
     const socketPath = join(dir, 'daemon.sock');

@@ -137,7 +137,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `import-sessions` (import Claude Code and Codex sessions), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (open the local web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `import-sessions` (import Claude Code and Codex sessions), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -159,12 +159,14 @@ kimi acp
 
 ### `kimi web`
 
-Run the local Kimi server in the foreground of the current terminal — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin — and open the web UI in the default browser once it is ready. The command stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM` (e.g. `Ctrl-C`).
+Open the local Kimi web UI in your default browser. On macOS and Linux, `kimi web` and `kimi web --no-open` reuse the background server that Kimi Code uses for SSH connections to that machine, or start it if needed. Both connections see the same sessions when they use the same Kimi data directory. `Ctrl+C` exits the command and leaves the shared server running until idle.
+
+On Windows, and when you supply a server option such as `--host`, `--port`, or `--json`, the command starts a separate foreground server. Use `kimi web --port 58627` if you want a server that stops when you press `Ctrl+C`.
 
 When the server is running, `GET /api/v1/kap.md` returns the version-matched KAP runtime guide, `GET /openapi.json` returns the REST OpenAPI document, and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For interacting with or handing off sessions from other agents, see [Using in Other Agents (Agent to Agent)](../guides/other-agents.md).
 
 ```sh
-kimi web                 # run the server in the foreground and open the browser
+kimi web                 # open the browser using the default server
 kimi web --no-open       # don't open the browser
 kimi web --port 58628    # pick a specific bind port
 ```
@@ -191,7 +193,7 @@ Multiple instances can share one home directory: each registers itself under `~/
 
 #### `kimi server kill`
 
-Deprecated — only stops a server started by a version before 0.28.0. Those versions could leave a background server behind, recorded in the legacy single-instance lock at `~/.kimi-code/server/lock`; the command first tries `POST /api/v1/shutdown` for a graceful exit, then signals the recorded pid with SIGTERM, escalating to SIGKILL when needed, and removes the lock file once the process is confirmed dead. Servers started by `kimi web` run in the foreground — stop them with `Ctrl+C` instead.
+Deprecated — only stops a server started by a version before 0.28.0. Those versions could leave a background server behind, recorded in the legacy single-instance lock at `~/.kimi-code/server/lock`; the command first tries `POST /api/v1/shutdown` for a graceful exit, then signals the recorded pid with SIGTERM, escalating to SIGKILL when needed, and removes the lock file once the process is confirmed dead.
 
 #### `kimi web rotate-token`
 

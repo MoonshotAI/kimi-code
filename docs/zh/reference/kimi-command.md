@@ -137,7 +137,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`import-sessions`（导入 Claude Code 和 Codex 会话）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（打开本地 Web 界面）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`import-sessions`（导入 Claude Code 和 Codex 会话）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -159,12 +159,14 @@ kimi acp
 
 ### `kimi web`
 
-在当前终端前台运行本地 Kimi 服务 —— 同一个进程同时挂载 REST + WebSocket API 与 web UI —— 并在服务就绪后用默认浏览器打开 web UI。命令会一直挂在终端，直到收到 `SIGINT` / `SIGTERM`（如 `Ctrl-C`）时干净退出。
+在默认浏览器打开本地 Kimi Web 界面。在 macOS 和 Linux 上，`kimi web` 和 `kimi web --no-open` 会复用 Kimi Code 的 SSH 连接在这台机器上使用的后台服务，没有运行时会自动启动。两种连接使用同一个 Kimi 数据目录时，可以看到相同的会话。按 `Ctrl+C` 会退出命令，共享服务会继续运行，直到空闲后自动退出。
+
+在 Windows 上，或显式指定 `--host`、`--port`、`--json` 等服务选项时，命令会启动独立的前台服务。要让服务在按下 `Ctrl+C` 时停止，可以用 `kimi web --port 58627`。
 
 服务运行时，`GET /api/v1/kap.md` 会返回当前版本的 KAP 接口说明，`GET /openapi.json` 会返回 REST OpenAPI 文档，`GET /asyncapi.json` 会返回本地 WebSocket 协议的 AsyncAPI 文档。在其他 Agent 中交互与交接会话见[在其他 Agent 中使用（Agent to Agent）](../guides/other-agents.md)。
 
 ```sh
-kimi web                 # 前台运行服务并打开浏览器
+kimi web                 # 使用默认服务并打开浏览器
 kimi web --no-open       # 不打开浏览器
 kimi web --port 58628    # 指定绑定端口
 ```
@@ -191,7 +193,7 @@ kimi web --port 58628    # 指定绑定端口
 
 #### `kimi server kill`
 
-已废弃——仅用于停止 0.28.0 之前的 Kimi Code 版本启动的服务。那些版本可能在后台遗留服务进程，记录在 legacy 单实例锁文件 `~/.kimi-code/server/lock` 中；该命令先请求 `POST /api/v1/shutdown` 优雅退出，再对锁中记录的 pid 发 SIGTERM、必要时升级为 SIGKILL，并在确认进程退出后删除锁文件。`kimi web` 启动的服务在前台运行，直接用 `Ctrl+C` 停止即可。
+已废弃——仅用于停止 0.28.0 之前的 Kimi Code 版本启动的服务。那些版本可能在后台遗留服务进程，记录在 legacy 单实例锁文件 `~/.kimi-code/server/lock` 中；该命令先请求 `POST /api/v1/shutdown` 优雅退出，再对锁中记录的 pid 发 SIGTERM、必要时升级为 SIGKILL，并在确认进程退出后删除锁文件。
 
 #### `kimi web rotate-token`
 

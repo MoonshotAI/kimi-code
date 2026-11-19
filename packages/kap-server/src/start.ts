@@ -67,7 +67,7 @@ import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcast
 import type { ConfigWarningItem } from './transport/ws/v1/events';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { registerWsDebug, WS_DEBUG_PATH } from './transport/ws/debug/registerWsDebug';
-import { startUnixRpcServer } from './transport/stdioRpc';
+import { isUnixRpcRequest, startUnixRpcServer } from './transport/stdioRpc';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
 import {
@@ -138,6 +138,7 @@ export interface ServerStartOptions {
   readonly serverVersion?: string;
   readonly telemetry?: boolean;
   readonly socketPath?: string;
+  readonly alsoListenTcp?: boolean;
   readonly managedBy?: string;
   readonly managedIdleExitMs?: number;
 }
@@ -162,9 +163,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const homeDir = resolveKimiHome(opts.homeDir);
   const serverVersion = opts.serverVersion ?? getServerVersion();
   const idleReclaimMs = resolveSessionIdleReclaimMs(opts.env ?? process.env);
-  const disableAuth = opts.disableAuth === true || opts.socketPath !== undefined;
+  const listenTcp = opts.socketPath === undefined || opts.alsoListenTcp === true;
   const registration: InstanceRegistration =
-    opts.socketPath !== undefined || opts.skipInstanceRegistry === true
+    !listenTcp || opts.skipInstanceRegistry === true
       ? { serverId: 'socket', update: async () => {}, release: async () => {} }
       : await createInstanceRegistry({
           instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
@@ -350,11 +351,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const allowedOrigins = opts.corsOrigins ?? parseCorsOrigins();
   app.addHook('onRequest', hostCheck.onRequest);
   app.addHook('onRequest', createOriginHook({ allowedOrigins }));
-  if (!disableAuth) {
-    app.addHook(
-      'onRequest',
-      createAuthHook(authTokenService, { limiter: authFailureLimiter, validateCredential }),
-    );
+  if (listenTcp && opts.disableAuth !== true) {
+    const authenticate = createAuthHook(authTokenService, { limiter: authFailureLimiter, validateCredential });
+    app.addHook('onRequest', async (req, reply) => {
+      if (!isUnixRpcRequest(req.raw)) return authenticate(req, reply);
+    });
   } else if (opts.disableAuth === true) {
     logger.warn(
       { host, exposureClass },
@@ -544,7 +545,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       devices: remoteControlDevices,
       homeDir,
       staticEnableError:
-        opts.socketPath !== undefined
+        !listenTcp
           ? 'Remote Control requires a TCP listener.'
           : exposureClass !== 'loopback'
             ? 'Remote Control requires a loopback host.'
@@ -678,11 +679,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
 
   try {
-    if (opts.socketPath !== undefined) {
-      await app.ready();
-      rpcServer = await startUnixRpcServer(opts.socketPath, { app, wssV1, wssDebug });
-      boundPort = 0;
-    } else {
+    if (listenTcp) {
       await listenWithPortRetry({
         listen: (h, p) => app.listen({ host: h, port: p }),
         host,
@@ -692,6 +689,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       const address = app.server.address();
       boundPort = typeof address === 'object' && address !== null ? address.port : port;
       await registration.update({ port: boundPort });
+    } else {
+      await app.ready();
+      boundPort = 0;
+    }
+    if (opts.socketPath !== undefined) {
+      rpcServer = await startUnixRpcServer(opts.socketPath, { app, wssV1, wssDebug });
     }
   } catch (error) {
     try {

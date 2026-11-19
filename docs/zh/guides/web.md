@@ -26,13 +26,15 @@ Kimi Code Web 是 Kimi Code CLI 内置的浏览器图形界面：既可以在本
 ```text
 Local:   http://127.0.0.1:58627/#token=...
 Token:   ...
-Stop:    Ctrl+C
+Exit:    Ctrl+C  the shared server stays running
 ```
 
 ::: warning 注意
-地址里的 `#token=` 是访问凭证，请勿外发，停止服务在终端按 `Ctrl+C`。
+地址里的 `#token=` 是访问凭证，请勿外发。
 :::
 </div>
+
+在 macOS 和 Linux 上，`kimi web` 与 Kimi Code 连到同一台机器的 SSH 连接，只要使用同一个 Kimi 数据目录，就能共享会话。按 `Ctrl+C` 会退出命令，共享服务会继续运行，直到空闲后自动退出。在 Windows 上，或显式指定 `--host`、`--port` 等服务选项时，按 `Ctrl+C` 会停止前台服务。
 
 ### 启动选项
 
