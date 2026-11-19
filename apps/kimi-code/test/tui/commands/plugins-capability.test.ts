@@ -457,7 +457,7 @@ describe('plugins command capability surface', () => {
   it('treats managed base URL catalogs as default and explicit catalogs as custom', () => {
     vi.stubEnv('KIMI_CODE_BASE_URL', 'https://api.kimi.com/coding/v1');
     expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
-    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://coding.deva.msh.team/coding/v1');
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://coding.example.com/coding/v1');
     expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
     vi.stubEnv('KIMI_CODE_BASE_URL', 'https://gateway.example.test/coding/v1');
     expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
