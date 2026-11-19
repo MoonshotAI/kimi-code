@@ -1352,7 +1352,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 
     <component :is="historyList.is" ref="historyRef" :key="historyList.key" v-bind="historyList.props">
       <template #default="{ item: turn, index: ti }: { item: ChatTurn; index: number }">
-      <div class="chat-row" :data-row-kind="turn.role">
+      <div class="chat-row" :data-row-kind="turn.role" :data-row-key="windowHistory ? undefined : turn.id">
       <template v-if="turn.role === 'user'">
         <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">

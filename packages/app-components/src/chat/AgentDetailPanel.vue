@@ -3,7 +3,7 @@ import { computed, inject, nextTick, onActivated, onBeforeUnmount, onDeactivated
 import { useI18n } from 'vue-i18n';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
 
-import { useFollowScroll } from '@moonshot-ai/app-client/composables';
+import { useFollowScroll, usePanelScroll, useTranscriptEngine } from '@moonshot-ai/app-client/composables';
 import { ModelDisplayKey, PinScrollKey, SubagentEffortKey } from '@moonshot-ai/app-client/contracts';
 import { panelApiKey } from '@moonshot-ai/app-client/panel';
 import { ComposerText } from '@moonshot-ai/app-composer/transcript';
@@ -81,7 +81,10 @@ watch(promptText, () => {
 });
 
 function togglePrompt(event: MouseEvent): void {
-  if (!promptExpanded.value) {
+  if (panelScroll) {
+    const anchor = promptExpanded.value ? event.currentTarget : promptTextEl.value;
+    if (anchor instanceof HTMLElement) panelScroll.hold(anchor);
+  } else if (!promptExpanded.value) {
     pinScroll();
   } else {
     const btn = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
@@ -116,8 +119,20 @@ const promptAttachments = computed(() => {
   return props.turns.find((turn) => turn.role === 'user' && turn.text === prompt)?.inlineAttachments;
 });
 
+const transcriptV2 = useTranscriptEngine().transcriptEngine.value === 'v2';
 const identity = computed(() => props.member.id);
-const { scroller, following, showJump, onScroll, pinScroll, jumpToBottom } = useFollowScroll(identity);
+const followScroll = transcriptV2 ? null : useFollowScroll(identity);
+const panelScroll = transcriptV2 ? usePanelScroll({ identity: () => props.member.id }) : null;
+const { scroller, following, showJump } = panelScroll ?? followScroll!;
+
+function pinScroll(): void {
+  followScroll?.pinScroll();
+}
+
+function jumpToBottom(): void {
+  if (panelScroll) panelScroll.follow();
+  else followScroll!.jumpToBottom();
+}
 
 const working = computed(
   () =>
@@ -138,19 +153,25 @@ watch(identity, () => {
 let lastScrollTop = 0;
 let parkedScrollTop: number | null = null;
 function onTranscriptScroll(): void {
+  if (panelScroll) {
+    panelScroll.onScroll();
+    return;
+  }
   lastScrollTop = scroller.value?.scrollTop ?? 0;
-  onScroll();
+  followScroll!.onScroll();
 }
-onDeactivated(() => {
-  parkedScrollTop = following.value ? null : lastScrollTop;
-});
-onActivated(() => {
-  const element = scroller.value;
-  if (parkedScrollTop === null || !element) return;
-  pinScroll();
-  element.scrollTop = parkedScrollTop;
-  parkedScrollTop = null;
-});
+if (followScroll) {
+  onDeactivated(() => {
+    parkedScrollTop = following.value ? null : lastScrollTop;
+  });
+  onActivated(() => {
+    const element = scroller.value;
+    if (parkedScrollTop === null || !element) return;
+    pinScroll();
+    element.scrollTop = parkedScrollTop;
+    parkedScrollTop = null;
+  });
+}
 
 const contentReady = ref(false);
 let readyFrame: number | null = null;
@@ -214,7 +235,7 @@ const showEmptyOutput = computed(
 );
 const showOutputState = computed(() => outputLoading.value || showEmptyOutput.value);
 
-provide(PinScrollKey, () => {
+provide(PinScrollKey, panelScroll ? (el: HTMLElement) => panelScroll.hold(el) : () => {
   if (scroller.value) pinScroll();
 });
 
@@ -241,10 +262,10 @@ const metaLabel = computed(() => {
   <div class="agent-panel">
     <div ref="scroller" class="agent-transcript" @scroll.passive="onTranscriptScroll">
       <div class="agent-transcript-inner">
-        <div v-if="metaLabel" class="agent-meta">
+        <div v-if="metaLabel" class="agent-meta" data-row-key="meta">
           <span class="agent-meta-text">{{ metaLabel }}</span>
         </div>
-        <section v-if="promptText" class="agent-prompt">
+        <section v-if="promptText" class="agent-prompt" data-row-key="prompt">
           <div class="agent-prompt-bubble">
             <div class="agent-prompt-wrap" :class="{ 'is-clamped': isPromptClamped }">
               <div
@@ -275,6 +296,7 @@ const metaLabel = computed(() => {
           <div
             v-if="transcriptTurns.length === 0 && !loading && (loadError || fallbackOutput.length > 0 || showOutputState)"
             class="agent-fallback"
+            data-row-key="fallback"
             :class="{ prose: fallbackProse }"
           >
             <div v-if="loadError" class="agent-error">{{ t('tasks.transcriptLoadError') }}</div>

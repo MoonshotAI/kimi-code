@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon, IconButton, Spinner } from '@moonshot-ai/app-ui';
-import { useFollowScroll } from '@moonshot-ai/app-client/composables';
+import { useFollowScroll, usePanelScroll, useTranscriptEngine } from '@moonshot-ai/app-client/composables';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import type { AgentMember } from '@moonshot-ai/app-core/client/types';
 import JumpToBottomPill from './JumpToBottomPill.vue';
@@ -50,10 +50,17 @@ const showStatus = computed(
     cancelled.value,
 );
 
+const transcriptV2 = useTranscriptEngine().transcriptEngine.value === 'v2';
 const identity = computed(() => props.member?.id ?? null);
-const { scroller, showJump, onScroll, jumpToBottom } = useFollowScroll(identity);
+const followScroll = transcriptV2 ? null : useFollowScroll(identity);
+const panelScroll = transcriptV2 ? usePanelScroll({ identity: () => identity.value }) : null;
+const { scroller, showJump, onScroll } = panelScroll ?? followScroll!;
 function setScroller(el: unknown): void {
   scroller.value = el instanceof HTMLElement ? el : null;
+}
+function jumpToBottom(): void {
+  if (panelScroll) panelScroll.follow();
+  else followScroll!.jumpToBottom();
 }
 
 const copiedFor = ref<'cmd' | 'out' | null>(null);
@@ -110,7 +117,7 @@ function copyOutput(): void {
     </div>
     <div class="bp-output-wrap">
       <div :ref="setScroller" class="bp-output" @scroll.passive="onScroll">
-        <div class="bp-output-inner">
+        <div class="bp-output-inner" data-row-key="output">
           <div v-for="(line, i) in outputLines" :key="i">{{ line }}</div>
           <div v-if="outputLoading && !running" class="bp-empty bp-loading">
             <Spinner size="sm" />
