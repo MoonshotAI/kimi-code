@@ -1,8 +1,5 @@
 # Paths exempt from scripts/check-comments.mjs. Same syntax as .gitignore.
 
-# Prebuilt web UI bundle synced from code-app.
-apps/kimi-code/dist-web/
-
 # Vendored upstream code that carries license headers.
 packages/pi-tui/
 

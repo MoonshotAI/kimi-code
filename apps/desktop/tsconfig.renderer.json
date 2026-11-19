@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The renderer is a DOM/Vue app (built by Vite), unlike the Node main
+    // process. Add DOM libs on top of the base `ES2023` and swap the base
+    // `node` types for Vite's client types so the renderer type-checks as a
+    // browser bundle. `unplugin-icons/types/vue` types the bare `~icons/*`
+    // component imports (the `@moonshot-ai/vite-preset/icons` ambient only
+    // covers `~icons/*?raw`). Most strict flags (`strict`,
+    // `noUncheckedIndexedAccess`, …) are inherited from tsconfig.base.json.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite/client", "unplugin-icons/types/vue"],
+    "noPropertyAccessFromIndexSignature": false,
+    "noEmit": true
+  },
+  // tests/renderer holds the renderer unit tests (DOM composables); they need
+  // the same DOM libs and therefore live in this program, not the Node one.
+  "include": ["src/renderer", "src/renderer/env.d.ts", "tests/renderer", "tests/web"]
+}
