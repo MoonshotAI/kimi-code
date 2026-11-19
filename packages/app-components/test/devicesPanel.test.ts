@@ -3,82 +3,108 @@ import { createApp, h, nextTick, type App } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import { IconResolverKey } from '@moonshot-ai/app-ui';
-import type { AppHost, AppHostDefinition, AppHostTestResult, AppSshConfigHosts } from '@moonshot-ai/app-core/api';
+import type { AppDevice, AppDeviceDefinition, AppDeviceTestResult, AppSshConfigHosts } from '@moonshot-ai/app-core/api';
+import type { RcDevice } from '@moonshot-ai/app-core/lib';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { hostsStore, type HostAccount } from '@moonshot-ai/app-client/stores';
-import HostsPanel from '../src/settings/HostsPanel.vue';
-import HostTestResult from '../src/settings/HostTestResult.vue';
+import { authStore, configStore, devicesStore, setDevicesHooks, warningsStore, type DeviceAccount } from '@moonshot-ai/app-client/stores';
+import DevicesPanel from '../src/settings/DevicesPanel.vue';
+import DeviceTestResult from '../src/settings/DeviceTestResult.vue';
 
 let app: App | undefined;
 let host: HTMLDivElement;
 
-const NEW_ID = 'host-a1b2c3d4';
+const NEW_ID = 'device-a1b2c3d4';
 
 beforeEach(() => {
   host = document.createElement('div');
   document.body.append(host);
   vi.spyOn(crypto, 'randomUUID').mockReturnValue('a1b2c3d4-0000-4000-8000-000000000000');
+  setDevicesHooks({
+    signedIn: () => authStore().signedIn,
+    localDeviceId: () => configStore().deviceId,
+    pushWarning: (warning) => warningsStore().pushWarning(warning),
+    pushOperationFailure: warningsStore().pushOperationFailure,
+  });
 });
 
 afterEach(() => {
   app?.unmount();
   app = undefined;
   useConfirmDialog().settle(false);
-  const store = hostsStore();
+  setDevicesHooks(null);
+  authStore().managedProviderStatus = null;
+  configStore().deviceId = '';
+  const store = devicesStore();
   store.byId = {};
   store.loaded = false;
   store.connecting = {};
   store.providerCopies = {};
   store.accounts = {};
-  store.loginHostId = null;
-  store.focusHostId = null;
+  store.loginDeviceId = null;
+  store.settledFailures = {};
+  store.registrations = null;
+  store.maxDevices = undefined;
+  store.registrationsError = null;
+  store.registrationsLoading = false;
+  store.upgradeRequests = {};
+  store.focusDeviceId = null;
+  store.addIfEmpty = false;
   host.remove();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
 });
 
-function sshHost(id: string, extra: Partial<AppHost> = {}): AppHost {
-  return { id, host: id, status: 'pending', ...extra };
+function sshDevice(id: string, extra: Partial<AppDevice> = {}): AppDevice {
+  return { id, connection: 'ssh', host: id, status: 'pending', ...extra };
 }
 
-function failedTest(connectError: string, connectFailure?: AppHostTestResult['connectFailure']): AppHostTestResult {
+function failedTest(connectError: string, connectFailure?: AppDeviceTestResult['connectFailure']): AppDeviceTestResult {
   return { connected: false, connectError, connectFailure };
 }
 
 function mountPanel(options: {
-  hosts?: AppHost[];
+  devices?: AppDevice[];
   test?: ReturnType<typeof vi.fn>;
   save?: ReturnType<typeof vi.fn>;
   loadSshHosts?: () => Promise<AppSshConfigHosts>;
   openSshConfig?: (path: string) => void;
-  connect?: (hostId: string) => Promise<unknown>;
+  connect?: (deviceId: string) => Promise<unknown>;
   connecting?: Record<string, boolean>;
   pickIdentityFile?: (defaultPath?: string) => Promise<string | undefined>;
-  createProject?: (hostId: string) => void;
-  copyProviders?: (hostId: string) => Promise<void>;
-  accounts?: Record<string, HostAccount>;
-  loadAccount?: (hostId: string) => Promise<void>;
-  signIn?: (hostId: string) => void;
-  signOut?: (hostId: string) => Promise<void>;
+  createProject?: (deviceId: string) => void;
+  copyProviders?: (deviceId: string) => Promise<void>;
+  accounts?: Record<string, DeviceAccount>;
+  loadAccount?: (deviceId: string) => Promise<void>;
+  signIn?: (deviceId: string) => void;
+  signOut?: (deviceId: string) => Promise<void>;
+  signedIn?: boolean;
+  registrations?: RcDevice[] | null;
+  maxDevices?: number;
+  thisDevice?: boolean;
+  onLogin?: () => void;
 } = {}) {
-  const store = hostsStore();
-  store.byId = Object.fromEntries((options.hosts ?? []).map((row) => [row.id, row]));
+  const store = devicesStore();
+  if (options.signedIn === true) authStore().managedProviderStatus = 'authenticated';
+  configStore().deviceId = 'this-mac';
+  store.byId = Object.fromEntries((options.devices ?? []).map((row) => [row.id, row]));
   store.loaded = true;
   store.connecting = options.connecting ?? {};
   store.providerCopies = {};
   store.accounts = options.accounts ?? {};
+  store.registrations = options.registrations ?? null;
+  store.maxDevices = options.maxDevices;
 
-  const test = options.test ?? vi.fn(async (): Promise<AppHostTestResult> => ({ connected: true }));
-  const save = options.save ?? vi.fn(async (hostId: string, definition: AppHostDefinition) => {
-    const existing = store.byId[hostId];
+  const test = options.test ?? vi.fn(async (): Promise<AppDeviceTestResult> => ({ connected: true }));
+  const save = options.save ?? vi.fn(async (deviceId: string, definition: AppDeviceDefinition) => {
+    const existing = store.byId[deviceId];
     store.byId = {
       ...store.byId,
-      [hostId]: existing === undefined ? { id: hostId, status: 'pending', ...definition } : { ...existing, ...definition },
+      [deviceId]: existing === undefined ? { id: deviceId, status: 'pending', ...definition } : { ...existing, ...definition },
     };
   });
-  const remove = vi.fn(async (hostId: string) => {
+  const remove = vi.fn(async (deviceId: string) => {
     const next = { ...store.byId };
-    delete next[hostId];
+    delete next[deviceId];
     store.byId = next;
   });
   const connect = vi.fn(options.connect ?? (async () => undefined));
@@ -87,7 +113,7 @@ function mountPanel(options: {
   const signIn = vi.fn(options.signIn ?? (() => undefined));
   const signOut = vi.fn(options.signOut ?? (async () => undefined));
 
-  vi.spyOn(store, 'load').mockImplementation(async () => store.hosts);
+  vi.spyOn(store, 'load').mockImplementation(async () => store.devices);
   vi.spyOn(store, 'loadSshConfig').mockImplementation(
     options.loadSshHosts ?? (async () => ({ configPath: '', exists: false, hosts: [] })),
   );
@@ -99,18 +125,26 @@ function mountPanel(options: {
   vi.spyOn(store, 'loadAccount').mockImplementation(loadAccount);
   vi.spyOn(store, 'openLogin').mockImplementation(signIn);
   vi.spyOn(store, 'signOut').mockImplementation(signOut);
+  const loadRegistrations = vi.spyOn(store, 'loadRegistrations').mockResolvedValue();
+  const addAccountDevice = vi.spyOn(store, 'addAccountDevice').mockImplementation(async (deviceId) => {
+    store.byId = { ...store.byId, [deviceId]: { id: deviceId, connection: 'account', status: 'connecting' } };
+  });
+  const renameRegistration = vi.spyOn(store, 'renameRegistration').mockResolvedValue();
+  const deactivateRegistration = vi.spyOn(store, 'deactivateRegistration').mockResolvedValue();
+  const deleteRegistration = vi.spyOn(store, 'deleteRegistration').mockResolvedValue();
 
   app = createApp({
-    render: () => h(HostsPanel, {
+    render: () => h(DevicesPanel, {
       openSshConfig: options.openSshConfig,
       pickIdentityFile: options.pickIdentityFile,
       createProject: options.createProject,
-    }),
+      onLogin: options.onLogin,
+    }, options.thisDevice === true ? { 'this-device': () => h('div', { class: 'this-device-probe' }, 'Remote Control') } : undefined),
   });
   app.use(createKimiI18n({ locale: 'en' }));
   app.provide(IconResolverKey, (name: string) => ({ render: () => h('svg', { 'data-icon': name }) }));
   app.mount(host);
-  return { store, test, save, remove, connect, copyProviders, loadAccount, signIn, signOut };
+  return { store, test, save, remove, connect, copyProviders, loadAccount, signIn, signOut, loadRegistrations, addAccountDevice, renameRegistration, deactivateRegistration, deleteRegistration };
 }
 
 async function fillForm(id: string, target: string, identityFile?: string): Promise<void> {
@@ -159,14 +193,14 @@ async function openRowEditor(index = 0): Promise<void> {
   await nextTick();
 }
 
-describe('HostTestResult', () => {
+describe('DeviceTestResult', () => {
   it.each([
     ['executor_not_found', '.etr-install-command', 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'],
-    ['executor_outdated', '.etr-update-command', 'kimi upgrade'],
+    ['outdated', '.etr-update-command', 'kimi upgrade'],
   ] as const)('copies the recovery command for %s', async (failure, selector, command) => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    app = createApp({ render: () => h(HostTestResult, { state: 'failed', endpoint: 'devbox', failure, reason: 'Failed', detail: 'raw' }) });
+    app = createApp({ render: () => h(DeviceTestResult, { state: 'failed', endpoint: 'devbox', failure, reason: 'Failed', detail: 'raw' }) });
     app.use(createKimiI18n({ locale: 'en' }));
     app.mount(host);
 
@@ -177,8 +211,8 @@ describe('HostTestResult', () => {
   });
 });
 
-describe('HostsPanel', () => {
-  it('tests a new host before saving it and connects right after without copying providers', async () => {
+describe('DevicesPanel', () => {
+  it('tests a new device before saving it and connects right after without copying providers', async () => {
     const { test, save, connect, copyProviders } = mountPanel();
     await flush();
     expect(host.querySelector('.re-empty')).not.toBeNull();
@@ -193,11 +227,11 @@ describe('HostsPanel', () => {
 
     expect(test).toHaveBeenCalledOnce();
     expect(test.mock.invocationCallOrder[0]).toBeLessThan(save.mock.invocationCallOrder[0]!);
-    expect(save).toHaveBeenCalledWith(NEW_ID, { name: 'devbox', host: 'dev@example.test', identityFile: '~/.ssh/devbox_ed25519' });
+    expect(save).toHaveBeenCalledWith(NEW_ID, { connection: 'ssh', name: 'devbox', host: 'dev@example.test', identityFile: '~/.ssh/devbox_ed25519' });
     expect(copyProviders).not.toHaveBeenCalled();
     expect(host.querySelector('.re-page')).toBeNull();
     expect(host.querySelector('.re-row-name')?.textContent).toContain('devbox');
-    expect(host.querySelector('.re-row-detail')?.textContent).toContain('dev@example.test');
+    expect(host.querySelector('.re-row-status')?.textContent ?? '').not.toContain('dev@example.test');
     await vi.waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith(NEW_ID));
   });
 
@@ -225,11 +259,11 @@ describe('HostsPanel', () => {
   });
 
   it('names the outdated remote version and shows the raw error with the hint', async () => {
-    const test = vi.fn(async (): Promise<AppHostTestResult> => ({
+    const test = vi.fn(async (): Promise<AppDeviceTestResult> => ({
       connected: false,
       remoteVersion: '0.40.0',
       connectError: "error: unknown option '--probe'",
-      connectFailure: 'executor_outdated',
+      connectFailure: 'outdated',
     }));
     mountPanel({ test });
     await openDraft();
@@ -244,22 +278,24 @@ describe('HostsPanel', () => {
 
   it('offers failure guidance, reconnect, and edit in the expanded row', async () => {
     const { connect } = mountPanel({
-      hosts: [sshHost('devbox', { status: 'disconnected', connectError: 'raw', connectFailure: 'authentication_failed' })],
+      devices: [sshDevice('devbox', { status: 'disconnected', connectError: 'raw', connectFailure: 'authentication_failed' })],
     });
     await flush();
 
+    expect(host.querySelector('.re-row-details-text')).not.toBeNull();
+    host.querySelector<HTMLButtonElement>('.re-row .re-row-reconnect')!.click();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith('devbox'));
     await expandFailure();
     expect(host.querySelector('.re-row-failure .etr-hint')).not.toBeNull();
-    host.querySelector<HTMLButtonElement>('.re-row-failure .re-row-reconnect')!.click();
-    await vi.waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith('devbox'));
+    expect(host.querySelector('.re-row-failure .re-row-reconnect')).toBeNull();
     host.querySelector<HTMLButtonElement>('.re-row-failure .re-row-edit')!.click();
     await nextTick();
     expect(host.querySelector('.re-page-title')?.textContent).toContain('devbox');
   });
 
-  it('renames a host without testing it, and omits the name when an unnamed host is unchanged', async () => {
+  it('renames a device without testing it, and omits the name when an unnamed device is unchanged', async () => {
     const { save, test } = mountPanel({
-      hosts: [sshHost('devbox', { host: 'old.example.test', remoteBin: '/opt/kimi' }), sshHost('other')],
+      devices: [sshDevice('devbox', { host: 'old.example.test', remoteBin: '/opt/kimi' }), sshDevice('other')],
     });
     await openRowEditor();
     saveButton().click();
@@ -276,16 +312,16 @@ describe('HostsPanel', () => {
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
 
     expect(test).not.toHaveBeenCalled();
-    expect(save).toHaveBeenLastCalledWith('devbox', { name: 'Build box', host: 'old.example.test', remoteBin: '/opt/kimi' });
+    expect(save).toHaveBeenLastCalledWith('devbox', { connection: 'ssh', name: 'Build box', host: 'old.example.test', remoteBin: '/opt/kimi' });
     await flush();
     expect(host.querySelector('.re-row-name')?.textContent).toContain('Build box');
   });
 
-  it('checks a new name against the names of other hosts, not their ids', async () => {
+  it('checks a new name against the names of other devices, not their ids', async () => {
     mountPanel({
-      hosts: [
-        sshHost('host-11111111', { name: 'Build box', host: 'a.example.test' }),
-        sshHost('plain', { host: 'b.example.test' }),
+      devices: [
+        sshDevice('device-11111111', { name: 'Build box', host: 'a.example.test' }),
+        sshDevice('plain', { host: 'b.example.test' }),
       ],
     });
     await openDraft('Build box', 'c.example.test');
@@ -293,7 +329,7 @@ describe('HostsPanel', () => {
     expect(saveButton().disabled).toBe(true);
     await fillForm('plain', 'c.example.test');
     expect(saveButton().disabled).toBe(true);
-    await fillForm('host-11111111', 'c.example.test');
+    await fillForm('device-11111111', 'c.example.test');
     expect(saveButton().disabled).toBe(false);
     await fillForm('local', 'c.example.test');
     expect(saveButton().disabled).toBe(false);
@@ -303,15 +339,15 @@ describe('HostsPanel', () => {
     vi.spyOn(crypto, 'randomUUID')
       .mockReturnValueOnce('11111111-0000-4000-8000-000000000000')
       .mockReturnValueOnce('22222222-0000-4000-8000-000000000000');
-    const { save } = mountPanel({ hosts: [sshHost('host-11111111', { host: 'a.example.test' })] });
+    const { save } = mountPanel({ devices: [sshDevice('device-11111111', { host: 'a.example.test' })] });
     await openDraft('second', 'b.example.test');
     saveButton().click();
-    await vi.waitFor(() => expect(save).toHaveBeenCalledWith('host-22222222', expect.objectContaining({ name: 'second' })));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledWith('device-22222222', expect.objectContaining({ name: 'second' })));
   });
 
-  it('deletes a host after confirmation', async () => {
+  it('deletes a device after confirmation', async () => {
     const { remove } = mountPanel({
-      hosts: [sshHost('devbox', { name: 'Build box', host: 'dev@example.test' }), sshHost('other')],
+      devices: [sshDevice('devbox', { name: 'Build box', host: 'dev@example.test' }), sshDevice('other')],
     });
     await flush();
     await openRowMenu();
@@ -324,12 +360,12 @@ describe('HostsPanel', () => {
   });
 });
 
-describe('HostsPanel status', () => {
-  it('disables hosts without dropping their settings or reconnecting failed ones', async () => {
+describe('DevicesPanel status', () => {
+  it('disables devices without dropping their settings or reconnecting failed ones', async () => {
     const { save, connect } = mountPanel({
-      hosts: [
-        sshHost('devbox', { host: 'dev@example.test', identityFile: '~/.ssh/id', status: 'ready' }),
-        sshHost('flaky', { host: 'flaky@example.test', status: 'disconnected', connectError: 'connect timed out', connectFailure: 'connect_timeout' }),
+      devices: [
+        sshDevice('devbox', { host: 'dev@example.test', identityFile: '~/.ssh/id', status: 'ready' }),
+        sshDevice('flaky', { host: 'flaky@example.test', status: 'disconnected', connectError: 'connect timed out', connectFailure: 'connect_timeout' }),
       ],
     });
     await flush();
@@ -337,12 +373,12 @@ describe('HostsPanel status', () => {
 
     toggles()[0]!.click();
     await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
-    expect(save).toHaveBeenCalledWith('devbox', { host: 'dev@example.test', identityFile: '~/.ssh/id', enabled: false });
+    expect(save).toHaveBeenCalledWith('devbox', { connection: 'ssh', host: 'dev@example.test', identityFile: '~/.ssh/id', enabled: false });
 
     await flush();
     toggles()[1]!.click();
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
-    expect(save).toHaveBeenLastCalledWith('flaky', { host: 'flaky@example.test', enabled: false });
+    expect(save).toHaveBeenLastCalledWith('flaky', { connection: 'ssh', host: 'flaky@example.test', enabled: false });
     expect(connect).not.toHaveBeenCalled();
 
     await flush();
@@ -351,9 +387,9 @@ describe('HostsPanel status', () => {
     expect(host.querySelector('.re-row-action')).toBeNull();
   });
 
-  it('connects as soon as a host is enabled and keeps it enabled when the connection fails', async () => {
+  it('connects as soon as a device is enabled and keeps it enabled when the connection fails', async () => {
     const { save, connect } = mountPanel({
-      hosts: [sshHost('devbox', {
+      devices: [sshDevice('devbox', {
         host: 'dev@example.test',
         enabled: false,
         status: 'disconnected',
@@ -368,23 +404,21 @@ describe('HostsPanel status', () => {
     toggle.click();
     await vi.waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith('devbox'));
 
-    expect(save).toHaveBeenCalledWith('devbox', { host: 'dev@example.test' });
+    expect(save).toHaveBeenCalledWith('devbox', { connection: 'ssh', host: 'dev@example.test' });
     expect(save.mock.calls[0]![1].enabled).toBeUndefined();
     await flush();
     expect(host.querySelector('.re-row-error')).not.toBeNull();
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     expect(host.querySelector('.re-row.disabled')).toBeNull();
 
-    expect(host.querySelector('.re-row-action')).toBeNull();
-    await expandFailure();
-    host.querySelector<HTMLButtonElement>('.re-row-failure .re-row-action')!.click();
+    host.querySelector<HTMLButtonElement>('.re-row .re-row-action')!.click();
     await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
     expect(save).toHaveBeenCalledOnce();
   });
 
 });
 
-describe('HostsPanel SSH config hosts', () => {
+describe('DevicesPanel SSH config hosts', () => {
   const hosts: AppSshConfigHosts = {
     configPath: '/home/me/.ssh/config',
     exists: true,
@@ -404,7 +438,7 @@ describe('HostsPanel SSH config hosts', () => {
   }
 
   async function mountHosts(options: Parameters<typeof mountPanel>[0] = {}) {
-    const mounted = mountPanel({ hosts: [sshHost('devbox')], loadSshHosts: async () => hosts, ...options });
+    const mounted = mountPanel({ devices: [sshDevice('devbox')], loadSshHosts: async () => hosts, ...options });
     await flush();
     expect(host.querySelector('.re-hosts')).toBeNull();
     addButton().click();
@@ -458,7 +492,7 @@ describe('HostsPanel SSH config hosts', () => {
     const { save, test, connect } = await mountHosts();
 
     hostRow('gpu').querySelector<HTMLButtonElement>('.re-host-add')!.click();
-    await vi.waitFor(() => expect(save).toHaveBeenCalledWith(NEW_ID, { name: 'gpu', host: 'gpu' }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledWith(NEW_ID, { connection: 'ssh', name: 'gpu', host: 'gpu' }));
     await flush();
 
     expect(test).not.toHaveBeenCalled();
@@ -471,17 +505,17 @@ describe('HostsPanel SSH config hosts', () => {
     expect(hostNames()).toEqual(['staging']);
   });
 
-  it('avoids a host name that is already taken', async () => {
-    const { save } = await mountHosts({ hosts: [sshHost('other', { name: 'gpu', host: 'other' })] });
+  it('avoids a device name that is already taken', async () => {
+    const { save } = await mountHosts({ devices: [sshDevice('other', { name: 'gpu', host: 'other' })] });
     hostRow('gpu').querySelector<HTMLButtonElement>('.re-host-add')!.click();
     await vi.waitFor(() => expect(save).toHaveBeenCalledWith(NEW_ID, expect.objectContaining({ name: 'gpu-2', host: 'gpu' })));
   });
 
-  it('auto-expands a failed added host in its row with reconnect and edit actions', async () => {
-    const save = vi.fn(async (hostId: string, definition: AppHostDefinition) => {
-      hostsStore().byId = {
-        ...hostsStore().byId,
-        [hostId]: { id: hostId, ...definition, status: 'disconnected', connectError: 'Permission denied (publickey)', connectFailure: 'authentication_failed' },
+  it('auto-expands a failed added device in its row with reconnect and edit actions', async () => {
+    const save = vi.fn(async (deviceId: string, definition: AppDeviceDefinition) => {
+      devicesStore().byId = {
+        ...devicesStore().byId,
+        [deviceId]: { id: deviceId, ...definition, status: 'disconnected', connectError: 'Permission denied (publickey)', connectFailure: 'authentication_failed' },
       };
     });
     await mountHosts({ save });
@@ -529,7 +563,7 @@ describe('HostsPanel SSH config hosts', () => {
   });
 
   it('goes straight to the form when the SSH config cannot be read', async () => {
-    mountPanel({ hosts: [sshHost('devbox')], loadSshHosts: async () => { throw new Error('nope'); } });
+    mountPanel({ devices: [sshDevice('devbox')], loadSshHosts: async () => { throw new Error('nope'); } });
     await flush();
 
     addButton().click();
@@ -537,12 +571,13 @@ describe('HostsPanel SSH config hosts', () => {
     expect(host.querySelector('.re-hosts')).toBeNull();
   });
 
-  it('keeps the empty list on level 1 and opens the add subpage with persistent source tabs', async () => {
+  it('keeps an empty card with the detected host count until Add opens the host picker', async () => {
     mountPanel({ loadSshHosts: async () => hosts });
     await flush();
 
-    expect(host.querySelector('.re-empty')).not.toBeNull();
-    expect(host.querySelector('.re-hosts')).toBeNull();
+    expect(host.querySelector('.re-empty')?.textContent?.trim()).toBe('Found 3 hosts in ~/.ssh/config');
+    expect(hostNames()).toEqual([]);
+
     addButton().click();
     await nextTick();
     expect(host.querySelector('.re-back')).not.toBeNull();
@@ -559,7 +594,7 @@ describe('HostsPanel SSH config hosts', () => {
     const loadSshHosts = vi.fn<() => Promise<AppSshConfigHosts>>()
       .mockResolvedValueOnce({ configPath: '/home/me/.ssh/config', exists: false, hosts: [] })
       .mockResolvedValueOnce({ configPath: '/home/me/.ssh/config', exists: true, hosts: [{ alias: 'devbox' }] });
-    mountPanel({ hosts: [sshHost('devbox')], loadSshHosts });
+    mountPanel({ devices: [sshDevice('devbox')], loadSshHosts });
     await flush();
 
     addButton().click();
@@ -591,10 +626,10 @@ describe('HostsPanel SSH config hosts', () => {
   });
 });
 
-describe('HostsPanel navigation and row actions', () => {
+describe('DevicesPanel navigation and row actions', () => {
   it('opens the add page for focused empty settings and resets the request after navigating away', async () => {
     const { store } = mountPanel({
-      hosts: [],
+      devices: [],
       loadSshHosts: async () => ({ configPath: '/home/me/.ssh/config', exists: true, hosts: [{ alias: 'devbox' }] }),
     });
     await flush();
@@ -612,13 +647,13 @@ describe('HostsPanel navigation and row actions', () => {
     expect(store.addIfEmpty).toBe(false);
   });
 
-  it('surfaces New project directly on ready rows without jumping to edit on row click, and expands focused hosts', async () => {
+  it('surfaces New project directly on ready rows without jumping to edit on row click, and expands focused devices', async () => {
     const createProject = vi.fn();
     const { connect, store } = mountPanel({
-      hosts: [
-        sshHost('ready-box', { status: 'ready' }),
-        sshHost('broken-box', { status: 'disconnected', connectError: 'refused', connectFailure: 'connection_refused' }),
-        sshHost('paused', { enabled: false }),
+      devices: [
+        sshDevice('ready-box', { status: 'ready' }),
+        sshDevice('broken-box', { status: 'disconnected', connectError: 'refused', connectFailure: 'connection_refused' }),
+        sshDevice('paused', { enabled: false }),
       ],
       createProject,
     });
@@ -637,12 +672,12 @@ describe('HostsPanel navigation and row actions', () => {
 
     store.requestFocus('broken-box');
     await flush();
-    expect(store.focusHostId).toBeNull();
+    expect(store.focusDeviceId).toBeNull();
     expect(host.querySelector('.re-row-failure')).not.toBeNull();
 
     store.connecting = { 'broken-box': true };
     await nextTick();
-    const retryingRow = [...host.querySelectorAll<HTMLElement>('.re-item')].find((item) => item.dataset.hostId === 'broken-box')!;
+    const retryingRow = [...host.querySelectorAll<HTMLElement>('.re-item')].find((item) => item.dataset.deviceId === 'broken-box')!;
     expect(retryingRow.querySelector('.re-row-state')?.textContent).toContain('Retrying');
     expect(retryingRow.querySelector('.re-row-failure')).not.toBeNull();
     store.connecting = {};
@@ -654,7 +689,7 @@ describe('HostsPanel navigation and row actions', () => {
   });
 });
 
-describe('HostsPanel model setup', () => {
+describe('DevicesPanel model setup', () => {
   function rowOf(id: string): HTMLElement {
     return [...host.querySelectorAll<HTMLElement>('.re-item')].find((item) => item.querySelector('.re-row-name')?.textContent === id)!;
   }
@@ -673,9 +708,9 @@ describe('HostsPanel model setup', () => {
     return host.querySelector<HTMLButtonElement>(`.re-row-menu ${selector}`);
   }
 
-  it('flags only connected hosts without models and offers both fixes inline', async () => {
+  it('flags only connected devices without models and offers both fixes inline', async () => {
     const { signIn, copyProviders } = mountPanel({
-      hosts: [sshHost('devbox', { status: 'ready' }), sshHost('named', { status: 'ready' }), sshHost('idle-box')],
+      devices: [sshDevice('devbox', { status: 'ready' }), sshDevice('named', { status: 'ready' }), sshDevice('idle-box')],
       accounts: {
         devbox: { status: 'signedOut', modelsReady: false },
         named: { status: 'signedIn', modelsReady: true },
@@ -706,7 +741,7 @@ describe('HostsPanel model setup', () => {
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(undefined);
     const { signIn, loadAccount } = mountPanel({
-      hosts: [sshHost('devbox', { status: 'ready' }), sshHost('named', { status: 'ready' }), sshHost('idle-box')],
+      devices: [sshDevice('devbox', { status: 'ready' }), sshDevice('named', { status: 'ready' }), sshDevice('idle-box')],
       accounts: { named: { status: 'signedIn', modelsReady: true } },
       signOut,
     });
@@ -720,7 +755,7 @@ describe('HostsPanel model setup', () => {
     expect(menuItem('.re-menu-sign-out')).toBeNull();
     expect(menuItem('.re-menu-sign-in')).toBeNull();
     expect(loadAccount).toHaveBeenCalledExactlyOnceWith('devbox');
-    hostsStore().accounts = { ...hostsStore().accounts, devbox: { status: 'signedOut', modelsReady: true } };
+    devicesStore().accounts = { ...devicesStore().accounts, devbox: { status: 'signedOut', modelsReady: true } };
     await openMenu('devbox');
     await openMenu('devbox');
     expect(menuItem('.re-menu-copy')).not.toBeNull();
@@ -744,12 +779,12 @@ describe('HostsPanel model setup', () => {
     vi.useFakeTimers();
     try {
       const { store, copyProviders } = mountPanel({
-        hosts: [sshHost('devbox', { status: 'ready' })],
+        devices: [sshDevice('devbox', { status: 'ready' })],
         accounts: { devbox: { status: 'signedIn', modelsReady: true } },
       });
       store.providerCopies = { devbox: { status: 'failed' } };
       await flush();
-      expect(statusOf('devbox')).toContain('devbox');
+      expect(statusOf('devbox').trim()).toBe('Connected');
 
       await openMenu('devbox');
       menuItem('.re-menu-copy')!.click();
@@ -782,21 +817,20 @@ describe('HostsPanel model setup', () => {
       expect(statusOf('devbox')).toContain('gateway');
       vi.advanceTimersByTime(4000);
       await flush();
-      expect(statusOf('devbox')).not.toContain('gateway');
-      expect(statusOf('devbox')).toContain('devbox');
+      expect(statusOf('devbox').trim()).toBe('Connected');
     } finally {
       vi.useRealTimers();
     }
   });
 });
 
-describe('HostsPanel connection test steps', () => {
+describe('DevicesPanel connection test steps', () => {
   function pendingTest() {
     const signals: AbortSignal[] = [];
     const resolvers: Array<() => void> = [];
     const test = vi.fn((_definition: unknown, signal: AbortSignal) => {
       signals.push(signal);
-      return new Promise<AppHostTestResult>((resolve) => resolvers.push(() => resolve({ connected: true })));
+      return new Promise<AppDeviceTestResult>((resolve) => resolvers.push(() => resolve({ connected: true })));
     });
     return { test, signals, resolvers };
   }
@@ -831,8 +865,8 @@ describe('HostsPanel connection test steps', () => {
     expect(host.querySelector('.re-page')).toBeNull();
   });
 
-  it('offers retry and save anyway after a failure and saves once the host is reachable', async () => {
-    const test = vi.fn<() => Promise<AppHostTestResult>>()
+  it('offers retry and save anyway after a failure and saves once the device is reachable', async () => {
+    const test = vi.fn<() => Promise<AppDeviceTestResult>>()
       .mockResolvedValueOnce(failedTest('unreachable'))
       .mockResolvedValueOnce({ connected: true });
     const { save } = mountPanel({ test });
@@ -852,19 +886,19 @@ describe('HostsPanel connection test steps', () => {
     expect(test).toHaveBeenCalledTimes(2);
   });
 
-  it('tests changed connection settings on enabled hosts only and keeps the old ones on failure', async () => {
+  it('tests changed connection settings on enabled devices only and keeps the old ones on failure', async () => {
     const test = vi.fn(async () => failedTest('unreachable'));
     const { save, store } = mountPanel({
       test,
-      hosts: [
-        sshHost('paused', { name: 'Paused box', host: 'old.example.test', enabled: false }),
-        sshHost('devbox', { name: 'Build box', host: 'old.example.test' }),
+      devices: [
+        sshDevice('paused', { name: 'Paused box', host: 'old.example.test', enabled: false }),
+        sshDevice('devbox', { name: 'Build box', host: 'old.example.test' }),
       ],
     });
     await openRowEditor(0);
     await fillForm('Paused box', 'new.example.test');
     saveButton().click();
-    await vi.waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('paused', { name: 'Paused box', host: 'new.example.test', enabled: false }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('paused', { connection: 'ssh', name: 'Paused box', host: 'new.example.test', enabled: false }));
     expect(test).not.toHaveBeenCalled();
 
     await openRowEditor(1);
@@ -876,7 +910,7 @@ describe('HostsPanel connection test steps', () => {
   });
 
   it('shows the failure itself without a step list', async () => {
-    const test = vi.fn<() => Promise<AppHostTestResult>>()
+    const test = vi.fn<() => Promise<AppDeviceTestResult>>()
       .mockResolvedValueOnce(failedTest('ssh failed', 'authentication_failed'))
       .mockResolvedValueOnce(failedTest('kimi: not found', 'executor_not_found'));
     mountPanel({ test });
@@ -945,7 +979,7 @@ describe('HostsPanel connection test steps', () => {
     expect(signals[0]!.aborted).toBe(true);
   });
 
-  it('saves an unreachable host anyway and shows it in the list', async () => {
+  it('saves an unreachable device anyway and shows it in the list', async () => {
     const test = vi.fn(async () => failedTest('unreachable'));
     const connect = vi.fn(async () => { throw new Error('unreachable'); });
     const { save } = mountPanel({ test, connect });
@@ -974,5 +1008,401 @@ describe('HostsPanel connection test steps', () => {
     await flush();
     expect(host.querySelector('.re-page')).not.toBeNull();
     expect(host.querySelector('.re-foot [role="alert"]')).not.toBeNull();
+  });
+});
+
+function registration(id: string, extra: Partial<RcDevice> = {}): RcDevice {
+  return {
+    device_id: id,
+    alias: id,
+    status: 'online',
+    platform: 'darwin',
+    client_version: 'kimi-code-desktop/1.3.7',
+    local_base_url: '',
+    created_at: '2026-11-01T00:00:00.000Z',
+    updated_at: new Date().toISOString(),
+    last_remote_access_at: '',
+    ...extra,
+  };
+}
+
+function accountRow(name: string): HTMLElement {
+  return [...host.querySelectorAll<HTMLElement>('.ad-row')].find((row) => row.querySelector('.ad-name')?.textContent === name)!;
+}
+
+function accountRowNames(): (string | null | undefined)[] {
+  return [...host.querySelectorAll('.ad-row .ad-name')].map((node) => node.textContent);
+}
+
+function statusParts(name: string): (string | null)[] {
+  return [...accountRow(name).querySelectorAll('.ad-state, .ad-detail')].map((node) => node.textContent);
+}
+
+async function openAccountMenu(name: string): Promise<HTMLButtonElement[]> {
+  accountRow(name).querySelector<HTMLButtonElement>('.ad-more')!.click();
+  await vi.waitFor(() => expect(host.querySelector('.ad-menu')).not.toBeNull());
+  return [...host.querySelectorAll<HTMLButtonElement>('.ad-menu .ui-menu-item')];
+}
+
+describe('DevicesPanel layout', () => {
+  function sshSection(): HTMLElement {
+    return host.querySelector<HTMLElement>('section.re, section.re-page')!;
+  }
+
+  function visibleTabs(): HTMLButtonElement[] {
+    return [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].filter((tab) => tab.closest<HTMLElement>('section.ad, section.re')?.style.display !== 'none');
+  }
+
+  it('shows this device above tabs for my devices and SSH devices, and only the SSH page while it is open', async () => {
+    mountPanel({ thisDevice: true, devices: [sshDevice('devbox')] });
+    await flush();
+    expect([...host.querySelectorAll('h3')].map((title) => title.textContent)).toEqual(['This computer']);
+    expect(host.querySelector('.this-device-probe')?.textContent).toBe('Remote Control');
+    expect(visibleTabs().map((tab) => tab.textContent?.trim())).toEqual(['My devices', 'SSH devices 1']);
+    expect(host.querySelector<HTMLElement>('.ad')!.style.display).toBe('');
+    expect(sshSection().style.display).toBe('none');
+
+    visibleTabs()[1]!.click();
+    await nextTick();
+    expect(host.querySelector<HTMLElement>('.ad')!.style.display).toBe('none');
+    expect(sshSection().style.display).toBe('');
+
+    await openRowEditor();
+    expect(host.querySelector<HTMLElement>('.dp-this-device')!.style.display).toBe('none');
+    expect(host.querySelector('section.re-page')).not.toBeNull();
+    host.querySelector<HTMLButtonElement>('.re-back')!.click();
+    await nextTick();
+    expect(host.querySelector<HTMLElement>('.dp-this-device')!.style.display).toBe('');
+    expect(sshSection().style.display).toBe('');
+  });
+
+  it('leaves out this device when the app has nothing to show for it', async () => {
+    mountPanel();
+    await flush();
+    expect(host.querySelector('.dp-this-device')).toBeNull();
+    expect(host.querySelectorAll('h3')).toHaveLength(0);
+    expect(visibleTabs().map((tab) => tab.textContent?.trim())).toEqual(['My devices', 'SSH devices']);
+  });
+
+  it('marks the tab that has a device with a problem', async () => {
+    mountPanel({
+      devices: [sshDevice('devbox', { status: 'disconnected', connectError: 'refused', connectFailure: 'connection_refused' })],
+    });
+    await flush();
+    const [account, ssh] = visibleTabs();
+    expect(account!.querySelector('.ui-seg__swatch')).toBeNull();
+    expect(ssh!.querySelector('.ui-seg__swatch')).not.toBeNull();
+  });
+});
+
+describe('DevicesPanel my devices', () => {
+  it('asks to sign in before listing other devices', async () => {
+    const onLogin = vi.fn();
+    const { loadRegistrations } = mountPanel({ onLogin });
+    await flush();
+
+    expect(host.querySelector('.ad-center-title')?.textContent).toBe('Sign in to see your other devices');
+    expect(host.querySelector('.ad-log-in')?.textContent?.trim()).toBe('Sign in');
+    host.querySelector<HTMLButtonElement>('.ad-log-in')!.click();
+    expect(onLogin).toHaveBeenCalledOnce();
+    expect(loadRegistrations).not.toHaveBeenCalled();
+  });
+
+  it('loads the account devices once signed in and says when this computer is the only one', async () => {
+    const { loadRegistrations } = mountPanel({ signedIn: true, registrations: [registration('this-mac')], maxDevices: 3 });
+    await flush();
+
+    expect(loadRegistrations).toHaveBeenCalledOnce();
+    expect(host.querySelector('.ad-empty')?.textContent).toContain('or run kimi rc on a server');
+    expect(host.querySelector('.ad-usage')).toBeNull();
+    expect(host.querySelector('.ad-row')).toBeNull();
+  });
+
+  it('mentions the device limit only once the account has reached it', async () => {
+    mountPanel({
+      signedIn: true,
+      registrations: [registration('this-mac'), registration('rc-mac', { alias: 'Work Mac' }), registration('rc-pc', { alias: 'Gaming PC' })],
+      maxDevices: 3,
+    });
+    await flush();
+
+    expect(host.querySelector('.ad-usage')?.textContent).toBe('Device limit reached (3)');
+  });
+
+  it('describes each device and adds it to or removes it from the sidebar', async () => {
+    const { addAccountDevice, remove } = mountPanel({
+      signedIn: true,
+      devices: [{ id: 'rc-pc', connection: 'account', status: 'ready', alias: 'Gaming PC' }],
+      registrations: [
+        registration('rc-mac', { alias: 'Work Mac' }),
+        registration('rc-pc', { alias: 'Gaming PC', platform: 'win32', client_version: 'kimi-code-cli/1.2.0' }),
+      ],
+    });
+    await flush();
+
+    expect(statusParts('Work Mac')).toEqual(['Online']);
+    expect(statusParts('Gaming PC')).toEqual(['Connected']);
+    const toggle = (name: string) => accountRow(name).querySelector<HTMLButtonElement>('.ui-switch')!;
+    expect(toggle('Work Mac').getAttribute('aria-checked')).toBe('false');
+    expect(toggle('Work Mac').getAttribute('aria-label')).toBe('Enable Work Mac');
+    expect(toggle('Gaming PC').getAttribute('aria-checked')).toBe('true');
+
+    toggle('Work Mac').click();
+    await vi.waitFor(() => expect(addAccountDevice).toHaveBeenCalledExactlyOnceWith('rc-mac'));
+    await flush();
+    expect(toggle('Work Mac').getAttribute('aria-checked')).toBe('true');
+
+    toggle('Gaming PC').click();
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith('rc-pc'));
+    await flush();
+    expect(toggle('Gaming PC').getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('shows why an added device cannot connect', async () => {
+    mountPanel({
+      signedIn: true,
+      devices: [{ id: 'rc-mac', connection: 'account', status: 'disconnected', connectError: 'old', connectFailure: 'outdated', alias: 'Work Mac' }],
+      registrations: [registration('rc-mac', { alias: 'Work Mac', client_version: 'kimi-code-desktop/1.0.0' })],
+    });
+    await flush();
+
+    expect(statusParts('Work Mac')).toEqual(['Outdated', 'Update Kimi Code on Work Mac, then reconnect']);
+  });
+
+  it('tells how to bring an offline command-line device back', async () => {
+    mountPanel({
+      signedIn: true,
+      registrations: [
+        registration('rc-box', { alias: 'Build box', status: 'offline', platform: 'linux', client_version: 'kimi-code-cli/1.2.0' }),
+        registration('rc-mac', { alias: 'Work Mac', status: 'offline' }),
+      ],
+    });
+    await flush();
+
+    expect(statusParts('Build box')).toEqual(['Offline', 'Run kimi rc on that machine']);
+    expect(statusParts('Work Mac')).toEqual(['Offline']);
+  });
+
+  it('reconnects a device that failed to connect from its row', async () => {
+    const { connect } = mountPanel({
+      signedIn: true,
+      devices: [{ id: 'rc-mac', connection: 'account', status: 'disconnected', connectError: 'relay closed', connectFailure: 'relay_unavailable', alias: 'Work Mac' }],
+      registrations: [registration('rc-mac', { alias: 'Work Mac' })],
+    });
+    await flush();
+
+    accountRow('Work Mac').querySelector<HTMLButtonElement>('.ad-reconnect')!.click();
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith('rc-mac'));
+  });
+
+  it('leaves out a machine that is used over SSH until that SSH device is turned off', async () => {
+    const { store } = mountPanel({
+      signedIn: true,
+      devices: [sshDevice('devbox', { status: 'ready', deviceId: 'rc-server', name: 'Dev box' })],
+      registrations: [registration('rc-server', { alias: 'Server', platform: 'linux' }), registration('rc-mac', { alias: 'Work Mac' })],
+    });
+    await flush();
+    expect(accountRowNames()).toEqual(['Work Mac']);
+
+    store.byId = { devbox: sshDevice('devbox', { enabled: false, deviceId: 'rc-server', name: 'Dev box' }) };
+    await flush();
+    expect(accountRowNames()).toEqual(['Server', 'Work Mac']);
+    expect(accountRow('Server').querySelector<HTMLButtonElement>('.ui-switch')!.disabled).toBe(false);
+  });
+
+  it('folds devices that have been offline for a long time', async () => {
+    mountPanel({
+      signedIn: true,
+      registrations: [
+        registration('rc-old', { alias: 'Old laptop', status: 'offline', updated_at: '2026-01-01T00:00:00.000Z' }),
+        registration('rc-mac', { alias: 'Work Mac' }),
+        registration('rc-pc', { alias: 'Gaming PC', status: 'offline' }),
+      ],
+    });
+    await flush();
+
+    expect(accountRowNames()).toEqual(['Work Mac', 'Gaming PC']);
+    const fold = host.querySelector<HTMLButtonElement>('.ad-fold')!;
+    expect(fold.textContent).toContain('1 devices offline for more than 7 days');
+    expect(fold.getAttribute('aria-expanded')).toBe('false');
+    fold.click();
+    await nextTick();
+    expect(accountRowNames()).toEqual(['Work Mac', 'Gaming PC', 'Old laptop']);
+  });
+
+  it('explains how to add devices when every listed device has been offline for a long time', async () => {
+    mountPanel({
+      signedIn: true,
+      registrations: [registration('rc-old', { alias: 'Old laptop', status: 'offline', updated_at: '2026-01-01T00:00:00.000Z' })],
+    });
+    await flush();
+
+    expect(host.querySelector('.ad-card .ad-empty')?.textContent).toContain('or run kimi rc on a server');
+    expect(host.querySelector('.ad-fold')?.textContent).toContain('1 devices offline for more than 7 days');
+    expect(host.querySelector('section.ad [role="tab"]')?.textContent?.trim()).toBe('My devices');
+  });
+
+  it('renames, takes offline and deletes devices from the account through the row menu', async () => {
+    const createProject = vi.fn();
+    const { renameRegistration, deactivateRegistration, deleteRegistration } = mountPanel({
+      signedIn: true,
+      createProject,
+      devices: [{ id: 'rc-mac', connection: 'account', status: 'ready', alias: 'Work Mac' }],
+      registrations: [registration('rc-mac', { alias: 'Work Mac' }), registration('rc-old', { alias: 'Old laptop', status: 'offline' })],
+    });
+    await flush();
+
+    let items = await openAccountMenu('Work Mac');
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['New project', 'Reconnect', 'Rename', 'Take offline']);
+    items[0]!.click();
+    expect(createProject).toHaveBeenCalledExactlyOnceWith('rc-mac');
+
+    items = await openAccountMenu('Work Mac');
+    items[2]!.click();
+    await flush();
+    const input = host.querySelector<HTMLInputElement>('.ad-rename input')!;
+    expect(input.value).toBe('Work Mac');
+    input.value = 'Studio';
+    input.dispatchEvent(new Event('input'));
+    host.querySelector<HTMLFormElement>('.ad-rename')!.dispatchEvent(new Event('submit'));
+    await vi.waitFor(() => expect(renameRegistration).toHaveBeenCalledExactlyOnceWith('rc-mac', 'Studio'));
+    await flush();
+    expect(host.querySelector('.ad-rename')).toBeNull();
+
+    items = await openAccountMenu('Work Mac');
+    items[3]!.click();
+    await vi.waitFor(() => expect(useConfirmDialog().current.value?.title).toBe('Take Work Mac offline'));
+    await useConfirmDialog().runAction();
+    expect(deactivateRegistration).toHaveBeenCalledExactlyOnceWith('rc-mac');
+
+    items = await openAccountMenu('Old laptop');
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['Rename', 'Delete']);
+    items[1]!.click();
+    await vi.waitFor(() => expect(useConfirmDialog().current.value?.title).toBe('Delete Old laptop'));
+    await useConfirmDialog().runAction();
+    expect(deleteRegistration).toHaveBeenCalledExactlyOnceWith('rc-old');
+  });
+
+  it('reports a device that could not be added', async () => {
+    const { addAccountDevice } = mountPanel({ signedIn: true, registrations: [registration('rc-mac', { alias: 'Work Mac' })] });
+    addAccountDevice.mockRejectedValueOnce(new Error('validation failed'));
+    await flush();
+
+    accountRow('Work Mac').querySelector<HTMLButtonElement>('.ui-switch')!.click();
+    await vi.waitFor(() => expect(host.querySelector('.ad-error')?.textContent).toBe("Couldn't save. Please try again"));
+    expect(accountRow('Work Mac').querySelector('.ui-switch')!.getAttribute('aria-checked')).toBe('false');
+  });
+});
+
+describe('DevicesPanel upgrades', () => {
+  function sshRow(id: string): HTMLElement {
+    return [...host.querySelectorAll<HTMLElement>('.re-item')].find((item) => item.querySelector('.re-row-name')?.textContent === id)!;
+  }
+
+  function sshStatus(id: string): string[] {
+    return [...sshRow(id).querySelectorAll('.re-row-state, .re-row-detail')].map((node) => node.textContent?.trim() ?? '');
+  }
+
+  async function toggleSshMenu(id: string): Promise<string[]> {
+    sshRow(id).querySelector<HTMLButtonElement>('.re-row-more')!.click();
+    await flush();
+    return [...host.querySelectorAll('.re-row-menu .ui-menu-item')].map((item) => item.textContent?.trim() ?? '');
+  }
+
+  function menuTexts(items: HTMLButtonElement[]): (string | undefined)[] {
+    return items.map((item) => item.textContent?.trim());
+  }
+
+  async function closeMenu(): Promise<void> {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await vi.waitFor(() => expect(host.querySelector('.ad-menu, .re-row-menu')).toBeNull());
+  }
+
+  it('upgrades an outdated account device from its row and shows the upgrade on its status line', async () => {
+    const outdated: AppDevice = { id: 'rc-box', connection: 'account', status: 'disconnected', connectError: 'old', connectFailure: 'outdated', alias: 'Build box', install: 'cli', remoteUpgrade: true };
+    const { store } = mountPanel({
+      signedIn: true,
+      devices: [outdated],
+      registrations: [
+        registration('rc-box', { alias: 'Build box', platform: 'linux', client_version: 'kimi-code-cli/1.0.0' }),
+        registration('rc-mac', { alias: 'Work Mac', client_version: 'kimi-code-cli/1.0.0' }),
+      ],
+    });
+    const upgrade = vi.spyOn(store, 'upgrade').mockResolvedValue();
+    await flush();
+
+    expect(statusParts('Build box')).toEqual(['Outdated']);
+    expect(accountRow('Work Mac').querySelector('.ad-upgrade')).toBeNull();
+    expect(menuTexts(await openAccountMenu('Work Mac'))).toEqual(['Rename', 'Take offline']);
+    await closeMenu();
+    expect(menuTexts(await openAccountMenu('Build box'))).toEqual(['Reconnect', 'Rename', 'Take offline']);
+    await closeMenu();
+    accountRow('Build box').querySelector<HTMLButtonElement>('.ad-upgrade')!.click();
+    expect(upgrade).toHaveBeenCalledExactlyOnceWith('rc-box');
+
+    store.byId = { 'rc-box': { ...outdated, upgradeStatus: 'installing' } };
+    await flush();
+    expect(statusParts('Build box')).toEqual(['Upgrading…']);
+    expect(accountRow('Build box').querySelector('.kw-dot--running')).not.toBeNull();
+    expect(accountRow('Build box').querySelector('.ad-upgrade')).toBeNull();
+    expect(menuTexts(await openAccountMenu('Build box'))).not.toContain('Upgrade Kimi Code');
+    await closeMenu();
+
+    store.byId = { 'rc-box': { ...outdated, status: 'connecting', upgradeStatus: 'restarting' } };
+    await flush();
+    expect(statusParts('Build box')[0]).toBe('Restarting…');
+
+    store.byId = { 'rc-box': { ...outdated, upgradeStatus: 'failed', upgradeError: 'installer exited with 1\nsee the log' } };
+    await flush();
+    expect(statusParts('Build box')).toEqual(['Upgrade failed', 'installer exited with 1']);
+    expect(accountRow('Build box').querySelector('.ad-status--upgrade-failed .kw-dot--error')).not.toBeNull();
+  });
+
+  it('keeps a connection problem on the status line after an upgrade that could not help', async () => {
+    const busy = sshDevice('devbox', {
+      status: 'disconnected',
+      connectError: 'a kimi server of version 2.6.3 is still running work on this device; retry after it finishes',
+      connectFailure: 'remote_busy',
+      remoteUpgrade: true,
+      upgradeStatus: 'failed',
+      upgradeError: 'Kimi Code is already up to date (v2.7.0).',
+    });
+    mountPanel({ devices: [busy] });
+    await flush();
+
+    expect(sshStatus('devbox')[0]).toBe('Connection failed');
+    expect(sshStatus('devbox').join(' ')).not.toContain('already up to date');
+    expect(sshRow('devbox').querySelector('.re-row-action')).not.toBeNull();
+    expect(sshRow('devbox').querySelector('.re-row-upgrade')).toBeNull();
+    expect(await toggleSshMenu('devbox')).not.toContain('Upgrade Kimi Code');
+  });
+
+  it('upgrades an outdated SSH device from its row and shows the upgrade on its status line', async () => {
+    const outdated = sshDevice('devbox', { status: 'disconnected', connectError: 'old', connectFailure: 'outdated', remoteVersion: '0.40.0', remoteUpgrade: true });
+    const { store } = mountPanel({ devices: [outdated, sshDevice('paused', { enabled: false, remoteUpgrade: true })] });
+    const upgrade = vi.spyOn(store, 'upgrade').mockResolvedValue();
+    await flush();
+
+    expect(sshRow('paused').querySelector('.re-row-upgrade')).toBeNull();
+    expect(await toggleSshMenu('paused')).not.toContain('Upgrade Kimi Code');
+    await closeMenu();
+    expect(await toggleSshMenu('devbox')).not.toContain('Upgrade Kimi Code');
+    await closeMenu();
+    sshRow('devbox').querySelector<HTMLButtonElement>('.re-row-upgrade')!.click();
+    expect(upgrade).toHaveBeenCalledExactlyOnceWith('devbox');
+
+    store.byId = { ...store.byId, devbox: { ...outdated, upgradeStatus: 'installing' } };
+    await flush();
+    expect(sshStatus('devbox')).toEqual(['Upgrading…']);
+    expect(sshRow('devbox').querySelector('.re-row-details')).toBeNull();
+    expect(sshRow('devbox').querySelector('.re-row-upgrade')).toBeNull();
+    expect(await toggleSshMenu('devbox')).not.toContain('Upgrade Kimi Code');
+    await closeMenu();
+
+    store.byId = { ...store.byId, devbox: { ...outdated, upgradeStatus: 'failed', upgradeError: 'permission denied\nat step 2' } };
+    await flush();
+    expect(sshStatus('devbox')).toEqual(['Upgrade failed', 'permission denied']);
+    expect(sshRow('devbox').querySelector('.re-row-status--upgrade-failed .kw-dot--error')).not.toBeNull();
+    expect(sshRow('devbox').querySelector('.re-row-upgrade')).not.toBeNull();
   });
 });

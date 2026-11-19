@@ -59,10 +59,10 @@ describe.each(bootstraps)('$name API bootstrap', ({ name, source }) => {
   it('disposes the owning API on HMR and cancels queued requests without fetching them', async () => {
     const responses: Array<(response: Response) => void> = [];
     const fetchMock = vi.fn((url: string) =>
-      url.endsWith('/hosts')
-        ? Promise.resolve(envelope({ hosts: [] }))
+      url.endsWith('/devices')
+        ? Promise.resolve(envelope({ devices: [] }))
         : new Promise<Response>((resolve) => responses.push(resolve)));
-    const sessionFetches = () => fetchMock.mock.calls.filter(([url]) => !url.endsWith('/hosts')).length;
+    const sessionFetches = () => fetchMock.mock.calls.filter(([url]) => !url.endsWith('/devices')).length;
     vi.stubGlobal('fetch', fetchMock);
     const bootstrap = loadBootstrap(source, true);
     expect(bootstrap.disposeHandlers).toHaveLength(1);

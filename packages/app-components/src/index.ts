@@ -132,7 +132,7 @@ export { default as ProviderBrandIcon } from './settings/ProviderBrandIcon.vue';
 export { default as ProviderForm } from './settings/ProviderForm.vue';
 export { default as ProvidersPanel } from './settings/ProvidersPanel.vue';
 export { default as PluginsPanel } from './settings/PluginsPanel.vue';
-export { default as HostsPanel } from './settings/HostsPanel.vue';
+export { default as DevicesPanel } from './settings/DevicesPanel.vue';
 export { default as SecondaryModelPicker } from './settings/SecondaryModelPicker.vue';
 
 export * from './chatTurnRendering';

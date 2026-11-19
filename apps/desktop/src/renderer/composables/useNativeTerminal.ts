@@ -5,8 +5,9 @@ import {
 } from '../../shared/terminal-activity';
 
 import { computed, reactive, ref, type ComputedRef, type Ref } from 'vue';
+import type { AppDevice } from '@moonshot-ai/app-core/api';
 import { reorderedPanelTabs } from '@moonshot-ai/app-client/lib';
-import { hostsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { markTerminalInstanceMoving } from './terminalInstances';
 
 export type { NativeTerminalSshTarget };
@@ -68,6 +69,7 @@ interface SessionBucket {
 export interface NativeTerminalStore {
   inspect: (ids: string[]) => Promise<TerminalActivity[]>;
   available: boolean;
+  canOpen: ComputedRef<boolean>;
   currentKey: Ref<string>;
   bucketsWithTabs: ComputedRef<SessionBucket[]>;
   tabs: ComputedRef<NativeTerminalTab[]>;
@@ -106,8 +108,10 @@ export function createNativeTerminalStore(
   bridge: NativeTerminalBridge | undefined,
   resolveSsh: () => Promise<NativeTerminalSshTarget | undefined> | NativeTerminalSshTarget | undefined = () =>
     undefined,
+  supported: () => boolean = () => true,
 ): NativeTerminalStore {
   const usable = canUseNativeTerminal(bridge);
+  const canOpen = computed(() => usable && supported());
   const buckets = reactive(new Map<string, SessionBucket>());
   const currentKey = ref(DRAFT_KEY);
   const error = ref<string | null>(null);
@@ -342,7 +346,7 @@ export function createNativeTerminalStore(
     },
     stillValid: () => boolean = () => true,
   ): Promise<NativeTerminalTab | null> {
-    if (!usable || bridge === undefined) return null;
+    if (!usable || bridge === undefined || !supported()) return null;
     reportError(null);
     try {
       const resolved = resolveSsh();
@@ -414,6 +418,7 @@ export function createNativeTerminalStore(
   }
 
   function toggle(cwd?: string): void {
+    if (!open.value && !supported()) return;
     open.value = !open.value;
     if (open.value) {
       ensureTab(cwd);
@@ -614,6 +619,7 @@ export function createNativeTerminalStore(
     },
     allTabs,
     available: usable,
+    canOpen,
     currentKey,
     bucketsWithTabs,
     tabs,
@@ -644,9 +650,9 @@ export function createNativeTerminalStore(
   };
 }
 
-function toSshTarget(hostId: string, host: { host: string; identityFile?: string } | undefined): NativeTerminalSshTarget {
-  const target = normalizeTerminalSshTarget(host);
-  if (target === undefined) throw new Error(`SSH host "${hostId}" is not configured`);
+function toSshTarget(deviceId: string, device: { host?: string; identityFile?: string } | undefined): NativeTerminalSshTarget {
+  const target = normalizeTerminalSshTarget(device);
+  if (target === undefined) throw new Error(`Device "${deviceId}" is not configured`);
   return target;
 }
 
@@ -654,12 +660,20 @@ function activeWorkspaceSshTarget():
   | Promise<NativeTerminalSshTarget | undefined>
   | NativeTerminalSshTarget
   | undefined {
-  const hostId = workspacesStore().visibleWorkspace?.hostId;
-  if (hostId === undefined) return undefined;
-  const store = hostsStore();
-  const host = store.hostFor(hostId);
-  if (host !== undefined || store.loaded) return toSshTarget(hostId, host);
-  return store.load().then(() => toSshTarget(hostId, store.hostFor(hostId)));
+  const deviceId = workspacesStore().visibleWorkspace?.deviceId;
+  if (deviceId === undefined) return undefined;
+  const store = devicesStore();
+  const device = store.deviceFor(deviceId);
+  if (device !== undefined || store.loaded) return toSshTarget(deviceId, device);
+  return store.load().then(() => toSshTarget(deviceId, store.deviceFor(deviceId)));
+}
+
+export function supportsNativeTerminal(device: Pick<AppDevice, 'connection'> | undefined): boolean {
+  return device?.connection !== 'account';
+}
+
+function activeWorkspaceHasTerminal(): boolean {
+  return supportsNativeTerminal(devicesStore().deviceFor(workspacesStore().visibleWorkspace?.deviceId));
 }
 
 let store: NativeTerminalStore | null = null;
@@ -669,6 +683,7 @@ export function useNativeTerminal(): NativeTerminalStore {
     store = createNativeTerminalStore(
       typeof window === 'undefined' ? undefined : (window as { kimiDesktop?: NativeTerminalBridge }).kimiDesktop,
       activeWorkspaceSshTarget,
+      activeWorkspaceHasTerminal,
     );
   }
   return store;

@@ -6,7 +6,7 @@ import { useIsMobile } from './useIsMobile';
 import { openDialogCount } from '@moonshot-ai/app-ui';
 import { resolveUpgradeRegion } from '@moonshot-ai/app-core/lib';
 import type { AttachmentEntry } from '@moonshot-ai/app-composer/features/attachment';
-import { hostsStore } from '../stores/hosts';
+import { devicesStore } from '../stores/devices';
 
 export type PendingWorkspaceSubmit = {
   prompt: PromptEnvelope;
@@ -32,7 +32,7 @@ const authRequired = ref(false);
 
 export type SettingsHighlightKey = 'running-send-mode';
 
-const settingsInitialTab = ref<'providers' | 'archived' | 'agent' | 'hosts' | undefined>(undefined);
+const settingsInitialTab = ref<'providers' | 'archived' | 'agent' | 'devices' | undefined>(undefined);
 const mobileSettingsInitialTab = ref<'providers' | undefined>(undefined);
 const settingsHighlightKey = ref<SettingsHighlightKey | undefined>(undefined);
 const modelPickerTargetSid = ref<string | undefined>(undefined);
@@ -49,7 +49,7 @@ watch(showMobileSettings, (open) => {
 watch([showSettings, showMobileSettings], ([settingsOpen, mobileOpen]) => {
   if (!settingsOpen && !mobileOpen) {
     settingsHighlightKey.value = undefined;
-    hostsStore().requestFocus(null);
+    devicesStore().requestFocus(null);
   }
 });
 
@@ -105,19 +105,19 @@ export function openAgentSettings(mobile = false): void {
   }
 }
 
-export function openHostSettings(hostId?: string, options?: { addIfEmpty?: boolean }): void {
+export function openDeviceSettings(deviceId?: string, options?: { addIfEmpty?: boolean }): void {
   const seq = ++dialogOpenSeq;
   showModelPicker.value = false;
   showMobileSettings.value = false;
   settingsHighlightKey.value = undefined;
-  hostsStore().requestFocus(hostId ?? null, options);
-  settingsInitialTab.value = 'hosts';
+  devicesStore().requestFocus(deviceId ?? null, options);
+  settingsInitialTab.value = 'devices';
   if (showSettings.value) {
     showSettings.value = false;
     void nextTick(() => {
       if (seq !== dialogOpenSeq) return;
-      hostsStore().requestFocus(hostId ?? null, options);
-      settingsInitialTab.value = 'hosts';
+      devicesStore().requestFocus(deviceId ?? null, options);
+      settingsInitialTab.value = 'devices';
       showSettings.value = true;
     });
   } else {
@@ -279,7 +279,7 @@ export function useAppDialogs(dialogDeps?: AppDialogsDeps) {
     openAddWorkspace,
     openProviderSettings,
     openArchivedSettings,
-    openHostSettings,
+    openDeviceSettings,
     openAgentSettings: () => openAgentSettings(isMobile.value),
     dropPendingWorkspaceSubmit,
     completeWorkspaceCreation,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
-import { hostsStore, sessionViewsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore, sessionViewsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import WorkspaceIcon from '../WorkspaceIcon.vue';
 import { useWorkspaceRename } from './useWorkspaceRename';
 import { Icon, IconButton, useImeComposition } from '@moonshot-ai/app-ui';
@@ -25,7 +25,7 @@ const emit = defineEmits<{
 const sessionViews = sessionViewsStore();
 const workspaces = workspacesStore();
 
-const groups = computed(() => sessionViews.workspaceGroups);
+const groups = computed(() => sessionViews.workspaceGroups.filter((group) => group.workspace.deviceId === workspaces.deviceScope));
 const activeWorkspaceId = computed(() => workspaces.activeWorkspaceId);
 
 const {
@@ -63,14 +63,14 @@ function onWorkspaceMouseLeave(): void {
     v-for="g in groups"
     :key="g.workspace.id"
     class="ws-dir"
-    :class="{ on: g.workspace.id === activeWorkspaceId, 'host-unavailable': hostsStore().unavailable(g.workspace.hostId) }"
+    :class="{ on: g.workspace.id === activeWorkspaceId, 'device-unavailable': devicesStore().unavailable(g.workspace.deviceId) }"
     @click="emit('createInWorkspace', g.workspace.id); emit('workspaceHoverEnd')"
     @mouseenter="onWorkspaceMouseEnter(g.workspace, $event)"
     @mouseleave="onWorkspaceMouseLeave"
     @contextmenu="emit('openMenu', g.workspace, $event)"
   >
     <div class="ws-dir-row">
-      <WorkspaceIcon class="ws-dir-icon" :host-id="g.workspace.hostId" status="all" />
+      <WorkspaceIcon class="ws-dir-icon" :device-id="g.workspace.deviceId" status="all" />
       <input
         v-if="renamingId === g.workspace.id"
         :ref="setRenameInputRef"
@@ -136,7 +136,7 @@ function onWorkspaceMouseLeave(): void {
   flex: none;
   color: var(--color-text-muted);
 }
-.ws-dir.host-unavailable .ws-dir-name { color: var(--color-text-faint); }
+.ws-dir.device-unavailable .ws-dir-name { color: var(--color-text-faint); }
 .ws-dir-name {
   flex: 1;
   min-width: 0;

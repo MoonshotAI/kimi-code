@@ -10,7 +10,7 @@ vi.stubGlobal('localStorage', {
   clear: () => memStorage.clear(),
 });
 
-import type { AppSession, AppWorkspace, KimiWebApi } from '@moonshot-ai/app-core/api';
+import type { AppDevice, AppSession, AppWorkspace, KimiWebApi } from '@moonshot-ai/app-core/api';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import {
   loadActiveWorkspace,
@@ -24,7 +24,7 @@ import {
 } from '@moonshot-ai/app-core/lib';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { noopProductTracker, setProductTracker } from '../src/contracts';
-import { hostsStore } from '../src/stores/hosts';
+import { devicesStore } from '../src/stores/devices';
 import { sessionsStore } from '../src/stores/sessions';
 import { warningsStore } from '../src/stores/warnings';
 import { SESSIONS_INITIAL_PAGE_SIZE, setWorkspacesHooks, workspacesStore } from '../src/stores/workspaces';
@@ -82,12 +82,38 @@ function resetStore(): void {
   store.sessionsLoadingMoreByWorkspace = {};
   store.sessionsCursorByWorkspace = {};
   store.sessionsInitialCountByWorkspace = {};
+  store.setDeviceScope(undefined);
   sessionsStore().setSessions([]);
 }
 
 beforeEach(() => {
   memStorage.clear();
   resetStore();
+});
+
+describe('sidebar device scope', () => {
+  it('scopes to one device, creates projects there and falls back when the device is turned off', () => {
+    const store = workspacesStore();
+    const devices = devicesStore();
+    const devbox = { id: 'devbox', connection: 'ssh', host: 'devbox', status: 'ready' } as AppDevice;
+    devices.byId = { devbox };
+    store.workspaces = [makeWorkspace('wm_local', '/a'), makeWorkspace('wm_remote', '/r', { deviceId: 'devbox' })];
+    store.selectWorkspace('wm_local');
+
+    store.setDeviceScope('devbox');
+    expect(store.deviceScope).toBe('devbox');
+    expect(store.activeWorkspaceId).toBe('wm_remote');
+    expect(store.defaultCreateDeviceId()).toBe('devbox');
+    expect(memStorage.get(STORAGE_KEYS.sidebarDeviceScope)).toBe('devbox');
+
+    devices.byId = { devbox: { ...devbox, enabled: false } };
+    expect(store.deviceScope).toBeUndefined();
+
+    store.setDeviceScope(undefined);
+    expect(store.activeWorkspaceId).toBe('wm_local');
+    expect(memStorage.has(STORAGE_KEYS.sidebarDeviceScope)).toBe(false);
+    devices.byId = {};
+  });
 });
 
 describe('workspacesView ordering', () => {
@@ -123,7 +149,7 @@ describe('workspacesView ordering', () => {
 
   it('keeps remote roots unshortened because the local home does not apply to them', () => {
     const store = workspacesStore();
-    store.workspaces = [makeWorkspace('a', '/home/x/code/app', { hostId: 'devbox' })];
+    store.workspaces = [makeWorkspace('a', '/home/x/code/app', { deviceId: 'devbox' })];
     store.fsHome = '/Users/x';
     expect(store.workspacesView[0]!.shortPath).toBe('/home/x/code/app');
   });
@@ -225,12 +251,12 @@ describe('active workspace resolution', () => {
     expect(workspacesStore().visibleWorkspace).toBeNull();
   });
 
-  it('treats only a workspace on an SSH host as non-local', () => {
+  it('treats only a workspace on an SSH device as non-local', () => {
     const store = workspacesStore();
     expect(store.isLocalWorkspace).toBe(true);
     store.workspaces = [
       makeWorkspace('a', '/a'),
-      makeWorkspace('b', '/b', { hostId: 'devbox' }),
+      makeWorkspace('b', '/b', { deviceId: 'devbox' }),
     ];
     store.storedActiveWorkspaceId = 'a';
     expect(store.isLocalWorkspace).toBe(true);
@@ -460,25 +486,47 @@ describe('loadWorkspaces', () => {
     expect(store.workspaces).toEqual([]);
   });
 
-  it('keeps cached sessions on their disabled host after refreshing the available projects', async () => {
+  it('keeps cached sessions on their disabled device after refreshing the available projects', async () => {
     const store = workspacesStore();
     const local = makeWorkspace('wm_local', '/ws');
-    store.workspaces = [local, makeWorkspace('wm_remote', '/srv/project', { hostId: 'devbox' })];
+    store.workspaces = [local, makeWorkspace('wm_remote', '/srv/project', { deviceId: 'devbox' })];
     sessionsStore().setSessions([makeSession('s_remote', '2026-01-01T00:00:00.000Z', {
-      workspaceId: 'wm_remote', cwd: '/srv/project', hostId: 'devbox',
+      workspaceId: 'wm_remote', cwd: '/srv/project', deviceId: 'devbox',
     })]);
-    hostsStore().applySnapshot([{ id: 'devbox', host: 'example.test', status: 'disconnected', enabled: false }]);
+    devicesStore().applySnapshot([{ id: 'devbox', connection: 'ssh', host: 'example.test', status: 'disconnected', enabled: false }]);
     apiMock.listWorkspaces = vi.fn().mockResolvedValue([local]);
     apiMock.getFsHome = vi.fn().mockResolvedValue({ home: '', recentRoots: [] });
 
     try {
       await store.loadWorkspaces();
-      expect(store.workspaceById.get('wm_remote')?.hostId).toBe('devbox');
+      expect(store.workspaceById.get('wm_remote')?.deviceId).toBe('devbox');
       expect(store.visibleWorkspaceIds.has('wm_remote')).toBe(false);
       expect(store.openWorkspaceDraft('wm_remote')).toBe(false);
     } finally {
-      hostsStore().byId = {};
-      hostsStore().loaded = false;
+      devicesStore().byId = {};
+      devicesStore().loaded = false;
+    }
+  });
+
+  it('drops the projects of a device that left this app once the available projects are refreshed', async () => {
+    const store = workspacesStore();
+    const local = makeWorkspace('wm_local', '/ws');
+    store.workspaces = [local, makeWorkspace('wm_remote', '/srv/project', { deviceId: 'rc-mac' })];
+    sessionsStore().setSessions([makeSession('s_remote', '2026-01-01T00:00:00.000Z', {
+      workspaceId: 'wm_remote', cwd: '/srv/project', deviceId: 'rc-mac',
+    })]);
+    devicesStore().applySnapshot([{ id: 'rc-mac', connection: 'account', status: 'pending' }]);
+    apiMock.listWorkspaces = vi.fn().mockResolvedValue([local]);
+    apiMock.getFsHome = vi.fn().mockResolvedValue({ home: '', recentRoots: [] });
+
+    try {
+      devicesStore().applySnapshot([]);
+      await store.loadWorkspaces();
+      expect(store.workspaceById.has('wm_remote')).toBe(false);
+      expect(store.workspaceById.has('wm_local')).toBe(true);
+    } finally {
+      devicesStore().byId = {};
+      devicesStore().loaded = false;
     }
   });
 
@@ -667,45 +715,45 @@ describe('workspaces store session orchestration', () => {
     expect(hooks.writeSessionUrl).toHaveBeenCalledWith(undefined, 'push');
   });
 
-  it('openWorkspaceDraft refuses projects on a host that is disabled or failed to connect', () => {
+  it('openWorkspaceDraft refuses projects on a device that is disabled or failed to connect', () => {
     const store = workspacesStore();
     store.workspaces = [
       makeWorkspace('wd_local', '/ws'),
-      makeWorkspace('wd_failed', '/srv/a', { hostId: 'broken' }),
-      makeWorkspace('wd_disabled', '/srv/b', { hostId: 'paused' }),
+      makeWorkspace('wd_failed', '/srv/a', { deviceId: 'broken' }),
+      makeWorkspace('wd_disabled', '/srv/b', { deviceId: 'paused' }),
     ];
     store.storedActiveWorkspaceId = 'wd_local';
-    hostsStore().loaded = true;
-    hostsStore().byId = {
-      broken: { id: 'broken', host: 'broken.test', status: 'disconnected', connectError: 'Connection refused' },
-      paused: { id: 'paused', host: 'paused.test', status: 'disconnected', enabled: false },
+    devicesStore().loaded = true;
+    devicesStore().byId = {
+      broken: { id: 'broken', connection: 'ssh', host: 'broken.test', status: 'disconnected', connectError: 'Connection refused' },
+      paused: { id: 'paused', connection: 'ssh', host: 'paused.test', status: 'disconnected', enabled: false },
     };
 
     expect(store.openWorkspaceDraft('wd_failed', { entry: 'newChat' })).toBe(false);
     expect(store.openWorkspaceDraft('wd_disabled', { entry: 'workspace' })).toBe(false);
     expect(store.storedActiveWorkspaceId).toBe('wd_local');
     expect(store.openWorkspaceDraft('wd_local')).toBe(true);
-    hostsStore().byId = {};
-    hostsStore().loaded = false;
+    devicesStore().byId = {};
+    devicesStore().loaded = false;
   });
 
-  it('exits the active session and clears host state when a host is disabled or removed, but stays on connection failure', async () => {
+  it('exits the active session and clears device state when a device is disabled or removed, but stays on connection failure', async () => {
     const store = workspacesStore();
     store.workspaces = [
-      makeWorkspace('wd_remote', '/srv/a', { hostId: 'devbox' }),
+      makeWorkspace('wd_remote', '/srv/a', { deviceId: 'devbox' }),
       makeWorkspace('wd_local', '/ws'),
     ];
     store.storedActiveWorkspaceId = 'wd_remote';
     sessionsStore().setSessions([makeSession('s_remote', '2026-01-02T00:00:00.000Z', { workspaceId: 'wd_remote' })]);
     sessionsStore().setActiveSessionId('s_remote');
-    hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'ready' }]);
+    devicesStore().applySnapshot([{ id: 'devbox', connection: 'ssh', host: 'dev.test', status: 'ready' }]);
 
-    hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'disconnected', connectError: 'Connection refused' }]);
+    devicesStore().applySnapshot([{ id: 'devbox', connection: 'ssh', host: 'dev.test', status: 'disconnected', connectError: 'Connection refused' }]);
     expect(sessionsStore().activeSessionId).toBe('s_remote');
     expect(store.storedActiveWorkspaceId).toBe('wd_remote');
 
-    hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'disconnected', enabled: false }]);
-    store.handleUnavailableHosts(['devbox']);
+    devicesStore().applySnapshot([{ id: 'devbox', connection: 'ssh', host: 'dev.test', status: 'disconnected', enabled: false }]);
+    store.handleUnavailableDevices(['devbox']);
     expect(sessionsStore().activeSessionId).toBeUndefined();
     expect(store.storedActiveWorkspaceId).toBe('wd_local');
     expect(store.workspaces.map((w) => w.id)).toEqual(['wd_remote', 'wd_local']);
@@ -714,7 +762,7 @@ describe('workspaces store session orchestration', () => {
     expect(hooks.writeSessionUrl).toHaveBeenCalledWith(undefined, 'replace');
 
     sessionsStore().setSessions([]);
-    store.workspaces = [makeWorkspace('wd_remote', '/srv/a', { hostId: 'devbox' })];
+    store.workspaces = [makeWorkspace('wd_remote', '/srv/a', { deviceId: 'devbox' })];
     store.storedActiveWorkspaceId = 'wd_remote';
     store.trustByWorkspaceId = { wd_remote: true };
     store.trustErrorByWorkspaceId = {
@@ -722,11 +770,11 @@ describe('workspaces store session orchestration', () => {
     };
     store.setSessionCursor('wd_remote', 's_remote');
     store.setSessionHasMore('wd_remote', true);
-    hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'ready' }]);
+    devicesStore().applySnapshot([{ id: 'devbox', connection: 'ssh', host: 'dev.test', status: 'ready' }]);
     expect(store.activeWorkspaceId).toBe('wd_remote');
 
-    hostsStore().applySnapshot([]);
-    expect(store.removeHostWorkspaces(['devbox'])).toEqual(['wd_remote']);
+    devicesStore().applySnapshot([]);
+    expect(store.removeDeviceWorkspaces(['devbox'])).toEqual(['wd_remote']);
     expect(store.workspaces).toEqual([]);
     expect(store.storedActiveWorkspaceId).toBeNull();
     expect(store.activeWorkspaceId).toBeNull();
@@ -737,24 +785,24 @@ describe('workspaces store session orchestration', () => {
 
     store.workspaces = [
       makeWorkspace('wd_local', '/local'),
-      makeWorkspace('wd_other', '/srv/b', { hostId: 'otherbox' }),
+      makeWorkspace('wd_other', '/srv/b', { deviceId: 'otherbox' }),
     ];
     store.storedActiveWorkspaceId = 'wd_local';
     store.trustErrorByWorkspaceId = {
       wd_other: { operation: 'read', message: 'not configured', originalError: new Error('not configured') },
     };
     store.trustLoadingByWorkspaceId = { wd_other: true };
-    hostsStore().applySnapshot([{ id: 'otherbox', host: 'other.test', status: 'ready' }]);
+    devicesStore().applySnapshot([{ id: 'otherbox', connection: 'ssh', host: 'other.test', status: 'ready' }]);
     expect(store.activeWorkspaceId).toBe('wd_local');
 
-    hostsStore().applySnapshot([]);
-    expect(store.removeHostWorkspaces(['otherbox'])).toEqual(['wd_other']);
+    devicesStore().applySnapshot([]);
+    expect(store.removeDeviceWorkspaces(['otherbox'])).toEqual(['wd_other']);
     expect(store.workspaces.map((w) => w.id)).toEqual(['wd_local']);
     expect(store.activeWorkspaceId).toBe('wd_local');
     expect(store.trustErrorByWorkspaceId.wd_other).toBeUndefined();
     expect(store.trustLoadingByWorkspaceId.wd_other).toBe(false);
-    hostsStore().byId = {};
-    hostsStore().loaded = false;
+    devicesStore().byId = {};
+    devicesStore().loaded = false;
   });
 
   it('uses explicit workspace ids before root when checking session ownership', () => {
@@ -774,7 +822,7 @@ describe('workspaces store session orchestration', () => {
     store.workspaces = [
       makeWorkspace('wm_1', '/ws', { lastOpenedAt: '2026-01-01T00:00:00.000Z' }),
       makeWorkspace('wm_2', '/ws', { lastOpenedAt: '2026-01-02T00:00:00.000Z' }),
-      makeWorkspace('wm_remote', '/ws', { hostId: 'devbox', lastOpenedAt: '2026-03-01T00:00:00.000Z' }),
+      makeWorkspace('wm_remote', '/ws', { deviceId: 'devbox', lastOpenedAt: '2026-03-01T00:00:00.000Z' }),
     ];
 
     expect(store.openMostRecentWorkspaceByRoot('/ws')?.id).toBe('wm_2');
@@ -1083,11 +1131,11 @@ describe('saveWorkspace', () => {
     ]);
   });
 
-  it('searches one root on the picked host and resolves relative directory results', async () => {
+  it('searches one root on the picked device and resolves relative directory results', async () => {
     const controller = new AbortController();
-    const hostApi = { suggestFilesAtRoots: vi.fn() };
-    apiMock.deviceApi = vi.fn(() => hostApi);
-    hostApi.suggestFilesAtRoots.mockResolvedValue({
+    const remoteApi = { suggestFilesAtRoots: vi.fn() };
+    apiMock.deviceApi = vi.fn(() => remoteApi);
+    remoteApi.suggestFilesAtRoots.mockResolvedValue({
       items: [
         { path: 'apps/frontend', name: 'frontend', kind: 'directory' },
         { path: 'apps/frontend/index.ts', name: 'index.ts', kind: 'file' },
@@ -1101,7 +1149,7 @@ describe('saveWorkspace', () => {
       { path: '/srv/backend', label: '/srv/backend' },
     ]);
     expect(apiMock.deviceApi).toHaveBeenCalledExactlyOnceWith('devbox');
-    expect(hostApi.suggestFilesAtRoots).toHaveBeenCalledExactlyOnceWith(['/srv/project'], {
+    expect(remoteApi.suggestFilesAtRoots).toHaveBeenCalledExactlyOnceWith(['/srv/project'], {
       query: 'front',
       limit: 150,
       showHidden: true,
@@ -1127,7 +1175,7 @@ describe('saveWorkspace', () => {
   it('surfaces remote browseFs errors while keeping local browseFs fallbacks quiet', async () => {
     const localApi = { browseFs: vi.fn().mockRejectedValue(new Error('local boom')) };
     const remoteApi = { browseFs: vi.fn().mockRejectedValue(new Error('ssh handshake failed')) };
-    apiMock.deviceApi = vi.fn((hostId?: string) => (hostId === undefined ? localApi : remoteApi));
+    apiMock.deviceApi = vi.fn((deviceId?: string) => (deviceId === undefined ? localApi : remoteApi));
 
     await expect(workspacesStore().browseFs('/Users/x')).resolves.toEqual({ path: '', parent: null, entries: [] });
     await expect(workspacesStore().browseFs(undefined, undefined, 'devbox')).rejects.toThrow('ssh handshake failed');
@@ -1165,7 +1213,7 @@ describe('saveWorkspace', () => {
     await expect(store.mkdirFs('/Users/x/fresh')).rejects.toBe(conflict);
   });
 
-  it('routes home and project config requests to the target SSH host', async () => {
+  it('routes home and project config requests to the target SSH device', async () => {
     const remoteApi = {
       getFsHome: vi.fn().mockResolvedValue({ home: '/home/ubuntu', recentRoots: ['/home/ubuntu/app'] }),
       getWorkspaceProjectConfigDirs: vi.fn().mockResolvedValue(['/home/ubuntu/shared']),
@@ -1180,12 +1228,12 @@ describe('saveWorkspace', () => {
     delete apiMock.deviceApi;
   });
 
-  it('uses offline removal copy for a missing host without exposing its id', () => {
-    hostsStore().loaded = true;
-    hostsStore().byId = {};
-    workspacesStore().workspaces = [makeWorkspace('wm_gone', '/srv/app', { name: 'trainer', hostId: 'host-a1b2c3d4' })];
-    const tr = (key: string, params?: Record<string, unknown>) => key === 'workspace.deletedHost' ? 'Removed host' : `${key}:${String(params?.device)}`;
-    expect(workspacesStore().removeWorkspaceMessage('wm_gone', tr)).toBe('workspace.removeWorkspaceConfirmHostOffline:Removed host');
-    hostsStore().loaded = false;
+  it('uses offline removal copy for a missing device without exposing its id', () => {
+    devicesStore().loaded = true;
+    devicesStore().byId = {};
+    workspacesStore().workspaces = [makeWorkspace('wm_gone', '/srv/app', { name: 'trainer', deviceId: 'device-a1b2c3d4' })];
+    const tr = (key: string, params?: Record<string, unknown>) => key === 'workspace.deletedDevice' ? 'Removed device' : `${key}:${String(params?.device)}`;
+    expect(workspacesStore().removeWorkspaceMessage('wm_gone', tr)).toBe('workspace.removeWorkspaceConfirmDeviceOffline:Removed device');
+    devicesStore().loaded = false;
   });
 });

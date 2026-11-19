@@ -34,7 +34,7 @@ export interface Session {
   lastPrompt?: string;
   workspaceId?: string;
   workspaceName?: string;
-  hostId?: string;
+  deviceId?: string;
   pinned?: boolean;
   archived?: boolean;
   cwd?: string;
@@ -51,7 +51,7 @@ export interface WorkspaceView {
   id: string;
   name: string;
   root: string;
-  hostId?: string;
+  deviceId?: string;
   shortPath: string;
   additionalDirs: string[];
   sessionCount: number;

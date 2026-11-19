@@ -3,7 +3,7 @@ import { onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
-import { Icon } from '@moonshot-ai/app-ui';
+import { Icon, IconButton } from '@moonshot-ai/app-ui';
 
 import { createRemoteControlQrDataUrl } from '../../lib/remoteControlQr';
 import { track } from '../../lib/track';
@@ -11,10 +11,12 @@ import { track } from '../../lib/track';
 const props = defineProps<{
   url: string;
   source: 'panel' | 'conflict_dialog';
+  compact?: boolean;
 }>();
 
 const { t } = useI18n();
 const qrDataUrl = ref<string | undefined>(undefined);
+const qrOpen = ref(false);
 const copied = ref(false);
 const copyFailed = ref(false);
 let qrGeneration = 0;
@@ -59,7 +61,41 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="rc-share">
+  <div v-if="compact" class="rc-share rc-share--compact">
+    <div class="rc-share__bar">
+      <span class="rc-share__label">{{ t('remoteControl.openOnPhone') }}</span>
+      <div class="rc-share__tools">
+        <IconButton
+          class="rc-share__tool"
+          size="sm"
+          :label="qrOpen ? t('remoteControl.hideQr') : t('remoteControl.showQr')"
+          :tooltip="qrOpen ? t('remoteControl.hideQr') : t('remoteControl.showQr')"
+          :pressed="qrOpen"
+          @click="qrOpen = !qrOpen"
+        >
+          <Icon name="device-mobile" />
+        </IconButton>
+        <IconButton
+          class="rc-share__tool"
+          size="sm"
+          :label="copied ? t('remoteControl.copied') : t('remoteControl.copyLink')"
+          :tooltip="copied ? t('remoteControl.copied') : t('remoteControl.copyLink')"
+          @click="copyLink"
+        >
+          <Icon :name="copied ? 'check' : 'copy'" />
+        </IconButton>
+      </div>
+    </div>
+    <div v-if="qrOpen && qrDataUrl" class="rc-share__panel">
+      <img class="rc-share__panel-qr" :src="qrDataUrl" :alt="t('remoteControl.qrAlt')" />
+      <div class="rc-share__panel-copy">
+        <span>{{ t('remoteControl.qrCaption') }}</span>
+        <span class="rc-share__note">{{ t('remoteControl.securityNote') }}</span>
+      </div>
+    </div>
+    <span v-if="copyFailed" class="rc-share__error">{{ t('remoteControl.copyFailed') }}</span>
+  </div>
+  <div v-else class="rc-share">
     <div v-if="qrDataUrl" class="rc-share__qr">
       <img class="rc-share__qr-image" :src="qrDataUrl" :alt="t('remoteControl.qrAlt')" />
       <span class="rc-share__qr-caption">{{ t('remoteControl.qrCaption') }}</span>
@@ -133,5 +169,61 @@ onBeforeUnmount(() => {
   margin-top: var(--space-2);
   color: var(--color-danger);
   font-size: var(--text-xs);
+}
+.rc-share--compact {
+  align-items: stretch;
+}
+.rc-share__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: 0 var(--space-3) 0 var(--space-4);
+}
+.rc-share__label {
+  min-width: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.rc-share__tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+.rc-share__tool {
+  color: var(--color-text-muted);
+}
+.rc-share__panel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
+}
+.rc-share__panel-qr {
+  flex: none;
+  width: 96px;
+  height: 96px;
+  padding: var(--space-2);
+  border: var(--p-hairline) solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  image-rendering: pixelated;
+}
+.rc-share__panel-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+.rc-share__note {
+  color: var(--color-text-faint);
+  line-height: var(--leading-normal);
+}
+.rc-share--compact .rc-share__error {
+  margin: 0 var(--space-4) var(--space-3);
 }
 </style>

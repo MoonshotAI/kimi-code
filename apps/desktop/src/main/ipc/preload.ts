@@ -413,6 +413,7 @@ export type KimiDesktopApi = {
   getRemoteControlRestoreState: () => Promise<{ restoreEnabled: boolean; previousEnabled: boolean }>;
   setRemoteControlRestoreState: (patch: { restoreEnabled?: boolean; previousEnabled?: boolean }) => Promise<void>;
   onRemoteControlRestoreFinished: (cb: () => void) => () => void;
+  getHostName: () => Promise<string>;
   getCanaryInfo: () => Promise<CanaryInfo>;
   canaryImportStableSettings?: () => Promise<CanaryStableImportResult>;
   getRuntimeEnvironmentOverrides: () => Promise<RuntimeEnvironmentGetResult>;
@@ -662,6 +663,10 @@ export const api: KimiDesktopApi = {
     const listener = (): void => cb();
     ipcRenderer.on('kimi:remote-control-restore-finished', listener);
     return () => ipcRenderer.removeListener('kimi:remote-control-restore-finished', listener);
+  },
+  getHostName: async () => {
+    const name: unknown = await ipcRenderer.invoke('kimi:host-name');
+    return typeof name === 'string' ? name : '';
   },
   getCanaryInfo: async () => {
     const info = asCanaryInfo(await ipcRenderer.invoke('kimi:canary-get-info'));

@@ -6,7 +6,7 @@ const clientState = vi.hoisted(() => ({
   activeSessionId: null as null | { value: string | null },
   activity: null as null | { value: string },
   working: null as null | { value: boolean },
-  visibleWorkspace: null as null | { value: { hostId?: string } | null },
+  visibleWorkspace: null as null | { value: { deviceId?: string } | null },
 }));
 
 vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
@@ -15,7 +15,7 @@ vi.mock('@moonshot-ai/app-client/client', async (importOriginal) => {
   clientState.activeSessionId = vue.ref<string | null>('sess-1');
   clientState.activity = vue.ref('idle');
   clientState.working = vue.ref(false);
-  clientState.visibleWorkspace = vue.ref<{ hostId?: string } | null>(null);
+  clientState.visibleWorkspace = vue.ref<{ deviceId?: string } | null>(null);
   return {
     ...actual,
     useKimiWebClient: () => ({
@@ -340,13 +340,13 @@ describe('Composer running send mode and first-time steer tip', () => {
     expect(steers).toHaveLength(0);
   });
 
-  it('shows the host model setup pill and gates submit when the ready SSH host has no models', async () => {
-    const { hostsStore } = await import('@moonshot-ai/app-client/stores');
+  it('shows the device model setup pill and gates submit when the ready SSH device has no models', async () => {
+    const { devicesStore } = await import('@moonshot-ai/app-client/stores');
     const { setDraft, submits, dialogs } = await mountFreshComposer('en');
-    hostsStore().loaded = true;
-    hostsStore().byId = { devbox: { id: 'devbox', host: 'dev.example.test', name: 'Build box', status: 'ready' } };
-    hostsStore().accounts = { devbox: { status: 'signedOut', modelsReady: false } };
-    clientState.visibleWorkspace!.value = { hostId: 'devbox' };
+    devicesStore().loaded = true;
+    devicesStore().byId = { devbox: { id: 'devbox', connection: 'ssh', host: 'dev.example.test', name: 'Build box', status: 'ready' } };
+    devicesStore().accounts = { devbox: { status: 'signedOut', modelsReady: false } };
+    clientState.visibleWorkspace!.value = { deviceId: 'devbox' };
     await nextTick();
 
     const input = host.querySelector('[aria-label="Message input"]')!;
@@ -357,7 +357,7 @@ describe('Composer running send mode and first-time steer tip', () => {
 
     expect(submits).toHaveLength(0);
     expect(dialogs.showSettings.value).toBe(true);
-    expect(dialogs.settingsInitialTab.value).toBe('hosts');
-    expect(hostsStore().focusHostId).toBe('devbox');
+    expect(dialogs.settingsInitialTab.value).toBe('devices');
+    expect(devicesStore().focusDeviceId).toBe('devbox');
   });
 });

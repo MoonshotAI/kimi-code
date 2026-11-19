@@ -73,12 +73,12 @@ async function setup() {
   }));
   let handlers!: KimiEventHandlers;
   const baselines = new Map<string, ConversationTurn[]>();
-  const hostApi = {
+  const remoteApi = {
     listModels: vi.fn(async () => [{ id: 'remote-model', model: 'remote-model', provider: 'managed:kimi-code' }]),
     getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'remote-model' })),
   };
   const api = {
-    deviceApi: (hostId: string | undefined) => (hostId === 'dev' ? hostApi : api),
+    deviceApi: (deviceId: string | undefined) => (deviceId === 'dev' ? remoteApi : api),
     connectEvents: vi.fn((next: KimiEventHandlers) => {
       handlers = next;
       return {
@@ -166,39 +166,39 @@ async function setup() {
   const event = (sid: string, appEvent: AppEvent) => {
     handlers.onEvent(appEvent, { sessionId: sid });
   };
-  const hostEvent = (hostId: string, appEvent: AppEvent) => {
-    handlers.onEvent(appEvent, { sessionId: '', hostId });
+  const deviceEvent = (deviceId: string, appEvent: AppEvent) => {
+    handlers.onEvent(appEvent, { sessionId: '', deviceId });
   };
   const goal = (sid: string, next: AppGoal | null) => {
     handlers.onAgentGoal?.(sid, 'main', next);
   };
-  return { client, api, hostApi, clock, scopes, goal, hostEvent, turn, conversation, compaction, waitFor, baselines, event, filesStore, goalStore, approvalsStore, modelsStore, tasksStore, warningsStore, sessionsStore, sessionViewsStore, configStore };
+  return { client, api, remoteApi, clock, scopes, goal, deviceEvent, turn, conversation, compaction, waitFor, baselines, event, filesStore, goalStore, approvalsStore, modelsStore, tasksStore, warningsStore, sessionsStore, sessionViewsStore, configStore };
 }
 
 async function addRemoteWorkspace() {
   const { workspacesStore } = await import('../src/stores/workspaces');
-  const { hostsStore } = await import('../src/stores/hosts');
-  hostsStore().applySnapshot([{ id: 'dev', host: 'dev', status: 'ready' }]);
+  const { devicesStore } = await import('../src/stores/devices');
+  devicesStore().applySnapshot([{ id: 'dev', connection: 'ssh', host: 'dev', status: 'ready' }]);
   workspacesStore().workspaces = [
     ...workspacesStore().workspaces,
-    { id: 'remote-ws', root: '/srv/project', name: 'remote', sessionCount: 0, hostId: 'dev' },
+    { id: 'remote-ws', root: '/srv/project', name: 'remote', sessionCount: 0, deviceId: 'dev' },
   ];
   return workspacesStore();
 }
 
-it('shows the model catalog of the selected host without reloading local settings', async () => {
+it('shows the model catalog of the selected device without reloading local settings', async () => {
   const h = await setup();
   await addRemoteWorkspace();
 
   h.client.selectWorkspace('remote-ws');
   await vi.waitFor(() => expect(h.modelsStore().activeModels.map((model) => model.id)).toEqual(['remote-model']));
   expect(h.modelsStore().resolveSendModel(null)).toBe('remote-model');
-  expect(h.hostApi.listModels).toHaveBeenCalledTimes(1);
+  expect(h.remoteApi.listModels).toHaveBeenCalledTimes(1);
   await nextTick();
   expect(h.api.getConfig).toBeUndefined();
 });
 
-it('applies account events from a host to that host only', async () => {
+it('applies account events from a device to that device only', async () => {
   const h = await setup();
   await addRemoteWorkspace();
   h.modelsStore().setDefaultModel('local-model');
@@ -207,51 +207,51 @@ it('applies account events from a host to that host only', async () => {
   await vi.waitFor(() => expect(h.modelsStore().activeModels.map((model) => model.id)).toEqual(['remote-model']));
   const configWrites = vi.spyOn(h.configStore(), 'noteConfigWrite');
 
-  h.hostApi.listModels.mockResolvedValue([{ id: 'remote-next', model: 'remote-next', provider: 'managed:kimi-code' }]);
-  h.hostEvent('dev', { type: 'modelCatalogChanged', changed: [], unchanged: [], failed: [] });
+  h.remoteApi.listModels.mockResolvedValue([{ id: 'remote-next', model: 'remote-next', provider: 'managed:kimi-code' }]);
+  h.deviceEvent('dev', { type: 'modelCatalogChanged', changed: [], unchanged: [], failed: [] });
   await vi.waitFor(() => expect(h.modelsStore().activeModels.map((model) => model.id)).toEqual(['remote-next']));
 
-  h.hostEvent('dev', { type: 'configChanged', changedFields: ['defaultModel'], config: { providers: {}, defaultModel: 'remote-next' } });
+  h.deviceEvent('dev', { type: 'configChanged', changedFields: ['defaultModel'], config: { providers: {}, defaultModel: 'remote-next' } });
   expect(h.modelsStore().activeDefaultModel).toBe('remote-next');
   expect(h.modelsStore().defaultModel).toBe('local-model');
   expect(configWrites).not.toHaveBeenCalled();
 });
 
-it('keeps the order of projects on a host that cannot be reached', async () => {
+it('keeps the order of projects on a device that cannot be reached', async () => {
   await setup();
-  const { hostsStore } = await import('../src/stores/hosts');
+  const { devicesStore } = await import('../src/stores/devices');
   const workspacesStore = await addRemoteWorkspace();
   const [local] = workspacesStore.workspaces;
   workspacesStore.reorderWorkspaces(['remote-ws', 'ws1']);
 
-  hostsStore().applySnapshot([{ id: 'dev', host: 'dev', status: 'disconnected' }]);
+  devicesStore().applySnapshot([{ id: 'dev', connection: 'ssh', host: 'dev', status: 'disconnected' }]);
   workspacesStore.workspaces = [local!];
   await nextTick();
   expect(workspacesStore.workspaceOrder).toEqual(['remote-ws', 'ws1']);
 
-  hostsStore().applySnapshot([{ id: 'dev', host: 'dev', status: 'ready' }]);
+  devicesStore().applySnapshot([{ id: 'dev', connection: 'ssh', host: 'dev', status: 'ready' }]);
   await nextTick();
   expect(workspacesStore.workspaceOrder).toEqual(['ws1']);
 });
 
-it('lists the projects and sessions of a host again once it is reachable', async () => {
+it('lists the projects and sessions of a device again once it is reachable', async () => {
   const h = await setup();
   const { workspacesStore } = await import('../src/stores/workspaces');
   await h.client.selectSession('a');
   const [local] = workspacesStore().workspaces;
-  const remote = { id: 'remote-ws', root: '/srv/project', name: 'remote', sessionCount: 1, hostId: 'dev' };
+  const remote = { id: 'remote-ws', root: '/srv/project', name: 'remote', sessionCount: 1, deviceId: 'dev' };
   const remoteSession: AppSession = {
     ...h.sessionsStore().sessions[0]!,
     id: 's-remote',
     title: 's-remote',
     cwd: '/srv/project',
     workspaceId: 'remote-ws',
-    hostId: 'old-dev',
+    deviceId: 'old-dev',
     lastPrompt: 'hi',
   };
   h.sessionsStore().setSessions([...h.sessionsStore().sessions, remoteSession]);
   const listSessions = vi.fn(async () => ({
-    items: [{ ...remoteSession, hostId: 'dev', title: '' }],
+    items: [{ ...remoteSession, deviceId: 'dev', title: '' }],
     hasMore: false,
   }));
   Object.assign(h.api, {
@@ -260,35 +260,35 @@ it('lists the projects and sessions of a host again once it is reachable', async
     listSessions,
   });
 
-  h.event('', { type: 'hostsChanged', hosts: [{ id: 'dev', host: 'dev', status: 'ready' }] });
-  h.hostApi.listModels.mockClear();
+  h.event('', { type: 'devicesChanged', devices: [{ id: 'dev', connection: 'ssh', host: 'dev', status: 'ready' }] });
+  h.remoteApi.listModels.mockClear();
 
   await vi.waitFor(() => expect(listSessions).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'remote-ws' })));
   expect(workspacesStore().workspaces.map((workspace) => workspace.id)).toEqual(['ws1', 'remote-ws']);
-  expect(h.sessionsStore().sessions.find((s) => s.id === 's-remote')?.hostId).toBe('dev');
+  expect(h.sessionsStore().sessions.find((s) => s.id === 's-remote')?.deviceId).toBe('dev');
   expect(
     h.sessionViewsStore().workspaceGroups.find((g) => g.workspace.id === 'remote-ws')?.sessions.map((s) => s.id),
   ).toEqual(['s-remote']);
-  expect(h.hostApi.listModels).not.toHaveBeenCalled();
+  expect(h.remoteApi.listModels).not.toHaveBeenCalled();
 
   h.client.selectWorkspace('remote-ws');
-  await vi.waitFor(() => expect(h.hostApi.listModels).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect(h.remoteApi.listModels).toHaveBeenCalledTimes(1));
 });
 
-it('cascades cleanup when an SSH host is removed and restores sessions when re-added with a new host id', async () => {
+it('cascades cleanup when an SSH device is removed and restores sessions when re-added with a new device id', async () => {
   const h = await setup();
   const { workspacesStore } = await import('../src/stores/workspaces');
   const { sessionListStore } = await import('../src/stores/sessionList');
   await h.client.selectSession('a');
   const [local] = workspacesStore().workspaces;
-  const remote = { id: 'remote-ws', root: '/srv/project', name: 'remote', sessionCount: 2, hostId: 'old-dev' };
+  const remote = { id: 'remote-ws', root: '/srv/project', name: 'remote', sessionCount: 2, deviceId: 'old-dev' };
   const remoteSession: AppSession = {
     ...h.sessionsStore().sessions[0]!,
     id: 's-remote',
     title: 's-remote',
     cwd: '/srv/project',
     workspaceId: 'remote-ws',
-    hostId: 'old-dev',
+    deviceId: 'old-dev',
     lastPrompt: 'hi',
   };
   const remoteDone: AppSession = {
@@ -296,7 +296,7 @@ it('cascades cleanup when an SSH host is removed and restores sessions when re-a
     id: 's-remote-done',
     title: 's-remote-done',
   };
-  h.event('', { type: 'hostsChanged', hosts: [{ id: 'old-dev', host: 'dev', status: 'ready' }] });
+  h.event('', { type: 'devicesChanged', devices: [{ id: 'old-dev', connection: 'ssh', host: 'dev', status: 'ready' }] });
   workspacesStore().workspaces = [local!, remote];
   workspacesStore().storedActiveWorkspaceId = 'remote-ws';
   workspacesStore().trustErrorByWorkspaceId = {
@@ -314,7 +314,7 @@ it('cascades cleanup when an SSH host is removed and restores sessions when re-a
   });
   const stalePage = sessionListStore().loadFirstWorkspacePage('remote-ws');
 
-  h.event('', { type: 'hostsChanged', hosts: [] });
+  h.event('', { type: 'devicesChanged', devices: [] });
   expect(h.sessionsStore().activeSessionId).toBeUndefined();
   expect(workspacesStore().activeWorkspaceId).toBe('ws1');
   expect(workspacesStore().workspaces.map((w) => w.id)).toEqual(['ws1']);
@@ -328,9 +328,9 @@ it('cascades cleanup when an SSH host is removed and restores sessions when re-a
   await expect(stalePage).resolves.toBe(false);
   expect(h.sessionsStore().sessions.some((s) => s.id === 's-remote')).toBe(false);
 
-  const readdedRemote = { ...remote, hostId: 'new-dev' };
+  const readdedRemote = { ...remote, deviceId: 'new-dev' };
   const listSessions = vi.fn(async () => ({
-    items: [{ ...remoteSession, hostId: 'new-dev', title: '' }],
+    items: [{ ...remoteSession, deviceId: 'new-dev', title: '' }],
     hasMore: false,
   }));
   Object.assign(h.api, {
@@ -339,10 +339,10 @@ it('cascades cleanup when an SSH host is removed and restores sessions when re-a
     listSessions,
   });
 
-  h.event('', { type: 'hostsChanged', hosts: [{ id: 'new-dev', host: 'dev', status: 'ready' }] });
+  h.event('', { type: 'devicesChanged', devices: [{ id: 'new-dev', connection: 'ssh', host: 'dev', status: 'ready' }] });
   await vi.waitFor(() => expect(listSessions).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'remote-ws' })));
   expect(workspacesStore().workspaces.map((w) => w.id)).toEqual(['ws1', 'remote-ws']);
-  expect(h.sessionsStore().sessions.find((s) => s.id === 's-remote')?.hostId).toBe('new-dev');
+  expect(h.sessionsStore().sessions.find((s) => s.id === 's-remote')?.deviceId).toBe('new-dev');
   expect(
     h.sessionViewsStore().workspaceGroups.find((g) => g.workspace.id === 'remote-ws')?.sessions.map((s) => s.id),
   ).toEqual(['s-remote']);

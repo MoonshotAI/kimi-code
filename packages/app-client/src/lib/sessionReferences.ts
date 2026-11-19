@@ -22,7 +22,7 @@ export interface SessionMentionCandidatesInput {
 export function sessionMentionCandidates(input: SessionMentionCandidatesInput): SessionMentionCandidate[] {
   const eligible = input.sessions
     .filter((session): session is AppSession & { workspaceId: string } =>
-      session.workspaceId !== undefined && session.hostId === undefined && !session.archived && session.id !== input.activeSessionId)
+      session.workspaceId !== undefined && session.deviceId === undefined && !session.archived && session.id !== input.activeSessionId)
     .toSorted((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   const inActiveWorkspace = eligible.filter((session) => session.workspaceId === input.activeWorkspaceId);
   const elsewhere = eligible.filter((session) => session.workspaceId !== input.activeWorkspaceId);

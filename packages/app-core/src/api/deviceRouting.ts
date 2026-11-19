@@ -1,6 +1,6 @@
 import type {
   AppEvent,
-  AppHost,
+  AppDevice,
   AppSession,
   AppWorkspace,
   KimiEventConnection,
@@ -104,13 +104,14 @@ const ROUTES = {
   trustWorkspace: 'workspace',
   browseFs: 'local',
   mkdirFs: 'local',
-  listHosts: 'custom',
-  putHost: 'local',
-  deleteHost: 'local',
-  connectHost: 'custom',
-  testHost: 'local',
-  copyProvidersToHost: 'local',
-  listHostSshConfig: 'local',
+  listDevices: 'custom',
+  putDevice: 'local',
+  deleteDevice: 'local',
+  connectDevice: 'custom',
+  upgradeDevice: 'local',
+  testDevice: 'local',
+  copyProvidersToDevice: 'local',
+  listDeviceSshConfig: 'local',
   getFsHome: 'local',
   listModels: 'local',
   listProviders: 'local',
@@ -149,51 +150,51 @@ const IMMEDIATE_CUSTOM: ReadonlySet<string> = new Set(['dispose', 'connectEvents
 
 type AnyApi = Record<string, (...args: unknown[]) => unknown>;
 
-interface HostClient {
+interface DeviceClient {
   readonly api: DaemonKimiWebApi;
-  record: AppHost;
+  record: AppDevice;
 }
 
-interface HostTagged {
+interface DeviceTagged {
   id: string;
-  host_id?: string;
+  device_id?: string;
 }
 
-export interface HostRoutingControls {
-  deviceApi(hostId: string | undefined): KimiWebApi;
+export interface DeviceRoutingControls {
+  deviceApi(deviceId: string | undefined): KimiWebApi;
 }
 
 function isRoutedMethod(method: string): method is keyof typeof ROUTES {
   return Object.hasOwn(ROUTES, method);
 }
 
-export class HostRouter implements HostRoutingControls {
-  private readonly hosts = new Map<string, HostClient>();
-  private readonly sessionHost = new Map<string, string | null>();
-  private readonly onSessionHostChanged = new Set<(sessionId: string, hostId: string | null) => void>();
+export class DeviceRouter implements DeviceRoutingControls {
+  private readonly devices = new Map<string, DeviceClient>();
+  private readonly sessionDevice = new Map<string, string | null>();
+  private readonly onSessionDeviceChanged = new Set<(sessionId: string, deviceId: string | null) => void>();
 
-  private setSessionHost(sessionId: string, hostId: string | null): void {
-    const previous = this.sessionHost.get(sessionId);
-    this.sessionHost.set(sessionId, hostId);
-    if (previous !== hostId) {
-      for (const listener of this.onSessionHostChanged) listener(sessionId, hostId);
+  private setSessionDevice(sessionId: string, deviceId: string | null): void {
+    const previous = this.sessionDevice.get(sessionId);
+    this.sessionDevice.set(sessionId, deviceId);
+    if (previous !== deviceId) {
+      for (const listener of this.onSessionDeviceChanged) listener(sessionId, deviceId);
     }
   }
   private readonly lookups = new Map<string, Promise<AppSession>>();
-  private readonly workspaceHost = new Map<string, string>();
-  private readonly fileHost = new Map<string, string>();
+  private readonly workspaceDevice = new Map<string, string>();
+  private readonly fileDevice = new Map<string, string>();
   private readonly streamSyncs = new Set<() => void>();
-  private readonly hostListeners = new Set<(hosts: AppHost[]) => void>();
-  private reportedHosts: string | undefined;
+  private readonly deviceListeners = new Set<(devices: AppDevice[]) => void>();
+  private reportedDevices: string | undefined;
   private ready: Promise<void> | undefined;
 
   constructor(
     private readonly local: DaemonKimiWebApi,
-    private readonly createHostClient: (hostId: string) => DaemonKimiWebApi,
+    private readonly createDeviceClient: (deviceId: string) => DaemonKimiWebApi,
   ) {}
 
-  createApi(): KimiWebApi & HostRoutingControls {
-    return new Proxy({} as KimiWebApi & HostRoutingControls, {
+  createApi(): KimiWebApi & DeviceRoutingControls {
+    return new Proxy({} as KimiWebApi & DeviceRoutingControls, {
       get: (_target, property) => {
         if (property === 'deviceApi') return this.deviceApi.bind(this);
         if (typeof property !== 'string' || !isRoutedMethod(property)) return undefined;
@@ -202,8 +203,8 @@ export class HostRouter implements HostRoutingControls {
     });
   }
 
-  deviceApi(hostId: string | undefined): KimiWebApi {
-    return hostId === undefined ? this.local : this.clientFor(hostId);
+  deviceApi(deviceId: string | undefined): KimiWebApi {
+    return deviceId === undefined ? this.local : this.clientFor(deviceId);
   }
 
   private invoke(method: keyof typeof ROUTES, args: unknown[]): unknown {
@@ -215,87 +216,87 @@ export class HostRouter implements HostRoutingControls {
   }
 
   private whenReady(): Promise<void> {
-    this.ready ??= this.refreshHosts().catch((error: unknown) => {
+    this.ready ??= this.refreshDevices().catch((error: unknown) => {
       this.ready = undefined;
       throw error;
     });
     return this.ready;
   }
 
-  private async refreshHosts(): Promise<void> {
-    this.applyHostRecords(await this.local.listHosts());
+  private async refreshDevices(): Promise<void> {
+    this.applyDeviceRecords(await this.local.listDevices());
   }
 
-  private applyHostRecords(records: readonly AppHost[]): void {
+  private applyDeviceRecords(records: readonly AppDevice[]): void {
     const known = new Set(records.map((record) => record.id));
     const removed = new Set<string>();
-    for (const id of this.hosts.keys()) {
+    for (const id of this.devices.keys()) {
       if (known.has(id)) continue;
       removed.add(id);
-      this.hosts.get(id)?.api.dispose();
-      this.hosts.delete(id);
+      this.devices.get(id)?.api.dispose();
+      this.devices.delete(id);
     }
     if (removed.size > 0) {
-      for (const [id, hostId] of this.workspaceHost) {
-        if (removed.has(hostId)) this.workspaceHost.delete(id);
+      for (const [id, deviceId] of this.workspaceDevice) {
+        if (removed.has(deviceId)) this.workspaceDevice.delete(id);
       }
-      for (const [id, hostId] of this.sessionHost) {
-        if (hostId !== null && removed.has(hostId)) this.sessionHost.delete(id);
+      for (const [id, deviceId] of this.sessionDevice) {
+        if (deviceId !== null && removed.has(deviceId)) this.sessionDevice.delete(id);
       }
-      for (const [id, hostId] of this.fileHost) {
-        if (removed.has(hostId)) this.fileHost.delete(id);
+      for (const [id, deviceId] of this.fileDevice) {
+        if (removed.has(deviceId)) this.fileDevice.delete(id);
       }
     }
     for (const record of records) {
-      const existing = this.hosts.get(record.id);
-      if (existing === undefined) this.hosts.set(record.id, { api: this.createHostClient(record.id), record });
+      const existing = this.devices.get(record.id);
+      if (existing === undefined) this.devices.set(record.id, { api: this.createDeviceClient(record.id), record });
       else existing.record = record;
     }
     for (const sync of this.streamSyncs) sync();
-    this.reportHosts();
+    this.reportDevices();
   }
 
-  private reportHosts(): void {
-    const hosts = this.hostList();
-    const key = JSON.stringify(hosts);
-    if (key === this.reportedHosts) return;
-    this.reportedHosts = key;
-    for (const listener of this.hostListeners) listener(hosts);
+  private reportDevices(): void {
+    const devices = this.deviceList();
+    const key = JSON.stringify(devices);
+    if (key === this.reportedDevices) return;
+    this.reportedDevices = key;
+    for (const listener of this.deviceListeners) listener(devices);
   }
 
-  private hostList(): AppHost[] {
-    return [...this.hosts.values()].map((host) => host.record);
+  private deviceList(): AppDevice[] {
+    return [...this.devices.values()].map((device) => device.record);
   }
 
-  private clientFor(hostId: string): DaemonKimiWebApi {
-    const host = this.hosts.get(hostId);
-    if (host === undefined) throw new Error(`SSH host "${hostId}" is not configured`);
-    return host.api;
+  private clientFor(deviceId: string): DaemonKimiWebApi {
+    const device = this.devices.get(deviceId);
+    if (device === undefined) throw new Error(`Device "${deviceId}" is not configured`);
+    return device.api;
   }
 
-  private apiFor(hostId: string | undefined): AnyApi {
-    return this.deviceApi(hostId) as unknown as AnyApi;
+  private apiFor(deviceId: string | undefined): AnyApi {
+    return this.deviceApi(deviceId) as unknown as AnyApi;
   }
 
   private dispatch(method: string, route: Exclude<Route, 'custom'>, args: unknown[]): unknown {
     const key = args[0] as string;
     if (route === 'session' || route === 'localSession') {
-      const owner = this.sessionHost.get(key);
+      const owner = this.sessionDevice.get(key);
       if (owner === undefined) return this.dispatchUnknownSession(method, route, args);
       return this.dispatchSession(method, route, args, owner ?? undefined);
     }
-    const hostId = route === 'workspace' ? this.workspaceHost.get(key) : route === 'file' ? this.fileHost.get(key) : undefined;
-    const api = this.apiFor(hostId);
+    const deviceId = route === 'workspace' ? this.workspaceDevice.get(key) : route === 'file' ? this.fileDevice.get(key) : undefined;
+    const api = this.apiFor(deviceId);
     return api[method]!.apply(api, args);
   }
 
   private async dispatchUnknownSession(method: string, route: 'session' | 'localSession', args: unknown[]): Promise<unknown> {
     const sessionId = args[0] as string;
     await this.whenReady();
-    if (this.hosts.size === 0) return this.dispatchSession(method, route, args, undefined);
+    if (this.devices.size === 0) return this.dispatchSession(method, route, args, undefined);
     const session = await this.lookUp(sessionId);
     if (method === 'getSession') return session;
-    return this.dispatchSession(method, route, args, session.hostId);
+    return this.dispatchSession(method, route, args, session.deviceId);
   }
 
   private lookUp(sessionId: string): Promise<AppSession> {
@@ -304,7 +305,7 @@ export class HostRouter implements HostRoutingControls {
     const lookup = this.local
       .findSession(sessionId)
       .then((session) => {
-        this.setSessionHost(session.id, session.hostId ?? null);
+        this.setSessionDevice(session.id, session.deviceId ?? null);
         return session;
       })
       .finally(() => {
@@ -315,49 +316,49 @@ export class HostRouter implements HostRoutingControls {
   }
 
   private async ownerOf(sessionId: string): Promise<string | undefined> {
-    const owner = this.sessionHost.get(sessionId);
+    const owner = this.sessionDevice.get(sessionId);
     if (owner !== undefined) return owner ?? undefined;
     await this.whenReady();
-    if (this.hosts.size === 0) return undefined;
-    return this.lookUp(sessionId).then((session) => session.hostId);
+    if (this.devices.size === 0) return undefined;
+    return this.lookUp(sessionId).then((session) => session.deviceId);
   }
 
-  private dispatchSession(method: string, route: 'session' | 'localSession', args: unknown[], hostId: string | undefined): unknown {
-    if (route === 'localSession' && hostId !== undefined) {
-      return Promise.reject(new Error('This action is not available for projects on a remote host'));
+  private dispatchSession(method: string, route: 'session' | 'localSession', args: unknown[], deviceId: string | undefined): unknown {
+    if (route === 'localSession' && deviceId !== undefined) {
+      return Promise.reject(new Error('This action is not available for projects on a remote device'));
     }
-    const api = this.apiFor(hostId);
+    const api = this.apiFor(deviceId);
     const result = api[method]!.apply(api, args);
     if (method === 'forkSession') {
       return (result as Promise<{ id?: string }>).then((session) => {
-        if (session.id !== undefined) this.setSessionHost(session.id, hostId ?? null);
+        if (session.id !== undefined) this.setSessionDevice(session.id, deviceId ?? null);
         return session;
       });
     }
     return result;
   }
 
-  private rememberSessions(hostId: string | undefined, sessions: readonly AppSession[]): AppSession[] {
-    for (const session of sessions) this.setSessionHost(session.id, hostId ?? session.hostId ?? null);
-    return hostId === undefined ? [...sessions] : sessions.map((session) => ({ ...session, hostId }));
+  private rememberSessions(deviceId: string | undefined, sessions: readonly AppSession[]): AppSession[] {
+    for (const session of sessions) this.setSessionDevice(session.id, deviceId ?? session.deviceId ?? null);
+    return deviceId === undefined ? [...sessions] : sessions.map((session) => ({ ...session, deviceId }));
   }
 
-  private rememberWorkspace(hostId: string | undefined, workspace: AppWorkspace): AppWorkspace {
-    if (hostId === undefined) return workspace;
-    this.workspaceHost.set(workspace.id, hostId);
-    return { ...workspace, hostId };
+  private rememberWorkspace(deviceId: string | undefined, workspace: AppWorkspace): AppWorkspace {
+    if (deviceId === undefined) return workspace;
+    this.workspaceDevice.set(workspace.id, deviceId);
+    return { ...workspace, deviceId };
   }
 
-  private rewriteEvent(hostId: string, event: AppEvent): AppEvent {
+  private rewriteEvent(deviceId: string, event: AppEvent): AppEvent {
     switch (event.type) {
       case 'workspaceCreated':
       case 'workspaceUpdated':
-        return { ...event, workspace: this.rememberWorkspace(hostId, event.workspace) };
+        return { ...event, workspace: this.rememberWorkspace(deviceId, event.workspace) };
       case 'workspaceDeleted':
-        this.workspaceHost.delete(event.workspaceId);
+        this.workspaceDevice.delete(event.workspaceId);
         return event;
       case 'sessionCreated':
-        this.setSessionHost(event.session.id, hostId);
+        this.setSessionDevice(event.session.id, deviceId);
         return event;
       case 'sessionArchived':
       case 'sessionRestored':
@@ -366,10 +367,10 @@ export class HostRouter implements HostRoutingControls {
       case 'approvalRequested':
       case 'questionRequested':
       case 'interactionsReset':
-        this.setSessionHost(event.sessionId, hostId);
+        this.setSessionDevice(event.sessionId, deviceId);
         return event;
       case 'sessionDeleted':
-        this.sessionHost.delete(event.sessionId);
+        this.sessionDevice.delete(event.sessionId);
         return event;
       default:
         return event;
@@ -381,10 +382,10 @@ export class HostRouter implements HostRoutingControls {
     const remote = new Map<string, KimiEventConnection>();
     const subscriptions = new Map<string, Set<string>>();
     const taskWatches = new Map<string, { sessionId: string; agentId: string; taskId: string }>();
-    const connectionFor = (hostId: string | null | undefined): KimiEventConnection | undefined =>
-      hostId === undefined || hostId === null ? local : remote.get(hostId);
-    const onOwnerChanged = (sessionId: string, hostId: string | null): void => {
-      const connection = connectionFor(hostId);
+    const connectionFor = (deviceId: string | null | undefined): KimiEventConnection | undefined =>
+      deviceId === undefined || deviceId === null ? local : remote.get(deviceId);
+    const onOwnerChanged = (sessionId: string, deviceId: string | null): void => {
+      const connection = connectionFor(deviceId);
       if (connection === undefined) return;
       const agents = subscriptions.get(sessionId);
       if (agents !== undefined) {
@@ -398,30 +399,30 @@ export class HostRouter implements HostRoutingControls {
     };
     const sync = (): void => {
       for (const [id, connection] of remote) {
-        if (this.hosts.get(id)?.record.status === 'ready') continue;
+        if (this.devices.get(id)?.record.status === 'ready') continue;
         connection.close();
         remote.delete(id);
       }
-      for (const [id, host] of this.hosts) {
-        if (host.record.status !== 'ready' || remote.has(id)) continue;
-        const connection = host.api.connectEvents(this.hostHandlers(id, handlers));
+      for (const [id, device] of this.devices) {
+        if (device.record.status !== 'ready' || remote.has(id)) continue;
+        const connection = device.api.connectEvents(this.deviceHandlers(id, handlers));
         remote.set(id, connection);
         for (const [sessionId, agents] of subscriptions) {
-          if (this.sessionHost.get(sessionId) !== id) continue;
+          if (this.sessionDevice.get(sessionId) !== id) continue;
           for (const agentId of agents) connection.subscribeConversation(sessionId, agentId);
         }
         for (const watch of taskWatches.values()) {
-          if (this.sessionHost.get(watch.sessionId) === id) {
+          if (this.sessionDevice.get(watch.sessionId) === id) {
             connection.watchTaskOutput(watch.sessionId, watch.agentId, watch.taskId);
           }
         }
       }
     };
     this.streamSyncs.add(sync);
-    this.onSessionHostChanged.add(onOwnerChanged);
+    this.onSessionDeviceChanged.add(onOwnerChanged);
     sync();
     const forSession = (sessionId: string): KimiEventConnection | undefined =>
-      connectionFor(this.sessionHost.get(sessionId));
+      connectionFor(this.sessionDevice.get(sessionId));
     const requireForSession = (sessionId: string): KimiEventConnection => forSession(sessionId) ?? local;
     return {
       subscribeConversation: (sessionId, agentId) => {
@@ -461,7 +462,7 @@ export class HostRouter implements HostRoutingControls {
       },
       close: () => {
         this.streamSyncs.delete(sync);
-        this.onSessionHostChanged.delete(onOwnerChanged);
+        this.onSessionDeviceChanged.delete(onOwnerChanged);
         subscriptions.clear();
         taskWatches.clear();
         local.close();
@@ -471,12 +472,12 @@ export class HostRouter implements HostRoutingControls {
     };
   }
 
-  private hostHandlers(hostId: string, handlers: KimiEventHandlers): KimiEventHandlers {
+  private deviceHandlers(deviceId: string, handlers: KimiEventHandlers): KimiEventHandlers {
     let stale = true;
     return {
       ...handlers,
       onEvent: (event, meta) => {
-        handlers.onEvent(this.rewriteEvent(hostId, event), { ...meta, hostId });
+        handlers.onEvent(this.rewriteEvent(deviceId, event), { ...meta, deviceId });
       },
       onError: () => {},
       onConnectionChange: (connected) => {
@@ -491,33 +492,33 @@ export class HostRouter implements HostRoutingControls {
 
   protected route_dispose(): void {
     this.streamSyncs.clear();
-    this.onSessionHostChanged.clear();
-    this.hostListeners.clear();
-    for (const host of this.hosts.values()) host.api.dispose();
-    this.hosts.clear();
+    this.onSessionDeviceChanged.clear();
+    this.deviceListeners.clear();
+    for (const device of this.devices.values()) device.api.dispose();
+    this.devices.clear();
     this.local.dispose();
   }
 
   protected route_connectEvents(handlers: KimiEventHandlers): KimiEventConnection {
-    const report = (hosts: AppHost[]): void => handlers.onEvent({ type: 'hostsChanged', hosts }, { sessionId: '' });
-    this.hostListeners.add(report);
-    if (this.reportedHosts !== undefined) report(this.hostList());
+    const report = (devices: AppDevice[]): void => handlers.onEvent({ type: 'devicesChanged', devices }, { sessionId: '' });
+    this.deviceListeners.add(report);
+    if (this.reportedDevices !== undefined) report(this.deviceList());
     void this.whenReady().catch(() => undefined);
     const connection = this.fanOut({
       ...handlers,
       onEvent: (event, meta) => {
-        if (event.type === 'hostsChanged') this.applyHostRecords(event.hosts);
+        if (event.type === 'devicesChanged') this.applyDeviceRecords(event.devices);
         else handlers.onEvent(event, meta);
       },
       onConnectionChange: (connected) => {
-        if (connected) void this.refreshHosts().catch(() => undefined);
+        if (connected) void this.refreshDevices().catch(() => undefined);
         handlers.onConnectionChange(connected);
       },
     });
     return {
       ...connection,
       close: () => {
-        this.hostListeners.delete(report);
+        this.deviceListeners.delete(report);
         connection.close();
       },
     };
@@ -526,47 +527,47 @@ export class HostRouter implements HostRoutingControls {
   protected async route_listWorkspaces(): Promise<AppWorkspace[]> {
     const workspaces = await this.local.listWorkspaces();
     for (const workspace of workspaces) {
-      if (workspace.hostId !== undefined) this.workspaceHost.set(workspace.id, workspace.hostId);
+      if (workspace.deviceId !== undefined) this.workspaceDevice.set(workspace.id, workspace.deviceId);
     }
     return workspaces;
   }
 
-  protected async route_addWorkspace({ hostId, ...rest }: Parameters<KimiWebApi['addWorkspace']>[0]): Promise<AppWorkspace> {
-    return this.rememberWorkspace(hostId, await this.deviceApi(hostId).addWorkspace(rest));
+  protected async route_addWorkspace({ deviceId, ...rest }: Parameters<KimiWebApi['addWorkspace']>[0]): Promise<AppWorkspace> {
+    return this.rememberWorkspace(deviceId, await this.deviceApi(deviceId).addWorkspace(rest));
   }
 
   protected async route_updateWorkspace(
     id: string,
     input: Parameters<KimiWebApi['updateWorkspace']>[1],
   ): Promise<AppWorkspace> {
-    const hostId = this.workspaceHost.get(id);
-    return this.rememberWorkspace(hostId, await this.deviceApi(hostId).updateWorkspace(id, input));
+    const deviceId = this.workspaceDevice.get(id);
+    return this.rememberWorkspace(deviceId, await this.deviceApi(deviceId).updateWorkspace(id, input));
   }
 
   protected async route_setWorkspacePrimary(id: string, path: string): Promise<AppWorkspace> {
-    const hostId = this.workspaceHost.get(id);
-    return this.rememberWorkspace(hostId, await this.deviceApi(hostId).setWorkspacePrimary(id, path));
+    const deviceId = this.workspaceDevice.get(id);
+    return this.rememberWorkspace(deviceId, await this.deviceApi(deviceId).setWorkspacePrimary(id, path));
   }
 
   protected async route_deleteWorkspace(id: string): Promise<void> {
-    await this.deviceApi(this.workspaceHost.get(id)).deleteWorkspace(id);
-    this.workspaceHost.delete(id);
+    await this.deviceApi(this.workspaceDevice.get(id)).deleteWorkspace(id);
+    this.workspaceDevice.delete(id);
   }
 
   protected async route_createSession(input: Parameters<KimiWebApi['createSession']>[0]): Promise<AppSession> {
-    const hostId = input.workspaceId === undefined ? undefined : this.workspaceHost.get(input.workspaceId);
-    return this.rememberSessions(hostId, [await this.deviceApi(hostId).createSession(input)])[0]!;
+    const deviceId = input.workspaceId === undefined ? undefined : this.workspaceDevice.get(input.workspaceId);
+    return this.rememberSessions(deviceId, [await this.deviceApi(deviceId).createSession(input)])[0]!;
   }
 
-  protected async route_uploadFile({ hostId, ...rest }: Parameters<KimiWebApi['uploadFile']>[0]): ReturnType<KimiWebApi['uploadFile']> {
-    const file = await this.deviceApi(hostId).uploadFile(rest);
-    if (hostId !== undefined) this.fileHost.set(file.id, hostId);
+  protected async route_uploadFile({ deviceId, ...rest }: Parameters<KimiWebApi['uploadFile']>[0]): ReturnType<KimiWebApi['uploadFile']> {
+    const file = await this.deviceApi(deviceId).uploadFile(rest);
+    if (deviceId !== undefined) this.fileDevice.set(file.id, deviceId);
     return file;
   }
 
-  private rememberTagged(items: readonly HostTagged[]): void {
+  private rememberTagged(items: readonly DeviceTagged[]): void {
     for (const item of items) {
-      this.setSessionHost(item.id, item.host_id ?? null);
+      this.setSessionDevice(item.id, item.device_id ?? null);
     }
   }
 
@@ -584,49 +585,49 @@ export class HostRouter implements HostRoutingControls {
   ): ReturnType<KimiWebApi['listSessionGroups']> {
     const page = await this.local.listSessionGroups(input, options);
     for (const group of page.groups) {
-      this.rememberTagged(group.sessions.map((session) => ({ id: session.id, host_id: session.hostId })));
+      this.rememberTagged(group.sessions.map((session) => ({ id: session.id, device_id: session.deviceId })));
     }
     return page;
   }
 
   protected async route_listSessions(input?: Parameters<KimiWebApi['listSessions']>[0]): ReturnType<KimiWebApi['listSessions']> {
-    const hostId = input?.workspaceId === undefined ? undefined : this.workspaceHost.get(input.workspaceId);
-    const page = await this.deviceApi(hostId).listSessions(input);
-    return { ...page, items: this.rememberSessions(hostId, page.items) };
+    const deviceId = input?.workspaceId === undefined ? undefined : this.workspaceDevice.get(input.workspaceId);
+    const page = await this.deviceApi(deviceId).listSessions(input);
+    return { ...page, items: this.rememberSessions(deviceId, page.items) };
   }
 
-  private async batchByHost(
+  private async batchByDevice(
     method: 'archiveSessions' | 'restoreSessions',
     ids: string[],
   ): Promise<BatchSessionResponse> {
     const owners = await Promise.all(ids.map((id) => this.ownerOf(id)));
     const grouped = new Map<string | undefined, string[]>();
     ids.forEach((id, index) => {
-      const hostId = owners[index];
-      grouped.set(hostId, [...(grouped.get(hostId) ?? []), id]);
+      const deviceId = owners[index];
+      grouped.set(deviceId, [...(grouped.get(deviceId) ?? []), id]);
     });
     const responses = await Promise.all(
-      [...grouped].map(([hostId, group]) => this.deviceApi(hostId)[method](group)),
+      [...grouped].map(([deviceId, group]) => this.deviceApi(deviceId)[method](group)),
     );
     return { ...responses[0]!, results: responses.flatMap((response) => response.results) };
   }
 
   protected route_archiveSessions(ids: string[]): Promise<BatchSessionResponse> {
-    return this.batchByHost('archiveSessions', ids);
+    return this.batchByDevice('archiveSessions', ids);
   }
 
   protected route_restoreSessions(ids: string[]): Promise<BatchSessionResponse> {
-    return this.batchByHost('restoreSessions', ids);
+    return this.batchByDevice('restoreSessions', ids);
   }
 
-  protected async route_listHosts(): Promise<AppHost[]> {
-    await this.refreshHosts();
-    return this.hostList();
+  protected async route_listDevices(): Promise<AppDevice[]> {
+    await this.refreshDevices();
+    return this.deviceList();
   }
 
-  protected async route_connectHost(id: string): Promise<AppHost> {
-    const host = await this.local.connectHost(id);
-    await this.refreshHosts();
-    return host;
+  protected async route_connectDevice(id: string): Promise<AppDevice> {
+    const device = await this.local.connectDevice(id);
+    await this.refreshDevices();
+    return device;
   }
 }

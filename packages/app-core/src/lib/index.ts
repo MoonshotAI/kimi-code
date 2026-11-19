@@ -19,7 +19,7 @@ export * from './formatDuration';
 export * from './formatMessageTime';
 export * from './formatTokens';
 export * from './formatZonedDateTime';
-export * from './hostDisplay';
+export * from './deviceDisplay';
 export * from './isAbsoluteLocalPath';
 export * from './log';
 export * from './mergeWorkspaces';

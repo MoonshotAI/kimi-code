@@ -9,13 +9,18 @@ describe('visibleSettingsTabs', () => {
     expect(SETTINGS_TABS.find((tab) => tab.id === 'plugins')?.icon).toBe('plugin');
   });
 
-  it('hides the browser, remote control, and shortcuts tabs without the desktop bridge', () => {
+  it('keeps Remote Control inside the devices tab', () => {
+    expect(SETTINGS_TABS.map((tab) => tab.id)).not.toContain('remoteControl');
+    expect(SETTINGS_TABS.find((tab) => tab.id === 'devices')?.icon).toBe('device-desktop');
+  });
+
+  it('hides the browser and shortcuts tabs without the desktop bridge', () => {
     expect(visibleSettingsTabs(false, false).map((tab) => tab.id)).toEqual([
       'general',
       'account',
       'agent',
       'providers',
-      'hosts',
+      'devices',
       'plugins',
       'advanced',
       'lab',
@@ -29,7 +34,7 @@ describe('visibleSettingsTabs', () => {
       'account',
       'agent',
       'providers',
-      'hosts',
+      'devices',
       'advanced',
       'lab',
       'archived',
@@ -40,7 +45,7 @@ describe('visibleSettingsTabs', () => {
     const ids = visibleSettingsTabs(true, true).map((tab) => tab.id);
     expect(ids).toContain('browser');
     expect(ids).toContain('shortcuts');
-    expect(ids).toContain('remoteControl');
+    expect(ids).toContain('devices');
     expect(ids).not.toContain('plugins');
   });
 });

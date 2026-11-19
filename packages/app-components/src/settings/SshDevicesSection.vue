@@ -1,26 +1,30 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { AppHost, AppHostConnectFailure, AppHostDefinition, AppSshConfigHost, AppSshConfigHosts } from '@moonshot-ai/app-core/api';
-import { hostDisplayName, hostDisplayState, providerDisplayName } from '@moonshot-ai/app-core/lib';
+import type { AppDevice, AppDeviceConnectFailure, AppDeviceUpgradeStatus, AppSshConfigHost, AppSshConfigHosts, AppSshDeviceDefinition } from '@moonshot-ai/app-core/api';
+import { deviceDisplayName, deviceDisplayState, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { isImeKeyEvent } from '@moonshot-ai/app-client/lib';
 import { useConfirmDialog } from '@moonshot-ai/app-client/composables';
-import { hostDefinition, hostsStore, type HostAccount, type HostProviderCopy } from '@moonshot-ai/app-client/stores';
-import { Banner, Button, Field, Icon, IconButton, Input, Menu, MenuItem, SegmentedControl, StatusDot, Switch } from '@moonshot-ai/app-ui';
+import { deviceDefinition, devicesStore, type DeviceAccount, type DeviceProviderCopy } from '@moonshot-ai/app-client/stores';
+import { Banner, Button, Field, Icon, IconButton, Input, Menu, MenuItem, SegmentedControl, StatusDot, Switch, Tooltip } from '@moonshot-ai/app-ui';
 import { useAnchoredMenu } from '../composables/useAnchoredMenu';
-import { useHostFailureText } from '../composables/useHostFailureText';
-import HostTestResult from './HostTestResult.vue';
+import { useDeviceFailureText } from '../composables/useDeviceFailureText';
+import DeviceTestResult from './DeviceTestResult.vue';
 
 const props = defineProps<{
   openSshConfig?: (path: string) => void;
   pickIdentityFile?: (defaultPath?: string) => Promise<string | undefined>;
-  createProject?: (hostId: string) => void;
+  createProject?: (deviceId: string) => void;
+}>();
+
+const emit = defineEmits<{
+  page: [open: boolean];
 }>();
 
 const { locale, t } = useI18n();
-const store = hostsStore();
+const store = devicesStore();
 const { confirm } = useConfirmDialog();
-const failureText = useHostFailureText();
+const failureText = useDeviceFailureText();
 const rootEl = ref<HTMLElement>();
 const pageMode = ref<'list' | 'add' | 'edit'>('list');
 const addTab = ref<'config' | 'manual'>('config');
@@ -35,7 +39,7 @@ const copyFeedbackId = ref('');
 const busy = ref(false);
 const testing = ref(false);
 const error = ref('');
-const testFailure = ref<{ failure?: AppHostConnectFailure; reason: string; hint: string; detail: string }>();
+const testFailure = ref<{ failure?: AppDeviceConnectFailure; reason: string; hint: string; detail: string }>();
 const pendingIds = ref<Record<string, boolean>>({});
 const flashId = ref('');
 const backButton = ref<HTMLButtonElement>();
@@ -53,29 +57,33 @@ let flashTimer = 0;
 let copyFeedbackTimer = 0;
 let testAbort: AbortController | undefined;
 
-const original = computed(() => store.hosts.find((row) => row.id === originalId.value));
-const menuRow = computed(() => store.hosts.find((row) => row.id === rowMenuId.value));
+const sshDevices = computed(() => store.devices.filter((row) => row.connection === 'ssh'));
+const original = computed(() => sshDevices.value.find((row) => row.id === originalId.value));
+const menuRow = computed(() => sshDevices.value.find((row) => row.id === rowMenuId.value));
 const testState = computed(() => (testing.value ? 'running' : testFailure.value ? 'failed' : undefined));
 const nameError = computed(() => {
   const value = name.value.trim();
-  if (value === '') return t('settings.hosts.nameRequired');
-  if (value.length > 64) return t('settings.hosts.nameTooLong');
-  if (store.hosts.some((row) => hostDisplayName(row) === value && row.id !== originalId.value)) return t('settings.hosts.nameDuplicate');
+  if (value === '') return t('settings.devices.nameRequired');
+  if (value.length > 64) return t('settings.devices.nameTooLong');
+  if (store.devices.some((row) => deviceDisplayName(row) === value && row.id !== originalId.value)) return t('settings.devices.nameDuplicate');
   return '';
 });
-const targetError = computed(() => host.value.trim() === '' ? t('settings.hosts.targetRequired') : '');
+const targetError = computed(() => host.value.trim() === '' ? t('settings.devices.targetRequired') : '');
 const canSubmit = computed(() => nameError.value === '' && targetError.value === '' && !busy.value);
-const configuredHosts = computed(() => new Set(store.hosts.map((row) => row.host)));
+const configuredHosts = computed(() => new Set(sshDevices.value.map((row) => row.host)));
 const detectedHosts = computed(() => (sshHosts.value?.hosts ?? []).filter((entry) => !configuredHosts.value.has(entry.alias)));
 const subpage = computed(() => pageMode.value !== 'list');
 const hasSourceTabs = computed(() => pageMode.value === 'add');
 const showForm = computed(() => pageMode.value === 'edit' || (pageMode.value === 'add' && addTab.value === 'manual'));
 const showHostPicker = computed(() => pageMode.value === 'add' && addTab.value === 'config');
+const showDeviceList = computed(() => sshDevices.value.length > 0 || !sshHostsLoading.value);
 const addSourceOptions = computed(() => [
-  { value: 'config', label: t('settings.hosts.sshHostsTitle') },
-  { value: 'manual', label: t('settings.hosts.addManually') },
+  { value: 'config', label: t('settings.devices.sshHostsTitle') },
+  { value: 'manual', label: t('settings.devices.addManually') },
 ]);
 const writeBlocked = computed(() => busy.value || testing.value || addingHost.value !== '');
+
+watch(subpage, (open) => emit('page', open), { immediate: true });
 
 onUnmounted(() => {
   window.clearTimeout(flashTimer);
@@ -83,58 +91,94 @@ onUnmounted(() => {
   testAbort?.abort();
 });
 
-function enabled(row: AppHost): boolean {
+function enabled(row: AppDevice): boolean {
   return row.enabled !== false;
 }
 
-function connectionState(row: AppHost) {
-  return hostDisplayState(row.id, row, {
+function connectionState(row: AppDevice) {
+  return deviceDisplayState(row.id, row, {
     loaded: true,
     connecting: pendingIds.value[row.id] === true || store.connecting[row.id] === true,
+    settledFailure: store.settledFailures[row.id],
   });
 }
 
-function retrying(row: AppHost): boolean {
-  return connectionState(row) === 'connecting' && (row.connectError !== undefined || row.connectFailure !== undefined);
+function upgradeOf(row: AppDevice): AppDeviceUpgradeStatus | undefined {
+  const upgrade = store.upgradeStatus(row.id);
+  if (upgrade !== 'failed') return upgrade;
+  const state = connectionState(row);
+  return state === 'ready' || state === 'outdated' ? upgrade : undefined;
 }
 
-function statusLabel(row: AppHost): string {
-  return t(`workspace.hostState.${retrying(row) ? 'retrying' : connectionState(row)}`);
+function retrying(row: AppDevice): boolean {
+  return upgradeOf(row) === undefined
+    && connectionState(row) === 'connecting'
+    && (row.connectError !== undefined || row.connectFailure !== undefined);
 }
 
-function showsFailure(row: AppHost): boolean {
-  return connectionState(row) === 'failed' || retrying(row);
+function statusKind(row: AppDevice): string {
+  const upgrade = upgradeOf(row);
+  return upgrade === undefined ? connectionState(row) : `upgrade-${upgrade}`;
 }
 
-function isExpandable(row: AppHost): boolean {
+function stateLabel(row: AppDevice): string {
+  const upgrade = upgradeOf(row);
+  if (upgrade !== undefined) return t(`workspace.deviceUpgrade.${upgrade}`);
+  return t(`workspace.deviceState.${retrying(row) ? 'retrying' : connectionState(row)}`);
+}
+
+function failed(row: AppDevice): boolean {
+  if (upgradeOf(row) !== undefined) return false;
+  const state = connectionState(row);
+  return state === 'failed' || state === 'outdated';
+}
+
+function showsFailure(row: AppDevice): boolean {
+  return failed(row) || retrying(row);
+}
+
+function isExpandable(row: AppDevice): boolean {
   if (showsFailure(row)) return true;
   const notice = rowNotice(row);
   return notice === 'needsModels' || notice === 'copyFailed';
 }
 
-function failureOpen(row: AppHost): boolean {
+function upgradeInline(row: AppDevice): boolean {
+  return store.canUpgrade(row.id) && connectionState(row) === 'outdated';
+}
+
+function canReconnect(row: AppDevice): boolean {
+  return showsFailure(row) && !upgradeInline(row);
+}
+
+function failureOpen(row: AppDevice): boolean {
   return openDetailId.value === row.id && showsFailure(row);
+}
+
+function duplicateText(row: AppDevice): string {
+  if (connectionState(row) !== 'duplicate' || row.duplicateOf === undefined) return '';
+  return t('settings.devices.duplicateOf', { name: store.displayName(row.duplicateOf) ?? row.duplicateOf });
 }
 
 function toggleDetail(id: string): void {
   openDetailId.value = openDetailId.value === id ? '' : id;
 }
 
-function onRowLeadClick(row: AppHost): void {
+function onRowLeadClick(row: AppDevice): void {
   if (isExpandable(row)) toggleDetail(row.id);
 }
 
-function rowFailureSummary(row: AppHost): string {
+function rowFailureSummary(row: AppDevice): string {
   return failureText.label(row.connectFailure, row.remoteVersion)
     || (row.connectError ?? '').split('\n', 1)[0]?.trim()
-    || t('settings.hosts.showDetails');
+    || t('settings.devices.showDetails');
 }
 
-function copyFeedback(row: AppHost): HostProviderCopy | undefined {
+function copyFeedback(row: AppDevice): DeviceProviderCopy | undefined {
   return copyFeedbackId.value === row.id && connectionState(row) === 'ready' ? store.providerCopies[row.id] : undefined;
 }
 
-function rowNotice(row: AppHost): 'needsModels' | 'copyFailed' | 'copying' | 'copied' | undefined {
+function rowNotice(row: AppDevice): 'needsModels' | 'copyFailed' | 'copying' | 'copied' | undefined {
   if (connectionState(row) === 'ready' && store.needsLogin(row.id)) return 'needsModels';
   const status = copyFeedback(row)?.status;
   if (status === 'failed') return 'copyFailed';
@@ -143,45 +187,47 @@ function rowNotice(row: AppHost): 'needsModels' | 'copyFailed' | 'copying' | 'co
   return undefined;
 }
 
-function noticeOpen(row: AppHost): boolean {
+function noticeOpen(row: AppDevice): boolean {
   const notice = rowNotice(row);
   return openDetailId.value === row.id && (notice === 'needsModels' || notice === 'copyFailed');
 }
 
-function noticeText(row: AppHost): string {
+function noticeText(row: AppDevice): string {
   const notice = rowNotice(row);
-  if (notice === 'needsModels') return t('settings.hosts.setupNeeded');
-  if (notice === 'copyFailed') return t('settings.hosts.copyFailedStatus');
-  if (notice === 'copying') return t('settings.hosts.copyingStatus');
+  if (notice === 'needsModels') return t('settings.devices.setupNeeded');
+  if (notice === 'copyFailed') return t('settings.devices.copyFailedStatus');
+  if (notice === 'copying') return t('settings.devices.copyingStatus');
   const copy = copyFeedback(row);
   if (copy?.status !== 'done') return '';
   const names = copy.result.providers.map((id) => providerDisplayName(id, t));
   return names.length === 0
-    ? t('settings.hosts.localNone')
-    : t('settings.hosts.localCopied', { names: new Intl.ListFormat(locale.value, { type: 'conjunction' }).format(names) });
+    ? t('settings.devices.localNone')
+    : t('settings.devices.localCopied', { names: new Intl.ListFormat(locale.value, { type: 'conjunction' }).format(names) });
 }
 
-function setupText(row: AppHost): string {
+function setupText(row: AppDevice): string {
   const copy = copyFeedback(row);
-  if (copy?.status === 'failed') return t('settings.hosts.localFailed');
-  if (copy?.status === 'done' && copy.result.providers.length === 0) return t('settings.hosts.localNone');
-  return t('settings.hosts.setupHint');
+  if (copy?.status === 'failed') return t('settings.devices.localFailed');
+  if (copy?.status === 'done' && copy.result.providers.length === 0) return t('settings.devices.localNone');
+  return t('settings.devices.setupHint');
 }
 
 watch(() => (copyFeedbackId.value === '' ? undefined : store.providerCopies[copyFeedbackId.value]?.status), (status) => {
   window.clearTimeout(copyFeedbackTimer);
   if (status !== 'done') return;
-  const hostId = copyFeedbackId.value;
+  const deviceId = copyFeedbackId.value;
   copyFeedbackTimer = window.setTimeout(() => {
-    if (copyFeedbackId.value === hostId) copyFeedbackId.value = '';
+    if (copyFeedbackId.value === deviceId) copyFeedbackId.value = '';
   }, 4000);
 });
 
-function dotFor(row: AppHost): string {
+function dotFor(row: AppDevice): string {
+  const upgrade = upgradeOf(row);
+  if (upgrade !== undefined) return upgrade === 'failed' ? 'error' : 'running';
   const state = connectionState(row);
   if (state === 'ready') return 'ok';
   if (state === 'connecting') return 'running';
-  if (state === 'failed') return 'error';
+  if (failed(row)) return 'error';
   return 'idle';
 }
 
@@ -197,25 +243,26 @@ function cancelTest(): void {
   clearResult();
 }
 
-function flashRow(hostId: string): void {
-  flashId.value = hostId;
+function flashRow(deviceId: string): void {
+  flashId.value = deviceId;
   window.clearTimeout(flashTimer);
   flashTimer = window.setTimeout(() => {
     flashId.value = '';
   }, 1200);
 }
 
-function applyFocusHost(): void {
-  const targetId = store.focusHostId;
+function applyFocusDevice(): void {
+  const targetId = store.focusDeviceId;
   const openAdd = store.addIfEmpty;
   if (!targetId && !openAdd) return;
   if (!store.loaded) return;
-  const row = targetId ? store.hostFor(targetId) : undefined;
+  const row = targetId ? store.deviceFor(targetId) : undefined;
+  if (row?.connection === 'account') return;
   store.requestFocus(null);
   cancelTest();
   fillForm(undefined);
   pageMode.value = 'list';
-  if (openAdd && store.hosts.length === 0) {
+  if (openAdd && sshDevices.value.length === 0) {
     void startAdd();
     return;
   }
@@ -223,13 +270,13 @@ function applyFocusHost(): void {
   if (isExpandable(row)) openDetailId.value = row.id;
   flashRow(row.id);
   void nextTick(() => {
-    const el = [...(rootEl.value?.querySelectorAll<HTMLElement>('[data-host-id]') ?? [])]
-      .find((item) => item.dataset.hostId === row.id);
+    const el = [...(rootEl.value?.querySelectorAll<HTMLElement>('[data-device-id]') ?? [])]
+      .find((item) => item.dataset.deviceId === row.id);
     el?.scrollIntoView?.({ block: 'nearest' });
   });
 }
 
-watch(() => [store.focusHostId, store.addIfEmpty, store.loaded] as const, applyFocusHost, { immediate: true });
+watch(() => [store.focusDeviceId, store.addIfEmpty, store.loaded] as const, applyFocusDevice, { immediate: true });
 
 async function loadHosts(): Promise<void> {
   if (sshHostsLoading.value) return;
@@ -252,14 +299,14 @@ function hostTarget(entry: AppSshConfigHost): string {
 
 function availableName(alias: string): string {
   const base = alias.slice(0, 64);
-  const taken = new Set(store.hosts.map(hostDisplayName));
+  const taken = new Set(store.devices.map(deviceDisplayName));
   if (!taken.has(base)) return base;
   let suffix = 2;
   while (taken.has(`${base.slice(0, 60)}-${suffix}`)) suffix++;
   return `${base.slice(0, 60)}-${suffix}`;
 }
 
-async function toggleRowMenu(row: AppHost, event: MouseEvent): Promise<void> {
+async function toggleRowMenu(row: AppDevice, event: MouseEvent): Promise<void> {
   if (rowMenuOpen.value && rowMenuId.value === row.id) {
     closeRowMenu();
     return;
@@ -280,9 +327,9 @@ async function browseIdentityFile(): Promise<void> {
   clearResult();
 }
 
-function fillForm(row: AppHost | undefined): void {
+function fillForm(row: AppDevice | undefined): void {
   originalId.value = row?.id ?? '';
-  name.value = row === undefined ? '' : hostDisplayName(row);
+  name.value = row === undefined ? '' : deviceDisplayName(row);
   host.value = row?.host ?? '';
   identityFile.value = row?.identityFile ?? '';
   remoteBin.value = row?.remoteBin ?? '';
@@ -319,7 +366,7 @@ function setAddSource(source: string): void {
   if (next === 'manual') void nextTick(() => nameInput.value?.focus());
 }
 
-function startEdit(row: AppHost): void {
+function startEdit(row: AppDevice): void {
   closeRowMenu();
   fillForm(row);
   pageMode.value = 'edit';
@@ -344,11 +391,12 @@ function onKeydown(event: KeyboardEvent): void {
   cancel();
 }
 
-function draftDefinition(): AppHostDefinition {
+function draftDefinition(): AppSshDeviceDefinition {
   const displayName = name.value.trim();
   const target = host.value.trim();
   const unnamed = original.value !== undefined && original.value.name === undefined && displayName === original.value.id;
   return {
+    connection: 'ssh',
     host: /^[^\s:/]+:\d+$/.test(target) ? `ssh://${target}` : target,
     identityFile: identityFile.value.trim() || undefined,
     remoteBin: remoteBin.value.trim() || undefined,
@@ -357,7 +405,7 @@ function draftDefinition(): AppHostDefinition {
   };
 }
 
-function connectionKey(value: AppHostDefinition): string {
+function connectionKey(value: Pick<AppDevice, 'host' | 'identityFile' | 'remoteBin'>): string {
   return JSON.stringify([value.host, value.identityFile, value.remoteBin]);
 }
 
@@ -373,7 +421,7 @@ async function test(): Promise<boolean> {
     testFailure.value = {
       failure: result.connectFailure,
       reason: failureText.label(result.connectFailure, result.remoteVersion),
-      hint: failureText.hint(result.connectFailure, draftDefinition().host, name.value.trim()),
+      hint: failureText.hint(result.connectFailure, { host: draftDefinition().host, name: name.value.trim() }),
       detail: result.connectError ?? '',
     };
     return false;
@@ -389,32 +437,32 @@ async function test(): Promise<boolean> {
   }
 }
 
-function newHostId(): string {
-  let hostId: string;
-  do hostId = `host-${crypto.randomUUID().slice(0, 8)}`;
-  while (store.hosts.some((row) => row.id === hostId));
-  return hostId;
+function newDeviceId(): string {
+  let deviceId: string;
+  do deviceId = `device-${crypto.randomUUID().slice(0, 8)}`;
+  while (store.devices.some((row) => row.id === deviceId));
+  return deviceId;
 }
 
-async function writeHost(existingId: string, saved: AppHostDefinition, expandOnFailure = false): Promise<string | undefined> {
+async function writeDevice(existingId: string, saved: AppSshDeviceDefinition, expandOnFailure = false): Promise<string | undefined> {
   busy.value = true;
   clearResult();
   try {
-    const hostId = existingId || newHostId();
+    const deviceId = existingId || newDeviceId();
     try {
-      await store.save(hostId, saved);
+      await store.save(deviceId, saved);
     } catch {
-      error.value = t('settings.hosts.saveFailed');
+      error.value = t('settings.devices.saveFailed');
       return undefined;
     }
     back();
-    flashRow(hostId);
-    const savedRow = store.hostFor(hostId);
-    if (expandOnFailure && savedRow && connectionState(savedRow) === 'failed') {
-      openDetailId.value = hostId;
+    flashRow(deviceId);
+    const savedRow = store.deviceFor(deviceId);
+    if (expandOnFailure && savedRow && failed(savedRow)) {
+      openDetailId.value = deviceId;
     }
-    if (saved.enabled !== false) void reconnect(hostId, expandOnFailure);
-    return hostId;
+    if (saved.enabled !== false) void reconnect(deviceId, expandOnFailure);
+    return deviceId;
   } finally {
     busy.value = false;
   }
@@ -427,32 +475,32 @@ async function save(): Promise<void> {
   const before = original.value;
   const needsTest = saved.enabled !== false && (before === undefined || connectionKey(saved) !== connectionKey(before));
   if (needsTest && !await test()) return;
-  await writeHost(originalId.value, saved);
+  await writeDevice(originalId.value, saved);
 }
 
 async function saveAnyway(): Promise<void> {
   if (!canSubmit.value || testing.value) return;
-  await writeHost(originalId.value, draftDefinition(), true);
+  await writeDevice(originalId.value, draftDefinition(), true);
 }
 
 async function addHost(entry: AppSshConfigHost): Promise<void> {
   if (writeBlocked.value) return;
   addingHost.value = entry.alias;
   try {
-    await writeHost('', { name: availableName(entry.alias), host: entry.alias }, true);
+    await writeDevice('', { connection: 'ssh', name: availableName(entry.alias), host: entry.alias }, true);
   } finally {
     addingHost.value = '';
   }
 }
 
-async function setEnabled(row: AppHost, value: boolean): Promise<void> {
+async function setEnabled(row: AppDevice, value: boolean): Promise<void> {
   if (pendingIds.value[row.id] || busy.value || value === enabled(row)) return;
   error.value = '';
   pendingIds.value = { ...pendingIds.value, [row.id]: true };
   try {
-    await store.save(row.id, { ...hostDefinition(row), enabled: value ? undefined : false });
+    await store.save(row.id, { ...deviceDefinition(row), enabled: value ? undefined : false });
   } catch {
-    error.value = t('settings.hosts.saveFailed');
+    error.value = t('settings.devices.saveFailed');
     return;
   } finally {
     const next = { ...pendingIds.value };
@@ -462,54 +510,59 @@ async function setEnabled(row: AppHost, value: boolean): Promise<void> {
   if (value) void reconnect(row.id);
 }
 
-function copyRow(hostId: string): void {
-  copyFeedbackId.value = hostId;
-  void store.copyProviders(hostId);
+function copyRow(deviceId: string): void {
+  copyFeedbackId.value = deviceId;
+  void store.copyProviders(deviceId);
 }
 
-async function copyToRow(row: AppHost): Promise<void> {
+async function copyToRow(row: AppDevice): Promise<void> {
   closeRowMenu();
-  if (await failureText.confirmCopy(hostDisplayName(row))) copyRow(row.id);
+  if (await failureText.confirmCopy(deviceDisplayName(row))) copyRow(row.id);
 }
 
-async function reconnect(hostId: string, expandOnFailure = false): Promise<void> {
+async function reconnect(deviceId: string, expandOnFailure = false): Promise<void> {
   closeRowMenu();
   try {
-    await store.connect(hostId);
+    await store.connect(deviceId);
   } catch {
     await reload();
   }
   if (expandOnFailure) {
-    const row = store.hostFor(hostId);
-    if (row && connectionState(row) === 'failed') openDetailId.value = hostId;
+    const row = store.deviceFor(deviceId);
+    if (row && failed(row)) openDetailId.value = deviceId;
   }
 }
 
-function account(row: AppHost): HostAccount | undefined {
+function upgradeRow(deviceId: string): void {
+  closeRowMenu();
+  void store.upgrade(deviceId);
+}
+
+function account(row: AppDevice): DeviceAccount | undefined {
   return connectionState(row) === 'ready' ? store.accounts[row.id] : undefined;
 }
 
 function signOutLabel(): string {
-  return t('settings.hosts.kimiSignOut');
+  return t('settings.devices.kimiSignOut');
 }
 
-async function signOutRow(hostId: string): Promise<void> {
+async function signOutRow(deviceId: string): Promise<void> {
   closeRowMenu();
   error.value = '';
   try {
-    await store.signOut(hostId);
+    await store.signOut(deviceId);
   } catch {
-    error.value = t('settings.hosts.signOutFailed');
+    error.value = t('settings.devices.signOutFailed');
   }
 }
 
-async function remove(row: AppHost): Promise<void> {
+async function remove(row: AppDevice): Promise<void> {
   closeRowMenu();
   if (busy.value) return;
   const ok = await confirm({
-    title: t('settings.hosts.deleteTitle'),
-    message: t('settings.hosts.deleteMessage', { name: hostDisplayName(row) }),
-    confirmLabel: t('settings.hosts.delete'),
+    title: t('settings.devices.deleteTitle'),
+    message: t('settings.devices.deleteMessage', { name: deviceDisplayName(row) }),
+    confirmLabel: t('settings.devices.delete'),
     variant: 'danger',
   });
   if (!ok) return;
@@ -519,7 +572,7 @@ async function remove(row: AppHost): Promise<void> {
     await store.remove(row.id);
     back();
   } catch {
-    error.value = t('settings.hosts.deleteFailed');
+    error.value = t('settings.devices.deleteFailed');
   } finally {
     busy.value = false;
   }
@@ -541,17 +594,17 @@ void loadHosts();
 <template>
   <section ref="rootEl" :class="subpage ? 're-page' : 're'" @keydown="onKeydown">
     <div v-if="subpage" class="re-page-head">
-      <button ref="backButton" type="button" class="re-back" :aria-label="t('settings.hosts.back')" @click="back">
+      <button ref="backButton" type="button" class="re-back" :aria-label="t('settings.devices.back')" @click="back">
         <Icon name="arrow-left" size="sm" />
       </button>
-      <span class="re-page-title">{{ pageMode === 'edit' && original ? hostDisplayName(original) : t('settings.hosts.add') }}</span>
+      <span class="re-page-title">{{ pageMode === 'edit' && original ? deviceDisplayName(original) : t('settings.devices.add') }}</span>
     </div>
     <div v-else class="re-head">
-      <div class="re-head-copy">
-        <h3 class="re-title">{{ t('settings.hosts.title') }}</h3>
-      </div>
+      <slot name="title">
+        <h3 class="re-title">{{ t('settings.devices.sshTitle') }}</h3>
+      </slot>
       <Button variant="secondary" size="sm" :disabled="busy" @click="startAdd">
-        <Icon name="plus" size="sm" />{{ t('settings.hosts.add') }}
+        <Icon name="plus" size="sm" />{{ t('settings.devices.addHost') }}
       </Button>
     </div>
 
@@ -564,44 +617,44 @@ void loadHosts();
         @update:model-value="setAddSource"
       />
       <div v-if="showHostPicker" class="re-hosts-actions">
-        <IconButton v-if="openSshConfig && sshHosts?.exists" class="re-hosts-open" size="sm" :label="t('settings.hosts.openSshConfig')" :tooltip="t('settings.hosts.openSshConfig')" @click="openSshConfig(sshHosts.configPath)">
+        <IconButton v-if="openSshConfig && sshHosts?.exists" class="re-hosts-open" size="sm" :label="t('settings.devices.openSshConfig')" :tooltip="t('settings.devices.openSshConfig')" @click="openSshConfig(sshHosts.configPath)">
           <Icon name="external-link" size="sm" />
         </IconButton>
-        <IconButton class="re-hosts-refresh" size="sm" :label="t('settings.hosts.sshHostsRefresh')" :tooltip="t('settings.hosts.sshHostsRefresh')" :disabled="sshHostsLoading" @click="loadHosts">
+        <IconButton class="re-hosts-refresh" size="sm" :label="t('settings.devices.sshHostsRefresh')" :tooltip="t('settings.devices.sshHostsRefresh')" :disabled="sshHostsLoading" @click="loadHosts">
           <Icon name="refresh" size="sm" />
         </IconButton>
       </div>
     </div>
 
     <template v-if="showForm">
-      <p class="re-page-hint">{{ t('settings.hosts.formHint') }}</p>
+      <p class="re-page-hint">{{ t('settings.devices.formHint') }}</p>
 
-      <Field :label="t('settings.hosts.nameLabel')" :error="name !== '' ? nameError : ''">
-        <Input ref="nameInput" v-model="name" size="sm" :placeholder="t('settings.hosts.namePlaceholder')" :disabled="busy || testing" :error="name !== '' && nameError !== ''" autocomplete="off" spellcheck="false" @update:model-value="clearResult" />
+      <Field :label="t('settings.devices.nameLabel')" :error="name !== '' ? nameError : ''">
+        <Input ref="nameInput" v-model="name" size="sm" :placeholder="t('settings.devices.namePlaceholder')" :disabled="busy || testing" :error="name !== '' && nameError !== ''" autocomplete="off" spellcheck="false" @update:model-value="clearResult" />
       </Field>
-      <Field :label="t('settings.hosts.targetLabel')" :error="targetTouched ? targetError : ''" :hint="t('settings.hosts.targetHint')">
-        <Input v-model="host" size="sm" :placeholder="t('settings.hosts.targetPlaceholder')" :disabled="busy || testing" :error="targetTouched && targetError !== ''" autocomplete="off" autocapitalize="off" spellcheck="false" @update:model-value="targetTouched = true; clearResult()" />
+      <Field :label="t('settings.devices.targetLabel')" :error="targetTouched ? targetError : ''" :hint="t('settings.devices.targetHint')">
+        <Input v-model="host" size="sm" :placeholder="t('settings.devices.targetPlaceholder')" :disabled="busy || testing" :error="targetTouched && targetError !== ''" autocomplete="off" autocapitalize="off" spellcheck="false" @update:model-value="targetTouched = true; clearResult()" />
       </Field>
-      <Field :label="t('settings.hosts.identityLabel')" :hint="t('settings.hosts.identityHint')">
+      <Field :label="t('settings.devices.identityLabel')" :hint="t('settings.devices.identityHint')">
         <div class="re-input-row">
           <Input v-model="identityFile" size="sm" placeholder="~/.ssh/id_ed25519" :disabled="busy || testing" autocomplete="off" autocapitalize="off" spellcheck="false" @update:model-value="clearResult" />
-          <Button v-if="pickIdentityFile" class="re-browse" variant="secondary" size="sm" :disabled="busy || testing" @click="browseIdentityFile">{{ t('settings.hosts.identityBrowse') }}</Button>
+          <Button v-if="pickIdentityFile" class="re-browse" variant="secondary" size="sm" :disabled="busy || testing" @click="browseIdentityFile">{{ t('settings.devices.identityBrowse') }}</Button>
         </div>
       </Field>
 
       <div class="re-advanced">
         <button type="button" class="re-advanced-toggle" :aria-expanded="advancedOpen" @click="advancedOpen = !advancedOpen">
-          <Icon :name="advancedOpen ? 'chevron-down' : 'chevron-right'" size="sm" />{{ t('settings.hosts.advanced') }}
+          <Icon :name="advancedOpen ? 'chevron-down' : 'chevron-right'" size="sm" />{{ t('settings.devices.advanced') }}
         </button>
         <div v-if="advancedOpen" class="re-advanced-body">
-          <Field :label="t('settings.hosts.binLabel')" :hint="t('settings.hosts.binHint')">
+          <Field :label="t('settings.devices.binLabel')" :hint="t('settings.devices.binHint')">
             <Input v-model="remoteBin" size="sm" placeholder="~/.kimi-code/bin/kimi" :disabled="busy || testing" autocomplete="off" autocapitalize="off" spellcheck="false" @update:model-value="clearResult" />
           </Field>
         </div>
       </div>
 
       <div class="re-foot" :class="{ 're-foot--result': testState }">
-        <HostTestResult
+        <DeviceTestResult
           v-if="testState"
           :state="testState"
           :endpoint="draftDefinition().host"
@@ -612,48 +665,48 @@ void loadHosts();
         />
         <Banner v-if="error" variant="danger" role="alert">{{ error }}</Banner>
         <div class="re-foot-actions">
-          <Button v-if="pageMode === 'edit' && original" variant="danger" size="sm" :disabled="busy || testing" @click="remove(original)">{{ t('settings.hosts.delete') }}</Button>
+          <Button v-if="pageMode === 'edit' && original" variant="danger" size="sm" :disabled="busy || testing" @click="remove(original)">{{ t('settings.devices.delete') }}</Button>
           <span class="re-spacer" />
           <Button variant="secondary" size="sm" :disabled="busy" @click="cancel">{{ t('common.cancel') }}</Button>
-          <Button v-if="testState === 'failed'" class="re-save-anyway" variant="secondary" size="sm" :disabled="!canSubmit" @click="saveAnyway">{{ t('settings.hosts.saveAnyway') }}</Button>
-          <Button class="re-save" variant="primary" size="sm" :loading="busy || testing" :disabled="!canSubmit || testing" @click="save">{{ t(testState === 'failed' ? 'settings.hosts.retry' : 'settings.hosts.save') }}</Button>
+          <Button v-if="testState === 'failed'" class="re-save-anyway" variant="secondary" size="sm" :disabled="!canSubmit" @click="saveAnyway">{{ t('settings.devices.saveAnyway') }}</Button>
+          <Button class="re-save" variant="primary" size="sm" :loading="busy || testing" :disabled="!canSubmit || testing" @click="save">{{ t(testState === 'failed' ? 'settings.devices.retry' : 'settings.devices.save') }}</Button>
         </div>
       </div>
     </template>
 
-    <section v-else-if="showHostPicker" class="re-hosts" :aria-label="t('settings.hosts.sshHostsTitle')">
-      <p v-if="sshHostsFailed" class="re-hosts-note">{{ t('settings.hosts.sshHostsFailed') }}</p>
+    <section v-else-if="showHostPicker" class="re-hosts" :aria-label="t('settings.devices.sshHostsTitle')">
+      <p v-if="sshHostsFailed" class="re-hosts-note">{{ t('settings.devices.sshHostsFailed') }}</p>
       <div v-else-if="detectedHosts.length > 0" class="re-group re-hosts-list" role="list">
         <div v-for="entry in detectedHosts" :key="entry.alias" class="re-row re-host" role="listitem">
           <span class="re-row-copy">
             <span class="re-row-name">{{ entry.alias }}</span>
             <span v-if="hostTarget(entry) !== entry.alias" class="re-host-target" :title="hostTarget(entry)">{{ hostTarget(entry) }}</span>
           </span>
-          <Button class="re-host-add" variant="secondary" size="xs" :loading="addingHost === entry.alias" :disabled="writeBlocked" @click="addHost(entry)">{{ t('settings.hosts.addHost') }}</Button>
+          <Button class="re-host-add" variant="secondary" size="xs" :loading="addingHost === entry.alias" :disabled="writeBlocked" @click="addHost(entry)">{{ t('settings.devices.addHost') }}</Button>
         </div>
       </div>
-      <p v-else-if="sshHosts && !sshHosts.exists" class="re-hosts-note">{{ t('settings.hosts.sshHostsMissing') }}</p>
-      <p v-else-if="sshHosts && sshHosts.hosts.length === 0" class="re-hosts-note">{{ t('settings.hosts.sshHostsEmpty') }}</p>
-      <p v-else-if="sshHosts" class="re-hosts-note">{{ t('settings.hosts.sshHostsAllAdded') }}</p>
+      <p v-else-if="sshHosts && !sshHosts.exists" class="re-hosts-note">{{ t('settings.devices.sshHostsMissing') }}</p>
+      <p v-else-if="sshHosts && sshHosts.hosts.length === 0" class="re-hosts-note">{{ t('settings.devices.sshHostsEmpty') }}</p>
+      <p v-else-if="sshHosts" class="re-hosts-note">{{ t('settings.devices.sshHostsAllAdded') }}</p>
       <Banner v-if="error" variant="danger" role="alert">{{ error }}</Banner>
     </section>
 
     <template v-else>
-      <div class="re-group" role="list" :aria-label="t('settings.hosts.title')">
-        <div v-if="store.hosts.length === 0" class="re-empty">
-          <div class="re-empty-title">{{ t('settings.hosts.emptyTitle') }}</div>
-          <div class="re-empty-hint">{{ t('settings.hosts.emptyHint') }}</div>
+      <div v-if="showDeviceList" class="re-group" role="list" :aria-label="t('settings.devices.sshTitle')">
+        <div v-if="sshDevices.length === 0" class="re-empty">
+          {{ detectedHosts.length > 0 ? t('settings.devices.emptyDetectedHint', { count: detectedHosts.length }) : t('settings.devices.emptyHint') }}
         </div>
-        <div v-for="row in store.hosts" :key="row.id" class="re-item" :data-host-id="row.id" role="listitem">
+        <div v-for="row in sshDevices" :key="row.id" class="re-item" :data-device-id="row.id" role="listitem">
           <div class="re-row" :class="{ disabled: !enabled(row), flash: flashId === row.id }">
             <div class="re-row-lead" :class="{ expandable: isExpandable(row) }" @click="onRowLeadClick(row)">
               <span class="re-row-copy">
-                <span class="re-row-name">{{ hostDisplayName(row) }}</span>
-                <span class="re-row-status" :class="`re-row-status--${connectionState(row)}`">
-                  <StatusDot v-if="enabled(row)" :status="dotFor(row)" />
-                  <span class="re-row-state">{{ statusLabel(row) }}</span>
+                <span class="re-row-name">{{ deviceDisplayName(row) }}</span>
+                <span v-if="enabled(row)" class="re-row-status" :class="`re-row-status--${statusKind(row)}`">
+                  <StatusDot :status="dotFor(row)" />
+                  <span class="re-row-state">{{ stateLabel(row) }}</span>
+                  <span v-if="upgradeOf(row) === 'failed' && row.upgradeError" class="re-row-detail" :title="row.upgradeError">{{ row.upgradeError.split('\n', 1)[0] }}</span>
                   <button
-                    v-if="showsFailure(row)"
+                    v-else-if="showsFailure(row)"
                     type="button"
                     class="re-row-detail re-row-error re-row-details"
                     :title="row.connectError ?? ''"
@@ -674,16 +727,20 @@ void loadHosts();
                     <Icon :name="noticeOpen(row) ? 'chevron-down' : 'chevron-right'" size="sm" />
                   </button>
                   <span v-else-if="rowNotice(row)" class="re-row-detail re-row-notice" :title="noticeText(row)">{{ noticeText(row) }}</span>
-                  <span v-else class="re-row-detail" :title="row.host">{{ row.host }}</span>
+                  <span v-else-if="duplicateText(row)" class="re-row-detail re-row-notice" :title="duplicateText(row)">{{ duplicateText(row) }}</span>
                 </span>
               </span>
             </div>
-            <Switch
-              :model-value="enabled(row)"
-              :label="t('settings.hosts.enabledLabel', { name: hostDisplayName(row) })"
-              :disabled="pendingIds[row.id] === true || busy"
-              @update:model-value="setEnabled(row, $event)"
-            />
+            <Button v-if="upgradeInline(row)" class="re-row-upgrade" variant="secondary" size="xs" @click="upgradeRow(row.id)">{{ t('settings.devices.upgradeShort') }}</Button>
+            <Button v-else-if="canReconnect(row)" class="re-row-action re-row-reconnect" variant="secondary" size="xs" :loading="retrying(row)" @click="reconnect(row.id)">{{ t('settings.devices.reconnect') }}</Button>
+            <Tooltip :text="t('settings.devices.useHere')">
+              <Switch
+                :model-value="enabled(row)"
+                :label="t('settings.devices.enabledLabel', { name: deviceDisplayName(row) })"
+                :disabled="pendingIds[row.id] === true || busy"
+                @update:model-value="setEnabled(row, $event)"
+              />
+            </Tooltip>
             <span class="re-row-actions">
               <IconButton
                 v-if="createProject"
@@ -700,8 +757,8 @@ void loadHosts();
                 class="re-row-more"
                 :class="{ open: rowMenuOpen && rowMenuId === row.id }"
                 size="sm"
-                :label="t('settings.hosts.options')"
-                :tooltip="t('settings.hosts.options')"
+                :label="t('settings.devices.options')"
+                :tooltip="t('settings.devices.options')"
                 aria-haspopup="menu"
                 :aria-expanded="rowMenuOpen && rowMenuId === row.id"
                 @click.stop="toggleRowMenu(row, $event)"
@@ -711,33 +768,32 @@ void loadHosts();
             </span>
           </div>
           <div v-if="failureOpen(row)" class="re-row-failure">
-            <HostTestResult
+            <DeviceTestResult
               state="failed"
-              :endpoint="row.host"
-              :failure="row.connectFailure"
-              :hint="failureText.hint(row.connectFailure, row.host, hostDisplayName(row))"
+              :endpoint="row.host ?? ''"
+              :failure="upgradeInline(row) ? undefined : row.connectFailure"
+              :hint="failureText.hint(row.connectFailure, { host: row.host, name: deviceDisplayName(row) })"
               :detail="row.connectError ?? ''"
             />
             <div class="re-row-failure-actions">
-              <Button class="re-row-action re-row-reconnect" variant="secondary" size="xs" :loading="retrying(row)" @click="reconnect(row.id)">{{ t('settings.hosts.reconnect') }}</Button>
-              <Button class="re-row-edit" variant="secondary" size="xs" @click="startEdit(row)">{{ t('settings.hosts.edit') }}</Button>
+              <Button class="re-row-edit" variant="secondary" size="xs" @click="startEdit(row)">{{ t('settings.devices.edit') }}</Button>
             </div>
           </div>
           <div v-if="noticeOpen(row) && rowNotice(row) === 'needsModels'" class="re-row-setup">
             <p class="re-row-setup-text" :class="{ 're-row-setup-text--danger': copyFeedback(row)?.status === 'failed' }">{{ setupText(row) }}</p>
             <div class="re-row-setup-actions">
-              <Button class="re-row-sign-in" variant="primary" size="xs" @click="store.openLogin(row.id)">{{ t('workspace.hostNotice.signIn') }}</Button>
-              <Button class="re-row-copy-local" variant="secondary" size="xs" :loading="store.providerCopies[row.id]?.status === 'copying'" @click="copyToRow(row)">{{ t('workspace.hostNotice.useLocal') }}</Button>
+              <Button class="re-row-sign-in" variant="primary" size="xs" @click="store.openLogin(row.id)">{{ t('workspace.deviceNotice.signIn') }}</Button>
+              <Button class="re-row-copy-local" variant="secondary" size="xs" :loading="store.providerCopies[row.id]?.status === 'copying'" @click="copyToRow(row)">{{ t('workspace.deviceNotice.useLocal') }}</Button>
             </div>
           </div>
           <div v-else-if="noticeOpen(row)" class="re-row-setup">
-            <Button class="re-row-copy-retry" variant="secondary" size="xs" @click="copyRow(row.id)">{{ t('settings.hosts.retry') }}</Button>
+            <Button class="re-row-copy-retry" variant="secondary" size="xs" @click="copyRow(row.id)">{{ t('settings.devices.retry') }}</Button>
           </div>
         </div>
       </div>
 
       <Banner v-if="error" variant="danger" role="alert">{{ error }}</Banner>
-      <Banner v-if="loadFailed" variant="warning">{{ t('settings.hosts.statusFailed') }}</Banner>
+      <Banner v-if="loadFailed" variant="warning">{{ t('settings.devices.statusFailed') }}</Banner>
 
       <Transition name="menu-pop">
         <Menu v-if="rowMenuOpen && menuRow" ref="rowMenuRef" class="re-row-menu" :style="rowMenuStyle" @click.stop>
@@ -745,26 +801,29 @@ void loadHosts();
             <Icon name="folder-plus" size="sm" />{{ t('workspace.dialog.createTitle') }}
           </MenuItem>
           <MenuItem class="re-menu-edit" @click="startEdit(menuRow)">
-            <Icon name="pencil" size="sm" />{{ t('settings.hosts.edit') }}
+            <Icon name="pencil" size="sm" />{{ t('settings.devices.edit') }}
           </MenuItem>
           <MenuItem v-if="enabled(menuRow)" class="re-menu-reconnect" @click="reconnect(menuRow.id)">
-            <Icon name="refresh" size="sm" />{{ t('settings.hosts.reconnect') }}
+            <Icon name="refresh" size="sm" />{{ t('settings.devices.reconnect') }}
+          </MenuItem>
+          <MenuItem v-if="store.canUpgrade(menuRow.id) && !upgradeInline(menuRow)" class="re-menu-upgrade" @click="upgradeRow(menuRow.id)">
+            <Icon name="download" size="sm" />{{ t('settings.devices.upgrade') }}
           </MenuItem>
           <template v-if="connectionState(menuRow) === 'ready'">
             <MenuItem separator />
             <MenuItem v-if="account(menuRow)?.status === 'signedOut'" class="re-menu-sign-in" @click="closeRowMenu(); store.openLogin(menuRow.id)">
-              <Icon name="log-in" size="sm" />{{ t('workspace.hostNotice.signIn') }}
+              <Icon name="log-in" size="sm" />{{ t('workspace.deviceNotice.signIn') }}
             </MenuItem>
             <MenuItem v-else-if="account(menuRow)?.status === 'signedIn'" class="re-menu-sign-out" @click="signOutRow(menuRow.id)">
               <Icon name="log-out" size="sm" />{{ signOutLabel() }}
             </MenuItem>
             <MenuItem class="re-menu-copy" :disabled="store.providerCopies[menuRow.id]?.status === 'copying'" @click="copyToRow(menuRow)">
-              <Icon name="copy" size="sm" />{{ t('settings.hosts.copyLocal') }}
+              <Icon name="copy" size="sm" />{{ t('settings.devices.copyLocal') }}
             </MenuItem>
           </template>
           <MenuItem separator />
           <MenuItem danger @click="remove(menuRow)">
-            <Icon name="trash" size="sm" />{{ t('settings.hosts.delete') }}
+            <Icon name="trash" size="sm" />{{ t('settings.devices.delete') }}
           </MenuItem>
         </Menu>
       </Transition>
@@ -776,11 +835,10 @@ void loadHosts();
 .re, .re-page { display: flex; flex-direction: column; }
 .re { gap: var(--space-3); }
 .re-page { gap: var(--space-4); }
-.re-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-.re-head-copy { min-width: 0; }
+.re-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: 28px; }
 .re-title { margin: 0; color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-medium); }
 .re-group { overflow: hidden; border-radius: var(--radius-xl); background: var(--color-surface); }
-.re-row { display: flex; align-items: center; gap: var(--space-3); min-height: 60px; padding: 0 var(--space-3) 0 var(--space-4); transition: background var(--duration-fast) var(--ease-out); }
+.re-row { display: flex; align-items: center; gap: var(--space-3); min-height: 56px; padding: 0 var(--space-3) 0 var(--space-4); transition: background var(--duration-fast) var(--ease-out); }
 .re-row + .re-row, .re-item + .re-item { border-top: var(--p-hairline) solid var(--color-line); }
 .re-row:hover { background: var(--color-hover); }
 .re-item:has(> .re-row-setup, > .re-row-failure) > .re-row:hover { background: transparent; }
@@ -795,7 +853,9 @@ void loadHosts();
 .re-row-name { display: block; overflow: hidden; color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-sm); font-weight: var(--weight-option-label); text-overflow: ellipsis; white-space: nowrap; }
 .re-row-status { display: flex; align-items: center; gap: var(--space-1-5); min-width: 0; color: var(--color-text-faint); font-size: var(--text-xs); }
 .re-row-state { flex: none; }
-.re-row-status--failed .re-row-state { color: var(--color-danger); }
+.re-row-status--failed .re-row-state,
+.re-row-status--outdated .re-row-state,
+.re-row-status--upgrade-failed .re-row-state { color: var(--color-danger); }
 .re-row-warning { color: var(--color-warning); }
 .re-row-notice { color: var(--color-text-muted); }
 .re-row-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -806,6 +866,7 @@ void loadHosts();
 .re-row-details-text { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
 .re-row-details :deep(svg) { flex: none; }
 .re-row.disabled .re-row-name { color: var(--color-text-faint); }
+.re-row-upgrade, .re-row-action { flex: none; }
 .re-row-actions { display: flex; flex: none; align-items: center; gap: var(--space-1); }
 .re-row-create-project, .re-row-more { flex: none; color: var(--color-text-faint); }
 .re-row-failure { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding: 0 var(--space-3) var(--space-3) var(--space-4); }
@@ -818,9 +879,7 @@ void loadHosts();
 .re-row-setup-text { margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
 .re-row-setup-text--danger { color: var(--color-danger); }
 .re-row-setup-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.re-empty { padding: var(--space-6) var(--space-4); font-family: var(--font-ui); text-align: center; }
-.re-empty-title { color: var(--color-text-faint); font-size: var(--text-sm); }
-.re-empty-hint { margin-top: var(--space-1); color: var(--color-text-quaternary); font-size: var(--text-xs); }
+.re-empty { padding: var(--space-4); color: var(--color-text-faint); font-family: var(--font-ui); font-size: var(--text-xs); line-height: var(--leading-normal); text-align: center; }
 .re-page-head {
   position: sticky;
   top: calc(-1 * var(--space-2));

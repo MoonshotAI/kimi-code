@@ -6,8 +6,7 @@ export type SettingsTab =
   | 'agent'
   | 'account'
   | 'providers'
-  | 'hosts'
-  | 'remoteControl'
+  | 'devices'
   | 'plugins'
   | 'advanced'
   | 'lab'
@@ -25,8 +24,7 @@ export const SETTINGS_TABS: readonly SettingsTabDef[] = [
   { id: 'account', labelKey: 'settings.tabs.account', icon: 'user' },
   { id: 'agent', labelKey: 'settings.tabs.agent', icon: 'robot' },
   { id: 'providers', labelKey: 'settings.tabs.providers', icon: 'bolt' },
-  { id: 'hosts', labelKey: 'settings.tabs.hosts', icon: 'server' },
-  { id: 'remoteControl', labelKey: 'settings.tabs.remoteControl', icon: 'device-mobile' },
+  { id: 'devices', labelKey: 'settings.tabs.devices', icon: 'device-desktop' },
   { id: 'browser', labelKey: 'settings.tabs.browser', icon: 'browser' },
   { id: 'plugins', labelKey: 'settings.tabs.plugins', icon: 'plugin' },
   { id: 'shortcuts', labelKey: 'settings.tabs.shortcuts', icon: 'keyboard' },
@@ -42,7 +40,6 @@ export function visibleSettingsTabs(
   return SETTINGS_TABS.filter(
     (tab) =>
       (tab.id !== 'plugins' || !pluginsUnsupported) &&
-      (desktopBridge ||
-        (tab.id !== 'browser' && tab.id !== 'shortcuts' && tab.id !== 'remoteControl')),
+      (desktopBridge || (tab.id !== 'browser' && tab.id !== 'shortcuts')),
   );
 }

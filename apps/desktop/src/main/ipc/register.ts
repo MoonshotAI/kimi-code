@@ -13,7 +13,7 @@ import { app, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions, WebContents } from 'electron';
 
 import { existsSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { asBrowserPanelSessions } from '../../shared/browser-panel-state';
 import { BrowserSessionStore } from '../browser/browser-session-store';
@@ -326,6 +326,10 @@ export function registerIpcHandlers(): void {
     const value = patch as { restoreEnabled?: unknown; previousEnabled?: unknown };
     if (typeof value.restoreEnabled === 'boolean') setRemoteControlRestoreEnabled(value.restoreEnabled);
     if (typeof value.previousEnabled === 'boolean') setRemoteControlPreviousEnabled(value.previousEnabled);
+  });
+  ipcMain.handle(IPC.hostName, (event) => {
+    if (!isMainRendererSender(event.sender)) throw new Error('host-name: unknown sender');
+    return hostname();
   });
   const runtimeEnvironmentAllowed = (event: { sender: WebContents }): boolean =>
     runtimeEnvironmentCustomizationEnabled(app.getVersion(), app.isPackaged) && event.sender === getMainWindow()?.webContents;

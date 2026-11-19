@@ -61,7 +61,7 @@ describe('sessionMentionCandidates', () => {
         session('newer-here', { updatedAt: '2026-01-04T00:00:00.000Z' }),
         session('active', { updatedAt: '2026-01-06T00:00:00.000Z' }),
         session('archived', { archived: true }),
-        session('remote', { hostId: 'devbox' }),
+        session('remote', { deviceId: 'devbox' }),
         session('unscoped', { workspaceId: undefined }),
       ],
       activeSessionId: 'active',

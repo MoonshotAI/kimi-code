@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { AppHostConnectFailure } from '@moonshot-ai/app-core/api';
+import type { AppDeviceConnectFailure } from '@moonshot-ai/app-core/api';
 import { copyTextToClipboard } from '@moonshot-ai/app-core/lib';
 import { Icon, Spinner } from '@moonshot-ai/app-ui';
 
@@ -11,7 +11,7 @@ const INSTALL_COMMAND = 'curl -fsSL https://code.kimi.com/kimi-code/install.sh |
 const props = defineProps<{
   state: 'running' | 'failed';
   endpoint: string;
-  failure?: AppHostConnectFailure;
+  failure?: AppDeviceConnectFailure;
   reason?: string;
   hint?: string;
   detail?: string;
@@ -25,12 +25,12 @@ let commandCopiedTimer = 0;
 
 const command = computed(() => props.failure === 'executor_not_found'
   ? INSTALL_COMMAND
-  : props.failure === 'executor_outdated'
+  : props.failure === 'outdated'
     ? UPDATE_COMMAND
     : '');
 const commandLabel = computed(() => props.failure === 'executor_not_found'
-  ? 'settings.hosts.copyInstallCommand'
-  : 'settings.hosts.copyUpdateCommand');
+  ? 'settings.devices.copyInstallCommand'
+  : 'settings.devices.copyUpdateCommand');
 
 watch(
   () => [props.state, props.endpoint, props.failure, props.reason, props.detail] as const,
@@ -68,7 +68,7 @@ onUnmounted(() => {
   <div class="etr" role="status">
     <div v-if="state === 'running'" class="etr-line etr-line--running">
       <span class="etr-marker"><Spinner size="xs" /></span>
-      <span class="etr-label">{{ t('settings.hosts.testing') }}</span>
+      <span class="etr-label">{{ t('settings.devices.testing') }}</span>
       <span v-if="endpoint" class="etr-endpoint" :title="endpoint">{{ endpoint }}</span>
     </div>
     <div v-else class="etr-failure" role="alert">

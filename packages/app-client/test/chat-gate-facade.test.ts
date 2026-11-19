@@ -465,7 +465,7 @@ describe('remote chat isolation', () => {
     const { nextTick } = await import('vue');
     const workspaces = workspacesStore();
     workspaces.workspaces = [{
-      id: 'workspace-1', root: '/srv/project', name: 'Remote', hostId: 'devbox',
+      id: 'workspace-1', root: '/srv/project', name: 'Remote', deviceId: 'devbox',
       kind: 'managed', additionalDirs: [], sessionCount: 0,
     }];
     workspaces.storedActiveWorkspaceId = 'workspace-1';
@@ -474,7 +474,7 @@ describe('remote chat isolation', () => {
       listModels: vi.fn(async () => [MANAGED_MODEL]),
       getConfig: vi.fn(async () => ({ defaultModel: 'managed:kimi-code/kimi-k2' })),
     }));
-    await facade.models.loadHostCatalog('devbox');
+    await facade.models.loadDeviceCatalog('devbox');
     clientApiMock.getAuth = vi.fn();
     clientApiMock.getUserInfo = vi.fn();
     facade.auth.managedProviderStatus = 'authenticated';
@@ -486,7 +486,7 @@ describe('remote chat isolation', () => {
     const { client, sessions } = await remoteFacade();
     expect(client.chatGateVerdict.value).toBe('ok');
     await expect(client.ensureChatReady()).resolves.toBe('ok');
-    sessions.setSessions([{ ...session('remote', 'managed:kimi-code/kimi-k2'), hostId: 'devbox' }]);
+    sessions.setSessions([{ ...session('remote', 'managed:kimi-code/kimi-k2'), deviceId: 'devbox' }]);
     sessions.setActiveSessionId('remote');
     await expect(client.ensureChatReady()).resolves.toBe('ok');
     expect(clientApiMock.getAuth).not.toHaveBeenCalled();
@@ -495,7 +495,7 @@ describe('remote chat isolation', () => {
 
   it('reports remote auth failures without redirecting to the local account', async () => {
     const f = await remoteFacade();
-    f.sessions.setSessions([{ ...session('remote', 'managed:kimi-code/kimi-k2'), hostId: 'devbox' }]);
+    f.sessions.setSessions([{ ...session('remote', 'managed:kimi-code/kimi-k2'), deviceId: 'devbox' }]);
     f.sessions.setActiveSessionId('remote');
     clientApiMock.submitPrompt = vi.fn(async () => {
       throw authError(f, 40111, { provider_id: 'managed:kimi-code' });

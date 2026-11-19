@@ -8,7 +8,7 @@ const workspaces = [
   { id: 'c', name: 'Gamma', root: '/srv/shared', shortPath: '~/srv/shared' },
   { id: 'd', name: 'Delta', root: '/tmp/delta', shortPath: '~/tmp/delta' },
   { id: 'e', name: 'Echo', root: '/tmp/echo', shortPath: '~/tmp/echo' },
-  { id: 'f', name: 'Foxtrot', root: '/tmp/f', shortPath: '~/tmp/f', hostId: 'host-1' },
+  { id: 'f', name: 'Foxtrot', root: '/tmp/f', shortPath: '~/tmp/f', deviceId: 'device-1' },
 ];
 
 describe('filterWorkspaces', () => {
@@ -25,10 +25,10 @@ describe('filterWorkspaces', () => {
     expect(filterWorkspaces(workspaces, '~/tmp').map((workspace) => workspace.id)).toEqual(['d', 'e', 'f']);
   });
 
-  it('matches remote host display names and addresses when provided', () => {
-    const hostText = (hostId: string) => (hostId === 'host-1' ? ['GPU Box', 'ubuntu@10.0.0.8'] : []);
-    expect(filterWorkspaces(workspaces, 'gpu box', hostText).map((workspace) => workspace.id)).toEqual(['f']);
-    expect(filterWorkspaces(workspaces, '10.0.0.8', hostText).map((workspace) => workspace.id)).toEqual(['f']);
+  it('matches remote device display names and addresses when provided', () => {
+    const deviceText = (deviceId: string) => (deviceId === 'device-1' ? ['GPU Box', 'ubuntu@10.0.0.8'] : []);
+    expect(filterWorkspaces(workspaces, 'gpu box', deviceText).map((workspace) => workspace.id)).toEqual(['f']);
+    expect(filterWorkspaces(workspaces, '10.0.0.8', deviceText).map((workspace) => workspace.id)).toEqual(['f']);
   });
 
   it('returns no workspaces when nothing matches', () => {

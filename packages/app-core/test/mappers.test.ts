@@ -91,16 +91,60 @@ describe('toAppEvent session', () => {
     });
   });
 
-  it('keeps the session host and maps host status events', () => {
-    expect(toAppEvent({ ...frame('updated'), session: { ...frame('updated').session, host_id: 'dev' } }))
-      .toMatchObject({ session: { hostId: 'dev' } });
+  it('keeps the session device and maps device status events', () => {
+    expect(toAppEvent({ ...frame('updated'), session: { ...frame('updated').session, device_id: 'dev' } }))
+      .toMatchObject({ session: { deviceId: 'dev' } });
     expect(toAppEvent({
-      type: 'event.host.changed',
+      type: 'event.device.changed',
       event_created_at: '2026-01-01T00:00:00.000Z',
-      hosts: [{ id: 'dev', host: 'dev@example.test', status: 'ready' }],
+      devices: [{ id: 'dev', connection: 'ssh', host: 'dev@example.test', status: 'ready' }],
     })).toEqual({
-      type: 'hostsChanged',
-      hosts: [{ id: 'dev', host: 'dev@example.test', status: 'ready' }],
+      type: 'devicesChanged',
+      devices: [{ id: 'dev', connection: 'ssh', host: 'dev@example.test', status: 'ready' }],
+    });
+  });
+
+  it('maps account devices with their remote identity and conflicts', () => {
+    expect(toAppEvent({
+      type: 'event.device.changed',
+      event_created_at: '2026-01-01T00:00:00.000Z',
+      devices: [{
+        id: 'rc-mac',
+        connection: 'account',
+        status: 'disconnected',
+        connect_error: 'device "rc-mac" is the same computer as device "devbox"',
+        connect_failure: 'duplicate',
+        device_id: 'rc-mac',
+        product_name: 'kimi-code-desktop',
+        platform: 'darwin',
+        alias: 'Work Mac',
+        duplicate_of: 'devbox',
+      }],
+    })).toEqual({
+      type: 'devicesChanged',
+      devices: [{
+        id: 'rc-mac',
+        connection: 'account',
+        status: 'disconnected',
+        connectError: 'device "rc-mac" is the same computer as device "devbox"',
+        connectFailure: 'duplicate',
+        deviceId: 'rc-mac',
+        productName: 'kimi-code-desktop',
+        platform: 'darwin',
+        alias: 'Work Mac',
+        duplicateOf: 'devbox',
+      }],
+    });
+  });
+
+  it('maps how a device was installed and the progress of its remote upgrade', () => {
+    expect(toAppEvent({
+      type: 'event.device.changed',
+      event_created_at: '2026-01-01T00:00:00.000Z',
+      devices: [{ id: 'rc-box', connection: 'account', status: 'connecting', install: 'cli', remote_upgrade: true, upgrade_status: 'restarting' }],
+    })).toEqual({
+      type: 'devicesChanged',
+      devices: [{ id: 'rc-box', connection: 'account', status: 'connecting', install: 'cli', remoteUpgrade: true, upgradeStatus: 'restarting' }],
     });
   });
 });

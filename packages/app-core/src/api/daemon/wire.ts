@@ -17,22 +17,22 @@ export interface WireSessionsPage {
   total: number;
   has_more: boolean;
   next_page_token?: string | null;
-  unavailable_hosts?: string[];
+  unavailable_devices?: string[];
 }
 
 export interface WireSessionIdsPage {
-  items: { id: string; archived: boolean; host_id?: string }[];
+  items: { id: string; archived: boolean; device_id?: string }[];
   total: number;
   has_more: boolean;
   next_page_token?: string | null;
-  unavailable_hosts?: string[];
+  unavailable_devices?: string[];
 }
 
 export interface WireSessionGroup {
   workspace_id: string;
   sessions: WireSession[];
   total: number;
-  host_id?: string;
+  device_id?: string;
 }
 
 export interface WireSessionGroupsPage {
@@ -40,7 +40,7 @@ export interface WireSessionGroupsPage {
   total: number;
   has_more: boolean;
   next_page_token?: string | null;
-  unavailable_hosts?: string[];
+  unavailable_devices?: string[];
 }
 
 export interface WireBatchSessionResponse {
@@ -80,7 +80,7 @@ export interface WireSession {
   archived_at?: string;
   last_prompt?: string;
   workspace_id?: string;
-  host_id?: string;
+  device_id?: string;
   metadata?: Record<string, unknown>;
   git?: WireSessionGit;
 }
@@ -134,7 +134,7 @@ export interface WireWorkspace {
   additional_dirs: string[];
   last_opened_at?: string;
   session_count: number;
-  host_id?: string;
+  device_id?: string;
 }
 
 export interface WireFsBrowseEntry {
@@ -506,7 +506,8 @@ export interface WireConfig {
   raw?: Record<string, unknown>;
 }
 
-export interface WireHostDefinition {
+export interface WireSshDeviceDefinition {
+  connection: 'ssh';
   host: string;
   identity_file?: string;
   remote_bin?: string;
@@ -514,15 +515,38 @@ export interface WireHostDefinition {
   enabled?: boolean;
 }
 
-export interface WireHost extends WireHostDefinition {
+export interface WireAccountDeviceDefinition {
+  connection: 'account';
+  name?: string;
+  enabled?: boolean;
+}
+
+export type WireDeviceDefinition = WireSshDeviceDefinition | WireAccountDeviceDefinition;
+
+export interface WireDevice {
   id: string;
+  connection: 'ssh' | 'account';
+  host?: string;
+  identity_file?: string;
+  remote_bin?: string;
+  name?: string;
+  enabled?: boolean;
   status: 'pending' | 'connecting' | 'ready' | 'disconnected';
   remote_version?: string;
   connect_error?: string;
   connect_failure?: string;
+  device_id?: string;
+  product_name?: string;
+  platform?: string;
+  alias?: string;
+  duplicate_of?: string;
+  install?: 'desktop' | 'cli';
+  remote_upgrade?: boolean;
+  upgrade_status?: 'installing' | 'restarting' | 'failed';
+  upgrade_error?: string;
 }
 
-export interface WireHostTestResult {
+export interface WireDeviceTestResult {
   connected: boolean;
   remote_version?: string;
   connect_error?: string;
@@ -757,8 +781,8 @@ type WireCapabilityChangedEvent = WireEventBase<'event.capability.changed'> & {
   install: WireCapabilityInstallProgress;
 };
 
-type WireHostChangedEvent = WireEventBase<'event.host.changed'> & {
-  hosts: WireHost[];
+type WireDeviceChangedEvent = WireEventBase<'event.device.changed'> & {
+  devices: WireDevice[];
 };
 
 type WireEventUnknown = { type: string; event_created_at: string };
@@ -769,5 +793,5 @@ export type WireEvent =
   | WireConfigEvent
   | WireInvalidatedEvent
   | WireCapabilityChangedEvent
-  | WireHostChangedEvent
+  | WireDeviceChangedEvent
   | WireEventUnknown;

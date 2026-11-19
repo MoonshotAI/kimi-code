@@ -107,7 +107,7 @@ import { modeStore, setModeHooks } from '../stores/mode';
 import { warningsStore, warningDetail } from '../stores/warnings';
 import { goalStore, setGoalHooks } from '../stores/goal';
 import { configStore, setConfigHooks } from '../stores/config';
-import { hostsStore, setHostsHooks } from '../stores/hosts';
+import { devicesStore, setDevicesHooks } from '../stores/devices';
 import { tasksStore, setTasksHooks } from '../stores/tasks';
 import { agentStatesStore } from '../stores/agentStates';
 import { setFilesHooks } from '../stores/files';
@@ -1099,7 +1099,7 @@ interface SkillRootsRefreshState {
 const refreshedSkillRootsByWorkspace = new Map<string, SkillRootsRefreshState>();
 
 function skillRootsKey(workspace: AppWorkspace): string {
-  return JSON.stringify([workspace.hostId ?? null, workspace.root, ...(workspace.additionalDirs ?? [])]);
+  return JSON.stringify([workspace.deviceId ?? null, workspace.root, ...(workspace.additionalDirs ?? [])]);
 }
 
 function hasFailedSkillsRefresh(workspace: AppWorkspace): boolean {
@@ -1154,31 +1154,38 @@ function refreshSkillsForRoots(workspace: AppWorkspace, previousWorkspace?: AppW
   });
 }
 
-function loadHostSessions(hostId: string): void {
+function loadDeviceSessions(deviceId: string): void {
   for (const workspace of workspacesStore().workspaces) {
-    if (workspace.hostId === hostId) void sessionListStore().loadFirstWorkspacePage(workspace.id);
+    if (workspace.deviceId === deviceId) void sessionListStore().loadFirstWorkspacePage(workspace.id);
   }
 }
 
-function loadActiveHostModels(hostId: string): void {
-  if (hostId !== workspacesStore().visibleWorkspace?.hostId) return;
-  void modelsStore().loadHostCatalog(hostId).catch((err: unknown) => {
-    logWarn('[kimi-code] loading models from SSH host failed', hostId, err);
+function loadActiveDeviceModels(deviceId: string): void {
+  if (deviceId !== workspacesStore().visibleWorkspace?.deviceId) return;
+  void modelsStore().loadDeviceCatalog(deviceId).catch((err: unknown) => {
+    logWarn('[kimi-code] loading models from device failed', deviceId, err);
   });
 }
 
 watch(
-  () => workspacesStore().visibleWorkspace?.hostId,
-  (hostId) => {
-    modelsStore().setActiveHost(hostId);
-    if (hostId !== undefined && hostsStore().hostFor(hostId)?.status === 'ready') loadActiveHostModels(hostId);
+  () => workspacesStore().visibleWorkspace?.deviceId,
+  (deviceId) => {
+    modelsStore().setActiveDevice(deviceId);
+    if (deviceId !== undefined && devicesStore().deviceFor(deviceId)?.status === 'ready') loadActiveDeviceModels(deviceId);
   },
   { immediate: true },
 );
 
-function refreshActiveHostWorkspace(hostId: string): void {
+watch(
+  () => devicesStore().devices.map((device) => device.id),
+  (ids, previous) => {
+    if (previous.some((id) => !ids.includes(id))) void workspacesStore().loadWorkspaces();
+  },
+);
+
+function refreshActiveDeviceWorkspace(deviceId: string): void {
   const workspace = workspacesStore().workspaces.find(
-    (candidate) => candidate.id === activeWorkspaceId.value && candidate.hostId === hostId,
+    (candidate) => candidate.id === activeWorkspaceId.value && candidate.deviceId === deviceId,
   );
   if (workspace === undefined) return;
   if (hasFailedSkillsRefresh(workspace)) refreshSkillsForRoots(workspace);
@@ -1194,15 +1201,15 @@ function refreshActiveHostWorkspace(hostId: string): void {
   }
 }
 
-function applyHostAccountEvent(hostId: string, event: AppEvent): boolean {
+function applyDeviceAccountEvent(deviceId: string, event: AppEvent): boolean {
   switch (event.type) {
     case 'modelCatalogChanged':
-      loadActiveHostModels(hostId);
-      void hostsStore().loadAccount(hostId);
+      loadActiveDeviceModels(deviceId);
+      void devicesStore().loadAccount(deviceId);
       return true;
     case 'configChanged':
-      modelsStore().setHostDefaultModel(hostId, event.config.defaultModel ?? null);
-      void hostsStore().loadAccount(hostId);
+      modelsStore().setDeviceDefaultModel(deviceId, event.config.defaultModel ?? null);
+      void devicesStore().loadAccount(deviceId);
       return true;
     case 'pluginsChanged':
     case 'capabilityChanged':
@@ -1214,17 +1221,17 @@ function applyHostAccountEvent(hostId: string, event: AppEvent): boolean {
 
 function createOnEventHandler(): KimiEventHandlers['onEvent'] {
   return (appEvent, meta) => {
-    if (meta.hostId !== undefined && applyHostAccountEvent(meta.hostId, appEvent)) return;
-    if (appEvent.type === 'hostsChanged') {
-      const { becameReady: ready } = hostsStore().applySnapshot(appEvent.hosts);
+    if (meta.deviceId !== undefined && applyDeviceAccountEvent(meta.deviceId, appEvent)) return;
+    if (appEvent.type === 'devicesChanged') {
+      const { becameReady: ready } = devicesStore().applySnapshot(appEvent.devices);
       if (ready.length > 0) {
         void workspacesStore().loadWorkspaces().then(() => {
-          for (const hostId of ready) loadHostSessions(hostId);
+          for (const deviceId of ready) loadDeviceSessions(deviceId);
         });
       }
-      for (const hostId of ready) {
-        refreshActiveHostWorkspace(hostId);
-        loadActiveHostModels(hostId);
+      for (const deviceId of ready) {
+        refreshActiveDeviceWorkspace(deviceId);
+        loadActiveDeviceModels(deviceId);
       }
       return;
     }
@@ -2109,11 +2116,11 @@ function resolveGateChatModel(
   return { chatModel, chatModelManaged: entry?.provider === MANAGED_KIMI_CODE_PROVIDER_ID };
 }
 
-function chatHostId(sessionId = rawState.activeSessionId): string | undefined {
+function chatDeviceId(sessionId = rawState.activeSessionId): string | undefined {
   const session = rawState.sessions.find((row) => row.id === sessionId);
   const workspaces = workspacesStore();
   const workspaceId = session === undefined ? workspaces.activeWorkspaceId : workspaces.workspaceIdForSession(session);
-  return session?.hostId ?? (workspaceId === null ? undefined : workspaces.workspaceById.get(workspaceId)?.hostId);
+  return session?.deviceId ?? (workspaceId === null ? undefined : workspaces.workspaceById.get(workspaceId)?.deviceId);
 }
 
 function gateVerdictInput(): ChatGateInput {
@@ -2138,7 +2145,7 @@ function activeSessionModelUnknown(): boolean {
 }
 
 const chatGateVerdict = computed<ChatGateVerdict>(() => {
-  if (chatHostId() !== undefined) return 'ok';
+  if (chatDeviceId() !== undefined) return 'ok';
   const verdict = computeGateVerdict(gateVerdictInput());
   if (verdict === 'pick-model' && activeSessionModelUnknown()) return 'ok';
   return verdict;
@@ -2151,9 +2158,9 @@ const MODEL_SWITCH_COMPACT_TIMEOUT_MS = 10 * 60 * 1000;
 let modelSelectGeneration = 0;
 
 async function applySelectModel(modelId: string): Promise<void> {
-  const hostId = chatHostId();
+  const deviceId = chatDeviceId();
   const switched = await modelProvider.setModel(modelId);
-  if (switched && hostId === undefined && modelId !== defaultModel.value) {
+  if (switched && deviceId === undefined && modelId !== defaultModel.value) {
     void configStore().updateConfig({ defaultModel: modelId });
   }
 }
@@ -2300,7 +2307,7 @@ function ensureChatReady(): Promise<EnsureChatReadyResult> {
 }
 
 async function runEnsureChatReady(): Promise<EnsureChatReadyResult> {
-  if (chatHostId() !== undefined) return 'ok';
+  if (chatDeviceId() !== undefined) return 'ok';
   const pendingSid = rawState.activeSessionId;
   if (pendingSid !== null && pendingSid !== undefined) {
     const row = rawState.sessions.find((s) => s.id === pendingSid);
@@ -2332,7 +2339,7 @@ async function runEnsureChatReady(): Promise<EnsureChatReadyResult> {
 }
 
 async function ensureSideChatReady(sid: string): Promise<EnsureChatReadyResult> {
-  if (chatHostId(sid) !== undefined) return 'ok';
+  if (chatDeviceId(sid) !== undefined) return 'ok';
   let verdict: EnsureChatReadyResult;
   if (sid === rawState.activeSessionId) {
     verdict = await ensureChatReady();
@@ -2365,7 +2372,7 @@ function dismissSendFailureVerdict(): void {
 }
 
 async function mapSendAuthFailure(err: unknown, sid?: string): Promise<ChatGateVerdict | null> {
-  if (chatHostId(sid) !== undefined) return null;
+  if (chatDeviceId(sid) !== undefined) return null;
   const initial = mapDaemonAuthError(err, { hasModels: modelsStore().hasModels });
   if (initial === null) return null;
   const generation = ++sendFailureMapGeneration;
@@ -2419,7 +2426,7 @@ function mentionCandidatesFrom(sessions: readonly AppSession[]): SessionMentionC
 }
 
 const sessionMentionsAvailable = computed(
-  () => useSessionMentions().sessionMentions.value && visibleWorkspace.value?.hostId === undefined,
+  () => useSessionMentions().sessionMentions.value && visibleWorkspace.value?.deviceId === undefined,
 );
 
 const sessionMentionCandidates = computed<SessionMentionCandidate[]>(() => {
@@ -2496,10 +2503,10 @@ watch(
     [
       workspacesStore().mergedWorkspaces.map((w) => w.id).join('\0'),
       rawState.loading,
-      hostsStore().loaded && hostsStore().hosts.every((host) => host.status === 'ready'),
+      devicesStore().loaded && devicesStore().devices.every((device) => device.status === 'ready'),
     ] as const,
-  ([idsKey, loading, everyHostListed]) => {
-    if (loading || !everyHostListed) return;
+  ([idsKey, loading, everyDeviceListed]) => {
+    if (loading || !everyDeviceListed) return;
     const current = idsKey ? idsKey.split('\0') : [];
     workspacesStore().reconcileOrder(current);
   },
@@ -2691,7 +2698,7 @@ const doneSessionsAll = computed<Session[]>(() => {
         updatedAt,
         workspaceId,
         workspaceName: ws?.name,
-        hostId: ws?.hostId,
+        deviceId: ws?.deviceId,
         archived: true,
         cwdLabel: s.cwd ? basename(s.cwd) : '-',
         pullRequest: s.pullRequest,
@@ -2834,22 +2841,26 @@ setConfigHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setApprovalsHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setTasksHooks({ pushOperationFailure: warningsStore().pushOperationFailure });
 setAuthHooks({ reload: () => workspaceBoot.load() });
-setHostsHooks({
-  onHostsChanged: ({ removed, becameDisabled }) => {
+setDevicesHooks({
+  signedIn: () => authStore().signedIn,
+  localDeviceId: () => configStore().deviceId,
+  pushWarning: (warning) => warningsStore().pushWarning(warning),
+  pushOperationFailure: warningsStore().pushOperationFailure,
+  onDevicesChanged: ({ removed, becameDisabled }) => {
     if (removed.length > 0) {
-      const removedWorkspaces = workspacesStore().removeHostWorkspaces(removed);
+      const removedWorkspaces = workspacesStore().removeDeviceWorkspaces(removed);
       for (const workspaceId of removedWorkspaces) {
         refreshedSkillRootsByWorkspace.delete(workspaceId);
         modelProvider.invalidateSkillsForWorkspace(workspaceId);
       }
-      const removedSessions = sessionListStore().removeHostSessions(removed, removedWorkspaces);
+      const removedSessions = sessionListStore().removeDeviceSessions(removed, removedWorkspaces);
       for (const sessionId of removedSessions) {
         modelProvider.invalidateSkillsForSession(sessionId);
         forgetSession(sessionId);
       }
     }
     if (becameDisabled.length > 0) {
-      workspacesStore().handleUnavailableHosts(becameDisabled);
+      workspacesStore().handleUnavailableDevices(becameDisabled);
     }
   },
 });

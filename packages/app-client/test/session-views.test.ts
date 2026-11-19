@@ -11,7 +11,7 @@ vi.stubGlobal('localStorage', {
 import type { AppApprovalRequest, AppQuestionRequest, AppSession } from '@moonshot-ai/app-core/api';
 import { STORAGE_KEYS } from '@moonshot-ai/app-core/lib';
 import { approvalsStore } from '../src/stores/approvals';
-import { hostsStore } from '../src/stores/hosts';
+import { devicesStore } from '../src/stores/devices';
 import { pinnedOrderStore } from '../src/stores/pinnedOrder';
 import { promptStore } from '../src/stores/prompt';
 import { sessionRuntimeStore } from '../src/stores/sessionRuntime';
@@ -71,7 +71,7 @@ function sessionRow(
 function seedWorkspaces(): void {
   workspacesStore().workspaces = [
     { id: 'ws-a', root: '/repo/a', name: 'Alpha', sessionCount: 0 },
-    { id: 'ws-b', root: '/repo/b', name: 'Beta', sessionCount: 0, hostId: 'devbox' },
+    { id: 'ws-b', root: '/repo/b', name: 'Beta', sessionCount: 0, deviceId: 'devbox' },
   ];
 }
 
@@ -104,8 +104,8 @@ function resetStores(): void {
   views.reloadUnread();
   views.setFlatSessionsFrontier(null);
   views.sessionTimeClock = 0;
-  hostsStore().byId = {};
-  hostsStore().loaded = false;
+  devicesStore().byId = {};
+  devicesStore().loaded = false;
 }
 
 beforeEach(() => {
@@ -236,7 +236,7 @@ describe('workspaceGroups / mobileWorkspaceGroups', () => {
     expect(groupB?.sessions.map((s) => s.id)).toEqual(['s-b']);
     expect(groupB?.pinnedCount).toBe(0);
   });
-  it('hides sessions of a disabled or removed host while keeping its workspace group', () => {
+  it('hides sessions of a disabled or removed device while keeping its workspace group', () => {
     seedWorkspaces();
     sessionsStore().setSessions([
       sessionRow('s-local', { updatedAt: T1 }),
@@ -247,7 +247,7 @@ describe('workspaceGroups / mobileWorkspaceGroups', () => {
     approvalsStore().setSessionApprovals('s-remote', [{ approvalId: 'a1' } as AppApprovalRequest]);
     workspacesStore().sessionsHasMoreByWorkspace = { 'ws-b': true };
     workspacesStore().sessionsLoadingMoreByWorkspace = { 'ws-b': true };
-    hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'disconnected', enabled: false }]);
+    devicesStore().applySnapshot([{ id: 'devbox', connection: 'ssh', host: 'dev.test', status: 'disconnected', enabled: false }]);
 
     const views = sessionViewsStore();
     const groupB = views.workspaceGroups.find((g) => g.workspace.id === 'ws-b');
@@ -264,7 +264,7 @@ describe('workspaceGroups / mobileWorkspaceGroups', () => {
     expect(views.recentSessionsForWorkspace('ws-b', 6, [])).toEqual([]);
     expect(views.attentionByWorkspace['ws-b']).toBeUndefined();
 
-    hostsStore().applySnapshot([{ id: 'devbox', host: 'dev.test', status: 'ready' }]);
+    devicesStore().applySnapshot([{ id: 'devbox', connection: 'ssh', host: 'dev.test', status: 'ready' }]);
     expect(views.workspaceGroups.find((g) => g.workspace.id === 'ws-b')?.sessions.map((s) => s.id)).toEqual(['s-remote']);
     expect(views.pinnedSessions.map((s) => s.id)).toEqual(['s-remote-pinned']);
   });
@@ -287,7 +287,7 @@ describe('pinnedSessions', () => {
 
     expect(rows.map((r) => r.id)).toEqual(['s1', 's2']);
     expect(rows[0]).toMatchObject({ pinned: true, workspaceName: 'Alpha', cwdLabel: 'a' });
-    expect(rows[1]).toMatchObject({ pinned: true, workspaceName: 'Beta', hostId: 'devbox', cwdLabel: 'b' });
+    expect(rows[1]).toMatchObject({ pinned: true, workspaceName: 'Beta', deviceId: 'devbox', cwdLabel: 'b' });
   });
 
   it('interleaves pinned workspaces and sessions, appends new pins at the tail, supports targeted drop-pinning and persists manual reordering', () => {

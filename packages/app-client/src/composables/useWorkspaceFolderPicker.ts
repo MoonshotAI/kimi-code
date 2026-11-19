@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 
 export interface WorkspaceFolderPickerRequest {
-  hostId?: string;
+  deviceId?: string;
   defaultPath?: string;
   multiple: boolean;
 }
@@ -12,7 +12,7 @@ export function useWorkspaceFolderPicker() {
 
   function pickWorkspaceFolders(options: Partial<WorkspaceFolderPickerRequest> = {}): Promise<string[]> {
     folderPickerRequest.value = {
-      hostId: options.hostId,
+      deviceId: options.deviceId,
       defaultPath: options.defaultPath,
       multiple: options.multiple ?? true,
     };
@@ -21,8 +21,8 @@ export function useWorkspaceFolderPicker() {
     });
   }
 
-  function pickRemoteWorkspaceDirs(hostId: string, defaultPath = ''): Promise<string[]> {
-    return pickWorkspaceFolders({ hostId, defaultPath, multiple: true });
+  function pickRemoteWorkspaceDirs(deviceId: string, defaultPath = ''): Promise<string[]> {
+    return pickWorkspaceFolders({ deviceId, defaultPath, multiple: true });
   }
 
   function completeWorkspaceFolderPicker(paths: string[]): void {

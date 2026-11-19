@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useKimiWebClient } from '@moonshot-ai/app-client/client';
+import { getKimiWebApi, useKimiWebClient } from '@moonshot-ai/app-client/client';
 import type { AppSession } from '../../api/types';
 import { serverEndpointLabel } from '../../api/config';
 import { useDialogFocus } from '@moonshot-ai/app-components';
@@ -12,7 +12,7 @@ import type { FontTarget } from '@moonshot-ai/app-core';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import type { ShortcutActionId } from '../../../shared/action-ids';
 import { usePlugins } from '@moonshot-ai/app-client/composables';
-import { PluginsPanel, ProvidersPanel, HostsPanel } from '@moonshot-ai/app-components';
+import { PluginsPanel, ProvidersPanel, DevicesPanel } from '@moonshot-ai/app-components';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, openTextFileInNative } from '../../lib/nativeOpenIn';
 import { canPickWorkspaceDirectory, pickNativeFile } from '../../lib/nativeWorkspacePicker';
 import { saveDefaultOpenInTarget, useDefaultOpenInTarget } from '@moonshot-ai/app-components';
@@ -33,7 +33,7 @@ import DockIconPicker from './DockIconPicker.vue';
 import BrowserSettingsTab from '../browser/BrowserSettingsTab.vue';
 import { copyTextToClipboard, hasDesktopBridge, isLinuxDesktop, isMacosDesktop, isRcLocation, prefersNativeTitleBar, providerDisplayName } from '@moonshot-ai/app-core/lib';
 import { useContextInspector, useSessionMentions, useSidebarTabs } from '@moonshot-ai/app-core';
-import { configStore, hostsStore } from '@moonshot-ai/app-client/stores';
+import { configStore, devicesStore } from '@moonshot-ai/app-client/stores';
 import { useActivityRunFolding, usePasteImageAutoMention, useRunningSendMode, useTurnFolding, type RunningSendMode, type SettingsHighlightKey } from '@moonshot-ai/app-client';
 import { useVibrancy } from '../../composables/useVibrancy';
 import { usePreventSystemSleep } from '../../composables/usePreventSystemSleep';
@@ -223,7 +223,7 @@ const emit = defineEmits<{
   logout: [];
   updateConfig: [patch: Partial<AppConfig>];
   openBrowserUrl: [url: string];
-  createProject: [hostId: string];
+  createProject: [deviceId: string];
   close: [];
 }>();
 
@@ -315,7 +315,11 @@ function onBodyScroll(): void {
 }
 
 const { state: pluginsState, probeSupport: probePluginSupport } = usePlugins();
-const remoteControl = useRemoteControl();
+const remoteControl = useRemoteControl(getKimiWebApi(), {
+  onRegistrationChange: () => {
+    if (signedIn.value) void devicesStore().loadRegistrations();
+  },
+});
 onMounted(() => {
   void probePluginSupport();
 });
@@ -1023,20 +1027,21 @@ function archiveTime(iso: string): string {
           </section>
           </div>
         </section>
-        <section v-if="activeTab === 'hosts'" class="panel">
-          <HostsPanel
+        <section v-if="activeTab === 'devices'" class="panel">
+          <DevicesPanel
             :open-ssh-config="canOpenInNative() ? (path: string) => void openTextFileInNative(path) : undefined"
-            :pick-identity-file="canPickWorkspaceDirectory() ? (defaultPath?: string) => pickNativeFile({ title: t('settings.hosts.identityLabel'), defaultPath }) : undefined"
-            :create-project="(hostId) => emit('createProject', hostId)"
-          />
-        </section>
-
-        <section v-if="activeTab === 'remoteControl'" class="panel">
-          <RemoteControlPanel
-            :controller="remoteControl"
-            :signed-in="signedIn"
+            :pick-identity-file="canPickWorkspaceDirectory() ? (defaultPath?: string) => pickNativeFile({ title: t('settings.devices.identityLabel'), defaultPath }) : undefined"
+            :create-project="(deviceId) => emit('createProject', deviceId)"
             @login="emit('login')"
-          />
+          >
+            <template v-if="desktopBridge" #this-device>
+              <RemoteControlPanel
+                :controller="remoteControl"
+                :signed-in="signedIn"
+                @login="emit('login')"
+              />
+            </template>
+          </DevicesPanel>
         </section>
 
         <section v-if="activeTab === 'browser'" class="panel">
@@ -1162,7 +1167,7 @@ function archiveTime(iso: string): string {
               <div class="row">
                 <span class="rlabel">
                   {{ t('settings.secondaryModel') }}
-                  <span class="hint">{{ t(hostsStore().hosts.length > 0 ? 'settings.secondaryModelHintLocalOnly' : 'settings.secondaryModelHint') }}</span>
+                  <span class="hint">{{ t(devicesStore().devices.length > 0 ? 'settings.secondaryModelHintLocalOnly' : 'settings.secondaryModelHint') }}</span>
                 </span>
                 <div v-if="modelGroups.length > 0" class="select-wrap">
                   <SecondaryModelPicker

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, effectScope, h, nextTick, type App } from 'vue';
 import { createKimiI18n } from '@moonshot-ai/app-i18n';
 import type { WorkspaceView } from '@moonshot-ai/app-core/client/types';
-import { hostsStore } from '@moonshot-ai/app-client/stores';
+import { devicesStore } from '@moonshot-ai/app-client/stores';
 
 import WorkspaceHoverCard from '../src/sidebar/WorkspaceHoverCard.vue';
 import { useWorkspaceHoverCard } from '../src/sidebar/useWorkspaceHoverCard';
@@ -121,7 +121,7 @@ describe('WorkspaceHoverCard', () => {
         workspace: {
           ...workspace,
           root: '/srv/app',
-          hostId: 'devbox',
+          deviceId: 'devbox',
           additionalDirs: [],
         },
         canOpen: true,
@@ -134,20 +134,20 @@ describe('WorkspaceHoverCard', () => {
   }
 
   afterEach(() => {
-    hostsStore().byId = {};
-    hostsStore().loaded = false;
+    devicesStore().byId = {};
+    devicesStore().loaded = false;
   });
 
   it('shows the device and its state together, above a plain remote path', async () => {
-    hostsStore().byId = { devbox: { id: 'devbox', name: 'Build box', host: 'devbox', status: 'ready' } };
-    hostsStore().loaded = true;
+    devicesStore().byId = { devbox: { id: 'devbox', connection: 'ssh', name: 'Build box', host: 'devbox', status: 'ready' } };
+    devicesStore().loaded = true;
     const emitted = vi.fn();
     const card = mountRemote(emitted);
     await nextTick();
 
     expect(card.querySelector('.whc-head')?.textContent?.trim()).toBe('code-app');
-    expect(card.querySelector('.whc-host-name')?.textContent).toBe('Build box');
-    expect(card.querySelector('.whc-host-state')).not.toBeNull();
+    expect(card.querySelector('.whc-device-name')?.textContent).toBe('Build box');
+    expect(card.querySelector('.whc-device-state')).not.toBeNull();
     expect(card.querySelector('.whc-path')?.textContent).toBe('/srv/app');
     expect(card.querySelector('button')).toBeNull();
     card.querySelector<HTMLElement>('.whc-directory--static')!.click();
@@ -155,14 +155,27 @@ describe('WorkspaceHoverCard', () => {
   });
 
   it('names the reason next to the device when the connection failed', async () => {
-    hostsStore().byId = { devbox: { id: 'devbox', host: 'devbox', status: 'disconnected', connectError: 'raw', connectFailure: 'connection_refused' } };
-    hostsStore().loaded = true;
+    devicesStore().byId = { devbox: { id: 'devbox', connection: 'ssh', host: 'devbox', status: 'disconnected', connectError: 'raw', connectFailure: 'connection_refused' } };
+    devicesStore().loaded = true;
     const card = mountRemote();
     await nextTick();
 
-    const states = [...card.querySelectorAll('.whc-host-state')];
+    const states = [...card.querySelectorAll('.whc-device-state')];
     expect(states).toHaveLength(2);
     expect(states[1]?.textContent?.trim()).not.toBe('');
-    expect(card.querySelector('.whc-host-state.failed')).not.toBeNull();
+    expect(card.querySelector('.whc-device-state.failed')).not.toBeNull();
+  });
+
+  it('names an offline account device by its alias and shows only its state', async () => {
+    devicesStore().byId = {
+      devbox: { id: 'devbox', connection: 'account', alias: 'Work Mac', status: 'disconnected', connectError: 'offline', connectFailure: 'offline' },
+    };
+    devicesStore().loaded = true;
+    const card = mountRemote();
+    await nextTick();
+
+    expect(card.querySelector('.whc-device-name')?.textContent).toBe('Work Mac');
+    expect([...card.querySelectorAll('.whc-device-state')].map((state) => state.textContent?.trim())).toEqual(['Offline']);
+    expect(card.querySelector('.ws-icon')?.getAttribute('aria-label')).toBe('Work Mac · Offline');
   });
 });

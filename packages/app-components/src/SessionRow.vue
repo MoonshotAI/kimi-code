@@ -571,7 +571,7 @@ function openPullRequest(): void {
     </div>
 
     <div v-if="showSubRow" class="sub">
-      <WorkspaceIcon class="sub-icon" :host-id="session.hostId" size="sm" status="none" />
+      <WorkspaceIcon class="sub-icon" :device-id="session.deviceId" size="sm" status="none" />
       <span class="sub-text">{{ session.workspaceName ?? session.cwdLabel }}</span>
       <!-- PR association (v2 git domain): a small tag at the second line's
            right edge; click opens the PR (system browser / new tab). Open PRs

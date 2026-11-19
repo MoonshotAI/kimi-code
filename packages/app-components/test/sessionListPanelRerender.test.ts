@@ -15,21 +15,31 @@ const fakes = vi.hoisted(() => ({
     pendingBySession: Record<string, { approvals: number; questions: number }>;
     unreadBySession: Record<string, boolean>;
   },
-  sessions: null as unknown as { activeSessionId: string | null },
+  sessions: null as unknown as { activeSessionId: string | null; sessions: unknown[]; pinnedSessionIds: string[] },
   workspaces: null as unknown as {
     activeWorkspaceId: string | null;
     workspaceSortMode: string;
     pinnedWorkspaceIds: string[];
     workspaces: Array<{ id: string }>;
+    workspaceById: Map<string, unknown>;
+    deviceScope: string | undefined;
+    setDeviceScope: (deviceId: string | undefined) => void;
   },
   client: null as unknown as Record<string, unknown>,
+  devices: [] as Array<{ id: string; connection: string; name: string }>,
 }));
 
 vi.mock('@moonshot-ai/app-client/stores', () => ({
   sessionViewsStore: () => fakes.views,
   sessionsStore: () => fakes.sessions,
   workspacesStore: () => fakes.workspaces,
-  hostsStore: () => ({ displayState: () => 'local', unavailable: () => false, blocked: () => false }),
+  devicesStore: () => ({
+    devices: fakes.devices,
+    displayName: (id: string) => fakes.devices.find((device) => device.id === id)?.name,
+    displayState: () => 'local',
+    unavailable: () => false,
+    blocked: () => false,
+  }),
 }));
 
 vi.mock('@moonshot-ai/app-client/client', () => ({
@@ -127,13 +137,17 @@ beforeEach(() => {
     pendingBySession: {},
     unreadBySession: {},
   });
-  fakes.sessions = reactive({ activeSessionId: 's-0-0' });
+  fakes.sessions = reactive({ activeSessionId: 's-0-0', sessions: [], pinnedSessionIds: [] });
   fakes.workspaces = reactive({
     activeWorkspaceId: 'ws-0',
     workspaceSortMode: 'recent',
     pinnedWorkspaceIds: [],
     workspaces: Array.from({ length: GROUPS }, (_, i) => ({ id: `ws-${i}` })),
+    workspaceById: new Map(),
+    deviceScope: undefined,
+    setDeviceScope: vi.fn(),
   });
+  fakes.devices = [];
   fakes.client = {
     flatSessions: ref([]),
     flatSessionsHasMore: ref(false),
@@ -159,6 +173,47 @@ afterEach(() => {
   app = null;
   renders.restore();
   host.remove();
+});
+
+describe('SessionListPanel device scope', () => {
+  function remoteGroup(groupIndex: number, deviceId: string): WorkspaceGroupView {
+    const value = group(groupIndex);
+    return { ...value, workspace: { ...value.workspace, deviceId } } as WorkspaceGroupView;
+  }
+
+  function listedWorkspaceIds(): (string | null)[] {
+    return [...host.querySelectorAll('[data-ws-id]')].map((el) => el.getAttribute('data-ws-id'));
+  }
+
+  it('lists only the projects of the selected device', async () => {
+    fakes.views.workspaceGroups = [group(0), remoteGroup(1, 'dev-1')];
+    fakes.views.unpinnedWorkspaceGroups = fakes.views.workspaceGroups;
+    await nextTick();
+    expect(listedWorkspaceIds()).toEqual(['ws-0']);
+
+    fakes.workspaces.deviceScope = 'dev-1';
+    await nextTick();
+    expect(listedWorkspaceIds()).toEqual(['ws-1']);
+  });
+
+  it('hides the switcher without other devices and switches devices from the project row', async () => {
+    expect(host.querySelector('.dss')).toBeNull();
+
+    app?.unmount();
+    fakes.devices = [{ id: 'dev-1', connection: 'ssh', name: 'GPU box' }];
+    Object.assign(fakes.views, { sessionsForView: [] });
+    app = installTestPlugins(createApp(SessionListPanel, { statusTab: 'open', canEditWorkspace: true }));
+    app.mount(host);
+    await nextTick();
+
+    expect(host.querySelector('.dss-name')?.textContent).toBe('This computer');
+    host.querySelector<HTMLButtonElement>('.dss')!.click();
+    await vi.waitFor(() => expect(host.querySelector('.dss-menu')).not.toBeNull());
+    const items = [...host.querySelectorAll<HTMLElement>('.dss-menu .dss-item')];
+    expect(items.map((item) => item.querySelector('.dss-label')?.textContent)).toEqual(['This computer', 'GPU box']);
+    items[1]!.click();
+    expect(fakes.workspaces.setDeviceScope).toHaveBeenCalledExactlyOnceWith('dev-1');
+  });
 });
 
 describe('SessionListPanel re-render scope', () => {

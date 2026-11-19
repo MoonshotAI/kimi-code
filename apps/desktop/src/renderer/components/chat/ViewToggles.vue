@@ -40,7 +40,7 @@ function toggleRightPanel(): void {
 <template>
   <div class="ch-toggles">
     <IconButton
-      v-if="terminalStore.available"
+      v-if="terminalStore.available && terminalStore.canOpen.value"
       class="ch-terminal"
       :class="{ open: terminalStore.open.value }"
       :label="terminalToggleLabel"
