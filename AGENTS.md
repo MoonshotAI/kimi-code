@@ -10,6 +10,11 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - Treat code, not documentation, as the source of truth. Unless the user explicitly says otherwise, do not read ordinary Markdown just to understand the implementation.
 - Before making code changes, read the relevant code and the most recent constraints, and follow the nearest `AGENTS.md` in the directory tree.
 - Keep changes focused. Do not slip in unrelated refactors along the way.
+- Surface conflicts explicitly. When two local patterns or instructions disagree, choose the newer, more specific, or better-tested one; explain the choice instead of blending incompatible approaches.
+- Keep implementation surgical and simple. Do not add speculative abstractions, configurability, or fallback paths that the current requirement does not need.
+- Make tests express intent. Prefer assertions that would fail when the meaningful behavior regresses, not only when the current implementation shape changes.
+- Be explicit about uncertainty and skipped verification. Do not describe tests, builds, or reviews as passing unless you actually ran or checked them.
+- Quantified claims must come from a measured source. If you mention counts, percentages, line totals, timings, or file numbers, base them on tool output or mark them as unmeasured estimates.
 - When committing, do not add any co-author attribution, and do not reveal the identity of the agent in commit messages, PR descriptions, or any explanatory text.
 
 ## Project Map
