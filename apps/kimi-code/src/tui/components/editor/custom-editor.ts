@@ -132,6 +132,7 @@ export class CustomEditor extends Editor {
   private argumentHints: ReadonlyMap<string, string> = new Map();
   private skillCommandNames: ReadonlySet<string> = new Set();
   private promptPrediction: string | undefined;
+  private promptPredictionPresentation: 'ghost' | 'recall' = 'ghost';
   private currentSubmitKey: SubmitKey = 'enter';
 
   get submitKey(): SubmitKey {
@@ -148,6 +149,11 @@ export class CustomEditor extends Editor {
 
   setPromptPrediction(text: string | undefined): void {
     this.promptPrediction = text;
+    this.promptPredictionPresentation = 'ghost';
+  }
+
+  parkPromptPrediction(): void {
+    if (this.promptPrediction !== undefined) this.promptPredictionPresentation = 'recall';
   }
 
   getPromptPrediction(): string | undefined {
@@ -158,6 +164,7 @@ export class CustomEditor extends Editor {
     const text = this.promptPrediction;
     if (text === undefined || this.getText().length > 0) return false;
     this.promptPrediction = undefined;
+    this.promptPredictionPresentation = 'ghost';
     this.setText(text);
     return true;
   }
@@ -287,6 +294,7 @@ export class CustomEditor extends Editor {
     }
     if (
       this.promptPrediction !== undefined &&
+      this.promptPredictionPresentation === 'ghost' &&
       this.inputMode === 'prompt' &&
       this.getText().length === 0 &&
       !this.hasAutocompleteActivity()
@@ -323,7 +331,18 @@ export class CustomEditor extends Editor {
         label: isBash ? ` ${currentTheme.boldFg('shellMode', '! shell mode')} ` : undefined,
       },
     );
-    return inactive ? framed.map((line) => currentTheme.fade(line)) : framed;
+    const rendered = inactive ? framed.map((line) => currentTheme.fade(line)) : framed;
+    if (
+      this.promptPrediction === undefined ||
+      this.promptPredictionPresentation !== 'recall' ||
+      this.inputMode !== 'prompt' ||
+      this.getText().length > 0 ||
+      this.hasAutocompleteActivity()
+    ) {
+      return rendered;
+    }
+    const recall = renderPromptPredictionRecall(this.promptPrediction, width);
+    return [inactive ? currentTheme.fade(recall) : recall, ...rendered];
   }
 
   private computeArgumentHint(): string | undefined {
@@ -686,6 +705,15 @@ function truncateHint(hint: string, maxLen: number): string {
   if (hint.length <= maxLen) return hint;
   if (maxLen === 1) return '…';
   return `${hint.slice(0, maxLen - 1)}…`;
+}
+
+function renderPromptPredictionRecall(prediction: string, width: number): string {
+  const prefix = '✦ Next prompt · ';
+  const suffix = ' · Tab / → recall · Esc dismiss';
+  const preview = prediction.replaceAll(/\s+/g, ' ').trim();
+  const available = Math.max(1, width - visibleWidth(prefix) - visibleWidth(suffix));
+  const trimmed = truncateToWidth(preview, available, '…');
+  return currentTheme.fg('textMuted', truncateToWidth(`${prefix}${trimmed}${suffix}`, width, '…'));
 }
 
 function injectPromptPrediction(line: string, prediction: string, width: number): string {
