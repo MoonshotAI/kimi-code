@@ -715,3 +715,22 @@ describe('non-streaming OpenAI reasoning', () => {
     expect(message).not.toHaveProperty('reasoning_details');
   });
 });
+
+it('keeps OpenAI system and developer instructions in order for routing and request assertions', async () => {
+  const model = fakeModel();
+  const workspace = 'Workspace: example-project';
+  model.route('workspace', (request) => request.texts('system').includes(workspace)).script(say('workspace reply'));
+  const chunks = await collect(clientOf(model), [
+    { role: 'system', content: 'First line\nSecond line' },
+    { role: 'developer', content: '' },
+    { role: 'user', content: 'hello' },
+    { role: 'developer', content: workspace },
+  ], { tools: false });
+
+  const request = model.request(0);
+  expect(request.texts('system')).toEqual(['First line\nSecond line', '', workspace]);
+  expect(request.view.system).toBe(`First line\nSecond line\n${workspace}`);
+  expect(request.view.messages.map((message) => message.role)).toEqual(['user']);
+  expect(contentOf(chunks)).toBe('workspace reply');
+  model.verify();
+});

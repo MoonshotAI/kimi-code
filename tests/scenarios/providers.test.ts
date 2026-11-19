@@ -1,7 +1,31 @@
-import { bash, say, think, withUsage, type FakeProviderType, type ProtocolName } from '@moonshot-ai/testkit/model';
+import { bash, fakeModelConfig, say, think, withUsage, type FakeProviderType, type ProtocolName } from '@moonshot-ai/testkit/model';
 import { test as base, describe, expect } from 'vitest';
 
 import { scenarioFixtures, type ScenarioFixtures } from './support/scenario';
+
+const test = base.extend<ScenarioFixtures>(scenarioFixtures());
+
+test('exposes the configured model alias and sends the wire model name through its provider', async ({ kap, model }) => {
+  expect(await kap.rest.get('/api/v1/providers/testkit')).toMatchObject({ id: 'testkit', models: ['testkit'] });
+  await kap.writeConfig(fakeModelConfig(model, {
+    type: 'openai',
+    alias: 'e2e/stub',
+    providerAlias: 'e2e',
+    modelName: 'stub',
+    maxContextSize: 128_000,
+    apiKey: 'test-key',
+  }));
+  await kap.restart();
+
+  expect(await kap.rest.get('/api/v1/providers/e2e')).toMatchObject({ id: 'e2e', type: 'openai', models: ['e2e/stub'] });
+  expect(await kap.rest.get('/api/v1/config')).toMatchObject({ default_model: 'e2e/stub' });
+  model.script(say('ready'));
+  const session = await kap.createSession();
+  await kap.prompt(session.id, 'check the selected model');
+  await kap.waitIdle(session.id);
+  expect(model.requests('main')).toMatchObject([{ authorization: 'Bearer test-key', view: { model: 'stub' } }]);
+  expect((await kap.turns(session.id))[0]).toMatchObject({ outcome: 'completed' });
+});
 
 const PROVIDERS: ReadonlyArray<{ readonly type: FakeProviderType; readonly protocol: ProtocolName; readonly path: RegExp }> = [
   { type: 'kimi', protocol: 'openai', path: /^\/v1\/chat\/completions$/ },

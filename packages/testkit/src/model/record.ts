@@ -40,6 +40,7 @@ export function factsOf(incoming: IncomingFacts): RequestFacts {
   const messages = incoming.view.messages;
   return {
     ...incoming,
+    view: { ...incoming.view, messages: messages.filter((message) => message.role !== 'system') },
     authorization: incoming.headers['authorization'],
     metadata: parseMetadata(incoming.headers['x-msh-client-metadata']),
     tools: incoming.view.tools.map((tool) => tool.name),

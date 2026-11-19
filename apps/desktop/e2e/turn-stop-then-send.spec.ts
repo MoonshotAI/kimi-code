@@ -1,3 +1,7 @@
+import { join } from 'node:path';
+import { writeKimiConfig } from '@moonshot-ai/testkit/fixtures';
+import { fakeModelConfig, held as holdReply, say as reply, startFakeModel, type FakeModel } from '@moonshot-ai/testkit/model';
+
 import { expect, test, type DesktopApp } from './fixtures/app';
 import { held, messageProblems, say, type StubModel } from './fixtures/model';
 
@@ -65,4 +69,52 @@ test('stopping a streaming turn keeps its partial answer and the next prompt get
     },
   });
   expect(model.aborts()).toBe(2);
+});
+
+const testWithProvider = test.extend<{ provider: FakeModel }>({
+  provider: async ({ app, scratch }, use) => {
+    const provider = await startFakeModel({ apiKey: 'test-key' });
+    try {
+      await writeKimiConfig(join(scratch, 'home'), fakeModelConfig(provider, {
+        type: 'openai', providerAlias: 'e2e', alias: 'e2e/stub', modelName: 'stub', apiKey: 'test-key',
+      }));
+      await app.relaunch();
+      await use(provider);
+    } finally {
+      try {
+        provider.verify();
+      } finally {
+        await provider.close();
+      }
+    }
+  },
+});
+
+testWithProvider('the desktop cancels its testkit provider stream and continues the same conversation', async ({ app, provider }) => {
+  const partial = 'I have checked the build.';
+  const remaining = ' The rest would follow.';
+  const answer = 'The next build is ready.';
+  provider.script(holdReply('after-first-chunk', reply([partial, remaining]), 1), reply(answer));
+
+  await app.submit('Check the build.');
+  const active = await provider.hold('after-first-chunk').reached();
+  const transcript = app.window.getByRole('list').first();
+  await expect(transcript.getByText(partial, { exact: true })).toBeVisible();
+  const sessionId = await app.sessionId();
+  expect(active.authorization).toBe('Bearer test-key');
+  expect(active.view.model).toBe('stub');
+  expect(active.texts('system').join('\n')).toContain(app.workspace);
+
+  await app.window.getByRole('button', { name: 'Interrupt', exact: true }).click();
+  await expect.poll(() => active.state).toBe('aborted');
+  await expect(transcript.getByRole('status').filter({ hasText: 'Manually stopped' })).toBeVisible();
+
+  await app.submit('Check the next build.');
+  await expect(transcript.getByText(answer, { exact: true })).toBeVisible();
+  await expect(transcript.getByText(partial, { exact: true })).toBeVisible();
+  await expect(transcript).not.toContainText(remaining.trim());
+  expect(await app.sessionId()).toBe(sessionId);
+  const requests = provider.requests('main');
+  expect(requests).toHaveLength(2);
+  expect(requests[1]?.texts('assistant').at(-1)).toBe(partial);
 });

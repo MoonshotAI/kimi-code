@@ -250,7 +250,7 @@ class FakeModelImpl implements FakeModel {
       headers: incoming.headers,
       rawBody: incoming.body,
       body,
-      view: { ...view, messages: view.messages.filter((message) => message.role !== 'system') },
+      view,
     });
     let lane: LaneState;
     try {

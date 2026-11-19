@@ -6,6 +6,7 @@ export type FakeProviderType = 'kimi' | 'openai' | 'anthropic' | 'google-genai';
 export interface FakeProviderOptions {
   readonly type?: FakeProviderType;
   readonly alias?: string;
+  readonly providerAlias?: string;
   readonly modelName?: string;
   readonly maxContextSize?: number;
   readonly capabilities?: readonly string[];
@@ -23,10 +24,11 @@ export const FAKE_PROVIDER_DEFAULTS = {
 export function fakeModelConfig(model: FakeModel, options: FakeProviderOptions = {}): KimiConfig {
   const type = options.type ?? FAKE_PROVIDER_DEFAULTS.type;
   const alias = options.alias ?? FAKE_PROVIDER_DEFAULTS.alias;
+  const providerAlias = options.providerAlias ?? alias;
   return {
     defaultModel: alias,
     providers: {
-      [alias]: {
+      [providerAlias]: {
         type,
         baseUrl: type === 'google-genai' ? model.origin : model.baseUrl,
         apiKey: options.apiKey ?? FAKE_PROVIDER_DEFAULTS.apiKey,
@@ -34,7 +36,7 @@ export function fakeModelConfig(model: FakeModel, options: FakeProviderOptions =
     },
     models: {
       [alias]: {
-        provider: alias,
+        provider: providerAlias,
         model: options.modelName ?? FAKE_PROVIDER_DEFAULTS.modelName,
         maxContextSize: options.maxContextSize ?? FAKE_PROVIDER_DEFAULTS.maxContextSize,
         capabilities: options.capabilities,

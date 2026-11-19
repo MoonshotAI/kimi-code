@@ -18,6 +18,7 @@ This is a private workspace package. When adopting it in another package, add `"
 | What a provider client sends and how it parses the reply | [假模型与 SDK 测试](docs/model.md) |
 | What a KAP client sees during tool use, approval, cancellation or restart | [编写 KAP 场景测试](docs/kap-scenarios.md) |
 | Code that reads configuration, uses a workspace or produces snapshots | [夹具、隔离与快照](docs/fixtures.md) |
+| A Playwright test that drives Kimi Code Desktop against a scripted provider | [在桌面端接入假模型](docs/model.md#在桌面端接入假模型) |
 
 To try the tool-call example or run both suites, use these commands from the repository root.
 
@@ -62,6 +63,7 @@ Failed KAP tests also print summaries of the most recent 32 WebSocket frames and
 - `model.fetch` serves requests in process. `await model.listen()` also serves them on `127.0.0.1` with a random port; then `model.baseUrl` is `http://127.0.0.1:<port>/v1` and `model.origin` has no path.
 - The request path picks the protocol: OpenAI chat completions (`kimi` and `openai` providers), Anthropic messages, or Google GenAI. `GET …/models` lists `options.models`.
 - `fakeModelConfig(model, { type })` produces the provider and model entries for `config.toml`. `startKap` adds them for you. New tests should use the default `kimi` type, because only that type sends the request metadata that routes subagent and compaction requests (see Lanes).
+- `alias` names the configured model, `providerAlias` names its provider (defaults to `alias`), and `modelName` is sent to the provider. For example, the desktop fixture registers `e2e/stub` under provider `e2e` and sends `stub` on the wire.
 
 ### Scripts and steps
 
@@ -122,6 +124,8 @@ model.hold('slow').release();
 ```
 
 A hold can also `fail(status)` before the headers or `cut()` the connection. `model.releaseHeld()` releases every hold a request is waiting at, and leaves holds that no request has reached yet. After parsing and routing, `model.requests(lane?)` and `model.request(index)` expose the raw body, parsed body, headers, metadata, state (`pending`, `streaming`, `held`, `finished`, `aborted`, `cut`, `failed`) and a normalized `view` of system text, tools and messages. Earlier failures such as invalid JSON or a wrong API key appear in `model.problems()`. Helpers include `firstUserText`, `userTextsSinceReply`, `remindersSinceReply` and `texts(role)`. `model.waitForRequest(index | predicate)` waits for a matching record.
+
+For OpenAI chat completions, `request.texts('system')` returns the individual system and developer messages in request order, including empty entries. Use `request.view.system` for the combined prompt across providers.
 
 ## The KAP harness
 
