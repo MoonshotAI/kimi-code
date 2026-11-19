@@ -27,7 +27,7 @@ const recordTypes = [
   'tool.ended',
   'tool.async_ended',
   'hook.failed',
-  'llm.retrying',
+  'llm.retry',
   'llm.notice',
 ] as const;
 

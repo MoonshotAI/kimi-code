@@ -18,6 +18,7 @@ import {
   type OpenAINativeToolCall,
   type OpenAILowerContext,
 } from '#/llm/builtin/protocol/openai/index';
+import { openAIMediaConversionPatterns } from '#/llm/builtin/protocol/openai/media-conversion';
 import {
   openAIResponsesModelLegality,
   openAIResponsesProtocol,
@@ -144,6 +145,7 @@ export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
     ...openAIModelLegality,
     fillMaxOutputTokens: fillKimiMaxOutputTokens,
   },
+  patterns: (module) => openAIMediaConversionPatterns(module.options?.toolMessageConversion ?? 'keep_parts'),
   thinking: (thinking) => (thinking === undefined ? undefined : kimiOpenAIThinkingParams(thinking)),
   maxOutputTokens: (cap) => ({ max_completion_tokens: cap }),
   tool: convertKimiTool,

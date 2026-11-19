@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { OpenAIResponsesTransportFixture } from '../types';
 
 export default {
-  name: 'stream-text',
+  name: 'as a Responses API user, I want streamed text and custom headers to use the real HTTP transport',
   module: testModule(),
   endpoint: {
     baseUrl: 'https://example.test/v1',
@@ -30,8 +30,7 @@ export default {
     headers: { authorization: 'Bearer test-key', 'x-custom': 'custom' },
     body: {
       model: 'test-model',
-      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
-      store: false,
+      messages: [{ role: 'user', content: 'hi' }],
       stream: true,
     },
     outcome: {

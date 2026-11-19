@@ -898,6 +898,44 @@ describe('server /api/v1/sessions list', () => {
     expect(grouped.groups[0]?.total).toBe(2);
   });
 
+  it('filters by query over title and last prompt (case-insensitive substring) or an exact id', async () => {
+    const byTitle = await getData('?query=ALPH');
+    expect(byTitle.items.map((item) => item.id)).toEqual(['s1']);
+
+    const byPrompt = await getData('?query=beta');
+    expect(byPrompt.items.map((item) => item.id)).toEqual(['s2']);
+
+    const byId = await getData('?query=S3');
+    expect(byId.items.map((item) => item.id)).toEqual(['s3']);
+    expect(byId.total).toBe(1);
+
+    const idFragment = await getData('?query=s');
+    expect(idFragment.items).toEqual([]);
+
+    const archived = await getData('?query=old&archived=all');
+    expect(archived.items.map((item) => item.id)).toEqual(['s4']);
+
+    const blank = await getData('?query=%20%20');
+    expect(blank.items.map((item) => item.id)).toEqual(['s1', 's2', 's3']);
+
+    const grouped = await getGroupData('?view=by_workspace&query=do');
+    expect(grouped.groups.map((group) => group.workspace_id)).toEqual([WS_A]);
+    expect(grouped.groups[0]?.sessions.map((item) => item.id)).toEqual(['s1', 's2']);
+  });
+
+  it('binds query into the page_token fingerprint', async () => {
+    const page1 = await getData('?page_size=1&query=do');
+    expect(page1.items.map((item) => item.id)).toEqual(['s1']);
+    expect(page1.has_more).toBe(true);
+
+    const page2 = await getData(`?page_size=1&query=do&page_token=${page1.next_page_token}`);
+    expect(page2.items.map((item) => item.id)).toEqual(['s2']);
+    expect(page2.has_more).toBe(false);
+
+    const drifted = await getError(`?page_size=1&query=alpha&page_token=${page1.next_page_token}`);
+    expect(drifted.code).toBe(40922);
+  });
+
   it('applies sort, workspace_id, and archived to groups with flat-view semantics', async () => {
     const asc = await getGroupData('?view=by_workspace&sort=updated_at_asc');
     expect(asc.groups.map((group) => group.workspace_id)).toEqual([WS_B, WS_A]);

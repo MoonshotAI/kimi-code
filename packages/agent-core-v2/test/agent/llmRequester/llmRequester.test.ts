@@ -932,7 +932,7 @@ async function requestCore(
     {
       signal,
       onEvent: (event) => {
-        if (event.type === 'llm.streaming.part') onPart(event.part);
+        if (event.type === 'llm.delta.part') onPart(event.part);
       },
     },
   );

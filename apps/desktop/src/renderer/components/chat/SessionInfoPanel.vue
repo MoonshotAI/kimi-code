@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useContextInspector } from '@moonshot-ai/app-core';
 import { Icon, IconButton } from '@moonshot-ai/app-ui';
 import { sessionInfoStore, sessionsStore, workspacesStore } from '@moonshot-ai/app-client/stores';
 import { SessionInfoPopover, sessionWorktreeDisplay } from '@moonshot-ai/app-components/support';
 import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
+import SessionInfoContext from './SessionInfoContext.vue';
 import SessionInfoFolder from './SessionInfoFolder.vue';
 import SessionInfoTabs from './SessionInfoTabs.vue';
 import type { SessionInfoMode } from '../../composables/useSessionInfoLayout';
@@ -14,9 +16,14 @@ import type { PanelLauncherItem } from '../../lib/panelLauncher';
 const props = withDefaults(defineProps<{
   sessionId: string;
   mode: SessionInfoMode;
+  ctxUsed?: number;
+  ctxMax?: number;
+  modelId?: string;
+  running?: boolean;
   tabs?: PanelTab[];
   available?: PanelLauncherItem[];
 }>(), {
+  running: false,
   tabs: () => [],
   available: () => [],
 });
@@ -27,11 +34,14 @@ const emit = defineEmits<{
   activate: [id: string];
   open: [type: PanelLauncherType];
   showTabs: [];
+  compact: [];
 }>();
 
 const { t } = useI18n();
+const { contextInspectorEnabled } = useContextInspector();
 const store = sessionInfoStore();
 const rows = computed(() => store.rows(props.sessionId));
+const contextState = computed(() => store.contextState?.(props.sessionId));
 const showFolders = ref(false);
 let folderLoadingTimer: ReturnType<typeof setTimeout> | undefined;
 watch(() => rows.value.map(row => row.state.status), (statuses) => {
@@ -88,6 +98,27 @@ watch(
     void store.refresh(sessionId);
   },
 );
+
+watch(
+  [() => props.sessionId, contextInspectorEnabled],
+  ([sessionId, enabled], _previous, onCleanup) => {
+    if (!sessionId || !enabled) return;
+    void store.observeContext?.(sessionId);
+    onCleanup(() => store.unobserveContext?.(sessionId));
+  },
+  { immediate: true },
+);
+
+watch(
+  () => [props.ctxUsed, props.ctxMax, props.modelId, props.running] as const,
+  ([used, max, model, running], [prevUsed, prevMax, prevModel, prevRunning]) => {
+    if (!props.sessionId || !contextInspectorEnabled.value) return;
+    const contextChanged = used !== prevUsed || max !== prevMax || model !== prevModel;
+    if (contextChanged || (prevRunning === true && !running)) {
+      void store.refreshContext?.(props.sessionId);
+    }
+  },
+);
 </script>
 
 <template>
@@ -130,6 +161,14 @@ watch(
         </template>
       </SessionInfoFolder>
     </div>
+    <SessionInfoContext
+      v-if="sessionId && contextInspectorEnabled"
+      :state="contextState"
+      :ctx-used="ctxUsed"
+      :ctx-max="ctxMax"
+      :can-compact="Boolean(sessionId) && !running"
+      @compact="emit('compact')"
+    />
     <SessionInfoTabs
       :tabs="tabs"
       :available="available"
@@ -178,5 +217,14 @@ watch(
 @media (hover: none) {
   .si-refresh { opacity: 1; }
 }
-.si-folders::after { content: ""; position: absolute; right: var(--space-4); bottom: 0; left: var(--space-4); height: var(--p-hairline); background: var(--color-line); }
+.si-folders::after,
+.session-info :deep(.si-context:has(+ .sit .sit-section))::after {
+  content: "";
+  position: absolute;
+  right: var(--space-4);
+  bottom: 0;
+  left: var(--space-4);
+  height: var(--p-hairline);
+  background: var(--color-line);
+}
 </style>

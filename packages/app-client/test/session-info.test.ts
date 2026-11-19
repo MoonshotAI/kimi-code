@@ -393,4 +393,56 @@ describe('sessionInfoStore', () => {
     expect(getGitStatusBatch).toHaveBeenCalledExactlyOnceWith('s2', { roots: ['/repo'], includePullRequest: false, includeUntracked: true }, undefined);
     expect(sessionInfoStore().rows('s2')[0]?.state).toEqual({ status: 'ready', value: gitStatus('main') });
   });
+
+  it('observes, refreshes in background, and preserves ready context summary across reobserves', async () => {
+    const summary1 = {
+      session_id: 's1',
+      agent_id: 'main',
+      captured_at: 1,
+      tokens: { used: 1200, max: 10000 },
+      groups: [{ role: 'user', count: 1, tokens: 1200 }],
+    };
+    const summary2 = { ...summary1, tokens: { used: 2400, max: 10000 } };
+    const nextSummary = deferred<typeof summary1>();
+    const getSessionContextSummary = vi.fn()
+      .mockResolvedValueOnce(summary1)
+      .mockReturnValueOnce(nextSummary.promise);
+    getKimiWebApiMock.mockReturnValue({ getSessionContextSummary });
+
+    await sessionInfoStore().observeContext('s1');
+    expect(getSessionContextSummary).toHaveBeenCalledExactlyOnceWith('s1', undefined, { background: true });
+    expect(sessionInfoStore().contextState('s1')).toEqual({ status: 'ready', value: summary1 });
+
+    const refreshing = sessionInfoStore().refresh('s1');
+    expect(sessionInfoStore().contextState('s1')).toEqual({ status: 'loading', value: summary1 });
+    nextSummary.resolve(summary2);
+    await refreshing;
+    expect(sessionInfoStore().contextState('s1')).toEqual({ status: 'ready', value: summary2 });
+
+    sessionInfoStore().unobserveContext('s1');
+    await sessionInfoStore().refresh('s1');
+    expect(getSessionContextSummary).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the last summary but reports the error when a context refresh fails', async () => {
+    const summary = {
+      session_id: 's1',
+      agent_id: 'main',
+      captured_at: 1,
+      tokens: { used: 1200, max: 10000 },
+      groups: [{ role: 'user', count: 1, tokens: 1200 }],
+    };
+    const getSessionContextSummary = vi.fn()
+      .mockResolvedValueOnce(summary)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(summary);
+    getKimiWebApiMock.mockReturnValue({ getSessionContextSummary });
+
+    await sessionInfoStore().observeContext('s1');
+    await sessionInfoStore().refreshContext('s1');
+    expect(sessionInfoStore().contextState('s1')).toEqual({ status: 'error', message: 'offline', value: summary });
+
+    await sessionInfoStore().refreshContext('s1');
+    expect(sessionInfoStore().contextState('s1')).toEqual({ status: 'ready', value: summary });
+  });
 });

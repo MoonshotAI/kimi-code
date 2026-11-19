@@ -74,6 +74,7 @@ import { effectiveThinkingLevel } from '@moonshot-ai/app-core/lib';
 import { isPurePreviewFile, modelDisplayName, subagentEffortSuffix } from '@moonshot-ai/app-core/lib';
 import { stripSkillPrefix, skillCommandArgs } from '@moonshot-ai/app-core/lib';
 import { TOWER_STATUS_PROMPT, TOWER_TEARDOWN_PROMPT } from '@moonshot-ai/app-core/lib';
+import { useContextInspector } from '@moonshot-ai/app-core';
 import { sessionDisplayStatus, type SessionDisplayStatus } from '@moonshot-ai/app-core/lib';
 import { Icon, IconButton, StatusDot } from '@moonshot-ai/app-ui';
 import { hasCustomTitleBar, hasDesktopBridge, isMacosDesktop, isWindowsDesktop } from '@moonshot-ai/app-core/lib';
@@ -1009,12 +1010,13 @@ const deadBtwTabIds = computed(() =>
     })
     .map((tab) => tab.id),
 );
-watch(deadBtwTabIds, (ids) => {
+function reapPanelTabs(ids: readonly string[]): void {
   if (ids.length === 0) return;
   const snapshot = reapFocusSnapshot(ids);
   for (const id of ids) panel.closeTab(id);
   focusHandoffAfterReap(snapshot.reapedActive, snapshot.focusWasInside);
-});
+}
+watch(deadBtwTabIds, reapPanelTabs);
 
 
 const canOpenTermTab = computed(() => terminalStore.available && !isMobile.value);
@@ -1149,6 +1151,10 @@ provide(panelApiKey, {
   openAgent: (id) => {
     closeDockWorkPanel();
     panel.openAgentPanel(id);
+  },
+  openContext: () => {
+    closeDockWorkPanel();
+    panel.openTab('context', {});
   },
   openTurnDiff: (payload) => {
     closeDockWorkPanel();
@@ -1295,6 +1301,14 @@ const panelTabsRef = ref<InstanceType<typeof PanelTabs> | null>(null);
 function openSessionInfoTab(type: PanelLauncherType): void {
   void panelTabsRef.value?.openLauncherTab(type);
 }
+
+const { contextInspectorEnabled } = useContextInspector();
+const disabledContextTabIds = computed(() =>
+  contextInspectorEnabled.value
+    ? []
+    : panel.panelTabs.value.filter((tab) => tab.type === 'context').map((tab) => tab.id),
+);
+watch(disabledContextTabIds, reapPanelTabs, { immediate: true });
 
 function armSideChatFocus(): { acted: () => boolean; focusWhenReady: () => void } {
   let userActed = false;

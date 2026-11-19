@@ -2,7 +2,7 @@ import { testModule } from '../../../harness';
 import type { OpenAITransportFixture } from '../types';
 
 export default {
-  name: 'non-stream-text',
+  name: 'as an OpenAI user, I want non-streaming text to use the real HTTP transport',
   module: testModule(),
   endpoint: { baseUrl: 'https://example.test/v1', apiKey: 'test-key' },
   stream: false,

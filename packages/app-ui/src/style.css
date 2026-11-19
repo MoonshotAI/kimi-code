@@ -229,6 +229,11 @@ html[data-color-scheme="dark"] {
   --color-done: #8250df;
   --color-done-soft: #f3e8ff;
   --color-done-bd: #e0ccff;
+  --color-context-definition: #84649a;
+  --color-context-assistant: #087f8c;
+  --color-syntax-string: #0a3069;
+  --color-syntax-number: #0550ae;
+  --color-syntax-keyword: #cf222e;
   --color-info: #1783ff;
   /* Terminal ANSI hues the status ramp doesn't carry (desktop xterm). */
   --color-term-magenta: #8250df;
@@ -245,6 +250,7 @@ html[data-color-scheme="dark"] {
   --space-5: 20px;
   --space-6: 24px;
   --space-8: 32px;
+  --radius-context-segment: 2px;
   --browser-annotation-label-max-width: 360px;
   --browser-annotation-popover-width: 26rem;
   --browser-annotation-popover-preview-height: 180px;
@@ -839,6 +845,11 @@ html[data-color-scheme="dark"] {
   --color-done: #a371f7;
   --color-done-soft: rgba(163, 113, 247, 0.14);
   --color-done-bd: rgba(163, 113, 247, 0.28);
+  --color-context-definition: #b59cc8;
+  --color-context-assistant: #54bdc5;
+  --color-syntax-string: #a5d6ff;
+  --color-syntax-number: #79c0ff;
+  --color-syntax-keyword: #ff7b72;
   --color-info: #1a88ff;
   /* Terminal ANSI hues the status ramp doesn't carry (desktop xterm). */
   --color-term-magenta: #d2a8ff;
@@ -934,6 +945,11 @@ html[data-color-scheme="dark"] {
     --color-term-magenta: #d2a8ff;
     --color-term-cyan: #76e3ea;
     --color-term-black: #484f58;
+    --color-context-definition: #b59cc8;
+    --color-context-assistant: #54bdc5;
+    --color-syntax-string: #a5d6ff;
+    --color-syntax-number: #79c0ff;
+    --color-syntax-keyword: #ff7b72;
     --color-info: #1a88ff;
     --color-composer-bg: #1f1f1f;
     --color-composer-line: rgba(255, 255, 255, 0.12);

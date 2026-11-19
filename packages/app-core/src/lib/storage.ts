@@ -61,10 +61,12 @@ export const STORAGE_KEYS = {
   notifyOnApproval: 'kimi-web.notify-on-approval',
   soundOnComplete: 'kimi-web.sound-on-complete',
   sessionInfoPanel: 'kimi-web.session-info-panel',
+  contextInspector: 'kimi-web.context-inspector',
   browserTabTitle: 'kimi-web.browser-tab-title',
   worktreeSourceByWorkspace: 'kimi-web.worktree-source-by-workspace',
   worktreeUseRemoteByWorkspace: 'kimi-web.worktree-use-remote-by-workspace',
   worktreeDiskRemindedLevel: 'kimi-web.worktree-disk-reminded-level',
+  sessionMentions: 'kimi-web.session-mentions',
 } as const;
 
 export const NEW_SESSION_SCOPE = '__new__';

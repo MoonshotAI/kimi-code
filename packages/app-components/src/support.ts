@@ -10,6 +10,7 @@ export * from './composables/useAnchoredMenu';
 export * from './lib/toolMeta';
 export * from './lib/activitySummary';
 export { useDialogFocus } from './composables/useDialogFocus';
+export { default as ContextSummaryBody } from './composer/ContextSummaryBody.vue';
 export { default as WorkspaceIcon } from './WorkspaceIcon.vue';
 export { default as HostNotice } from './HostNotice.vue';
 export * from './worktree/session';

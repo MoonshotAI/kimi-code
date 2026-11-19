@@ -42,6 +42,7 @@ import remoteControl from './en/remoteControl';
 import worktreeCreate from './en/worktreeCreate';
 import worktreeSession from './en/worktreeSession';
 import worktreeManage from './en/worktreeManage';
+import inspector from './en/inspector';
 
 export default {
   common,
@@ -88,4 +89,5 @@ export default {
   worktreeCreate,
   worktreeSession,
   worktreeManage,
+  inspector,
 };

@@ -14,7 +14,7 @@ import {
 
 describe('Bedrock provider', () => {
 
-  it('keeps token lifecycle, routing, and Anthropic authentication provider-local', async () => {
+  it('as a Bedrock user, I want provider-local token lifecycle, routing and Anthropic authentication', async () => {
     expect(
       [
         'global.anthropic.claude-sonnet-4-6',

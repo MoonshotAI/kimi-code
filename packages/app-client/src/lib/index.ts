@@ -17,6 +17,7 @@ export * from './oauthAuthWake';
 export * from './quoteSelection';
 export * from './browserScreenshotRecovery';
 export * from './sessionExecutionReadiness';
+export * from './sessionReferences';
 
 export * from './commandPrompt';
 export * from './dockMetrics';
