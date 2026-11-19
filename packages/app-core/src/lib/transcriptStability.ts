@@ -293,7 +293,7 @@ export function createStabilityProbe(scroller: HTMLElement, options: StabilityPr
 
   return {
     report() {
-      const sorted = [...frameTimes].sort((a, b) => a - b);
+      const sorted = [...frameTimes].toSorted((a, b) => a - b);
       return {
         ...report,
         frameP50Ms: percentile(sorted, 0.5),
