@@ -7,7 +7,7 @@ const VIEWPORT = 200;
 const SIZE = 36;
 const GAP = 4;
 
-const state = reactive({ count: 200, enabled: true });
+const state = reactive({ count: 200, start: 0, enabled: true });
 let app: App | null = null;
 let rawTop = 0;
 let scroller: HTMLElement;
@@ -62,6 +62,7 @@ async function scrollTo(top: number): Promise<void> {
 beforeEach(async () => {
   rawTop = 0;
   state.count = 200;
+  state.start = 0;
   state.enabled = true;
   vi.stubGlobal('ResizeObserver', class { observe(): void {} disconnect(): void {} });
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
@@ -74,9 +75,13 @@ beforeEach(async () => {
     scrollTop: { configurable: true, get: () => rawTop, set: (value: number) => { rawTop = value; } },
   });
   document.body.append(scroller);
+  await mount();
+});
+
+async function mount(): Promise<void> {
   app = createApp(defineComponent(() => () => h(VirtualList<number>, {
     ref: listRef,
-    items: Array.from({ length: state.count }, (_, i) => i),
+    items: Array.from({ length: state.count }, (_, i) => state.start + i),
     itemKey: (item: number) => `k${item}`,
     itemSize: SIZE,
     gap: GAP,
@@ -87,7 +92,7 @@ beforeEach(async () => {
   })));
   app.mount(scroller);
   await nextTick();
-});
+}
 
 afterEach(() => {
   app?.unmount();
@@ -133,6 +138,30 @@ describe('VirtualList', () => {
     await scrollTo(150 * (SIZE + GAP));
     expect(row('k2')).not.toBeNull();
     expect(document.activeElement).toBe(row('k2'));
+  });
+
+  it('keeps the first visible row in place when rows are prepended', async () => {
+    const stride = SIZE + GAP;
+    await scrollTo(100 * stride);
+    state.start = -20;
+    state.count = 220;
+    await nextTick();
+    await nextTick();
+    expect(rawTop).toBe(120 * stride);
+    expect(rectOf(row('k100')!).top).toBe(0);
+  });
+
+  it('starts virtualizing when it becomes enabled after mount', async () => {
+    app!.unmount();
+    state.enabled = false;
+    await mount();
+    state.enabled = true;
+    await nextTick();
+    await nextTick();
+    expect(rows()[0]).toBe('k0');
+    expect(rows().length).toBeLessThan(40);
+    await scrollTo(100 * (SIZE + GAP));
+    expect(rows()).toContain('k100');
   });
 
   it('renders every row without spacers when disabled', async () => {

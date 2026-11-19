@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 
 const props = withDefaults(defineProps<{
   items: readonly T[];
@@ -85,8 +85,16 @@ function release(): void {
   if (pinned.value.size) pinned.value = new Set();
 }
 
-onMounted(() => {
-  const el = root.value;
+function unbind(): void {
+  scroller?.removeEventListener('scroll', measure);
+  observer?.disconnect();
+  observer = null;
+  scroller = null;
+  viewport.value = null;
+}
+
+function bind(el: HTMLElement | null): void {
+  unbind();
   if (!el) return;
   scroller = (props.scrollRoot ? el.closest<HTMLElement>(props.scrollRoot) : null) ?? el.parentElement;
   if (!scroller) return;
@@ -96,12 +104,21 @@ onMounted(() => {
     observer.observe(scroller);
   }
   measure();
-});
+}
 
-onBeforeUnmount(() => {
-  scroller?.removeEventListener('scroll', measure);
-  observer?.disconnect();
-});
+watch(root, bind, { flush: 'post' });
+
+watch(keys, (next, previous) => {
+  const current = viewport.value;
+  if (!props.enabled || !scroller || !current || !previous.length) return;
+  const index = Math.min(previous.length - 1, Math.max(0, Math.floor(current.top / stride.value)));
+  const moved = next.indexOf(previous[index]!);
+  if (moved < 0 || moved === index) return;
+  scroller.scrollTop += (moved - index) * stride.value;
+  measure();
+}, { flush: 'post' });
+
+onBeforeUnmount(unbind);
 
 defineExpose({ reveal, release });
 </script>
