@@ -195,6 +195,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private macroGeneration = 0;
   private lifecycleDrained = true;
   private lifecycleIdle = true;
+  private startRequested = false;
   private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private readonly loopHooks = createLoopHookRegistry();
@@ -242,10 +243,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.requester = {
       coreRequester: (options) => this.coreRequester(options),
       prepareOperation: async (options, _signal) => {
-        if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
+        await this.start();
+        const loop = this.loop!;
         const config = this.requestConfigSnapshot();
         const tools = options.tools ?? this.baselineTools();
-        return this.loop.operation((runtime) => {
+        return loop.operation((runtime) => {
           const requester = this.coreRequester({ ...options, runtime, tools, config });
           return requester.snapshot?.() ?? requester;
         });
@@ -327,7 +329,27 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.states.set(loopDisposingKey, value);
   }
 
+  get started(): boolean {
+    return this.startRequested;
+  }
+
+  get hasPersistedState(): boolean {
+    const snapshot = this.journal.snapshot();
+    const inbox = snapshot.input.inbox;
+    return (
+      snapshot.profileBound ||
+      (snapshot.input.messages?.length ?? 0) > 0 ||
+      (inbox?.normal?.length ?? 0) > 0 ||
+      (inbox?.notify?.length ?? 0) > 0 ||
+      (inbox?.remind?.length ?? 0) > 0 ||
+      (snapshot.input.nextTurnId ?? 0) > 0 ||
+      snapshot.input.unfinished !== undefined
+    );
+  }
+
   async start(tools?: readonly Tool[]): Promise<void> {
+    if (this.startRequested) return this.startPromise;
+    this.startRequested = true;
     if (this.loop !== undefined) return;
     this.startPromise ??= this.initializeLoop(undefined, tools).finally(() => {
       this.startPromise = undefined;
@@ -876,6 +898,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   async resetLoop(seededMessages?: readonly Message[]): Promise<void> {
     if (this.disposing) return;
+    this.startRequested = true;
     const loop = this.loop;
     if (loop === undefined) {
       this.initialized = false;
@@ -1016,6 +1039,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private admit(input: UserMessage): { readonly id: string; readonly entry: UserMessage } {
     if (this.disposing) throw abortError('Agent loop disposed');
+    if (this.dispatcher.restorePhase === 'ready') {
+      void this.start().catch(() => this.close().catch(() => undefined));
+    }
     this.runGate.begin();
     const snapshot = this.snapshot();
     return this.prompts.admit(input, snapshot.state === 'running' || snapshot.paused || snapshot.queue.length > 0);

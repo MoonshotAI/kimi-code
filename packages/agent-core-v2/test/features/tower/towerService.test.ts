@@ -159,6 +159,7 @@ describe('AgentTowerService', () => {
   let addedTools: string[];
   let removedTools: string[];
   let activeTools: string[] | undefined;
+  let loopStarted: boolean;
   let policyInactiveTools: string[];
   let liveSessions: Map<string, { busy: boolean; pendingInteraction: SessionPendingInteraction; exit: Mock<() => Promise<void>>; title?: string; metadataReadFails?: boolean }>;
   let fireUnitsChanged: () => void = () => {};
@@ -230,6 +231,7 @@ describe('AgentTowerService', () => {
     addedTools = [];
     removedTools = [];
     activeTools = undefined;
+    loopStarted = false;
     policyInactiveTools = [];
     ix.stub(IAgentToolPolicyService, {
       isToolActive: (name: string) => !policyInactiveTools.includes(name),
@@ -238,6 +240,7 @@ describe('AgentTowerService', () => {
       ...stubLoopWithHooks(),
       get: () => [],
       data: () => ({ profileName: undefined }),
+      get started() { return loopStarted; },
       getActiveToolNames: () => activeTools,
       addActiveTool: (name: string) => {
         addedTools.push(name);
@@ -290,6 +293,9 @@ describe('AgentTowerService', () => {
     await expect(tower.enter()).resolves.toEqual({ entered: true });
     expect(tower.isActive).toBe(true);
     await tower.exit();
+    expect(tower.isActive).toBe(false);
+    loopStarted = true;
+    await expect(tower.enter()).resolves.toEqual({ entered: false, reason: 'loop-already-started' });
     expect(tower.isActive).toBe(false);
 
     expect(events).toEqual([
@@ -3431,6 +3437,8 @@ describe('AgentTowerService', () => {
 
     it('does not deliver a pending wake when tower mode exits before rendering completes', async () => {
       const realCtx = createTestAgent(appService(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)));
+      const realTower = realCtx.get(IAgentTowerService);
+      await realTower.enter();
       await realCtx.restorePersisted();
       const realLoop = realCtx.get(IAgentLoopService);
       let release!: () => void;
@@ -3438,8 +3446,6 @@ describe('AgentTowerService', () => {
       const originalLoad = TowerStore.prototype.load;
       const load = vi.spyOn(TowerStore.prototype, 'load');
       try {
-        const realTower = realCtx.get(IAgentTowerService);
-        await realTower.enter();
         load.mockImplementationOnce(async function (this: TowerStore) {
           await pending;
           return originalLoad.call(this);
@@ -3464,12 +3470,12 @@ describe('AgentTowerService', () => {
 
     it('keeps a materialized wake when tower mode exits', async () => {
       const realCtx = createTestAgent(appService(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)));
+      const realTower = realCtx.get(IAgentTowerService);
+      await realTower.enter();
       await realCtx.restorePersisted();
       const realLoop = realCtx.get(IAgentLoopService);
       const wakeTurns = () => realCtx.allEvents.filter((entry) => entry.type === '[rpc]' && entry.event === 'turn.started');
       try {
-        const realTower = realCtx.get(IAgentTowerService);
-        await realTower.enter();
         realCtx.mockNextResponse({ type: 'text', text: 'wake done' });
         realCtx.get(ISessionEventBus).publish(new TowerInboxSent({ from: 'w1', to: 'tower', subject: 'need wider scope' }));
         await vi.waitFor(() => {
@@ -3480,6 +3486,7 @@ describe('AgentTowerService', () => {
         await realLoop.settled();
         const materialized = [...realLoop.history()];
         expect(wakeTurns()).toHaveLength(1);
+        expect(realCtx.llmCalls[0]!.tools.map((tool) => tool.name)).toContain('TowerSpawn');
 
         await realTower.exit();
         await realLoop.settled();
@@ -3639,6 +3646,8 @@ describe('AgentTowerService', () => {
 
     it('re-arms the inbox wake after the interrupting user turn ends', async () => {
       const realCtx = createTestAgent(appService(IFlagService, stubFlag((id) => id === TOWER_FLAG_ID)));
+      const realTower = realCtx.get(IAgentTowerService);
+      await realTower.enter();
       await realCtx.restorePersisted();
       const realLoop = realCtx.get(IAgentLoopService);
       const quiescence = realLoop.tryAcquireQuiescence();
@@ -3656,8 +3665,6 @@ describe('AgentTowerService', () => {
         await next();
       });
       try {
-        const realTower = realCtx.get(IAgentTowerService);
-        await realTower.enter();
         realCtx.get(ISessionEventBus).publish(new TowerInboxSent({
           from: 'w1',
           to: 'tower',
@@ -4249,6 +4256,7 @@ describe('TowerModeInjection', () => {
     );
     context = ctx.get(IAgentLoopService);
     tower = ctx.get(IAgentTowerService);
+    await tower.enter();
     await ctx.restorePersisted();
   });
 
@@ -4262,7 +4270,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('injects the full reminder when tower mode turns on', async () => {
-    await tower.enter();
+    expect(tower.isActive).toBe(true);
 
     await injectDynamic(ctx);
     const text = lastTowerReminder(context);
@@ -4291,8 +4299,6 @@ describe('TowerModeInjection', () => {
   });
 
   it('injects the exit reminder when tower mode turns off after being active', async () => {
-    await tower.enter();
-
     await injectDynamic(ctx);
     await tower.exit();
     await injectDynamic(ctx);
@@ -4302,8 +4308,6 @@ describe('TowerModeInjection', () => {
   });
 
   it('emits the exit reminder once when the tower flag is turned off with an active reminder in context', async () => {
-    await tower.enter();
-
     await injectDynamic(ctx);
     expect(towerReminderMessages(context)).toHaveLength(1);
 
@@ -4322,6 +4326,7 @@ describe('TowerModeInjection', () => {
   });
 
   it('does not inject anything when tower mode is inactive from the start', async () => {
+    await tower.exit();
     await injectDynamic(ctx);
 
     expect(towerReminderMessages(context)).toHaveLength(0);
@@ -4329,8 +4334,6 @@ describe('TowerModeInjection', () => {
   });
 
   it('skips reinjection before the assistant-turn threshold', async () => {
-    await tower.enter();
-
     await injectDynamic(ctx);
     appendAssistantTurn(ctx, context, 'assistant one');
     await injectDynamic(ctx);
@@ -4339,8 +4342,6 @@ describe('TowerModeInjection', () => {
   });
 
   it('injects the sparse reminder after the short assistant-turn threshold', async () => {
-    await tower.enter();
-
     await injectDynamic(ctx);
     appendAssistantTurn(ctx, context, 'assistant one');
     appendAssistantTurn(ctx, context, 'assistant two');
@@ -4353,8 +4354,6 @@ describe('TowerModeInjection', () => {
   });
 
   it('refreshes the full reminder after the long assistant-turn threshold', async () => {
-    await tower.enter();
-
     await injectDynamic(ctx);
     for (let i = 0; i < 5; i += 1) {
       appendAssistantTurn(ctx, context, `assistant ${String(i)}`);
@@ -4367,8 +4366,6 @@ describe('TowerModeInjection', () => {
   });
 
   it('does not refresh the full reminder for an internal injection user-role message', async () => {
-    await tower.enter();
-
     await injectDynamic(ctx);
     appendAssistantTurn(ctx, context, 'assistant one');
     ctx.appendSystemReminder('inbox wake', { kind: 'injection', variant: 'tower_inbox' });
@@ -4378,8 +4375,6 @@ describe('TowerModeInjection', () => {
   });
 
   it('refreshes the full reminder when a user message follows at least one assistant turn', async () => {
-    await tower.enter();
-
     await injectDynamic(ctx);
     appendAssistantTurn(ctx, context, 'assistant one');
     ctx.appendUserMessage([{ type: 'text', text: 'next task' }]);
@@ -4391,8 +4386,6 @@ describe('TowerModeInjection', () => {
   });
 
   it('does not duplicate the full reminder when the first objective follows activation directly', async () => {
-    await tower.enter();
-
     await injectDynamic(ctx);
     ctx.appendUserMessage([{ type: 'text', text: 'first objective' }]);
     await injectDynamic(ctx);
@@ -4400,9 +4393,7 @@ describe('TowerModeInjection', () => {
     expect(towerReminderMessages(context)).toHaveLength(1);
   });
 
-  it('emits the exit reminder only once and returns the full reminder on re-entry', async () => {
-    await tower.enter();
-
+  it('emits the exit reminder once and rejects re-entry after startup', async () => {
     await injectDynamic(ctx);
     await tower.exit();
     await injectDynamic(ctx);
@@ -4410,11 +4401,11 @@ describe('TowerModeInjection', () => {
 
     expect(towerReminderMessages(context)).toHaveLength(2);
 
-    await tower.enter();
+    await expect(tower.enter()).resolves.toEqual({ entered: false, reason: 'loop-already-started' });
     await injectDynamic(ctx);
 
-    expect(towerReminderMessages(context)).toHaveLength(3);
-    expect(lastTowerReminder(context)).toContain('Tower mode is active');
+    expect(towerReminderMessages(context)).toHaveLength(2);
+    expect(lastTowerReminder(context)).toContain('Tower mode is no longer active');
   });
 
 });

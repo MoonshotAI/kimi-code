@@ -34,10 +34,6 @@ export const agentConfigErrors = {
   [ErrorCode.GOAL_UNSUPPORTED_AGENT]: {},
 } as const;
 
-/**
- * Resolve the optional binding that kap-server applies while creating the main
- * agent, before tool activation and loop startup.
- */
 export async function creationMainAgentBinding(
   core: Scope,
   agentConfig: SessionAgentConfigPartial & { readonly profile?: string },

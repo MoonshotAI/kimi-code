@@ -230,6 +230,7 @@ describe('AgentLifecycleService', () => {
   let loopClose: ReturnType<typeof vi.fn<IAgentLoopService['close']>>;
   let loopSetProfile: ReturnType<typeof vi.fn<IAgentLoopService['setProfile']>>;
   let loopProfileSequence: ProfileBindingSnapshot[];
+  let loopHasPersistedState: boolean;
   let beforeExecuteListeners: number;
   let didExecuteHookIds: string[];
 
@@ -417,10 +418,13 @@ describe('AgentLifecycleService', () => {
     const loopHistory: ContextMessage[] = [];
     let closePromise: Promise<void> | undefined;
     let loopProfile: ProfileBindingSnapshot = { thinkingLevel: 'off', systemPrompt: '' };
+    loopHasPersistedState = false;
     loopProfileSequence = [];
     const loopStub = {
       _serviceBrand: undefined,
       start: vi.fn(async () => {}),
+      started: false,
+      get hasPersistedState() { return loopHasPersistedState; },
       baselineTools: () => [],
       data: () => ({
         ...(loopProfileSequence.length > 0 ? loopProfileSequence.shift()! : loopProfile),
@@ -661,6 +665,7 @@ describe('AgentLifecycleService', () => {
     expect(main.agentId).toBe('main');
     expect(svc.get('main')).toBe(main);
     expect(svc.handleOf('main')).toBeDefined();
+    expect(loopStart).not.toHaveBeenCalled();
     expect(svc.list()).toEqual([main]);
     await svc.remove(main);
     expect(svc.get('main')).toBeUndefined();
@@ -774,6 +779,7 @@ describe('AgentLifecycleService', () => {
 
   it('create and close failures after scope creation keep the context active through async teardown', async () => {
     const failure = new Error('boom');
+    loopHasPersistedState = true;
     loopStart.mockRejectedValueOnce(failure);
     loopClose.mockRejectedValueOnce(failure);
     const svc = ix.get(IAgentLifecycleService);
@@ -1084,6 +1090,8 @@ describe('AgentLifecycleService', () => {
     });
     expect(log.appended.filter((record) => record.type === 'profile.bind')).toHaveLength(1);
     expect(loopSetProfile).toHaveBeenCalledOnce();
+    loopHasPersistedState = true;
+    await svc.create({ agentId: 'restored' });
     expect(loopStart).toHaveBeenCalledOnce();
     expect(loopSetProfile.mock.invocationCallOrder[0]).toBeLessThan(
       loopStart.mock.invocationCallOrder[0]!,
@@ -1107,7 +1115,7 @@ describe('AgentLifecycleService', () => {
     expect(log.appended.some((record) => record.type === 'metadata')).toBe(false);
     expect(log.appended.some((record) => record.type === 'profile.bind')).toBe(false);
     expect(loopSetProfile).not.toHaveBeenCalled();
-    expect(loopStart).toHaveBeenCalledOnce();
+    expect(loopStart).not.toHaveBeenCalled();
   });
 
   it('leaves permission mode at the default when permissionMode is omitted', async () => {
