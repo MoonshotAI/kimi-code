@@ -52,6 +52,7 @@
     "@moonshot-ai/kap-server": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
+    "@moonshot-ai/testkit": "workspace:^",
     "@moonshot-ai/vite-preset": "workspace:*",
     "@playwright/test": "1.63.0",
     "@rive-app/canvas": "2.38.5",

@@ -4,7 +4,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 
+const require = createRequire(resolve('apps/desktop/package.json'));
+const { gt } = require('semver');
 const script = resolve('scripts/canary-version.mjs');
 const changesetCli = resolve('node_modules/.bin/changeset');
 
@@ -24,11 +27,12 @@ void test('Canary version follows real changesets before and after the release p
     config.changelog = false;
     writeFileSync(join(cwd, '.changeset/config.json'), JSON.stringify(config));
     writeFileSync(join(root, 'bin/pnpm'), '#!/usr/bin/env node\nconst { spawnSync } = require("node:child_process");\nconst result = spawnSync(process.env.CHANGESET_CLI, process.argv.slice(3), { stdio: "inherit" });\nprocess.exit(result.status ?? 1);\n', { mode: 0o755 });
-    const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, CHANGESET_CLI: changesetCli, GITHUB_REF_NAME: 'release/week', GITHUB_RUN_NUMBER: '108', GITHUB_RUN_ATTEMPT: '2', GITHUB_SHA: 'a'.repeat(40), CANARY_TARGET_VERSION: '' };
+    writeFileSync(join(root, 'bin/gh'), '#!/usr/bin/env node\nif (process.argv[2] === "api") { console.log(JSON.stringify({ created_at: process.env.CANARY_TEST_CREATED_AT })); } else { process.exit(1); }\n', { mode: 0o755 });
+    const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, CHANGESET_CLI: changesetCli, GITHUB_REF_NAME: 'release/week', GITHUB_REPOSITORY: 'MoonshotAI/kimi-code', GITHUB_RUN_ID: '44474123970', GITHUB_RUN_NUMBER: '108', GITHUB_RUN_ATTEMPT: '2', GITHUB_SHA: 'a'.repeat(40), CANARY_TARGET_VERSION: '', CANARY_TEST_CREATED_AT: '2026-11-19T06:42:26Z' };
     const run = (dir = cwd, extra = {}) => spawnSync(process.execPath, [script], { cwd: dir, env: { ...env, ...extra }, encoding: 'utf8' });
     const expectVersion = (result, version) => {
       assert.equal(result.status, 0, result.stderr);
-      assert.equal(result.stdout, `version=${version}-canary.108.2.gaaaaaaaa\n`);
+      assert.equal(result.stdout, `version=${version}-canary.20261119064226-aaaaaaa\n`);
     };
 
     git(cwd, 'init', '-b', 'main');
@@ -70,6 +74,10 @@ void test('Canary version follows real changesets before and after the release p
     expectVersion(run(), '1.0.6');
     expectVersion(run(cwd, { GITHUB_REF_NAME: 'main' }), '1.0.6');
     expectVersion(run(cwd, { GITHUB_REF_NAME: 'main', CANARY_TARGET_VERSION: '1.0.7' }), '1.0.7');
+    assert.equal(run(cwd, { GITHUB_REF_NAME: 'main', CANARY_TARGET_VERSION: '1.0.7', GITHUB_RUN_NUMBER: '15' }).stdout, 'version=1.0.7-canary.20261119064226-aaaaaaa\n');
+    assert.equal(run(cwd, { GITHUB_REF_NAME: 'main', CANARY_TARGET_VERSION: '1.0.7', GITHUB_RUN_NUMBER: '15', GITHUB_RUN_ATTEMPT: '99' }).stdout, 'version=1.0.7-canary.20261119064226-aaaaaaa\n');
+    assert.notEqual(run(cwd, { GITHUB_REF_NAME: 'main', CANARY_TARGET_VERSION: '1.0.7', CANARY_TEST_CREATED_AT: 'not-a-date' }).status, 0);
+    assert.ok(gt('1.0.7-canary.20261119064226-aaaaaaa', '1.0.7-canary.329.1.gaaaaaaaa'));
     writeFileSync(join(cwd, '.changeset/second.md'), '---\n"kimi-code-app": minor\n---\n\nA feature.\n');
     git(cwd, 'add', '.');
     git(cwd, 'commit', '-m', 'minor changeset');
@@ -79,8 +87,11 @@ void test('Canary version follows real changesets before and after the release p
     git(cwd, 'commit', '-m', 'consume all changesets');
     expectVersion(run(cwd, { GITHUB_REF_NAME: 'main' }), '1.0.6');
     assert.notEqual(run(cwd, { GITHUB_REF_NAME: 'feat/nightly' }).status, 0);
-    execFileSync(process.execPath, [script, '--stamp'], { cwd, env: { ...env, CANARY_VERSION: '1.0.6-canary.108.2.gaaaaaaaa' } });
-    assert.equal(JSON.parse(readFileSync(join(cwd, 'apps/desktop/package.json'), 'utf8')).version, '1.0.6-canary.108.2.gaaaaaaaa');
+    execFileSync(process.execPath, [script, '--stamp'], { cwd, env: { ...env, CANARY_VERSION: '1.0.6-canary.20261119064226-aaaaaaa' } });
+    assert.equal(JSON.parse(readFileSync(join(cwd, 'apps/desktop/package.json'), 'utf8')).version, '1.0.6-canary.20261119064226-aaaaaaa');
+    execFileSync(process.execPath, [script, '--stamp'], { cwd, env: { ...env, CANARY_VERSION: '1.0.6-canary.329.1.gaaaaaaaa' } });
+    assert.equal(JSON.parse(readFileSync(join(cwd, 'apps/desktop/package.json'), 'utf8')).version, '1.0.6-canary.329.1.gaaaaaaaa');
+    assert.notEqual(spawnSync(process.execPath, [script, '--stamp'], { cwd, env: { ...env, CANARY_VERSION: '1.0.6-canary.20261119064226.1.gaaaaaaa' } }).status, 0);
     assert.equal(readFileSync(join(cwd, '.changeset/release-plan.json'), 'utf8'), plan);
   } finally {
     rmSync(root, { recursive: true, force: true });
