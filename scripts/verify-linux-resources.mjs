@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { createRequire } from 'node:module';
+
+const require = createRequire(resolve('apps/desktop/package.json'));
+const builderRequire = createRequire(require.resolve('electron-builder'));
+const asarRequire = createRequire(builderRequire.resolve('app-builder-lib'));
+const { extractFile } = asarRequire('@electron/asar');
+const [resources, format] = process.argv.slice(2);
+assert.ok(resources && ['AppImage', 'deb', 'rpm'].includes(format));
+const config = readFileSync(join(resources, 'app-update.yml'), 'utf8');
+assert.match(config, /^channel: canary$/m);
+assert.match(config, /^updaterCacheDirName: kimi-code-canary-updater$/m);
+const pkg = JSON.parse(extractFile(join(resources, 'app.asar'), 'package.json').toString());
+assert.equal(pkg.name, 'kimi-code-app');
+assert.equal(pkg.desktopName, 'kimi-code-canary.desktop');
+assert.match(pkg.version, /-canary\./);
+if (format !== 'AppImage') assert.equal(readFileSync(join(resources, 'package-type'), 'utf8').trim(), format);
+console.log(`${format}: Canary channel, cache and desktop identity verified`);

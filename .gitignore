@@ -43,3 +43,11 @@ handover.md
 *-mockup.html
 *-demo.html
 *-demos.html
+
+# desktop (kimi-code-app) local signing & test outputs
+.env
+.ci-signing/
+mac_keys
+*.log
+test-results/
+playwright-report/

@@ -1,23 +1,25 @@
 ---
 name: sync-changelog
-description: Use after a release succeeds, when maintainers need to sync apps/kimi-code/CHANGELOG.md into docs/en/release-notes/changelog.md and docs/zh/release-notes/changelog.md, then open a PR on a dedicated branch.
+description: Use after a release succeeds — sync apps/kimi-code/CHANGELOG.md into the docs-site changelogs (docs/en|zh/release-notes/changelog.md) on a dedicated branch, or prepare the desktop update-dialog bilingual notes under release-notes/<version>/ from apps/desktop/CHANGELOG.md.
 ---
 
 # Sync Changelog
 
 ## Overview
 
-`kimi-code` uses changesets for versioning. Each package gets its own `CHANGELOG.md`. The user-facing CLI package, `@moonshot-ai/kimi-code`, writes its changelog here:
+`kimi-code` uses changesets for versioning. Each package gets its own `CHANGELOG.md`. Three products are user-facing — the CLI (`@moonshot-ai/kimi-code`, `apps/kimi-code`), desktop (`kimi-code-app`, `apps/desktop`), and the VS Code extension (`kimi-code`, `apps/vscode`) — and each has its own changelog outlet:
 
-```text
-apps/kimi-code/CHANGELOG.md
-```
+- **CLI**: `apps/kimi-code/CHANGELOG.md` syncs into the documentation-site changelogs (`docs/en/release-notes/changelog.md` and `docs/zh/release-notes/changelog.md`) — **Flow A** below. Internal package changelogs (`packages/*/CHANGELOG.md`) never enter the documentation site.
+- **Desktop**: the update dialog shows bilingual release notes from `release-notes/<version>/changelog.{en,zh}.md` at the repo root, curated from `apps/desktop/CHANGELOG.md` — **Flow B** below. The CDN upload at publish time is handled by the release flow (the CDN publish script lives in the ops repo).
+- **VS Code** (`apps/vscode/CHANGELOG.md`): surfaces through the marketplace pages; no docs sync.
 
-This file is the **only upstream source** for the documentation-site changelog. Internal package changelogs such as `packages/*/CHANGELOG.md` do not go into the documentation site.
+This skill covers Flow A and Flow B. Run the one that matches the release you are handling.
 
-After the release flow finishes (Release PR merged → `Version Packages` completed → npm publish succeeded), maintainers manually run this skill to copy the new CLI changelog entries into the docs site, translate the English increment into Chinese, wait for an optional human review, then commit on a dedicated branch and open a PR.
+---
 
-## When To Use
+## Flow A: CLI Changelog → Docs Site
+
+### When To Use
 
 - A new version has been published to npm.
 - The top of `apps/kimi-code/CHANGELOG.md` contains version blocks that are not yet in `docs/en/release-notes/changelog.md`.
@@ -25,7 +27,7 @@ After the release flow finishes (Release PR merged → `Version Packages` comple
 
 Do **not** run this before the Release PR is merged. At that point, changesets has not yet written the new version into `apps/kimi-code/CHANGELOG.md`.
 
-## Source And Targets
+### Source And Targets
 
 | File | Role | Edited by |
 |---|---|---|
@@ -35,7 +37,7 @@ Do **not** run this before the Release PR is merged. At that point, changesets h
 
 Core rule: the English docs changelog is the source of truth, and Chinese is translated from English. This matches `translate-docs`.
 
-## Preconditions
+### Preconditions
 
 Before editing, confirm:
 
@@ -46,7 +48,7 @@ If any condition is not true, stop and confirm with the user.
 
 Do **not** edit or commit directly on `main`. All sync work happens on a dedicated branch created in step 1.
 
-## Workflow
+### Workflow
 
 ### 1. Prepare Branch
 
@@ -211,7 +213,7 @@ Insert new version blocks immediately after the header paragraph and before the 
 Every version heading must carry its release date in parentheses:
 
 ```text
-## <version> (YYYY-MM-DD)
+### <version> (YYYY-MM-DD)
 ```
 
 Take the date from the version's published GitHub Release tag, not from when you run the sync:
@@ -225,7 +227,7 @@ Use the half-width parenthesis form ` (YYYY-MM-DD)` on the English page. Never i
 Example:
 
 ```markdown
-## 0.2.0 (2026-05-26)
+### 0.2.0 (2026-05-26)
 
 ### Bug Fixes
 
@@ -408,21 +410,21 @@ Fill in `.github/pull_request_template.md`. For changelog sync PRs:
 Example body:
 
 ```markdown
-## Related Issue
+### Related Issue
 
 N/A — post-release docs maintenance
 
-## Problem
+### Problem
 
 The docs-site changelog has not yet been synced for `<version range>` after the npm release.
 
-## What changed
+### What changed
 
 - Synced `<version range>` from `apps/kimi-code/CHANGELOG.md` into `docs/en/release-notes/changelog.md`
 - Translated the new English increment into `docs/zh/release-notes/changelog.md`
 - Verified with `pnpm --filter docs run build`
 
-## Checklist
+### Checklist
 
 - [x] I have read the CONTRIBUTING document.
 - [x] I have linked a related issue, or explained the problem above.
@@ -433,7 +435,7 @@ The docs-site changelog has not yet been synced for `<version range>` after the 
 
 Return the PR URL to the user when done.
 
-## Rules
+### Rules
 
 - The English docs changelog is the source of truth.
 - Never edit upstream `apps/kimi-code/CHANGELOG.md`.
@@ -443,7 +445,7 @@ Return the PR URL to the user when done.
 - Always sync on a `docs/changelog-sync-*` branch and open a PR; never push changelog docs sync directly to `main`.
 - Wait for the human review checkpoint before committing, pushing, or opening a PR.
 
-## Common Mistakes
+### Common Mistakes
 
 | Mistake | Fix |
 |---|---|
@@ -483,7 +485,7 @@ Return the PR URL to the user when done.
 | Using curly quotes or half-width Chinese punctuation | Follow `docs/AGENTS.md` |
 | Omitting the release date from a version heading, or guessing it | Add ` (YYYY-MM-DD)` (full-width `（）` in Chinese) taken from the published tag |
 
-## Stop Signals
+### Stop Signals
 
 - The top version in `apps/kimi-code/CHANGELOG.md` is not published on npm or GitHub Releases.
 - You are about to edit `apps/kimi-code/CHANGELOG.md`.
@@ -493,3 +495,88 @@ Return the PR URL to the user when done.
 - A Chinese term is uncertain and `docs/AGENTS.md` does not answer it.
 - A `docs/changelog-sync-*` branch already exists for the same version and you cannot confirm whether it is stale.
 - The user asked to review but has not yet confirmed review is complete.
+---
+
+## Flow B: Desktop Update-Dialog Notes
+
+The desktop update dialog is a 440px-wide glance surface, not documentation. This flow curates the entries for one desktop version from `apps/desktop/CHANGELOG.md` (changesets-generated, English entries), sections them, translates them into Chinese, and archives both files for the release owner to review.
+
+### Input
+
+- A version number (e.g. `1.3.8`). If the user does not give one, use the newest version at the top of `apps/desktop/CHANGELOG.md` and confirm.
+- The version must already be in the CHANGELOG (the version PR has merged). If there is no `## <version>` section, **stop and report** — never substitute another version or invent entries.
+
+### Output
+
+Write two files under `release-notes/<version>/` at the repo root (create the directory if needed):
+
+- `changelog.en.md`: English, sections + bullet lists.
+- `changelog.zh.md`: Chinese translation, **mirroring the English file 1:1 in section set, order, and entry count**.
+
+Format (blank line between sections; no version heading, no date, nothing beyond the entries):
+
+```markdown
+### Features
+
+- Updates can now download in the background; restart to apply. Enable in Settings > Advanced.
+
+### Bug Fixes
+
+- Fixed a black screen when clicking the close button in fullscreen.
+```
+
+Fixed section order, with the Chinese mapping:
+
+| English | 中文 | Meaning |
+|---|---|---|
+| `### Features` | `### 新功能` | New capabilities users could not do before |
+| `### Polish` | `### 优化` | User-perceivable improvements to existing functionality |
+| `### Bug Fixes` | `### 修复` | Fixes for broken behavior |
+| `### Other` | `### 其他` | Anything else |
+
+Order: Features → Polish → Bug Fixes → Other. **Omit empty sections.** Desktop changesets only record user-perceivable changes, so there is no Refactors section.
+
+### Length Limits (Hard Requirements)
+
+**Overlong entries are the most common review rejection:**
+
+- **One sentence per entry: English ≤ 15 words, Chinese ≤ 40 characters.** Not a suggestion — compress until it fits.
+- **One effect per entry.** No bundled effects ("fixed A, also fixed B, and improved C" is an automatic reject). The only exception is a short usage-hint clause (e.g. "enable in Settings > Advanced").
+- **Condense long upstream entries instead of copying.** Keep only the effect users care about most and drop the rest — the dialog is glanced at, then closed. Compression must stay factual; never invent effects.
+- **At most 10 entries total.** Merge first (step 3); if still over, cut the lowest reader value. Only the 10 most important entries ship, no matter how big the release.
+
+### Steps
+
+1. Read `apps/desktop/CHANGELOG.md` and locate the section from `## <version>` to the next `## `.
+2. Extract entries: changesets entries look like ``- [#74](...) [`3adc4c5`](...) Thanks [@user](...)! - actual text``; keep only the text after `! - `, stripping PR links, commit links, and the Thanks credit. Multiple entries from one PR are normal — they all go to the next step.
+3. **Merge and dedupe** with the same rules as Flow A step 4: merge small tweaks to the same surface into one higher-level entry; merge three-or-more same-area or same-kind fixes into one; do not over-merge broad, high-value, or genuinely distinct fixes.
+4. **Classify** with the same test as Flow A: could users do this before? **No** → Features. **Yes** → Polish. When unsure, inspect the stripped commit (`git show <hash>`) or the PR (`gh pr view <N>`); if still unclear, use Other — do not guess into Features. Default-behavior changes are usually Polish.
+5. **Order within sections** by reader value, not upstream order: broad, obvious, high-frequency changes first; narrow edge cases last. Reorder only — never reword or exaggerate.
+6. Write `changelog.en.md`: copy short entries verbatim; condense long entries to one sentence per the length limits (merged entries included; stay factual).
+7. Translate entry by entry into `changelog.zh.md` (see the translation rules below), within the 40-character limit.
+8. Self-check:
+   - **Every English entry ≤ 15 words, every Chinese entry ≤ 40 characters, one effect per entry, ≤ 10 entries total** — count them one by one;
+   - every entry traces back to a CHANGELOG entry (condensed and merged ones included);
+   - both files mirror each other in section set, order, and per-section entry count; no empty sections;
+   - no PR numbers, commit hashes, or author names left;
+   - no guessed classification (every Features entry survives the test question).
+9. Show both files in full and **stop for review** — the release owner may edit wording or reclassify. Only after approval, commit with a message like `chore: add release notes for kimi-code-desktop@<version>`. **Never commit before review.**
+
+### Translation Rules (en → zh)
+
+- Translate entry by entry; add nothing and drop nothing beyond the condensation already applied to the English file.
+- Short user-facing sentences, one per entry, each ≤ 40 characters; keep a consistent rhythm within a section.
+- Fixes start with `修复…`; features state what users get directly. No file names, internal package names, or PR numbers.
+- Align product terms with the existing Chinese locale (`packages/app-i18n/src/locales/zh/`): session→会话, workspace→工作区, thinking→思考, Settings→设置.
+- Keep product or feature names in English when unsure (e.g. Plan mode, Thinking).
+- Follow the Chinese wording style in Flow A step 6: one entry one sentence, prefer 新增/支持/修复/优化, avoid 通过…使… structures.
+
+### Red Flags
+
+- The version is missing from the CHANGELOG and you substitute another version or invent entries.
+- **Any entry over the length limit, any entry with multiple effects, or more than 10 entries.**
+- PR numbers, commit hashes, or author names in the output.
+- Translation adding information the English text does not have.
+- en/zh files differing in section set, order, or entry count; empty sections.
+- Classification by guessing; merging genuinely distinct high-value fixes into one.
+- Committing before the user has reviewed.

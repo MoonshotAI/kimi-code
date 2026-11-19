@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": patch
+"kimi-code-app": patch
 ---
 
-Fix Remote Control WebSocket connections ignoring HTTP and HTTPS proxy environment variables.
+Fix remote control connections ignoring the system HTTP/HTTPS proxy environment variables.

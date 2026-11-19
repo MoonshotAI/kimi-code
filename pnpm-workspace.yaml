@@ -13,3 +13,22 @@ catalog:
 overrides:
   "kimi-code>@tailwindcss/vite": "4.1.18"
   "kimi-code>tailwindcss": "4.1.18"
+  "ssh2@1.17.0>cpu-features": "-"
+  "ssh2@1.17.0>nan": "-"
+  # Unify zod to a single copy: engine packages split zod across 4.3.6 (via
+  # catalog) and 4.4.3 (via ^4.3.6), and the mixed $ZodType surfaces as type
+  # errors in kimi-code-app's typecheck, which resolves engine sources via
+  # workspace:^ exports.
+  "zod": "catalog:"
+  # linkedom 0.18.15 pulls an unbuilt canvas into node-sdk's rolldown graph;
+  # hold main's known-good resolution.
+  "linkedom": "0.18.12"
+  # jsdom's optional canvas peer only ships an unbuilt native binding here and
+  # breaks node-sdk's rolldown build; main's lockfile carries no canvas either.
+  "canvas": "-"
+  # shiki 4.6 changed codeToTokens' return shape and broke the desktop
+  # renderer's bash highlighting; pin to the version code-app tested against.
+  "shiki@^4.3.0": "4.3.1"
+
+patchedDependencies:
+  markstream-vue@2.0.19: patches/markstream-vue@2.0.19.patch
