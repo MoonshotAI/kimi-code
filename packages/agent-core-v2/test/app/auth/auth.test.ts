@@ -1878,6 +1878,22 @@ describe('AuthSummaryService', () => {
     expect(getCachedAccessToken).not.toHaveBeenCalled();
   });
 
+  it('ensureReady accepts Vertex AI ADC without an API key', async () => {
+    providers['vertex-main'] = {
+      type: 'vertexai',
+      env: { GOOGLE_CLOUD_PROJECT: 'test-project', GOOGLE_CLOUD_LOCATION: 'global' },
+    };
+    models['vertex'] = {
+      provider: 'vertex-main',
+      model: 'gemini-test',
+      protocol: 'google-genai',
+      maxContextSize: 128000,
+    };
+
+    await expect(createSummary().ensureReady('vertex')).resolves.toBeUndefined();
+    expect(getCachedAccessToken).not.toHaveBeenCalled();
+  });
+
   it('ensureReady resolves a providerless model through the configured defaultProvider', async () => {
     models = {
       flat: { model: 'gpt-4.1', protocol: 'openai', maxContextSize: 128000 },
