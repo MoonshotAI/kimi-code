@@ -160,7 +160,7 @@ kimi
 | `KIMI_IMAGE_MAX_EDGE_PX` | 图片压缩的最长边上限（像素），优先级高于 `config.toml` 的 `[image] max_edge_px`（默认 `2000`） | 正整数；非法值被忽略 |
 | `KIMI_IMAGE_READ_BYTE_BUDGET` | 模型自行读图的单图字节预算，优先级高于 `config.toml` 的 `[image] read_byte_budget`（默认 `262144`） | 正整数；非法值被忽略 |
 | `KIMI_CODE_PLUGIN_MARKETPLACE_URL` | 覆盖 `/plugins` 加载的 marketplace JSON；默认根据 managed provider 配置或 `KIMI_CODE_BASE_URL` 派生 `${baseURL}/plugins/marketplace` | 也接受 `http://`、`file://` URL 和本地路径 |
-| `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` | 限制 AgentSwarm 初始提升并发阶段可同时运行的 subagent 数量；不设置表示不限制 | 正整数；非法值会立即失败 |
+| `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` | 限制 AgentSwarm 可同时运行的 subagent 数量；不设置表示不限制 | 正整数；非法值会立即失败 |
 | `KIMI_CODE_SUBAGENT_SCOPE_CACHE_SIZE` | 保留在内存中的已完成 subagent scope 数量，超出后最旧的会被驱逐，恢复时从持久化状态按需重建（默认 `32`；`0` 或负数 = 不驱逐） | 整数；非法值会立即失败 |
 | `KIMI_CODE_SUBAGENT_SCOPE_EVICT_TIMEOUT_MS` | 单个 subagent scope 驱逐允许的最长时间（毫秒），超时后驱逐队列跳过它继续后续驱逐（默认 `15000`） | 正整数；非法值会立即失败 |
 | `KIMI_SUBAGENT_TIMEOUT_MS` | 单个 `Agent` subagent 可运行的最长时间（毫秒），优先级高于 `config.toml` 的 `[subagent] timeout_ms` | 正整数；非法值回退到配置或默认值 |

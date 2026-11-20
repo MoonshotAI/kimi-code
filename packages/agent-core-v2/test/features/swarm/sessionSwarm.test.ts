@@ -1010,6 +1010,246 @@ describe('AgentRunBatch max concurrency cap', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps maxConcurrency=1 during rate-limit recovery and resumes queued tasks after retry settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ maxConcurrency: 1 });
+      const running = runBatch(
+        Array.from({ length: 3 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+      const settled = new Set<number>();
+      const resolveCompleted = (index: number, agentId: string) => {
+        const attempt = attempts[index]!;
+        settled.add(index);
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId,
+          status: 'completed',
+          result: `done ${String(attempt.task.data)}`,
+        });
+      };
+      const resolveRateLimited = (index: number, agentId: string) => {
+        settled.add(index);
+        attempts[index]!.outcome.resolve({ type: 'rate_limited', agentId });
+      };
+      const inFlight = () => attempts.length - settled.size;
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(1);
+      expect(inFlight()).toBe(1);
+      attempts[0]!.markReady();
+
+      resolveRateLimited(0, 'agent-1');
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(attempts).toHaveLength(2);
+      expect(attempts[1]!.retryAgentId).toBe('agent-1');
+      expect(inFlight()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(attempts).toHaveLength(2);
+      expect(inFlight()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(attempts).toHaveLength(2);
+      expect(inFlight()).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+
+      attempts[1]!.markReady();
+      resolveCompleted(1, 'agent-1');
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(attempts).toHaveLength(3);
+      expect(attempts[2]!.task.data).toBe(2);
+      expect(inFlight()).toBe(1);
+
+      attempts[2]!.markReady();
+      resolveCompleted(2, 'agent-2');
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(attempts).toHaveLength(4);
+      expect(attempts[3]!.task.data).toBe(3);
+      expect(inFlight()).toBe(1);
+
+      attempts[3]!.markReady();
+      resolveCompleted(3, 'agent-3');
+      const results = await running;
+      expect(results.map((result) => [result.task.data, result.status, result.result])).toEqual([
+        [1, 'completed', 'done 1'],
+        [2, 'completed', 'done 2'],
+        [3, 'completed', 'done 3'],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps maxConcurrency=4 across rate-limit capacity recovery intervals', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ maxConcurrency: 4 });
+      const running = runBatch(
+        Array.from({ length: 6 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+      const settled = new Set<number>();
+      const resolveRateLimited = (index: number, agentId: string) => {
+        settled.add(index);
+        attempts[index]!.outcome.resolve({ type: 'rate_limited', agentId });
+      };
+      const resolveCompleted = (index: number) => {
+        const attempt = attempts[index]!;
+        settled.add(index);
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId: `agent-${String(attempt.task.data)}`,
+          status: 'completed',
+          result: `done ${String(attempt.task.data)}`,
+        });
+      };
+      const inFlight = () => attempts.length - settled.size;
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(4);
+      attempts.slice(0, 4).forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      resolveRateLimited(0, 'agent-1');
+      await vi.advanceTimersByTimeAsync(2_000);
+      resolveRateLimited(1, 'agent-2');
+      await vi.advanceTimersByTimeAsync(2_000);
+      resolveRateLimited(2, 'agent-3');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(inFlight()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(inFlight()).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(inFlight()).toBe(3);
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(inFlight()).toBe(4);
+      expect(attempts).toHaveLength(7);
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(inFlight()).toBe(4);
+      expect(attempts).toHaveLength(7);
+      expect(vi.getTimerCount()).toBe(0);
+
+      resolveCompleted(3);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(inFlight()).toBe(4);
+      expect(attempts).toHaveLength(8);
+      expect(attempts[7]!.task.data).toBe(5);
+
+      resolveCompleted(4);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(inFlight()).toBe(4);
+      expect(attempts).toHaveLength(9);
+      expect(attempts[8]!.task.data).toBe(6);
+
+      for (const index of [5, 6, 7, 8]) {
+        resolveCompleted(index);
+      }
+      const results = await running;
+      expect(results).toHaveLength(6);
+      expect(results.every((result) => result.status === 'completed')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clamps initial rate-limit capacity after earlier waves complete and stays bounded across repeated 429s', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ maxConcurrency: 2 });
+      const running = runBatch(
+        Array.from({ length: 6 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+      const settled = new Set<number>();
+      const completedTasks = new Set<number>();
+      const resolveCompleted = (index: number) => {
+        const attempt = attempts[index]!;
+        settled.add(index);
+        completedTasks.add(attempt.task.data);
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId: `agent-${String(attempt.task.data)}`,
+          status: 'completed',
+          result: `done ${String(attempt.task.data)}`,
+        });
+      };
+      const resolveRateLimited = (index: number) => {
+        const attempt = attempts[index]!;
+        settled.add(index);
+        attempt.outcome.resolve({
+          type: 'rate_limited',
+          agentId: `agent-${String(attempt.task.data)}`,
+        });
+      };
+      const inFlight = () => attempts.length - settled.size;
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(2);
+      attempts[0]!.markReady();
+      attempts[1]!.markReady();
+      resolveCompleted(0);
+      resolveCompleted(1);
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(4);
+      expect(inFlight()).toBe(2);
+      attempts[2]!.markReady();
+      attempts[3]!.markReady();
+
+      resolveRateLimited(2);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(inFlight()).toBe(1);
+      expect(attempts).toHaveLength(4);
+
+      await vi.advanceTimersByTimeAsync(176_999);
+      expect(attempts).toHaveLength(4);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(5);
+      expect(attempts[4]!.retryAgentId).toBe('agent-3');
+      expect(inFlight()).toBe(2);
+
+      attempts[4]!.markReady();
+      resolveRateLimited(4);
+      await vi.advanceTimersByTimeAsync(2_000);
+      resolveRateLimited(3);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(inFlight()).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(inFlight()).toBe(1);
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(inFlight()).toBe(2);
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(inFlight()).toBe(2);
+
+      while (completedTasks.size < 6) {
+        const nextOpen = attempts.findIndex((_, idx) => !settled.has(idx));
+        if (nextOpen === -1) {
+          await vi.advanceTimersByTimeAsync(6_000);
+          continue;
+        }
+        attempts[nextOpen]!.markReady();
+        resolveCompleted(nextOpen);
+        await vi.advanceTimersByTimeAsync(6_000);
+        expect(inFlight()).toBeLessThanOrEqual(2);
+      }
+
+      const results = await running;
+      expect(results).toHaveLength(6);
+      expect(results.every((result) => result.status === 'completed')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('AgentRunBatch swarm item forwarding', () => {
@@ -1642,6 +1882,69 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect(runAgent).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
+    }
+  });
+
+  it('enforces KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY during rate-limit recovery', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY', '1');
+    try {
+      for (const id of ['agent-1', 'agent-2', 'agent-3']) {
+        agents[id] = { labels: { parentAgentId: 'main' } };
+        handles.set(id, agentHandle(id, lifecycle, eventBus));
+      }
+      const runs: Array<{
+        readonly agentId: string;
+        readonly completion: ReturnType<typeof createControlledPromise<{ summary: string }>>;
+      }> = [];
+      runAgent.mockImplementation((agent, _request, options) => {
+        options?.onReady?.();
+        const agentId = (agent as AgentContext).agentId;
+        const completion = createControlledPromise<{ summary: string }>();
+        runs.push({ agentId, completion });
+        return { agentId, turn: {} as never, completion };
+      });
+
+      const swarm = ix.get(ISessionSwarmService).run({
+        callerAgentId: 'main',
+        tasks: [
+          resumeSessionTask('agent-1'),
+          resumeSessionTask('agent-2'),
+          resumeSessionTask('agent-3'),
+        ],
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runs).toHaveLength(1);
+      runs[0]!.completion.reject(new APIProviderRateLimitError('Rate limited'));
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(runs).toHaveLength(2);
+      expect(runs[1]!.agentId).toBe('agent-1');
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(runs).toHaveLength(2);
+
+      runs[1]!.completion.resolve({ summary: 'done 1' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(runs).toHaveLength(3);
+      expect(runs[2]!.agentId).toBe('agent-2');
+
+      runs[2]!.completion.resolve({ summary: 'done 2' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(runs).toHaveLength(4);
+      expect(runs[3]!.agentId).toBe('agent-3');
+
+      runs[3]!.completion.resolve({ summary: 'done 3' });
+      const results = await swarm;
+      expect(results.map((result) => [result.agentId, result.status, result.result])).toEqual([
+        ['agent-1', 'completed', 'done 1'],
+        ['agent-2', 'completed', 'done 2'],
+        ['agent-3', 'completed', 'done 3'],
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
     }
   });
 
