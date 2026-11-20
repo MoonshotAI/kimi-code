@@ -90,7 +90,7 @@ onBeforeUnmount(() => props.signal.removeEventListener('abort', close));
   padding: 0 12px;
   border-radius: 12px;
   color: white;
-  background: #2b2b2b;
+  background: light-dark(#2b2b2b, #404040);
   font: 400 14px/20px "PingFang SC", var(--font-ui);
 }
 .feedback-toast > img { flex: none; }

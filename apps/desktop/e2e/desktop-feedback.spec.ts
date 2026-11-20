@@ -1,8 +1,21 @@
+import type { Locator } from '@playwright/test';
 import { expect, test, type DesktopApp } from './fixtures/app';
 import type { StubModel } from './fixtures/model';
 import { sendAndFinish, sessionRowById } from './fixtures/sessions';
 
 const envelope = (data: unknown) => ({ code: 0, msg: '', data });
+
+async function expectVisibleCheckmark(app: DesktopApp, checkbox: Locator): Promise<void> {
+  const icon = checkbox.locator('..').locator('.ui-check__box');
+  const png = await icon.screenshot({ scale: 'css', animations: 'disabled' });
+  const pixels = await app.electron.evaluate(({ nativeImage }, data) => {
+    const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64'));
+    const pixel = (x: number, y: number) => image.crop({ x, y, width: 1, height: 1 }).toBitmap().toString('hex');
+    return { fill: pixel(7, 5), bend: pixel(7, 9), tip: pixel(10, 6) };
+  }, png.toString('base64'));
+  expect(pixels.bend).not.toBe(pixels.fill);
+  expect(pixels.tip).not.toBe(pixels.fill);
+}
 
 test('submits global and reply feedback with opt-in attachments', async ({ app, model }) => {
   const page = app.window;
@@ -80,6 +93,11 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   const receipt = (id: number) => page.locator('.feedback-receipt-toast').filter({ hasText: String(id) });
   await expect(dialog).toBeHidden();
   await expect(receipt(21)).toBeVisible();
+  await receipt(21).hover();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(receipt(21)).toHaveCSS('background-color', 'rgb(64, 64, 64)');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(receipt(21)).toHaveCSS('background-color', 'rgb(43, 43, 43)');
   await receipt(21).getByRole('button', { name: 'Copy feedback ID' }).click();
   await expect(receipt(21).getByRole('button', { name: 'Copied' })).toBeVisible();
   expect(feedbackRequests.map(({ body }) => body)).toEqual([
@@ -116,6 +134,7 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   const uploadLabel = details.getByText('Also upload this conversation', { exact: true });
   await uploadLabel.click();
   await expect(details.getByRole('checkbox')).toBeChecked();
+  await expectVisibleCheckmark(app, details.getByRole('checkbox'));
   await uploadLabel.click();
   await replyDescription.fill('');
   await details.getByRole('button', { name: 'Incorrect or incomplete' }).click();
@@ -148,6 +167,7 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await expect(dialog.getByRole('button', { name: 'Remove screen.png' })).toBeVisible();
   await dialog.getByText('Include diagnostic logs', { exact: true }).click();
   await expect(dialog.getByRole('checkbox', { name: /Include diagnostic logs/ })).toBeChecked();
+  await expectVisibleCheckmark(app, dialog.getByRole('checkbox', { name: /Include diagnostic logs/ }));
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
   await expect(receipt(23)).toBeVisible();
   const uploadFailure = page.getByRole('alert').filter({ hasText: 'Couldn’t upload diagnostic logs' });
