@@ -2,6 +2,15 @@ import { type FlagDefinitionInput, registerFlagDefinition } from '#/app/flag/fla
 
 export const AUTO_REVIEW_FLAG_ID = 'auto_review';
 export const AUTO_REVIEW_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW';
+export const AUTO_REVIEW_AGENT_LABEL = 'autoReview';
+export const AUTO_REVIEW_REVIEWER_LABEL_VALUE = 'reviewer';
+export const AUTO_REVIEW_FOR_AGENT_LABEL = 'reviewerForAgentId';
+
+export function isAutoReviewReviewerLabels(
+  labels: Readonly<Record<string, string>> | undefined,
+): boolean {
+  return labels?.[AUTO_REVIEW_AGENT_LABEL] === AUTO_REVIEW_REVIEWER_LABEL_VALUE;
+}
 
 export const autoReviewFlag: FlagDefinitionInput = {
   id: AUTO_REVIEW_FLAG_ID,

@@ -8,31 +8,42 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { OrderedHookSlot } from '#/hooks';
+import {
+  IAgentLoopService,
+  type AfterStepContext,
+  type BeforeStepContext,
+  type PromptSubmitContext,
+} from '#/agent/loop/loop';
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentPermissionGate, type PermissionGateReviewer } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { IAgentProfileService, type ProfileUpdateData } from '#/agent/profile/profile';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { BeforeToolExecuteEventImpl } from '#/agent/toolExecutor/beforeToolExecuteEvent';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IGitService, type FsGitStatusResponse, type GitStatusOptions } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.md?raw';
 import { AutoReviewCompleted, AutoReviewStarted } from '#/features/autoReview/autoReviewEvents';
 import { autoReviewTrigger } from '#/features/autoReview/autoReviewGate';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
-import type { AutoReviewResult } from '#/features/autoReview/review';
-import { AutoReviewService } from '#/features/autoReview/reviewService';
+import { AUTO_REVIEW_CIRCUIT_BREAKER_STOP_REASON, type AutoReviewResult } from '#/features/autoReview/review';
+import { AutoReviewService, parseReviewJson } from '#/features/autoReview/reviewService';
 import { APIContextOverflowError, APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
 import type { ToolCall } from '@moonshot-ai/core/llm/message';
 import { emptyUsage } from '@moonshot-ai/core/llm/usage';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { CreateAgentOptions } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { isSubagentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { SECONDARY_MODEL_SECTION, type SecondaryModelConfig } from '#/session/subagent/configSection';
 import type { AgentRunCompletion, AgentRunHandle, AgentRunRequest, RunAgentOptions } from '#/session/subagent/subagent';
@@ -48,7 +59,8 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { stubPermissionModeService } from '../../agent/permissionMode/stubs';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
 
-const ALLOW = '{"risk":"low","decision":"allow","reason":null}';
+const ALLOW = '{"authorization":"explicit","risk":"low","decision":"allow","reason":null}';
+const DENY = '{"authorization":"none","risk":"medium","decision":"deny","reason":"Needs confirmation."}';
 const defaultSignal = new AbortController().signal;
 
 describe('AutoReviewService', () => {
@@ -65,6 +77,8 @@ describe('AutoReviewService', () => {
   let history: ContextMessage[];
   let mainHistory: ContextMessage[] | undefined;
   let agentId: string;
+  let agentLabels: Readonly<Record<string, string>> | undefined;
+  let activeMode: PermissionMode;
   let agentsMd: string;
   let telemetry: TelemetryRecord[];
   let reviewEvents: AutoReviewCompleted[];
@@ -72,6 +86,11 @@ describe('AutoReviewService', () => {
   let usage: Parameters<ISessionUsageService['record']>[];
   let compactions: Array<{ readonly source: string }>;
   let registeredReviewer: PermissionGateReviewer | undefined;
+  let reviewerGateReviewer: PermissionGateReviewer | undefined;
+  let reviewerLegacyStarting: Array<(event: BeforeToolExecuteEvent) => void>;
+  let reviewerUpdates: ProfileUpdateData[];
+  let reviewerBeforeStepHooks: OrderedHookSlot<BeforeStepContext>;
+  let afterStepHooks: OrderedHookSlot<AfterStepContext>;
   let removed: string[];
   let modes: string[];
   let gitStatusImpl: ((cwd: string, options?: GitStatusOptions) => Promise<FsGitStatusResponse>) | undefined;
@@ -89,9 +108,16 @@ describe('AutoReviewService', () => {
     usage = [];
     compactions = [];
     registeredReviewer = undefined;
+    reviewerGateReviewer = undefined;
+    reviewerLegacyStarting = [];
+    reviewerUpdates = [];
+    reviewerBeforeStepHooks = new OrderedHookSlot<BeforeStepContext>();
+    afterStepHooks = new OrderedHookSlot<AfterStepContext>();
     gitStatusImpl = undefined;
     mainHistory = undefined;
     agentId = 'main';
+    agentLabels = undefined;
+    activeMode = 'yolo';
     summary = ALLOW;
     runError = undefined;
     holdRuns = false;
@@ -103,7 +129,7 @@ describe('AutoReviewService', () => {
     history = [
       { role: 'user', content: [{ type: 'text', text: 'Only remove generated files.' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [], toolCalls: [toolCallFor('mkdir', 'Bash', { command: 'mkdir generated' })] },
-      { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: 'untrusted tool output' }] },
+      { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: 'created generated/' }] },
     ];
     agentsMd = 'Do not delete user-data.';
     telemetry = [];
@@ -130,7 +156,7 @@ describe('AutoReviewService', () => {
           }) as IConfigService['get'],
         });
         reg.defineInstance(IFlagService, stubFlag(true));
-        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => 'yolo'));
+        reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => activeMode));
         reg.definePartialInstance(IAgentPermissionGate, {
           registerReviewer: (reviewer) => {
             registeredReviewer = reviewer;
@@ -148,8 +174,22 @@ describe('AutoReviewService', () => {
         reg.definePartialInstance(IAgentProfileService, {
           resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
         });
-        reg.definePartialInstance(IAgentLoopService, { history: () => history });
-        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope: '' }));
+        reg.definePartialInstance(IAgentLoopService, {
+          history: () => history,
+          hooks: {
+            onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
+            onDidFinishStep: afterStepHooks,
+            onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>(),
+          },
+        });
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({
+            agentId,
+            agentScope: '',
+            meta: agentLabels === undefined ? undefined : { labels: agentLabels },
+          }),
+        );
         reg.definePartialInstance(IAgentLifecycleService, {
           create: async (options) => {
             runs.push({ options: options ?? {}, prompt: '', mode: '' });
@@ -173,8 +213,33 @@ describe('AutoReviewService', () => {
                   if (token === IAgentPermissionModeService) {
                     return { setMode: (mode: string) => { modes.push(mode); } };
                   }
+                  if (token === IAgentToolExecutorService) {
+                    return {
+                      registerLegacyStarting: (fn: (event: BeforeToolExecuteEvent) => void) => {
+                        reviewerLegacyStarting.push(fn);
+                        return { dispose: () => {} };
+                      },
+                    };
+                  }
+                  if (token === IAgentPermissionGate) {
+                    return {
+                      registerReviewer: (reviewer: PermissionGateReviewer) => {
+                        reviewerGateReviewer = reviewer;
+                        return { dispose: () => {} };
+                      },
+                    };
+                  }
                   if (token === IAgentLoopService) {
-                    return { history: () => id === 'main' ? mainHistory ?? [] : history };
+                    return {
+                      history: () => (id === 'main' ? mainHistory ?? [] : history),
+                      hooks: {
+                        onWillBeginStep: reviewerBeforeStepHooks,
+                        onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
+                      },
+                      update: (changed: ProfileUpdateData) => {
+                        reviewerUpdates.push(changed);
+                      },
+                    };
                   }
                   return undefined;
                 },
@@ -249,47 +314,118 @@ describe('AutoReviewService', () => {
     resolveExecution: () => ({ output: '', isError: true }),
   };
 
-  function review(reviewer = service(), command = 'rm generated/file'): Promise<AutoReviewResult> {
-    return reviewer.review(reviewContext({ toolName: 'Bash', args: { command }, tool: bashTool }), 'fallback-ask');
+  function review(
+    reviewer = service(),
+    command = 'rm generated/file',
+    turnId = 0,
+  ): Promise<AutoReviewResult> {
+    return reviewer.review(
+      reviewContext({ toolName: 'Bash', args: { command }, tool: bashTool, turnId }),
+      'fallback-ask',
+    );
   }
 
   function sentContent(index = -1): string {
     return runs.at(index)?.prompt ?? '';
   }
 
-  it('uses the main model when the config section is absent', async () => {
+  it('spawns a dedicated read-only reviewer profile without subagent parent metadata', async () => {
     await expect(review(service(undefined, false))).resolves.toEqual({
       kind: 'decision',
-      decision: { risk: 'low', decision: 'allow' },
+      decision: { authorization: 'explicit', risk: 'low', decision: 'allow' },
     });
-    expect(runs[0]?.options.binding).toEqual({ profile: 'explore', model: 'main-model' });
-    expect(runs[0]?.options.labels).toMatchObject({ autoReview: 'reviewer' });
+    expect(runs[0]?.options.binding).toBeUndefined();
+    expect(runs[0]?.options.initialProfile).toEqual({
+      modelAlias: 'main-model',
+      profileName: 'auto-review',
+      thinkingLevel: 'off',
+      systemPrompt: REVIEW_POLICY,
+      activeToolNames: ['Read', 'Grep', 'Glob'],
+      disallowedTools: ['select_tools'],
+    });
+    expect(runs[0]?.options.labels).toEqual({
+      autoReview: 'reviewer',
+      reviewerForAgentId: 'main',
+    });
+    expect(isSubagentMeta({ labels: runs[0]?.options.labels })).toBe(false);
     expect(runs[0]?.mode).toBe('manual');
     expect(removed).toEqual(['reviewer-1']);
   });
 
-  it('sends the pending action without tool results', async () => {
-    expect(await review()).toEqual({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
-    expect(sentContent()).toContain('Review only the pending tool call.');
+  it('skips recursive reviewer registration inside a reviewer agent scope', () => {
+    agentLabels = { autoReview: 'reviewer', reviewerForAgentId: 'main' };
+    service();
+    expect(registeredReviewer).toBeUndefined();
+  });
+
+  it('vetoes non-readonly tools, denies asks without user prompts, and caps tool steps on the reviewer', async () => {
+    let capturedReviewerGate: PermissionGateReviewer | undefined;
+    let capturedStarting: ((event: BeforeToolExecuteEvent) => void) | undefined;
+    const reviewer = service();
+    vi.mocked(runAgentTurn).mockImplementation(async (_handle, request) => {
+      capturedReviewerGate = reviewerGateReviewer;
+      capturedStarting = reviewerLegacyStarting.at(-1);
+      await reviewerBeforeStepHooks.run({
+        turnId: 0,
+        step: 2,
+        firstStepOfTurn: false,
+        signal: defaultSignal,
+      });
+      expect(reviewerUpdates).toEqual([]);
+      await reviewerBeforeStepHooks.run({
+        turnId: 0,
+        step: 3,
+        firstStepOfTurn: false,
+        signal: defaultSignal,
+      });
+      expect(reviewerUpdates).toEqual([{ activeToolNames: [] }]);
+      if (request.kind === 'prompt') {
+        runs[runs.length - 1] = { ...runs.at(-1)!, prompt: request.prompt, mode: modes.at(-1) ?? '' };
+      }
+      return {
+        agentId: 'reviewer',
+        completion: Promise.resolve({ summary: ALLOW, usage: emptyUsage() }),
+        partialOutput: () => ALLOW,
+      };
+    });
+
+    await review(reviewer);
+
+    const bashEvent = new BeforeToolExecuteEventImpl(reviewContext({ toolName: 'Bash', args: { command: 'git status' } }));
+    capturedStarting?.(bashEvent);
+    expect(bashEvent.vetoResult).toMatchObject({ isError: true });
+
+    const readEvent = new BeforeToolExecuteEventImpl(reviewContext({ toolName: 'Read', args: { file_path: 'a.ts' } }));
+    capturedStarting?.(readEvent);
+    expect(readEvent.vetoResult).toBeUndefined();
+
+    const askReview = capturedReviewerGate?.review(readEvent, {
+      policyName: 'sensitive-file-access-ask',
+      result: { kind: 'ask' },
+    });
+    await expect(askReview?.()).resolves.toMatchObject({
+      policyName: 'auto-review-reviewer-readonly',
+      result: { kind: 'deny' },
+    });
+  });
+
+  it('sends chronological transcript with recent untrusted tool outputs and omits policy from user prompt', async () => {
+    expect(await review()).toEqual({
+      kind: 'decision',
+      decision: { authorization: 'explicit', risk: 'low', decision: 'allow' },
+    });
+    expect(sentContent()).not.toContain('Review only the pending tool call.');
     expect(sentContent()).toContain('human-instruction');
     expect(sentContent()).toContain('Do not delete user-data.');
-    expect(sentContent()).not.toContain('untrusted tool output');
+    expect(sentContent()).toContain('untrusted-tool-output');
+    expect(sentContent()).toContain('created generated/');
     expect(sentContent()).toContain('rm generated/file');
   });
 
   it('marks user-approved calls and omits tool metadata', async () => {
     const reviewer = service();
-    summary = '{"risk":"medium","decision":"deny","reason":"Needs confirmation."}';
-    const firstContext = {
-      ...reviewContext({ id: 'mkdir', toolName: 'Bash', args: { command: 'mkdir generated' }, tool: bashTool }),
-      veto: () => {},
-      allow: () => {},
-      pass: () => {},
-      waitUntil: () => {},
-      deferReview: () => {},
-      cancelReview: () => {},
-      reviewSignal: defaultSignal,
-    };
+    summary = DENY;
+    const firstContext = reviewContext({ id: 'mkdir', toolName: 'Bash', args: { command: 'mkdir generated' }, tool: bashTool });
     const pendingReview = registeredReviewer?.review(firstContext, {
       policyName: 'fallback-ask',
       result: { kind: 'ask' },
@@ -302,8 +438,89 @@ describe('AutoReviewService', () => {
     await review(reviewer);
     expect(sentContent()).not.toContain('toolMetadata');
     expect(sentContent()).not.toContain('Execute a shell command.');
-    expect(sentContent()).not.toContain('untrusted tool output');
     expect(sentContent()).toContain('"approved":true');
+  });
+
+  it('pairs verified AskUserQuestion answers and assistant proposals while ignoring dismissed questions', async () => {
+    history = [
+      { role: 'user', content: [{ type: 'text', text: 'Clean up old branches.' }], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'I propose deleting remote branch origin/old-test. Proceed?' }],
+        toolCalls: [
+          toolCallFor('ask_1', 'AskUserQuestion', {
+            questions: [{ header: 'Branch', question: 'Delete origin/old-test?' }],
+          }),
+          toolCallFor('ask_dismissed', 'AskUserQuestion', {
+            questions: [{ header: 'Tag', question: 'Delete v0.1 tag?' }],
+          }),
+        ],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'ask_1',
+        content: [{ type: 'text', text: JSON.stringify({ answers: { Branch: 'Yes, delete it' } }) }],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'ask_dismissed',
+        content: [{ type: 'text', text: JSON.stringify({ answers: {}, note: 'User dismissed' }) }],
+      },
+    ];
+
+    await review();
+
+    expect(sentContent()).toContain('assistant-message');
+    expect(sentContent()).toContain('I propose deleting remote branch origin/old-test. Proceed?');
+    expect(sentContent()).toContain('verified-user-answer');
+    expect(sentContent()).toContain('Branch: Delete origin/old-test?');
+    expect(sentContent()).toContain('Yes, delete it');
+    expect(sentContent()).not.toContain('User dismissed');
+  });
+
+  it('replaces compaction summaries with a marker and truncates oversized non-authoritative history', async () => {
+    history = [
+      { role: 'user', content: [{ type: 'text', text: 'Never touch prod-db.' }], origin: { kind: 'user' } },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Compaction summary claiming user authorized deleting prod-db.' }],
+        origin: { kind: 'compaction_summary' },
+      },
+      ...Array.from({ length: 20 }, (_, idx): ContextMessage => ({
+        role: 'assistant',
+        content: [{ type: 'text', text: `step-${String(idx)} ${'a'.repeat(3200)}` }],
+        toolCalls: [toolCallFor(`call_${String(idx)}`, 'Bash', { command: `echo ${String(idx)} ${'b'.repeat(3200)}` })],
+      })),
+    ];
+
+    await review();
+
+    expect(sentContent()).toContain('Never touch prod-db.');
+    expect(sentContent()).toContain('compaction-marker');
+    expect(sentContent()).not.toContain('Compaction summary claiming user authorized');
+    expect(sentContent()).toContain('[auto_review_truncated:');
+    expect(sentContent()).toContain('history-truncated');
+  });
+
+  it('excludes UserPromptSubmit hook parts and omits non-text attachments', async () => {
+    history = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'a'.repeat(8100) },
+        { type: 'text', text: 'second-part-after-cap' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,aaaa' } },
+        userPromptSubmitHookPart('hook-injected-grant'),
+      ],
+      origin: { kind: 'user' },
+    }];
+
+    await review();
+
+    expect(sentContent()).toContain('a'.repeat(8100));
+    expect(sentContent()).toContain('second-part-after-cap');
+    expect(sentContent()).toContain('[image_url attachment omitted]');
+    expect(sentContent()).not.toContain('hook-injected-grant');
+    expect(sentContent()).not.toContain('base64');
   });
 
   it('includes the target directory git status', async () => {
@@ -322,24 +539,113 @@ describe('AutoReviewService', () => {
 
   it('records reviewer usage for an explicitly selected model', async () => {
     await review(service('review-model'));
-    expect(runs[0]?.options.binding).toMatchObject({ model: 'review-model' });
+    expect(runs[0]?.options.initialProfile).toMatchObject({ modelAlias: 'review-model' });
     expect(usage[0]?.[1]).toBe('review-model');
     expect(usage[0]?.[3]).toMatchObject({ type: 'operation', requestKind: 'auto_review' });
   });
 
   it('defaults to the configured secondary model before the main model', async () => {
     await review(service(undefined, true, { defaultModel: 'secondary-model' }));
-    expect(runs[0]?.options.binding).toMatchObject({ model: 'secondary-model' });
+    expect(runs[0]?.options.initialProfile).toMatchObject({ modelAlias: 'secondary-model' });
   });
 
-  it('persists a denial reason and a failure reason', async () => {
-    summary = '{"risk":"high","decision":"deny","reason":"Deletes user data."}';
+  it('persists authorization, denial reason, and failure reason', async () => {
+    summary = '{"authorization":"none","risk":"high","decision":"deny","reason":"Deletes user data."}';
     await review();
-    expect(reviewEvents.at(-1)).toMatchObject({ reason: 'Deletes user data.', decision: 'deny' });
+    expect(reviewEvents.at(-1)).toMatchObject({
+      authorization: 'none',
+      risk: 'high',
+      reason: 'Deletes user data.',
+      decision: 'deny',
+    });
 
     summary = 'not JSON';
     await review();
     expect(reviewEvents.at(-1)?.decision).toBe('failed');
+  });
+
+  it('parses fenced or prose-prefixed JSON and enforces authorization-risk invariants', async () => {
+    for (const line of REVIEW_POLICY.split('\n').filter((entry) => entry.startsWith('{'))) {
+      summary = line;
+      await expect(review()).resolves.toMatchObject({ kind: 'decision' });
+    }
+
+    summary = 'Checked `${DIR}` safely.\n```json\n{"authorization":"explicit","risk":"medium","decision":"allow","reason":null}\n```';
+    await expect(review()).resolves.toEqual({
+      kind: 'decision',
+      decision: { authorization: 'explicit', risk: 'medium', decision: 'allow' },
+    });
+    expect(parseReviewJson('prefix {not json} {"decision":"allow"}')).toEqual({ decision: 'allow' });
+
+    for (const invalid of [
+      'not JSON',
+      '{"authorization":"ambiguous","risk":"medium","decision":"allow","reason":null}',
+      '{"authorization":"none","risk":"medium","decision":"allow","reason":null}',
+      '{"authorization":"explicit","risk":"high","decision":"allow","reason":null}',
+      '{"authorization":"none","risk":"low","decision":"deny","reason":"no"}',
+      '{"risk":"low","decision":"allow","reason":null}',
+    ]) {
+      runs = [];
+      summary = invalid;
+      await expect(review()).resolves.toMatchObject({ kind: 'failed' });
+      expect(runs).toHaveLength(3);
+    }
+  });
+
+  it('trips the circuit breaker after 3 consecutive Never Ask denials and stops the turn', async () => {
+    activeMode = 'auto';
+    summary = DENY;
+    const reviewer = service();
+
+    const outcomes: unknown[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const ctx = reviewContext({ id: `deny_${String(i)}`, toolName: 'Bash', args: { command: 'rm -rf /tmp/x' }, turnId: 4 });
+      const pending = registeredReviewer?.review(ctx, { policyName: 'fallback-ask', result: { kind: 'ask' } });
+      const resolved = await pending?.();
+      outcomes.push(resolved?.result);
+    }
+
+    expect(outcomes[0]).toMatchObject({ kind: 'deny', reason: { review_risk: 'medium' } });
+    expect(outcomes[1]).toMatchObject({ kind: 'deny', reason: { review_risk: 'medium' } });
+    expect(outcomes[2]).toMatchObject({
+      kind: 'deny',
+      message: expect.stringContaining('Auto Review stopped this turn after repeated denials.'),
+      reason: { review_risk: 'medium', review_circuit_breaker: true },
+    });
+
+    const stepCtx: AfterStepContext = {
+      turnId: 4,
+      step: 1,
+      firstStepOfTurn: true,
+      signal: defaultSignal,
+      usage: emptyUsage(),
+      finishReason: 'tool_calls',
+      tools: [],
+      stopTurn: false,
+    };
+    await afterStepHooks.run(stepCtx);
+    expect(stepCtx.stopTurn).toBe(true);
+    expect(stepCtx.stopReason).toBe(AUTO_REVIEW_CIRCUIT_BREAKER_STOP_REASON);
+
+    const callsBefore = runs.length;
+    await expect(review(reviewer, 'rm -rf /tmp/y', 4)).resolves.toMatchObject({
+      kind: 'decision',
+      decision: { decision: 'deny', reason: expect.stringContaining('Turn already stopped') },
+    });
+    expect(runs).toHaveLength(callsBefore);
+
+    const nextTurnCtx = reviewContext({ id: 'next_turn_deny', toolName: 'Bash', args: { command: 'rm -rf /tmp/z' }, turnId: 5 });
+    const nextTurnResolved = await registeredReviewer?.review(nextTurnCtx, {
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    })?.();
+    expect(nextTurnResolved?.result).toMatchObject({
+      kind: 'deny',
+      reason: { review_risk: 'medium' },
+    });
+    expect(nextTurnResolved?.result).not.toMatchObject({
+      reason: { review_circuit_breaker: true },
+    });
   });
 
   it('announces the review before the reviewer answers', async () => {
@@ -353,10 +659,16 @@ describe('AutoReviewService', () => {
     expect(reviewEvents).toHaveLength(1);
   });
 
-  it('inherits main human instructions for a subagent', async () => {
+  it('inherits main human instructions and verified user answers as rootAuthorization for a subagent', async () => {
     agentId = 'worker';
     mainHistory = [
       { role: 'user', content: [{ type: 'text', text: 'Keep the database.' }], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [toolCallFor('q1', 'AskUserQuestion', { questions: [{ header: 'Env', question: 'Clean staging?' }] })],
+      },
+      { role: 'tool', toolCallId: 'q1', content: [{ type: 'text', text: JSON.stringify({ answers: { Env: 'Yes' } }) }] },
     ];
     history = [{
       role: 'user',
@@ -364,7 +676,9 @@ describe('AutoReviewService', () => {
       origin: { kind: 'system_trigger', name: 'subagent' },
     }];
     await review();
+    expect(sentContent()).toContain('rootAuthorization');
     expect(sentContent()).toContain('Keep the database.');
+    expect(sentContent()).toContain('Env: Clean staging?');
     expect(sentContent()).toContain('direct-parent-instruction');
     expect(sentContent()).toContain('Delete dist and rebuild.');
   });
@@ -374,12 +688,6 @@ describe('AutoReviewService', () => {
     expect(autoReviewTrigger(true, 'yolo', evaluation, 'Write')).toBeUndefined();
     expect(autoReviewTrigger(true, 'auto', evaluation, 'Edit')).toBeUndefined();
     expect(autoReviewTrigger(true, 'yolo', evaluation, 'Bash')).toBe('fallback-ask');
-  });
-
-  it('fails invalid reviewer output and retries', async () => {
-    summary = 'not JSON';
-    await expect(review()).resolves.toMatchObject({ kind: 'failed' });
-    expect(runs).toHaveLength(3);
   });
 
   it('retries a rate limit and keeps the later decision', async () => {
@@ -506,13 +814,14 @@ describe('AutoReviewService', () => {
     await review();
     expect(telemetry.at(-1)).toMatchObject({
       event: 'auto_review_decision',
-      properties: { decision: 'allow', model: 'main-model' },
+      properties: { decision: 'allow', authorization: 'explicit', model: 'main-model' },
     });
   });
 });
 
 interface ReviewContextInput {
   readonly id?: string;
+  readonly turnId?: number;
   readonly toolName: string;
   readonly args: Record<string, unknown>;
   readonly signal?: AbortSignal;
@@ -522,7 +831,7 @@ interface ReviewContextInput {
 function reviewContext(input: ReviewContextInput): BeforeToolExecuteEvent {
   const toolCall = toolCallFor(input.id ?? `call_${input.toolName}`, input.toolName, input.args);
   return {
-    turnId: 0,
+    turnId: input.turnId ?? 0,
     signal: input.signal ?? defaultSignal,
     tool: input.tool,
     toolCall,
@@ -551,5 +860,3 @@ function toolCallFor(id: string, name: string, args: Record<string, unknown>): T
     arguments: JSON.stringify(args),
   };
 }
-
-void userPromptSubmitHookPart;

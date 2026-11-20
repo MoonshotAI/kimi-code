@@ -6,15 +6,17 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import type { IFlagService } from '#/app/flag/flag';
 
 import { AUTO_REVIEW_FLAG_ID } from './flag';
-import type { AutoReviewResult, IAutoReviewService } from './review';
+import type { AutoReviewGateCallbacks, AutoReviewResult, IAutoReviewService } from './review';
 
 const AUTO_REVIEW_ORIGIN = 'auto-review';
+
+type GateCallbacksInput = ((toolCallId: string) => void) | AutoReviewGateCallbacks;
 
 export function createAutoReviewReviewer(
   flags: IFlagService,
   modes: IAgentPermissionModeService,
   reviewService: () => IAutoReviewService,
-  onApproved?: (toolCallId: string) => void,
+  callbacks?: GateCallbacksInput,
 ): PermissionGateReviewer {
   return {
     evaluateOptions: () => {
@@ -48,7 +50,7 @@ export function createAutoReviewReviewer(
           evaluation,
           review,
           flags.enabled(AUTO_REVIEW_FLAG_ID) ? modes.mode : 'manual',
-          onApproved,
+          callbacks,
         );
       };
     },
@@ -75,10 +77,12 @@ export function resolveAutoReview(
   evaluation: PermissionPolicyEvaluation,
   review: AutoReviewResult,
   mode: PermissionMode,
-  onApproved?: (toolCallId: string) => void,
+  callbacks?: GateCallbacksInput,
 ): PermissionPolicyEvaluation {
+  const handlers = normalizeCallbacks(callbacks);
   const allowed = review.kind === 'decision' && review.decision.decision === 'allow';
   if (allowed && mode !== 'manual') {
+    if (mode === 'auto') handlers?.onAutoAllow?.(context.turnId);
     return {
       policyName: AUTO_REVIEW_ORIGIN,
       result: {
@@ -89,14 +93,25 @@ export function resolveAutoReview(
     };
   }
   if (mode === 'auto') {
-    return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review) };
+    if (review.kind === 'failed') {
+      handlers?.onAutoFailed?.(context.turnId);
+      return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review, false) };
+    }
+    const circuitBroken = handlers?.onAutoDeny?.(context.turnId) === true;
+    return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review, circuitBroken) };
   }
-  return { policyName: AUTO_REVIEW_ORIGIN, result: fallbackAsk(context, review, onApproved) };
+  return { policyName: AUTO_REVIEW_ORIGIN, result: fallbackAsk(context, review, handlers?.onApproved) };
+}
+
+function normalizeCallbacks(callbacks: GateCallbacksInput | undefined): AutoReviewGateCallbacks | undefined {
+  if (callbacks === undefined) return undefined;
+  return typeof callbacks === 'function' ? { onApproved: callbacks } : callbacks;
 }
 
 function denial(
   context: ResolvedToolExecutionHookContext,
   review: AutoReviewResult,
+  circuitBroken = false,
 ): Extract<PermissionPolicyResult, { kind: 'deny' }> {
   if (review.kind === 'failed') {
     return {
@@ -105,10 +120,15 @@ function denial(
       reason: { review_error: true },
     };
   }
+  const followUp = circuitBroken
+    ? 'Auto Review stopped this turn after repeated denials. Stop and ask the user for explicit authorization before continuing.'
+    : 'Do not retry the same action or bypass the review.';
   return {
     kind: 'deny',
-    message: `Auto Review denied tool "${context.toolCall.name}"; it was not executed.${reasonSuffix(review)} Do not retry the same action or bypass the review.`,
-    reason: { review_risk: review.decision.risk },
+    message: `Auto Review denied tool "${context.toolCall.name}"; it was not executed.${reasonSuffix(review)} ${followUp}`,
+    reason: circuitBroken
+      ? { review_risk: review.decision.risk, review_circuit_breaker: true }
+      : { review_risk: review.decision.risk },
   };
 }
 

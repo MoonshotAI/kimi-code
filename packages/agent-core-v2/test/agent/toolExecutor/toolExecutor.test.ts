@@ -95,6 +95,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IBashParserService } from '#/app/bashParser/bashParser';
 import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
@@ -180,10 +181,10 @@ afterEach(() => {
 describe('AgentToolExecutorService auto review', () => {
   it('does not execute a tool denied by the reviewer', async () => {
     installAutoReview({ kind: 'decision', decision: { risk: 'high', decision: 'deny' } });
-    const tool = new TestTool('Write');
+    const tool = new TestTool('Bash');
     registry.register(tool);
 
-    const [result] = await execute([toolCall('call_review', 'Write', { path: 'outside.txt' })]);
+    const [result] = await execute([toolCall('call_review', 'Bash', { command: 'rm outside.txt' })]);
 
     expect(result).toMatchObject({ isError: true, output: expect.stringContaining('not executed') });
     expect(tool.calls).toHaveLength(0);
@@ -191,10 +192,10 @@ describe('AgentToolExecutorService auto review', () => {
 
   it('executes a tool allowed by the reviewer', async () => {
     installAutoReview({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
-    const tool = new TestTool('Write');
+    const tool = new TestTool('Bash');
     registry.register(tool);
 
-    const [result] = await execute([toolCall('call_review', 'Write', { path: 'src/a.ts' })]);
+    const [result] = await execute([toolCall('call_review', 'Bash', { command: 'rm src/a.ts' })]);
 
     expect(result).not.toMatchObject({ isError: true });
     expect(tool.calls).toHaveLength(1);
@@ -213,12 +214,12 @@ describe('AgentToolExecutorService auto review', () => {
         inFlight -= 1;
       }
     });
-    const tool = new TestTool('Write');
+    const tool = new TestTool('Bash');
     registry.register(tool);
 
     const pending = execute([
-      toolCall('call_a', 'Write', { path: 'outside-a.txt' }),
-      toolCall('call_b', 'Write', { path: 'outside-b.txt' }),
+      toolCall('call_a', 'Bash', { command: 'rm outside-a.txt' }),
+      toolCall('call_b', 'Bash', { command: 'rm outside-b.txt' }),
     ]);
     await vi.waitFor(() => {
       expect(maxInFlight).toBe(2);
@@ -236,11 +237,11 @@ describe('AgentToolExecutorService auto review', () => {
       signals.push(signal!);
       return { kind: 'decision', decision: { risk: 'low', decision: 'allow' } };
     });
-    registry.register(new TestTool('Write'));
+    registry.register(new TestTool('Bash'));
 
     await execute([
-      toolCall('call_a', 'Write', { path: 'outside-a.txt' }),
-      toolCall('call_b', 'Write', { path: 'outside-b.txt' }),
+      toolCall('call_a', 'Bash', { command: 'rm outside-a.txt' }),
+      toolCall('call_b', 'Bash', { command: 'rm outside-b.txt' }),
     ]);
 
     expect(signals).toHaveLength(2);
@@ -262,6 +263,7 @@ function installAutoReview(
       : async () => result,
   });
   permissions.stub(IBootstrapService, stubBootstrap('/tmp', {}, { nonInteractive: true }));
+  permissions.stub(IBashParserService, { parse: () => ({ ok: false, reason: 'aborted' }) });
   permissions.stub(IConfigService, { get: (() => undefined) as IConfigService['get'] });
   permissions.stub(IAgentPermissionRulesService, { rules: [], sessionApprovalRulePatterns: [] });
   permissions.stub(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));

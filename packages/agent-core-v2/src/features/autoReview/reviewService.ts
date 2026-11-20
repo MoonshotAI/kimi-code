@@ -2,7 +2,9 @@ import { resolve } from 'node:path';
 
 import { z } from 'zod';
 
-import { ref, type LiveRef } from '#/_base/di/instantiation';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { ref, type LiveRef, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Service } from '#/_base/di/service';
 import { ILogService } from '#/_base/log/log';
 import { abortable, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
@@ -17,6 +19,10 @@ import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/envi
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
+import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -41,14 +47,35 @@ import {
   type ReviewGitStatus,
   type ReviewText,
 } from './context';
-import { AUTO_REVIEW_FLAG_ID } from './flag';
-import { IAutoReviewService, type AutoReviewResult } from './review';
+import {
+  AUTO_REVIEW_AGENT_LABEL,
+  AUTO_REVIEW_FLAG_ID,
+  AUTO_REVIEW_FOR_AGENT_LABEL,
+  AUTO_REVIEW_REVIEWER_LABEL_VALUE,
+  isAutoReviewReviewerLabels,
+} from './flag';
+import {
+  AUTO_REVIEW_CIRCUIT_BREAKER_STOP_REASON,
+  IAutoReviewService,
+  REVIEWER_READONLY_TOOLS,
+  type AutoReviewDecision,
+  type AutoReviewResult,
+} from './review';
 
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
-const REVIEWER_PROFILE = 'explore';
+const REVIEWER_PROFILE_NAME = 'auto-review';
 const MAX_REVIEW_ATTEMPTS = 3;
 const MAX_CONCURRENT_REVIEWS = 4;
 const MAX_GIT_STATUS_ENTRIES = 50;
+const MAX_REVIEWER_TOOL_ROUNDS = 2;
+const MAX_CONSECUTIVE_AUTO_DENIALS = 3;
+const ROLLING_AUTO_DENIAL_WINDOW = 50;
+const MAX_ROLLING_AUTO_DENIALS = 10;
+
+const REVIEWER_TOOL_DISABLED_MESSAGE =
+  'Only the read-only tools Read, Grep, and Glob are available during Auto Review.';
+const REVIEWER_APPROVAL_DISABLED_MESSAGE =
+  'Interactive approval is unavailable during Auto Review; restricted paths cannot be read.';
 
 type ReviewAttempt = AutoReviewResult | { readonly kind: 'appended' } | ReviewFailure;
 
@@ -58,17 +85,28 @@ interface ReviewFailure {
   readonly error?: unknown;
 }
 
-const DecisionSchema = z.union([
+const AuthorizationSchema = z.enum(['explicit', 'ambiguous', 'none']);
+
+const DecisionSchema: z.ZodType<AutoReviewDecision> = z.union([
   z.object({
-    risk: z.enum(['low', 'medium']),
+    authorization: AuthorizationSchema,
+    risk: z.literal('low'),
     decision: z.literal('allow'),
     reason: z.null(),
-  }).strict().transform(({ risk, decision }) => ({ risk, decision })),
+  }).strict().transform(({ authorization, risk, decision }) => ({ authorization, risk, decision })),
   z.object({
+    authorization: z.literal('explicit'),
+    risk: z.literal('medium'),
+    decision: z.literal('allow'),
+    reason: z.null(),
+  }).strict().transform(({ authorization, risk, decision }) => ({ authorization, risk, decision })),
+  z.object({
+    authorization: AuthorizationSchema,
     risk: z.enum(['medium', 'high']),
     decision: z.literal('deny'),
     reason: z.string().nullable(),
-  }).strict().transform(({ risk, decision, reason }) => ({
+  }).strict().transform(({ authorization, risk, decision, reason }) => ({
+    authorization,
     risk,
     decision,
     reason: reason === null ? undefined : reason.slice(0, 1000),
@@ -86,6 +124,10 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   private activeReviews = 0;
   private readonly reviewSlots: Array<() => void> = [];
   private readonly approvedToolCallIds = new Set<string>();
+  private consecutiveDenialsTurnId: number | undefined;
+  private consecutiveDenials = 0;
+  private readonly rollingAutoOutcomes: Array<'allow' | 'deny'> = [];
+  private circuitBrokenTurnId: number | undefined;
 
   constructor(
     @IConfigService private readonly configService: IConfigService,
@@ -107,14 +149,37 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @ref(IGitService) private readonly git: LiveRef<IGitService>,
   ) {
     super();
+    if (isAutoReviewReviewerLabels(this.scopeContext.meta?.labels)) {
+      return;
+    }
     if (this.flags.enabled(AUTO_REVIEW_FLAG_ID)) {
       void this.loadProjectInstructions();
+    }
+    if (this.loop.hooks?.onDidFinishStep !== undefined) {
+      this._register(
+        this.loop.hooks.onDidFinishStep.register('autoReview', async (ctx, next) => {
+          if (this.circuitBrokenTurnId === ctx.turnId) {
+            ctx.stopTurn = true;
+            ctx.stopReason = AUTO_REVIEW_CIRCUIT_BREAKER_STOP_REASON;
+          }
+          await next();
+        }),
+      );
     }
     if (typeof permissionGate.registerReviewer === 'function') {
       this._register(
         permissionGate.registerReviewer(
-          createAutoReviewReviewer(this.flags, this.modeService, () => this, (toolCallId) => {
-            this.approvedToolCallIds.add(toolCallId);
+          createAutoReviewReviewer(this.flags, this.modeService, () => this, {
+            onApproved: (toolCallId) => {
+              this.approvedToolCallIds.add(toolCallId);
+            },
+            onAutoAllow: (turnId) => {
+              this.recordAutoAllow(turnId);
+            },
+            onAutoDeny: (turnId) => this.recordAutoDeny(turnId),
+            onAutoFailed: (turnId) => {
+              this.recordAutoFailed(turnId);
+            },
           }),
         ),
       );
@@ -134,6 +199,46 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     return this.projectInstructions;
   }
 
+  private recordAutoAllow(turnId: number): void {
+    this.consecutiveDenialsTurnId = turnId;
+    this.consecutiveDenials = 0;
+    this.pushRollingOutcome('allow');
+  }
+
+  private recordAutoFailed(turnId: number): void {
+    if (this.consecutiveDenialsTurnId === turnId) {
+      this.consecutiveDenials = 0;
+    }
+  }
+
+  private recordAutoDeny(turnId: number): boolean {
+    if (this.circuitBrokenTurnId === turnId) return true;
+    if (this.consecutiveDenialsTurnId !== turnId) {
+      this.consecutiveDenialsTurnId = turnId;
+      this.consecutiveDenials = 0;
+    }
+    this.consecutiveDenials += 1;
+    this.pushRollingOutcome('deny');
+    const rollingDenials = this.rollingAutoOutcomes.filter((item) => item === 'deny').length;
+    if (
+      this.consecutiveDenials >= MAX_CONSECUTIVE_AUTO_DENIALS ||
+      rollingDenials >= MAX_ROLLING_AUTO_DENIALS
+    ) {
+      this.circuitBrokenTurnId = turnId;
+      this.consecutiveDenials = 0;
+      this.rollingAutoOutcomes.length = 0;
+      return true;
+    }
+    return false;
+  }
+
+  private pushRollingOutcome(outcome: 'allow' | 'deny'): void {
+    this.rollingAutoOutcomes.push(outcome);
+    if (this.rollingAutoOutcomes.length > ROLLING_AUTO_DENIAL_WINDOW) {
+      this.rollingAutoOutcomes.shift();
+    }
+  }
+
   async review(
     context: ResolvedToolExecutionHookContext,
     trigger: string,
@@ -151,7 +256,21 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       config?.model ??
       resolveSubagentModelPool(this.configService)?.defaultModel ??
       this.profile.resolveModelContext().modelAlias;
-    const result = await this.reviewWithDeadline(context, modelAlias, config?.timeoutMs ?? 30000, signal);
+    const result: AutoReviewResult =
+      this.circuitBrokenTurnId === context.turnId && this.modeService.mode === 'auto'
+        ? {
+            kind: 'decision',
+            decision: {
+              authorization: 'none',
+              risk: 'medium',
+              decision: 'deny',
+              reason: 'Turn already stopped after repeated Auto Review denials.',
+            },
+          }
+        : await this.reviewWithDeadline(context, modelAlias, config?.timeoutMs ?? 30000, signal);
+    const durationMs = Date.now() - startedAt;
+    const authorization = result.kind === 'failed' ? undefined : result.decision.authorization;
+    const risk = result.kind === 'failed' ? undefined : result.decision.risk;
     void this.dispatcher.dispatch(new AutoReviewCompleted({
       agentId: this.scopeContext.agentId,
       turnId: context.turnId,
@@ -160,13 +279,14 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       triggerPolicy: trigger,
       model: modelAlias,
       decision: result.kind === 'failed' ? 'failed' : result.decision.decision,
-      risk: result.kind === 'failed' ? undefined : result.decision.risk,
+      risk,
+      authorization,
       reason: result.kind === 'failed'
         ? result.reason
         : result.decision.decision === 'deny'
           ? result.decision.reason
           : undefined,
-      durationMs: Date.now() - startedAt,
+      durationMs,
     }));
     if (result.kind === 'failed') {
       this.log.warn('auto review failed', { model: modelAlias, tool: context.toolCall.name, reason: result.reason });
@@ -178,8 +298,9 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       trigger_policy: trigger,
       model: modelAlias,
       decision: result.kind === 'failed' ? 'failed' : result.decision.decision,
-      risk: result.kind === 'failed' ? undefined : result.decision.risk,
-      duration_ms: Date.now() - startedAt,
+      risk,
+      authorization,
+      duration_ms: durationMs,
     });
     return result;
   }
@@ -283,14 +404,14 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     deadline: DeadlineAbortSignal,
   ): Promise<ReviewAttempt> {
     const history = this.loop.history();
-    const authorization = this.currentAuthorization(history);
+    const { rootAuthorization, combined } = this.resolveAuthorization(history);
     const cwd = this.workspace.workDir;
     const gitStatus = await abortable(this.readGitStatus(cwd, context), deadline.signal);
     const message = await this.requestReviewer(
       modelAlias,
       buildReviewMessages(
         history,
-        authorization,
+        rootAuthorization,
         projectInstructions.agentsMd,
         projectInstructions.agentsMdPaths,
         cwd,
@@ -301,33 +422,36 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       context.turnId,
       deadline.signal,
     );
-    const current = this.currentAuthorization();
+    const current = this.resolveAuthorization().combined;
     if (this.workspace.workDir !== cwd) return authorizationChanged();
-    if (!sameAuthorization(authorization, current)) {
-      return sameAuthorization(authorization, current.slice(0, authorization.length))
+    if (!sameAuthorization(combined, current)) {
+      return sameAuthorization(combined, current.slice(0, combined.length))
         ? { kind: 'appended' }
         : authorizationChanged();
     }
-    const text = message.text;
-    const parsed = DecisionSchema.safeParse(parseReviewJson(text));
+    const parsed = DecisionSchema.safeParse(parseReviewJson(message.text));
     if (!parsed.success) return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
     return { kind: 'decision', decision: parsed.data };
   }
 
-  private currentAuthorization(history: readonly ContextMessage[] = this.loop.history()): ReviewText[] {
+  private resolveAuthorization(history: readonly ContextMessage[] = this.loop.history()): {
+    readonly rootAuthorization: readonly ReviewText[];
+    readonly combined: readonly ReviewText[];
+  } {
     const local = extractAuthorization(history);
-    if (
-      this.scopeContext.agentId === MAIN_AGENT_ID ||
-      local.some((entry) => entry.role === 'human-instruction')
-    ) {
-      return local;
+    const isHumanGrant = (entry: ReviewText): boolean =>
+      entry.role === 'human-instruction' || entry.role === 'verified-user-answer';
+    if (this.scopeContext.agentId === MAIN_AGENT_ID || local.some(isHumanGrant)) {
+      return { rootAuthorization: [], combined: local };
     }
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
-    if (main === undefined) return local;
+    if (main === undefined) return { rootAuthorization: [], combined: local };
     const inherited = extractAuthorization(
       main.accessor.get(IAgentLoopService).history(),
-    ).filter((entry) => entry.role === 'human-instruction');
-    return inherited.length === 0 ? local : [...inherited, ...local];
+    ).filter(isHumanGrant);
+    return inherited.length === 0
+      ? { rootAuthorization: [], combined: local }
+      : { rootAuthorization: inherited, combined: [...inherited, ...local] };
   }
 
   private async readGitStatus(
@@ -364,8 +488,18 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   ): Promise<{ readonly text: string }> {
     const binding = this.environmentBinding.current;
     const created = await this.agentLifecycle.create({
-      binding: { profile: REVIEWER_PROFILE, model: modelAlias },
-      labels: { autoReview: 'reviewer', parentAgentId: this.scopeContext.agentId },
+      initialProfile: {
+        modelAlias,
+        profileName: REVIEWER_PROFILE_NAME,
+        thinkingLevel: 'off',
+        systemPrompt: REVIEW_POLICY,
+        activeToolNames: [...REVIEWER_READONLY_TOOLS],
+        disallowedTools: [SELECT_TOOLS_TOOL_NAME],
+      },
+      labels: {
+        [AUTO_REVIEW_AGENT_LABEL]: AUTO_REVIEW_REVIEWER_LABEL_VALUE,
+        [AUTO_REVIEW_FOR_AGENT_LABEL]: this.scopeContext.agentId,
+      },
       environmentId: binding.environmentId,
       environmentCwd: binding.cwd,
     });
@@ -374,12 +508,12 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       await this.agentLifecycle.remove(created);
       throw new Error('The reviewer agent could not be started.');
     }
+    const guards = configureReviewerGuards(handle);
     try {
-      handle.accessor.get(IAgentPermissionModeService).setMode('manual');
-      const prompt = `${REVIEW_POLICY}\n\n${messages
+      const prompt = messages
         .flatMap((message) => message.content)
-        .flatMap((part) => part.type === 'text' ? [part.text] : [])
-        .join('\n')}`;
+        .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+        .join('\n');
       const run = await runAgentTurn(handle, { kind: 'prompt', prompt }, { signal });
       const completion = await run.completion;
       void this.usage.record(this.scopeContext.agentContext, modelAlias, completion.usage, {
@@ -389,8 +523,58 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       });
       return { text: completion.summary };
     } finally {
+      guards.dispose();
       await this.agentLifecycle.remove(created);
     }
+  }
+}
+
+function configureReviewerGuards(handle: IAgentScopeHandle): DisposableStore {
+  const guards = new DisposableStore();
+  optionalGet(handle, IAgentPermissionModeService)?.setMode('manual');
+  const toolExecutor = optionalGet(handle, IAgentToolExecutorService);
+  if (toolExecutor !== undefined) {
+    guards.add(
+      registerLegacyStarting(toolExecutor, (event) => {
+        if (!REVIEWER_READONLY_TOOLS.has(event.toolCall.name)) {
+          event.veto(denyToolExecution(REVIEWER_TOOL_DISABLED_MESSAGE));
+        }
+      }),
+    );
+  }
+  const permissionGate = optionalGet(handle, IAgentPermissionGate);
+  if (permissionGate !== undefined && typeof permissionGate.registerReviewer === 'function') {
+    guards.add(
+      permissionGate.registerReviewer({
+        review: (_ctx, evaluation) =>
+          evaluation.result.kind === 'ask'
+            ? () => Promise.resolve({
+                policyName: 'auto-review-reviewer-readonly',
+                result: { kind: 'deny', message: REVIEWER_APPROVAL_DISABLED_MESSAGE },
+              })
+            : undefined,
+      }),
+    );
+  }
+  const reviewerLoop = optionalGet(handle, IAgentLoopService);
+  if (reviewerLoop?.hooks?.onWillBeginStep !== undefined) {
+    guards.add(
+      reviewerLoop.hooks.onWillBeginStep.register('autoReviewReviewerStepCap', async (ctx, next) => {
+        if (ctx.step > MAX_REVIEWER_TOOL_ROUNDS) {
+          reviewerLoop.update({ activeToolNames: [] });
+        }
+        await next();
+      }),
+    );
+  }
+  return guards;
+}
+
+function optionalGet<T>(handle: IAgentScopeHandle, token: ServiceIdentifier<T>): T | undefined {
+  try {
+    return handle.accessor.get(token);
+  } catch {
+    return undefined;
   }
 }
 
@@ -398,12 +582,35 @@ function reviewResult(outcome: AutoReviewResult | ReviewFailure): AutoReviewResu
   return outcome.kind === 'decision' ? outcome : { kind: 'failed', reason: outcome.reason };
 }
 
-function parseReviewJson(text: string): unknown {
+export function parseReviewJson(text: string): unknown {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return undefined;
   try {
-    return JSON.parse(text);
+    const direct: unknown = JSON.parse(trimmed);
+    return direct;
   } catch {
-    return undefined;
+    return extractTrailingJsonObject(trimmed);
   }
+}
+
+function extractTrailingJsonObject(text: string): unknown {
+  let closeIndex = text.lastIndexOf('}');
+  while (closeIndex >= 0) {
+    const floor = Math.max(0, closeIndex - 4096);
+    let openIndex = text.lastIndexOf('{', closeIndex);
+    while (openIndex >= floor) {
+      try {
+        const candidate: unknown = JSON.parse(text.slice(openIndex, closeIndex + 1));
+        if (isRecord(candidate) && 'decision' in candidate) {
+          return candidate;
+        }
+      } catch {
+      }
+      openIndex = text.lastIndexOf('{', openIndex - 1);
+    }
+    closeIndex = text.lastIndexOf('}', closeIndex - 1);
+  }
+  return undefined;
 }
 
 function retryableReview(outcome: ReviewFailure): boolean {

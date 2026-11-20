@@ -110,6 +110,7 @@ interface AutoReviewDecisionPayload {
   model: string;
   decision: 'allow' | 'deny' | 'failed';
   risk?: 'low' | 'medium' | 'high';
+  authorization?: 'explicit' | 'ambiguous' | 'none';
   reason?: string;
   durationMs: number;
 }

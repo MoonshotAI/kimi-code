@@ -1,7 +1,9 @@
 import {
   IAgentLifecycleService,
+  IAgentScopeContext,
   IAgentTaskService,
   IEventBus,
+  isAutoReviewReviewerLabels,
   type IDisposable,
 } from '@moonshot-ai/agent-core-v2';
 import { TaskStarted, TaskTerminatedNotice } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
@@ -27,7 +29,15 @@ export class SessionTaskFeed implements IDisposable {
   }
 
   agentIds(): readonly string[] {
-    return this.agents.list().map((agent) => agent.agentId);
+    return this.agents
+      .list()
+      .map((agent) => agent.agentId)
+      .filter((agentId) => {
+        const handle = this.agents.handleOf(agentId);
+        return !isAutoReviewReviewerLabels(
+          handle === undefined ? undefined : optionalService(handle, IAgentScopeContext)?.meta?.labels,
+        );
+      });
   }
 
   running(agentId: string): TaskState[] {
@@ -46,6 +56,7 @@ export class SessionTaskFeed implements IDisposable {
     if (this.agentWatches.has(agentId)) return;
     const handle = this.agents.handleOf(agentId);
     if (handle === undefined) return;
+    if (isAutoReviewReviewerLabels(optionalService(handle, IAgentScopeContext)?.meta?.labels)) return;
     const tasks = optionalService(handle, IAgentTaskService);
     const bus = optionalService(handle, IEventBus);
     const subscriptions: IDisposable[] = [];

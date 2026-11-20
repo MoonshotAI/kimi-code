@@ -509,6 +509,43 @@ describe('AgentPermissionGate', () => {
     });
   });
 
+  it('reports circuit-breaker guidance when Never Ask exceeds the denial threshold', () => {
+    const allowedCalls: number[] = [];
+    const failedCalls: number[] = [];
+    const resolvedAllow = resolveAutoReview(
+      makeContext('Bash'),
+      modeApproval,
+      { kind: 'decision', decision: { risk: 'low', decision: 'allow' } },
+      'auto',
+      { onAutoAllow: (turnId) => allowedCalls.push(turnId) },
+    );
+    expect(resolvedAllow.result.kind).toBe('approve');
+    expect(allowedCalls).toEqual([1]);
+
+    resolveAutoReview(
+      makeContext('Bash'),
+      modeApproval,
+      { kind: 'failed', reason: 'timeout' },
+      'auto',
+      { onAutoFailed: (turnId) => failedCalls.push(turnId) },
+    );
+    expect(failedCalls).toEqual([1]);
+
+    const broken = resolveAutoReview(
+      makeContext('Bash'),
+      modeApproval,
+      { kind: 'decision', decision: { risk: 'medium', decision: 'deny', reason: 'Not authorized.' } },
+      'auto',
+      { onAutoDeny: () => true },
+    );
+    expect(broken.result).toEqual({
+      kind: 'deny',
+      message:
+        'Auto Review denied tool "Bash"; it was not executed. Not authorized. Auto Review stopped this turn after repeated denials. Stop and ask the user for explicit authorization before continuing.',
+      reason: { review_risk: 'medium', review_circuit_breaker: true },
+    });
+  });
+
   it('data() reflects the mode and rules services', () => {
     mode = 'yolo';
     rules = [{ decision: 'allow', scope: 'user', pattern: 'Bash(*)' }];

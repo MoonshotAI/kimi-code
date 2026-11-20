@@ -69,7 +69,11 @@ import {
   type BroadcastTarget,
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
-import { USAGE_FRAME_INTERVAL_MS } from '../src/transport/ws/v1/sessionAgentFeed';
+import {
+  SessionAgentFeed,
+  USAGE_FRAME_INTERVAL_MS,
+} from '../src/transport/ws/v1/sessionAgentFeed';
+import { SessionTaskFeed } from '../src/transport/ws/v1/sessionTaskFeed';
 
 type FakeBusEvent = { type: string };
 
@@ -2251,5 +2255,42 @@ describe('sessionEventMessageSchema', () => {
     expect(
       sessionEventMessageSchema.safeParse(frame({ type: 'invalidated', kind: 'capabilities' })).success,
     ).toBe(false);
+  });
+
+  it('ignores internal auto-review reviewer agents in session agent and task feeds', () => {
+    const reviewerScope = makeAgentScopeContext({
+      agentId: 'reviewer-1',
+      agentScope: '',
+      meta: { labels: { autoReview: 'reviewer', reviewerForAgentId: 'main' } },
+    });
+    const reviewerHandle = {
+      id: 'reviewer-1',
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: (token: unknown) => (token === IAgentScopeContext ? reviewerScope : undefined),
+      },
+      dispose: () => {},
+    } as unknown as import('@moonshot-ai/agent-core-v2').IAgentScopeHandle;
+    const lifecycle = {
+      list: () => [{ agentId: 'reviewer-1' } as AgentContext],
+      handleOf: (id: string) => (id === 'reviewer-1' ? reviewerHandle : undefined),
+      onDidCreate: () => ({ dispose: () => {} }),
+      onWillClose: () => ({ dispose: () => {} }),
+      onDidClose: () => ({ dispose: () => {} }),
+    } as unknown as IAgentLifecycleService;
+
+    const sent: string[] = [];
+    const agentFeed = new SessionAgentFeed('s1', lifecycle, (agentId) => {
+      sent.push(agentId);
+    });
+    const taskFeed = new SessionTaskFeed(lifecycle, () => {});
+    try {
+      expect(agentFeed.agentIds()).toEqual([]);
+      expect(sent).toEqual([]);
+      expect(taskFeed.agentIds()).toEqual([]);
+    } finally {
+      agentFeed.dispose();
+      taskFeed.dispose();
+    }
   });
 });
