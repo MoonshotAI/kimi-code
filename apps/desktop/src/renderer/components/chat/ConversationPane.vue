@@ -112,9 +112,13 @@ const openShortcutSettings = inject(OpenShortcutSettingsKey, undefined);
 const configureScreenshotShortcut = screenshotSupported && openShortcutSettings
   ? () => openShortcutSettings('captureScreenshot')
   : undefined;
-const screenshotShortcutKeys = computed(() =>
-  screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
-);
+const screenshotProps = computed(() => ({
+  onCaptureScreenshot: captureScreenshotAction,
+  screenshotShortcutKeys: screenshotSupported ? resolvedBindingKeys('captureScreenshot') : [],
+  screenshotShortcutUnavailable: !!osGlobalFailures.captureScreenshot,
+  screenshotShortcutFailureReason: osGlobalFailures.captureScreenshot,
+  onConfigureScreenshotShortcut: configureScreenshotShortcut,
+}));
 
 const client = useKimiWebClient();
 const { anyOverlayOpen } = useAppDialogs();
@@ -945,11 +949,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               :before-submit="gateSubmit"
               :defer-submit-reset="true"
               :extra-builtin-commands="extraBuiltinCommands"
-              :on-capture-screenshot="captureScreenshotAction"
-              :screenshot-shortcut-keys="screenshotShortcutKeys"
-              :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-              :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-              :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+              v-bind="screenshotProps"
               @submit="handleComposerSubmit"
               @steer="handleComposerSteer"
               @steer-queued="emit('steerQueued', $event)"
@@ -1044,11 +1044,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         :before-submit="gateSubmit"
         :defer-submit-reset="true"
         :extra-builtin-commands="extraBuiltinCommands"
-        :on-capture-screenshot="captureScreenshotAction"
-        :screenshot-shortcut-keys="screenshotShortcutKeys"
-        :screenshot-shortcut-unavailable="!!osGlobalFailures.captureScreenshot"
-        :screenshot-shortcut-failure-reason="osGlobalFailures.captureScreenshot"
-        :on-configure-screenshot-shortcut="configureScreenshotShortcut"
+        v-bind="screenshotProps"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
         @answer="handleQuestionAnswer"
