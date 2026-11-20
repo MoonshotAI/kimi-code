@@ -2,4 +2,4 @@
 '@moonshot-ai/kimi-code': patch
 ---
 
-Fix avatars not displaying in the web interface.
+Web: Fix avatars not displaying in the web interface.
