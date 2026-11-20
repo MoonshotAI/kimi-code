@@ -15,6 +15,8 @@ export function cliFetchStubs(): FetchStub[] {
   return [...kimiServiceStubs(), ...downloads];
 }
 
+export const TURN_FINISHED = 'Worked for ';
+
 export interface TerminalOptions {
   readonly columns?: number;
   readonly rows?: number;
@@ -91,6 +93,7 @@ async function startTerminal(model: FakeModel, home: TestHome, options: Terminal
     modelName, diagnostics, viewport,
     waitForText: (text: string, timeout?: number) => waitFor(`${JSON.stringify(text)} to appear`, (screen) => screen.includes(text), timeout),
     waitForTextGone: (text: string, timeout?: number) => waitFor(`${JSON.stringify(text)} to disappear`, (screen) => !screen.includes(text), timeout),
+    waitForTurnToFinish: (timeout?: number) => waitFor('the turn to finish', (screen) => screen.includes(TURN_FINISHED), timeout),
     scrollback: async () => { await screen.flush(); return screen.getScrollBuffer().join('\n'); },
     type: async (text: string) => {
       const echo = text.length <= columns - 4 ? text : text.slice(-ECHO_TAIL);

@@ -19,7 +19,7 @@ import { fakeModelConfig, say } from '@moonshot-ai/testkit/model';
 import { homeFixtures, modelFixtures, type HomeFixtures, type ModelFixtures } from '@moonshot-ai/testkit/vitest';
 import { expect, test as base } from 'vitest';
 
-import { cliFetchStubs } from '../support/terminal-session';
+import { cliFetchStubs, TURN_FINISHED } from '../support/terminal-session';
 
 const test = base.extend<HomeFixtures & ModelFixtures>({ ...homeFixtures(), ...modelFixtures() });
 
@@ -79,6 +79,7 @@ test.runIf(process.platform !== 'win32')('hands the terminal back in its normal 
     await until('the typed prompt', () => shows('Hello pty'));
     child.stdin.write('\r');
     await until('the answer', () => shows('Answer from a real terminal.'));
+    await until('the turn to finish', () => shows(TURN_FINISHED));
     child.stdin.write('\x03\x1b[200~/exit\x1b[201~\r');
     await until('the CLI exited and the shell printed the terminal modes', () => output.includes(EXIT_MARKER) && /\bspeed\b/.test(output.slice(output.indexOf(EXIT_MARKER))), { timeoutMs: TIMEOUTS.server });
     child.stdin.end();

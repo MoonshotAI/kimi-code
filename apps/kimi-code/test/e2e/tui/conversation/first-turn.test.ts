@@ -13,5 +13,6 @@ test('[L0:tui.first-turn] submits the first prompt from the terminal and display
   await terminal.waitForText(prompt);
   terminal.press('Enter');
   await terminal.waitForText(answer);
+  await terminal.waitForTurnToFinish();
   expect(model.requests('main').map(request => request.firstUserText)).toEqual([prompt]);
 });

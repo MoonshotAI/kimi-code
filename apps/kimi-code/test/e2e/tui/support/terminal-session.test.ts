@@ -18,6 +18,7 @@ test('distinguishes pasted drafts from submitted text and explains a missing scr
   terminal.paste('Send this question');
   terminal.press('Enter');
   await terminal.waitForText('Diagnostic reply.');
+  await terminal.waitForTurnToFinish();
   expect(await terminal.viewport()).not.toContain(lines[0]!);
   expect(await terminal.scrollback()).toContain(lines[0]!);
   await expect(terminal.waitForText('Missing screen marker', 100)).rejects.toThrow(
@@ -35,5 +36,6 @@ small('edits the draft with keys in a small terminal and sends what is on screen
   model.script(say('Hi there.'));
   terminal.press('Enter');
   await terminal.waitForText('Hi there.');
+  await terminal.waitForTurnToFinish();
   expect(model.requests('main').map(request => request.firstUserText)).toEqual(['Hello']);
 });
