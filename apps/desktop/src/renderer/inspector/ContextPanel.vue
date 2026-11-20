@@ -141,6 +141,10 @@ function itemLabel(item: SessionContextItemSummary): string {
 }
 
 const showGroupedTools = computed(() => !filtering.value && tools.value.length > 0);
+const groupedSystemItem = computed(() =>
+  showGroupedTools.value && items.value[0]?.role === 'system' ? items.value[0] : undefined,
+);
+const listedItems = computed(() => (groupedSystemItem.value ? items.value.slice(1) : items.value));
 const definitionSize = computed(() =>
   tools.value.reduce((acc, item) => acc + item.tokens, 0),
 );
@@ -148,9 +152,8 @@ const definitionSize = computed(() =>
 const navigableItems = computed<SessionContextItemSummary[]>(() => {
   if (definitionOnly.value) return items.value;
   if (showGroupedTools.value && toolsOpen.value) {
-    const sys = items.value[0]?.role === 'system' ? [items.value[0]] : [];
-    const rest = items.value[0]?.role === 'system' ? items.value.slice(1) : items.value;
-    return [...sys, ...tools.value, ...rest];
+    const system = groupedSystemItem.value ? [groupedSystemItem.value] : [];
+    return [...system, ...tools.value, ...listedItems.value];
   }
   return items.value;
 });
@@ -224,23 +227,23 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
       <div class="context-blocks">
         <template v-if="showGroupedTools">
           <button
-            v-if="items[0]?.role === 'system'"
+            v-if="groupedSystemItem"
             type="button"
             class="context-block context-row"
-            data-role="system"
+            data-context-role="system"
             aria-haspopup="dialog"
-            @click="selectedId = items[0].id"
+            @click="selectedId = groupedSystemItem.id"
           >
             <Icon class="open-message" name="expand" size="sm" />
             <span class="role-marker" />
             <span class="block-role">{{ t('inspector.role.system') }}</span>
-            <span class="block-preview">{{ items[0].preview }}</span>
-            <span class="block-size">{{ formatTokenEstimate(items[0].tokens) }}</span>
+            <span class="block-preview">{{ groupedSystemItem.preview }}</span>
+            <span class="block-size">{{ formatTokenEstimate(groupedSystemItem.tokens) }}</span>
           </button>
 
           <details
             class="context-block"
-            data-role="definition"
+            data-context-role="definition"
             @toggle.stop="toolsOpen = ($event.target as HTMLDetailsElement).open"
           >
             <summary>
@@ -256,7 +259,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
                 :key="tool.id"
                 type="button"
                 class="context-block context-row"
-                data-role="definition"
+                data-context-role="definition"
                 aria-haspopup="dialog"
                 @click="selectedId = tool.id"
               >
@@ -271,49 +274,27 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
               </button>
             </div>
           </details>
-
-          <button
-            v-for="item in (items[0]?.role === 'system' ? items.slice(1) : items)"
-            :key="item.id"
-            type="button"
-            class="context-block context-row"
-            :data-role="item.role"
-            aria-haspopup="dialog"
-            @click="selectedId = item.id"
-          >
-            <Icon class="open-message" name="expand" size="sm" />
-            <span v-if="item.sequence !== undefined" class="block-index">{{ String(item.sequence).padStart(2, '0') }}</span>
-            <span v-else class="role-marker" />
-            <span class="block-role">{{ itemLabel(item) }}</span>
-            <span class="block-preview">
-              <span v-if="item.name" class="block-name">{{ item.name }}</span>
-              <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
-            </span>
-            <span class="block-size">{{ formatTokenEstimate(item.tokens) }}</span>
-          </button>
         </template>
 
-        <template v-else>
-          <button
-            v-for="item in items"
-            :key="item.id"
-            type="button"
-            class="context-block context-row"
-            :data-role="item.role"
-            aria-haspopup="dialog"
-            @click="selectedId = item.id"
-          >
-            <Icon class="open-message" name="expand" size="sm" />
-            <span v-if="item.sequence !== undefined" class="block-index">{{ String(item.sequence).padStart(2, '0') }}</span>
-            <span v-else class="role-marker" />
-            <span class="block-role">{{ itemLabel(item) }}</span>
-            <span class="block-preview">
-              <span v-if="item.name" class="block-name">{{ item.name }}</span>
-              <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
-            </span>
-            <span class="block-size">{{ formatTokenEstimate(item.tokens) }}</span>
-          </button>
-        </template>
+        <button
+          v-for="item in listedItems"
+          :key="item.id"
+          type="button"
+          class="context-block context-row"
+          :data-context-role="item.role"
+          aria-haspopup="dialog"
+          @click="selectedId = item.id"
+        >
+          <Icon class="open-message" name="expand" size="sm" />
+          <span v-if="item.sequence !== undefined" class="block-index">{{ String(item.sequence).padStart(2, '0') }}</span>
+          <span v-else class="role-marker" />
+          <span class="block-role">{{ itemLabel(item) }}</span>
+          <span class="block-preview">
+            <span v-if="item.name" class="block-name">{{ item.name }}</span>
+            <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
+          </span>
+          <span class="block-size">{{ formatTokenEstimate(item.tokens) }}</span>
+        </button>
 
         <div v-if="hasMore" class="show-more-wrap">
           <Button size="sm" variant="ghost" :loading="loadingMore" @click="fetchContext('more')">
@@ -327,6 +308,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
       v-if="selectedItem"
       :session-id="sessionId"
       :item="selectedItem"
+      :label="itemLabel(selectedItem)"
       :index="selectedIndex"
       :total="navigableTotal"
       @close="selectedId = ''"
@@ -337,14 +319,6 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
 
 <style scoped>
 .model-inspector { height: 100%; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--color-bg); color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-sm); -webkit-app-region: no-drag; }
-.model-inspector :deep([data-role="system"]) { --context-color: var(--color-text-muted); }
-.model-inspector :deep([data-role="definition"]) { --context-color: var(--color-context-definition); }
-.model-inspector :deep([data-role="user"]) { --context-color: var(--color-info); }
-.model-inspector :deep([data-role="assistant"]) { --context-color: var(--color-context-assistant); }
-.model-inspector :deep([data-role="tool"]) { --context-color: var(--color-orange); }
-.model-inspector :deep([data-role="reminder"]) { --context-color: var(--color-context-reminder); }
-.model-inspector :deep([data-role="skill"]) { --context-color: var(--color-context-skill); }
-.model-inspector :deep([data-role="compaction"]) { --context-color: var(--color-context-compaction); }
 .current-time { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-text-faint); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .current-time:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .current-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); color: var(--color-danger); font-size: var(--text-xs); overflow-wrap: anywhere; }

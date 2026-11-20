@@ -83,13 +83,13 @@ const rows = computed(() => {
             type="button"
             class="ctx-composition-seg"
             :class="{ dimmed: filtering && !row.selected }"
-            :data-role="row.role"
+            :data-context-role="row.role"
             :style="{ width: row.width }"
             :aria-label="row.label"
             :aria-pressed="row.selected"
             @click="emit('toggle', row.role)"
           />
-          <span v-else class="ctx-composition-seg" :data-role="row.role" :style="{ width: row.width }" />
+          <span v-else class="ctx-composition-seg" :data-context-role="row.role" :style="{ width: row.width }" />
         </Tooltip>
         <span class="ctx-composition-free" />
       </div>
@@ -100,7 +100,7 @@ const rows = computed(() => {
               type="button"
               class="ctx-role-row ctx-role-toggle"
               :class="{ selected: row.selected, muted: filtering && !row.selected }"
-              :data-role="row.role"
+              :data-context-role="row.role"
               :aria-pressed="row.selected"
               @click="emit('toggle', row.role)"
             >
@@ -112,7 +112,7 @@ const rows = computed(() => {
           </Tooltip>
         </template>
         <template v-else>
-          <div v-for="row in rows" :key="row.role" class="ctx-role-row" :data-role="row.role">
+          <div v-for="row in rows" :key="row.role" class="ctx-role-row" :data-context-role="row.role">
             <span class="ctx-role-marker" />
             <Tooltip :text="row.count">
               <span class="ctx-role-name" tabindex="0">{{ row.name }}</span>
@@ -133,14 +133,6 @@ const rows = computed(() => {
   gap: var(--space-2);
   font-family: var(--font-ui);
 }
-.ctx-composition [data-role="system"] { --context-color: var(--color-text-muted); }
-.ctx-composition [data-role="definition"] { --context-color: var(--color-context-definition); }
-.ctx-composition [data-role="user"] { --context-color: var(--color-info); }
-.ctx-composition [data-role="reminder"] { --context-color: var(--color-context-reminder); }
-.ctx-composition [data-role="skill"] { --context-color: var(--color-context-skill); }
-.ctx-composition [data-role="assistant"] { --context-color: var(--color-context-assistant); }
-.ctx-composition [data-role="tool"] { --context-color: var(--color-orange); }
-.ctx-composition [data-role="compaction"] { --context-color: var(--color-context-compaction); }
 
 .ctx-usage {
   display: flex;

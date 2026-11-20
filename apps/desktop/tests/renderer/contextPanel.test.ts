@@ -155,7 +155,7 @@ describe('ContextPanel live refresh', () => {
   it('shows the composition like the ring card and filters items from its rows', async () => {
     const root = await mountPanel();
     expect(root.querySelector('.ctx-usage-headline')?.textContent).toBe('10% 已用');
-    const userRow = () => root.querySelector<HTMLButtonElement>('.ctx-role-toggle[data-role="user"]')!;
+    const userRow = () => root.querySelector<HTMLButtonElement>('.ctx-role-toggle[data-context-role="user"]')!;
     expect(userRow().textContent).toContain('用户消息');
     expect(userRow().getAttribute('aria-pressed')).toBe('false');
 

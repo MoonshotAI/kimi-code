@@ -56,14 +56,7 @@ export const contextItemPartSchema = z.object({
 });
 export type ContextItemPart = z.infer<typeof contextItemPartSchema>;
 
-export const contextItemDetailSchema = z.object({
-  id: z.string().min(1),
-  role: z.string().min(1),
-  segment: contextItemSegmentSchema.optional(),
-  name: z.string().optional(),
-  sequence: z.number().int().positive().optional(),
-  tokens: z.number().int().nonnegative(),
-  has_media: z.boolean(),
+export const contextItemDetailSchema = contextItemSummarySchema.omit({ preview: true }).extend({
   parts: z.array(contextItemPartSchema),
   raw: z.unknown(),
 });

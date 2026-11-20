@@ -12,6 +12,7 @@ import { contextItemText } from './contextCopy';
 const props = defineProps<{
   sessionId: string;
   item: SessionContextItemSummary;
+  label: string;
   index: number;
   total: number;
 }>();
@@ -74,7 +75,7 @@ onBeforeUnmount(() => {
 
 const title = computed(() => [
   props.item.sequence !== undefined ? `#${props.item.sequence}` : '',
-  props.item.segment ? t(`inspector.segment.${props.item.segment}`) : t(`inspector.role.${props.item.role}`, props.item.role),
+  props.label,
   props.item.name ?? '',
 ].filter(Boolean).join(' · '));
 
@@ -161,7 +162,7 @@ function onKeydown(event: KeyboardEvent): void {
 
 <template>
   <Dialog open :aria-label="title" size="lg" height="fixed" :padded="false" initial-focus=".context-message" @close="emit('close')">
-    <section ref="messageRoot" class="context-message" :data-role="item.role" tabindex="-1">
+    <section ref="messageRoot" class="context-message" :data-context-role="item.role" tabindex="-1">
       <header class="message-header">
         <span class="role-marker" />
         <h2 class="message-title">{{ title }}</h2>
@@ -216,11 +217,6 @@ function onKeydown(event: KeyboardEvent): void {
 <style scoped>
 .context-message { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text); }
 .context-message:focus { outline: none; }
-.context-message[data-role="system"] { --context-color: var(--color-text-muted); }
-.context-message[data-role="definition"] { --context-color: var(--color-context-definition); }
-.context-message[data-role="user"] { --context-color: var(--color-info); }
-.context-message[data-role="assistant"] { --context-color: var(--color-context-assistant); }
-.context-message[data-role="tool"] { --context-color: var(--color-orange); }
 .message-header { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: var(--p-hairline) solid var(--color-line); }
 .role-marker { width: var(--space-2); height: var(--space-2); background: var(--context-color, var(--color-text-muted)); border-radius: var(--radius-context-segment); flex: none; }
 .message-title { margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: var(--weight-medium); }
