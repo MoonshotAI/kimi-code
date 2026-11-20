@@ -41,6 +41,14 @@ protected:
     behavior: 请求先被限流，重试时又遇上下文超限，引擎自动压缩后再次请求，这一回合正常完成，而不是直接失败。
     source: 'core #4950 修复：LLM 重试后恢复超限压缩'
     owner: '@RealKai42'
+  - id: desktop.overlay-menu-stays-closed
+    kind: regression
+    runner: vitest
+    project: kimi-code-app
+    file: apps/desktop/tests/main/browser/browser-overlay.test.ts
+    behavior: 用户在浮层菜单里刚改完选项就按 Escape，渲染进程在收到关闭通知前发出的菜单刷新不会让菜单重新弹出；菜单保持关闭，渲染进程和主进程都认为它已关闭。
+    source: 'desktop 修复：浮层菜单被迟到的刷新重新打开（Desktop E2E 抓到）'
+    owner: '@RealKai42'
   - id: kap.api-contract
     kind: contract
     runner: vitest
