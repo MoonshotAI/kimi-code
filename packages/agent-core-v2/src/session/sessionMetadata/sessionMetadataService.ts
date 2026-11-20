@@ -5,6 +5,7 @@ import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
+import { hasRelativeLocalWorkdir } from '#/app/sessionIndex/legacySessionWorkdir';
 import { buildSessionSummary, recoverCwd } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
@@ -109,7 +110,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       this.refreshBeforeWrite = false;
       const existing = await this.readPersisted();
       if (existing !== undefined) {
-        this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
+        this.data = this.normalizeStored(existing);
       }
     }
     return !this.disposed;
@@ -235,6 +236,14 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     }
   }
 
+  private normalizeStored(existing: SessionMeta): SessionMeta {
+    const meta = normalizeSessionMeta(existing, this.ctx.sessionId);
+    if (this.workdir.environmentId === LOCAL_ENVIRONMENT_ID && hasRelativeLocalWorkdir(meta.environmentId, meta.environmentCwd ?? meta.cwd)) {
+      return { ...meta, cwd: this.workdir.cwd, environmentCwd: this.workdir.cwd };
+    }
+    return meta;
+  }
+
   private async readPersisted(): Promise<SessionMeta | undefined> {
     return await this.store.get<SessionMeta>(this.scope, META_KEY) ??
       this.store.get<SessionMeta>(legacySessionMetaScopeOf(this.scope), META_KEY);
@@ -243,8 +252,9 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   private async load(): Promise<void> {
     const existing = await this.readPersisted();
     if (existing !== undefined) {
-      this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
+      this.data = this.normalizeStored(existing);
       if (
+        this.data.environmentCwd !== existing.environmentCwd ||
         this.data.agents === undefined ||
         this.data.custom === undefined ||
         sessionMetaTitleNeedsMigration(existing, this.data)

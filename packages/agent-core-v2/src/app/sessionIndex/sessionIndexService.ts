@@ -10,6 +10,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SessionIndexDegradedEvent } from '#/app/telemetry/events';
 import { isError2 } from '#/errors';
 import { databaseBaseEnabled } from '#/persistence/configSection';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import {
   IQueryStore,
@@ -109,6 +110,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IAppendLogStore private readonly logs: IAppendLogStore,
     @IQueryStore private readonly queryStore: IQueryStore,
     @IConfigService private readonly config: IConfigService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
@@ -118,6 +120,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     super();
     this.sessionLog = new SessionIndexLog(storage, this.sessionsScope);
     this.projector = new SessionIndexProjector({
+      logs,
       storage,
       docs,
       queryStore,
@@ -721,7 +724,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       this.sessionLog.locations(),
     ]);
     const found = await mapBounded(buckets, 16, (bucket) =>
-      readSessionSummary(this.docs, this.sessionsScope, bucket, id, locations.get(`${bucket}/${id}`)),
+      readSessionSummary(this.docs, this.sessionsScope, bucket, id, locations.get(`${bucket}/${id}`), this.logs),
     );
     if (found.length > 1) throw new DuplicateSessionId(id, found[0]!.workspaceId, found[1]!.workspaceId);
     return found[0];
@@ -758,6 +761,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
             workspaceId,
             sessionId,
             locations.get(`${workspaceId}/${sessionId}`),
+            this.logs,
           );
           if (summary === undefined) continue;
           const owner = owners.get(sessionId);

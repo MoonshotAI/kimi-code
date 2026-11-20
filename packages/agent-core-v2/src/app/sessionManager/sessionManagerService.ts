@@ -135,8 +135,10 @@ export class SessionManager implements ISessionManager {
       const workDir = options.workDir ?? lease.instance.root;
       if (!remote) {
         const cwd = options.environmentCwd ?? workDir;
-        if (options.workspaceId !== undefined || cwd !== options.workDir) await this.assertUsableWorkDir(cwd);
         const absoluteCwd = resolve(cwd);
+        if (options.workspaceId !== undefined || cwd !== options.workDir) {
+          await this.assertUsableWorkDir(options.environmentCwd ? absoluteCwd : cwd);
+        }
         return { workspaceId: lease.instance.id, workDir: absoluteCwd, environmentId, environmentCwd: absoluteCwd, lease };
       }
       const registrationError = this.environmentDeclarations.registrationError(environmentId);

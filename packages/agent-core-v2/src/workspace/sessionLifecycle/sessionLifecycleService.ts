@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { isAbsolute } from 'node:path';
 
 import { join } from 'pathe';
 
@@ -41,6 +40,7 @@ import { CHILD_SESSION_KIND,
   ISessionIndexMirror,
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
+import { hasRelativeLocalWorkdir, readLegacyLocalWorkdir } from '#/app/sessionIndex/legacySessionWorkdir';
 import { buildSessionSummary, listWorkspaceIds, SessionIndexLog } from '#/app/sessionIndex/sessionIndexSource';
 import type { SessionEndedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -147,7 +147,7 @@ function sessionWorkdir(
   if (!cwd) {
     throw new EnvironmentError('environment.invalid_cwd', `Session "${sessionId}" has no recorded working directory for environment "${environmentId}"`);
   }
-  if (environmentId === LOCAL_ENVIRONMENT_ID && !isAbsolute(cwd)) {
+  if (hasRelativeLocalWorkdir(environmentId, cwd)) {
     throw new EnvironmentError('environment.invalid_cwd', `Session "${sessionId}" has a non-absolute local working directory: ${cwd}`);
   }
   return { environmentId, cwd };
@@ -1086,7 +1086,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         const log = new SessionIndexLog(this.storage, this.bootstrap.scope('sessions'));
         hostCwd = (await log.locations()).get(`${this.workspaceId}/${sessionId}`);
       }
-      const workdir = sessionWorkdir(sessionId, meta.environmentId, meta.environmentCwd, hostCwd);
+      const recovered = hasRelativeLocalWorkdir(meta.environmentId, meta.environmentCwd ?? hostCwd)
+        ? await readLegacyLocalWorkdir(this.appendLogStore, sessionScope)
+        : undefined;
+      const workdir = sessionWorkdir(sessionId, meta.environmentId, recovered ?? meta.environmentCwd, hostCwd);
       return { meta, workdir, hostCwd: workdir.environmentId === LOCAL_ENVIRONMENT_ID ? workdir.cwd : hostCwd ?? this.workspaceContext.cwd };
     }
     return undefined;
