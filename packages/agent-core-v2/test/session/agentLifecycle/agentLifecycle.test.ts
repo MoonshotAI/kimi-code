@@ -1429,6 +1429,17 @@ describe('AgentLifecycleService', () => {
     expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('auto');
   });
 
+  it('broadcastPermissionMode leaves auto-review agents pinned to manual', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    await svc.create({ agentId: 'reviewer-1', labels: { autoReview: 'reviewer' } });
+
+    svc.broadcastPermissionMode('yolo');
+
+    expect(svc.handleOf('main')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('yolo');
+    expect(svc.handleOf('reviewer-1')!.accessor.get(IAgentStateService).get(permissionModeKey)).toBe('manual');
+  });
+
   it('broadcastPermissionMode leaves tower-worker agents pinned to their spawned mode', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });

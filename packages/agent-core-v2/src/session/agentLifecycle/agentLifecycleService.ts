@@ -450,7 +450,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     for (const managed of this.roster.values()) {
       if (managed.closing || !managed.active) continue;
       const handle = managed.handle;
-      if (hasPinnedPermissionMode(handle.accessor.get(IAgentLoopService).data().profileName)) {
+      if (
+        hasPinnedPermissionMode(handle.accessor.get(IAgentLoopService).data().profileName) ||
+        handle.accessor.get(IAgentScopeContext).meta?.labels?.['autoReview'] === 'reviewer'
+      ) {
         continue;
       }
       handle.accessor.get(IAgentPermissionModeService).setMode(mode);

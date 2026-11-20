@@ -25,7 +25,12 @@ export function createAutoReviewReviewer(
       };
     },
     review: (context, evaluation) => {
-      const trigger = autoReviewTrigger(flags.enabled(AUTO_REVIEW_FLAG_ID), modes.mode, evaluation);
+      const trigger = autoReviewTrigger(
+        flags.enabled(AUTO_REVIEW_FLAG_ID),
+        modes.mode,
+        evaluation,
+        context.toolCall.name,
+      );
       if (trigger === undefined) return undefined;
       let pending: Promise<AutoReviewResult> | undefined;
       const start = (): Promise<AutoReviewResult> => {
@@ -50,12 +55,16 @@ export function createAutoReviewReviewer(
   };
 }
 
+const UNREVIEWED_TOOLS = new Set(['Write', 'Edit']);
+
 export function autoReviewTrigger(
   enabled: boolean,
   mode: PermissionMode,
   evaluation: PermissionPolicyEvaluation,
+  toolName?: string,
 ): string | undefined {
   if (!enabled || mode === 'manual') return undefined;
+  if (toolName !== undefined && UNREVIEWED_TOOLS.has(toolName)) return undefined;
   if (evaluation.result.kind === 'ask') return evaluation.policyName;
   const underlying = evaluation.underlying;
   return underlying?.result.kind === 'ask' ? underlying.policyName : undefined;

@@ -10,37 +10,13 @@ import { readRetryAfterMs, retryBackoffDelay, sleepForRetry } from '#/_base/util
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
-import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import {
-  resolveThinkingEffortForModel,
-  resolveThinkingKeep,
-} from '@moonshot-ai/core/llm/thinking';
-import type { TokenUsage } from '@moonshot-ai/core/llm/usage';
-import type { AssistantMessage, Message } from '@moonshot-ai/core/llm/message';
-import type { LlmRequestModel } from '@moonshot-ai/core/llm/request';
-import type { InitializedLlmRequestPart } from '@moonshot-ai/core/llm/requester';
-import { credentialRecovery } from '@moonshot-ai/core/llm/policy/credentials';
-import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
+import type { Message } from '@moonshot-ai/core/llm/message';
+import { classifyApiError, isRetryableGenerateError } from '#/llm-adapter/contract/errors';
+import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import { resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
-import type { ModelOverrides } from '#/llm-adapter/model/model.types';
-import {
-  requiresStrictThinkingValidation,
-  type ThinkingConfig,
-} from '#/llm-adapter/model/thinking';
-import {
-  errorFromLlmMessage,
-  llmMessageFromError,
-  withErrorDiagnostics,
-  classifyApiError,
-  isRetryableGenerateError,
-} from '#/llm-adapter/contract/errors';
-import { translateProviderError } from '#/llm-adapter/protocol/errors';
-import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -48,9 +24,9 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { resolveSubagentModelPool } from '#/session/subagent/configSection';
+import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -69,6 +45,7 @@ import { AUTO_REVIEW_FLAG_ID } from './flag';
 import { IAutoReviewService, type AutoReviewResult } from './review';
 
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
+const REVIEWER_PROFILE = 'explore';
 const MAX_REVIEW_ATTEMPTS = 3;
 const MAX_CONCURRENT_REVIEWS = 4;
 const MAX_GIT_STATUS_ENTRIES = 50;
@@ -98,24 +75,6 @@ const DecisionSchema = z.union([
   })),
 ]);
 
-const RESPONSE_FORMAT = {
-  type: 'json_schema',
-  jsonSchema: {
-    name: 'auto_review_decision',
-    strict: true,
-    schema: {
-      type: 'object',
-      properties: {
-        risk: { type: 'string', enum: ['low', 'medium', 'high'] },
-        decision: { type: 'string', enum: ['allow', 'deny'] },
-        reason: { type: ['string', 'null'] },
-      },
-      required: ['risk', 'decision', 'reason'],
-      additionalProperties: false,
-    },
-  },
-} as const;
-
 interface ProjectInstructions {
   readonly agentsMd: string | undefined;
   readonly agentsMdPaths: readonly string[] | undefined;
@@ -133,14 +92,12 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IFlagService private readonly flags: IFlagService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IAgentPermissionGate permissionGate: IAgentPermissionGate,
-    @IModelCatalog private readonly models: IModelCatalog,
-    @IProtocolAdapterRegistry private readonly protocols: IProtocolAdapterRegistry,
+    @IAgentEnvironmentBindingService private readonly environmentBinding: IAgentEnvironmentBindingService,
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentFullCompactionService private readonly compaction: IAgentFullCompactionService,
-    @ISessionContext private readonly session: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -329,7 +286,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const authorization = this.currentAuthorization(history);
     const cwd = this.workspace.workDir;
     const gitStatus = await abortable(this.readGitStatus(cwd, context), deadline.signal);
-    const message = await this.requestModel(
+    const message = await this.requestReviewer(
       modelAlias,
       buildReviewMessages(
         history,
@@ -351,10 +308,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         ? { kind: 'appended' }
         : authorizationChanged();
     }
-    if (message.toolCalls.length > 0) {
-      return { kind: 'failed', reason: 'The reviewer attempted a tool call.' };
-    }
-    const text = message.content.filter((part) => part.type === 'text').map((part) => part.text).join('');
+    const text = message.text;
     const parsed = DecisionSchema.safeParse(parseReviewJson(text));
     if (!parsed.success) return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
     return { kind: 'decision', decision: parsed.data };
@@ -402,89 +356,42 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     }
   }
 
-  private async requestModel(
+  private async requestReviewer(
     modelAlias: string,
     messages: readonly Message[],
     turnId: number,
     signal: AbortSignal,
-  ): Promise<AssistantMessage> {
-    const model = this.models.get(modelAlias);
-    const overrides = this.configService.get<ModelOverrides>('modelOverrides');
-    const thinkingConfig = this.configService.get<ThinkingConfig>(THINKING_SECTION);
-    const strict = requiresStrictThinkingValidation(
-      this.protocols,
-      model.protocol,
-      model.providerType,
-    );
-    const thinkingEffort = resolveThinkingEffortForModel('off', undefined, model.spec, strict);
-    const budget = resolveCompletionBudget({
-      maxOutputSize: model.maxOutputSize,
-      maxCompletionTokensCap: overrides?.maxCompletionTokens,
+  ): Promise<{ readonly text: string }> {
+    const binding = this.environmentBinding.current;
+    const created = await this.agentLifecycle.create({
+      binding: { profile: REVIEWER_PROFILE, model: modelAlias },
+      labels: { autoReview: 'reviewer', parentAgentId: this.scopeContext.agentId },
+      environmentId: binding.environmentId,
+      environmentCwd: binding.cwd,
     });
-    const maxOutputTokens: LlmRequestModel['maxOutputTokens'] =
-      overrides?.maxCompletionTokens !== undefined && overrides.maxCompletionTokens <= 0
-        ? 'none'
-        : budget === undefined
-          ? undefined
-          : Math.max(1, budget);
-    const sampling =
-      overrides?.temperature === undefined && overrides?.topP === undefined
-        ? undefined
-        : { temperature: overrides.temperature, topP: overrides.topP };
-    const params: InitializedLlmRequestPart = {
-      model: {
-        cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
-        sampling,
-        thinking: {
-          effort: thinkingEffort,
-          keep: resolveThinkingKeep(
-            overrides?.thinkingKeep,
-            thinkingConfig?.keep,
-            thinkingEffort,
-          ),
-        },
-        maxOutputTokens,
-      },
-    };
-    const outcome = await this.protocols.request(model, params).with({
-      model: { responseFormat: RESPONSE_FORMAT },
-      profile: { systemPrompt: REVIEW_POLICY, tools: [] },
-      content: { messages },
-      policy: {
-        retry: { maxAttemptsPerStep: 1 },
-        recoveries: [credentialRecovery],
-      },
-    }).generate({}, { signal });
-    if (outcome.type === 'aborted') throw signal.reason;
-    if (outcome.type === 'failed') throw reviewRequestError(outcome);
-    const message: AssistantMessage = outcome.message;
-    const usage: TokenUsage | undefined = outcome.usage;
-    void this.usage.record(this.scopeContext.agentContext, modelAlias, usage, {
-      type: 'operation',
-      turnId,
-      requestKind: AUTO_REVIEW_REQUEST_KIND,
-    });
-    return message;
+    const handle = this.agentLifecycle.handleOf(created.agentId);
+    if (handle === undefined) {
+      await this.agentLifecycle.remove(created);
+      throw new Error('The reviewer agent could not be started.');
+    }
+    try {
+      handle.accessor.get(IAgentPermissionModeService).setMode('manual');
+      const prompt = `${REVIEW_POLICY}\n\n${messages
+        .flatMap((message) => message.content)
+        .flatMap((part) => part.type === 'text' ? [part.text] : [])
+        .join('\n')}`;
+      const run = await runAgentTurn(handle, { kind: 'prompt', prompt }, { signal });
+      const completion = await run.completion;
+      void this.usage.record(this.scopeContext.agentContext, modelAlias, completion.usage, {
+        type: 'operation',
+        turnId,
+        requestKind: AUTO_REVIEW_REQUEST_KIND,
+      });
+      return { text: completion.summary };
+    } finally {
+      await this.agentLifecycle.remove(created);
+    }
   }
-}
-
-function reviewRequestError(outcome: Exclude<LlmOutcome, { readonly type: 'done' }>): Error {
-  if (outcome.type === 'aborted') {
-    const message = outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
-    return new DOMException(message, 'AbortError');
-  }
-  const classified =
-    outcome.error.kind === 'unknown' && outcome.rawError !== undefined
-      ? llmMessageFromError(outcome.rawError)
-      : undefined;
-  if (outcome.error.kind === 'unknown' && classified === undefined && outcome.rawError instanceof Error) {
-    return withErrorDiagnostics(translateProviderError(outcome.rawError), outcome.diagnostics);
-  }
-  const error = classified ?? outcome.error;
-  return errorFromLlmMessage(
-    error.kind === 'auth' ? { ...error, kind: 'status' as const } : error,
-    outcome.diagnostics,
-  );
 }
 
 function reviewResult(outcome: AutoReviewResult | ReviewFailure): AutoReviewResult {
