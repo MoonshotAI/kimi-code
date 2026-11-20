@@ -64,6 +64,7 @@ describe('PromptPredictionController', () => {
     expect(editor.getPromptPrediction()).toBeUndefined();
     expect(session.predictNextPrompt).toHaveBeenCalledTimes(1);
     editor.setText('');
+    expect(editor.render(80).join('\n')).toContain('Tab to predict');
     expect(controller.handlePreInput('\t')).toBe(true);
     expect(editor.getText()).toBe('请修复失败的测试\n并补充回归覆盖');
     expect(session.predictNextPrompt).toHaveBeenCalledTimes(1);
