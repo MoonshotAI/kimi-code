@@ -1,7 +1,7 @@
 import { toRaw, type ComputedRef } from 'vue';
 import { isDaemonApiError, isSessionOccupiedError } from '@moonshot-ai/app-core/api';
 import type { AppMessage, AppMessageContent, AppSession, AppWorkspace } from '@moonshot-ai/app-core/api';
-import { markSwarmPending, markThinkingPending, markTowerPending, skillIdentity, defaultSkillPath, upstreamModelIdFromConfigModels } from '@moonshot-ai/app-core/lib';
+import { markSwarmPending, markThinkingPending, markTowerPending, skillIdentity, defaultSkillPath } from '@moonshot-ai/app-core/lib';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { offsetAttachmentLinkIndices } from '@moonshot-ai/app-composer/model';
 import { buildPromptContent, buildPromptMetadata } from '../lib/browserReferenceSubmission';
@@ -15,7 +15,6 @@ import { sideChatDrafts } from './sideChatDrafts';
 import { submitWithNetworkRetry } from './submitRetry';
 import type { ChatGateVerdict } from '../lib/chatGate';
 import { track } from '../contracts';
-import { configStore } from '../stores/config';
 import { modeStore } from '../stores/mode';
 import { modelsStore } from '../stores/models';
 import { modelSwitchConfirmStore } from '../stores/modelSwitchConfirm';
@@ -48,7 +47,11 @@ export interface PromptPipelineDeps {
   modelProvider: UseModelProviderState;
   activity: ComputedRef<ActivityState>;
   nextOptimisticMsgId: () => string;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
+  persistSessionProfile: (
+    patch: PersistSessionProfilePatch,
+    sessionId?: string,
+    preserveDraftThinking?: boolean,
+  ) => Promise<boolean>;
   whenSessionProfileSettled: (sid: string) => Promise<boolean>;
   mapSendAuthFailure?: (err: unknown, sid?: string) => Promise<ChatGateVerdict | null>;
   isMainTurnRunning?: (sessionId: string) => boolean;
@@ -181,7 +184,11 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       towerBase: towerMode ? towerBase : undefined,
     };
     if (Object.values(draftSettings).some((value) => value !== undefined)) {
-      void persistSessionProfile(draftSettings, sid);
+      if (draftThinkingWrite === undefined) void persistSessionProfile(draftSettings, sid);
+      else void persistSessionProfile(draftSettings, sid, true);
+    }
+    if (draftThinkingWrite !== undefined && draftPick !== undefined && session.model !== draftPick) {
+      void modelProvider.normalizeDraftSessionModel(sid, draftPick);
     }
     if (modeStore().draftModes.goalMode) {
       modeStore().goalModeBySession = { ...modeStore().goalModeBySession, [sid]: true };
@@ -316,9 +323,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     const current = sessionsStore().sessions.find((s) => s.id === sid)?.model;
     const sendable = modelsStore().resolveSendModel(current);
     if (sendable !== null && sendable !== current) {
-      const isSameModelAlias = upstreamModelIdFromConfigModels(configStore().config?.models, sendable) === current;
-      if (isSameModelAlias) void modelProvider.normalizeSessionModel(sid, sendable);
-      else void modelProvider.setSessionModel(sid, sendable);
+      void modelProvider.setSessionModel(sid, sendable);
     }
     return deps.whenSessionProfileSettled(sid);
   }

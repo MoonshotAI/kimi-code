@@ -243,25 +243,34 @@ describe('agent state frames', () => {
     expect(modelOf()).toBe('model-3');
   });
 
-  it('keeps a successful thinking write when its agent frame arrives after the response', async () => {
+  it('keeps the draft thinking pick when the initial frame arrives during its write', async () => {
     vi.stubGlobal('WebSocket', vi.fn());
     vi.resetModules();
 
     const connection = makeConnection();
     const handlersRef: { handlers?: KimiEventHandlers } = {};
     for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
-    Object.assign(clientApiMock, baseApi([session('s_1')], connection, handlersRef));
+    Object.assign(clientApiMock, baseApi([], connection, handlersRef));
+    const created = session('s_1');
+    clientApiMock.createSession = vi.fn(async () => created);
+    clientApiMock.getSession = vi.fn(async () => created);
+    clientApiMock.submitPrompt = vi.fn(async () => ({ promptId: 'prompt-1', userMessageId: 'message-1' }));
     let releaseWrite!: () => void;
     clientApiMock.updateSession = vi.fn(
-      () => new Promise((resolve) => { releaseWrite = () => resolve(session('s_1')); }),
+      () => new Promise((resolve) => { releaseWrite = () => resolve(created); }),
     );
 
     const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
     const { modeStore } = await import('../src/stores/mode');
     const client = useKimiWebClient();
     await client.load();
-    await client.selectSession('s_1');
     await flush();
+    client.setThinking('max');
+    const starting = client.startSessionAndSendPrompt(
+      'workspace-1',
+      client.createPromptEnvelope({ text: 'hello' }),
+    );
+    await vi.waitFor(() => expect(clientApiMock.updateSession).toHaveBeenCalled());
     const frame = (thinking: string) => ({
       status: 'idle' as const,
       model: 'model-1',
@@ -273,64 +282,13 @@ describe('agent state frames', () => {
 
     handlersRef.handlers?.onAgentState?.('s_1', 'main', frame('high'));
     await flush();
-    expect(modeStore().thinkingBySession['s_1']).toBe('high');
-
-    client.setThinking('max');
-    await flush();
     expect(modeStore().thinkingBySession['s_1']).toBe('max');
 
     releaseWrite();
-    await flush();
+    await expect(starting).resolves.toEqual({ sessionId: 's_1', promptRejected: false });
     expect(modeStore().thinkingBySession['s_1']).toBe('max');
 
     handlersRef.handlers?.onAgentState?.('s_1', 'main', frame('low'));
-    await flush();
-    expect(modeStore().thinkingBySession['s_1']).toBe('low');
-  });
-
-  it('applies the agent state returned by a successful write instead of overwriting a newer cross-client update', async () => {
-    vi.stubGlobal('WebSocket', vi.fn());
-    vi.resetModules();
-
-    const connection = makeConnection();
-    const handlersRef: { handlers?: KimiEventHandlers } = {};
-    for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
-    Object.assign(clientApiMock, baseApi([session('s_1')], connection, handlersRef));
-    const frame = (thinking: string) => ({
-      status: 'idle' as const,
-      model: 'model-1',
-      thinking,
-      planMode: false,
-      swarmMode: false,
-      towerMode: false,
-    });
-    let releaseWrite!: () => void;
-    clientApiMock.updateSession = vi.fn(
-      () => new Promise((resolve) => {
-        releaseWrite = () => resolve({ session: session('s_1'), agent: frame('low') });
-      }),
-    );
-
-    const { useKimiWebClient } = await import('../src/client/useKimiWebClient');
-    const { modeStore } = await import('../src/stores/mode');
-    const client = useKimiWebClient();
-    await client.load();
-    await client.selectSession('s_1');
-    await flush();
-
-    handlersRef.handlers?.onAgentState?.('s_1', 'main', frame('high'));
-    await flush();
-    expect(modeStore().thinkingBySession['s_1']).toBe('high');
-
-    client.setThinking('max');
-    await flush();
-    expect(modeStore().thinkingBySession['s_1']).toBe('max');
-
-    handlersRef.handlers?.onAgentState?.('s_1', 'main', frame('low'));
-    await flush();
-    expect(modeStore().thinkingBySession['s_1']).toBe('max');
-
-    releaseWrite();
     await flush();
     expect(modeStore().thinkingBySession['s_1']).toBe('low');
   });

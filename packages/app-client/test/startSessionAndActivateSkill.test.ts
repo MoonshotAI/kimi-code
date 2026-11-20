@@ -5,7 +5,6 @@ import type { AppSession } from '@moonshot-ai/app-core/api';
 import { DaemonApiError } from '@moonshot-ai/app-core/api';
 import { resetKimiClientDeps, setKimiClientDeps } from '../src/client/deps';
 import { createWorkspaceRig } from '../src/testing/workspaceRig';
-import { configStore } from '../src/stores/config';
 import { modelsStore } from '../src/stores/models';
 import { modeStore } from '../src/stores/mode';
 import { permissionsStore } from '../src/stores/permissions';
@@ -198,11 +197,11 @@ function createWorkspaceState() {
     ),
     activateSkill: vi.fn(async () => true),
     setSessionModel: vi.fn(async () => true),
-    normalizeSessionModel: vi.fn(async (sessionId: string, model: string) => {
+    normalizeDraftSessionModel: vi.fn(async (sessionId: string, model: string) => {
       rawState.sessions = rawState.sessions.map((session) =>
         session.id === sessionId ? { ...session, model } : session,
       );
-      return persistSessionProfile({ model, thinking: rawState.thinkingBySession[sessionId] }, sessionId);
+      return persistSessionProfile({ model, thinking: rawState.thinkingBySession[sessionId] }, sessionId, true);
     }),
   };
 
@@ -261,7 +260,6 @@ describe('startSessionAndActivateSkill', () => {
     ]);
     modelsStore().setDraftModel(null);
     modelsStore().setDefaultModel(null);
-    configStore().config = null;
     permissionsStore().$reset();
     permissionsStore().pickInDraft('auto');
   });
@@ -333,6 +331,7 @@ describe('startSessionAndActivateSkill', () => {
     expect(persistSessionProfile).toHaveBeenCalledWith(
       expect.objectContaining({ thinking: DRAFT_PICK_LEVEL, permissionMode: 'auto' }),
       'session-1',
+      true,
     );
     const persistOrder = persistSessionProfile.mock.invocationCallOrder[0]!;
     const activateOrder = modelProvider.activateSkill.mock.invocationCallOrder[0]!;
@@ -409,6 +408,7 @@ describe('startSessionAndActivateSkill', () => {
     expect(persistSessionProfile).toHaveBeenCalledWith(
       expect.objectContaining({ thinking: DRAFT_PICK_LEVEL, permissionMode: 'auto' }),
       'session-1',
+      true,
     );
     const request = (api.submitPrompt.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
     expect(Object.keys(request).sort()).toEqual(['content', 'metadata', 'promptId', 'skills']);
@@ -423,7 +423,6 @@ describe('startSessionAndActivateSkill', () => {
   it('preserves the draft thinking level when the first prompt normalizes the session model id', async () => {
     const { rawState, api, modelProvider, persistSessionProfile, ws } = createWorkspaceState();
     modelsStore().setDefaultModel('kimi-k3');
-    configStore().config = { models: { 'kimi-k3': { model: 'legacy-k3' } } };
     const session = { ...createdSession('session-1'), model: 'legacy-k3' };
     api.createSession.mockResolvedValue(session);
     api.getSession.mockResolvedValue(session);
@@ -434,30 +433,14 @@ describe('startSessionAndActivateSkill', () => {
     );
 
     expect(started).toEqual({ sessionId: 'session-1', promptRejected: false });
-    expect(modelProvider.normalizeSessionModel).toHaveBeenCalledWith('session-1', 'kimi-k3');
+    expect(modelProvider.normalizeDraftSessionModel).toHaveBeenCalledWith('session-1', 'kimi-k3');
     expect(modelProvider.setSessionModel).not.toHaveBeenCalled();
     expect(persistSessionProfile).toHaveBeenCalledWith(
       { model: 'kimi-k3', thinking: DRAFT_PICK_LEVEL },
       'session-1',
+      true,
     );
     expect(rawState.thinkingBySession['session-1']).toBe(DRAFT_PICK_LEVEL);
-  });
-
-  it('uses model switch defaults when the first prompt falls back to a different model', async () => {
-    const { api, modelProvider, ws } = createWorkspaceState();
-    modelsStore().setDefaultModel('kimi-k3');
-    const session = { ...createdSession('session-1'), model: 'deleted-model' };
-    api.createSession.mockResolvedValue(session);
-    api.getSession.mockResolvedValue(session);
-
-    const started = await ws.startSessionAndSendPrompt(
-      'workspace',
-      ws.createPromptEnvelope({ text: 'hello' }),
-    );
-
-    expect(started).toEqual({ sessionId: 'session-1', promptRejected: false });
-    expect(modelProvider.setSessionModel).toHaveBeenCalledWith('session-1', 'kimi-k3');
-    expect(modelProvider.normalizeSessionModel).not.toHaveBeenCalled();
   });
 
   it('rejects the first prompt when the draft settings write fails', async () => {
