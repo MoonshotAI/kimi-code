@@ -179,20 +179,24 @@ async function discoverEnvironmentSkills(
     }
 
     if (isTopLevel) {
+      let rootIsBundle = false;
       if (root.plugin !== undefined) {
         const skillMdPath = path.join(dirPath, 'SKILL.md');
         if (await isFile(skillMdPath)) {
+          rootIsBundle = true;
           await register({ skillMdPath, skillDirName: path.basename(dirPath), root });
         }
       }
-      await registerAll(entries
-        .filter((entry) => entry.isFile && entry.name.endsWith('.md') && entry.name !== 'SKILL.md' &&
-          !directorySkills.has(entry.name.slice(0, -'.md'.length)))
-        .map((entry) => ({
-          skillMdPath: path.join(dirPath, entry.name),
-          skillDirName: entry.name.slice(0, -'.md'.length),
-          root,
-        })));
+      if (!rootIsBundle) {
+        await registerAll(entries
+          .filter((entry) => entry.isFile && entry.name.endsWith('.md') && entry.name !== 'SKILL.md' &&
+            !directorySkills.has(entry.name.slice(0, -'.md'.length)))
+          .map((entry) => ({
+            skillMdPath: path.join(dirPath, entry.name),
+            skillDirName: entry.name.slice(0, -'.md'.length),
+            root,
+          })));
+      }
     }
 
     for (const entry of subdirs) {
