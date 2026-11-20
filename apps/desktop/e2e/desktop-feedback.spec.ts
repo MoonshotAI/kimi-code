@@ -1,5 +1,6 @@
 import type { Locator } from '@playwright/test';
 import { expect, test, type DesktopApp } from './fixtures/app';
+import { captureClipboardWrites } from './fixtures/clipboard';
 import type { StubModel } from './fixtures/model';
 import { sendAndFinish, sessionRowById } from './fixtures/sessions';
 
@@ -26,6 +27,8 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   let failSubmission = true;
   let failDiagnostics = true;
   let nextFeedbackId = 21;
+  let releaseDiagnostics!: () => void;
+  const pendingDiagnostics = new Promise<void>(resolve => { releaseDiagnostics = resolve; });
 
   await page.route('**/api/v1/meta', (route) => route.fulfill({ json: envelope({
     server_version: '2.6.3', capabilities: {}, experimental_flags: { desktop_feedback: true },
@@ -46,10 +49,13 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
     if (path.endsWith('/attachments')) {
       const kind = url.searchParams.get('kind');
       uploaded.push({ kind, bytes: request.postDataBuffer() ?? Buffer.alloc(0) });
-      if (kind === 'diagnostics' && failDiagnostics) {
-        failDiagnostics = false;
-        await route.fulfill({ status: 503, json: { code: 50000, msg: 'Offline' } });
-        return;
+      if (kind === 'diagnostics') {
+        if (failDiagnostics) {
+          failDiagnostics = false;
+          await route.fulfill({ status: 503, json: { code: 50000, msg: 'Offline' } });
+          return;
+        }
+        await pendingDiagnostics;
       }
       await route.fulfill({ json: envelope({ upload_id: uploaded.length }) });
       return;
@@ -93,16 +99,28 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await expect(dialog.getByRole('alert')).toHaveText('Couldn’t submit feedback, please try again');
   await expect(dialog.getByRole('textbox', { name: 'Description' })).toHaveValue('A reproducible issue');
   await dialog.getByRole('button', { name: 'Resubmit' }).click();
-  const receipt = (id: number) => page.locator('.feedback-receipt-toast').filter({ hasText: String(id) });
+  const receipt = (id: number) => page.getByRole('status').filter({ has: page.getByText(`Feedback submitted · ID ${id}`, { exact: true }) });
   await expect(dialog).toBeHidden();
   await expect(receipt(21)).toBeVisible();
   await receipt(21).hover();
-  await page.emulateMedia({ colorScheme: 'dark' });
-  await expect(receipt(21)).toHaveCSS('background-color', 'rgb(64, 64, 64)');
-  await page.emulateMedia({ colorScheme: 'light' });
-  await expect(receipt(21)).toHaveCSS('background-color', 'rgb(43, 43, 43)');
-  await receipt(21).getByRole('button', { name: 'Copy feedback ID' }).click();
+  const surfaces: string[] = [];
+  for (const colorScheme of ['dark', 'light'] as const) {
+    await page.emulateMedia({ colorScheme });
+    const surface = await page.evaluate(() => {
+      const swatch = document.createElement('span');
+      swatch.style.color = getComputedStyle(document.documentElement).getPropertyValue('--color-surface-raised');
+      return swatch.style.color;
+    });
+    await expect(receipt(21)).toHaveCSS('background-color', surface);
+    surfaces.push(surface);
+  }
+  expect(surfaces[0]).not.toBe(surfaces[1]);
+  const clipboardWrites = await captureClipboardWrites(app);
+  await receipt(21).getByRole('button', { name: 'Copy ID', exact: true }).click();
   await expect(receipt(21).getByRole('button', { name: 'Copied' })).toBeVisible();
+  await expect.poll(clipboardWrites).toEqual(['21']);
+  await receipt(21).getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await expect(receipt(21)).toBeHidden();
   expect(feedbackRequests.map(({ body }) => body)).toEqual([
     { kind: 'global', source: 'command', category: 'bug', content: 'A reproducible issue', client: 'desktop', upload_session: false, upload_logs: false },
     { kind: 'global', source: 'command', category: 'bug', content: 'A reproducible issue', client: 'desktop', upload_session: false, upload_logs: false },
@@ -174,16 +192,24 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await expectVisibleCheckmark(app, dialog.getByRole('checkbox', { name: /Submit diagnostic logs/ }));
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
   await expect(receipt(23)).toBeVisible();
-  const uploadFailure = page.getByRole('alert').filter({ hasText: 'Couldn’t submit diagnostic logs' });
+  const uploadFailure = page.getByRole('status').filter({ hasText: 'Couldn’t submit diagnostic logs' });
   await expect(uploadFailure).toBeVisible();
+  await expect(receipt(23)).toBeVisible();
   await expect.poll(() => uploaded.map(({ kind }) => kind)).toEqual(['media', 'diagnostics']);
   expect(uploaded[0]?.bytes.includes(image)).toBe(true);
   expect(uploaded[1]?.bytes.includes(Buffer.from([0x50, 0x4b, 0x03, 0x04]))).toBe(true);
   const submitCount = feedbackRequests.length;
-  await uploadFailure.getByRole('button', { name: 'Retry submission' }).click();
-  await expect.poll(() => uploaded.map(({ kind }) => kind)).toEqual(['media', 'diagnostics', 'diagnostics']);
-  await expect(uploadFailure).toBeHidden();
+  const uploading = page.getByRole('status').filter({ hasText: 'Submitting…' });
+  try {
+    await uploadFailure.getByRole('button', { name: 'Retry submission' }).click();
+    await expect.poll(() => uploaded.map(({ kind }) => kind)).toEqual(['media', 'diagnostics', 'diagnostics']);
+    await expect(uploadFailure).toBeHidden();
+    await expect(uploading.locator('.ui-spinner')).toBeVisible();
+  } finally {
+    releaseDiagnostics();
+  }
   await expect(page.getByRole('status').filter({ hasText: 'Submitted diagnostic logs' })).toBeVisible();
+  await expect(uploading).toBeHidden();
   expect(feedbackRequests).toHaveLength(submitCount);
   expect(feedbackRequests.at(-1)?.body).toMatchObject({ client: 'desktop', upload_logs: true, upload_session: false });
 
@@ -331,7 +357,7 @@ test('local feedback remains available when the SSH conversation host disables i
   await dialog.getByRole('textbox', { name: 'Description' }).fill('A desktop issue');
   await app.snapshot('ssh-conversation-with-local-feedback');
   await dialog.getByRole('button', { name: 'Submit', exact: true }).click();
-  await expect(page.locator('.feedback-receipt-toast')).toContainText('31');
+  await expect(page.getByRole('status').filter({ hasText: 'Feedback submitted · ID 31' })).toBeVisible();
   expect(requests).toEqual([{ path: '/api/v1/feedback', body: expect.objectContaining({ kind: 'global', source: 'command', upload_session: false }) }]);
 });
 

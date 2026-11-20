@@ -15,6 +15,11 @@ let hostMounted = false;
 const listeners = new Set<ToastListener>();
 const replaceRevisions = new Map<ToastPosition, number>();
 let nextReplaceRevision = 0;
+let lastToastKey = 0;
+
+export function nextToastKey(): number {
+  return ++lastToastKey;
+}
 
 export function createKimiToast(host: Component): Plugin {
   return {

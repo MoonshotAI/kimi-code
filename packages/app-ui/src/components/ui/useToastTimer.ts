@@ -3,7 +3,6 @@ import { onUnmounted } from 'vue';
 export interface ToastTimer {
   pause: () => void;
   resume: () => void;
-  restart: () => void;
   dispose: () => void;
 }
 
@@ -40,16 +39,12 @@ export function useToastTimer(options: { duration: () => number; onExpire: () =>
     remaining = null;
   }
 
-  function restart(): void {
-    dispose();
-    const duration = options.duration();
-    if (duration > 0) {
-      const touch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches === true;
-      run(duration + (touch ? 5000 : 0));
-    }
+  const duration = options.duration();
+  if (duration > 0) {
+    const touch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches === true;
+    run(duration + (touch ? 5000 : 0));
   }
-  restart();
   onUnmounted(dispose);
 
-  return { pause, resume, restart, dispose };
+  return { pause, resume, dispose };
 }

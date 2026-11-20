@@ -1,7 +1,7 @@
-import { h, shallowRef } from 'vue';
-import { toast } from '@moonshot-ai/app-client/client';
+import { dismissToastByKey, nextToastKey, onToast, toast } from '@moonshot-ai/app-client/client';
+import type { ToastOptions } from '@moonshot-ai/app-ui';
 import { getKimiWebApi } from '../api';
-import FeedbackReceipt from '../components/feedback/FeedbackReceipt.vue';
+import { i18n } from '../i18n';
 import { collectFeedbackDiagnostics } from './feedbackDiagnostics';
 
 export type FeedbackAttachment =
@@ -9,25 +9,37 @@ export type FeedbackAttachment =
   | { kind: 'diagnostics' }
   | { kind: 'session'; sessionId: string };
 
-type UploadNotice =
-  | { kind: 'upload'; failed: readonly FeedbackAttachment[]; retry: () => void }
-  | { kind: 'retrying' }
-  | { kind: 'uploaded'; files: readonly FeedbackAttachment[] };
+const { t } = i18n.global;
 
-export type FeedbackNotice = UploadNotice
-  | { kind: 'submitted'; feedbackId: number }
-  | { kind: 'error'; message: string };
-
-function showNotice(notice: () => FeedbackNotice, signal: AbortSignal): void {
-  toast({
-    position: 'top-center',
-    presentation: ({ dismiss }) => h(FeedbackReceipt, { notice: notice(), signal, dismiss }),
+function showFeedbackToast(options: ToastOptions, signal: AbortSignal): () => boolean {
+  if (signal.aborted) return () => false;
+  const key = nextToastKey();
+  let visible = true;
+  const dismiss = (): boolean => {
+    if (!visible) return false;
+    dismissToastByKey(key);
+    return true;
+  };
+  const unsubscribe = onToast(event => {
+    if (event.type !== 'dismiss' || event.key !== key) return;
+    visible = false;
+    unsubscribe();
+    signal.removeEventListener('abort', dismiss);
   });
+  signal.addEventListener('abort', dismiss, { once: true });
+  toast(options, key);
+  return dismiss;
 }
 
 export function showFeedbackError(message: string, signal: AbortSignal): void {
-  const notice = { kind: 'error', message } as const;
-  showNotice(() => notice, signal);
+  showFeedbackToast({ variant: 'danger', title: t(message) }, signal);
+}
+
+function attachmentNames(items: readonly FeedbackAttachment[]): string {
+  return items.map(item => {
+    if (item.kind === 'media') return item.file.name;
+    return t(item.kind === 'session' ? 'feedback.sessionFile' : 'feedback.diagnosticsFile');
+  }).join(t('feedback.fileSeparator'));
 }
 
 export function showFeedbackReceipt(
@@ -37,8 +49,11 @@ export function showFeedbackReceipt(
   handleLoginError: (error: unknown, sessionId?: string) => boolean,
   globalFeedback?: { hostId?: string; authorizeSession?: () => Promise<AbortSignal | undefined> },
 ): void {
-  const receipt = { kind: 'submitted', feedbackId } as const;
-  showNotice(() => receipt, signal);
+  showFeedbackToast({
+    variant: 'success',
+    title: t('feedback.submittedId', { id: feedbackId }),
+    copyLink: { url: String(feedbackId), label: t('feedback.copyId'), copiedLabel: t('warnings.copied') },
+  }, signal);
   if (attachments.length === 0) return;
 
   let diagnostics: File | undefined;
@@ -74,19 +89,26 @@ export function showFeedbackReceipt(
     return failed;
   }
 
-  void upload(attachments).then(failed => {
-    if (signal.aborted || failed.length === 0) return;
-    const notice = shallowRef<UploadNotice>({ kind: 'upload', failed, retry });
-    showNotice(() => notice.value, signal);
+  function showFailedAttachments(files: readonly FeedbackAttachment[]): void {
+    const dismissFailure = showFeedbackToast({
+      variant: 'danger',
+      title: t('feedback.uploadFailed', { names: attachmentNames(files) }),
+      actions: [{ label: t('feedback.retryUpload'), onClick: retry }],
+    }, signal);
 
-    function retry(): void {
-      if (notice.value.kind !== 'upload' || signal.aborted) return;
-      const files = notice.value.failed;
-      notice.value = { kind: 'retrying' };
-      void upload(files).then(failedAgain => {
-        if (signal.aborted) return;
-        notice.value = failedAgain.length === 0 ? { kind: 'uploaded', files } : { kind: 'upload', failed: failedAgain, retry };
-      });
+    async function retry(): Promise<void> {
+      if (!dismissFailure()) return;
+      const dismissProgress = showFeedbackToast({
+        layout: 'bar', title: t('feedback.uploading'), running: true, duration: 0,
+      }, signal);
+      const failed = await upload(files);
+      if (!dismissProgress()) return;
+      if (failed.length > 0) showFailedAttachments(failed);
+      else showFeedbackToast({ variant: 'success', title: t('feedback.uploadComplete', { names: attachmentNames(files) }) }, signal);
     }
+  }
+
+  void upload(attachments).then(failed => {
+    if (failed.length > 0) showFailedAttachments(failed);
   });
 }

@@ -1,38 +1,47 @@
-import { effectScope, shallowRef, type VNode } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { effectScope, shallowRef } from 'vue';
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dismissToastByKey, onToast, type ToastEvent } from '@moonshot-ai/app-client/client';
 import { useDesktopFeedback, type TurnFeedbackTarget } from '../../src/renderer/composables/useDesktopFeedback';
+import { i18n } from '../../src/renderer/i18n';
 
-const { api, toast } = vi.hoisted(() => ({
+const { api } = vi.hoisted(() => ({
   api: {
     createFeedback: vi.fn(), updateFeedback: vi.fn(), uploadFeedbackSession: vi.fn(), uploadFeedbackAttachment: vi.fn(), getUserInfo: vi.fn(),
   },
-  toast: vi.fn<(notice: { presentation: (controls: { dismiss: () => void }) => VNode }) => void>(),
 }));
 vi.mock('../../src/renderer/api', () => ({ getKimiWebApi: () => api }));
-vi.mock('@moonshot-ai/app-client/client', () => ({ toast }));
-vi.mock('../../src/renderer/components/feedback/FeedbackReceipt.vue', () => ({ default: {} }));
 
 let scope = effectScope();
+const events: ToastEvent[] = [];
+const shown = () => events.filter(event => event.type === 'show');
+let unsubscribe: () => void;
 beforeEach(() => {
   scope = effectScope();
   vi.resetAllMocks();
+  i18n.global.locale.value = 'en';
+  events.length = 0;
+  unsubscribe = onToast(event => events.push(event));
   let nextId = 0;
   api.createFeedback.mockImplementation(async () => ({ feedback_id: ++nextId }));
   api.uploadFeedbackSession.mockImplementation((_id: number, _session: string, signal: AbortSignal) =>
     new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Upload cancelled', 'AbortError')), { once: true })));
 });
-afterEach(() => scope.stop());
+afterEach(() => {
+  scope.stop();
+  unsubscribe();
+});
 
 function setup(localId: string | null = 'user') {
   const hosts = shallowRef<Record<string, { status: 'signedIn' | 'signedOut' }>>({});
+  const accountId = shallowRef(localId);
   const userIds: Record<string, string> = { first: 'user', second: 'user' };
   const hostUserId = vi.fn(async (hostId: string) => userIds[hostId]);
   const feedback = scope.run(() => useDesktopFeedback({
-    signedIn: () => true, accountId: () => localId ?? undefined, openLogin: vi.fn(),
+    signedIn: () => true, accountId: () => accountId.value ?? undefined, openLogin: vi.fn(),
     sessionHost: sessionId => sessionId === 'local' ? undefined : sessionId,
     hostAccounts: () => hosts.value, hostUserId, openHostLogin: vi.fn(),
   }))!;
-  return { hosts, userIds, hostUserId, feedback };
+  return { hosts, userIds, hostUserId, feedback, accountId };
 }
 
 const target = (sessionId: string): TurnFeedbackTarget => ({ sessionId, turnId: 'turn', replyId: 'reply' });
@@ -99,13 +108,15 @@ describe('feedback account ownership', () => {
     await feedback.submitGlobal({ kind: 'global', source: 'sidebar', category: 'other', content: 'Example', session_id: 'first' }, [
       { kind: 'media', file }, { kind: 'session', sessionId: 'first' },
     ]);
-    await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(shown()).toHaveLength(2));
     expect(api.uploadFeedbackAttachment).toHaveBeenCalledOnce();
     expect(api.uploadFeedbackSession).not.toHaveBeenCalled();
-    const notice = toast.mock.calls[1]?.[0].presentation({ dismiss: () => {} }).props?.['notice'];
-    expect(notice).toMatchObject({ kind: 'upload', failed: [{ kind: 'session', sessionId: 'first' }] });
+    expect(shown().map(event => event.options)).toMatchObject([
+      { variant: 'success', title: 'Feedback submitted · ID 1', copyLink: { label: 'Copy ID', copiedLabel: 'Copied', url: '1' } },
+      { variant: 'danger', title: 'Couldn’t submit conversation history', actions: [{ label: 'Retry submission' }] },
+    ]);
     userIds['first'] = 'user';
-    notice.retry();
+    void shown()[1]?.options?.actions?.[0]?.onClick({ dismiss: vi.fn() });
     await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal), { hostId: 'first' }));
     expect(api.uploadFeedbackAttachment).toHaveBeenCalledOnce();
     feedback.clearHostAccount('first');
@@ -121,14 +132,63 @@ describe('feedback account ownership', () => {
     await feedback.submitGlobal({ kind: 'global', source: 'sidebar', category: 'other', content: 'Example', session_id: 'first' }, [
       { kind: 'media', file }, { kind: 'session', sessionId: 'first' },
     ]);
-    await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(shown()).toHaveLength(2));
     expect(api.uploadFeedbackSession).not.toHaveBeenCalled();
-    const notice = toast.mock.calls[1]?.[0].presentation({ dismiss: () => {} }).props?.['notice'];
-    expect(notice).toMatchObject({ kind: 'upload', failed: [{ kind: 'media', file }, { kind: 'session', sessionId: 'first' }] });
+    expect(shown()[1]?.options).toMatchObject({
+      variant: 'danger', title: 'Couldn’t submit example.png and conversation history', actions: [{ label: 'Retry submission' }],
+    });
     api.getUserInfo.mockResolvedValue({ kind: 'ok', userInfo: { userId: 'user' } });
-    notice.retry();
+    void shown()[1]?.options?.actions?.[0]?.onClick({ dismiss: vi.fn() });
     await vi.waitFor(() => expect(api.uploadFeedbackSession).toHaveBeenCalledExactlyOnceWith(1, 'first', expect.any(AbortSignal), { hostId: 'first' }));
     expect(api.uploadFeedbackAttachment).toHaveBeenCalledTimes(2);
+    expect(api.createFeedback).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a dismissed retry closed and removes the original receipt on account switch', async () => {
+    const { feedback, accountId } = setup();
+    let finishUpload!: () => void;
+    api.uploadFeedbackAttachment.mockRejectedValueOnce(new Error('Offline')).mockImplementationOnce(
+      () => new Promise<void>(resolve => { finishUpload = resolve; }),
+    );
+    const file = new File(['image'], 'example.png', { type: 'image/png' });
+    await feedback.submitGlobal({ kind: 'global', source: 'sidebar', category: 'bug', content: 'Example' }, [{ kind: 'media', file }]);
+    await vi.waitFor(() => expect(shown()).toHaveLength(2));
+    const [receipt, failure] = shown();
+    const retry = failure?.options?.actions?.[0];
+    expect(retry?.label).toBe('Retry submission');
+    const pending = retry?.onClick({ dismiss: vi.fn() });
+    await retry?.onClick({ dismiss: vi.fn() });
+    expect(api.uploadFeedbackAttachment).toHaveBeenCalledTimes(2);
+    const progress = shown()[2];
+    expect(progress?.options).toMatchObject({ layout: 'bar', title: 'Submitting…', running: true, duration: 0 });
+    assert.isDefined(progress?.key);
+    dismissToastByKey(progress.key);
+    finishUpload();
+    await pending;
+    expect(shown()).toHaveLength(3);
+    expect(events).not.toContainEqual({ type: 'dismiss', key: receipt?.key });
+    accountId.value = 'other-user';
+    expect(events).toContainEqual({ type: 'dismiss', key: receipt?.key });
+  });
+
+  it('retries only the remaining attachments and announces completion for the saved feedback', async () => {
+    const { feedback } = setup();
+    const offline = new Error('Offline');
+    api.uploadFeedbackAttachment.mockRejectedValueOnce(offline).mockRejectedValueOnce(offline)
+      .mockResolvedValueOnce({ upload_id: 1 }).mockRejectedValueOnce(offline).mockResolvedValueOnce({ upload_id: 2 });
+    const first = new File(['image'], 'first.png', { type: 'image/png' });
+    const second = new File(['image'], 'second.png', { type: 'image/png' });
+    await feedback.submitGlobal({ kind: 'global', source: 'sidebar', category: 'other', content: 'Example' }, [
+      { kind: 'media', file: first }, { kind: 'media', file: second },
+    ]);
+    await vi.waitFor(() => expect(shown()).toHaveLength(2));
+    expect(shown()[1]?.options?.title).toBe('Couldn’t submit first.png and second.png');
+    await shown()[1]?.options?.actions?.[0]?.onClick({ dismiss: vi.fn() });
+    expect(shown()[3]?.options?.title).toBe('Couldn’t submit second.png');
+    await shown()[3]?.options?.actions?.[0]?.onClick({ dismiss: vi.fn() });
+    expect(shown()[5]?.options).toMatchObject({ variant: 'success', title: 'Submitted second.png' });
+    expect(api.uploadFeedbackAttachment).toHaveBeenCalledTimes(5);
+    expect(api.uploadFeedbackAttachment).toHaveBeenLastCalledWith(1, { kind: 'media', file: second, fileName: second.name }, expect.any(AbortSignal));
     expect(api.createFeedback).toHaveBeenCalledOnce();
   });
 });
