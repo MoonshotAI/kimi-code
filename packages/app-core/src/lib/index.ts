@@ -89,3 +89,4 @@ export * from './upgrade';
 export * from './workspaceOrder';
 export * from './workspacePathInput';
 export * from './workspacePicker';
+export * from './workspacePrimary';

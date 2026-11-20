@@ -9,6 +9,7 @@ import { createRowMemo, errorInfo } from '@moonshot-ai/app-core/client';
 import {
   buildWorkspaceRecencyKeys,
   currentActivityKeys,
+  isPrimaryImmutable,
   loadActiveWorkspace,
   loadHiddenWorkspaceIds,
   loadPinnedWorkspaces,
@@ -788,6 +789,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     const current = workspaces.value.find((w) => w.id === input.id);
     const primary = input.primary;
     if (primary !== undefined && current !== undefined && primary !== current.root) {
+      if (primaryChangeRefused(current)) return false;
       if (!current.additionalDirs.includes(primary)) {
         const added = await saveWorkspace({
           id: input.id,
@@ -851,8 +853,15 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     }
   }
 
+  function primaryChangeRefused(workspace: AppWorkspace | undefined): boolean {
+    if (workspace === undefined || !isPrimaryImmutable(workspace)) return false;
+    logWarn('[kimi-code] refused to move the primary directory of implicit project', workspace.id);
+    return true;
+  }
+
   async function setWorkspacePrimary(input: { id: string; path: string }): Promise<boolean> {
     const previousWorkspace = workspaces.value.find((w) => w.id === input.id);
+    if (primaryChangeRefused(previousWorkspace)) return false;
     try {
       const ws = await getKimiWebApi().setWorkspacePrimary(input.id, input.path);
       upsertWorkspacePreserveOrder(ws);

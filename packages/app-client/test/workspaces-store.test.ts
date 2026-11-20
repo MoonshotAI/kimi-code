@@ -1023,6 +1023,52 @@ describe('saveWorkspace', () => {
     expect(setWorkspacePrimary.mock.invocationCallOrder[0]).toBeLessThan(updateWorkspace.mock.invocationCallOrder[0]!);
   });
 
+  it('refuses to move the primary directory of an implicit project without contacting the server', async () => {
+    const updateWorkspace = vi.fn();
+    const setWorkspacePrimary = vi.fn();
+    apiMock.updateWorkspace = updateWorkspace;
+    apiMock.setWorkspacePrimary = setWorkspacePrimary;
+    const store = workspacesStore();
+    const repo = makeWorkspace('wd_repo', '/repo', { name: 'repo', additionalDirs: ['/repo-fix'] });
+    store.workspaces = [repo];
+
+    const promoteRegistered = await store.saveWorkspace({
+      id: 'wd_repo',
+      name: 'renamed',
+      additionalDirs: ['/repo'],
+      primary: '/repo-fix',
+    });
+    const promoteUnregistered = await store.saveWorkspace({ id: 'wd_repo', primary: '/elsewhere' });
+    const promoteDirectly = await store.setWorkspacePrimary({ id: 'wd_repo', path: '/repo-fix' });
+
+    expect([promoteRegistered, promoteUnregistered, promoteDirectly]).toEqual([false, false, false]);
+    expect(updateWorkspace).not.toHaveBeenCalled();
+    expect(setWorkspacePrimary).not.toHaveBeenCalled();
+    expect(store.workspaces).toEqual([repo]);
+  });
+
+  it('still saves the name and additional directories of an implicit project', async () => {
+    const updated = makeWorkspace('wd_repo', '/repo', { name: 'renamed', additionalDirs: ['/lib'] });
+    const updateWorkspace = vi.fn().mockResolvedValue(updated);
+    const setWorkspacePrimary = vi.fn();
+    apiMock.updateWorkspace = updateWorkspace;
+    apiMock.setWorkspacePrimary = setWorkspacePrimary;
+    const store = workspacesStore();
+    store.workspaces = [makeWorkspace('wd_repo', '/repo', { name: 'repo' })];
+
+    const ok = await store.saveWorkspace({
+      id: 'wd_repo',
+      name: 'renamed',
+      additionalDirs: ['/lib'],
+      primary: '/repo',
+    });
+
+    expect(ok).toBe(true);
+    expect(updateWorkspace).toHaveBeenCalledExactlyOnceWith('wd_repo', { name: 'renamed', additionalDirs: ['/lib'] });
+    expect(setWorkspacePrimary).not.toHaveBeenCalled();
+    expect(store.workspaces[0]).toEqual(updated);
+  });
+
   it('falls back to an id-keyed local override on 40410 rename-only', async () => {
     const updateWorkspace = vi.fn().mockRejectedValue(
       new DaemonApiError({ code: 40410, msg: 'workspace not found', requestId: 'r' }),
