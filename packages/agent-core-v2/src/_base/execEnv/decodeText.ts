@@ -32,7 +32,7 @@ function isUtf8Continuation(byte: number): boolean {
   return byte >= 0x80 && byte <= 0xbf;
 }
 
-function decodeUtf8Ignore(data: Buffer): string {
+function decodeUtf8Ignore(data: Uint8Array): string {
   let output = '';
   let i = 0;
 
@@ -109,7 +109,7 @@ function decodeUtf8Ignore(data: Buffer): string {
   return output;
 }
 
-function decodeUtf16LeIgnore(data: Buffer): string {
+function decodeUtf16LeIgnore(data: Uint8Array): string {
   let output = '';
   let i = 0;
 
@@ -149,7 +149,7 @@ function decodeUtf16LeIgnore(data: Buffer): string {
 }
 
 export function decodeTextWithErrors(
-  data: Buffer,
+  data: Uint8Array,
   encoding: BufferEncoding,
   errors: TextDecodeErrors = 'strict',
   ignoreBOM: boolean = false,
@@ -170,7 +170,7 @@ export function decodeTextWithErrors(
   }
 
   if (webLabel === undefined) {
-    return data.toString(encoding);
+    return Buffer.from(data).toString(encoding);
   }
 
   if (errors === 'strict') {

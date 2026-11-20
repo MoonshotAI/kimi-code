@@ -8,6 +8,7 @@ import {
   OsFsErrors,
 } from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import {
+  classifyTextSample,
   HostFileSystem,
   type HostDirEntry,
   type HostFileHead,
@@ -41,6 +42,43 @@ function* splitLinesKeepingTerminator(text: string): Generator<string> {
 
 function isResourceNotFound(error: unknown): boolean {
   return error instanceof RequestError && error.code === -32002;
+}
+
+function isLocalNotFound(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if ((current as { code?: unknown }).code === 'ENOENT') return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+function decodeBridgeableText(data: Uint8Array): string | undefined {
+  const classification = classifyTextSample(data);
+  if (classification.isBinary) {
+    return undefined;
+  }
+  if (classification.encoding === 'utf-8') {
+    try {
+      return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data);
+    } catch {
+      return undefined;
+    }
+  }
+  const encoding =
+    data[0] === 0xff && data[1] === 0xfe && !(data[2] === 0x00 && data[3] === 0x00)
+      ? ('utf-16le' as const)
+      : data[0] === 0xfe && data[1] === 0xff
+        ? ('utf-16be' as const)
+        : undefined;
+  if (encoding === undefined) {
+    return undefined;
+  }
+  try {
+    return new TextDecoder(encoding, { fatal: true, ignoreBOM: true }).decode(data);
+  } catch {
+    return undefined;
+  }
 }
 
 export class AcpHostFileSystem implements IHostFileSystem {
@@ -90,13 +128,16 @@ export class AcpHostFileSystem implements IHostFileSystem {
     if (!this.connection.fsReadTextFile || !this.connection.fsWriteTextFile) {
       return this.inner.appendText(path, data);
     }
-    let existing = '';
+    let existing: string | undefined;
     try {
       existing = await this.readText(path);
     } catch (error) {
       if (!isResourceNotFound(error)) throw error;
+      if (await this.localHasFile(path)) {
+        return this.inner.appendText(path, data);
+      }
     }
-    await this.writeText(path, existing + data);
+    await this.writeText(path, (existing ?? '') + data);
   }
 
   async *readLines(path: string, options?: ReadTextOptions): AsyncGenerator<string> {
@@ -116,17 +157,49 @@ export class AcpHostFileSystem implements IHostFileSystem {
     if (!this.connection.fsWriteTextFile) {
       return this.inner.writeBytes(path, data);
     }
-    let text: string;
-    try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(data);
-    } catch {
+    const text = decodeBridgeableText(data);
+    if (text === undefined) {
       return this.inner.writeBytes(path, data);
     }
     await this.writeText(path, text);
   }
 
-  createExclusive(path: string, data: Uint8Array): Promise<boolean> {
-    return this.inner.createExclusive(path, data);
+  async createExclusive(path: string, data: Uint8Array): Promise<boolean> {
+    if (!this.connection.fsReadTextFile || !this.connection.fsWriteTextFile) {
+      return this.inner.createExclusive(path, data);
+    }
+    if (await this.clientHasFile(path)) {
+      return false;
+    }
+    const text = decodeBridgeableText(data);
+    if (text === undefined) {
+      return this.inner.createExclusive(path, data);
+    }
+    if (await this.localHasFile(path)) {
+      return false;
+    }
+    await this.writeText(path, text);
+    return true;
+  }
+
+  private async clientHasFile(path: string): Promise<boolean> {
+    try {
+      await this.readText(path);
+      return true;
+    } catch (error) {
+      if (!isResourceNotFound(error)) throw error;
+      return false;
+    }
+  }
+
+  private async localHasFile(path: string): Promise<boolean> {
+    try {
+      await this.inner.lstat(path);
+      return true;
+    } catch (error) {
+      if (isLocalNotFound(error)) return false;
+      throw error;
+    }
   }
 
   stat(path: string): Promise<HostFileStat> {
