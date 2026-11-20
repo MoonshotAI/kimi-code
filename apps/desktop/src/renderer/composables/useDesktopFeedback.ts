@@ -1,11 +1,15 @@
 import { onScopeDispose, shallowReactive, shallowRef, watch, type InjectionKey } from 'vue';
+import type { z } from 'zod';
+import { getDeviceApi } from '@moonshot-ai/app-client/client';
 import type { ChatTurn } from '@moonshot-ai/app-core/client';
 import { isDaemonApiError, KIMI_AUTH_REJECTED_CODE, KIMI_AUTH_REQUIRED_CODE, type CreateFeedbackInput } from '@moonshot-ai/app-core/api';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
+import { FEEDBACK_REASONS_CONFIG, feedbackReasonsSchema } from '@moonshot-ai/kap-server/protocol/feedback-reasons';
 import { getKimiWebApi } from '../api';
 import { showFeedbackError, showFeedbackReceipt, type FeedbackAttachment } from '../lib/feedbackReceipt';
 
 export type { FeedbackAttachment } from '../lib/feedbackReceipt';
+export type FeedbackReason = z.infer<typeof feedbackReasonsSchema>['reasons'][number];
 
 export interface GlobalFeedbackTarget {
   source: 'sidebar' | 'command';
@@ -125,6 +129,15 @@ export function useDesktopFeedback(deps: {
 
   function isPopoverOpen(target: TurnFeedbackTarget | undefined): boolean {
     return target !== undefined && activePopover.value === turnFeedbackKey(target);
+  }
+
+  async function loadReasons(sessionId: string): Promise<readonly FeedbackReason[] | null> {
+    try {
+      const config = await getDeviceApi(deps.sessionHost(sessionId)).getClientConfig(FEEDBACK_REASONS_CONFIG);
+      return feedbackReasonsSchema.safeParse(config).data?.reasons ?? null;
+    } catch {
+      return null;
+    }
   }
 
   function closePopover(target?: TurnFeedbackTarget): void {
@@ -285,7 +298,7 @@ export function useDesktopFeedback(deps: {
     }, 2000));
   }
 
-  return { accountEpoch, clearHostAccount: (hostId: string) => clearAccountState(hostId), state, isPopoverOpen, closePopover, requireLogin, submitGlobal, chooseRating, submitDetails };
+  return { accountEpoch, clearHostAccount: (hostId: string) => clearAccountState(hostId), state, isPopoverOpen, closePopover, loadReasons, requireLogin, submitGlobal, chooseRating, submitDetails };
 }
 
 export const DesktopFeedbackKey: InjectionKey<ReturnType<typeof useDesktopFeedback>> = Symbol('desktop-feedback');

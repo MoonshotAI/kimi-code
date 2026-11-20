@@ -3,8 +3,7 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef
 import { useI18n } from 'vue-i18n';
 import { useFontPrefs } from '@moonshot-ai/app-core';
 import { Button, Checkbox, IconButton, Menu, Pill, Textarea } from '@moonshot-ai/app-ui';
-import { DesktopFeedbackKey, FEEDBACK_DESCRIPTION_LIMIT, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
-import { loadFeedbackReasons, type FeedbackReason } from '../../lib/feedbackReasons';
+import { DesktopFeedbackKey, FEEDBACK_DESCRIPTION_LIMIT, type FeedbackReason, type TurnFeedbackTarget } from '../../composables/useDesktopFeedback';
 import FeedbackGuideLink from './FeedbackGuideLink.vue';
 
 const props = defineProps<{
@@ -22,7 +21,7 @@ const editor = ref<InstanceType<typeof Textarea>>();
 const scrolls = ref(false);
 const deferPreview = ref(false);
 const position = shallowRef<{ top: number; left: number; maxHeight: number }>();
-const configuredReasons = shallowRef<readonly FeedbackReason[]>();
+const configuredReasons = shallowRef<readonly FeedbackReason[] | null>();
 const builtinReasons = ['incorrect', 'missed_instructions', 'off_topic', 'lost_context', 'slow', 'other'] as const;
 const reasonOptions = computed(() => configuredReasons.value?.map(reason => ({
   id: reason.id,
@@ -84,8 +83,8 @@ onMounted(() => {
   document.addEventListener('scroll', outside, true);
   window.addEventListener('keydown', escape, true);
   window.addEventListener('resize', measure);
-  void loadFeedbackReasons().then(reasons => {
-    if (!selected.value.length) configuredReasons.value = reasons;
+  void feedback?.loadReasons(props.target.sessionId).then(reasons => {
+    configuredReasons.value = reasons;
   });
 });
 
@@ -139,7 +138,7 @@ async function submit(): Promise<void> {
         :key="reason.id"
         :active="selected.includes(reason.id)"
         :aria-pressed="selected.includes(reason.id)"
-        :disabled="updating"
+        :disabled="updating || configuredReasons === undefined"
         @click="toggle(reason.id)"
       ><span>{{ reason.label }}</span></Pill>
     </div>
