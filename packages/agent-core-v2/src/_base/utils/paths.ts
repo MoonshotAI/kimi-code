@@ -12,6 +12,10 @@ export function isWindowsAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }
 
+export function directoryKey(cwd: string): string {
+  return isWindowsAbsolutePath(cwd) ? nodePath.win32.resolve(cwd).toLowerCase() : nodePath.posix.resolve(cwd);
+}
+
 export function resolvePath(base: string, value: string): string {
   if (isWindowsAbsolutePath(base)) {
     return nodePath.win32.resolve(base, value).replaceAll('\\', '/');

@@ -205,6 +205,7 @@ export async function* suggestWithFdEvents(options: FdSuggestOptions): AsyncGene
       '--type', 'f',
       '--type', 'd',
       '--hidden',
+      '--no-require-git',
     ];
     for (const dir of VCS_METADATA_DIRS) {
       args.push('--exclude', dir, '--exclude', `${dir}/*`, '--exclude', `${dir}/**`);

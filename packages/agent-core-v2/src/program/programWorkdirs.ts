@@ -1,4 +1,5 @@
 import type { LiveRef } from '#/_base/di/instantiation';
+import { directoryKey } from '#/_base/utils/paths';
 import { Event } from '#/_base/event';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { IGitService } from '#/app/git/git';
@@ -91,6 +92,18 @@ export class ProgramWorkdirs {
   readonly root: ProgramView;
   private readonly entries = new Map<string, ProgramWorkdirEntry>();
 
+  get primaryWorkdir(): ProgramView {
+    const cwd = this.context.meta.root;
+    const existing = this.entries.get(workdirContextKey(LOCAL_ENVIRONMENT_ID, cwd, false));
+    if (existing !== undefined) return existing.view;
+    const primary = directoryKey(cwd);
+    for (const [key, { view }] of this.entries) {
+      const directory = view.dirs.primary;
+      if (directoryKey(directory) === primary && key === workdirContextKey(LOCAL_ENVIRONMENT_ID, directory, false)) return view;
+    }
+    return this.root;
+  }
+
   constructor(
     private readonly environments: IEnvironmentService,
     private readonly context: IWorkspaceContext,
@@ -153,7 +166,9 @@ export class ProgramWorkdirs {
   }
 
   async reload(): Promise<void> {
-    for (const { view } of this.entries.values()) await reloadView(view);
+    const results = await Promise.allSettled([...this.entries.values()].map(({ view }) => reloadView(view)));
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed !== undefined) throw failed.reason;
   }
 
   dispose(): void {

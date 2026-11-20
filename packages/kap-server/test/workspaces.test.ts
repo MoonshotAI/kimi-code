@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -12,6 +12,7 @@ import {
   IAgentToolRegistryService,
   IAtomicDocumentStore,
   type ISessionScopeHandle,
+  ISessionWorkdir,
   IWorkspaceInstanceManager,
   resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -749,13 +750,50 @@ describe('server-v2 /api/v1/workspaces', () => {
     }
   });
 
+  it('exposes only temporary directories of the current primary workdir after a promotion', async () => {
+    const [first, next, firstExtra, nextExtra] = await Promise.all([
+      mkdtemp(join(home!, 'first-')), mkdtemp(join(home!, 'next-')),
+      mkdtemp(join(home!, 'first-extra-')), mkdtemp(join(home!, 'next-extra-')),
+    ]);
+    const expectedFirstExtra = firstExtra.split(sep).join('/');
+    const expectedNextExtra = nextExtra.split(sep).join('/');
+    const workspace = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: first, additional_dirs: [next] });
+    expect(workspace.body.code).toBe(0);
+    const id = workspace.body.data.id;
+    const core = server!.core.accessor;
+    const addTemporaryDir = async (dir: string) => {
+      const result = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: id });
+      expect(result.body.code).toBe(0);
+      const session = getLiveSessionById(core, result.body.data.id)!;
+      const dirs = session.accessor.get(ISessionWorkdir).dirs;
+      await dirs.addDir({ path: dir, persist: false });
+      return dirs;
+    };
+    const projectLease = await core.get(IWorkspaceInstanceManager).acquire({ workspaceId: id });
+    const project = projectLease.instance;
+    const otherView = await project.program.acquireWorkdir('local', next);
+    const firstDirs = await addTemporaryDir(firstExtra);
+    expect(project.program.dirs.additionalDirs).toContain(expectedFirstExtra);
+    const promoted = await postJson<WorkspaceWire>(`/api/v1/workspaces/${id}/primary`, { path: next });
+    expect(promoted.body.code).toBe(0);
+    await vi.waitFor(() => expect(project.root).toBe(next.split(sep).join('/')));
+    expect(project.program.dirs.additionalDirs).not.toContain(expectedFirstExtra);
+    const nextDirs = await addTemporaryDir(nextExtra);
+    expect(project.program.dirs.additionalDirs).toContain(expectedNextExtra);
+    expect(firstDirs.additionalDirs).toContain(expectedFirstExtra);
+    expect(firstDirs.additionalDirs).not.toContain(expectedNextExtra);
+    expect(nextDirs.additionalDirs).not.toContain(expectedFirstExtra);
+    otherView.dispose();
+    projectLease.dispose();
+  });
+
   it('keeps tools and effective roots stable through primary changes, reload, resume, and restart', async () => {
     const dirA = await mkdtemp(join(home as string, 'primary-a-'));
     const dirB = await mkdtemp(join(home as string, 'primary-b-'));
     const dirC = await mkdtemp(join(home as string, 'primary-c-'));
     await Promise.all([
-      writeFile(join(dirA, 'a.txt'), 'from-a'),
-      writeFile(join(dirB, 'b.txt'), 'from-b'),
+      writeFile(join(dirA, 'where.txt'), 'from-a'),
+      writeFile(join(dirB, 'where.txt'), 'from-b'),
       writeFile(join(dirC, 'c.txt'), 'from-c'),
     ]);
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', {
@@ -790,8 +828,8 @@ describe('server-v2 /api/v1/workspaces', () => {
     const initialTools = identities();
     for (const name of toolNames) expect(initialTools[name], name).toBeDefined();
     let toolCall = 0;
-    const run = async (name: string, input: unknown) => {
-      const tool = registry.resolve(name);
+    const run = async (name: string, input: unknown, tools = registry) => {
+      const tool = tools.resolve(name);
       expect(tool, name).toBeDefined();
       const execution = await tool!.resolveExecution(input);
       if (execution.isError === true) throw new Error(JSON.stringify(execution.output));
@@ -814,19 +852,26 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(promoted.body.code).toBe(0);
     await vi.waitFor(() => {
       expect(instance.root).toBe(dirB);
-      expect(environment.workspaceRoots().workDir).toBe(dirB);
+      expect(environment.workspaceRoots()).toMatchObject({ workDir: dirA, additionalDirs: [] });
     });
     expect(manager.get(workspaceId)).toBe(instance);
     expect(instance.program).toBe(program);
-    expect(environment.workspaceRoots().additionalDirs).toEqual([dirA]);
     expect(identities()).toEqual(initialTools);
     for (const name of toolNames) expect(registry.resolve(name)).toBe(initialTools[name]);
-    expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
-    expect(await run('Read', { path: join(dirA, 'a.txt') })).toContain('from-a');
-    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirB}\n`));
+    expect(await run('Read', { path: 'where.txt' })).toContain('from-a');
+    expect(await run('Read', { path: join(dirA, 'where.txt') })).toContain('from-a');
+    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirA}\n`));
     await run('Write', { path: 'new.txt', content: 'from-write' });
     await run('Edit', { path: 'new.txt', old_string: 'from-write', new_string: 'from-edit' });
-    expect(await readFile(join(dirB, 'new.txt'), 'utf8')).toBe('from-edit');
+    expect(await readFile(join(dirA, 'new.txt'), 'utf8')).toBe('from-edit');
+    await expect(readFile(join(dirB, 'new.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const newSession = await postJson<{ id: string; cwd: string }>('/api/v1/sessions', { workspace_id: workspaceId });
+    expect(newSession.body.code).toBe(0);
+    expect(newSession.body.data.cwd).toBe(dirB);
+    const newLive = getLiveSessionById((server as RunningServer).core.accessor, newSession.body.data.id)!;
+    const newTools = (await ensureAgent(newLive)).accessor.get(IAgentToolRegistryService);
+    expect(await run('Read', { path: 'where.txt' }, newTools)).toContain('from-b');
 
     const explicitLive = getLiveSessionById((server as RunningServer).core.accessor, explicitSession.body.data.id)!;
     const explicitAgent = await ensureAgent(explicitLive);
@@ -837,7 +882,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     });
     expect(added.body.code).toBe(0);
     await vi.waitFor(() => {
-      expect(environment.workspaceRoots().additionalDirs).toEqual([dirA, dirC]);
+      expect(environment.workspaceRoots().additionalDirs).toEqual([dirC]);
     });
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
     for (const name of toolNames) expect(registry.resolve(name)).toBe(initialTools[name]);
@@ -848,20 +893,20 @@ describe('server-v2 /api/v1/workspaces', () => {
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
     environment = agent.accessor.get(IAgentEnvironmentService);
-    expect(environment.workspaceRoots()).toMatchObject({ workDir: dirB, additionalDirs: [dirA, dirC] });
-    expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
+    expect(environment.workspaceRoots()).toMatchObject({ workDir: dirA, additionalDirs: [dirC] });
+    expect(await run('Read', { path: 'where.txt' })).toContain('from-a');
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
-    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirB}\n`));
+    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirA}\n`));
 
     const reloaded = await postJson<{ cwd: string }>(`/api/v1/sessions/${sessionId}:reload`);
     expect(reloaded.body.code).toBe(0);
-    expect(reloaded.body.data.cwd).toBe(dirB);
+    expect(reloaded.body.data.cwd).toBe(dirA);
     session = getLiveSessionById((server as RunningServer).core.accessor, sessionId)!;
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
     environment = agent.accessor.get(IAgentEnvironmentService);
     for (const name of toolNames) expect(registry.resolve(name), name).toBeDefined();
-    expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
+    expect(await run('Read', { path: 'where.txt' })).toContain('from-a');
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
 
     await (server as RunningServer).close();
@@ -877,11 +922,11 @@ describe('server-v2 /api/v1/workspaces', () => {
     agent = await ensureAgent(session);
     registry = agent.accessor.get(IAgentToolRegistryService);
     environment = agent.accessor.get(IAgentEnvironmentService);
-    expect(environment.workspaceRoots()).toMatchObject({ workDir: dirB, additionalDirs: [dirA, dirC] });
+    expect(environment.workspaceRoots()).toMatchObject({ workDir: dirA, additionalDirs: [dirC] });
     for (const name of toolNames) expect(registry.resolve(name), name).toBeDefined();
-    expect(await run('Read', { path: 'b.txt' })).toContain('from-b');
+    expect(await run('Read', { path: 'where.txt' })).toContain('from-a');
     expect(await run('Read', { path: join(dirC, 'c.txt') })).toContain('from-c');
-    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirB}\n`));
+    expect(await run('Bash', { command: 'pwd' })).toBe(JSON.stringify(`${dirA}\n`));
 
     const explicitResumed = (await resumeSessionById(server.core.accessor, explicitSession.body.data.id))!;
     const explicitResumedAgent = await ensureAgent(explicitResumed);

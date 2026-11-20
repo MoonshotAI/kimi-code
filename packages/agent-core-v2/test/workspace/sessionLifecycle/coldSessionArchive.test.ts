@@ -260,6 +260,7 @@ function sessionManagerResuming(sessionId: string): SessionManager {
       realpath: async (path: string) => path,
     } as unknown as IHostFileSystem,
     new InMemorySessionLockService(),
+    undefined as never,
   );
 }
 

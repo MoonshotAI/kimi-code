@@ -125,7 +125,7 @@ describe('AgentWorkspaceContextService', () => {
 
     main.binding.apply({ environmentId: 'remote', cwd: '/remote/work' });
     expect(main.shadow.workDir).toBe('/remote/work');
-    expect(main.shadow.additionalDirs).toEqual(['/extra']);
+    expect(main.shadow.additionalDirs).toEqual([]);
 
     expect(sub.shadow.workDir).toBe('/workspace');
     expect(sub.shadow.additionalDirs).toEqual(['/extra']);

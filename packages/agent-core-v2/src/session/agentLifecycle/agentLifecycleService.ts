@@ -260,7 +260,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             [IAgentEnvironmentBindingSeed, {
               _serviceBrand: undefined,
               binding: opts.environmentId === undefined
-                ? { environmentId: this.workdir.environmentId, cwd: this.workdir.cwd }
+                ? {
+                    environmentId: this.workdir.environmentId,
+                    cwd: this.workdir.environmentId === LOCAL_ENVIRONMENT_ID ? undefined : this.workdir.cwd,
+                  }
                 : { environmentId: opts.environmentId, cwd: opts.environmentCwd },
             }],
             [IAgentBlobService, blobView],

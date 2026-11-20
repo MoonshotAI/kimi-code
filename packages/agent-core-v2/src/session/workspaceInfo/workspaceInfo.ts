@@ -5,6 +5,7 @@ import type { Event } from '#/_base/event';
 export interface ISessionWorkspaceInfo {
   readonly _serviceBrand: undefined;
 
+  readonly environmentId?: string;
   readonly ready: Promise<void>;
   readonly additionalDirs: readonly string[];
   readonly primaryByWorkspace: Readonly<Record<string, string>>;

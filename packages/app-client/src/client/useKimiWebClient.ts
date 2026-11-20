@@ -1108,7 +1108,7 @@ function hasFailedSkillsRefresh(workspace: AppWorkspace): boolean {
 }
 
 function sessionBelongsToRoots(session: AppSession, workspace: AppWorkspace): boolean {
-  if (session.workspaceId !== undefined) return session.workspaceId === workspace.id;
+  if (session.workspaceId !== undefined) return workspacesStore().sessionBelongsToWorkspace(session, workspace.id);
   const sessionRoot = workspaceRootKey(session.cwd);
   return [workspace.root, ...(workspace.additionalDirs ?? [])].some(
     (dir) => workspaceRootKey(dir) === sessionRoot,

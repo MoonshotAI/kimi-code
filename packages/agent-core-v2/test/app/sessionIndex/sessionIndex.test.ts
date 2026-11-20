@@ -2,7 +2,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Emitter } from '#/_base/event';
 import { LifecycleScope } from '#/app/scopes';
@@ -32,6 +32,8 @@ import {
 } from '#/app/sessionIndex/sessionIndexModel';
 import { markSessionDirty } from '#/app/sessionIndex/sessionIndexDirtyJournal';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { readSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import {
   drainSessionIndexMirror,
@@ -74,6 +76,7 @@ describe('FileSessionIndex (legacy)', () => {
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
+    registerScopedService(LifecycleScope.App, IAppendLogStore, AppendLogStore, ScopeActivation.OnDemand, 'persistence');
     registerScopedService(
       LifecycleScope.App,
       ISessionIndex,
@@ -169,18 +172,90 @@ describe('FileSessionIndex (legacy)', () => {
     expect((await store.get('none'))?.cwd).toBeUndefined();
   });
 
-  it('projects the current primary without changing explicit environment cwd or historical metadata', async () => {
+  it('recovers relative local directories per session in the same historical bucket', async () => {
+    const first = join(homeDir, 'first', 'child');
+    const second = join(homeDir, 'second', 'child');
+    const store = build();
+    for (const [id, absolute, environment] of [['one', first, 'local'], ['two', second, 'local'], ['rebound', first, 'ssh']] as const) {
+      await seedSession(id, { cwd: 'child', environmentCwd: 'child' });
+      const dir = join(sessionsDir, workspaceId, id, 'agents', 'main');
+      await fsp.mkdir(dir, { recursive: true });
+      await fsp.writeFile(join(dir, 'wire.jsonl'), [
+        null,
+        { type: 'environment.set_binding', agentId: 'main', environmentId: environment },
+        { type: 'profile.bind', agentId: 'main', environmentDisclosure: { cwd: absolute } },
+      ].map((record) => JSON.stringify(record)).join('\n') + '\n');
+    }
+    await seedSession('broken', { cwd: 'child', title: 'Past work' });
+    const broken = join(sessionsDir, workspaceId, 'broken', 'agents', 'main');
+    await fsp.mkdir(broken, { recursive: true });
+    await fsp.writeFile(join(broken, 'wire.jsonl'), 'invalid JSON\n');
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'broken', title: 'Past work', cwd: 'child' })]));
+    expect(await store.get('one')).toMatchObject({ cwd: first, environmentCwd: first, workspaceId });
+    expect(await store.get('two')).toMatchObject({ cwd: second, environmentCwd: second, workspaceId });
+    expect(await store.get('rebound')).toMatchObject({ cwd: 'child', environmentCwd: 'child' });
+  });
+
+  it('keeps the saved workdir ahead of index log hints and preserves the remote host anchor', async () => {
     await seedSession('default', { cwd: '/old' });
     await seedSession('explicit', { cwd: '/old', environmentCwd: '/explicit' });
     await seedSession('remote', { cwd: '/host', environmentId: 'ssh', environmentCwd: '/remote' });
     const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
     const sessionsScope = stubBootstrap(homeDir).scope('sessions');
 
-    expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'default', '/new'))?.cwd).toBe('/new');
+    expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'default', '/new'))?.cwd).toBe('/old');
     expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'explicit', '/new'))?.cwd).toBe('/explicit');
     expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'remote', '/new'))?.cwd).toBe('/host');
     expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'default'))?.cwd).toBe('/old');
     expect(JSON.parse(await fsp.readFile(join(sessionsDir, workspaceId, 'default', 'session-meta', 'state.json'), 'utf8')).cwd).toBe('/old');
+  });
+
+  it('recovers legacy cwd only from logs for the exact session directory', async () => {
+    const other = encodeWorkDirKey('/home/user/other');
+    await seedSession('logged', {});
+    await seedSession('misplaced', {}, other);
+    await seedSession('wrong-id', {});
+    await seedSession('relative', {});
+    const entries = [
+      { sessionId: 'logged', sessionDir: join(sessionsDir, workspaceId, 'logged'), workDir: '/original' },
+      { sessionId: 'misplaced', sessionDir: join(sessionsDir, workspaceId, 'misplaced'), workDir: '/unrelated' },
+      { sessionId: 'wrong-id', sessionDir: join(sessionsDir, workspaceId, 'logged'), workDir: '/wrong' },
+      { sessionId: 'relative', sessionDir: join('sessions', workspaceId, 'relative'), cwd: '/old-relative' },
+    ];
+    await fsp.writeFile(join(homeDir, 'session_index.jsonl'), entries.map((entry) => JSON.stringify(entry)).join('\n'));
+    const store = build();
+    expect((await store.get('logged'))?.cwd).toBe('/original');
+    expect((await store.get('misplaced'))?.cwd).toBeUndefined();
+    expect((await store.get('wrong-id'))?.cwd).toBeUndefined();
+    expect((await store.get('relative'))?.cwd).toBe('/old-relative');
+    expect((await store.listRecent({ workspaceIds: [workspaceId] })).items.find((item) => item.id === 'logged')?.cwd).toBe('/original');
+  });
+
+  it('reports both owners of a duplicate session ID even when one has an index hint', async () => {
+    const other = 'wm_other';
+    await seedSession('duplicate', { cwd: '/one' });
+    await seedSession('duplicate', { cwd: '/two' }, other);
+    await fsp.writeFile(join(homeDir, 'session_index.jsonl'), JSON.stringify({
+      sessionId: 'duplicate', sessionDir: join(sessionsDir, workspaceId, 'duplicate'), workDir: '/one',
+    }));
+    const store = build();
+    const failure = store.get('duplicate');
+    await expect(failure).rejects.toThrow(workspaceId);
+    await expect(failure).rejects.toThrow(other);
+  });
+
+  it('filters by project, environment and cwd before applying the page limit', async () => {
+    await seedSession('match', { updatedAt: 1, cwd: '/checkout' });
+    await seedSession('other-cwd', { updatedAt: 2, cwd: '/other' });
+    await seedSession('remote', { updatedAt: 3, cwd: '/host', environmentId: 'remote', environmentCwd: '/checkout' });
+    await seedSession('other-project', { updatedAt: 4, cwd: '/checkout' }, 'wm_other');
+    await seedSession('archived', { updatedAt: 5, cwd: '/checkout', archived: true });
+    const store = build();
+    const search = { workspaceIds: [workspaceId], workdir: { environmentId: 'local', cwd: '/checkout/' }, limit: 1 };
+    expect((await store.listRecent(search)).items.map((item) => item.id)).toEqual(['match']);
+    expect((await store.listRecent({ ...search, sessionId: 'other-cwd' })).items).toEqual([]);
+    expect((await store.listRecent({ ...search, workdir: { environmentId: 'remote', cwd: '/checkout' } })).items.map((item) => item.id)).toEqual(['remote']);
   });
 
   it('recovers the session environment binding from metadata', async () => {
@@ -331,7 +406,7 @@ describe('FileSessionIndex (legacy)', () => {
     }
   }
 
-  it('get resolves through the session_index mapping without enumerating session directories', async () => {
+  it('get checks all owning buckets without enumerating their session directories', async () => {
     const otherId = encodeWorkDirKey('/home/user/other');
     await seedSession('decoy', { title: 'decoy' });
     await seedSession('target', { title: 'mapped' }, otherId);
@@ -347,7 +422,7 @@ describe('FileSessionIndex (legacy)', () => {
     const store = build(fileStorage);
     const summary = await store.get('target');
     expect(summary?.title).toBe('mapped');
-    expect(fileStorage.listCalls).toBe(0);
+    expect(fileStorage.listCalls).toBe(1);
   });
 
   it('get falls back to probing workspace directories when the mapping is missing or stale', async () => {
@@ -380,6 +455,7 @@ describe('FileSessionIndex (read model)', () => {
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
+    registerScopedService(LifecycleScope.App, IAppendLogStore, AppendLogStore, ScopeActivation.OnDemand, 'persistence');
     registerScopedService(
       LifecycleScope.App,
       ISessionIndex,
@@ -484,7 +560,7 @@ describe('FileSessionIndex (read model)', () => {
     return ids;
   }
 
-  it('reprojects closed sessions on primary changes and detects stale primaries after restart', async () => {
+  it('preserves a closed session workdir across project primary changes and restarts', async () => {
     const changes = new Emitter<void>();
     const workspace: Workspace = {
       id: workspaceId,
@@ -506,12 +582,8 @@ describe('FileSessionIndex (read model)', () => {
 
     primary = '/new';
     changes.fire();
-    await vi.waitFor(
-      async () => {
-        expect((await store.get('closed'))?.cwd).toBe('/new');
-      },
-      { timeout: 5_000 },
-    );
+    await store.reconcileNow();
+    expect((await store.get('closed'))?.cwd).toBe('/old');
     expect((await store.get('closed'))?.updatedAt).toBe(2);
 
     disposeHost?.();
@@ -521,41 +593,30 @@ describe('FileSessionIndex (read model)', () => {
     primary = '/after-restart';
     const restarted = build(storage, { service, persistence });
     await restarted.prepare();
-    expect((await restarted.get('closed'))?.cwd).toBe('/after-restart');
+    expect((await restarted.get('closed'))?.cwd).toBe('/old');
     expect((await restarted.get('closed'))?.updatedAt).toBe(2);
     const persisted = await fsp.readFile(join(sessionsDir, workspaceId, 'closed', 'session-meta', 'state.json'), 'utf8');
     expect(JSON.parse(persisted).cwd).toBe('/old');
   });
 
-  it('publishes the primary snapshot used to build reconciliation summaries', async () => {
-    const changes = new Emitter<void>();
-    const workspace: Workspace = {
-      id: workspaceId,
-      root: '/old',
-      name: 'project',
-      kind: 'managed',
-      additionalDirs: [],
-      createdAt: 0,
-      lastOpenedAt: 0,
-    };
-    const list = vi.fn(async () => [{ ...workspace, root: '/old' }]);
-    const service = { list } as unknown as IWorkspaceService;
-    const persistence = { onDidChange: changes.event } as IWorkspacePersistence;
-    await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
-    const store = build(new FileStorageService(homeDir), { service, persistence });
+  it('reports duplicate buckets during cold projection and after a published generation', async () => {
+    const secondBucket = 'wm_other';
+    const fileStorage = new FileStorageService(homeDir);
+    await seedSession('duplicate', { cwd: '/first' });
+    const store = build(fileStorage);
     await store.prepare();
-    store.stopReconcileLoop();
-
-    let reads = 0;
-    list.mockImplementation(async () => [{ ...workspace, root: reads++ === 0 ? '/old' : '/new' }]);
-    await store.reconcileNow();
-
-    const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(manifest?.workspacePrimaries).toEqual({ [workspaceId]: '/old' });
-    expect((await store.get('closed'))?.cwd).toBe('/old');
+    await seedSession('duplicate', { cwd: '/second' }, secondBucket);
+    await expect(store.reconcileNow()).rejects.toThrow(secondBucket);
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainQueryStoreDisposals();
+    const restarted = build(fileStorage);
+    await restarted.prepare();
+    await expect(restarted.get('duplicate')).rejects.toThrow(workspaceId);
+    await expect(restarted.listRecent({})).rejects.toThrow(secondBucket);
   });
 
-  it('subscribes when workspace persistence activates after the index', async () => {
+  it('keeps a saved session cwd when its project catalog activates later', async () => {
     const changes = new Emitter<void>();
     const workspace: Workspace = {
       id: workspaceId,
@@ -568,8 +629,7 @@ describe('FileSessionIndex (read model)', () => {
     };
     let primary = workspace.root;
     const service = { list: async () => [{ ...workspace, root: primary }] } as unknown as IWorkspaceService;
-    const onDidChange = vi.fn(changes.event);
-    const persistence = { onDidChange } as unknown as IWorkspacePersistence;
+    const persistence = { onDidChange: changes.event } as IWorkspacePersistence;
     await seedSession('closed', { cwd: '/old', createdAt: 1, updatedAt: 2 });
     const store = build(new FileStorageService(homeDir), {
       service,
@@ -580,15 +640,10 @@ describe('FileSessionIndex (read model)', () => {
     expect((await store.get('closed'))?.cwd).toBe('/old');
 
     activatePrimary();
-    expect(onDidChange).toHaveBeenCalledTimes(1);
     primary = '/new';
     changes.fire();
-    await vi.waitFor(
-      async () => {
-        expect((await store.get('closed'))?.cwd).toBe('/new');
-      },
-      { timeout: 5_000 },
-    );
+    await store.reconcileNow();
+    expect((await store.get('closed'))?.cwd).toBe('/old');
   });
 
   class CountingStorage extends FileStorageService {
@@ -685,6 +740,39 @@ describe('FileSessionIndex (read model)', () => {
       return keys;
     }
   }
+
+  it('applies the same Workdir filter to persisted sessions and pending writes before pagination', async () => {
+    await seedSession('older', { updatedAt: 1, cwd: '/checkout' });
+    await seedSession('also-visible', { updatedAt: 2, environmentCwd: '/checkout' });
+    await seedSession('newer', { updatedAt: 8, cwd: '/other' });
+    await seedSession('other-environment', { updatedAt: 9, cwd: '/checkout', environmentId: 'remote', environmentCwd: '/checkout' });
+    const store = build();
+    await store.prepare();
+    mirror.record(summary('queued', { updatedAt: 5, cwd: '/checkout' }));
+    mirror.record(summary('queued-with-different-cwd', { updatedAt: 10, cwd: '/other' }));
+    const search = { workspaceIds: [workspaceId], workdir: { environmentId: 'local', cwd: '/checkout/' }, limit: 1 };
+    const page = await store.listRecent(search);
+    expect(page.items.map((item) => item.id)).toEqual(['queued']);
+    expect((await store.listRecent({ ...search, before: page.nextCursor })).items.map((item) => item.id)).toEqual(['also-visible']);
+    await mirror.drain();
+    expect((await store.listRecent({ ...search, before: 'also-visible' })).items.map((item) => item.id)).toEqual(['older']);
+    expect((await store.listRecent({ ...search, sessionId: 'other-environment' })).items).toEqual([]);
+  });
+
+  it('combines directory matches and registered project buckets before paging', async () => {
+    await seedSession('physical-cwd', { cwd: '/selected', updatedAt: 5 });
+    await seedSession('remote-host-anchor', { cwd: '/selected', environmentCwd: '/elsewhere', environmentId: 'remote', updatedAt: 4 });
+    await seedSession('registered', { cwd: '/other', updatedAt: 3 }, 'wm_selected');
+    await seedSession('other-cwd', { cwd: '/other', updatedAt: 6 });
+    const store = build();
+    await store.prepare();
+    mirror.record(summary('pending', { cwd: '/selected', updatedAt: 2 }));
+    const query = { directory: { cwd: '/selected/', workspaceIds: ['wm_selected'] }, limit: 2 };
+    const first = await store.listRecent(query);
+    expect(first.items.map((item) => item.id)).toEqual(['physical-cwd', 'remote-host-anchor']);
+    expect((await store.listRecent({ ...query, before: first.nextCursor })).items.map((item) => item.id)).toEqual(['registered', 'pending']);
+    expect((await store.listRecent({ ...query, workspaceIds: ['wm_selected'] })).items.map((item) => item.id)).toEqual(['registered']);
+  });
 
   it('prepare projects the persisted sessions and publishes a generation', async () => {
     await seedSession('active', { title: 'hello', createdAt: 1, updatedAt: 2 });
@@ -1952,7 +2040,7 @@ describe('FileSessionIndex (read model)', () => {
       items: [{ id: 'a' }, { id: 'c' }, { id: 'b' }],
     });
     const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 3 });
+    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 4 });
     expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
   });
 

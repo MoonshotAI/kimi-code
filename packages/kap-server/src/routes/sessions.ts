@@ -42,6 +42,7 @@ import {
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServerResponse } from 'node:http';
+import { isAbsolute, resolve } from 'node:path';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import {
@@ -202,7 +203,11 @@ export function registerSessionsRoutes(
       const callerCwd = topCwd ?? metaCwd;
       const cwdPath = topCwd !== undefined ? 'cwd' : 'metadata.cwd';
       const workspaceId = body.workspace_id;
-      if (workspaceId === undefined && callerCwd === undefined) {
+      const hostCwd = callerCwd !== undefined && !isAbsolute(callerCwd) ? resolve(callerCwd) : callerCwd;
+      const placement = workspaceId !== undefined
+        ? { workspaceId, workDir: hostCwd }
+        : hostCwd !== undefined ? { workDir: hostCwd } : undefined;
+      if (placement === undefined) {
         reply.send(
           buildValidationEnvelope(
             [{ path: cwdPath, message: 'either workspace_id or cwd is required' }],
@@ -213,9 +218,7 @@ export function registerSessionsRoutes(
       }
 
       const registry = core.accessor.get(IWorkspaceService);
-      let workDir: string;
-      let bucket: { readonly id: string; readonly root: string } | undefined;
-      if (workspaceId !== undefined) {
+      if (workspaceId !== undefined && callerCwd !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
           reply.send(
@@ -227,7 +230,7 @@ export function registerSessionsRoutes(
           );
           return;
         }
-        if (callerCwd !== undefined && callerCwd !== workspace.root) {
+        if (callerCwd !== workspace.root && hostCwd !== workspace.root) {
           reply.send(
             buildValidationEnvelope(
               [
@@ -241,25 +244,19 @@ export function registerSessionsRoutes(
           );
           return;
         }
-        workDir = workspace.root;
-        bucket = workspace;
-      } else {
-        workDir = callerCwd as string;
       }
 
       try {
-        const resolved =
-          bucket === undefined
-            ? await registry.createOrTouch(workDir)
-            : ((await registry.touch(bucket.id)) ?? bucket);
+        if (workspaceId !== undefined && await registry.touch(workspaceId) === undefined) {
+          throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${workspaceId} does not exist`);
+        }
         const custom = customSessionMetadata(body.metadata);
         const agentConfig = body.agent_config ?? {};
         const mainAgentBinding = await creationMainAgentBinding(core, agentConfig);
         const { profile: _profile, model: _model, thinking: _thinking, ...settings } = agentConfig;
         const appliesSettings = Object.keys(settings).some((key) => key !== 'tower_base');
         const handle = await core.accessor.get(ISessionManager).create({
-          workspaceId: resolved.id,
-          workDir,
+          ...placement,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
           mainAgentBinding,
@@ -276,8 +273,8 @@ export function registerSessionsRoutes(
         const meta = await metadata.read();
         const sessionId = meta.id;
         const session = toWireSession(
-          { ...meta, workspaceId: resolved.id },
-          resolved.root,
+          { ...meta, workspaceId: handle.accessor.get(ISessionContext).workspaceId },
+          metadata.effectiveCwd,
           resolveSessionFacts(core, sessionId),
         );
         core.accessor.get(IEventService).publish(

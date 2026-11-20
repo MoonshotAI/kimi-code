@@ -1332,8 +1332,8 @@ describe('notifyWorkspaceDirsChanges', () => {
     await h.notifier.notifyWorkspaceDirsChanges();
 
     expect(h.reminders).toHaveLength(1);
-    expect(h.reminders[0]?.content).toContain('Default working directory: /work/A -> /work/B.');
-    expect(h.reminders[0]?.content).toContain('Effective directories: /work/B, /work/A.');
+    expect(h.reminders[0]?.content).toContain(`Default working directory: ${workDir}.`);
+    expect(h.reminders[0]?.content).toContain(`Effective directories: ${workDir}, /work/A.`);
     expect(h.reminders[0]?.content).not.toContain('Added directories:');
     expect(h.reminders[0]?.content).not.toContain('Removed directories:');
 
@@ -1342,7 +1342,7 @@ describe('notifyWorkspaceDirsChanges', () => {
     expect(h.reminders).toHaveLength(2);
     expect(h.reminders[1]?.content).toContain('Added directories: /work/C.');
     expect(h.reminders[1]?.content).not.toContain('Removed directories:');
-    expect(h.reminders[1]?.content).toContain('Effective directories: /work/B, /work/A, /work/C.');
+    expect(h.reminders[1]?.content).toContain(`Effective directories: ${workDir}, /work/A, /work/C.`);
   });
 
   it('does not invent a primary change when a project leaves the cwd association', async () => {

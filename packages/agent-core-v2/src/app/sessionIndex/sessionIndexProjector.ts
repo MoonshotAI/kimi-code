@@ -1,3 +1,5 @@
+import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { directoryKey } from '#/_base/utils/paths';
 import { ILogService } from '#/_base/log/log';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IQueryStore, type WriteOp } from '#/persistence/interface/queryStore';
@@ -14,12 +16,17 @@ import {
   SESSION_INDEX_MANIFEST,
   SESSION_INDEX_SCHEMA_VERSION,
   recencyColumn,
+  DIRECTORY_FIELD,
+  WORKDIR_FIELD,
+  sessionWorkdirKey,
   sessionCollection,
   sessionCountersCollection,
   withRecencyField,
   type SessionWorkspaceCounts,
 } from './sessionIndexModel';
 import {
+  DuplicateSessionId,
+  type SessionIndexLog,
   listSessionIds,
   listWorkspaceIds,
   mapBounded,
@@ -37,12 +44,13 @@ const STAT_CONCURRENCY = 64;
 const SHARED_SCAN_REUSE_MS = 30_000;
 
 export interface SessionIndexProjectorDeps {
+  readonly logs: IAppendLogStore;
   readonly storage: IFileSystemStorageService;
   readonly docs: IAtomicDocumentStore;
   readonly queryStore: IQueryStore;
   readonly log: ILogService;
   readonly sessionsScope: string;
-  readonly primaryByWorkspace: () => Promise<Readonly<Record<string, string>>>;
+  readonly sessionLog: SessionIndexLog;
 }
 
 export interface ProjectionResult {
@@ -61,7 +69,6 @@ export interface AuthoritativeScan {
   readonly counts: Map<string, { active: number; archived: number }>;
   readonly sourceSessionCount: number;
   readonly workspaceSignals?: Record<string, number>;
-  readonly primaryByWorkspace: Readonly<Record<string, string>>;
 }
 
 interface ScanSlot {
@@ -130,7 +137,7 @@ export class SessionIndexProjector {
       field: `custom.${PARENT_SESSION_ID_KEY}`,
     });
 
-    const { summaries, counts, sourceSessionCount, workspaceSignals, primaryByWorkspace } = await scan;
+    const { summaries, counts, sourceSessionCount, workspaceSignals } = await scan;
     await this.batchChunks(
       summaries.map((summary) => ({
         kind: 'put' as const,
@@ -148,7 +155,6 @@ export class SessionIndexProjector {
         sourceSessionCount,
         schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
         workspaceSignals,
-        workspacePrimaries: primaryByWorkspace,
       },
       epoch,
     );
@@ -182,7 +188,7 @@ export class SessionIndexProjector {
     const changed = dirtyMarkSessionIds(marks);
 
     const workspaceIds = await listWorkspaceIds(storage, sessionsScope);
-    const primaryByWorkspace = await this.deps.primaryByWorkspace();
+    const locations = await this.deps.sessionLog.locations();
     const authoritative = new Map<string, string>();
     const workspaceSignals: Record<string, number> = {};
     let signalsComplete = true;
@@ -191,6 +197,14 @@ export class SessionIndexProjector {
       if (signal === undefined) signalsComplete = false;
       else workspaceSignals[workspaceId] = signal;
       for (const sessionId of await listSessionIds(storage, sessionsScope, workspaceId)) {
+        const owner = authoritative.get(sessionId);
+        if (owner !== undefined) {
+          const [previous, next] = await Promise.all([owner, workspaceId].map((bucket) =>
+            statSessionStateFile(storage, sessionsScope, bucket, sessionId),
+          ));
+          if (previous !== undefined && next !== undefined) throw new DuplicateSessionId(sessionId, owner, workspaceId);
+          if (next === undefined) continue;
+        }
         authoritative.set(sessionId, workspaceId);
       }
     }
@@ -203,7 +217,7 @@ export class SessionIndexProjector {
       if (!authoritative.has(key)) changed.add(key);
     }
 
-    const olds = await queryStore.getMany<SessionSummary>(collection, [...changed]);
+    const olds = await queryStore.getMany<SessionSummary & { directoryKey?: string; workdirKey?: string }>(collection, [...changed]);
     const upserts: WriteOp[] = [];
     const removals: WriteOp[] = [];
     const applied = new Map<string, SessionSummary>();
@@ -218,7 +232,8 @@ export class SessionIndexProjector {
               sessionsScope,
               workspaceId,
               sessionId,
-              primaryByWorkspace[workspaceId],
+              locations.get(`${workspaceId}/${sessionId}`),
+              this.deps.logs,
             );
       if (summary === undefined) {
         if (olds.get(sessionId) !== undefined) {
@@ -229,7 +244,9 @@ export class SessionIndexProjector {
       }
       applied.set(sessionId, summary);
       const existing = olds.get(sessionId);
-      if (existing === undefined || !summaryEquals(existing, summary)) {
+      if (existing === undefined || !summaryEquals(existing, summary) ||
+        existing[WORKDIR_FIELD] !== sessionWorkdirKey(summary) ||
+        existing[DIRECTORY_FIELD] !== (summary.cwd === undefined ? undefined : directoryKey(summary.cwd))) {
         upserts.push({
           kind: 'put',
           collection,
@@ -289,7 +306,6 @@ export class SessionIndexProjector {
           sourceSessionCount: authoritative.size,
           schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
           workspaceSignals: signalsComplete ? workspaceSignals : undefined,
-          workspacePrimaries: primaryByWorkspace,
         },
         epoch,
       );
@@ -308,7 +324,7 @@ export class SessionIndexProjector {
 
   private async scanAuthoritative(): Promise<AuthoritativeScan> {
     const { storage, docs, sessionsScope } = this.deps;
-    const primaryByWorkspace = await this.deps.primaryByWorkspace();
+    const locations = await this.deps.sessionLog.locations();
     const cache = await readSessionScanCache(storage, sessionsScope);
     const nextCache = new Map<string, SessionScanCacheEntry>();
     const summaries: SessionSummary[] = [];
@@ -332,9 +348,13 @@ export class SessionIndexProjector {
           cached.meta === stat.meta &&
           cached.mtimeMs === stat.mtimeMs &&
           cached.size === stat.size &&
-          cached.primaryDir === primaryByWorkspace[workspaceId];
+          cached.loggedCwd === locations.get(`${workspaceId}/${sessionId}`);
         return { sessionId, stat, cached: hit ? cached : undefined };
       });
+      for (const check of checks) {
+        const previous = nextCache.get(check.sessionId);
+        if (previous !== undefined) throw new DuplicateSessionId(check.sessionId, previous.ws, workspaceId);
+      }
       const entry = counts.get(workspaceId) ?? { active: 0, archived: 0 };
       const found = await mapBounded(checks, SCAN_CONCURRENCY, async (check) => {
         if (check === undefined) return undefined;
@@ -347,7 +367,8 @@ export class SessionIndexProjector {
           sessionsScope,
           workspaceId,
           check.sessionId,
-          primaryByWorkspace[workspaceId],
+          locations.get(`${workspaceId}/${check.sessionId}`),
+          this.deps.logs,
         );
         if (summary === undefined) return undefined;
         nextCache.set(check.sessionId, {
@@ -355,7 +376,7 @@ export class SessionIndexProjector {
           meta: check.stat.meta,
           mtimeMs: check.stat.mtimeMs,
           size: check.stat.size,
-          primaryDir: primaryByWorkspace[workspaceId],
+          loggedCwd: locations.get(`${workspaceId}/${check.sessionId}`),
           summary,
         });
         return summary;
@@ -377,7 +398,6 @@ export class SessionIndexProjector {
       counts,
       sourceSessionCount,
       workspaceSignals: signalsComplete ? workspaceSignals : undefined,
-      primaryByWorkspace,
     };
   }
 

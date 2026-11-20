@@ -1083,7 +1083,6 @@
     "packages/agent-core-v2/src/app/plugin/archive.ts": 2,
     "packages/agent-core-v2/src/app/sessionIndex/sessionIndexMirrorService.ts": 1,
     "packages/agent-core-v2/src/app/sessionIndex/sessionIndexProjector.ts": 1,
-    "packages/agent-core-v2/src/app/sessionIndex/sessionIndexService.ts": 1,
     "packages/agent-core-v2/src/app/workspace/fileWorkspacePersistence.ts": 1,
     "packages/agent-core-v2/src/features/externalHooks/internal/runHook.ts": 1,
     "packages/agent-core-v2/src/features/fileHistory/fileHistoryService.ts": 1,

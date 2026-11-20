@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue';
+import { reactive, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import {
   isPageTokenMismatchError,
@@ -12,7 +12,7 @@ import type {
   SessionGroupsPage,
   SessionsPage,
 } from '@moonshot-ai/app-core/api';
-import { logWarn, workspaceRootKey } from '@moonshot-ai/app-core/lib';
+import { logWarn } from '@moonshot-ai/app-core/lib';
 import { getKimiWebApi, t } from '../client/deps';
 import { clientPinia } from './pinia';
 import { configStore } from './config';
@@ -82,6 +82,16 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
   const doneSessionsLoading = ref(false);
   const doneSessionsLoadingMore = ref(false);
   const doneSessionsSeeded = ref(false);
+
+  watch(
+    [() => workspacesStore().workspaces, () => sessionsStore().sessions, doneSessions],
+    ([projects, active, archived]) => {
+      if (projects.length === 0) return;
+      const workspaces = workspacesStore();
+      workspaces.identifySessionWorkspaces(active);
+      workspaces.identifySessionWorkspaces(archived);
+    },
+  );
 
   const archivedTombstoneIds = new Set<string>();
   const archiveSerialById = new Map<string, number>();
@@ -307,7 +317,9 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
     addArchiveTombstone(sessionId);
     const archived = sessionsStore().sessions.find((s) => s.id === sessionId);
     if (archived === undefined && sessionsStore().activeSessionId !== sessionId) return true;
-    const wsId = workspaceId ?? (archived !== undefined ? workspacesStore().workspaceIdForSession(archived) : undefined);
+    const wsId = archived === undefined ? workspaceId : workspacesStore().workspaceIdForSession({
+      ...archived, workspaceId: workspaceId ?? archived.workspaceId,
+    });
     const backfillTarget = wsId !== undefined ? loadedInWorkspace(wsId).length : 0;
     await applySessionsArchivedLocally([sessionId], true);
     if (archived !== undefined && wsId !== undefined) {
@@ -465,26 +477,13 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
     complete: boolean,
   ): SessionGroupsMapping {
     const groupById = new Map(groups.map((group) => [group.workspaceId, group] as const));
-    const groupByRoot = new Map(
-      groups
-        .filter((group) => (group.sessions[0]?.cwd ?? '') !== '')
-        .map((group) => [workspaceRootKey(group.sessions[0]!.cwd), group] as const),
-    );
-    const workspaceCountByRoot = new Map<string, number>();
-    for (const workspace of workspacesStore().workspaces) {
-      const key = workspaceRootKey(workspace.root);
-      workspaceCountByRoot.set(key, (workspaceCountByRoot.get(key) ?? 0) + 1);
-    }
     const loaded: AppSession[] = [];
     const loadedIds = new Set<string>();
     const hasMore: Record<string, boolean> = {};
     const cursors: Record<string, string | undefined> = {};
     const counts: Record<string, number> = {};
     for (const workspace of workspacesStore().workspaces) {
-      const rootKey = workspaceRootKey(workspace.root);
-      const directGroup = groupById.get(workspace.id);
-      const group = directGroup ??
-        (workspaceCountByRoot.get(rootKey) === 1 ? groupByRoot.get(rootKey) : undefined);
+      const group = groupById.get(workspace.id);
       if (group === undefined) {
         hasMore[workspace.id] = !complete;
         cursors[workspace.id] = undefined;
@@ -498,12 +497,9 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
             !deletedTombstoneIds.has(s.id) &&
             (s.lastPrompt ?? '').length > 0,
         )
-        .map((s) => {
-          const session = withFallbackSessionTitle(
-            s.cwd === '' ? { ...s, cwd: workspace.root } : s,
-          );
-          return directGroup === undefined ? { ...session, workspaceId: workspace.id } : session;
-        });
+        .map((s) => withFallbackSessionTitle(workspacesStore().projectSessionWorkspace(
+          s.cwd ? s : { ...s, cwd: workspace.root }, group.workspaceId,
+        )));
       for (const session of items) {
         if (loadedIds.has(session.id)) continue;
         loaded.push(session);
@@ -714,6 +710,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
       if (page === undefined) return;
       const existing = new Set(sessionsStore().sessions.map((s) => s.id));
       const fresh = page.items
+        .map((s) => wsStore.projectSessionWorkspace(s, workspaceId))
         .filter(
           (s) =>
             !existing.has(s.id) &&
@@ -787,7 +784,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
       ) {
         return false;
       }
-      const wid = workspacesStore().workspaceIdForSession({ workspaceId: s.workspaceId, cwd: s.cwd });
+      const wid = workspacesStore().workspaceIdForSession(s);
       if (!visibleWorkspaceIds.has(wid)) return false;
       if (pinnedWorkspaceIds?.has(wid)) return false;
       return true;
@@ -1005,6 +1002,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
         return false;
       }
       const items = page.items
+        .map((s) => wsStore.projectSessionWorkspace(s, workspaceId))
         .filter((s) => !archivedTombstoneIds.has(s.id) && !deletedTombstoneIds.has(s.id))
         .map(withFallbackSessionTitle);
       const existing = new Set(sessionsStore().sessions.map((s) => s.id));
@@ -1022,7 +1020,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
           [
             ...sessionsStore().sessions.map((s) => {
               const next = updatedById.get(s.id);
-              return next === undefined ? s : { ...s, hostId: next.hostId ?? s.hostId };
+              return next === undefined ? s : { ...s, hostId: next.hostId ?? s.hostId, workspaceId: next.workspaceId ?? s.workspaceId };
             }),
             ...fresh,
           ].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
@@ -1152,6 +1150,7 @@ export const useSessionListStore = defineStore('kimi.sessionList', () => {
 
   function resetSessionList(): void {
     cancelBackgroundReads();
+    workspacesStore().sessionWorkspaceAliases = new Map();
     archiveSerialById.clear();
     sessionsFullyLoaded.value = false;
     flatSessionsNextPageToken.value = null;

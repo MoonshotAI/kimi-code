@@ -1,6 +1,6 @@
 import { toRaw, type ComputedRef } from 'vue';
 import { isDaemonApiError, isSessionOccupiedError } from '@moonshot-ai/app-core/api';
-import type { AppMessage, AppMessageContent, AppSession, AppWorkspace } from '@moonshot-ai/app-core/api';
+import type { AppMessage, AppMessageContent, AppSession } from '@moonshot-ai/app-core/api';
 import { markSwarmPending, markThinkingPending, markTowerPending, skillIdentity, defaultSkillPath } from '@moonshot-ai/app-core/lib';
 import type { SessionUrlMode } from '@moonshot-ai/app-core/lib';
 import { offsetAttachmentLinkIndices } from '@moonshot-ai/app-composer/model';
@@ -40,7 +40,6 @@ import type {
 const MAX_QUEUE_FLUSH_FAILURES = 3;
 const COMPACT_RETRY_DELAY_MS = 1000;
 const PROMPT_NOT_FOUND_CODE = 40402;
-const WORKSPACE_NOT_FOUND_CODE = 40410;
 
 export interface PromptPipelineDeps {
   sideChat: UseSideChat;
@@ -112,23 +111,6 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     };
   }
 
-  async function createSessionInWorkspace(
-    ws: AppWorkspace,
-    model: string | undefined,
-  ): Promise<{ session: AppSession; workspaceId: string | undefined }> {
-    const api = getKimiWebApi();
-    const request = { cwd: ws.root, model };
-    const workspaceId = ws.id === ws.root ? undefined : ws.id;
-    let session: AppSession;
-    try {
-      session = await api.createSession({ ...request, workspaceId });
-    } catch (err) {
-      if (!isDaemonApiError(err) || err.code !== WORKSPACE_NOT_FOUND_CODE) throw err;
-      session = await api.createSession({ ...request, workspaceId: undefined });
-    }
-    return { session, workspaceId: session.workspaceId };
-  }
-
   async function createDraftSession(workspaceId: string): Promise<string | null> {
     const ws = workspacesStore().mergedWorkspaces.find((w) => w.id === workspaceId);
     if (!ws) return null;
@@ -137,8 +119,8 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     const draftThinkingExplicit = modeStore().draftThinkingExplicit;
     const draftPermission = permissionsStore().forDraftPrompt();
     const draftPick = modelsStore().resolveSendModel(null, { includeDraft: true }) ?? undefined;
-    const { session, workspaceId: workspaceIdForCreate } =
-      await createSessionInWorkspace(ws, draftPick);
+    const target = ws.id === ws.root ? { cwd: ws.root } : { workspaceId: ws.id };
+    const session = await getKimiWebApi().createSession({ ...target, model: draftPick });
     modelsStore().setDraftModel(null);
     const sid = session.id;
     sessionListStore().notePoolInsert(sid);
@@ -150,7 +132,7 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
     }
     markDraftPromotion({ workspaceId, sessionId: sid });
     modeStore().draftThinkingExplicit = false;
-    workspacesStore().selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+    workspacesStore().selectWorkspace(session.workspaceId ?? workspaceId);
     track('session_created', { kind: 'new', source: sessionSource });
     await selectSession(session.id, {
       skipTrack: true,

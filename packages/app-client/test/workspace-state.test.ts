@@ -1092,7 +1092,6 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(apiMock.createSession).toHaveBeenCalledOnce();
     expect(apiMock.createSession).toHaveBeenCalledWith({
       workspaceId: 'wd_derived_123456789abc',
-      cwd: '/abs/path',
       model: undefined,
     });
     expect(activateSkill).toHaveBeenCalledOnce();
@@ -1119,7 +1118,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledOnce();
   });
 
-  it('falls back to cwd only after the daemon rejects the workspace id', async () => {
+  it('does not start a session in another project after the selected project was deleted', async () => {
     const state = createState();
     workspacesStore().workspaces = [];
     sessionsStore().setSessions([
@@ -1134,18 +1133,12 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
     await ws.startSessionAndActivateSkill('wd_derived_123456789abc', 'pre-changelog');
 
-    expect(apiMock.createSession).toHaveBeenCalledTimes(2);
-    expect(apiMock.createSession).toHaveBeenNthCalledWith(1, {
+    expect(apiMock.createSession).toHaveBeenCalledOnce();
+    expect(apiMock.createSession).toHaveBeenCalledWith({
       workspaceId: 'wd_derived_123456789abc',
-      cwd: '/abs/path',
       model: undefined,
     });
-    expect(apiMock.createSession).toHaveBeenNthCalledWith(2, {
-      workspaceId: undefined,
-      cwd: '/abs/path',
-      model: undefined,
-    });
-    expect(activateSkill).toHaveBeenCalledOnce();
+    expect(activateSkill).not.toHaveBeenCalled();
   });
 
   it('does not retry session creation without a workspace-not-found response', async () => {
@@ -4571,12 +4564,12 @@ describe('useWorkspaceState — grouped initial session load (view=by_workspace)
     expect(workspacesStore().sessionsInitialCountByWorkspace).toEqual({ ws1: 5, ws2: 5, ws3: 5 });
   });
 
-  it('matches a server-canonicalized alias group to the registered workspace by root', async () => {
+  it('puts every checkout in its server-canonicalized project group', async () => {
     apiMock.listSessionGroups.mockResolvedValue({
       groups: [
         {
-          workspaceId: 'wd_canonical',
-          sessions: [groupedSession('s1', 1, 'wd_legacy', '/repo/ws1')],
+          workspaceId: 'ws1',
+          sessions: [groupedSession('s1', 1, 'wd_legacy', '/repo/worktree/src')],
           total: 3,
         },
       ],
@@ -4590,7 +4583,7 @@ describe('useWorkspaceState — grouped initial session load (view=by_workspace)
     await ws.load();
 
     expect(state.sessions.map((s) => s.id)).toEqual(['s1']);
-    expect(state.sessions[0]?.workspaceId).toBe('ws1');
+    expect(state.sessions[0]).toMatchObject({ workspaceId: 'ws1', cwd: '/repo/worktree/src' });
     expect(workspacesStore().sessionsHasMoreByWorkspace['ws1']).toBe(true);
     expect(workspacesStore().sessionsCursorByWorkspace['ws1']).toBe('s1');
     expect(workspacesStore().sessionsHasMoreByWorkspace['ws2']).toBe(false);

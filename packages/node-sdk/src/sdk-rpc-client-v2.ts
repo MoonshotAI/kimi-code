@@ -1461,10 +1461,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async listSessionsPage(input: ListSessionsOptions = {}): Promise<SessionSummaryPage> {
-    const workspaceIds =
-      input.workDir === undefined
-        ? undefined
-        : await this.workspaceIdsFor(normalizeRequiredWorkDir('listSessions', input.workDir));
+    const workDir = input.workDir === undefined ? undefined : normalizeRequiredWorkDir('listSessions', input.workDir);
+    const directory = workDir === undefined ? undefined : { cwd: workDir, workspaceIds: await this.workspaceIdsFor(workDir) };
     const workspacesById = new Map(
       (await this.klient.global.workspaces.list()).map((workspace) => [workspace.id, workspace]),
     );
@@ -1474,7 +1472,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       const remaining = input.limit === undefined ? undefined : input.limit - collected.length;
       if (remaining !== undefined && remaining <= 0) break;
       const page = await this.klient.global.sessions.list({
-        workspaceIds,
+        directory,
         sessionId: input.sessionId,
         includeArchived: input.includeArchived,
         limit: remaining,
@@ -1927,15 +1925,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
     const handle = this.requireLiveSession(input.id);
-    const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
-    const lease = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .acquire({ workspaceId });
-    try {
-      return await lease.instance.program.dirs.addDir({ path: input.path, persist: input.persist });
-    } finally {
-      lease.dispose();
-    }
+    return handle.accessor.get(ISessionWorkdir).dirs.addDir({ path: input.path, persist: input.persist });
   }
 
   /**

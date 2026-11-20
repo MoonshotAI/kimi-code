@@ -1,4 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { EnvironmentBinding } from '#/environment/environment';
 import type { Page } from '#/persistence/interface/queryStore';
 
 export const PARENT_SESSION_ID_KEY = 'parent_session_id';
@@ -24,6 +25,8 @@ export interface SessionSummary {
 }
 
 export interface SessionListQuery {
+  readonly workdir?: Required<EnvironmentBinding>;
+  readonly directory?: { readonly cwd: string; readonly workspaceIds: readonly string[] };
   readonly workspaceIds?: readonly string[];
   readonly sessionId?: string;
   readonly includeArchived?: boolean;

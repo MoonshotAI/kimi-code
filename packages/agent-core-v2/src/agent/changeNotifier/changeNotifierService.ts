@@ -396,7 +396,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         host,
       );
       this.reminder.notify(
-        workspaceDirsChangeText(changes, roots, this.sessionContext.workspaceId, binding.cwd !== undefined),
+        workspaceDirsChangeText(changes, roots, binding.cwd !== undefined),
         { variant: WORKSPACE_DIRS_CHANGE_VARIANT },
       );
     } catch (error) {
@@ -698,7 +698,6 @@ function diffWorkspaceDirs(
 function workspaceDirsChangeText(
   changes: WorkspaceDirsChanges,
   roots: EffectiveWorkspaceRoots,
-  workspaceId: string,
   explicitCwd: boolean,
 ): string {
   const lines = ['Project directory configuration changed.'];
@@ -711,10 +710,7 @@ function workspaceDirsChangeText(
   if (changes.removed.length > 0) {
     lines.push(`Removed directories: ${changes.removed.join(', ')}.`);
   }
-  const primaryChange = changes.primary.find((change) => change.workspaceId === workspaceId);
-  if (roots.followsPrimary && primaryChange !== undefined) {
-    lines.push(`Default working directory: ${primaryChange.from} -> ${primaryChange.to}.`);
-  } else if (explicitCwd) {
+  if (explicitCwd) {
     lines.push(`Explicit session cwd remains ${roots.workDir}.`);
   } else {
     lines.push(`Default working directory: ${roots.workDir}.`);

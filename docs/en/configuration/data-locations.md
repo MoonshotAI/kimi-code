@@ -41,7 +41,7 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 │   └── mcp/
 │       └── <key>-<suffix>.json
 ├── sessions/               # Session data (see below)
-│   └── <workDirKey>/<sessionId>/
+│   └── <projectId>/<sessionId>/
 ├── locks/
 │   └── sessions/           # Cross-process occupancy locks while a client writes a session
 ├── bin/
@@ -72,7 +72,7 @@ Each top-level file under the data root serves a specific purpose; most are mana
 
 ## Session data
 
-Each session's data is stored under `sessions/<workspaceId>/<sessionId>/`, and a top-level `session_index.jsonl` index is maintained (one record per line, each containing `sessionId`, `sessionDir`, and `workDir`). For an implicit workspace, `workspaceId` is a bucket name derived from the working directory path, in the format `wd_<slug>_<first-12-chars-of-sha256>`. For a managed workspace (a project created explicitly), `workspaceId` is the generated `wm_<uuid>`.
+Each session lives in `sessions/<projectId>/<sessionId>/`. The parent directory identifies its project. The state file records the session’s working directory. The top-level `session_index.jsonl` stores `sessionId`, `sessionDir`, and the directory under `workDir` or `cwd`. Implicit project IDs use `wd_<slug>_<12 hex digits>`. Manually created projects use `wm_<uuid>`.
 
 Inside each session directory:
 

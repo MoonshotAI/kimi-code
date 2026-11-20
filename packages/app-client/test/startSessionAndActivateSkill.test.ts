@@ -281,7 +281,7 @@ describe('startSessionAndActivateSkill', () => {
 
     expect(started).toEqual({ sessionId: 'session-1', promptRejected: false });
     expect(api.addWorkspace).not.toHaveBeenCalled();
-    expect(api.createSession.mock.calls[0]?.[0]).toEqual({ workspaceId: multiRoot.id, cwd: multiRoot.root });
+    expect(api.createSession).toHaveBeenCalledExactlyOnceWith({ workspaceId: multiRoot.id, model: undefined });
     expect(store.workspaces).toEqual([singleRoot, multiRoot]);
   });
 
@@ -303,7 +303,7 @@ describe('startSessionAndActivateSkill', () => {
 
     expect(started).toEqual({ sessionId: 'session-1', promptRejected: false });
     expect(api.addWorkspace).not.toHaveBeenCalled();
-    expect(api.createSession.mock.calls[0]?.[0]).toEqual({ workspaceId: id, cwd: '/repo/legacy' });
+    expect(api.createSession).toHaveBeenCalledExactlyOnceWith({ workspaceId: id, model: undefined });
   });
 
   it('passes an immutable composer snapshot through new-session skill activation', async () => {

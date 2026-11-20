@@ -84,7 +84,7 @@ describe('SessionLifecycleService', () => {
             workDir: string;
             additionalDirs: readonly string[];
           },
-          environment: undefined,
+          environment: { environmentId: string; cwd: string },
           workdir: unknown,
         ): Promise<unknown>;
       }
@@ -94,7 +94,7 @@ describe('SessionLifecycleService', () => {
         workDir: '/workspace',
         additionalDirs: ['/additional'],
       },
-      undefined,
+      { environmentId: 'local', cwd: '/workspace' },
       workdir,
     );
 
@@ -110,15 +110,28 @@ describe('SessionLifecycleService', () => {
     }
   });
 
-  it('keeps remote resume cwd independent from the local primary', () => {
+  it.each([
+    { meta: { cwd: '/old', environmentId: 'ssh-dev', environmentCwd: '/srv/app' }, host: '/old', environment: 'ssh-dev', cwd: '/srv/app' },
+    { meta: { cwd: '/old' }, host: '/old', environment: 'local', cwd: '/old' },
+    { meta: { cwd: '/old', environmentCwd: '/explicit' }, host: '/explicit', environment: 'local', cwd: '/explicit' },
+    { meta: { workDir: '/legacy' }, host: '/legacy', environment: 'local', cwd: '/legacy' },
+    { meta: { custom: { cwd: '/custom' } }, host: '/custom', environment: 'local', cwd: '/custom' },
+  ])('resumes a session from its persisted cwd $cwd', async ({ meta, host, environment, cwd }) => {
+    const materialized = vi.fn(async () => ({
+      accessor: { get: () => ({ get: () => ({}) }) },
+    }));
+    const openWorkdir = vi.fn(async () => ({}));
     const service = Object.assign(Object.create(SessionLifecycleService.prototype), {
-      workspaceContext: { workspaceId: 'workspace', meta: { root: '/new-primary' } },
-    }) as unknown as {
-      sessionWorkDir(fallbackCwd: string, environment: { environmentId: string; cwd?: string } | undefined): string;
-    };
-
-    expect(service.sessionWorkDir('/local-anchor', { environmentId: 'ssh-dev', cwd: '/srv/app' })).toBe('/local-anchor');
-    expect(service.sessionWorkDir('/old', undefined)).toBe('/new-primary');
-    expect(service.sessionWorkDir('/old', { environmentId: 'local', cwd: '/explicit' })).toBe('/explicit');
+      sessions: new Map(), resuming: new Map(), resumeFailures: new Map(),
+      index: { get: async () => ({ workspaceId: 'workspace', cwd: '/wrong' }) },
+      docs: { get: async (scope: string) => scope.endsWith('session-meta') ? meta : undefined },
+      workspaceContext: { workspaceId: 'workspace', cwd: '/new', meta: { root: '/new' }, persistenceScope: 'sessions/workspace' },
+      openWorkdir, materializeSession: materialized, announceCreated: async () => {},
+    }) as SessionLifecycleService;
+    await service.resume('original');
+    expect(openWorkdir).toHaveBeenCalledWith({ environmentId: environment, cwd });
+    expect(materialized).toHaveBeenCalledWith(expect.objectContaining({
+      workDir: host,
+    }), { environmentId: environment, cwd }, {});
   });
 });

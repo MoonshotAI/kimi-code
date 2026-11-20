@@ -63,6 +63,33 @@ describe('sessionInfoStore', () => {
     expect(sessionInfoStore().foldersForSession('missing')).toEqual([]);
   });
 
+  it('reads each worktree branch and the owning project’s shared folders', async () => {
+    const main = '/repo';
+    const checkout = '/worktrees/feature';
+    sessionsStore().setSessions([
+      { id: 's1', workspaceId: 'p1', cwd: main } as AppSession,
+      { id: 's2', workspaceId: 'p1', cwd: checkout } as AppSession,
+    ]);
+    workspacesStore().workspaces = [
+      seedWorkspace('p1', main, [checkout, '/docs']),
+      seedWorkspace('p2', main, ['/unrelated']),
+    ];
+    workspacesStore().selectWorkspace('p2');
+    mockBatches(vi.fn().mockResolvedValue(statusBatch({
+      [main]: gitStatus('main'), [checkout]: gitStatus('feature'), '/docs': gitStatus('docs'),
+    })));
+    const info = sessionInfoStore();
+    for (const [id, expectedFolders, branch] of [
+      ['s1', folders(main, checkout, '/docs'), 'main'],
+      ['s2', folders(checkout, '/docs'), 'feature'],
+    ] as const) {
+      const actual = info.foldersForSession(id);
+      expect(actual).toEqual(expectedFolders);
+      await info.observe(id, actual);
+      expect(info.rows(id)[0]?.state).toEqual({ status: 'ready', value: gitStatus(branch) });
+    }
+  });
+
   it('resolves a historical session workspace by cwd when workspaceId is missing', () => {
     sessionsStore().setSessions([{ id: 's1', cwd: '/shared' } as AppSession]);
     workspacesStore().workspaces = [seedWorkspace('ws1', '/shared', ['/one'])];

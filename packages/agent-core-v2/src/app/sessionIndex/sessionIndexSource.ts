@@ -1,7 +1,10 @@
+import { readSessionIndexEntries, sessionIndexBucket, SESSION_INDEX_KEY, SESSION_INDEX_SCOPE } from '#/app/workspace/workspaceAlias';
+import { Error2, ErrorCodes } from '#/errors';
+import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { resolveEffectiveWorkspaceRoots } from '#/session/workspaceContext/workspaceRoots';
+import { hasRelativeLocalWorkdir, readLegacyLocalWorkdir } from './legacySessionWorkdir';
 
 import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from './sessionIndex';
 import { SESSION_INDEX_DIRTY_DIR } from './sessionIndexDirtyJournal';
@@ -12,14 +15,14 @@ const META_KEY = 'state.json';
 export const SESSION_INDEX_SCAN_CACHE_DIR = '.index-cache';
 
 const SCAN_CACHE_KEY = 'scan.json';
-const SCAN_CACHE_VERSION = 2;
+const SCAN_CACHE_VERSION = 4;
 
 export interface SessionScanCacheEntry {
   readonly ws: string;
   readonly meta: string;
   readonly mtimeMs: number;
   readonly size: number;
-  readonly primaryDir?: string;
+  readonly loggedCwd?: string;
   readonly summary: SessionSummary;
 }
 
@@ -49,7 +52,7 @@ function isScanCacheEntryShape(value: unknown): value is SessionScanCacheEntry {
     Number.isFinite(entry['mtimeMs']) &&
     typeof entry['size'] === 'number' &&
     Number.isFinite(entry['size']) &&
-    (entry['primaryDir'] === undefined || typeof entry['primaryDir'] === 'string') &&
+    (entry['loggedCwd'] === undefined || typeof entry['loggedCwd'] === 'string') &&
     summary !== null &&
     typeof summary === 'object' &&
     typeof (summary as Record<string, unknown>)['id'] === 'string' &&
@@ -141,7 +144,35 @@ export function parseTurnOutcome(value: unknown): 'completed' | 'cancelled' | 'f
   return value === 'completed' || value === 'cancelled' || value === 'failed' ? value : undefined;
 }
 
-export function recoverCwd(meta: Record<string, unknown>): string | undefined {
+export class SessionIndexLog {
+  private cached?: { mtime: number; size: number; locations: ReadonlyMap<string, string> };
+
+  constructor(private readonly storage: IFileSystemStorageService, private readonly sessionsScope: string) {}
+
+  async locations(): Promise<ReadonlyMap<string, string>> {
+    const [mtime, size] = await Promise.all([
+      this.storage.mtime(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY),
+      this.storage.size(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY),
+    ]);
+    if (mtime === undefined || size === undefined) return new Map();
+    if (this.cached?.mtime === mtime && this.cached.size === size) return this.cached.locations;
+    const locations = new Map<string, string>();
+    for (const entry of await readSessionIndexEntries(this.storage, this.sessionsScope)) {
+      const bucket = sessionIndexBucket(entry);
+      if (bucket !== undefined) locations.set(`${bucket}/${entry.sessionId}`, entry.workDir);
+    }
+    this.cached = { mtime, size, locations };
+    return locations;
+  }
+}
+
+export class DuplicateSessionId extends Error2 {
+  constructor(id: string, first: string, second: string) {
+    super(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${id}" exists in both "${first}" and "${second}"`);
+  }
+}
+
+export function recoverCwd(meta: { readonly cwd?: unknown; readonly workDir?: unknown; readonly custom?: unknown }): string | undefined {
   if (typeof meta['cwd'] === 'string' && meta['cwd'].length > 0) return meta['cwd'];
   if (typeof meta['workDir'] === 'string' && meta['workDir'].length > 0) {
     return meta['workDir'];
@@ -172,7 +203,9 @@ export function buildSessionSummary(fields: {
   return {
     id: fields.id,
     workspaceId: fields.workspaceId,
-    cwd: fields.cwd,
+    cwd: fields.environmentId === undefined || fields.environmentId === LOCAL_ENVIRONMENT_ID
+      ? fields.environmentCwd ?? fields.cwd
+      : fields.cwd,
     environmentId: fields.environmentId,
     environmentCwd: fields.environmentCwd,
     title: fields.title,
@@ -220,13 +253,9 @@ export async function listWorkspaceIds(
   storage: IFileSystemStorageService,
   sessionsScope: string,
 ): Promise<readonly string[]> {
-  try {
-    return (await storage.list(sessionsScope)).filter(
-      (entry) => entry !== SESSION_INDEX_DIRTY_DIR && entry !== SESSION_INDEX_SCAN_CACHE_DIR,
-    );
-  } catch {
-    return [];
-  }
+  return (await storage.list(sessionsScope)).filter(
+    (entry) => entry !== SESSION_INDEX_DIRTY_DIR && entry !== SESSION_INDEX_SCAN_CACHE_DIR,
+  );
 }
 
 export async function listSessionIds(
@@ -246,7 +275,8 @@ export async function readSessionSummary(
   sessionsScope: string,
   workspaceId: string,
   sessionId: string,
-  primaryDir?: string,
+  loggedCwd?: string,
+  logs?: IAppendLogStore,
 ): Promise<SessionSummary | undefined> {
   const base = `${sessionsScope}/${workspaceId}/${sessionId}`;
   const meta = (await readMeta(docs, base)) ?? (await readMeta(docs, `${base}/${META_SCOPE}`));
@@ -256,26 +286,18 @@ export async function readSessionSummary(
     rawCustom !== null && typeof rawCustom === 'object' && !Array.isArray(rawCustom)
       ? (rawCustom as Record<string, unknown>)
       : undefined;
-  const originalCwd = recoverCwd(meta);
-  const environmentId = typeof meta['environmentId'] === 'string'
-    ? meta['environmentId']
-    : LOCAL_ENVIRONMENT_ID;
-  const environmentCwd = typeof meta['environmentCwd'] === 'string'
-    ? meta['environmentCwd']
+  const cwd = recoverCwd(meta) ?? loggedCwd;
+  const environmentId = typeof meta['environmentId'] === 'string' ? meta['environmentId'] : undefined;
+  const environmentCwd = typeof meta['environmentCwd'] === 'string' ? meta['environmentCwd'] : undefined;
+  const recovered = logs !== undefined && hasRelativeLocalWorkdir(environmentId, environmentCwd ?? cwd)
+    ? await readLegacyLocalWorkdir(logs, base).catch(() => undefined)
     : undefined;
-  const cwd = primaryDir === undefined || environmentId !== LOCAL_ENVIRONMENT_ID
-    ? originalCwd
-    : resolveEffectiveWorkspaceRoots(
-        { workspaceId, cwd: originalCwd ?? primaryDir },
-        { environmentId, cwd: environmentCwd },
-        { primaryByWorkspace: { [workspaceId]: primaryDir }, additionalDirs: [] },
-      ).workDir;
   return buildSessionSummary({
     id: sessionId,
     workspaceId,
-    cwd,
-    environmentId: typeof meta['environmentId'] === 'string' ? meta['environmentId'] : undefined,
-    environmentCwd,
+    cwd: recovered ?? cwd,
+    environmentId,
+    environmentCwd: recovered ?? environmentCwd,
     title: typeof meta['title'] === 'string' ? meta['title'] : undefined,
     lastPrompt: typeof meta['lastPrompt'] === 'string' ? meta['lastPrompt'] : undefined,
     createdAt: parseTime(meta['createdAt']),
