@@ -6,6 +6,12 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.7.2 (2026-11-20)
+
+### Bug Fixes
+
+- Web: Fix the draft thinking effort inherited from the global thinking setting reverting to the model default after sending.
+
 ## 2.7.1 (2026-11-20)
 
 ### Bug Fixes
