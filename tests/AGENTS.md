@@ -70,7 +70,7 @@ L0 表示维护者选择长期保护的一条行为。按入选理由分三类�
 - **主 CI 的 `L0 protected tests`** 汇总 5 个测试分片各自记录的 Vitest 结果，核对清单里全部 Vitest 条目，不分类别。缺失、跳过、重试后才通过、预期失败、重复 ID 都会失败；没有收到任何结果时同样失败。
 - **[E2E smoke 工作流](../.github/workflows/e2e-smoke.yml)** 在 macOS 上运行三个 Vitest 项目的 smoke 和 Electron smoke，核对 smoke 条目。
 
-两个检查都会并入 PR base 版本的清单和 `require_smoke`，所以在同一个 PR 里删掉用例和清单条目、或者去掉某个项目的 smoke 要求，都会失败。Playwright 条目只能是 smoke，因为只有 Electron smoke 是必过检查。主 CI 的检查只看 L0 结果，其他测试的失败由测试分片报告。[CODEOWNERS](../.github/CODEOWNERS) 指派评审。退役已有 ID 时，先评审清单变更，在该 PR 保留原用例和标记供 base 清单验收，合入后再移除标记或用例。删除或放宽已登记的断言时，请负责人核对将失去的保障。若用例使用 golden（入库的预期数据），更新时一并评审预期差异。[门禁实现](../scripts/protected-smoke.ts)
+两个检查都会并入 PR base 版本的清单和 `require_smoke`，所以在同一个 PR 里删掉用例和清单条目、或者去掉某个项目的 smoke 要求，都会失败。Playwright 条目只能是 smoke，因为只有 Electron smoke 是必过检查。主 CI 的检查只看 L0 结果，其他测试的失败由测试分片报告。[CODEOWNERS](../.github/CODEOWNERS) 指派评审。`pnpm lint` 里的 `scripts/checks/guards.mjs` 还会核对汇总任务的接线：L0 汇总和 Desktop E2E 汇总必须等齐它们汇总的任务，上游失败时照样运行；Desktop E2E 汇总还要逐个读取上游结果，工作流里新增的任务没接进汇总也会报错。汇总任务登记在 `scripts/checks/registry.json` 的 `fanIn` 里。退役已有 ID 时，先评审清单变更，在该 PR 保留原用例和标记供 base 清单验收，合入后再移除标记或用例。删除或放宽已登记的断言时，请负责人核对将失去的保障。若用例使用 golden（入库的预期数据），更新时一并评审预期差异。[门禁实现](../scripts/protected-smoke.ts)
 
 ## 从根目录运行现有用例
 

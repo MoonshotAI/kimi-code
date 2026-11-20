@@ -4,6 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
+import { parse } from 'yaml';
+
 const ROOT = resolve(import.meta.dirname, '../..');
 const GUARDS_FILE = 'scripts/checks/guards.mjs';
 const SNAPSHOT_FILE = 'scripts/checks/baselines/oxlint-config.json';
@@ -12,6 +14,7 @@ const LEVEL_NAMES = { allow: 'off', off: 'off', warn: 'warn', deny: 'error', err
 const LEVEL_RANKS = { off: 0, warn: 1, error: 2 };
 const KIND_ORDER = { weakened: 0, changed: 1, strengthened: 2 };
 const DIFFED_KEYS = new Set(['$schema', 'categories', 'plugins', 'rules', 'overrides', 'ignorePatterns']);
+const RUNS_AFTER_FAILURE = /\balways\(\)|!\s*cancelled\(\)/;
 
 function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
@@ -173,6 +176,38 @@ export function checkWiring(registry, readText, fileExists) {
   return findings;
 }
 
+export function checkFanIn(registry, readText) {
+  const findings = [];
+  for (const entry of registry.fanIn ?? []) {
+    const text = readText(entry.workflow);
+    const jobs = text === undefined ? undefined : parse(text)?.jobs;
+    const job = jobs?.[entry.job];
+    if (job === undefined) {
+      findings.push({ kind: 'fan-in-missing', entry });
+      continue;
+    }
+    const needs = [job.needs ?? []].flat();
+    for (const need of entry.needs) {
+      if (!needs.includes(need)) findings.push({ kind: 'fan-in-need', entry, job: need });
+    }
+    if (!RUNS_AFTER_FAILURE.test(String(job.if ?? ''))) findings.push({ kind: 'fan-in-condition', entry });
+    if (entry.checksResults) {
+      const steps = JSON.stringify(job.steps ?? []);
+      for (const need of needs) {
+        if (!steps.includes(`needs.${need}.result`)) findings.push({ kind: 'fan-in-result', entry, job: need });
+      }
+    }
+    if (entry.coversJobsExcept !== undefined) {
+      for (const other of Object.keys(jobs)) {
+        if (other !== entry.job && !entry.coversJobsExcept.includes(other) && !needs.includes(other)) {
+          findings.push({ kind: 'fan-in-uncovered', entry, job: other });
+        }
+      }
+    }
+  }
+  return findings;
+}
+
 function formatConfigFindings(findings) {
   if (findings.length === 0) return [];
   return [
@@ -204,6 +239,19 @@ function formatWiringFinding(finding) {
     `  Why: ${entry.why}`,
     `  What to do: remove ${finding.flag} from that command.`,
   ];
+}
+
+function formatFanInFinding(finding) {
+  const { entry } = finding;
+  const where = `${entry.workflow} job ${entry.job}`;
+  const [problem, fix] = {
+    'fan-in-missing': [`${where} no longer exists`, `restore it, or retire it on purpose by deleting its fanIn entry from ${REGISTRY_FILE} and saying why in the PR.`],
+    'fan-in-need': [`${where} no longer needs ${finding.job}`, `add ${finding.job} back to its needs.`],
+    'fan-in-condition': [`${where} does not run when a job it collects fails`, 'give it `if: ${{ always() }}` or `if: ${{ !cancelled() }}`. A skipped job is reported as passed, so without it a failure upstream reaches the merge button as green.'],
+    'fan-in-result': [`${where} needs ${finding.job} but never reads needs.${finding.job}.result`, `fail the job unless needs.${finding.job}.result is success.`],
+    'fan-in-uncovered': [`${where} does not collect ${finding.job}`, `add ${finding.job} to its needs and check its result, or list it in coversJobsExcept of the fanIn entry in ${REGISTRY_FILE} and say why in the PR.`],
+  }[finding.kind];
+  return [`✗ guards: ${problem}`, `  Why: ${entry.why}`, `  What to do: ${fix}`];
 }
 
 export function expandOverridePlugins(config, catalog) {
@@ -278,13 +326,14 @@ export function main(args) {
       (file) => (existsSync(join(ROOT, file)) ? readFileSync(join(ROOT, file), 'utf8') : undefined),
       (file) => existsSync(join(ROOT, file)),
     ).flatMap(formatWiringFinding),
+    ...checkFanIn(registry, (file) => (existsSync(join(ROOT, file)) ? readFileSync(join(ROOT, file), 'utf8') : undefined)).flatMap(formatFanInFinding),
   ];
   if (report.length > 0) {
     process.stderr.write(`${report.join('\n')}\n`);
     return 1;
   }
   process.stdout.write(
-    `✓ guards: oxlint config matches the snapshot (${ruleCount} rules, ${config.overrides?.length ?? 0} overrides); ${registry.invocations.length} check invocations wired\n`,
+    `✓ guards: oxlint config matches the snapshot (${ruleCount} rules, ${config.overrides?.length ?? 0} overrides); ${registry.invocations.length} check invocations wired; ${registry.fanIn?.length ?? 0} fan-in jobs collect every result\n`,
   );
   return 0;
 }

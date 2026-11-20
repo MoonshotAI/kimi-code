@@ -93,5 +93,21 @@
       "in": "package.json#lint-staged",
       "why": "lint-staged commits whatever its commands change. Some oxlint fixes change behavior (for example `unicorn/no-unnecessary-await` removes an `await`, which changes when the code after it runs), so the hook would rewrite code without telling anyone."
     }
+  ],
+  "fanIn": [
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "l0-gate",
+      "needs": ["test"],
+      "why": "It turns the L0 results of every test shard into one check. If it stopped waiting for the shards, or stopped running after a shard failed, a missing or failing L0 test would never be reported."
+    },
+    {
+      "workflow": ".github/workflows/desktop-e2e.yml",
+      "job": "result",
+      "needs": ["plan", "journeys"],
+      "checksResults": true,
+      "coversJobsExcept": ["quarantine"],
+      "why": "It reports every Desktop E2E shard under one check name. A job it does not wait for, or whose result it does not read, could fail while the check stays green. The nightly quarantine job is informational and stays outside it."
+    }
   ]
 }
