@@ -361,6 +361,10 @@ function openThisFolder(): void {
 }
 
 const selected = ref<string[]>([]);
+const pathsToAdd = computed(() => {
+  if (!props.multiple || !pathEditing.value || !pathValid.value || selected.value.includes(pathTrimmed.value)) return selected.value;
+  return [...selected.value, pathTrimmed.value];
+});
 
 function toggleSelect(path: string): void {
   selected.value = selected.value.includes(path)
@@ -373,8 +377,8 @@ function isSelected(path: string): boolean {
 }
 
 function addSelected(): void {
-  if (selected.value.length === 0 || creatingFolder.value) return;
-  emit('addMany', [...selected.value]);
+  if (pathsToAdd.value.length === 0 || creatingFolder.value) return;
+  emit('addMany', [...pathsToAdd.value]);
 }
 
 function handlePathAdd(): void {
@@ -643,9 +647,9 @@ onUnmounted(() => {
         <Button
           v-if="multiple"
           variant="primary"
-          :disabled="selected.length === 0 || creatingFolder"
+          :disabled="pathsToAdd.length === 0 || creatingFolder"
           @click="addSelected"
-        >{{ t('workspace.addSelected', { n: selected.length }) }}</Button>
+        >{{ t('workspace.addSelected', { n: pathsToAdd.length }) }}</Button>
       </div>
     </div>
   </Dialog>

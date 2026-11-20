@@ -133,8 +133,38 @@ describe('AddWorkspaceDialog multi-select mode', () => {
     expect(addMany).toHaveBeenCalledWith(['/home/beta']);
   });
 
+  it('adds a typed absolute path via the primary button in multi mode', async () => {
+    const { addMany } = mountDialog({ multiple: true });
+    await settled();
+
+    const input = document.querySelector<HTMLInputElement>('.pathbar input')!;
+    input.value = '/tmp/pasted';
+    input.dispatchEvent(new Event('input'));
+    await nextTick();
+    primaryAction().click();
+    await nextTick();
+
+    expect(addMany).toHaveBeenCalledWith(['/tmp/pasted']);
+  });
+
+  it('adds a typed absolute path together with the selected folders', async () => {
+    const { addMany } = mountDialog({ multiple: true });
+    await settled();
+
+    checkboxes()[0]!.click();
+    const input = document.querySelector<HTMLInputElement>('.pathbar input')!;
+    input.value = '/tmp/pasted';
+    input.dispatchEvent(new Event('input'));
+    await nextTick();
+    expect(primaryAction().textContent).toContain('2');
+    primaryAction().click();
+    await nextTick();
+
+    expect(addMany).toHaveBeenCalledWith(['/home/alpha', '/tmp/pasted']);
+  });
+
   it('collects a typed absolute path without expanding another input', async () => {
-    mountDialog({ multiple: true });
+    const { addMany } = mountDialog({ multiple: true });
     await settled();
 
     const input = document.querySelector<HTMLInputElement>('.pathbar input')!;
@@ -142,11 +172,15 @@ describe('AddWorkspaceDialog multi-select mode', () => {
     input.value = '/tmp/pasted';
     input.dispatchEvent(new Event('input'));
     await nextTick();
+    expect(primaryAction().disabled).toBe(false);
     document.querySelector<HTMLButtonElement>('.path-add')!.click();
     await nextTick();
 
     expect(primaryAction().disabled).toBe(false);
     expect(primaryAction().textContent).toContain('1');
+    primaryAction().click();
+    await nextTick();
+    expect(addMany).toHaveBeenCalledWith(['/tmp/pasted']);
   });
 
   it('filters sibling folders while typing and opens the active suggestion with the keyboard', async () => {
