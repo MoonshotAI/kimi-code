@@ -274,6 +274,11 @@ export class SshKapBridge {
     return this.establishOnce();
   }
 
+  resumeIfIdle(): Promise<HostSession> | undefined {
+    if (this.disposed || this.statusValue !== 'ready' || this.sessionValue !== undefined) return undefined;
+    return this.establishOnce();
+  }
+
   start(): void {
     void this.connect().catch(() => {});
   }

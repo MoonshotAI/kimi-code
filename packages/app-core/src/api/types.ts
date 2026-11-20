@@ -1081,6 +1081,7 @@ export interface KimiWebApi {
   ): Promise<string | null>;
   forkSession(sessionId: string, input?: { title?: string; turnIndex?: number }): Promise<AppSession>;
   startBtw(sessionId: string): Promise<{ agentId: string }>;
+  closeAgent(sessionId: string, agentId: string): Promise<{ closed: true }>;
   respondApproval(sessionId: string, approvalId: string, response: ApprovalResponse): Promise<InteractionRespondResult>;
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<InteractionRespondResult>;
   dismissQuestion(sessionId: string, questionId: string): Promise<InteractionRespondResult>;

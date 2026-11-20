@@ -21,7 +21,7 @@ import type {
   TurnDiffTabPayload,
 } from '@moonshot-ai/app-client/panel';
 import { isTraceEnabled } from '@moonshot-ai/app-client/trace';
-import { panelCloseTargets, type PanelCloseAction } from '@moonshot-ai/app-client/panel';
+import { createSideChatCloseGuard, panelCloseTargets, type PanelCloseAction } from '@moonshot-ai/app-client/panel';
 import type { SelectionActionPayload } from '@moonshot-ai/app-client/lib';
 import { panelComponents } from './panelComponents';
 import { panelTabProps, type PanelAdapterCtx } from './panelAdapters';
@@ -87,6 +87,14 @@ function moveTerminalToBottom(tabId: string, index: number): void {
   if (ptyId !== undefined && terminalStore.moveTabToBottom(ptyId, index) !== null) props.panel.closeTab(tabId, { keepVisible: true });
 }
 const approveClose = createTerminalCloseGuard({ inspect: ids => terminalStore.inspect(ids), confirm, t });
+const approveSideChatClose = createSideChatCloseGuard({
+  hasActivity: (agentId) =>
+    client.sideChatRunningOf(agentId) ||
+    client.sideChatSendingOf(agentId) ||
+    client.sideChatTurnsOf(agentId).length > 0,
+  confirm,
+  t,
+});
 async function requestClose(action: PanelCloseAction, id?: string): Promise<void> {
   const targets = panelCloseTargets(presentedTabs.value, action, id);
   if (targets.length === 0) return;
@@ -97,6 +105,8 @@ async function requestClose(action: PanelCloseAction, id?: string): Promise<void
     ptyId: tab.type === 'term' ? (tab.payload as TermTabPayload | undefined)?.ptyId : undefined,
   })));
   if (!approved || session !== client.activeSessionId.value || workspace !== client.activeWorkspaceId.value) return;
+  const sideChatApproved = await approveSideChatClose(targets);
+  if (!sideChatApproved || session !== client.activeSessionId.value || workspace !== client.activeWorkspaceId.value) return;
   for (const tab of targets) {
     if (props.panel.panelTabs.value.some(current => current.id === tab.id && current.payload === tab.payload)) props.panel.closeTab(tab.id);
   }
@@ -407,7 +417,7 @@ async function browserShortcut(action: 'reload' | 'new-tab' | 'focus-address'): 
 }
 
 const pfcHostEl = ref<HTMLElement | null>(null);
-defineExpose({ focusSideChatInput, openBrowserUrl, browserShortcut, openLauncherTab: onAddTab, rootEl, pfcHostEl });
+defineExpose({ focusSideChatInput, openBrowserUrl, browserShortcut, requestClose, openLauncherTab: onAddTab, rootEl, pfcHostEl });
 const pfcHostH = ref(0);
 let pfcHostRO: ResizeObserver | null = null;
 watch(pfcHostEl, (el, prev) => {
