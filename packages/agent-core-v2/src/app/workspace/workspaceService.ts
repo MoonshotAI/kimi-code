@@ -258,50 +258,26 @@ export class WorkspaceService implements IWorkspaceService {
     });
   }
 
-  setPrimary(id: string, path: string): Promise<Workspace | undefined> {
-    return this.runExclusive(async () => {
-      await this.ensureMerged();
-      let updated: Workspace | undefined;
-      let changed = false;
-      await this.store.update(async (catalog) => {
-        const existing = catalog.workspaces.find((ws) => ws.id === id);
-        if (existing === undefined) return catalog;
-        const resolved = (await this.localConfig.resolveAdditionalDirs(existing.root, [path]))[0];
-        if (resolved === undefined) {
-          throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `primary ${path} does not exist`);
-        }
-        const rootKey = workspaceRootKey(existing.root);
-        const resolvedKey = workspaceRootKey(resolved);
-        if (resolvedKey === rootKey) {
-          updated = existing;
-          return catalog;
-        }
-        if (!existing.additionalDirs.some((dir) => workspaceRootKey(dir) === resolvedKey)) {
-          throw new Error2(
-            ErrorCodes.CONFIG_INVALID,
-            `primary ${resolved} is not in the workspace dir set`,
-          );
-        }
-        updated = {
-          ...existing,
-          root: resolved,
-          additionalDirs: [
-            existing.root,
-            ...existing.additionalDirs.filter((dir) => workspaceRootKey(dir) !== resolvedKey),
-          ],
-          lastOpenedAt: Date.now(),
-        };
-        changed = true;
-        return {
-          workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated! : ws)),
-          deletedIds: catalog.deletedIds,
-          idempotencyKeys: catalog.idempotencyKeys,
-        };
-      });
-      if (changed && updated !== undefined) {
-        this.event.publish(new WorkspaceUpdated({ payload: { workspace: updated } }));
+  setPrimary(id: string, path: string) {
+    return this.changeProject(id, async (existing) => {
+      const [resolved] = await this.localConfig.resolveAdditionalDirs(existing.root, [path]);
+      if (resolved === undefined) {
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `primary ${path} does not exist`);
       }
-      return updated;
+      const resolvedKey = workspaceRootKey(resolved);
+      if (workspaceRootKey(existing.root) === resolvedKey) return existing;
+      if (!existing.additionalDirs.some((dir) => workspaceRootKey(dir) === resolvedKey)) {
+        throw new Error2(ErrorCodes.CONFIG_INVALID, `primary ${resolved} is not in the workspace dir set`);
+      }
+      return {
+        ...existing,
+        root: resolved,
+        additionalDirs: [
+          existing.root,
+          ...existing.additionalDirs.filter((dir) => workspaceRootKey(dir) !== resolvedKey),
+        ],
+        lastOpenedAt: Date.now(),
+      };
     });
   }
 

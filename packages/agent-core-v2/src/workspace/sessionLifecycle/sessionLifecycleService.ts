@@ -61,7 +61,7 @@ import {
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
-import { sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
+import { ISessionEphemeralMcpServers, sessionEphemeralMcpServersSeed } from '#/session/mcp/ephemeralMcpServers';
 import { sessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import {
   ISessionMetadata,
@@ -366,11 +366,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               'telemetry:session-context',
             );
             container.anchorKernelEntry(() => { workdir.dispose(); }, 'sessionLifecycle:workdir');
-            if (opts.mcpServers !== undefined && Object.keys(opts.mcpServers).length > 0) {
-              const overlay = workdir.mcp.sessionOverlay(opts.mcpServers, { sessionId: opts.sessionId });
-              container.anchorKernelEntry(() => { void overlay.shutdown(); }, 'sessionLifecycle:mcp');
-              container.provide(ISessionMcpHandle, overlay.handle);
-            }
             this._onWillCreateSession.fire({
               sessionId: opts.sessionId,
               onDidCreateScope: scopeCreated.event,
@@ -382,6 +377,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
                 container.anchorKernelEntry(dispose, 'sessionLifecycle:willCreateParticipant');
               },
             });
+            const servers = container.invokeFunction((accessor) => accessor.get(ISessionEphemeralMcpServers));
+            if (Object.keys(servers).length > 0) {
+              const overlay = workdir.mcp.sessionOverlay(servers, { sessionId: opts.sessionId });
+              container.anchorKernelEntry(() => { void overlay.shutdown(); }, 'sessionLifecycle:mcp');
+              container.provide(ISessionMcpHandle, overlay.handle);
+            }
           },
         },
       ) as ISessionScopeHandle;

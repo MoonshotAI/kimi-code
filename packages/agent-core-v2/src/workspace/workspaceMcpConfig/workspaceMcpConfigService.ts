@@ -1,3 +1,4 @@
+import { AsyncSerialQueue } from '#/_base/utils/promise';
 import { dirname } from 'pathe';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
@@ -47,7 +48,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   readonly onDidChangeTunables = this.tunablesEmitter.event;
   private projectWatcher?: IDisposable;
   private watchedPrimary?: string;
-  private primaryReloadTail: Promise<void> = Promise.resolve();
+  private readonly primaryReloads: AsyncSerialQueue;
 
   constructor(
     @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
@@ -63,10 +64,11 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     super();
     this.oauth.setConfigurationSource(this, []);
     this._register({ dispose: () => this.oauth.removeConfigurationSource(this) });
-    this.primaryReloadTail = this.watchConfigFiles().catch((error: unknown) => {
+    const watchReady = this.watchConfigFiles().catch((error: unknown) => {
       this.log.warn('cannot watch MCP configuration', { error });
     });
-    this.ready = this.primaryReloadTail.then(() => this.initialize()).catch((error: unknown) => {
+    this.primaryReloads = new AsyncSerialQueue(watchReady);
+    this.ready = watchReady.then(() => this.initialize()).catch((error: unknown) => {
       this.log.error('mcp config initial load failed', { error });
     });
     this._register(
@@ -111,11 +113,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     this._register({ dispose: () => this.projectWatcher?.dispose() });
     this._register(
       this.dirs.onDidChange(() => {
-        this.primaryReloadTail = this.primaryReloadTail.then(
-          () => this.refreshPrimary(),
-          () => this.refreshPrimary(),
-        );
-        void this.primaryReloadTail.catch((error) => {
+        void this.primaryReloads.run(() => this.refreshPrimary()).catch((error) => {
           this.log.warn(`mcp primary reload failed: ${String(error)}`);
         });
       }),

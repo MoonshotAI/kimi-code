@@ -126,11 +126,18 @@ describe('DaemonKimiWebApi lists across hosts', () => {
   });
 
   it('searches only this machine when a session listing is local-only', async () => {
-    vi.mocked(fetch).mockResolvedValue(envelope({ items: [], has_more: false }));
+    vi.mocked(fetch).mockResolvedValueOnce(envelope({ items: [], has_more: false }))
+      .mockImplementation(async () => envelope({ groups: [], has_more: false }));
+    const api = hostAwareApi(true);
+    await api.listSessions({ query: 'login fix', pageSize: 50, localOnly: true });
+    await api.listSessionGroups({ pageSize: 1, localOnly: true });
+    await api.listSessionGroups({ pageSize: 1 });
 
-    await hostAwareApi(true).listSessions({ query: 'login fix', pageSize: 50, localOnly: true });
-
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('http://daemon.test/api/v1/sessions?page_size=50&query=login+fix');
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      'http://daemon.test/api/v1/sessions?page_size=50&query=login+fix',
+      'http://daemon.test/api/v1/sessions?view=by_workspace&page_size=1',
+      'http://daemon.test/api/v1/sessions?view=by_workspace&page_size=1&hosts=include',
+    ]);
   });
 
   it('never asks a host to list other hosts', async () => {

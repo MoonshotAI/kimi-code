@@ -494,6 +494,7 @@ describe('sessionListStore cancellable background reads', () => {
     workspace.workspaces = [
       { id: owner, root: cwd, name: 'current', sessionCount: 2 },
       { id: 'wm_other', root: cwd, name: 'other', sessionCount: 1 },
+      { id: alias, hostId: 'dev', root: cwd, name: 'remote', sessionCount: 1 },
     ];
     const old = { ...row('old'), cwd, workspaceId: alias };
     listSessionGroups.mockResolvedValueOnce({
@@ -509,11 +510,12 @@ describe('sessionListStore cancellable background reads', () => {
     }
     await vi.waitFor(() => expect(workspace.workspaceIdForSession(old)).toBe(owner));
     expect(listSessionGroups).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ workspaceIds: [alias] }),
+      expect.objectContaining({ workspaceIds: [alias], localOnly: true }),
       expect.objectContaining({ background: true }),
     );
     expect(list.loadedInWorkspace('wm_other')).toEqual([]);
-    expect(workspace.mergedWorkspaces.map((project) => project.id)).toEqual([owner, 'wm_other']);
+    expect(workspace.workspaceIdForSession({ ...old, hostId: 'dev' })).toBe(alias);
+    expect(workspace.mergedWorkspaces.map((project) => project.id)).toEqual([owner, 'wm_other', alias]);
   });
 
   it('does not assign a different project’s sessions by matching their working directory', async () => {
