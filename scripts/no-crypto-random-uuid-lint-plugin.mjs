@@ -13,15 +13,25 @@ const unwrap = (node) => node.type === 'TSAsExpression'
   ? unwrap(node.expression)
   : node;
 
-const isGlobalObject = (node) => {
-  const target = unwrap(node);
-  return target.type === 'Identifier' && (target.name === 'globalThis' || target.name === 'window');
+const isUnshadowedGlobal = (node, sourceCode) => {
+  for (let scope = sourceCode.getScope(node); scope !== null; scope = scope.upper) {
+    const variable = scope.set.get(node.name);
+    if (variable !== undefined) return variable.defs.length === 0;
+  }
+  return true;
 };
 
-const isCrypto = (node) => {
+const isGlobalObject = (node, sourceCode) => {
   const target = unwrap(node);
-  if (target.type === 'Identifier') return target.name === 'crypto';
-  return target.type === 'MemberExpression' && memberName(target) === 'crypto' && isGlobalObject(target.object);
+  return target.type === 'Identifier'
+    && (target.name === 'globalThis' || target.name === 'window' || target.name === 'self')
+    && isUnshadowedGlobal(target, sourceCode);
+};
+
+const isCrypto = (node, sourceCode) => {
+  const target = unwrap(node);
+  if (target.type === 'Identifier') return target.name === 'crypto' && isUnshadowedGlobal(target, sourceCode);
+  return target.type === 'MemberExpression' && memberName(target) === 'crypto' && isGlobalObject(target.object, sourceCode);
 };
 
 export default {
@@ -37,12 +47,12 @@ export default {
       create(context) {
         return {
           MemberExpression(node) {
-            if (memberName(node) === 'randomUUID' && isCrypto(node.object)) {
+            if (memberName(node) === 'randomUUID' && isCrypto(node.object, context.sourceCode)) {
               context.report({ node, messageId: 'forbidden' });
             }
           },
           VariableDeclarator(node) {
-            if (node.id.type !== 'ObjectPattern' || node.init === null || !isCrypto(node.init)) return;
+            if (node.id.type !== 'ObjectPattern' || node.init === null || !isCrypto(node.init, context.sourceCode)) return;
             if (node.id.properties.some((property) => property.type === 'Property' && propertyName(property) === 'randomUUID')) {
               context.report({ node: node.id, messageId: 'forbidden' });
             }

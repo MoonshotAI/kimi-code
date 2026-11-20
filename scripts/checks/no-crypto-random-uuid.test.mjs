@@ -37,9 +37,10 @@ void test('reports direct, optional, computed, and destructured crypto randomUUI
     crypto.randomUUID();
     globalThis.crypto?.randomUUID?.();
     window.crypto['randomUUID']();
+    self.crypto.randomUUID();
     const { randomUUID } = crypto;
   `);
-  assert.equal(diagnostics.length, 4);
+  assert.equal(diagnostics.length, 5);
   for (const diagnostic of diagnostics) {
     assert.match(diagnostic.message, /use v4 from uuid instead/);
   }
@@ -54,6 +55,18 @@ void test('allows Node crypto, uuid, custom objects, and test spies', () => {
     const custom = { randomUUID: () => 'custom' };
     custom.randomUUID();
     vi.spyOn(crypto, 'randomUUID');
+  `);
+  assert.deepEqual(diagnostics, []);
+});
+
+void test('allows Node namespace imports and locally shadowed crypto bindings', () => {
+  const diagnostics = lint(`
+    import * as crypto from 'node:crypto';
+    crypto.randomUUID();
+    {
+      const crypto = { randomUUID: () => 'custom' };
+      crypto.randomUUID();
+    }
   `);
   assert.deepEqual(diagnostics, []);
 });
