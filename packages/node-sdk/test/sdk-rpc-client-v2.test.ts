@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
@@ -1770,7 +1770,7 @@ key = "${titleOAuthRef.key}"
       const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
       const acquireSpy = vi.spyOn(manager, 'acquire');
       try {
-        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir.split(sep).join('/')]);
         expect(harness.sessions.size).toBe(0);
         expect(acquireSpy).toHaveBeenCalledTimes(1);
         const lease = await acquireSpy.mock.results[0]!.value;
@@ -1793,7 +1793,7 @@ key = "${titleOAuthRef.key}"
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
         const project = await workspaces.createOrTouch(workDir);
         await workspaces.update(project.id, { additionalDirs: [extraDir] });
-        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir.split(sep).join('/')]);
         expect(harness.sessions.size).toBe(0);
       } finally {
         await harness.close();

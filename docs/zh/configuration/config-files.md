@@ -713,6 +713,8 @@ thinking = "grouped" # "grouped" | "ungrouped"
 
 在 CLI 创建的隐式项目中，`[workspace].additional_dir` 只对当前检出的会话生效。通过 [`/add-dir`](../reference/slash-commands.md) 记住的目录写入 `~/.kimi-code/projects.json`，项目里的各个工作目录都能使用。临时添加的目录只在当前工作目录的运行期间生效。对于手动创建的项目，可以在桌面的项目设置中显式导入文件里的目录，导入后由项目管理。
 
+同一路径也可以有一个桌面手动项目。从该目录启动 CLI 时，会话使用隐式项目登记的目录。恢复手动项目的会话时，使用该手动项目登记的目录。
+
 ### `[workspace]`
 
 `[workspace]` 表用于存放项目级的工作区设置：

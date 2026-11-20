@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { normalize } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { promises as fsp } from 'node:fs';
@@ -1028,7 +1029,7 @@ describe('WorkspaceService (file-backed)', () => {
     const gated = Object.create(hostFs) as IHostFileSystem;
     let first = true;
     gated.stat = async (path: string) => {
-      if (path === gateDir && first) {
+      if (first && normalize(path) === normalize(gateDir)) {
         first = false;
         statEntered();
         await gate;
