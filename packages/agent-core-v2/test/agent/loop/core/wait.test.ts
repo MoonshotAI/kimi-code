@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { createUserMessage } from '@moonshot-ai/core/llm/message';
-import type { LoopEmitted } from '@moonshot-ai/core/loop/index';
+import { createAssistantMessage, createUserMessage } from '@moonshot-ai/core/llm/message';
+import { createPolicyRegistry } from '@moonshot-ai/core/llm/policy/registry';
+import type { LlmOutcome } from '@moonshot-ai/core/llm/response';
+import {
+  createTurn,
+  type LoopEmitted,
+  type LoopLlmRequester,
+  type TurnEmitted,
+  type TurnRuntime,
+} from '@moonshot-ai/core/loop/index';
 import { createMockProviderRequester } from '../../../harness/scripted-generate';
 import { createTestLoop as createLoop } from './factory';
 import { successfulExecutor } from './executor';
@@ -106,7 +114,7 @@ describe('loop.wait', () => {
     await loop.close();
   });
 
-  it('rejects when the external signal aborts and honors abort grace', async () => {
+  it('handles abort signals without rerunning settled turns', async () => {
     const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
     const controller = new AbortController();
     const pending = loop.wait('turn.ended', { signal: controller.signal });
@@ -153,6 +161,80 @@ describe('loop.wait', () => {
     expect((await reentrant.runTurn(prompt('reentrant'))).type).toBe('aborted');
     expect(steps).toEqual([1]);
     await reentrant.close();
+
+    let requestCount = 0;
+    let startingCount = 0;
+    let batchCount = 0;
+    let announceRequest!: () => void;
+    let resolveRequest!: (outcome: LlmOutcome) => void;
+    const requestStarted = new Promise<void>((resolve) => {
+      announceRequest = resolve;
+    });
+    const requester: LoopLlmRequester = {
+      generate: () => {
+        requestCount += 1;
+        announceRequest();
+        return new Promise<LlmOutcome>((resolve) => {
+          resolveRequest = resolve;
+        });
+      },
+    };
+    const events: TurnEmitted[] = [];
+    const runtime: TurnRuntime = {
+      request: { current: () => requester, policy: createPolicyRegistry() },
+      tools: {
+        executeBatch: () => {
+          batchCount += 1;
+          return { outcomes: [] };
+        },
+        abortBatch: () => ({ outcomes: [] }),
+      },
+      hooks: {
+        starting: () => {
+          startingCount += 1;
+        },
+      },
+      extensions: {
+        'tool.batch-starting': () => {
+          batchCount += 1;
+        },
+      },
+      host: {
+        read: () => ({ messages: [], profile: {} }),
+        emit: (event) => {
+          events.push(event);
+        },
+        transition: (run) => run(),
+        report: () => undefined,
+        committed: () => undefined,
+      },
+      signal: new AbortController().signal,
+    };
+    const turn = createTurn({ id: 90, start: { type: 'continue' } }, runtime);
+    expect(requestCount).toBe(0);
+    expect(startingCount).toBe(0);
+    expect(events).toEqual([]);
+    turn.start();
+    turn.start();
+    await requestStarted;
+    turn.abort('stop');
+    turn.abort('force', { force: true });
+    await expect(turn.done).resolves.toMatchObject({ type: 'aborted' });
+    expect(turn.state.phase).toBe('finished');
+    resolveRequest({
+      type: 'done',
+      message: createAssistantMessage([{ type: 'text', text: 'late' }]),
+      usage: undefined,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    turn.start();
+    turn.abort('late');
+    expect(requestCount).toBe(1);
+    expect(startingCount).toBe(1);
+    expect(batchCount).toBe(0);
+    expect(events.filter((event) => event.type === 'turn.ended')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'message.appended')).toHaveLength(0);
   });
 });
 
