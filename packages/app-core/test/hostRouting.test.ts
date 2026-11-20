@@ -59,6 +59,9 @@ function client(workspaces: AppWorkspace[], overrides: Record<string, unknown> =
       browseFs: vi.fn(async () => ({ path: '/', parent: null, entries: [] })),
       createSession: vi.fn(async () => ({ id: 'new-session' })),
       getSession: vi.fn(async (id: string) => ({ id })),
+      restoreSession: vi.fn(async (id: string) => ({ id })),
+      reloadSession: vi.fn(async (id: string) => ({ id })),
+      forkSession: vi.fn(async () => ({ id: 'forked' })),
       findSession: vi.fn(async (id: string): Promise<{ id: string; hostId?: string }> => ({ id })),
       listSessions: vi.fn(async () => ({ items: [], hasMore: false, nextPageToken: null, total: 0 })),
       archiveSessions: vi.fn(async (ids: string[]) => ({ results: ids.map((id) => ({ id, ok: true })) })),
@@ -145,6 +148,10 @@ describe('HostRouter', () => {
     const { api, remote, local } = await setup();
     await api.listWorkspaces();
     const session = await api.createSession({ workspaceId: 'remote-ws' });
+    expect(await api.getSession(session.id)).toMatchObject({ id: session.id, hostId: 'dev' });
+    expect(await api.restoreSession(session.id)).toMatchObject({ id: session.id, hostId: 'dev' });
+    expect(await api.reloadSession(session.id)).toMatchObject({ id: session.id, hostId: 'dev' });
+    expect(await api.forkSession(session.id)).toMatchObject({ id: 'forked', hostId: 'dev' });
 
     await api.submitPrompt(session.id, {} as never);
 
@@ -417,6 +424,14 @@ describe('HostRouter', () => {
     });
 
     const events = api.connectEvents(handlers);
+    const raw = { ...session, hostId: undefined, workspaceId: 'wd_repo_123456789abc' };
+    hostHandlers!.onEvent({ type: 'sessionCreated', session: raw }, { sessionId: session.id });
+    hostHandlers!.onEvent({ type: 'sessionWorkChanged', sessionId: session.id, busy: false, session: raw }, { sessionId: session.id });
+    for (const type of ['sessionCreated', 'sessionWorkChanged']) {
+      expect(handlers.onEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type, session: expect.objectContaining({ workspaceId: raw.workspaceId, hostId: 'dev' }),
+      }), expect.objectContaining({ hostId: 'dev' }));
+    }
     hostHandlers!.onEvent({ type: 'sessionMetaUpdated', sessionId: session.id, title: 'Remote session' }, { sessionId: session.id });
     await api.submitPrompt(session.id, {} as never);
     expect(remote.api.submitPrompt).toHaveBeenCalledTimes(1);

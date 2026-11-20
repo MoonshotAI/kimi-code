@@ -34,7 +34,7 @@ export class ExtraAgentProfileLoaderService
     @IConfigService private readonly configService: IConfigService,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IWorkspaceDirs private readonly dirs: Pick<IWorkspaceDirs, 'primary' | 'onDidChange'>,
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IBootstrapService private readonly bootstrap: Pick<IBootstrapService, 'osHomeDir'>,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
@@ -51,14 +51,7 @@ export class ExtraAgentProfileLoaderService
         }
       }),
     );
-    this._register(
-      this.dirs.onDidChange(() => {
-        void this.reload().catch((error) => {
-          this.log.warn(`agent profile loader "extra" primary reload failed: ${String(error)}`);
-        });
-      }),
-    );
-    this.start();
+    this.start(this.dirs.onDidChange);
   }
 
   protected override get workspaceKey(): string {

@@ -1335,6 +1335,13 @@ export class AgentTestContext {
               fs: undefined as never,
               dirs: undefined as never,
             });
+            reg.defineInstance(IProjectPermissionRulesService, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              rules: [],
+              refreshTrust: async () => {},
+              appendRules: () => Promise.resolve(),
+            });
             reg.definePartialInstance(IWorkspaceTrust, {
               get: async () => false,
             });
@@ -1438,13 +1445,6 @@ export class AgentTestContext {
               IAgentPermissionRulesService,
               new SyncDescriptor(AgentPermissionRulesService),
             );
-            reg.defineInstance(IProjectPermissionRulesService, {
-              _serviceBrand: undefined,
-              ready: Promise.resolve(),
-              rules: [],
-              refreshTrust: async () => {},
-              appendRules: () => Promise.resolve(),
-            });
             reg.defineDescriptor(
               IAgentPermissionGate,
               new SyncDescriptor(AgentPermissionGate),

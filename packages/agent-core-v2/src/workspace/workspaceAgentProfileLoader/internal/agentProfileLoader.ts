@@ -1,5 +1,6 @@
 import { MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
+import type { Event } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import { AgentProfileContribution } from '#/app/agentProfileCatalog/agentProfileContribution';
 import type { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
@@ -24,7 +25,14 @@ export abstract class AgentProfileLoaderBase extends Service {
     return this.readyPromise;
   }
 
-  protected start(): void {
+  protected start(onPrimaryChange?: Event<void>): void {
+    if (onPrimaryChange !== undefined) {
+      this._register(onPrimaryChange(() => {
+        void this.reload().catch((error: unknown) => {
+          this.log.warn(`agent profile loader "${this.sourceId}" primary reload failed: ${String(error)}`);
+        });
+      }));
+    }
     this.readyPromise = this.enqueue();
     void this.readyPromise.catch(() => undefined);
   }

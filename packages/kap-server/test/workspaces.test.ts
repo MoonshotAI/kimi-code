@@ -12,6 +12,7 @@ import {
   IAgentToolRegistryService,
   IAtomicDocumentStore,
   type ISessionScopeHandle,
+  ISessionWorkdir,
   IWorkspaceInstanceManager,
   resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -747,6 +748,41 @@ describe('server-v2 /api/v1/workspaces', () => {
       vi.unstubAllEnvs();
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it('exposes only temporary directories of the current primary workdir after a promotion', async () => {
+    const [first, next, firstExtra, nextExtra] = await Promise.all([
+      mkdtemp(join(home!, 'first-')), mkdtemp(join(home!, 'next-')),
+      mkdtemp(join(home!, 'first-extra-')), mkdtemp(join(home!, 'next-extra-')),
+    ]);
+    const workspace = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: first, additional_dirs: [next] });
+    expect(workspace.body.code).toBe(0);
+    const id = workspace.body.data.id;
+    const core = server!.core.accessor;
+    const addTemporaryDir = async (dir: string) => {
+      const result = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: id });
+      expect(result.body.code).toBe(0);
+      const session = getLiveSessionById(core, result.body.data.id)!;
+      const dirs = session.accessor.get(ISessionWorkdir).dirs;
+      await dirs.addDir({ path: dir, persist: false });
+      return dirs;
+    };
+    const projectLease = await core.get(IWorkspaceInstanceManager).acquire({ workspaceId: id });
+    const project = projectLease.instance;
+    const otherView = await project.program.acquireWorkdir('local', next);
+    const firstDirs = await addTemporaryDir(firstExtra);
+    expect(project.program.dirs.additionalDirs).toContain(firstExtra);
+    const promoted = await postJson<WorkspaceWire>(`/api/v1/workspaces/${id}/primary`, { path: next });
+    expect(promoted.body.code).toBe(0);
+    await vi.waitFor(() => expect(project.root).toBe(next));
+    expect(project.program.dirs.additionalDirs).not.toContain(firstExtra);
+    const nextDirs = await addTemporaryDir(nextExtra);
+    expect(project.program.dirs.additionalDirs).toContain(nextExtra);
+    expect(firstDirs.additionalDirs).toContain(firstExtra);
+    expect(firstDirs.additionalDirs).not.toContain(nextExtra);
+    expect(nextDirs.additionalDirs).not.toContain(firstExtra);
+    otherView.dispose();
+    projectLease.dispose();
   });
 
   it('keeps tools and effective roots stable through primary changes, reload, resume, and restart', async () => {

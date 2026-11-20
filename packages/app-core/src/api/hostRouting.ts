@@ -328,10 +328,13 @@ export class HostRouter implements HostRoutingControls {
     }
     const api = this.apiFor(hostId);
     const result = api[method]!.apply(api, args);
+    if (hostId !== undefined && (method === 'getSession' || method === 'restoreSession' || method === 'reloadSession')) {
+      return (result as Promise<AppSession>).then((session) => ({ ...session, hostId }));
+    }
     if (method === 'forkSession') {
       return (result as Promise<{ id?: string }>).then((session) => {
         if (session.id !== undefined) this.setSessionHost(session.id, hostId ?? null);
-        return session;
+        return hostId === undefined ? session : { ...session, hostId };
       });
     }
     return result;
@@ -358,10 +361,12 @@ export class HostRouter implements HostRoutingControls {
         return event;
       case 'sessionCreated':
         this.setSessionHost(event.session.id, hostId);
-        return event;
+        return { ...event, session: { ...event.session, hostId } };
+      case 'sessionWorkChanged':
+        this.setSessionHost(event.sessionId, hostId);
+        return event.session === undefined ? event : { ...event, session: { ...event.session, hostId } };
       case 'sessionArchived':
       case 'sessionRestored':
-      case 'sessionWorkChanged':
       case 'sessionMetaUpdated':
       case 'approvalRequested':
       case 'questionRequested':

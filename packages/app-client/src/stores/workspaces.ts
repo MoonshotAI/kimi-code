@@ -226,20 +226,28 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
     trustLoadingByWorkspaceId.value = { ...trustLoadingByWorkspaceId.value, [workspaceId]: loading };
   }
 
+  function workspaceKey(id: string, hostId?: string): string {
+    return hostId === undefined ? id : JSON.stringify([hostId, id]);
+  }
+
   const sessionWorkspaceAliases = ref(new Map<string, string>());
-  const registeredWorkspaceIds = computed(() => new Set(workspaces.value.map((workspace) => workspace.id)));
+  const registeredWorkspaceKeys = computed(() => new Set(
+    workspaces.value.map(({ id, hostId }) => workspaceKey(id, hostId)),
+  ));
 
   function registeredSessionWorkspace(id: string, hostId?: string): string {
-    if (registeredWorkspaceIds.value.has(id)) return id;
-    const known = sessionWorkspaceAliases.value.get(JSON.stringify([hostId, id]));
-    return known !== undefined && registeredWorkspaceIds.value.has(known) ? known : id;
+    const key = workspaceKey(id, hostId);
+    if (registeredWorkspaceKeys.value.has(key)) return id;
+    const known = sessionWorkspaceAliases.value.get(key);
+    return known !== undefined && registeredWorkspaceKeys.value.has(workspaceKey(known, hostId)) ? known : id;
   }
 
   function projectSessionWorkspace(session: AppSession, groupId?: string): AppSession {
     const id = session.workspaceId;
     if (groupId !== undefined && id !== undefined && id !== groupId &&
-        registeredWorkspaceIds.value.has(groupId) && !registeredWorkspaceIds.value.has(id)) {
-      sessionWorkspaceAliases.value.set(JSON.stringify([session.hostId, id]), groupId);
+        registeredWorkspaceKeys.value.has(workspaceKey(groupId, session.hostId)) &&
+        !registeredWorkspaceKeys.value.has(workspaceKey(id, session.hostId))) {
+      sessionWorkspaceAliases.value.set(workspaceKey(id, session.hostId), groupId);
     }
     const owner = id === undefined ? groupId : registeredSessionWorkspace(id, session.hostId);
     return owner === undefined || owner === id ? session : { ...session, workspaceId: owner };
@@ -247,18 +255,15 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
 
   async function findUnlistedSessionWorkspace(id: string, hostId?: string): Promise<void> {
     const aliases = sessionWorkspaceAliases.value;
-    const key = JSON.stringify([hostId, id]);
+    const key = workspaceKey(id, hostId);
     if (aliases.has(key)) return;
     aliases.set(key, id);
     try {
       const page = await getDeviceApi(hostId).listSessionGroups(
-        { workspaceIds: [id], groupPageSize: 1, pageSize: 1, archived: 'all' },
+        { workspaceIds: [id], groupPageSize: 1, pageSize: 1, archived: 'all', localOnly: true },
         { background: true },
       );
-      const group = page.groups.find((candidate) => {
-        const host = candidate.sessions[0]?.hostId;
-        return host === undefined || host === hostId;
-      });
+      const group = page.groups[0];
       if (group !== undefined && aliases.get(key) === id) aliases.set(key, group.workspaceId);
     } catch (error) {
       if (aliases.get(key) === id) aliases.delete(key);
@@ -269,7 +274,7 @@ export const useWorkspacesStore = defineStore('kimi.workspaces', () => {
   function identifySessionWorkspaces(sessions: readonly AppSession[]): void {
     for (const session of sessions) {
       const id = session.workspaceId;
-      if (id?.startsWith('wd_') && !registeredWorkspaceIds.value.has(id)) {
+      if (id?.startsWith('wd_') && !registeredWorkspaceKeys.value.has(workspaceKey(id, session.hostId))) {
         void findUnlistedSessionWorkspace(id, session.hostId);
       }
     }

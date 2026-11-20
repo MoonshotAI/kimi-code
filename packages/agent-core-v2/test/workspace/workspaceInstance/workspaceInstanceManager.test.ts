@@ -97,6 +97,17 @@ describe('WorkspaceInstanceManager', () => {
     await value.dispose();
   });
 
+  it('resolves an explicit directory fallback independently of ID-only requests', async () => {
+    const value = manager([workspace('one')]);
+    const [lease] = await Promise.all([
+      value.acquire({ workspaceId: 'missing', root: '/one' }),
+      expect(value.acquire({ workspaceId: 'missing' })).rejects.toThrow('workspace missing does not exist'),
+    ]);
+    expect(lease.instance.id).toBe('one');
+    lease.dispose();
+    await value.dispose();
+  });
+
   it('reuses the instance and program when the workspace primary changes', async () => {
     const initial = { ...workspace('one') };
     const value = manager([initial]);

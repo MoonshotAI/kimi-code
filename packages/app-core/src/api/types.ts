@@ -170,6 +170,7 @@ export interface SessionGroupsPage {
 }
 
 export interface ListSessionGroupsInput {
+  localOnly?: boolean;
   groupPageSize?: number;
   hasPrompt?: boolean;
   workspaceIds?: string[];

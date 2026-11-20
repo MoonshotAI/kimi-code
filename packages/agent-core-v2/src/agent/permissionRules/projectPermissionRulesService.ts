@@ -1,3 +1,4 @@
+import { AsyncSerialQueue } from '#/_base/utils/promise';
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
@@ -20,7 +21,7 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
   private currentRules: readonly PermissionRule[] = [];
   private loadError?: Error;
   readonly ready: Promise<void>;
-  private mutationTail: Promise<void> = Promise.resolve();
+  private readonly mutations = new AsyncSerialQueue();
 
   constructor(
     @ISessionContext session: ISessionContext,
@@ -31,12 +32,12 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
     super();
     this.cwd = workdir.cwd ?? session.cwd;
     this.local = workdir.environmentId === LOCAL_ENVIRONMENT_ID;
-    this.ready = this.local ? this.enqueue(() => this.loadFromDisk()) : Promise.resolve();
+    this.ready = this.local ? this.mutations.run(() => this.loadFromDisk()) : Promise.resolve();
     if (this.local) {
       const reload = (): void => {
         this.currentRules = [];
         this.loadError = undefined;
-        void this.enqueue(() => this.loadFromDisk()).catch((error: unknown) => {
+        void this.mutations.run(() => this.loadFromDisk()).catch((error: unknown) => {
           this.loadError = error instanceof Error ? error : new Error(String(error));
         });
       };
@@ -54,14 +55,14 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
   async refreshTrust(): Promise<void> {
     if (!this.local) return;
     if (this.currentRules.length > 0 || this.loadError !== undefined) await this.trust.get();
-    await this.mutationTail;
+    await this.mutations.settled;
   }
 
   appendRules(rules: readonly PermissionRule[]): Promise<void> {
     if (!this.local) {
       return Promise.reject(new Error('Project permission rules are not supported in remote environments'));
     }
-    return this.enqueue(async () => {
+    return this.mutations.run(async () => {
       parseProjectPermissionRules(rules);
       const appended = await this.localConfig.appendPermissionRules(this.cwd, rules);
       if (this.trust.isTrusted()) {
@@ -76,15 +77,6 @@ export class ProjectPermissionRulesService extends Disposable implements IProjec
     const loaded = await this.localConfig.readPermissionRules(this.cwd);
     this.currentRules = parseProjectPermissionRules(loaded.rules, loaded.configPath);
     this.loadError = undefined;
-  }
-
-  private enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const run = this.mutationTail.then(work, work);
-    this.mutationTail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
   }
 }
 
