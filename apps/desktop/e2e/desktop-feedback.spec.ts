@@ -159,14 +159,26 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   await expectVisibleCheckmark(app, details.getByRole('checkbox'));
   await replyConversationLabel.click();
   await replyDescription.fill('');
-  await details.getByRole('button', { name: 'Incorrect or incomplete' }).click();
+  const incorrect = details.getByRole('button', { name: 'Incorrect or incomplete' });
+  await incorrect.click();
+  const retryDetail = 'Details to keep after a failed submission';
+  await replyDescription.fill(retryDetail);
+  failSubmission = true;
   await replySubmit.click();
+  const failedUpdate = page.getByRole('status').filter({ hasText: 'Couldn’t submit feedback, please try again' });
+  await failedUpdate.getByRole('button', { name: 'Dismiss' }).click();
+  await expect(failedUpdate).toBeHidden();
+  await expect(replyDescription).toHaveValue(retryDetail);
+  await expect(incorrect).toHaveAttribute('aria-pressed', 'true');
+  await replyDescription.fill('');
+  await details.getByRole('button', { name: 'Retry', exact: true }).click();
   await expect(receipt(22)).toBeVisible();
   await expect(details).toBeHidden();
   await page.getByRole('button', { name: 'Remove dislike' }).click();
   await expect(page.getByRole('button', { name: 'Poor response' })).toBeVisible();
   expect(feedbackRequests.slice(2)).toEqual([
     { path: '/api/v1/feedback', method: 'POST', body: { kind: 'turn', rating: 'down', session_id: await app.sessionId(), turn_id: expect.any(String), reply_id: expect.any(String), client: 'desktop' } },
+    { path: '/api/v1/feedback/22', method: 'PATCH', body: { kind: 'details', reasons: ['incorrect'], content: retryDetail, upload_session: false } },
     { path: '/api/v1/feedback/22', method: 'PATCH', body: { kind: 'details', reasons: ['incorrect'], upload_session: false } },
     { path: '/api/v1/feedback/22', method: 'PATCH', body: { kind: 'cancel' } },
   ]);
