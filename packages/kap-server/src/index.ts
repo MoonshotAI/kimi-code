@@ -33,3 +33,4 @@ export type {
   InstanceRegistryOptions,
   ServerInstanceInfo,
 } from './instanceRegistry';
+export { connectIpcTls } from './transport/ipcTls';
