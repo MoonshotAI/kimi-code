@@ -174,8 +174,7 @@ function drift(series) {
   if (values.length === 0) return { frames: series.length, max: null, final: null, moves: 0 };
   let moves = 0;
   for (let i = 1; i < values.length; i++) if (Math.abs(values[i] - values[i - 1]) > 1) moves++;
-  const first = values[0];
-  return { frames: series.length, max: Math.round(Math.max(...values.map(v => Math.abs(v - first)))), final: Math.round(values.at(-1) - first), moves };
+  return { frames: series.length, max: Math.round(Math.max(...values.map(v => Math.abs(v)))), final: Math.round(values.at(-1)), moves };
 }
 
 async function stream(probe) {
