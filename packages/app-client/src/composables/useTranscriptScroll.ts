@@ -17,6 +17,7 @@ import {
 import { PinScrollKey } from '../contracts';
 
 export const TRANSCRIPT_DOCK_FADE_PX = 48;
+export const TRANSCRIPT_FOLLOW_THRESHOLD_PX = 80;
 const SCROLLING_CLASS_MS = 900;
 const SNAPSHOT_LIMIT = 50;
 
@@ -161,7 +162,7 @@ export function useTranscriptScroll(options: TranscriptScrollOptions): Transcrip
       return;
     }
     adapter = createDomScrollAdapter({ scroller: el, model, list: () => list?.root ?? null, applyLayout });
-    const next = createScrollController(adapter, { ...options.controller, onChange });
+    const next = createScrollController(adapter, { followThreshold: TRANSCRIPT_FOLLOW_THRESHOLD_PX, ...options.controller, onChange });
     controller.value = next;
     for (const [key, row] of rows) next.observeRow(key, row);
     for (const entry of aux.values()) next.observeAux(entry.kind, entry.el, entry.id);

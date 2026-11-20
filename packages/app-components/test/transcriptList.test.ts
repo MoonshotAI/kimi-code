@@ -328,6 +328,13 @@ describe('useTranscriptScroll', () => {
     expect(rawTop).toBe(maxTop());
   });
 
+  it('resumes following when the user scrolls down to within 80px of the bottom', async () => {
+    await userScrollTo(1000);
+    expect(scroll.following.value).toBe(false);
+    await userScrollTo(maxTop() - 60);
+    expect(scroll.following.value).toBe(true);
+  });
+
   it('restores each session position on the first frame after switching back', async () => {
     await userScrollTo(2000);
     const anchor = renderedKeys().find(key => rowEl(key)!.getBoundingClientRect().bottom > 0)!;
