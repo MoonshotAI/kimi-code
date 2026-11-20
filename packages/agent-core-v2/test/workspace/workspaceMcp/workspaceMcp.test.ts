@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import type { AddressInfo as HttpAddress } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -9,8 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 
-import type { ServiceIdentifier } from '#/_base/di/instantiation';
-import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { AsyncEmitter, Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
@@ -26,18 +25,12 @@ import {
 import { McpOAuthService, type McpOAuthEvent } from '#/mcpCore/oauth/service';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import { ISessionEphemeralMcpServers } from '#/session/mcp/ephemeralMcpServers';
 import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
-import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
-import type { SessionWillCreateEvent } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
-import {
-  IWorkspaceMcpService,
-  type ISessionMcpOverlay,
-} from '#/workspace/workspaceMcp/workspaceMcp';
+import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
 import {
   IWorkspaceMcpConfigService,
@@ -45,6 +38,7 @@ import {
   type McpTunables,
 } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
 
+import { stubClientIdentity } from '../../app/bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { registerAgentIdentityStub } from '../../app/agentIdentity/stubs';
 import {
@@ -71,7 +65,6 @@ describe('WorkspaceMcpService', () => {
   let tunablesFn: Mock<() => McpTunables>;
   let configChanges: AsyncEmitter<McpServersChangeEvent>;
   let tunablesChanges: Emitter<McpTunables>;
-  let assemblyEvents: Emitter<SessionWillCreateEvent>;
   let oauthService: McpOAuthService;
   let oauthScheduler: ManualMcpOAuthScheduler;
   let manager: InstanceType<typeof McpConnectionManager> | undefined;
@@ -95,7 +88,6 @@ describe('WorkspaceMcpService', () => {
     tunablesFn = vi.fn(() => tunablesValue);
     configChanges = disposables.add(new AsyncEmitter<McpServersChangeEvent>());
     tunablesChanges = disposables.add(new Emitter<McpTunables>());
-    assemblyEvents = disposables.add(new Emitter<SessionWillCreateEvent>());
     oauthScheduler = new ManualMcpOAuthScheduler();
     oauthService = new McpOAuthService({
       store: createMemoryMcpOAuthStore(),
@@ -159,9 +151,6 @@ describe('WorkspaceMcpService', () => {
             },
             dispose: () => {},
           }),
-        });
-        reg.definePartialInstance(ISessionManager, {
-          onWillCreateSession: assemblyEvents.event,
         });
         registerAgentIdentityStub(reg);
         reg.define(IWorkspaceMcpService, WorkspaceMcpService);
@@ -429,98 +418,40 @@ describe('WorkspaceMcpService', () => {
     await overlay.shutdown();
   }, 20000);
 
-  describe('session overlay activation (onWillCreateSession)', () => {
-    function willCreateEvent(
-      servers: Record<string, McpServerConfig>,
-      sessionCwd: string,
-      workspaceId = 'test-workspace',
-    ) {
-      const seeds = new Map<unknown, unknown>([
-        [ISessionEphemeralMcpServers, servers],
-        [
-          ISessionContext,
-          makeSessionContext({
-            sessionId: 's1',
-            workspaceId,
-            sessionDir: join(cwd, 's1'),
-            sessionScope: 'ws/s1',
-            cwd: sessionCwd,
-          }),
-        ],
-      ]);
-      const contributed = new Map<unknown, unknown>();
-      const disposers: Array<() => void> = [];
-      const event: SessionWillCreateEvent = {
-        sessionId: 's1',
-        onDidCreateScope: () => Disposable.None,
-        readSeed: <T>(id: ServiceIdentifier<T>): T => seeds.get(id) as T,
-        contributeSeed: (id, value) => {
-          contributed.set(id, value);
-        },
-        onSessionDispose: (dispose) => {
-          disposers.push(dispose);
-        },
-      };
-      return { event, contributed, disposers };
+  it('gives only the creating session its ephemeral MCP and releases it on close', async () => {
+    const engine = await import('#/index');
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-session-overlay-home-'));
+    const { app } = engine.bootstrap({ homeDir, osHomeDir: homeDir, cwd, env: {}, clientIdentity: stubClientIdentity },
+      engine.logSeed(engine.resolveLoggingConfig({ homeDir, env: {} })));
+    try {
+      const sessions = app.accessor.get(ISessionManager);
+      const origin = await sessions.create({ workDir: cwd, mcpServers: { eph: stdioServer() } });
+      const sibling = await sessions.create({ workDir: cwd });
+      const otherCwd = join(cwd, 'other');
+      await mkdir(otherCwd);
+      const other = await sessions.create({ workDir: otherCwd });
+      const overlay = origin.accessor.get(ISessionMcpHandle);
+      const peers = [sibling, other].map((session) => session.accessor.get(ISessionMcpHandle));
+      await Promise.all([overlay.ready, ...peers.map((peer) => peer.ready)]);
+      expect(overlay.connectionManager.get('eph')?.status).toBe('connected');
+      for (const peer of peers) expect(peer.connectionManager.get('eph')).toBeUndefined();
+      await sessions.close(origin.id);
+      await vi.waitFor(() => expect(overlay.connectionManager.get('eph')).toBeUndefined());
+      for (const session of [sibling, other]) await sessions.close(session.id);
+    } finally {
+      const sessions = app.accessor.get(ISessionManager);
+      for (const live of sessions.list()) await sessions.close(live.id);
+      await app.accessor.get(engine.ISessionIndex).prepare();
+      await app.accessor.get(engine.ISessionIndexMirror).drain();
+      app.dispose();
+      await app.instantiation.disposeAsync();
+      await engine.drainSessionIndexMirror();
+      await engine.drainQueryStoreDisposals();
+      await engine.drainSessionMetadataWrites();
+      await engine.drainLogCloses();
+      await rm(homeDir, { recursive: true, force: true });
     }
-
-    it('creates the overlay from the will-create event, contributes the merged handle, and shuts it down with the session', async () => {
-      const service = createService();
-      manager = service.connectionManager();
-      await service.ready;
-
-      const sessionCwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-cwd-'));
-      const servers = { eph: stdioServer() };
-      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent(servers, sessionCwd);
-      assemblyEvents.fire(event);
-
-      expect(sessionOverlay).toHaveBeenCalledWith(servers, { stdioCwd: cwd, sessionId: 's1' });
-      const overlay = sessionOverlay.mock.results[0]?.value as ISessionMcpOverlay;
-      expect(contributed.get(ISessionMcpHandle)).toBe(overlay.handle);
-      await overlay.handle.ready;
-      expect(overlay.handle.connectionManager.get('eph')?.status).toBe('connected');
-
-      const shutdown = vi.spyOn(overlay, 'shutdown');
-      expect(disposers).toHaveLength(1);
-      disposers[0]!();
-      expect(shutdown).toHaveBeenCalledTimes(1);
-      await shutdown.mock.results[0]?.value;
-      await rm(sessionCwd, { recursive: true, force: true });
-    }, 20000);
-
-    it('ignores a session created without ephemeral servers', async () => {
-      const service = createService();
-      manager = service.connectionManager();
-      await service.ready;
-
-      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent({}, cwd);
-      assemblyEvents.fire(event);
-
-      expect(sessionOverlay).not.toHaveBeenCalled();
-      expect(contributed.size).toBe(0);
-      expect(disposers).toHaveLength(0);
-    });
-
-    it('ignores a will-create event of a session belonging to another workspace', async () => {
-      const service = createService();
-      manager = service.connectionManager();
-      await service.ready;
-
-      const sessionOverlay = vi.spyOn(service, 'sessionOverlay');
-      const { event, contributed, disposers } = willCreateEvent(
-        { eph: stdioServer() },
-        cwd,
-        'other-workspace',
-      );
-      assemblyEvents.fire(event);
-
-      expect(sessionOverlay).not.toHaveBeenCalled();
-      expect(contributed.size).toBe(0);
-      expect(disposers).toHaveLength(0);
-    });
-  });
+  }, 20000);
 
   describe('credential events', () => {
     const SERVER_URL = 'https://mcp.example.test/mcp';

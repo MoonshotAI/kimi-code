@@ -994,6 +994,8 @@ function registerSessionExportServices(
     }),
     touch: async () => undefined,
     update: async () => undefined,
+    addDirectory: async () => undefined,
+    implicitDirectories: async (cwd) => [cwd],
     setPrimary: async () => undefined,
     readProjectConfigDirs: async () => [],
     delete: async () => {},

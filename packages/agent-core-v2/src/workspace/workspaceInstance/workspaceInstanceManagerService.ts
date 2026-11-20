@@ -15,7 +15,6 @@ import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
-import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import { IUserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import { IAppStateService } from '#/app/state/appState';
@@ -71,7 +70,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IMcpConfigStore private readonly configStore: IMcpConfigStore,
     @IPluginService private readonly plugins: IPluginService,
     @IProviderService private readonly modelProviders: IProviderService,
-    @ref(ISessionManager) private readonly sessionManager: LiveRef<ISessionManager>,
     @IAgentProfileRegistry private readonly agentProfiles: IAgentProfileRegistry,
     @IBuiltinAgentProfileLoader private readonly builtinAgentProfiles: IBuiltinAgentProfileLoader,
     @IBuiltinSkillSource private readonly builtinSkills: IBuiltinSkillSource,
@@ -134,9 +132,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
 
   acquire(ref: WorkspaceInstanceRef): Promise<WorkspaceInstanceLease> {
     if (this.disposing) return Promise.reject(new Error('workspace instance manager is disposing'));
-    const key = 'workspaceId' in ref
-      ? `id:${ref.workspaceId}`
-      : `root:${ref.root.replace(/[\\/]$/, '')}`;
+    const key = JSON.stringify(['workspaceId' in ref ? ref.workspaceId : null, ref.root?.replace(/[\\/]$/, '')]);
     let request = this.requests.get(key);
     if (request === undefined) {
       const pending: Promise<Workspace> = this.resolveWorkspace(ref).finally(() => {
@@ -149,15 +145,11 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   }
 
   private async resolveWorkspace(ref: WorkspaceInstanceRef): Promise<Workspace> {
-    let workspace: Workspace | undefined;
-    if ('workspaceId' in ref) {
-      workspace = await this.workspaces.get(ref.workspaceId);
-      if (workspace === undefined && ref.root !== undefined) workspace = await this.workspaces.createOrTouch(ref.root);
-    } else {
-      workspace = await this.workspaces.createOrTouch(ref.root);
-    }
-    if (workspace === undefined) throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${'workspaceId' in ref ? ref.workspaceId : ref.root} does not exist`);
-    return workspace;
+    if (!('workspaceId' in ref)) return this.workspaces.createOrTouch(ref.root);
+    const workspace = await this.workspaces.get(ref.workspaceId);
+    if (workspace !== undefined) return workspace;
+    if (ref.root !== undefined) return this.workspaces.createOrTouch(ref.root);
+    throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${ref.workspaceId} does not exist`);
   }
 
   private async acquireWorkspace(workspace: Workspace): Promise<WorkspaceInstanceLease> {
@@ -263,7 +255,6 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         oauth: this.oauth,
         configStore: this.configStore,
         plugins: this.plugins,
-        sessionManager: this.sessionManager,
         agentProfiles: this.agentProfiles,
         builtinAgentProfiles: this.builtinAgentProfiles,
         builtinSkills: this.builtinSkills,
@@ -289,11 +280,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.event,
           this.telemetry,
           this.flags,
-          input.extraAgentProfiles,
-          input.explicitAgentProfiles,
           input.userAgentProfiles,
           input.pluginAgentProfiles,
-          input.mcp,
           this.models,
           this.modelProviders,
           this.environments,

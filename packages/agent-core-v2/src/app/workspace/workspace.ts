@@ -29,10 +29,12 @@ export interface IWorkspaceService {
 
   list(): Promise<readonly Workspace[]>;
   get(id: string): Promise<Workspace | undefined>;
+  implicitDirectories(cwd: string): Promise<readonly string[]>;
   create(input: WorkspaceCreate): Promise<Workspace>;
   createOrTouch(root: string, name?: string): Promise<Workspace>;
   touch(id: string): Promise<Workspace | undefined>;
   update(id: string, patch: WorkspaceUpdate): Promise<Workspace | undefined>;
+  addDirectory(id: string, dir: string): Promise<Workspace | undefined>;
   setPrimary(id: string, path: string): Promise<Workspace | undefined>;
   readProjectConfigDirs(root: string): Promise<readonly string[]>;
   delete(id: string): Promise<void>;

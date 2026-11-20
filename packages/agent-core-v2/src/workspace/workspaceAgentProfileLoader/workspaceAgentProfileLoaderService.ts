@@ -1,3 +1,4 @@
+import { AsyncSerialQueue } from '#/_base/utils/promise';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
 import { TimeoutTimer } from '#/_base/utils/timer';
@@ -34,7 +35,7 @@ export class WorkspaceAgentProfileLoaderService
   private readonly watchReady: Promise<void>;
   private watchers?: DisposableStore;
   private watchedPrimary?: string;
-  private primaryReloadTail: Promise<void> = Promise.resolve();
+  private readonly primaryReloads: AsyncSerialQueue;
 
   constructor(
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
@@ -48,15 +49,11 @@ export class WorkspaceAgentProfileLoaderService
   ) {
     super(log, registry);
     this._register({ dispose: () => this.watchers?.dispose() });
-    this.primaryReloadTail = this.refreshPrimary(false);
-    this.watchReady = this.primaryReloadTail;
+    this.watchReady = this.refreshPrimary(false);
+    this.primaryReloads = new AsyncSerialQueue(this.watchReady);
     this._register(
       this.dirs.onDidChange(() => {
-        this.primaryReloadTail = this.primaryReloadTail.then(
-          () => this.refreshPrimary(),
-          () => this.refreshPrimary(),
-        );
-        void this.primaryReloadTail.catch((error) => {
+        void this.primaryReloads.run(() => this.refreshPrimary()).catch((error) => {
           this.log.warn(`agent profile primary reload failed: ${String(error)}`);
         });
       }),

@@ -2,21 +2,13 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { mkdir, open, rename, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
+import { AsyncSerialQueue } from '../utils/promise';
+
 import { formatEntry, type FormatOptions } from './formatter';
 import type { ILogWriter, LogEntry } from './log';
 
 export const PENDING_MAX = 1000;
 const STDERR_NOTICE_INTERVAL_MS = 30_000;
-
-class AsyncSerialQueue {
-  private tail: Promise<unknown> = Promise.resolve();
-
-  run<T>(task: () => Promise<T>): Promise<T> {
-    const next = this.tail.then(task, task);
-    this.tail = next.catch(() => {});
-    return next;
-  }
-}
 
 export interface RotatingFileWriterOptions {
   readonly path: string;

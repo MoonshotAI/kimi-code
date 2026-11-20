@@ -1,3 +1,4 @@
+import { AsyncSerialQueue } from '#/_base/utils/promise';
 import { dirname } from 'pathe';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
@@ -47,7 +48,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   readonly onDidChangeTunables = this.tunablesEmitter.event;
   private projectWatcher?: IDisposable;
   private watchedPrimary?: string;
-  private primaryReloadTail: Promise<void> = Promise.resolve();
+  private readonly primaryReloads: AsyncSerialQueue;
 
   constructor(
     @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
@@ -63,7 +64,11 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     super();
     this.oauth.setConfigurationSource(this, []);
     this._register({ dispose: () => this.oauth.removeConfigurationSource(this) });
-    this.ready = this.initialize().catch((error: unknown) => {
+    const watchReady = this.watchConfigFiles().catch((error: unknown) => {
+      this.log.warn('cannot watch MCP configuration', { error });
+    });
+    this.primaryReloads = new AsyncSerialQueue(watchReady);
+    this.ready = watchReady.then(() => this.initialize()).catch((error: unknown) => {
       this.log.error('mcp config initial load failed', { error });
     });
     this._register(
@@ -106,14 +111,9 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       }),
     );
     this._register({ dispose: () => this.projectWatcher?.dispose() });
-    this.primaryReloadTail = this.watchConfigFiles();
     this._register(
       this.dirs.onDidChange(() => {
-        this.primaryReloadTail = this.primaryReloadTail.then(
-          () => this.refreshPrimary(),
-          () => this.refreshPrimary(),
-        );
-        void this.primaryReloadTail.catch((error) => {
+        void this.primaryReloads.run(() => this.refreshPrimary()).catch((error) => {
           this.log.warn(`mcp primary reload failed: ${String(error)}`);
         });
       }),
@@ -147,6 +147,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       this.plugins.enabledMcpServers(),
       this.plugins.mcpServerEntries(),
     ]);
+    if (this._store.isDisposed) return;
     this.fileServers = new Map(Object.entries(fileServers));
     this.disabledOAuthServers = retainedDisabledOAuthServers(
       entries,
@@ -178,6 +179,12 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
           cwd: this.dirs.primary,
           homeDir: this.bootstrap.homeDir,
           includeProject: trusted,
+        }).catch(async (error: unknown) => {
+          if (!trusted) {
+            this.fileServers.clear();
+            await this.publishIfChanged(true);
+          }
+          throw error;
         });
         if (trusted) await this.reconcileUntrustedOAuthServers(fresh);
         this.fileServers = new Map(Object.entries(fresh));
@@ -221,8 +228,10 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       cwd: this.dirs.primary,
       homeDir: this.bootstrap.homeDir,
     });
-    this.watchPaths([paths.user]);
-    await this.refreshProjectConfigWatcher();
+    if (this._store.isDisposed) return;
+    const user = this._register(watch(paths.user));
+    this._register(user.onDidChange(() => this.scheduleFileReload()));
+    await Promise.all([user.ready, this.refreshProjectConfigWatcher()]);
   }
 
   private async refreshProjectConfigWatcher(): Promise<void> {
@@ -233,6 +242,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       cwd: primary,
       homeDir: this.bootstrap.homeDir,
     });
+    if (this._store.isDisposed) return;
     const projectRoot = dirname(paths.projectRoot);
     const handle = watchCandidates(projectRoot, [paths.projectRoot, paths.project], {
       ignored: subtreeWatchFilter(projectRoot, [paths.projectRoot, paths.project]),
@@ -248,18 +258,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       },
     };
     this.watchedPrimary = primary;
-  }
-
-  private watchPaths(paths: readonly string[]): void {
-    for (const path of paths) {
-      const handle = watch(path);
-      this._register(handle);
-      this._register(
-        handle.onDidChange(() => {
-          this.scheduleFileReload();
-        }),
-      );
-    }
+    await handle.ready;
   }
 
   private scheduleFileReload(): void {
@@ -330,6 +329,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     preserveOAuthCredentials = false,
     preservedOAuthServers?: ReadonlySet<string>,
   ): Promise<void> {
+    if (this._store.isDisposed) return;
     const next = this.merged();
     const upsert: Record<string, McpServerConfig> = Object.create(null);
     const remove: string[] = [];

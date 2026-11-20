@@ -1,5 +1,6 @@
 import { IInstantiationService } from "#/_base/di/instantiation";
 import { Service } from "#/_base/di/service";
+import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
@@ -34,6 +35,7 @@ export class AgentPermissionPolicyService
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IBootstrapService bootstrap: IBootstrapService,
+    @IProjectPermissionRulesService private readonly projectRules: IProjectPermissionRulesService,
   ) {
     super();
     this.policies = [
@@ -58,6 +60,7 @@ export class AgentPermissionPolicyService
   async evaluate(
     context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyEvaluation | undefined> {
+    await this.projectRules.refreshTrust();
     for (const policy of this.policies) {
       const result = await policy.evaluate(context);
       if (result !== undefined) return { policyName: policy.name, result };

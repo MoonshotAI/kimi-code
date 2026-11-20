@@ -10,6 +10,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { ILogService } from '#/_base/log/log';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -21,7 +22,7 @@ import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { projectRootsForDirs } from '#/features/skill/catalog/skillRoots';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
-import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { WORKSPACE_TRUST_SECTION } from '#/workspace/workspaceTrust/configSection';
 import {
   IWorkspaceTrust,
@@ -110,14 +111,12 @@ describe('WorkspaceTrustService', () => {
       strict: true,
       additionalServices: (reg) => {
         registerStateServices(reg);
-        reg.definePartialInstance(IWorkspaceDirs, {
-          get primary() {
-            return dirs.primary;
+        reg.defineInstance(ILogService, stubLog());
+        reg.definePartialInstance(IWorkspaceContext, {
+          get meta() {
+            return { id: 'project', root: dirs.primary, additionalDirs: dirs.additionalDirs, kind: 'implicit', name: 'project', createdAt: 0, lastOpenedAt: 0 } as const;
           },
-          get additionalDirs() {
-            return dirs.additionalDirs;
-          },
-          onDidChange: dirsChange.event,
+          onDidChangeProject: dirsChange.event,
         });
         reg.defineInstance(IBootstrapService, stubBootstrap(homeDir, env));
         reg.defineInstance(IConfigService, trustConfigService());
@@ -364,6 +363,7 @@ describe('WorkspaceTrustService', () => {
       noopTelemetryService,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubLog(),
     ));
     const entry = trustStore.forRoot(cwd);
 
@@ -397,6 +397,7 @@ describe('WorkspaceTrustService', () => {
       noopTelemetryService,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubLog(),
     ));
     const entry = store.forRoot(cwd);
     const events: WorkspaceTrustChange[] = [];
@@ -444,6 +445,21 @@ describe('WorkspaceTrustService', () => {
     } finally {
       await rm(other, { recursive: true, force: true });
     }
+  });
+
+  it('updates active trust when another process writes and clears the same directory marker', async () => {
+    const { service, trustStore } = createService(cwd);
+    const otherStore = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    const unopenedRoot = join(cwd, 'unopened');
+    const unopened = trustStore.forRoot(unopenedRoot);
+    await service.ready;
+    await writeWorkspaceTrust(otherStore, unopenedRoot, Date.now());
+    await writeWorkspaceTrust(otherStore, cwd, Date.now());
+    await vi.waitFor(() => expect(service.isTrusted()).toBe(true));
+    expect(unopened.isTrusted()).toBe(false);
+    expect(await unopened.get()).toBe(true);
+    await deleteWorkspaceTrust(otherStore, cwd);
+    await vi.waitFor(() => expect(service.isTrusted()).toBe(false));
   });
 
   it('registers the trusted flag into the workspace state container', async () => {
@@ -509,6 +525,7 @@ describe('WorkspaceTrustService', () => {
       noopTelemetryService,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubLog(),
     ));
     const entry = store.forRoot(firstRoot);
 
@@ -537,6 +554,7 @@ describe('WorkspaceTrustService', () => {
       noopTelemetryService,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubLog(),
     ));
     const entry = store.forRoot(cwd);
     const events: WorkspaceTrustChange[] = [];
@@ -549,6 +567,42 @@ describe('WorkspaceTrustService', () => {
 
     expect(await entry.get()).toBe(false);
     expect(events).toEqual([{ trusted: true }, { trusted: false }]);
+  });
+
+  it.each([
+    { kind: 'managed', remote: false },
+    { kind: 'implicit', remote: false },
+    { kind: 'implicit', remote: true },
+  ] as const)('discloses each additional directory and its actual sources for a $kind project (remote=$remote)', async ({ kind, remote }) => {
+    const registered = join(homeDir, 'registered');
+    const shared = join(homeDir, 'shared');
+    const fromFile = join(homeDir, 'file-only');
+    const pending = join(homeDir, 'pending');
+    await Promise.all([registered, shared, fromFile, pending, join(cwd, '.kimi-code')].map((dir) => mkdir(dir)));
+    const localFile = join(cwd, '.kimi-code', 'local.toml');
+    await writeFile(localFile, `[workspace]\nadditional_dir = ${JSON.stringify([shared, fromFile])}\n`);
+    const catalogFile = join(homeDir, 'projects.json');
+    await writeFile(catalogFile, '{}');
+    const fs = new HostFileSystem();
+    const realpath = vi.spyOn(fs, 'realpath');
+    const service = new WorkspaceTrustDisclosureService(
+      { cwd, workspaceId: 'project', meta: { kind, additionalDirs: [registered, shared] } } as never,
+      fs, stubBootstrap(homeDir), { get: () => true } as never,
+      new FileProjectLocalConfigService(stubBootstrap(homeDir), fs),
+      { ready: Promise.resolve(), primary: cwd, sharedAdditionalDirs: [] } as never,
+      { get: async () => false } as never,
+      { ready: Promise.resolve(), catalog: new InMemorySkillCatalog(), reloadSources: async () => {} } as never,
+      { ready: Promise.resolve() } as never, { entries: () => [] } as never,
+      { ready: Promise.resolve(), snapshot: { agentsMdPaths: [] } } as never, stubLog(),
+      undefined, remote ? () => ({ fs, cwd: homeDir }) : undefined,
+    );
+    const result = await service.describeGatedActivation([shared, pending]);
+    expect(realpath.mock.calls.some(([dir]) => dir === registered)).toBe(!remote);
+    const expected = [...(remote ? [] : [registered]), shared, ...(kind === 'implicit' ? [fromFile] : []), pending];
+    const sources = [...(remote ? [] : [catalogFile]), ...(kind === 'implicit' ? [localFile] : []), shared, pending];
+    expect(result.additionalDirs).toEqual(await Promise.all(expected.map((dir) => fs.realpath(dir))));
+    expect(result.additionalDirSources).toEqual(await Promise.all(sources.map((file) => fs.realpath(file))));
+    expect(result.warnings).toEqual([]);
   });
 
   it('tracks change telemetry once per effective mutation', async () => {
@@ -564,6 +618,7 @@ describe('WorkspaceTrustService', () => {
       telemetry,
       stubBootstrap(homeDir),
       trustConfigService(),
+      stubLog(),
     ));
     const entry = store.forRoot(cwd);
 
@@ -592,7 +647,7 @@ describe('WorkspaceTrustService', () => {
     for (const skill of discovered.skills) catalog.register(skill);
     catalog.addRoots(discovered.scannedRoots);
     const service = new WorkspaceTrustDisclosureService(
-      { cwd, workspaceId: 'wm_test' } as never,
+      { cwd, workspaceId: 'wm_test', meta: { kind: 'implicit' } } as never,
       fs,
       stubBootstrap(homeDir),
       { get: () => true } as never,
@@ -647,7 +702,7 @@ describe('WorkspaceTrustService', () => {
     });
     const fs = new HostFileSystem();
     const service = new WorkspaceTrustDisclosureService(
-      { cwd, workspaceId: 'wm_test' } as never,
+      { cwd, workspaceId: 'wm_test', meta: { kind: 'implicit' } } as never,
       fs,
       stubBootstrap(homeDir),
       { get: () => true } as never,
@@ -692,7 +747,7 @@ describe('WorkspaceTrustService', () => {
     );
     const fs = new HostFileSystem();
     const service = new WorkspaceTrustDisclosureService(
-      { cwd, workspaceId: 'wm_test' } as never,
+      { cwd, workspaceId: 'wm_test', meta: { kind: 'implicit' } } as never,
       fs,
       stubBootstrap(homeDir),
       { get: () => true } as never,

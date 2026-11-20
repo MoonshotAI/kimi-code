@@ -1,11 +1,13 @@
+import { AsyncSerialQueue } from '#/_base/utils/promise';
 import { DisposableStore, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
-import { workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import { Error2, ErrorCodes } from '#/errors';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
@@ -45,13 +47,16 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   private readonly disposables = new DisposableStore();
   private projectRoot: string;
   private configPath: string;
+  private localConfigError?: Error;
   private readonly legacyProjectConfig: boolean;
   readonly ready: Promise<void>;
   private readonly onDidChangeEmitter = this._register(new Emitter<void>());
   readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
+  private readonly localConfigChange = this._register(new Emitter<void>());
+  readonly onDidChangeLocalConfig = this.localConfigChange.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly localConfigWatcher = this._register(new MutableDisposable<IDisposable>());
-  private mutationTail: Promise<void> = Promise.resolve();
+  private readonly mutations = new AsyncSerialQueue();
   private registryReloadQueued = false;
   private changeBatchDepth = 0;
   private changePending = false;
@@ -64,7 +69,6 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
     private readonly environmentId = LOCAL_ENVIRONMENT_ID,
-    private readonly followsPrimary = environmentId === LOCAL_ENVIRONMENT_ID,
   ) {
     this.states.contributeState(workspaceDirsFileDirsKey);
     this.states.contributeState(workspaceDirsEphemeralDirsKey);
@@ -73,12 +77,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     this.projectRoot = workspace.cwd;
     this.configPath = '';
     this.legacyProjectConfig = workspace.meta.kind !== 'managed';
-    this.ready = this.enqueue(() => this.reloadWorkspace(true));
+    this.ready = this.mutations.run(() => this.reloadWorkspace(true));
     this._register(
       this.workspaceStore.onDidChange(() => {
         if (this.registryReloadQueued) return;
         this.registryReloadQueued = true;
-        void this.enqueue(async () => {
+        void this.mutations.run(async () => {
           this.registryReloadQueued = false;
           await this.reloadWorkspace();
         }).catch((error) => {
@@ -121,44 +125,50 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   get primary(): string {
-    if (this.environmentId !== LOCAL_ENVIRONMENT_ID || !this.followsPrimary) return this.workspace.cwd;
-    return this.primaryByWorkspace[this.workspace.workspaceId] ?? this.workspace.meta.root;
+    return this.workspace.cwd;
   }
 
   get sharedAdditionalDirs(): readonly string[] {
-    return [...new Set([...this.fileDirs, ...this.registryDirs])];
+    if (this.localConfigError !== undefined) throw this.localConfigError;
+    return this.sharedRoots;
+  }
+
+  private get sharedRoots(): readonly string[] {
+    return this.additionalRoots([...this.fileDirs, ...this.registryDirs]);
   }
 
   get additionalDirs(): readonly string[] {
-    return [...new Set([...this.sharedAdditionalDirs, ...this.ephemeralDirs])];
+    return this.additionalRoots([...this.sharedAdditionalDirs, ...this.ephemeralDirs]);
   }
 
   addDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult> {
-    return this.enqueue(() => this.applyAddDir(input));
+    return this.mutations.run(() => this.applyAddDir(input));
   }
 
   mergeAdditionalDirs(baseDir: string, dirs: readonly string[]): Promise<void> {
     if (dirs.length === 0) return Promise.resolve();
-    return this.enqueue(async () => {
+    return this.mutations.run(async () => {
       const resolved = await this.localConfig.resolveAdditionalDirs(baseDir, dirs);
       if (this.unionEphemeral(resolved)) this.fireChange();
     });
   }
 
   reload(): Promise<void> {
-    return this.enqueue(() => this.reloadWorkspace(true));
+    return this.mutations.run(() => this.reloadWorkspace(true));
   }
 
   private async reloadWorkspace(reloadLocal = false): Promise<void> {
     await this.batchChanges(async () => {
-      const previousPrimary = this.primary;
       await this.reloadFromRegistry();
-      if (!this.legacyProjectConfig) return;
-      const primaryChanged = previousPrimary !== this.primary;
-      if (reloadLocal || primaryChanged || this.localConfigWatcher.value === undefined) {
+      if (!reloadLocal) return;
+      if (this.legacyProjectConfig) {
         await this.reloadFromDisk();
+      } else if (this.environmentId === LOCAL_ENVIRONMENT_ID && this.localConfigWatcher.value === undefined) {
+        const location = await this.localConfig.locate(this.primary);
+        this.projectRoot = location.projectRoot;
+        this.configPath = location.configPath;
       }
-      if (primaryChanged || this.localConfigWatcher.value === undefined) {
+      if (this.environmentId === LOCAL_ENVIRONMENT_ID && this.localConfigWatcher.value === undefined) {
         this.watchLocalToml();
       }
     });
@@ -182,10 +192,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   private async applyAddDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult> {
+    if (this.localConfigError !== undefined) throw this.localConfigError;
     const persist = input.persist ?? true;
-    const onDisk = await this.localConfig.readAdditionalDirs(this.primary);
-    this.projectRoot = onDisk.projectRoot;
-    this.configPath = onDisk.configPath;
+    if (persist && this.environmentId !== LOCAL_ENVIRONMENT_ID) {
+      throw new Error('Remote directories cannot be registered as local project directories');
+    }
+    const onDisk = await this.localConfig.locate(this.primary);
 
     if (persist) {
       const resolved = await this.localConfig.resolveAdditionalDirs(this.primary, [
@@ -195,18 +207,15 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
       if (dir === undefined) {
         throw new Error(`additional dir ${input.path} did not resolve`);
       }
-      const existing = await this.workspaces.get(this.workspace.workspaceId);
-      const target = existing ?? (await this.workspaces.createOrTouch(this.workspace.cwd));
-      const dirKey = workspaceRootKey(dir);
-      const inSet =
-        workspaceRootKey(target.root) === dirKey ||
-        target.additionalDirs.some((kept) => workspaceRootKey(kept) === dirKey);
-      if (!inSet) {
-        await this.workspaces.update(target.id, {
-          additionalDirs: [...target.additionalDirs, dir],
-        });
-        await this.reloadWorkspace(true);
+      let target = await this.workspaces.addDirectory(this.workspace.workspaceId, dir);
+      if (target === undefined && this.workspace.workspaceId === encodeWorkDirKey(this.workspace.cwd)) {
+        const project = await this.workspaces.createOrTouch(this.workspace.cwd);
+        if (project.id === this.workspace.workspaceId) target = await this.workspaces.addDirectory(project.id, dir);
       }
+      if (target === undefined) {
+        throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${this.workspace.workspaceId} does not exist`);
+      }
+      await this.reloadWorkspace();
       return {
         projectRoot: onDisk.projectRoot,
         configPath: onDisk.configPath,
@@ -229,57 +238,51 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   private async reloadFromDisk(): Promise<void> {
-    const onDisk = await this.localConfig.readAdditionalDirs(this.primary);
+    const onDisk = await this.localConfig.readAdditionalDirs(this.primary).catch((error: unknown) => {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      const changed = this.localConfigError?.message !== failure.message;
+      this.localConfigError = failure;
+      this.fileDirs = [];
+      if (changed && this.configPath !== '') this.fireChange();
+      throw failure;
+    });
+    const recovered = this.localConfigError !== undefined;
+    this.localConfigError = undefined;
     this.projectRoot = onDisk.projectRoot;
     this.configPath = onDisk.configPath;
-    if (this.setFileDirs(onDisk.additionalDirs)) this.fireChange();
+    if (this.setFileDirs(onDisk.additionalDirs) || recovered) this.fireChange();
   }
 
   private setFileDirs(dirs: readonly string[]): boolean {
-    const before = this.sharedAdditionalDirs;
+    const before = this.sharedRoots;
     this.fileDirs = dirs;
-    return !sameStringList(before, this.sharedAdditionalDirs);
+    return !sameStringList(before, this.sharedRoots);
   }
 
   private async reloadFromRegistry(): Promise<void> {
-    const registered = await this.workspaces.list();
-    const current = this.workspace.meta.kind === 'managed'
-      ? undefined
-      : await this.workspaces.get(this.workspace.workspaceId);
-    const entries =
-      this.workspace.meta.kind === 'managed'
-        ? registered.filter((entry) => entry.id === this.workspace.workspaceId)
-        : current === undefined
-          ? registered
-          : [current, ...registered.filter((entry) => entry.id !== current.id)];
-    const cwdKey = workspaceRootKey(this.workspace.cwd);
-    const dirs: string[] = [];
-    const primary: Record<string, string> = {};
-    for (const entry of entries) {
-      const currentEntry = this.environmentId === LOCAL_ENVIRONMENT_ID && entry.id === this.workspace.workspaceId;
-      if (!this.followsPrimary && !currentEntry) continue;
-      const set = this.followsPrimary ? [entry.root, ...entry.additionalDirs] : entry.additionalDirs;
-      if (!currentEntry && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
-      primary[entry.id] = entry.root;
-      const primaryKey = workspaceRootKey(entry.root);
-      for (const dir of set) {
-        const key = workspaceRootKey(dir);
-        if (this.followsPrimary && currentEntry && key === primaryKey) continue;
-        if ((!this.followsPrimary || !currentEntry) && key === cwdKey) continue;
-        if (dirs.some((kept) => workspaceRootKey(kept) === key)) continue;
-        dirs.push(dir);
-      }
-    }
-    const beforeDirs = this.sharedAdditionalDirs;
+    if (this.environmentId !== LOCAL_ENVIRONMENT_ID) return;
+    const project = await this.workspaces.get(this.workspace.workspaceId);
+    const primary = project === undefined ? {} : { [project.id]: project.root };
+    const beforeDirs = this.sharedRoots;
     const beforePrimary = this.primaryByWorkspace;
-    this.registryDirs = dirs;
+    this.registryDirs = project?.additionalDirs ?? [];
     this.primaryByWorkspace = primary;
     if (
-      !sameStringList(beforeDirs, this.sharedAdditionalDirs) ||
+      !sameStringList(beforeDirs, this.sharedRoots) ||
       !samePrimaryByWorkspace(beforePrimary, primary)
     ) {
       this.fireChange();
     }
+  }
+
+  private additionalRoots(dirs: readonly string[]): string[] {
+    const seen = new Set([workspaceRootKey(this.primary)]);
+    return dirs.filter((dir) => {
+      const key = workspaceRootKey(dir);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   private unionEphemeral(dirs: readonly string[]): boolean {
@@ -316,9 +319,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
       });
       const subscription = handle.onDidChange(() => {
         this.watchDebounce.cancelAndSet(() => {
-          void this.enqueue(() => this.reloadFromDisk()).catch((error) => {
-            this.log.warn(`local.toml reload failed: ${String(error)}`);
-          });
+          this.localConfigChange.fire();
+          if (this.legacyProjectConfig) {
+            void this.mutations.run(() => this.reloadFromDisk()).catch((error) => {
+              this.log.warn(`local.toml reload failed for ${this.configPath}: ${String(error)}`);
+            });
+          }
         }, WATCH_DEBOUNCE_MS);
       });
       const watchers = new DisposableStore();
@@ -338,18 +344,9 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     this.disposables.dispose();
     let pending: Promise<void>;
     do {
-      pending = this.mutationTail;
+      pending = this.mutations.settled;
       await pending;
-    } while (pending !== this.mutationTail);
-  }
-
-  private enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const run = this.mutationTail.then(work, work);
-    this.mutationTail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+    } while (pending !== this.mutations.settled);
   }
 }
 

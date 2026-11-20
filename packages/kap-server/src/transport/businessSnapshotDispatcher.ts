@@ -28,6 +28,7 @@ export async function workspaceSnapshot(
 ): Promise<WorkspaceInstanceSnapshot> {
   const lease = await core.accessor.get(IWorkspaceInstanceManager).acquire({ workspaceId });
   try {
+    await lease.instance.program.prepareSnapshot();
     return lease.instance.snapshot();
   } finally {
     lease.dispose();

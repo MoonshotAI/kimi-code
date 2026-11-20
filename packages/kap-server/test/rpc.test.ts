@@ -19,9 +19,10 @@ import {
   IWorkspaceService,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resolvePath } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
 
 import type {
   AgentEnvironmentBindingSnapshot,
@@ -238,6 +239,35 @@ describe('server-v2 /api/v1/debug RPC', () => {
     );
     expect(got.body.code).toBe(0);
     expect(got.body.data.root).toBe(cwd);
+  });
+
+  it('reads root resources in the first workspace snapshot without opening a session', async () => {
+    const root = await realpath(await mkdtemp(join(home!, 'snapshot-')));
+    const skills = resolvePath(root, '.kimi-code/skills');
+    await mkdir(join(skills, 'example'), { recursive: true });
+    await writeFile(join(skills, 'example', 'SKILL.md'), '---\nname: example\ndescription: Example skill\n---\n');
+    const instructions = resolvePath(root, 'AGENTS.md');
+    await writeFile(instructions, 'Workspace instructions');
+    await writeFile(join(root, '.mcp.json'), JSON.stringify({
+      mcpServers: { example: { command: 'example-command' } },
+    }));
+    const created = await call<{ id: string }>('POST', rpc('core', IWorkspaceService, 'createOrTouch'), root);
+    const { id } = created.body.data;
+    const trust = await call<{ trusted: boolean }>('POST', `/api/v1/workspaces/${id}/trust`);
+    expect(trust.body.data.trusted).toBe(true);
+
+    const { body } = await call<WorkspaceInstanceSnapshot>('GET', `/api/v1/debug/workspace/${id}/snapshot`);
+    expect(body.data.program).toMatchObject({
+      ready: true,
+      status: 'ready',
+      catalog: { mcpServers: 1 },
+      sources: {
+        skills: expect.arrayContaining([{ source: 'project', count: 1 }]),
+        skillRoots: expect.arrayContaining([skills]),
+        instructionPaths: expect.arrayContaining([instructions]),
+        mcpServers: ['example'],
+      },
+    });
   });
 
   it('exposes workspace, session association, and agent binding business snapshots', async () => {

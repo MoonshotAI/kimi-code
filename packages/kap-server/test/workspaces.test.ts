@@ -16,11 +16,20 @@ import {
   IWorkspaceInstanceManager,
   resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
+import { canonicalWorkspaceRoot } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
+
+function failTrustMarkerReads(docs: IAtomicDocumentStore, markerKey: string) {
+  const read = docs.get.bind(docs);
+  return vi.spyOn(docs, 'get').mockImplementation(async <T>(scope: string, key: string) => {
+    if (scope === 'workspace-trust' && key === markerKey) throw new Error('temporary trust read failure');
+    return read<T>(scope, key);
+  });
+}
 
 interface Envelope<T> {
   code: number;
@@ -607,29 +616,21 @@ describe('server-v2 /api/v1/workspaces', () => {
       const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
       const id = created.body.data.id;
       const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
-      await docs.set('workspace-trust', encodeWorkDirKey(root), { root, trustedAt: 1 });
+      const markerKey = encodeWorkDirKey(canonicalWorkspaceRoot(root));
+      await docs.set('workspace-trust', markerKey, { root, trustedAt: 1 });
       const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
-      const read = docs.get.bind(docs);
-      let shouldFail = true;
-      let failed = false;
-      const get = vi.spyOn(docs, 'get').mockImplementation(async <T>(scope: string, key: string) => {
-        if (shouldFail && scope === 'workspace-trust') {
-          shouldFail = false;
-          failed = true;
-          throw new Error('temporary trust read failure');
-        }
-        return read<T>(scope, key);
-      });
+      const get = failTrustMarkerReads(docs, markerKey);
       let release: (() => void) | undefined;
       try {
         const lease = await manager.acquire({ workspaceId: id, root });
         release = () => lease.dispose();
         const workspace = lease.instance;
         await workspace.program.mcpConfig.ready;
-        expect(failed).toBe(true);
+        expect(get).toHaveBeenCalledWith('workspace-trust', markerKey);
         expect(workspace.program.mcpConfig.servers()).toEqual({});
         const recovered: boolean[] = [];
         workspace.program.trust.onDidChange((change) => recovered.push(change.trusted));
+        get.mockRestore();
 
         const trusted = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
         expect(trusted.body.code).toBe(0);
@@ -662,27 +663,19 @@ describe('server-v2 /api/v1/workspaces', () => {
       const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
       const id = created.body.data.id;
       const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
+      const markerKey = encodeWorkDirKey(canonicalWorkspaceRoot(root));
       const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
-      const read = docs.get.bind(docs);
-      let shouldFail = true;
-      let failed = false;
-      const get = vi.spyOn(docs, 'get').mockImplementation(async <T>(scope: string, key: string) => {
-        if (shouldFail && scope === 'workspace-trust') {
-          shouldFail = false;
-          failed = true;
-          throw new Error('temporary trust read failure');
-        }
-        return read<T>(scope, key);
-      });
+      const get = failTrustMarkerReads(docs, markerKey);
       let release: (() => void) | undefined;
       try {
         const lease = await manager.acquire({ workspaceId: id, root });
         release = () => lease.dispose();
         const workspace = lease.instance;
         await workspace.program.mcpConfig.ready;
-        expect(failed).toBe(true);
+        expect(get).toHaveBeenCalledWith('workspace-trust', markerKey);
         expect(workspace.program.mcpConfig.servers()).toEqual({});
 
+        get.mockRestore();
         const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
         expect(revoked.body.code).toBe(0);
         expect(revoked.body.data.trusted).toBe(true);

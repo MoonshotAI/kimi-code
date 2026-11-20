@@ -378,6 +378,40 @@ describe('WorkspaceService (file-backed)', () => {
     expect((await registry.list()).map((w) => w.id)).toContain(encodeWorkDirKey(dirB));
   });
 
+  it('atomically adds directories across independent clients and deduplicates the primary and retries', async () => {
+    const a = join(homeDir, 'a');
+    const b = join(homeDir, 'b');
+    await Promise.all([fsp.mkdir(a), fsp.mkdir(b)]);
+    const first = build();
+    const firstHost = currentHost!;
+    const second = build();
+    try {
+      const { id } = await first.create({ root: homeDir });
+      await Promise.all([first.addDirectory(id, a), second.addDirectory(id, b)]);
+      await first.addDirectory(id, homeDir);
+      expect((await second.addDirectory(id, a))?.additionalDirs.toSorted()).toEqual([a, b].toSorted());
+      await expect(first.addDirectory(id, join(homeDir, 'missing'))).rejects.toThrow();
+      expect(await second.addDirectory('wm_missing', a)).toBeUndefined();
+      expect((await first.get(id))?.additionalDirs.toSorted()).toEqual([a, b].toSorted());
+    } finally {
+      firstHost.dispose();
+    }
+  });
+
+  it('reads the implicit project trust directories without opening a workspace', async () => {
+    const root = join(homeDir, 'root');
+    const extra = join(homeDir, 'extra');
+    await Promise.all([root, extra].map((dir) => fsp.mkdir(dir)));
+    const registry = build();
+    expect(await registry.implicitDirectories(root)).toEqual([root]);
+    expect(await registry.list()).toEqual([]);
+    const project = await registry.createOrTouch(root);
+    await registry.addDirectory(project.id, extra);
+    const before = await fsp.readFile(join(homeDir, 'projects.json'), 'utf8');
+    expect(await registry.implicitDirectories(root)).toEqual([root, extra]);
+    expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
+  });
+
   it('delete adds its tombstone on top of the current file state', async () => {
     const dirA = join(homeDir, 'dir-a');
     await fsp.mkdir(dirA);

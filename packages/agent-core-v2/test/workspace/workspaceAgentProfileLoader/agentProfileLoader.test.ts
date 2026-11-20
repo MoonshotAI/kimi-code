@@ -50,7 +50,11 @@ import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLo
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 
-const watchMockState = vi.hoisted(() => ({ mode: 'inert' as 'inert' | 'real', calls: [] as string[] }));
+const watchMockState = vi.hoisted(() => ({
+  mode: 'inert' as 'inert' | 'real',
+  calls: [] as string[],
+  ready: Promise.resolve(),
+}));
 
 vi.mock('#human/utils/watch', async (importOriginal) => {
   const original = await importOriginal<typeof import('#human/utils/watch')>();
@@ -70,10 +74,12 @@ vi.mock('#human/utils/watch', async (importOriginal) => {
       root: string,
       candidates: readonly string[],
       options?: Parameters<typeof original.watch>[1],
-    ) =>
-      watchMockState.mode === 'real'
-        ? original.watchCandidates(root, candidates, options)
-        : watch(root, options),
+    ) => {
+      if (watchMockState.mode === 'inert') return watch(root, options);
+      const handle = original.watchCandidates(root, candidates, options);
+      watchMockState.ready = handle.ready;
+      return handle;
+    },
   };
 });
 
@@ -788,24 +794,18 @@ describe('agent profile loaders + session catalog', () => {
         await stack.ready();
         expect(stack.catalog.get('watched-agent')).toBeUndefined();
 
-        const refreshed = new Promise<string>((resolvePromise) => {
-          const d = stack.catalog.onDidChange((sourceId) => {
-            if (sourceId !== 'workspace') return;
-            d.dispose();
-            resolvePromise(sourceId);
-          });
-        });
-        const timedOut = new Promise<never>((_resolve, reject) => {
-          setTimeout(() => reject(new Error('watch-driven refresh timed out')), 10000);
-        });
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await watchMockState.ready;
+        const refreshed = waitForEvent(Event.filter(stack.catalog.onDidChange, (sourceId) =>
+          sourceId === 'workspace' && stack.catalog.get('watched-agent') !== undefined,
+        ));
+        await stack.workspaceLoader.reload();
         await writeAgent(
           join(fixture.workDir, '.kimi-code', 'agents'),
           'watched-agent.md',
           agentMd('watched-agent', 'from watch'),
         );
 
-        await expect(Promise.race([refreshed, timedOut])).resolves.toBe('workspace');
+        await refreshed;
         expect(stack.catalog.get('watched-agent')?.description).toBe('from watch');
       });
     });

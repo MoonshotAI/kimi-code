@@ -28,6 +28,7 @@ import {
 import { McpManagementService } from '#/app/mcpManagement/mcpManagementService';
 import { IMcpRegistryService } from '#/app/mcpRegistry/mcpRegistry';
 import { McpRegistryService } from '#/app/mcpRegistry/mcpRegistryService';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginMcpServerEntry } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
@@ -145,6 +146,7 @@ describe('McpManagementService', () => {
           list: async () => [],
         });
         reg.defineInstance(ITelemetryService, noopTelemetryService);
+        reg.definePartialInstance(IWorkspaceService, { implicitDirectories: async (cwd) => [cwd] });
         reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
         reg.define(IMcpRegistryService, McpRegistryService);
         reg.defineInstance(IMcpOAuthService, oauth);

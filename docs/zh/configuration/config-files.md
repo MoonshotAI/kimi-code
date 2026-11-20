@@ -541,7 +541,7 @@ api_key = "sk-xxx"
 
 如果用户 `config.toml` 无法读取、TOML 解析失败或配置节校验失败，会话会使用默认值或最后一份有效的校验后配置继续运行，error 和 warning 诊断仍会显示在配置诊断及非交互输出中。文件无法读取或解析期间，配置写回仍会被阻止。
 
-项目规则仅在本地环境且 workspace 已信任时从 `.kimi-code/local.toml` 读取，省略 `scope` 时默认为 `project`。远程环境不支持项目规则。项目规则修改后需要新建会话生效，不会热重载。
+项目规则仅在本地环境且 workspace 已信任时从 `.kimi-code/local.toml` 读取，省略 `scope` 时默认为 `project`。远程环境不支持项目规则。开启文件监听后，修改规则会在当前运行的工作目录里生效。
 
 也可以在 `[permission]` 下设置 `dangerous_command_guard = false` 完全关闭所有内置 guard 确认策略：危险命令、敏感文件（如 `.env`、`id_rsa`）访问、git 控制路径访问在 "Always Ask" 和 "Ask When Needed" 模式下不再触发审批（"Never Ask" 模式本就不启用这些策略），默认 `true`。环境变量 `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` 会覆盖文件设置。全部内置 guard 关闭后，"Ask When Needed" 模式下只有你自己配置的 `ask` 规则仍会要求确认；"Always Ask" 模式下未被自动放行的工具照旧逐个询问。`Read`/`Write`/`Edit` 对秘密文件的硬阻断保持不变。此开关只适用于已经在 Agent 之外统一命令限权的环境。
 
@@ -709,9 +709,11 @@ thinking = "grouped" # "grouped" | "ungrouped"
 
 ## 项目级本地配置
 
-除了 `~/.kimi-code` 下的用户级文件，Kimi Code 还会读取位于 `<项目根目录>/.kimi-code/local.toml` 的项目级本地配置文件。它保存的是与某一个项目检出相关、通常不应与队友共享的设置。
+会话从当前 Git 检出根目录读取 `.kimi-code/local.toml`，非 Git 目录则从当前工作目录读取。每个 worktree 都可以有自己的文件，其中的相对目录以该根目录为基准解析。
 
-早期版本的 [`/add-dir`](../reference/slash-commands.md) 会把「记住此目录」写入这个文件；现版本改为记入 `~/.kimi-code/projects.json` 中的工作区注册表，`local.toml` 随之成为只读的存量兼容字段，任何组件都不会再写入它。隐式工作区（终端按目录进入）的会话仍把其中的 `additional_dir` 并入额外目录；显式创建（managed）工作区的会话不再读取它。要把旧配置搬进注册表，可在客户端的新建/编辑工作区弹窗中使用导入功能（底层为本地服务的 `GET /api/v1/workspaces/project-config-dirs`），导入后即由注册表管理，删除即时生效。
+在 CLI 创建的隐式项目中，`[workspace].additional_dir` 只对当前检出的会话生效。通过 [`/add-dir`](../reference/slash-commands.md) 记住的目录写入 `~/.kimi-code/projects.json`，项目里的各个工作目录都能使用。临时添加的目录只在当前工作目录的运行期间生效。对于手动创建的项目，可以在桌面的项目设置中显式导入文件里的目录，导入后由项目管理。
+
+同一路径也可以有一个桌面手动项目。从该目录启动 CLI 时，会话使用隐式项目登记的目录。恢复手动项目的会话时，使用该手动项目登记的目录。
 
 ### `[workspace]`
 
@@ -719,14 +721,14 @@ thinking = "grouped" # "grouped" | "ungrouped"
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `additional_dir` | `array<string>` | 否 | 额外工作目录列表（绝对路径，存量兼容字段）；由旧版本 `/add-dir` 写入，现版本任何组件均不写入；隐式工作区的会话仍并入生效，显式（managed）工作区不读取 |
+| `additional_dir` | `array<string>` | 否 | 当前检出的附加目录。支持绝对路径和相对于检出根目录的路径。 |
 
 ```toml
 [workspace]
 additional_dir = ["/absolute/path/to/shared"]
 ```
 
-目录以绝对路径存储，与具体机器相关。因此建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
+如果文件里包含当前机器专用的路径，建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
 
 除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
 

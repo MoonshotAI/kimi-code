@@ -3,7 +3,7 @@ import { Emitter } from '#/_base/event';
 import { IConfigService } from '#/app/config/config';
 import { defineState } from '#/state/state';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
-import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 import { workspaceTrustRequired } from './configSection';
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
@@ -29,38 +29,43 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   readonly onDidChange = this.changeEmitter.event;
 
   constructor(
-    @IWorkspaceDirs private readonly dirs: IWorkspaceDirs,
+    @IWorkspaceContext private readonly context: IWorkspaceContext,
     @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
     @IConfigService private readonly config: IConfigService,
   ) {
     super();
     this.states.contributeState(workspaceTrustTrustedKey);
-    this.inner = this.bindTrust();
+    this.inner = this.projectTrust();
+    this.subscribe(this.inner);
     this._register({ dispose: () => this.innerSubscription?.dispose() });
-    this._register(this.dirs.onDidChange(() => this.rebindTrust()));
+    if (this.context.onDidChangeProject !== undefined) {
+      this._register(this.context.onDidChangeProject(() => this.rebindTrust()));
+    }
   }
 
-  private bindTrust(onDidChange?: () => void): IWorkspaceTrustEntry {
+  private projectTrust(): IWorkspaceTrustEntry {
+    const project = this.context.meta;
+    return this.trustStore.forRoots([project.root, ...(project.additionalDirs ?? [])]);
+  }
+
+  private subscribe(inner: IWorkspaceTrustEntry): void {
     this.innerSubscription?.dispose();
-    const inner = this.trustStore.forRoots([this.dirs.primary, ...this.dirs.additionalDirs]);
     this.innerSubscription = inner.onDidChange((change) => {
-      onDidChange?.();
       this.trusted = change.trusted;
       this.changeEmitter.fire(change);
     });
-    return inner;
   }
 
   private rebindTrust(): void {
-    const previous = this.trusted;
-    let notified = false;
-    this.inner = this.bindTrust(() => {
-      notified = true;
-    });
+    const next = this.projectTrust();
+    if (this.inner === next) return;
+    this.inner = next;
+    this.subscribe(next);
     this.initialization = undefined;
+    const previous = this.trusted;
     void this.ready.then(() => {
-      if (!notified && previous !== this.trusted) this.changeEmitter.fire({ trusted: this.trusted });
+      if (this.inner === next && previous !== this.trusted) this.changeEmitter.fire({ trusted: this.trusted });
     }).catch(() => {});
   }
 
@@ -90,7 +95,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     await this.config.ready;
     if (!workspaceTrustRequired(this.config)) return true;
     await this.ready;
-    return this.inner.get();
+    return this.inner.refresh();
   }
 
   trust(): Promise<void> {
@@ -102,7 +107,8 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   }
 
   private async initialize(): Promise<void> {
-    await this.inner.ready;
-    this.trusted = this.inner.isPersistedTrusted();
+    const inner = this.inner;
+    await inner.ready;
+    if (this.inner === inner) this.trusted = inner.isPersistedTrusted();
   }
 }

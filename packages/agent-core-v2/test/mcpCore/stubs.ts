@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
@@ -21,27 +23,14 @@ import type {
   ToolExecution,
 } from '#/tool/toolContract';
 
-export const fixturesDir = new URL('./fixtures/', import.meta.url).pathname;
-export const stdioFixture = new URL('./fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
-export const cwdStdioFixture = new URL('./fixtures/cwd-stdio-server.mjs', import.meta.url).pathname;
-export const slowStdioFixture = new URL('./fixtures/slow-stdio-server.mjs', import.meta.url)
-  .pathname;
-export const slowToolStdioFixture = new URL(
-  './fixtures/slow-tool-stdio-server.mjs',
-  import.meta.url,
-).pathname;
-export const hangingListStdioFixture = new URL(
-  './fixtures/hanging-list-stdio-server.mjs',
-  import.meta.url,
-).pathname;
-export const crashAfterConnectFixture = new URL(
-  './fixtures/crash-after-connect-stdio-server.mjs',
-  import.meta.url,
-).pathname;
-export const stderrThenExitFixture = new URL(
-  './fixtures/stderr-then-exit-stdio-server.mjs',
-  import.meta.url,
-).pathname;
+export const fixturesDir = fileURLToPath(new URL('./fixtures/', import.meta.url));
+export const stdioFixture = join(fixturesDir, 'mock-stdio-server.mjs');
+export const cwdStdioFixture = join(fixturesDir, 'cwd-stdio-server.mjs');
+export const slowStdioFixture = join(fixturesDir, 'slow-stdio-server.mjs');
+export const slowToolStdioFixture = join(fixturesDir, 'slow-tool-stdio-server.mjs');
+export const hangingListStdioFixture = join(fixturesDir, 'hanging-list-stdio-server.mjs');
+export const crashAfterConnectFixture = join(fixturesDir, 'crash-after-connect-stdio-server.mjs');
+export const stderrThenExitFixture = join(fixturesDir, 'stderr-then-exit-stdio-server.mjs');
 
 export function createMemoryMcpOAuthStore(): McpOAuthStore {
   const data = new Map<string, unknown>();

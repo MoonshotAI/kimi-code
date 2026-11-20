@@ -542,7 +542,7 @@ User rules are loaded from the user `config.toml` at session startup. For compat
 
 If the user `config.toml` cannot be read, parsed, or validated, sessions continue with default or last-known-good validated values, and error or warning diagnostics remain visible in config diagnostics and non-interactive outputs. Config writes remain blocked while the file cannot be read or parsed.
 
-Project rules are read from `.kimi-code/local.toml` only in the local environment when the workspace is trusted, with an omitted `scope` defaulting to `project`. Remote project rules are not supported. Project rule changes take effect in a new session and are not hot-reloaded.
+Project rules are read from `.kimi-code/local.toml` only in the local environment when the workspace is trusted, with an omitted `scope` defaulting to `project`. Remote project rules are not supported. With file watching enabled, changes to the rules are picked up in the running workdir.
 
 You can also set `dangerous_command_guard = false` under `[permission]` to turn off every built-in guard confirmation policy entirely: dangerous commands, access to sensitive files such as `.env` or `id_rsa`, and access to git control paths no longer ask for confirmation in Always Ask and Ask When Needed mode (these policies are never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting. With all built-in guards off, only `ask` rules you configured yourself can still prompt in Ask When Needed mode; in Always Ask mode, tools that are not auto-approved continue to prompt as before. The hard block that stops `Read`/`Write`/`Edit` from touching secret files stays in effect. Use this switch only for environments that already gate commands outside the agent.
 
@@ -710,9 +710,11 @@ Changes apply on the next start, or immediately with `/reload-tui` (which reload
 
 ## Project-local configuration
 
-In addition to the user-level files under `~/.kimi-code`, Kimi Code reads a project-local configuration file at `<project-root>/.kimi-code/local.toml`. It holds settings that are specific to one project checkout and typically should not be shared with teammates.
+A session reads `.kimi-code/local.toml` from its Git checkout root, or from its working directory outside Git. Each worktree can have its own file. Relative directory paths in the file resolve against that root.
 
-Earlier versions of [`/add-dir`](../reference/slash-commands.md) wrote remembered directories to this file; current versions write them to the workspace registry in `~/.kimi-code/projects.json` instead, and `local.toml` is now a read-only legacy field that nothing writes to. Sessions of implicit workspaces (entered by directory in the terminal) still merge its `additional_dir` into the additional directories; sessions of explicitly created (managed) workspaces no longer read it. To move legacy entries into the registry, use the import action in the client's create/edit workspace dialog (backed by the local server's `GET /api/v1/workspaces/project-config-dirs`); imported entries are registry-managed and removals take effect immediately.
+In a CLI-created project, `[workspace].additional_dir` adds directories to sessions in that checkout. Directories remembered with [`/add-dir`](../reference/slash-commands.md) are stored in `~/.kimi-code/projects.json` and shared across the project. A temporary addition applies only to the running workdir. For a manually created project, use the import action in the desktop project dialog to copy directories from the file into the project registry.
+
+A desktop project can use the same path as an implicit project. Starting the CLI there loads directories registered to the implicit project. Resuming a session in the desktop project loads that project’s directories.
 
 ### `[workspace]`
 
@@ -720,14 +722,14 @@ The `[workspace]` table groups project-level workspace settings:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `additional_dir` | `array<string>` | No | Additional workspace directories (absolute paths, legacy compatibility field); written by older versions of `/add-dir` and never written by current versions; still merged for implicit-workspace sessions and ignored by managed workspaces |
+| `additional_dir` | `array<string>` | No | Additional directories for this checkout. Supports absolute paths and paths relative to the checkout root. |
 
 ```toml
 [workspace]
 additional_dir = ["/absolute/path/to/shared"]
 ```
 
-Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
+If the file contains machine-specific paths, add `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
 
 Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 

@@ -56,6 +56,8 @@ function manager(
     }),
     touch: vi.fn(async (id: string) => byId.get(id)),
     update: async () => undefined,
+    addDirectory: async () => undefined,
+    implicitDirectories: async (cwd) => [cwd],
     setPrimary: async () => undefined,
     readProjectConfigDirs: async () => [],
     delete: async () => {},
@@ -67,10 +69,10 @@ function manager(
     { ready },
     ...Array.from({ length: 27 }, () => undefined),
   ];
-  args[19] = { entries: () => [] };
-  args[29] = environments;
-  args[30] = { onDidChange: () => ({ dispose: () => {} }) };
-  args[31] = { assertAllowed: () => {} };
+  args[18] = { entries: () => [] };
+  args[28] = environments;
+  args[29] = { onDidChange: () => ({ dispose: () => {} }) };
+  args[30] = { assertAllowed: () => {} };
   customize?.(args);
   return Reflect.construct(WorkspaceInstanceManager, args) as WorkspaceInstanceManager;
 }
@@ -92,6 +94,17 @@ describe('WorkspaceInstanceManager', () => {
     await vi.waitFor(() => {
       expect(value.get('one')).toBeUndefined();
     });
+    await value.dispose();
+  });
+
+  it('resolves an explicit directory fallback independently of ID-only requests', async () => {
+    const value = manager([workspace('one')]);
+    const [lease] = await Promise.all([
+      value.acquire({ workspaceId: 'missing', root: '/one' }),
+      expect(value.acquire({ workspaceId: 'missing' })).rejects.toThrow('workspace missing does not exist'),
+    ]);
+    expect(lease.instance.id).toBe('one');
+    lease.dispose();
     await value.dispose();
   });
 
