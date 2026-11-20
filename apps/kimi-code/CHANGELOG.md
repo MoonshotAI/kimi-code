@@ -1,5 +1,17 @@
 # @moonshot-ai/kimi-code
 
+## 2.7.1
+
+### Patch Changes
+
+- [#5170](https://github.com/MoonshotAI/kimi-code/pull/5170) [`c2bec3f`](https://github.com/MoonshotAI/kimi-code/commit/c2bec3fb8e42aca9a7f7b3b80eff9dc1230d332c) Thanks [@liruifengv](https://github.com/liruifengv)! - Web: Fix draft thinking effort selections reverting to the model default after sending.
+
+- [#5165](https://github.com/MoonshotAI/kimi-code/pull/5165) [`170c729`](https://github.com/MoonshotAI/kimi-code/commit/170c729e5e83472eea276458cf7a6c65489b57a3) Thanks [@sailist](https://github.com/sailist)! - Fix turn-specific fork failures after restoring sessions with in-turn steering.
+
+- [#5173](https://github.com/MoonshotAI/kimi-code/pull/5173) [`7b20daf`](https://github.com/MoonshotAI/kimi-code/commit/7b20daf7ce8c734ad6150c5f56a9c107e0ecb44f) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Web: Fix the input composer disappearing when accessed over insecure HTTP.
+
+- [#5166](https://github.com/MoonshotAI/kimi-code/pull/5166) [`f0ea8ac`](https://github.com/MoonshotAI/kimi-code/commit/f0ea8ac1c02a3b37586d24c77c518c730a9afb2c) Thanks [@sailist](https://github.com/sailist)! - Keep queued prompts pending until background notification turns finish.
+
 ## 2.7.0
 
 ### Minor Changes
