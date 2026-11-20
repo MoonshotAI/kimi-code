@@ -35,6 +35,7 @@ interface PredictionSuggestion extends ActivePrediction {
 
 export function createPromptPrediction(host: {
   api: () => PredictionApi;
+  isActiveSession: (sessionId: string) => boolean;
   canPredict: (sessionId: string) => boolean;
   hasEmptyInput: (sessionId: string) => boolean;
 }) {
@@ -80,6 +81,7 @@ export function createPromptPrediction(host: {
   }
 
   function handleTurnStarted(sessionId: string): void {
+    if (!host.isActiveSession(sessionId)) return;
     latestTurn.value = undefined;
     dismissForSession('new_turn', sessionId);
   }
@@ -123,6 +125,7 @@ export function createPromptPrediction(host: {
   }
 
   function handleTurnEnded(sessionId: string, sourceId: string, turnId: number, completed: boolean): void {
+    if (!host.isActiveSession(sessionId)) return;
     latestTurn.value = undefined;
     dismissForSession('new_turn', sessionId);
     if (!completed) return;

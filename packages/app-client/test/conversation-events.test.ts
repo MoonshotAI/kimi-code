@@ -445,6 +445,7 @@ describe('conversation events in the client', () => {
         predictNextPrompt: directPredict,
         cancelPromptPrediction: directCancel,
       }),
+      isActiveSession: (sessionId) => sessionId === activeSession,
       canPredict: (sessionId) => sessionId === activeSession,
       hasEmptyInput: () => emptyInput,
     });
@@ -457,6 +458,10 @@ describe('conversation events in the client', () => {
     resolveFirstSession('first result');
     await Promise.resolve();
     await Promise.resolve();
+    directController.handleTurnStarted('s2');
+    directController.handleTurnEnded('s2', 'background', 99, true);
+    expect(directController.suggestion.value).toMatchObject({ text: 'first result' });
+    expect(directPredict).toHaveBeenCalledTimes(1);
     emptyInput = false;
     directController.handleInput();
     expect(directController.suggestion.value).toMatchObject({ text: 'first result', parked: true });
@@ -487,9 +492,9 @@ describe('conversation events in the client', () => {
     expect(directPredict).toHaveBeenCalledTimes(2);
     directController.dismiss('submit', 's1');
 
-    directController.handleTurnEnded('s2', 'second', 0, true);
     directController.dismiss('session', 's1');
     activeSession = 's2';
+    directController.handleTurnEnded('s2', 'second', 0, true);
     directController.refresh();
     await vi.waitFor(() => expect(directPredict).toHaveBeenCalledTimes(3));
     expect(directPredict).toHaveBeenNthCalledWith(3, 's2', {
