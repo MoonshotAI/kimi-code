@@ -72,7 +72,6 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
     this.watchReady = handle.ready;
     this._register(
       handle.onDidChange(() => {
-        this.catalogCache = undefined;
         this.watchDebounce.cancelAndSet(() => {
           this.changeEmitter.fire();
         }, WATCH_DEBOUNCE_MS);

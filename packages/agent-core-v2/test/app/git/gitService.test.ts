@@ -250,6 +250,29 @@ describe('GitService', () => {
       expect(await discoverRepository(plain)).toBeNull();
     });
 
+    it('opens ordinary directories with HEAD and only one of the Git storage directories', async () => {
+      for (const name of ['objects', 'refs']) {
+        const child = join(repo, name);
+        const plain = outside();
+        mkdirSync(child);
+        for (const folder of [child, plain]) {
+          writeFileSync(join(folder, 'HEAD'), 'ref: refs/heads/main\n');
+          mkdirSync(join(folder, name));
+        }
+        expect(await discoverRepository(child)).toMatchObject({ checkoutRoot: realpathSync.native(repo) });
+        expect(await discoverRepository(plain)).toBeNull();
+      }
+    });
+
+    it('reports a damaged bare repository inside a checkout', async () => {
+      for (const missing of ['refs', 'objects']) {
+        const bare = join(repo, 'bare-without-' + missing);
+        git(repo, 'init', '--bare', bare);
+        rmSync(join(bare, missing), { recursive: true });
+        await expect(discoverRepository(bare)).rejects.toMatchObject({ code: ErrorCodes.FS_GIT_UNAVAILABLE });
+      }
+    });
+
     it('reports broken markers even in a parent repository', async () => {
       const nested = join(repo, 'nested');
       mkdirSync(nested);

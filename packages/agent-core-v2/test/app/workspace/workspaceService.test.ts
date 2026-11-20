@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import * as watchService from '#human/utils/watch';
+import { Emitter } from '#/_base/event';
 
 import { normalize } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -301,6 +303,19 @@ describe('WorkspaceService (file-backed)', () => {
     await fsp.writeFile(join(remote, 'state.json'), JSON.stringify({ cwd: '/host', environmentId: 'ssh', environmentCwd: child }));
     expect(await build().list()).toMatchObject([{ id, root: main }]);
     expect((await readRegistry()).workspaces).toHaveProperty(id);
+  });
+
+  it('uses an old session record to recover only the project with a matching directory hash', async () => {
+    const root = await fsp.realpath(homeDir);
+    const good = encodeWorkDirKey(root);
+    for (const id of [good, encodeWorkDirKey('relative')]) {
+      const session = join(homeDir, 'sessions', id, 'source');
+      const agent = join(session, 'agents', 'main');
+      await fsp.mkdir(agent, { recursive: true });
+      await fsp.writeFile(join(session, 'state.json'), JSON.stringify({ cwd: 'relative' }));
+      await fsp.writeFile(join(agent, 'wire.jsonl'), JSON.stringify({ type: 'profile.bind', agentId: 'main', environmentDisclosure: { cwd: root } }) + '\n');
+    }
+    expect(await build().list()).toMatchObject([{ id: good, root }]);
   });
 
   it('resolves trust directories without opening or creating a project', async () => {
@@ -1375,6 +1390,23 @@ describe('projects.json migration and patch', () => {
       expect((await persistence.load())?.deletedIds).toEqual(['wd_removed']);
     } finally {
       persistence.dispose();
+    }
+  });
+
+  it('retains the cached catalog when a delayed directory notification follows a read', async () => {
+    const signal = new Emitter<watchService.WatchChange>();
+    const observe = vi.spyOn(watchService, 'watch').mockReturnValue({
+      ready: Promise.resolve(), onDidChange: signal.event, dispose: () => signal.dispose(),
+    });
+    await writeProjects({ schema_version: 2, projects: {}, deleted_project_ids: [] });
+    const persistence = createPersistence();
+    try {
+      const current = await persistence.load();
+      signal.fire({ action: 'modified', kind: 'directory', path: homeDir });
+      expect(await persistence.load()).toBe(current);
+    } finally {
+      persistence.dispose();
+      observe.mockRestore();
     }
   });
 

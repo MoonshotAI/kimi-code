@@ -5,6 +5,7 @@ import { encodeWorkDirKey, isWorkDirKey } from '#/_base/utils/workdir-slug';
 import { discoverRepository } from '#/app/git/repository';
 import { listSessionIds, listWorkspaceIds, readSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -17,6 +18,7 @@ export async function recoverImplicitProjects(
   catalog: WorkspaceCatalog,
   storage: IFileSystemStorageService,
   docs: IAtomicDocumentStore,
+  logs: IAppendLogStore,
   log: ILogger,
 ): Promise<readonly Project[]> {
   const known = new Set([...catalog.workspaces.map((project) => project.id), ...catalog.deletedIds]);
@@ -63,7 +65,7 @@ export async function recoverImplicitProjects(
     if (!unresolved(id)) continue;
     const tried = hints.get(id) ?? new Set<string>();
     for (const sessionId of await listSessionIds(storage, 'sessions', id)) {
-      const session = await readSessionSummary(docs, 'sessions', id, sessionId);
+      const session = await readSessionSummary(docs, 'sessions', id, sessionId, undefined, logs);
       if (session === undefined) continue;
       const local = session.environmentId === undefined || session.environmentId === LOCAL_ENVIRONMENT_ID;
       const cwd = local ? session.environmentCwd ?? session.cwd : session.cwd;

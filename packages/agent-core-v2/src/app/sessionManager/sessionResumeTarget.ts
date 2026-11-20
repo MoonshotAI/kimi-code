@@ -1,5 +1,7 @@
 import type { ServicesAccessor } from '#/_base/di/instantiation';
+import { IProjectService } from '#/app/project/project';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import { isAbsoluteLocalCwd } from '#/app/sessionIndex/legacySessionWorkdir';
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
@@ -43,9 +45,14 @@ export async function resolveSessionResumeTarget(
   }
   const environmentId = summary.environmentId ?? LOCAL_ENVIRONMENT_ID;
   const environmentCwd = summary.environmentCwd ?? (environmentId === LOCAL_ENVIRONMENT_ID ? summary.cwd : undefined);
-  const workDir = environmentId === LOCAL_ENVIRONMENT_ID ? environmentCwd : summary.cwd;
+  const workDir = environmentId === LOCAL_ENVIRONMENT_ID
+    ? environmentCwd
+    : summary.cwd ?? (await services.get(IProjectService).get(summary.workspaceId))?.root;
   if (workDir === undefined || environmentCwd === undefined) {
     throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `Session "${summary.id}" has no recorded working directory.`);
+  }
+  if (!isAbsoluteLocalCwd(workDir)) {
+    throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `Session "${summary.id}" has no recorded absolute host working directory: ${workDir}`);
   }
   return { id: summary.id, projectId: summary.workspaceId, workDir, environmentId, environmentCwd };
 }

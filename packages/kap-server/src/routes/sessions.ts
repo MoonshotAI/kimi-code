@@ -42,6 +42,7 @@ import {
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import type { ServerResponse } from 'node:http';
+import { isAbsolute, resolve } from 'node:path';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
 import {
@@ -202,9 +203,10 @@ export function registerSessionsRoutes(
       const callerCwd = topCwd ?? metaCwd;
       const cwdPath = topCwd !== undefined ? 'cwd' : 'metadata.cwd';
       const workspaceId = body.workspace_id;
+      const hostCwd = callerCwd !== undefined && !isAbsolute(callerCwd) ? resolve(callerCwd) : callerCwd;
       const placement = workspaceId !== undefined
-        ? { workspaceId, workDir: callerCwd }
-        : callerCwd !== undefined ? { workDir: callerCwd } : undefined;
+        ? { workspaceId, workDir: hostCwd }
+        : hostCwd !== undefined ? { workDir: hostCwd } : undefined;
       if (placement === undefined) {
         reply.send(
           buildValidationEnvelope(
@@ -228,7 +230,7 @@ export function registerSessionsRoutes(
           );
           return;
         }
-        if (callerCwd !== workspace.root) {
+        if (callerCwd !== workspace.root && hostCwd !== workspace.root) {
           reply.send(
             buildValidationEnvelope(
               [

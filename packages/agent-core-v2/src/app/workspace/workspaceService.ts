@@ -305,7 +305,7 @@ export class ProjectService implements IProjectService {
   private async ensureMerged(): Promise<void> {
     if (this.merged) return;
     const catalog = await this.loadCatalog();
-    const recovered = await recoverImplicitProjects(catalog, this.storage, this.docs, this.log);
+    const recovered = await recoverImplicitProjects(catalog, this.storage, this.docs, this.appendLogs, this.log);
     if (recovered.length > 0) {
       await this.store.update((latest) => {
         const occupied = new Set([...latest.workspaces.map((ws) => ws.id), ...latest.deletedIds]);

@@ -1,8 +1,10 @@
 import { readSessionIndexEntries, sessionIndexBucket, SESSION_INDEX_KEY, SESSION_INDEX_SCOPE } from '#/app/workspace/workspaceAlias';
 import { Error2, ErrorCodes } from '#/errors';
+import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { hasRelativeLocalWorkdir, readLegacyLocalWorkdir } from './legacySessionWorkdir';
 
 import { CHILD_SESSION_KIND, CHILD_SESSION_KIND_KEY, type SessionSummary } from './sessionIndex';
 import { SESSION_INDEX_DIRTY_DIR } from './sessionIndexDirtyJournal';
@@ -13,7 +15,7 @@ const META_KEY = 'state.json';
 export const SESSION_INDEX_SCAN_CACHE_DIR = '.index-cache';
 
 const SCAN_CACHE_KEY = 'scan.json';
-const SCAN_CACHE_VERSION = 3;
+const SCAN_CACHE_VERSION = 4;
 
 export interface SessionScanCacheEntry {
   readonly ws: string;
@@ -274,6 +276,7 @@ export async function readSessionSummary(
   workspaceId: string,
   sessionId: string,
   loggedCwd?: string,
+  logs?: IAppendLogStore,
 ): Promise<SessionSummary | undefined> {
   const base = `${sessionsScope}/${workspaceId}/${sessionId}`;
   const meta = (await readMeta(docs, base)) ?? (await readMeta(docs, `${base}/${META_SCOPE}`));
@@ -283,12 +286,18 @@ export async function readSessionSummary(
     rawCustom !== null && typeof rawCustom === 'object' && !Array.isArray(rawCustom)
       ? (rawCustom as Record<string, unknown>)
       : undefined;
+  const cwd = recoverCwd(meta) ?? loggedCwd;
+  const environmentId = typeof meta['environmentId'] === 'string' ? meta['environmentId'] : undefined;
+  const environmentCwd = typeof meta['environmentCwd'] === 'string' ? meta['environmentCwd'] : undefined;
+  const recovered = logs !== undefined && hasRelativeLocalWorkdir(environmentId, environmentCwd ?? cwd)
+    ? await readLegacyLocalWorkdir(logs, base).catch(() => undefined)
+    : undefined;
   return buildSessionSummary({
     id: sessionId,
     workspaceId,
-    cwd: recoverCwd(meta) ?? loggedCwd,
-    environmentId: typeof meta['environmentId'] === 'string' ? meta['environmentId'] : undefined,
-    environmentCwd: typeof meta['environmentCwd'] === 'string' ? meta['environmentCwd'] : undefined,
+    cwd: recovered ?? cwd,
+    environmentId,
+    environmentCwd: recovered ?? environmentCwd,
     title: typeof meta['title'] === 'string' ? meta['title'] : undefined,
     lastPrompt: typeof meta['lastPrompt'] === 'string' ? meta['lastPrompt'] : undefined,
     createdAt: parseTime(meta['createdAt']),

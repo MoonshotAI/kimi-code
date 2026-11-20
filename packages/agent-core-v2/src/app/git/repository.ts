@@ -26,7 +26,7 @@ interface RepositoryPaths {
 }
 
 type GitPathOption = '--git-dir' | '--git-common-dir' | '--show-toplevel';
-type RepositoryConfigKey = 'extensions.worktreeConfig' | 'core.worktree';
+type RepositoryConfigKey = 'extensions.worktreeConfig' | 'core.worktree' | 'core.bare';
 type DiscoveryArgument = GitPathOption | RepositoryConfigKey | 'rev-parse' | '--git-dir=.' | '--is-bare-repository'
   | 'config' | 'config.worktree' | '--file' | '--includes' | '--bool' | '--path' | '--get';
 type RunGit = (cwd: string, ...args: DiscoveryArgument[]) => Promise<string>;
@@ -79,6 +79,23 @@ async function discoveryCeilings(): Promise<Set<string>> {
   return ceilings;
 }
 
+async function hasBareMarker(root: string): Promise<boolean> {
+  if (!await hasMarker(join(root, 'HEAD'), 'file')) return false;
+  const [objects, refs] = await Promise.all([
+    hasMarker(join(root, 'objects'), 'directory'),
+    hasMarker(join(root, 'refs'), 'directory'),
+  ]);
+  if (objects && refs) return true;
+  if ((!objects && !refs) || !await hasMarker(join(root, 'config'), 'file')) return false;
+  try {
+    const head = (await readFile(join(root, 'HEAD'), 'utf8')).trim();
+    if (!/^ref: refs\/|^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(head)) return false;
+    return (await repositoryConfig(localGit(root), root, 'config', '--bool', 'core.bare')) === 'true';
+  } catch (cause) {
+    throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `Cannot inspect repository configuration at ${root}`, { cause });
+  }
+}
+
 async function findMarker(cwd: string) {
   const ceilings = await discoveryCeilings();
   const across = process.env['GIT_DISCOVERY_ACROSS_FILESYSTEM'] ?? '';
@@ -96,12 +113,7 @@ async function findMarker(cwd: string) {
       device = current;
     }
     if (await hasMarker(join(root, '.git'))) return { root, checkout: true };
-    if (
-      await hasMarker(join(root, 'HEAD'), 'file') &&
-      (await hasMarker(join(root, 'objects'), 'directory') || await hasMarker(join(root, 'refs'), 'directory'))
-    ) {
-      return { root, checkout: false };
-    }
+    if (await hasBareMarker(root)) return { root, checkout: false };
     const parent = dirname(root);
     if (root === parent || ceilings.has(physicalCeilingKey(parent))) return undefined;
   }
@@ -178,10 +190,8 @@ async function defaultDirectory(
     if (configured === undefined) return { kind: 'unknown' };
     main = await realpath(resolve(store, configured));
   }
-  const [mainControl, mainRoot] = await Promise.all([
-    gitPath(git, main, '--git-dir'),
-    gitPath(git, main, '--show-toplevel'),
-  ]);
+  const mainControl = await gitPath(git, main, '--git-dir');
+  const mainRoot = await gitPath(git, main, '--show-toplevel');
   if (!samePath(mainControl, store) || !samePath(mainRoot, main)) {
     throw new Error(`Git main checkout at ${main} does not belong to ${store}`);
   }
@@ -201,11 +211,9 @@ export async function discoverRepository(cwd: string): Promise<DiscoveredReposit
   if (marker === undefined) return null;
   try {
     const git = localGit(marker.root);
-    const [control, store, checkoutRoot] = await Promise.all([
-      gitPath(git, location, '--git-dir'),
-      gitPath(git, location, '--git-common-dir'),
-      marker.checkout ? gitPath(git, location, '--show-toplevel') : null,
-    ]);
+    const control = await gitPath(git, location, '--git-dir');
+    const store = await gitPath(git, location, '--git-common-dir');
+    const checkoutRoot = marker.checkout ? await gitPath(git, location, '--show-toplevel') : null;
     if (!samePath(checkoutRoot ?? control, marker.root)) {
       throw new Error(`Git does not recognize the repository marker at ${marker.root}`);
     }
