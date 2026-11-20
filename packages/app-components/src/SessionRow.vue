@@ -622,7 +622,7 @@ function openPullRequest(): void {
          escapes the `overflow: hidden` on the collapsing `.group-sessions` list. -->
     <Teleport to="body">
       <Transition name="menu-pop">
-        <Menu ref="menuRef" v-if="menuOpen" class="menu" :style="menuStyle" @click.stop>
+        <Menu ref="menuRef" v-if="menuOpen" class="menu anchored-menu" :style="menuStyle" @click.stop>
         <MenuItem @click="openPickerFromMenu">
           <Icon name="emoji" size="sm" />
           {{ t('sidebar.setEmoji') }}
@@ -686,7 +686,7 @@ function openPullRequest(): void {
         <SessionEmojiPicker
           v-if="pickerOpen"
           ref="pickerRef"
-          class="picker"
+          class="picker anchored-menu"
           :style="pickerStyle"
           :current="emojiSplit.emoji"
           :removable="emojiSplit.rest.length > 0"
@@ -958,35 +958,6 @@ function openPullRequest(): void {
     visibility 0s linear var(--duration-fast);
 }
 
-.menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.picker {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
-
 .rename-wrap {
   position: relative;
   display: flex;
@@ -1067,3 +1038,5 @@ function openPullRequest(): void {
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
 </style>
+
+<style src="./lib/anchored-menu.css"></style>

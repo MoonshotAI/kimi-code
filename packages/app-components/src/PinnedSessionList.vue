@@ -29,6 +29,7 @@ import {
 import { useAppearance } from '@moonshot-ai/app-core';
 import { useResizable, useOverlayScrollbar } from '@moonshot-ai/app-client/composables';
 import SessionRow from './SessionRow.vue';
+import SidebarSectionHeader from './sidebar/SidebarSectionHeader.vue';
 import { useAnchoredMenu } from './composables/useAnchoredMenu';
 import { useSessionDrag, usePinnedListDrag } from './composables/useSessionDrag';
 import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/app-ui';
@@ -549,21 +550,19 @@ const {
     @drop="onContainerDrop"
     @dragleave="onContainerDragLeave"
   >
-    <div class="pinned-label">
-      <div class="pinned-heading" @click.stop="toggleCollapsed">
-        <span class="pinned-title">{{ t('sidebar.pinned') }}</span>
-        <button
-          type="button"
-          class="pinned-toggle"
-          :class="{ 'pinned-toggle--on': collapsed }"
-          :aria-expanded="!collapsed"
-          :aria-label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
-          @click.stop="toggleCollapsed"
-        >
-          <Icon name="chevron-down" />
-        </button>
-      </div>
-      <div class="pinned-actions">
+    <SidebarSectionHeader
+      :title="t('sidebar.pinned')"
+      :collapsed="collapsed"
+      :toggle-label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
+      label-class="pinned-label"
+      heading-class="pinned-heading"
+      title-class="pinned-title"
+      toggle-class="pinned-toggle"
+      collapsed-toggle-class="pinned-toggle--on"
+      actions-class="pinned-actions"
+      @toggle="toggleCollapsed"
+    >
+      <template #actions>
         <Tooltip :text="t('sidebar.pinnedOptions')">
           <IconButton
             class="pinned-options"
@@ -577,8 +576,8 @@ const {
             <Icon name="view-switch" />
           </IconButton>
         </Tooltip>
-      </div>
-    </div>
+      </template>
+    </SidebarSectionHeader>
     <div
       class="pinned-fold"
       :class="{ collapsed }"
@@ -689,12 +688,12 @@ const {
         <Menu
           v-if="menuOpen"
           ref="menuRef"
-          class="pinned-menu"
+          class="pinned-menu anchored-menu"
           :style="menuStyle"
           @click.stop
           @contextmenu.prevent.stop
         >
-          <div class="pinned-menu-label">{{ t('sidebar.pinnedSessionsGroup') }}</div>
+          <div class="pinned-menu-label anchored-menu-label">{{ t('sidebar.pinnedSessionsGroup') }}</div>
           <MenuItem
             role="menuitemradio"
             :aria-checked="displayMode === 'compact'"
@@ -702,7 +701,7 @@ const {
           >
             <Icon name="list" size="sm" />
             {{ t('sidebar.pinnedDisplayCompact') }}
-            <span class="pinned-menu-check">
+            <span class="pinned-menu-check anchored-menu-check">
               <Icon v-if="displayMode === 'compact'" name="check" size="sm" />
             </span>
           </MenuItem>
@@ -713,7 +712,7 @@ const {
           >
             <Icon name="folder-closed" size="sm" />
             {{ t('sidebar.pinnedDisplayWorkspace') }}
-            <span class="pinned-menu-check">
+            <span class="pinned-menu-check anchored-menu-check">
               <Icon v-if="displayMode === 'workspace'" name="check" size="sm" />
             </span>
           </MenuItem>
@@ -724,80 +723,6 @@ const {
 </template>
 
 <style scoped>
-.pinned-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 var(--sb-action-inset) var(--space-1) var(--space-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-section-label);
-  text-transform: uppercase;
-  color: var(--faint);
-  user-select: none;
-}
-.pinned-heading {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  cursor: pointer;
-  transition: color var(--duration-base) var(--ease-out);
-}
-.pinned-heading:hover {
-  color: var(--dim);
-}
-.pinned-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pinned-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    color var(--duration-base) var(--ease-out);
-}
-.pinned-label:hover .pinned-toggle,
-.pinned-heading:focus-within .pinned-toggle,
-.pinned-toggle--on {
-  opacity: 1;
-}
-.pinned-toggle:hover {
-  color: var(--color-text-muted);
-}
-.pinned-toggle:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
-}
-.pinned-toggle svg {
-  width: 12px;
-  height: 12px;
-  transition: transform var(--duration-base) var(--ease-out);
-}
-.pinned-toggle--on svg {
-  transform: rotate(-90deg);
-}
-.pinned-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-}
 .pinned-options {
   color: var(--faint);
 }
@@ -811,38 +736,6 @@ const {
 .pinned-options svg {
   width: 13px;
   height: 13px;
-}
-.pinned-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.pinned-menu-label {
-  padding: var(--space-1) var(--space-2) var(--space-05);
-  font-size: var(--text-xs);
-  color: var(--faint);
-  user-select: none;
-}
-.pinned-menu-check {
-  margin-left: auto;
-  display: inline-flex;
-}
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 
 .se-locate-flash,
@@ -937,8 +830,7 @@ const {
 }
 @media (prefers-reduced-motion: reduce) {
   .pinned-fold,
-  .pinned-fold.collapsed,
-  .pinned-toggle svg {
+  .pinned-fold.collapsed {
     transition: none;
   }
 }
@@ -1027,3 +919,5 @@ const {
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 </style>
+
+<style src="./lib/anchored-menu.css"></style>

@@ -32,6 +32,7 @@ import WorkspaceGroup from '../WorkspaceGroup.vue';
 import WorkspaceMenu from './WorkspaceMenu.vue';
 import WorkspaceDirectory from './WorkspaceDirectory.vue';
 import WorkspaceHoverCard from './WorkspaceHoverCard.vue';
+import SidebarSectionHeader from './SidebarSectionHeader.vue';
 import { useWorkspaceHoverCard } from './useWorkspaceHoverCard';
 import { useWorkspaceRename } from './useWorkspaceRename';
 import {
@@ -303,6 +304,16 @@ function onDropPinnedSession(id: string): void {
 }
 
 const listMode = ref<SidebarViewMode>(loadSidebarViewMode());
+
+const sectionHeaderTitle = computed(() =>
+  props.statusTab === 'workspaces'
+    ? t('sidebar.tabWorkspaces')
+    : props.statusTab === 'done'
+      ? t('sidebar.tabDone')
+      : listMode.value === 'grouped'
+        ? t('sidebar.workspaces')
+        : t('sidebar.sessionsHeader'),
+);
 
 const sectionFoldLabel = computed(() => {
   const isProjects =
@@ -686,6 +697,30 @@ function deleteWs(ws: WorkspaceView): void {
   emit('deleteWorkspace', ws.id);
 }
 
+const openGroupListeners = {
+  onGroupClick: handleGhClick,
+  onWorkspaceHoverStart,
+  onWorkspaceHoverEnd: scheduleWorkspaceHoverClose,
+  onGroupContextmenu: openGhMenu,
+  onToggleWsMenu: toggleWsMenu,
+  onCreateInWorkspace: (id: string) => emit('createInWorkspace', id),
+  onSelectSession,
+  onRenameSession: (id: string, title: string) => void client.renameSession(id, title),
+  onGenerateSessionTitle: (id: string, done: (title: string | null) => void) => emit('generateTitle', id, done),
+  onArchiveSession: (id: string) => void client.archiveSessionWithToast(id),
+  onDeleteSession: (id: string) => void client.deleteSessionWithToast(id),
+  onForkSession: (id: string) => void client.forkSession(id),
+  onReloadSession,
+  onExportSession: (id: string) => void client.exportSessionWithToast(id),
+  onPinSession,
+  onDropPinnedSession,
+  onExpand,
+  onCollapse,
+  onConfirmRename: confirmRenameWorkspace,
+  onCancelRename: cancelRenameWorkspace,
+  onUpdateRenameValue: updateRenameValue,
+};
+
 defineExpose({
   revealPinnedSection,
   locateSession,
@@ -747,53 +782,23 @@ defineExpose({
             :flash-session-id="flashSessionId"
             :workspace-hover-enabled="workspaceHoverEnabled"
             state-tag="open"
-            @group-click="handleGhClick"
-            @workspace-hover-start="onWorkspaceHoverStart"
-            @workspace-hover-end="scheduleWorkspaceHoverClose"
-            @group-contextmenu="openGhMenu"
-            @toggle-ws-menu="toggleWsMenu"
-            @create-in-workspace="(id) => emit('createInWorkspace', id)"
-            @select-session="onSelectSession"
-            @rename-session="(id, title) => void client.renameSession(id, title)"
-            @generate-session-title="(id, done) => emit('generateTitle', id, done)"
-            @archive-session="(id) => void client.archiveSessionWithToast(id)"
-            @delete-session="(id) => void client.deleteSessionWithToast(id)"
-            @fork-session="(id) => void client.forkSession(id)"
-            @reload-session="onReloadSession"
-            @export-session="(id) => void client.exportSessionWithToast(id)"
-            @pin-session="onPinSession"
-            @drop-pinned-session="onDropPinnedSession"
-            @expand="onExpand"
-            @collapse="onCollapse"
-            @confirm-rename="confirmRenameWorkspace"
-            @cancel-rename="cancelRenameWorkspace"
-            @update-rename-value="updateRenameValue"
+            v-bind="openGroupListeners"
           />
         </template>
       </PinnedSessionList>
-      <div class="side-section-label">
-        <div class="side-section-heading" @click.stop="toggleSessionsCollapsed">
-          <span class="side-section-title">{{
-            statusTab === 'workspaces'
-              ? t('sidebar.tabWorkspaces')
-              : statusTab === 'done'
-                ? t('sidebar.tabDone')
-                : listMode === 'grouped'
-                  ? t('sidebar.workspaces')
-                  : t('sidebar.sessionsHeader')
-          }}</span>
-          <button
-            type="button"
-            class="side-section-fold"
-            :class="{ 'side-section-fold--on': sessionsCollapsed }"
-            :aria-expanded="!sessionsCollapsed"
-            :aria-label="sectionFoldLabel"
-            @click.stop="toggleSessionsCollapsed"
-          >
-            <Icon name="chevron-down" />
-          </button>
-        </div>
-        <div class="side-section-actions">
+      <SidebarSectionHeader
+        :title="sectionHeaderTitle"
+        :collapsed="sessionsCollapsed"
+        :toggle-label="sectionFoldLabel"
+        label-class="side-section-label"
+        heading-class="side-section-heading"
+        title-class="side-section-title"
+        toggle-class="side-section-fold"
+        collapsed-toggle-class="side-section-fold--on"
+        actions-class="side-section-actions"
+        @toggle="toggleSessionsCollapsed"
+      >
+        <template #actions>
           <Tooltip v-if="statusTab === 'workspaces'" :text="t('sidebar.newWorkspace')">
             <IconButton
               class="side-section-toggle"
@@ -835,8 +840,8 @@ defineExpose({
               <Icon name="view-switch" />
             </IconButton>
           </Tooltip>
-        </div>
-      </div>
+        </template>
+      </SidebarSectionHeader>
     </div>
 
     <div
@@ -936,27 +941,7 @@ defineExpose({
                 :flash-session-id="flashSessionId"
                 :workspace-hover-enabled="workspaceHoverEnabled"
                 state-tag="open"
-                @group-click="handleGhClick"
-                @workspace-hover-start="onWorkspaceHoverStart"
-                @workspace-hover-end="scheduleWorkspaceHoverClose"
-                @group-contextmenu="openGhMenu"
-                @toggle-ws-menu="toggleWsMenu"
-                @create-in-workspace="(id) => emit('createInWorkspace', id)"
-                @select-session="onSelectSession"
-                @rename-session="(id, title) => void client.renameSession(id, title)"
-                @generate-session-title="(id, done) => emit('generateTitle', id, done)"
-                @archive-session="(id) => void client.archiveSessionWithToast(id)"
-                @delete-session="(id) => void client.deleteSessionWithToast(id)"
-                @fork-session="(id) => void client.forkSession(id)"
-                @reload-session="onReloadSession"
-                @export-session="(id) => void client.exportSessionWithToast(id)"
-                @pin-session="onPinSession"
-                @drop-pinned-session="onDropPinnedSession"
-                @expand="onExpand"
-                @collapse="onCollapse"
-                @confirm-rename="confirmRenameWorkspace"
-                @cancel-rename="cancelRenameWorkspace"
-                @update-rename-value="updateRenameValue"
+                v-bind="openGroupListeners"
               />
             </div>
           </template>
@@ -1099,38 +1084,38 @@ defineExpose({
       <Menu
         v-if="viewMenuOpen"
         ref="viewMenuRef"
-        class="view-menu"
+        class="view-menu anchored-menu"
         :style="viewMenuStyle"
         @click.stop
       >
-        <div class="view-menu-label">{{ t('sidebar.viewGroup') }}</div>
+        <div class="view-menu-label anchored-menu-label">{{ t('sidebar.viewGroup') }}</div>
         <MenuItem @click="chooseListMode('flat')">
           <Icon name="list" size="sm" />
           {{ t('sidebar.viewFlat') }}
-          <span class="view-menu-check">
+          <span class="view-menu-check anchored-menu-check">
             <Icon v-if="listMode === 'flat'" name="check" size="sm" />
           </span>
         </MenuItem>
         <MenuItem @click="chooseListMode('grouped')">
           <Icon name="folder-tree" size="sm" />
           {{ t('sidebar.viewGrouped') }}
-          <span class="view-menu-check">
+          <span class="view-menu-check anchored-menu-check">
             <Icon v-if="listMode === 'grouped'" name="check" size="sm" />
           </span>
         </MenuItem>
         <template v-if="listMode === 'grouped'">
-          <div class="view-menu-label">{{ t('sidebar.sortGroup') }}</div>
+          <div class="view-menu-label anchored-menu-label">{{ t('sidebar.sortGroup') }}</div>
           <MenuItem @click="chooseSortMode('manual')">
             <Icon name="grip" size="sm" />
             {{ t('sidebar.sortManual') }}
-            <span class="view-menu-check">
+            <span class="view-menu-check anchored-menu-check">
               <Icon v-if="workspaceSortMode === 'manual'" name="check" size="sm" />
             </span>
           </MenuItem>
           <MenuItem @click="chooseSortMode('recent')">
             <Icon name="clock" size="sm" />
             {{ t('sidebar.sortRecent') }}
-            <span class="view-menu-check">
+            <span class="view-menu-check anchored-menu-check">
               <Icon v-if="workspaceSortMode === 'recent'" name="check" size="sm" />
             </span>
           </MenuItem>
@@ -1181,74 +1166,6 @@ defineExpose({
 }
 .sessions-head--scrolled::after { opacity: 1; }
 
-.side-section-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 var(--sb-action-inset) var(--space-1) var(--space-2);
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-section-label);
-  text-transform: uppercase;
-  color: var(--faint);
-  user-select: none;
-}
-.side-section-heading {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  cursor: pointer;
-  transition: color var(--duration-base) var(--ease-out);
-}
-.side-section-heading:hover {
-  color: var(--dim);
-}
-.side-section-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.side-section-fold {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    color var(--duration-base) var(--ease-out);
-}
-.side-section-label:hover .side-section-fold,
-.side-section-heading:focus-within .side-section-fold,
-.side-section-fold--on {
-  opacity: 1;
-}
-.side-section-fold:hover {
-  color: var(--color-text-muted);
-}
-.side-section-fold:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
-}
-.side-section-fold svg {
-  width: 12px;
-  height: 12px;
-  transition: transform var(--duration-base) var(--ease-out);
-}
-.side-section-fold--on svg {
-  transform: rotate(-90deg);
-}
 .sessions-head .pinned + .side-section-label {
   margin-top: var(--space-1);
 }
@@ -1261,12 +1178,6 @@ defineExpose({
 .side-section-toggle svg {
   width: 13px;
   height: 13px;
-}
-.side-section-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
 }
 
 .sessions {
@@ -1296,8 +1207,7 @@ defineExpose({
 }
 @media (prefers-reduced-motion: reduce) {
   .sessions,
-  .sessions.sessions--collapsed,
-  .side-section-fold svg {
+  .sessions.sessions--collapsed {
     transition: none;
   }
 }
@@ -1469,36 +1379,6 @@ defineExpose({
   line-height: 1.6;
 }
 
-.view-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: var(--z-dropdown);
-}
-.view-menu-label {
-  padding: var(--space-1) var(--space-2) var(--space-05);
-  font-size: var(--text-xs);
-  color: var(--faint);
-  user-select: none;
-}
-.view-menu-check {
-  margin-left: auto;
-  display: inline-flex;
-}
-.menu-pop-enter-active {
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    transform var(--duration-base) var(--ease-out);
-}
-.menu-pop-leave-active {
-  transition:
-    opacity var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  pointer-events: none;
-}
-.menu-pop-enter-from,
-.menu-pop-leave-to {
-  opacity: 0;
-  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
-}
 </style>
+
+<style src="../lib/anchored-menu.css"></style>
