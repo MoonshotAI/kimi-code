@@ -3,7 +3,7 @@ import { directoryKey } from '#/_base/utils/paths';
 import { Emitter, Event } from '#/_base/event';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID, environmentBindingId } from '#/environment/environment';
-import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
+import { EnvironmentError, environmentIsReady, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -28,7 +28,7 @@ import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspac
 import type { IEnvironmentService } from '#/app/environment/environment';
 
 import type { ProgramDependencies } from './programDependencies';
-import { PROGRAM_CAPABILITIES, ProgramWorkdirs, type ProgramHarness, type ProgramWorkdir } from './programWorkdirs';
+import { PROGRAM_CAPABILITIES, ProgramWorkdirs, type ProgramHarness, type ProgramView, type ProgramWorkdir } from './programWorkdirs';
 
 export type { ProgramWorkdir } from './programWorkdirs';
 
@@ -76,6 +76,7 @@ interface ProgramGeneration extends ProgramHarness {
   readonly workdirs: ProgramWorkdirs;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
   readonly disposables: readonly { dispose(): void | Promise<void> }[];
+  catalog?: { readonly root: ProgramView; status: ProgramStatus; readonly ready: Promise<void> };
   ready: boolean;
   failed: boolean;
   references: number;
@@ -93,7 +94,7 @@ export class Program {
   private disposed = false;
   private readonly generationCleanups = new Set<Promise<void>>();
   private resolveReady?: () => void;
-  readonly ready = new Promise<void>((resolve) => { this.resolveReady = resolve; });
+  private readonly initialReady = new Promise<void>((resolve) => { this.resolveReady = resolve; });
 
   constructor(
     readonly workspaceId: string,
@@ -105,6 +106,7 @@ export class Program {
     this.reconcileGeneration();
   }
 
+  get ready(): Promise<void> { return this.initialReady.then(() => this.prepareSnapshot()); }
   get status(): ProgramStatus { return this.currentStatus; }
   get state(): IWorkspaceStateService { return this.requireGeneration().workdirs.root.state; }
   get dirs(): IWorkspaceDirs { return this.requireGeneration().workdirs.root.dirs; }
@@ -168,9 +170,30 @@ export class Program {
     return this.requireGeneration().pluginAgentProfiles.ready;
   }
 
-  snapshot(): ProgramSnapshot {
+  prepareSnapshot(): Promise<void> {
     const generation = this.generation;
-    const root = generation?.workdirs.currentRoot;
+    const local = this.environments.current(LOCAL_ENVIRONMENT_ID);
+    if (generation === undefined || local === undefined || !environmentIsReady(local)) return Promise.resolve();
+    const root = generation.workdirs.root;
+    if (generation.catalog?.root === root) return generation.catalog.ready;
+    const complete = (status: ProgramStatus): void => {
+      if (this.generation !== generation || generation.catalog?.root !== root) return;
+      generation.catalog.status = status;
+      this.refresh();
+    };
+    const ready = Promise.all([
+      root.dirs.ready, root.instructions.ready, root.skills.ready, root.agentProfiles.ready, root.mcpConfig.ready,
+      generation.userAgentProfiles.ready, generation.pluginAgentProfiles.ready,
+    ]).then(() => complete('ready'), () => complete('degraded'));
+    generation.catalog = { root, status: 'preparing', ready };
+    return ready;
+  }
+
+  snapshot(): ProgramSnapshot {
+    void this.prepareSnapshot();
+    const generation = this.generation;
+    const catalog = generation?.catalog;
+    const root = catalog?.root;
     const skills = root?.skills.catalog.listSkills() ?? [];
     const skillsBySource = new Map<string, number>();
     for (const skill of skills) {
@@ -191,8 +214,8 @@ export class Program {
     return {
       workspaceId: this.workspaceId,
       binding: this.binding,
-      status: this.currentStatus,
-      ready: generation?.ready === true,
+      status: this.currentStatus === 'ready' ? catalog?.status ?? 'preparing' : this.currentStatus,
+      ready: generation?.ready === true && catalog?.status === 'ready',
       generation: generation?.id,
       trusted: generation?.trust.isTrusted(),
       catalog: {
@@ -378,7 +401,7 @@ export class Program {
     else if (this.generationFailed || this.generation?.failed === true) this.currentStatus = 'degraded';
     else if (this.generation?.ready !== true) this.currentStatus = this.generation === undefined && local.status !== 'ready' ? 'degraded' : 'preparing';
     else this.currentStatus = local.status === 'ready' ? 'ready' : 'degraded';
-    this.changeEmitter.fire(this.snapshot());
+    if (this.changeEmitter.listenerCount > 0) this.changeEmitter.fire(this.snapshot());
   }
 }
 

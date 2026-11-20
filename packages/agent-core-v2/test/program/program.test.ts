@@ -121,7 +121,7 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
     };
     return {
       id,
-      workdirs: { root, currentRoot: root, reload: async () => {}, dispose: () => {} },
+      workdirs: { root, reload: async () => {}, dispose: () => {} },
       trust: { ...behavior, isTrusted: () => false },
       userAgentProfiles: behavior,
       pluginAgentProfiles: behavior,
@@ -617,6 +617,36 @@ async function awaitLocality(generation: GenerationAccess): Promise<void> {
 }
 
 describe('Program local generation and remote workdirs', () => {
+  it('publishes ready snapshots for the current primary without connecting to MCP servers', async () => {
+    const fixture = await localityFixture();
+    const spawn = vi.spyOn(fixture.registry.current('local')!.process!, 'spawn');
+    try {
+      await fixture.program.ready;
+      const initial = fixture.program.snapshot();
+      expect(initial.ready).toBe(true);
+      expect(initial.catalog.skills.total).toBe(2);
+      expect(initial.sources.mcpServers.toSorted()).toEqual(['local-project-server', 'user-server']);
+      expect(initial.sources.instructionPaths).toContain(join(fixture.localRoot, 'AGENTS.md'));
+
+      const promoted = join(fixture.localRoot, 'promoted');
+      await mkdir(promoted);
+      await writeFile(join(promoted, 'AGENTS.md'), 'Promoted instructions');
+      fixture.promote(promoted);
+      expect(fixture.program.snapshot().ready).toBe(false);
+      await fixture.program.prepareSnapshot();
+      const next = fixture.program.snapshot();
+      expect(next.ready).toBe(true);
+      expect(next.sources.instructionPaths).toContain(join(promoted, 'AGENTS.md'));
+      expect(next.sources.mcpServers).toEqual(['user-server']);
+
+      await fixture.program.trust.untrust();
+      await fixture.program.trustDisclosure.describeGatedActivation();
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it('roots the local generation at the workspace root on the local fs, unchanged', async () => {
     const fixture = await localityFixture();
     try {

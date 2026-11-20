@@ -113,10 +113,6 @@ export class ProgramWorkdirs {
     });
   }
 
-  get currentRoot(): ProgramView | undefined {
-    return this.entries.get(workdirContextKey(LOCAL_ENVIRONMENT_ID, this.context.meta.root))?.view;
-  }
-
   get root(): ProgramView {
     const entry = this.getEntry(LOCAL_ENVIRONMENT_ID, this.context.meta.root);
     if (entry !== this.retainedRoot) {
