@@ -598,9 +598,10 @@ function openPullRequest(): void {
 
     <div v-if="showSubRow" class="sub" :class="{ 'sub--pinned': compactPinned }">
       <WorkspaceIcon v-if="showSubIcon" class="sub-icon" :host-id="session.hostId" size="sm" status="none" />
-      <Tooltip :text="showPinnedSubRow && !renaming ? subLabel : null">
+      <Tooltip v-if="showPinnedSubRow && !renaming" :text="subLabel">
         <span class="sub-text">{{ subLabel }}</span>
       </Tooltip>
+      <span v-else class="sub-text">{{ subLabel }}</span>
       <!-- PR association (v2 git domain): a small tag at the second line's
            right edge; click opens the PR (system browser / new tab). Open PRs
            stand out in success green, merged in purple, closed stays neutral. -->

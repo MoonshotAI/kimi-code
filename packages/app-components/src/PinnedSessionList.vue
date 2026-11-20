@@ -115,21 +115,54 @@ function chooseDisplayMode(mode: PinnedSessionDisplayMode): void {
   closeMenu();
 }
 
+let foldAnimating = false;
+let foldFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+let rowsScrollStateFrame = 0;
+let sessionListMeasureFrame = 0;
+
+function finishFoldAnimation(): void {
+  if (!foldAnimating) return;
+  foldAnimating = false;
+  if (foldFallbackTimer !== null) {
+    clearTimeout(foldFallbackTimer);
+    foldFallbackTimer = null;
+  }
+  if (!collapsed.value) {
+    measureSplitBudget();
+    scheduleRowsScrollState();
+  }
+}
+
+function setCollapsed(next: boolean): void {
+  if (collapsed.value === next) return;
+  foldAnimating = true;
+  if (foldFallbackTimer !== null) clearTimeout(foldFallbackTimer);
+  foldFallbackTimer = setTimeout(finishFoldAnimation, 220);
+  collapsed.value = next;
+  savePinnedCollapsed(next);
+  if (!next) {
+    void nextTick(() => updateRowsScrollState());
+  }
+}
+
 function toggleCollapsed(): void {
-  collapsed.value = !collapsed.value;
-  savePinnedCollapsed(collapsed.value);
+  setCollapsed(!collapsed.value);
 }
 
 function expand(): void {
-  if (!collapsed.value) return;
-  collapsed.value = false;
-  savePinnedCollapsed(false);
+  setCollapsed(false);
 }
 defineExpose({ expand });
 
-const resizable = computed(
-  () => !collapsed.value && pinnedSectionResizable(props.sessions.length + (props.workspaceRowCount ?? 0)),
+function onPinnedFoldTransitionEnd(event: TransitionEvent): void {
+  if (event.target !== event.currentTarget || event.propertyName !== 'grid-template-rows') return;
+  finishFoldAnimation();
+}
+
+const hasResizeCap = computed(() =>
+  pinnedSectionResizable(props.sessions.length + (props.workspaceRowCount ?? 0)),
 );
+const resizable = computed(() => !collapsed.value && hasResizeCap.value);
 
 const viewportHeight = ref(window.innerHeight);
 
@@ -150,6 +183,7 @@ function sessionsListEl(): HTMLElement | null {
 const splitBudget = ref<number | undefined>(undefined);
 
 function measureSplitBudget(): void {
+  if (collapsed.value || foldAnimating) return;
   const rows = pinnedRowsEl.value;
   const sessions = sessionsListEl();
   if (!rows || !sessions) {
@@ -165,7 +199,7 @@ const sessionsPaddingY = ref<number | null>(null);
 
 function measureSessionList(): void {
   const sessions = sessionsListEl();
-  if (!sessions) return;
+  if (!sessions || sessions.classList.contains('sessions--collapsed')) return;
   const rows = sessions.querySelectorAll('.se');
   const measures: SessionListRowMeasure[] = [];
   let visibleCount = 0;
@@ -186,13 +220,21 @@ function measureSessionList(): void {
   sessionsPaddingY.value = Number.isFinite(pad) ? pad : null;
 }
 
+function scheduleMeasureSessionList(): void {
+  if (sessionListMeasureFrame) return;
+  sessionListMeasureFrame = requestAnimationFrame(() => {
+    sessionListMeasureFrame = 0;
+    measureSessionList();
+  });
+}
+
 let budgetObserver: ResizeObserver | null = null;
 let sessionsMutationObserver: MutationObserver | null = null;
 
 function onSessionsTransitionEnd(event: TransitionEvent): void {
   if (event.propertyName !== 'height') return;
   if (!(event.target as HTMLElement).classList.contains('group-sessions')) return;
-  measureSessionList();
+  scheduleMeasureSessionList();
 }
 
 onMounted(() => {
@@ -205,7 +247,7 @@ onMounted(() => {
       budgetObserver.observe(sessions);
     }
     if (typeof MutationObserver === 'function' && sessions) {
-      sessionsMutationObserver = new MutationObserver(measureSessionList);
+      sessionsMutationObserver = new MutationObserver(scheduleMeasureSessionList);
       sessionsMutationObserver.observe(sessions, {
         childList: true,
         subtree: true,
@@ -217,6 +259,9 @@ onMounted(() => {
   });
 });
 onBeforeUnmount(() => {
+  if (foldFallbackTimer !== null) clearTimeout(foldFallbackTimer);
+  if (rowsScrollStateFrame) cancelAnimationFrame(rowsScrollStateFrame);
+  if (sessionListMeasureFrame) cancelAnimationFrame(sessionListMeasureFrame);
   budgetObserver?.disconnect();
   sessionsMutationObserver?.disconnect();
   sessionsListEl()?.removeEventListener('transitionend', onSessionsTransitionEnd);
@@ -302,9 +347,10 @@ watch(resizeDragging, (dragging) => {
 });
 
 const handleVisible = computed(() => resizable.value || resizeDragging.value);
+const rowsCapActive = computed(() => hasResizeCap.value || resizeDragging.value);
 
 watch(
-  [pinnedRowsEl, handleVisible, rowsHeight],
+  [pinnedRowsEl, rowsCapActive, rowsHeight],
   ([el, active, height]) => {
     if (!el) return;
     if (active) el.style.setProperty('max-height', `${height}px`);
@@ -397,17 +443,25 @@ function onRowsScroll(): void {
   markRowsScrolling();
 }
 
+function scheduleRowsScrollState(): void {
+  if (collapsed.value || rowsScrollStateFrame) return;
+  rowsScrollStateFrame = requestAnimationFrame(() => {
+    rowsScrollStateFrame = 0;
+    if (!collapsed.value) updateRowsScrollState();
+  });
+}
+
 let rowsObserver: ResizeObserver | null = null;
 
 watch(pinnedRowsEl, (el, prev) => {
   if (prev) rowsObserver?.disconnect();
   rowsObserver = null;
   if (el && typeof ResizeObserver === 'function') {
-    rowsObserver = new ResizeObserver(() => updateRowsScrollState());
+    rowsObserver = new ResizeObserver(scheduleRowsScrollState);
     rowsObserver.observe(el);
   }
   if (el) {
-    updateRowsScrollState(el);
+    if (!collapsed.value) updateRowsScrollState(el);
   } else {
     contentHeight.value = null;
     firstRowHeights.value = [];
@@ -416,7 +470,6 @@ watch(pinnedRowsEl, (el, prev) => {
     updateRowsThumb();
   }
 });
-onUpdated(() => updateRowsScrollState());
 onBeforeUnmount(() => rowsObserver?.disconnect());
 
 const { fontScale } = useAppearance();
@@ -464,6 +517,10 @@ const resolvedEntries = computed<PinnedEntry[]>(
     })),
 );
 
+onUpdated(() => {
+  if (!collapsed.value) updateRowsScrollState();
+});
+
 const {
   dropActive,
   entryDragOver,
@@ -493,7 +550,19 @@ const {
     @dragleave="onContainerDragLeave"
   >
     <div class="pinned-label">
-      <span class="pinned-title">{{ t('sidebar.pinned') }}</span>
+      <div class="pinned-heading" @click.stop="toggleCollapsed">
+        <span class="pinned-title">{{ t('sidebar.pinned') }}</span>
+        <button
+          type="button"
+          class="pinned-toggle"
+          :class="{ 'pinned-toggle--on': collapsed }"
+          :aria-expanded="!collapsed"
+          :aria-label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
+          @click.stop="toggleCollapsed"
+        >
+          <Icon name="chevron-down" />
+        </button>
+      </div>
       <div class="pinned-actions">
         <Tooltip :text="t('sidebar.pinnedOptions')">
           <IconButton
@@ -508,26 +577,21 @@ const {
             <Icon name="view-switch" />
           </IconButton>
         </Tooltip>
-        <IconButton
-          class="pinned-toggle"
-          :class="{ 'pinned-toggle--on': collapsed }"
-          size="sm"
-          :label="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
-          :tooltip="collapsed ? t('sidebar.expandPinned') : t('sidebar.collapsePinned')"
-          @click.stop="toggleCollapsed"
-        >
-          <Icon v-if="collapsed" name="chevron-right" />
-          <Icon v-else name="chevron-down" />
-        </IconButton>
       </div>
     </div>
     <div
-      v-if="!collapsed"
-      class="pinned-rows-wrap"
-      :class="{ scrolled: rowsScrolled, 'more-below': rowsCanScrollDown }"
-      @mouseenter="onRowsListMouseEnter"
-      @mouseleave="onRowsListMouseLeave"
+      class="pinned-fold"
+      :class="{ collapsed }"
+      :inert="collapsed || undefined"
+      @transitionend="onPinnedFoldTransitionEnd"
     >
+      <div class="pinned-fold-inner">
+        <div
+          class="pinned-rows-wrap"
+          :class="{ scrolled: rowsScrolled, 'more-below': rowsCanScrollDown }"
+          @mouseenter="onRowsListMouseEnter"
+          @mouseleave="onRowsListMouseLeave"
+        >
       <div ref="pinnedRowsEl" class="pinned-rows" @scroll="onRowsScroll">
         <slot v-if="!entries" name="workspaces" />
         <template v-for="entry in resolvedEntries" :key="entry.key">
@@ -600,6 +664,8 @@ const {
         @mouseenter="onRowsThumbMouseEnter"
         @mouseleave="onRowsThumbMouseLeave"
       ></span>
+        </div>
+      </div>
     </div>
     <div
       v-if="handleVisible"
@@ -671,37 +737,78 @@ const {
   color: var(--faint);
   user-select: none;
 }
+.pinned-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  cursor: pointer;
+  transition: color var(--duration-base) var(--ease-out);
+}
+.pinned-heading:hover {
+  color: var(--dim);
+}
 .pinned-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.pinned-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
+}
+.pinned-label:hover .pinned-toggle,
+.pinned-heading:focus-within .pinned-toggle,
+.pinned-toggle--on {
+  opacity: 1;
+}
+.pinned-toggle:hover {
+  color: var(--color-text-muted);
+}
+.pinned-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.pinned-toggle svg {
+  width: 12px;
+  height: 12px;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.pinned-toggle--on svg {
+  transform: rotate(-90deg);
+}
 .pinned-actions {
   display: flex;
   align-items: center;
   gap: 2px;
+  flex: none;
 }
-.pinned-options,
-.pinned-toggle {
+.pinned-options {
   color: var(--faint);
-  opacity: 0;
-  transition: opacity var(--duration-base) var(--ease-out);
-}
-.pinned-label:hover .pinned-options,
-.pinned-label:focus-within .pinned-options,
-.pinned-options.open,
-.pinned-label:hover .pinned-toggle,
-.pinned-label:focus-within .pinned-toggle,
-.pinned-toggle--on {
-  opacity: 1;
 }
 .pinned-options:hover,
-.pinned-toggle:hover {
+.pinned-options.open {
   color: var(--dim);
 }
-.pinned-options svg,
-.pinned-toggle svg {
+.pinned-options.open {
+  background: var(--color-hover);
+}
+.pinned-options svg {
   width: 13px;
   height: 13px;
 }
@@ -803,9 +910,41 @@ const {
   right: 0;
 }
 
+.pinned-fold {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  margin: 0 calc(var(--sb-inset) * -1);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    grid-template-rows var(--duration-base) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out),
+    visibility 0s;
+}
+.pinned-fold.collapsed {
+  grid-template-rows: minmax(0, 0fr);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    grid-template-rows var(--duration-base) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out),
+    visibility 0s linear var(--duration-base);
+}
+.pinned-fold-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pinned-fold,
+  .pinned-fold.collapsed,
+  .pinned-toggle svg {
+    transition: none;
+  }
+}
+
 .pinned-rows-wrap {
   position: relative;
-  margin: 0 calc(var(--sb-inset) * -1);
   --pinned-seam-down: linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.5%, transparent), transparent 35%), linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1%, transparent), transparent 65%), linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 0.75%, transparent), transparent);
   --pinned-seam-up: linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.5%, transparent), transparent 35%), linear-gradient(to top, color-mix(in srgb, var(--color-text) 1%, transparent), transparent 65%), linear-gradient(to top, color-mix(in srgb, var(--color-text) 0.75%, transparent), transparent);
 }

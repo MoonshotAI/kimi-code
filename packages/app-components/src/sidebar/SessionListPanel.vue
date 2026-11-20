@@ -5,11 +5,13 @@ import type { PinnedEntry, WorkspaceView } from '@moonshot-ai/app-core/client/ty
 import {
   copyTextToClipboard,
   loadCollapsedWorkspaces,
+  loadSessionsSectionCollapsed,
   loadSidebarViewMode,
   pinnedSessionKey,
   pinnedWorkspaceKey,
   saveCollapsedWorkspaces,
   savePinnedCollapsed,
+  saveSessionsSectionCollapsed,
   saveSidebarViewMode,
   visibleOpenGroups,
   type DropPosition,
@@ -156,8 +158,16 @@ const {
   onThumbMouseLeave: onSessionsThumbMouseLeave,
 } = useOverlayScrollbar(sessionsEl);
 
+const sessionsCollapsed = ref(loadSessionsSectionCollapsed());
+
 function updateSessionsScrollState(el = sessionsEl.value): void {
   if (!el) return;
+  if (sessionsCollapsed.value) {
+    sessionsScrolled.value = false;
+    sessionsCanScrollDown.value = false;
+    updateSessionsThumb();
+    return;
+  }
   sessionsScrolled.value = el.scrollTop > 0;
   sessionsCanScrollDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
   updateSessionsThumb();
@@ -174,7 +184,7 @@ onMounted(() => {
   nextTick(() => {
     updateSessionsScrollState();
     if (typeof ResizeObserver === 'function' && sessionsEl.value) {
-      sessionsResizeObserver = new ResizeObserver(() => updateSessionsScrollState());
+      sessionsResizeObserver = new ResizeObserver(scheduleSessionsScrollState);
       sessionsResizeObserver.observe(sessionsEl.value);
     }
   });
@@ -197,6 +207,23 @@ onBeforeUnmount(() => {
   if (flashSessionTimer) clearTimeout(flashSessionTimer);
 });
 
+function setSessionsCollapsed(next: boolean): void {
+  if (sessionsCollapsed.value === next) return;
+  sessionsCollapsed.value = next;
+  saveSessionsSectionCollapsed(next);
+  if (next) {
+    closeWorkspaceHover();
+    cancelRenameWorkspace();
+  }
+  updateSessionsScrollState();
+}
+
+function toggleSessionsCollapsed(): void {
+  setSessionsCollapsed(!sessionsCollapsed.value);
+}
+
+watch(() => props.statusTab, () => setSessionsCollapsed(false));
+
 const collapsedIds = ref<Set<string>>(new Set(loadCollapsedWorkspaces()));
 
 function isCollapsed(id: string): boolean {
@@ -212,12 +239,14 @@ function toggleCollapse(id: string): void {
 }
 
 function collapseAllWorkspaces(): void {
+  setSessionsCollapsed(false);
   const next = new Set(allGroups.value.map((g) => g.workspace.id));
   collapsedIds.value = next;
   saveCollapsedWorkspaces(next);
 }
 
 function expandAllWorkspaces(): void {
+  setSessionsCollapsed(false);
   const next = new Set<string>();
   collapsedIds.value = next;
   saveCollapsedWorkspaces(next);
@@ -275,7 +304,21 @@ function onDropPinnedSession(id: string): void {
 
 const listMode = ref<SidebarViewMode>(loadSidebarViewMode());
 
+const sectionFoldLabel = computed(() => {
+  const isProjects =
+    props.statusTab === 'workspaces' || (props.statusTab !== 'done' && listMode.value === 'grouped');
+  if (isProjects) {
+    return sessionsCollapsed.value
+      ? t('sidebar.expandProjectsSection')
+      : t('sidebar.collapseProjectsSection');
+  }
+  return sessionsCollapsed.value
+    ? t('sidebar.expandSessionsSection')
+    : t('sidebar.collapseSessionsSection');
+});
+
 function setListMode(mode: SidebarViewMode): void {
+  setSessionsCollapsed(false);
   if (listMode.value === mode) return;
   listMode.value = mode;
   saveSidebarViewMode(mode);
@@ -335,8 +378,20 @@ function getSiblingOrder(): string[] {
   return siblingOrder.value;
 }
 
-function expandGroupIfCollapsed(wsId: string): void {
-  if (isCollapsed(wsId)) toggleCollapse(wsId);
+function expandGroupIfCollapsed(wsId: string | null, sessionId?: string): void {
+  if (props.statusTab === 'open') {
+    if (sessionId !== undefined && pinnedSessions.value.some((s) => s.id === sessionId)) {
+      revealPinnedSection();
+      return;
+    }
+    if (wsId !== null && pinnedWorkspaceIdsSet.value.has(wsId)) {
+      revealPinnedSection();
+      if (isCollapsed(wsId)) toggleCollapse(wsId);
+      return;
+    }
+  }
+  setSessionsCollapsed(false);
+  if (wsId !== null && isCollapsed(wsId)) toggleCollapse(wsId);
 }
 
 const openGroups = computed(() =>
@@ -431,7 +486,7 @@ function openSessionAdmin(): void {
 const renamingFlatId = ref<string | null>(null);
 
 const flatLikeListActive = computed(
-  () => props.statusTab === 'open' && listMode.value === 'flat',
+  () => !sessionsCollapsed.value && props.statusTab === 'open' && listMode.value === 'flat',
 );
 
 const {
@@ -548,6 +603,7 @@ function locateSession(sessionId: string): void {
   }
   if (props.statusTab !== 'open') emit('update:statusTab', 'open');
   if (listMode.value !== 'grouped') setListMode('grouped');
+  setSessionsCollapsed(false);
   if (isCollapsed(group.workspace.id)) toggleCollapse(group.workspace.id);
   void nextTick(() => {
     const row = [...(sessionsEl.value?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [])].find(
@@ -567,6 +623,7 @@ function locateWorkspace(workspaceId: string): void {
   else {
     if (props.statusTab !== 'open') emit('update:statusTab', 'open');
     if (listMode.value !== 'grouped') setListMode('grouped');
+    setSessionsCollapsed(false);
   }
   if (isCollapsed(workspaceId)) toggleCollapse(workspaceId);
   client.openWorkspace(workspaceId);
@@ -715,15 +772,27 @@ defineExpose({
         </template>
       </PinnedSessionList>
       <div class="side-section-label">
-        <span class="side-section-title">{{
-          statusTab === 'workspaces'
-            ? t('sidebar.tabWorkspaces')
-            : statusTab === 'done'
-              ? t('sidebar.tabDone')
-              : listMode === 'grouped'
-                ? t('sidebar.workspaces')
-                : t('sidebar.sessionsHeader')
-        }}</span>
+        <div class="side-section-heading" @click.stop="toggleSessionsCollapsed">
+          <span class="side-section-title">{{
+            statusTab === 'workspaces'
+              ? t('sidebar.tabWorkspaces')
+              : statusTab === 'done'
+                ? t('sidebar.tabDone')
+                : listMode === 'grouped'
+                  ? t('sidebar.workspaces')
+                  : t('sidebar.sessionsHeader')
+          }}</span>
+          <button
+            type="button"
+            class="side-section-fold"
+            :class="{ 'side-section-fold--on': sessionsCollapsed }"
+            :aria-expanded="!sessionsCollapsed"
+            :aria-label="sectionFoldLabel"
+            @click.stop="toggleSessionsCollapsed"
+          >
+            <Icon name="chevron-down" />
+          </button>
+        </div>
         <div class="side-section-actions">
           <Tooltip v-if="statusTab === 'workspaces'" :text="t('sidebar.newWorkspace')">
             <IconButton
@@ -775,9 +844,11 @@ defineExpose({
       class="sessions"
       :class="{
         scrolling: sessionsScrolling,
+        'sessions--collapsed': sessionsCollapsed,
         'pinned-drag-active': flatLikeListActive && pinnedDragSession !== null,
         'flat-pinned-drop-hover': flatPinnedDropHover,
       }"
+      :inert="sessionsCollapsed || undefined"
       @scroll="onSessionsScroll"
       @dragover="onSessionsPinnedDragOver"
       @drop="onSessionsPinnedDrop"
@@ -994,7 +1065,7 @@ defineExpose({
     </div>
 
     <div
-      v-if="sessionsThumb"
+      v-if="!sessionsCollapsed && sessionsThumb"
       class="sessions-thumb"
       :class="{ visible: sessionsThumbVisible }"
       :style="{ top: `${sessionsThumb.top}px`, height: `${sessionsThumb.height}px` }"
@@ -1123,11 +1194,60 @@ defineExpose({
   color: var(--faint);
   user-select: none;
 }
+.side-section-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  cursor: pointer;
+  transition: color var(--duration-base) var(--ease-out);
+}
+.side-section-heading:hover {
+  color: var(--dim);
+}
 .side-section-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.side-section-fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
+}
+.side-section-label:hover .side-section-fold,
+.side-section-heading:focus-within .side-section-fold,
+.side-section-fold--on {
+  opacity: 1;
+}
+.side-section-fold:hover {
+  color: var(--color-text-muted);
+}
+.side-section-fold:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.side-section-fold svg {
+  width: 12px;
+  height: 12px;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.side-section-fold--on svg {
+  transform: rotate(-90deg);
 }
 .sessions-head .pinned + .side-section-label {
   margin-top: var(--space-1);
@@ -1146,6 +1266,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 2px;
+  flex: none;
 }
 
 .sessions {
@@ -1155,6 +1276,30 @@ defineExpose({
   min-height: 0;
   --overlay-scrollbar-thumb-min: var(--space-6);
   scrollbar-width: none;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out),
+    visibility 0s;
+}
+.sessions.sessions--collapsed {
+  overflow-y: hidden;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out),
+    visibility 0s linear var(--duration-base);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sessions,
+  .sessions.sessions--collapsed,
+  .side-section-fold svg {
+    transition: none;
+  }
 }
 .sessions::-webkit-scrollbar { display: none; }
 .sessions.pinned-drag-active { box-shadow: inset 0 0 0 1px var(--color-accent); }

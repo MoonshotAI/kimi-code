@@ -30,6 +30,7 @@ export const STORAGE_KEYS = {
   pinnedWorkspaces: 'kimi-web.pinned-workspaces',
   pinnedOrder: 'kimi-web.pinned-order',
   pinnedCollapsed: 'kimi-web.pinned-collapsed',
+  sessionsSectionCollapsed: 'kimi-web.sessions-section-collapsed',
   pinnedSessionDisplayMode: 'kimi-web.pinned-session-display-mode',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
   workspaceNameOverridesById: 'kimi-web.workspace-name-overrides-by-id',
@@ -167,6 +168,14 @@ export function loadPinnedCollapsed(): boolean {
 
 export function savePinnedCollapsed(collapsed: boolean): void {
   safeSetJson(STORAGE_KEYS.pinnedCollapsed, collapsed);
+}
+
+export function loadSessionsSectionCollapsed(): boolean {
+  return safeGetJson<boolean>(STORAGE_KEYS.sessionsSectionCollapsed) === true;
+}
+
+export function saveSessionsSectionCollapsed(collapsed: boolean): void {
+  safeSetJson(STORAGE_KEYS.sessionsSectionCollapsed, collapsed);
 }
 
 export type PinnedSessionDisplayMode = 'compact' | 'workspace';

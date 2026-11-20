@@ -3,6 +3,7 @@ import {
   loadCollapsedWorkspaces,
   loadPinnedSessionDisplayMode,
   loadPinnedSessions,
+  loadSessionsSectionCollapsed,
   loadUnread,
   loadWorkspaceOrder,
   loadWorkspaceRecencyFloor,
@@ -10,6 +11,7 @@ import {
   saveCollapsedWorkspaces,
   savePinnedSessionDisplayMode,
   savePinnedSessions,
+  saveSessionsSectionCollapsed,
   saveUnread,
   saveWorkspaceOrder,
   saveWorkspaceRecencyFloor,
@@ -286,6 +288,21 @@ describe('loadPinnedSessionDisplayMode / savePinnedSessionDisplayMode', () => {
   it("falls back to 'compact' for an unknown stored value", () => {
     safeSetString(STORAGE_KEYS.pinnedSessionDisplayMode, 'detailed');
     expect(loadPinnedSessionDisplayMode()).toBe('compact');
+  });
+});
+
+describe('loadSessionsSectionCollapsed / saveSessionsSectionCollapsed', () => {
+  it('defaults to false when unset or invalid', () => {
+    expect(loadSessionsSectionCollapsed()).toBe(false);
+    safeSetString(STORAGE_KEYS.sessionsSectionCollapsed, 'invalid');
+    expect(loadSessionsSectionCollapsed()).toBe(false);
+  });
+
+  it('round-trips boolean collapsed state', () => {
+    saveSessionsSectionCollapsed(true);
+    expect(loadSessionsSectionCollapsed()).toBe(true);
+    saveSessionsSectionCollapsed(false);
+    expect(loadSessionsSectionCollapsed()).toBe(false);
   });
 });
 
