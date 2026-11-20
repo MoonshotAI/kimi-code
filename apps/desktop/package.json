@@ -1,6 +1,6 @@
 {
   "name": "kimi-code-app",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "description": "Kimi Code Desktop — Everything you love about Kimi Code, now on desktop",
   "author": "Moonshot AI",
@@ -75,6 +75,7 @@
     "tsdown": "0.22.0",
     "typescript": "6.0.2",
     "unplugin-icons": "^23.0.0",
+    "uuid": "14.0.1",
     "vite": "^6.3.3",
     "vitest": "4.1.4",
     "vue": "^3.5.35",

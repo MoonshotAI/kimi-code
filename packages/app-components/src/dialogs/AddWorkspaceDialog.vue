@@ -351,16 +351,16 @@ function goUp(): void {
   if (parentPath.value && !creatingFolder.value) void navigate(parentPath.value);
 }
 
-function openThisFolder(): void {
-  if (!canOpen.value) return;
-  if (props.multiple) {
-    toggleSelect(currentPath.value);
-    return;
-  }
-  emit('add', currentPath.value);
-}
-
 const selected = ref<string[]>([]);
+const hasSelection = computed(() => props.multiple === true && selected.value.length > 0);
+const showPrimaryAction = computed(() => showBrowser.value || hasSelection.value);
+const primaryDisabled = computed(() => hasSelection.value ? creatingFolder.value : !canOpen.value);
+const primaryTooltip = computed(() => hasSelection.value ? undefined : currentPath.value);
+const primaryLabel = computed(() => {
+  if (!props.multiple) return t('workspace.openThisFolder');
+  if (selected.value.length > 0) return t('workspace.addFolders', { n: selected.value.length }, selected.value.length);
+  return t('workspace.addCurrentFolder');
+});
 
 function toggleSelect(path: string): void {
   selected.value = selected.value.includes(path)
@@ -372,9 +372,19 @@ function isSelected(path: string): boolean {
   return selected.value.includes(path);
 }
 
-function addSelected(): void {
-  if (selected.value.length === 0 || creatingFolder.value) return;
-  emit('addMany', [...selected.value]);
+function submitPrimary(): void {
+  if (props.multiple) {
+    if (selected.value.length > 0) {
+      if (creatingFolder.value) return;
+      emit('addMany', [...selected.value]);
+      return;
+    }
+    if (!canOpen.value) return;
+    emit('addMany', [currentPath.value]);
+    return;
+  }
+  if (!canOpen.value) return;
+  emit('add', currentPath.value);
 }
 
 function handlePathAdd(): void {
@@ -633,19 +643,13 @@ onUnmounted(() => {
 
       <div class="actions">
         <Button variant="ghost" :disabled="creatingFolder" @click="emit('close')">{{ t('workspace.cancel') }}</Button>
-        <Tooltip v-if="showBrowser" :text="currentPath">
+        <Tooltip v-if="showPrimaryAction" :text="primaryTooltip">
           <Button
-            :variant="multiple ? 'secondary' : 'primary'"
-            :disabled="!canOpen"
-            @click="openThisFolder"
-          >{{ multiple ? t('workspace.selectThisFolder') : t('workspace.openThisFolder') }}</Button>
+            variant="primary"
+            :disabled="primaryDisabled"
+            @click="submitPrimary"
+          >{{ primaryLabel }}</Button>
         </Tooltip>
-        <Button
-          v-if="multiple"
-          variant="primary"
-          :disabled="selected.length === 0 || creatingFolder"
-          @click="addSelected"
-        >{{ t('workspace.addSelected', { n: selected.length }) }}</Button>
       </div>
     </div>
   </Dialog>

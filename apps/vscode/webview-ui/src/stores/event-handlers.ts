@@ -1,3 +1,4 @@
+import { v4 as randomUUID } from "uuid";
 import { bridge } from "@/services";
 import { useApprovalStore } from "./approval.store";
 import { useSettingsStore } from "./settings.store";
@@ -332,7 +333,7 @@ const eventHandlers: Record<string, EventHandler> = {
     draft.activeTokenUsage = createEmptyTokenUsage();
 
     draft.messages.push({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       role: "user",
       content: payload.user_input,
       timestamp: Date.now(),
@@ -341,7 +342,7 @@ const eventHandlers: Record<string, EventHandler> = {
     });
 
     draft.messages.push({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       role: "assistant",
       content: "",
       timestamp: Date.now(),

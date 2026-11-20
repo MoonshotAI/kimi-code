@@ -47,7 +47,11 @@ export interface PromptPipelineDeps {
   modelProvider: UseModelProviderState;
   activity: ComputedRef<ActivityState>;
   nextOptimisticMsgId: () => string;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
+  persistSessionProfile: (
+    patch: PersistSessionProfilePatch,
+    sessionId?: string,
+    preserveDraftThinking?: boolean,
+  ) => Promise<boolean>;
   whenSessionProfileSettled: (sid: string) => Promise<boolean>;
   mapSendAuthFailure?: (err: unknown, sid?: string) => Promise<ChatGateVerdict | null>;
   isMainTurnRunning?: (sessionId: string) => boolean;
@@ -180,7 +184,11 @@ export function usePromptPipeline(rawState: ExtendedState, deps: PromptPipelineD
       towerBase: towerMode ? towerBase : undefined,
     };
     if (Object.values(draftSettings).some((value) => value !== undefined)) {
-      void persistSessionProfile(draftSettings, sid);
+      if (draftThinkingWrite === undefined) void persistSessionProfile(draftSettings, sid);
+      else void persistSessionProfile(draftSettings, sid, true);
+    }
+    if (draftThinkingWrite !== undefined && draftPick !== undefined && session.model !== draftPick) {
+      void modelProvider.normalizeDraftSessionModel(sid, draftPick);
     }
     if (modeStore().draftModes.goalMode) {
       modeStore().goalModeBySession = { ...modeStore().goalModeBySession, [sid]: true };

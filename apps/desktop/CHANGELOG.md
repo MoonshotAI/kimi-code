@@ -1,5 +1,17 @@
 # kimi-code-app
 
+## 1.4.1
+
+### Patch Changes
+
+- [#5161](https://github.com/MoonshotAI/kimi-code/pull/5161) [`55c7c7b`](https://github.com/MoonshotAI/kimi-code/commit/55c7c7befda7d907ad1cee3650d407415f78652e) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - Preserve the first prompt through project creation and sign-in prompts.
+
+- [#5170](https://github.com/MoonshotAI/kimi-code/pull/5170) [`c2bec3f`](https://github.com/MoonshotAI/kimi-code/commit/c2bec3fb8e42aca9a7f7b3b80eff9dc1230d332c) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix draft thinking effort selections reverting to the model default after sending.
+
+- [#5165](https://github.com/MoonshotAI/kimi-code/pull/5165) [`170c729`](https://github.com/MoonshotAI/kimi-code/commit/170c729e5e83472eea276458cf7a6c65489b57a3) Thanks [@sailist](https://github.com/sailist)! - Fix turn-specific fork failures after restoring sessions with in-turn steering.
+
+- [#5174](https://github.com/MoonshotAI/kimi-code/pull/5174) [`3ad2547`](https://github.com/MoonshotAI/kimi-code/commit/3ad25477c23663822c3f0f0ecabe0db514ebcd1e) Thanks [@7Sageer](https://github.com/7Sageer)! - Merge "Select this folder" into the primary button in the folder picker.
+
 ## 1.4.0
 
 ### Patch Changes

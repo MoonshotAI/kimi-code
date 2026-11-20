@@ -14,6 +14,7 @@ import { newAttId } from '@moonshot-ai/app-composer/features/attachment';
 import { composerSnapshotDocument, docToText, type ComposerDocumentSnapshot } from '@moonshot-ai/app-composer/model';
 import type { NativeMenuItem } from '@moonshot-ai/app-core/native-menu';
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
+import { v4 as randomUUID } from 'uuid';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, shallowRef, useId, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ReadRequestOptions, SessionContextSummary } from '@moonshot-ai/app-core/api';
@@ -110,6 +111,7 @@ const props = defineProps<{
   submitDisabled?: boolean;
   statusNote?: string;
   beforeSubmit?: () => boolean;
+  deferSubmitReset?: boolean;
   draftScopeKey?: string;
   placeholderText?: string;
   onCaptureScreenshot?: () => void;
@@ -547,7 +549,7 @@ async function acceptBrowserCapture(resource: BrowserCaptureResource, comment: s
     capture.screenshot.attachmentId = attId;
     composerAttachmentStore.upsert(scope, entry);
   }
-  ed.insertBrowserReference(capture, { id: `br_${crypto.randomUUID()}`, captureId: capture.id, comment: comment || undefined, includeScreenshot: capture.target.kind === 'region' || includeScreenshot });
+  ed.insertBrowserReference(capture, { id: `br_${randomUUID()}`, captureId: capture.id, comment: comment || undefined, includeScreenshot: capture.target.kind === 'region' || includeScreenshot });
   ed.focus();
   return true;
 }
@@ -807,7 +809,7 @@ function armGoalMode(): void {
 function insertMentionEntry(entry: MentionEntry, range: { start: number; end: number }): void {
   if (entry.kind === 'browser') {
     const capture = browserCaptures.value.find((candidate) => candidate.id === entry.captureId);
-    if (capture !== undefined) editor?.insertBrowserReference(capture, { id: `br_${crypto.randomUUID()}`, captureId: capture.id }, range);
+    if (capture !== undefined) editor?.insertBrowserReference(capture, { id: `br_${randomUUID()}`, captureId: capture.id }, range);
     return;
   }
   if (entry.kind === 'attachment') {
@@ -1730,6 +1732,19 @@ function resetAfterDispatch(
   );
 }
 
+function clearAfterDispatch(expectedSnapshot?: ComposerDocumentSnapshot): void {
+  if (props.deferSubmitReset === true && expectedSnapshot !== undefined) {
+    const current = editor?.getSnapshot();
+    if (
+      current === undefined ||
+      docToText(composerSnapshotDocument(current)) !== docToText(composerSnapshotDocument(expectedSnapshot)) ||
+      JSON.stringify(current.attachmentOrder) !== JSON.stringify(expectedSnapshot.attachmentOrder) ||
+      JSON.stringify(current.browserReferences ?? []) !== JSON.stringify(expectedSnapshot.browserReferences ?? [])
+    ) return;
+  }
+  resetAfterDispatch(clearDispatchPolicy);
+}
+
 function passSubmitGate(): boolean {
   if (props.beforeSubmit !== undefined && props.beforeSubmit() === false) return false;
   if (hostSetupId.value !== undefined) {
@@ -1739,7 +1754,7 @@ function passSubmitGate(): boolean {
   return true;
 }
 
-function handleSteer(): void {
+function handleRunningSend(delivery: 'steer' | 'queue'): void {
   const decision = currentSubmitDecision();
   if (
     decision.kind !== 'submit' &&
@@ -1753,34 +1768,24 @@ function handleSteer(): void {
   const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
   history.push(decision.historyText, snapshot);
   historyEntrySnapshot = null;
-  resetAfterDispatch(clearDispatchPolicy);
+  if (props.deferSubmitReset !== true || decision.kind === 'prompt-command') clearAfterDispatch();
   if (decision.kind === 'prompt-command') {
-    emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery: 'steer' });
+    emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery });
     return;
   }
-  emit('steer', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries, snapshot, ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}) });
-}
-
-function handleQueue(): void {
-  const decision = currentSubmitDecision();
-  if (
-    decision.kind !== 'submit' &&
-    decision.kind !== 'multi-skill-activation' &&
-    !(decision.kind === 'prompt-command' && decision.target === 'main')
-  ) {
-    return;
-  }
-  if (!passSubmitGate()) return;
-  const snapshot = editor?.getSnapshot();
-  const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
-  history.push(decision.historyText, snapshot);
-  historyEntrySnapshot = null;
-  resetAfterDispatch(clearDispatchPolicy);
-  if (decision.kind === 'prompt-command') {
-    emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery: 'queue' });
+  if (delivery === 'steer') {
+    emit('steer', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries, snapshot, ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}) });
     return;
   }
   emit('submit', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries, snapshot, ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}), forceQueue: true });
+}
+
+function handleSteer(): void {
+  handleRunningSend('steer');
+}
+
+function handleQueue(): void {
+  handleRunningSend('queue');
 }
 
 function handleSubmit(): void {
@@ -1883,7 +1888,7 @@ function handleSubmit(): void {
         snapshot,
         ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}),
       };
-      resetAfterDispatch(clearDispatchPolicy);
+      if (props.deferSubmitReset !== true) clearAfterDispatch();
       if (!isSideChat.value && running.value) {
         if (runningSendMode.value === 'steer') {
           noteDefaultRunningSteerTriggered();
@@ -2232,7 +2237,7 @@ function closeOverlays(): void {
 
 const isEmpty = () => text.value.trim().length === 0 && activeAttachmentEntries.value.length === 0;
 
-defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty });
+defineExpose({ loadForEdit, insertQuote, insertScreenshotAnnotation, insertPathMention, addFiles, loadAttachmentsForEdit, restoreDraftEntries, focus, closeOverlays, anyPopupOpen, isEmpty, clearAfterDispatch });
 
 function hasAnyToolbarMenuOpen(): boolean {
   return dropdownOpen.value || permDropdownOpen.value || ctxCardOpen.value || addMenuOpen.value;

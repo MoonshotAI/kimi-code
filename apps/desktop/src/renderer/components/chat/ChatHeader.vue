@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { v4 as randomUUID } from 'uuid';
 import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue';
 import { registerBrowserOverlayMenu } from '../../lib/browserOverlayMenu';
 import type { BrowserOverlayMenuItem } from '../../../shared/browser-overlay';
@@ -62,9 +63,9 @@ function copyItem(action: CopyAction, idleLabel: string, idleIcon: string): { la
     : { label: idleLabel, icon: idleIcon };
 }
 
-let menuContext = crypto.randomUUID();
+let menuContext = randomUUID();
 const nativeMenu = registerBrowserOverlayMenu({
-  id: `session.header.${crypto.randomUUID()}`, autoWidth: true, placement: 'bottom-start',
+  id: `session.header.${randomUUID()}`, autoWidth: true, placement: 'bottom-start',
   items: (): BrowserOverlayMenuItem[] => {
     const items: BrowserOverlayMenuItem[] = [
     ...(sessionId.value ? [
@@ -103,7 +104,7 @@ watch(nativeMenu.open, value => {
   menuOpen.value = value;
   if (!value) resetCopyFeedback();
 });
-watch([sessionId, workspaceRoot], () => { menuContext = crypto.randomUUID(); closeMenu(); }, { flush: 'sync' });
+watch([sessionId, workspaceRoot], () => { menuContext = randomUUID(); closeMenu(); }, { flush: 'sync' });
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
