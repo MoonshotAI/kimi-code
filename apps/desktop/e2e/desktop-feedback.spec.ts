@@ -1,4 +1,5 @@
 import type { Locator } from '@playwright/test';
+import { deferred } from '@moonshot-ai/testkit/fixtures';
 import { expect, test, type DesktopApp } from './fixtures/app';
 import { captureClipboardWrites } from './fixtures/clipboard';
 import type { StubModel } from './fixtures/model';
@@ -30,6 +31,7 @@ test('submits global and reply feedback with opt-in attachments', async ({ app, 
   let releaseDiagnostics!: () => void;
   const pendingDiagnostics = new Promise<void>(resolve => { releaseDiagnostics = resolve; });
 
+  await page.route('**/api/v1/client-configs/desktop_feedback_reasons', route => route.fulfill({ status: 404 }));
   await page.route('**/api/v1/meta', (route) => route.fulfill({ json: envelope({
     server_version: '2.6.3', capabilities: {}, experimental_flags: { desktop_feedback: true },
   }) }));
@@ -401,4 +403,50 @@ test('attaches an SSH conversation to the locally submitted feedback', async ({ 
     { path: '/api/v1/feedback', body: expect.objectContaining({ kind: 'global', session_id: sessionId, upload_session: true, upload_logs: false }) },
     { path: '/api/v1/feedback/31/attachments/session', body: { session_id: sessionId, host_id: hostId } },
   ]);
+});
+
+test('uses the SSH host’s reason choices and accepts text while the configuration loads', async ({ app, model }) => {
+  const { requests } = await openSshConversation(app, model, { local: true, remote: true });
+  const page = app.window;
+  const configPath = '/api/v1/client-configs/desktop_feedback_reasons';
+  const pendingReasons = deferred();
+  const remoteReason = { id: 'remote_choice', en: 'Remote reason', zh: '远程原因' };
+  let remoteReasons = [remoteReason];
+  await page.route(url => url.pathname.endsWith(configPath), async route => {
+    await pendingReasons.promise;
+    const remote = new URL(route.request().url()).pathname === hostProxy + configPath;
+    const reasons = remote ? remoteReasons : [{ id: 'local_choice', en: 'Local reason', zh: '本机原因' }];
+    await route.fulfill({ json: envelope({ config: { reasons } }) });
+  });
+  const read = page.waitForRequest(request => new URL(request.url()).pathname.endsWith(configPath));
+  const down = page.getByRole('button', { name: 'Poor response' });
+  await down.click();
+  const details = page.getByRole('dialog', { name: 'What could be better?' });
+  const input = details.getByRole('textbox');
+  const submit = details.getByRole('button', { name: 'Submit', exact: true });
+  try {
+    expect.soft(new URL((await read).url()).pathname).toBe(hostProxy + configPath);
+    await expect(details.getByRole('button', { name: 'Incorrect or incomplete' })).toBeDisabled();
+    await input.fill('Example detail');
+    await expect(submit).toBeEnabled();
+  } finally {
+    pendingReasons.resolve();
+  }
+  await details.getByRole('button', { name: remoteReason.en }).click();
+  await submit.click();
+  await expect(details).toBeHidden();
+  expect(requests.at(-1)).toEqual({
+    path: hostProxy + '/api/v1/feedback/31',
+    body: { kind: 'details', reasons: [remoteReason.id], content: 'Example detail', upload_session: false },
+  });
+
+  remoteReasons = [];
+  await page.getByRole('button', { name: 'Remove dislike' }).click();
+  await down.click();
+  await expect(details).toBeVisible();
+  await expect(details.getByRole('group').getByRole('button')).toHaveCount(0);
+  await input.fill('Text only');
+  await submit.click();
+  await expect(details).toBeHidden();
+  expect(requests.at(-1)?.body).toEqual({ kind: 'details', reasons: [], content: 'Text only', upload_session: false });
 });
