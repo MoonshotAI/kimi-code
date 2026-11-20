@@ -1,6 +1,6 @@
 import type { ContentPart, Message, ToolCall, ToolDescription, UserMessage } from '#/llm/message';
 import type { LlmRunEvent, LlmTiming } from '#/llm/response';
-import type { HookLifecycleEvent, HookPoint, ToolHookPoint } from './hook';
+import type { HookPoint, ToolHookPoint } from './hook';
 import type { MessageSource, RemindMessage, TurnTrigger } from './inbox';
 import type { AsyncToolOutcome, Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from './outcome';
 
@@ -77,7 +77,6 @@ export type LoopEmitted =
   | LlmRunEvent
   | ToolEvent
   | HookFailedEvent
-  | HookLifecycleEvent
   | {
       type: 'step.ended';
       turnId: number;

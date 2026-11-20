@@ -1,5 +1,13 @@
 import { computed, ref } from 'vue';
-import type { AppMessage, AppMessageContent, KimiWebApi, ThinkingLevel } from '@moonshot-ai/app-core/api';
+import {
+  isDaemonApiError,
+  SERVER_AUTH_UNAUTHORIZED_CODE,
+  SESSION_NOT_FOUND_CODE,
+  type AppMessage,
+  type AppMessageContent,
+  type KimiWebApi,
+  type ThinkingLevel,
+} from '@moonshot-ai/app-core/api';
 import {
   conversationTurnError,
   createConversationProjector,
@@ -22,7 +30,48 @@ import { modelsStore } from '../stores/models';
 import type { PromptAttachment } from './types';
 import { persistComposerDraftSnapshot } from '../lib/composerDraftLifecycle';
 import { forgetInputHistory } from '../composables/useInputHistory';
+import { defaultPanelStorage, destroyPanelBtwTab } from '../panel/panelPersistence';
 import type { ConversationPool } from '../composables/useConversations';
+
+const PENDING_SIDE_CHAT_CLOSES_STORAGE_KEY = 'kimi-web.side-chat.pending-closes.v1';
+
+function loadPersistedPendingCloses(): Array<{ sessionId: string; agentId: string }> {
+  try {
+    const raw = defaultPanelStorage()?.getItem(PENDING_SIDE_CHAT_CLOSES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is { sessionId: string; agentId: string } =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof (item as { sessionId?: unknown }).sessionId === 'string' &&
+        typeof (item as { agentId?: unknown }).agentId === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistPendingCloseDelta(
+  upserts: readonly { sessionId: string; agentId: string }[],
+  removedKeys: readonly string[],
+): void {
+  const storage = defaultPanelStorage();
+  if (!storage) return;
+  try {
+    const merged = new Map<string, { sessionId: string; agentId: string }>();
+    for (const item of loadPersistedPendingCloses()) {
+      merged.set(`${item.sessionId}\0${item.agentId}`, item);
+    }
+    for (const key of removedKeys) merged.delete(key);
+    for (const item of upserts) merged.set(`${item.sessionId}\0${item.agentId}`, item);
+    const list = [...merged.values()];
+    if (list.length === 0) storage.removeItem(PENDING_SIDE_CHAT_CLOSES_STORAGE_KEY);
+    else storage.setItem(PENDING_SIDE_CHAT_CLOSES_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+  }
+}
 
 export interface SideChatTarget {
   agentId: string;
@@ -68,12 +117,34 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
 
   const sideChatTargetBySession = ref<Record<string, SideChatTarget[]>>({});
   const sideChatSeqBySession: Record<string, number> = {};
-  const closedSideChatAgentIds = new Map<string, string>();
+  const closedSideChatAgentIds = new Set<string>();
+  const pendingCloseRequests = new Map<string, { sessionId: string; agentId: string }>();
+  const inFlightCloseRequests = new Set<string>();
   const pendingMessagesByAgent = ref<Record<string, AppMessage[]>>({});
   const submittingByAgent = ref<Record<string, number>>({});
 
   function sideAgentKey(sessionId: string, agentId: string): string {
     return `${sessionId}\0${agentId}`;
+  }
+
+  for (const item of loadPersistedPendingCloses()) {
+    const key = sideAgentKey(item.sessionId, item.agentId);
+    pendingCloseRequests.set(key, item);
+    closedSideChatAgentIds.add(key);
+  }
+
+  function addPendingClose(sessionId: string, agentId: string): void {
+    const entry = { sessionId, agentId };
+    pendingCloseRequests.set(sideAgentKey(sessionId, agentId), entry);
+    persistPendingCloseDelta([entry], []);
+  }
+
+  function removePendingCloses(keys: readonly string[]): void {
+    const removed: string[] = [];
+    for (const key of keys) {
+      if (pendingCloseRequests.delete(key)) removed.push(key);
+    }
+    if (removed.length > 0) persistPendingCloseDelta([], removed);
   }
 
   function sideChatTargetsOfSession(sessionId: string): SideChatTarget[] {
@@ -94,6 +165,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   }
 
   function restoreSideChatTarget(sessionId: string, target: SideChatTarget): void {
+    if (isClosedSideChatAgent(sessionId, target.agentId)) return;
     if (hasSideChatTarget(sessionId, target.agentId)) return;
     addSideChatTarget(sessionId, target);
   }
@@ -108,7 +180,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   }
 
   function isClosedSideChatAgent(sessionId: string, agentId: string): boolean {
-    return closedSideChatAgentIds.get(agentId) === sessionId;
+    return closedSideChatAgentIds.has(sideAgentKey(sessionId, agentId));
   }
 
   function turnsOf(agentId: string, parentId = sideChatParentOf(agentId)): readonly ConversationTurn[] | undefined {
@@ -369,12 +441,114 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     pendingMessagesByAgent.value = restPending;
   }
 
-  function closeSideChat(agentId?: string): void {
+  const closeRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const closeRetryCounts = new Map<string, number>();
+
+  function clearCloseRetry(key: string): void {
+    const timer = closeRetryTimers.get(key);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      closeRetryTimers.delete(key);
+    }
+    closeRetryCounts.delete(key);
+  }
+
+  function requestDaemonClose(
+    sessionId: string,
+    agentId: string,
+    operation: 'closeSideChat' | 'closeSideChats',
+    silent = false,
+  ): void {
+    const key = sideAgentKey(sessionId, agentId);
+    addPendingClose(sessionId, agentId);
+    if (inFlightCloseRequests.has(key)) return;
+    const existingTimer = closeRetryTimers.get(key);
+    if (existingTimer !== undefined) {
+      clearTimeout(existingTimer);
+      closeRetryTimers.delete(key);
+    }
+    inFlightCloseRequests.add(key);
+    void submitWithNetworkRetry(() => api.closeAgent(sessionId, agentId))
+      .then(() => {
+        clearCloseRetry(key);
+        removePendingCloses([key]);
+      })
+      .catch((err: unknown) => {
+        if (!pendingCloseRequests.has(key)) {
+          clearCloseRetry(key);
+          return;
+        }
+        if (
+          isDaemonApiError(err) &&
+          (err.code === SESSION_NOT_FOUND_CODE || err.code === 40939)
+        ) {
+          clearCloseRetry(key);
+          removePendingCloses([key]);
+          return;
+        }
+        const isServerErrorCode =
+          isDaemonApiError(err) &&
+          err.code !== undefined &&
+          (err.code >= 50000 || (err.code >= 500 && err.code < 600));
+        if (
+          isDaemonApiError(err) &&
+          err.code !== undefined &&
+          !isServerErrorCode &&
+          err.code !== 401 &&
+          err.code !== 429 &&
+          err.code !== SERVER_AUTH_UNAUTHORIZED_CODE
+        ) {
+          clearCloseRetry(key);
+          removePendingCloses([key]);
+          if (!silent) {
+            pushOperationFailure(operation, err, { sessionId });
+          }
+          return;
+        }
+        if (!silent) {
+          pushOperationFailure(operation, err, { sessionId });
+        }
+        if (pendingCloseRequests.has(key)) {
+          const attempt = (closeRetryCounts.get(key) ?? 0) + 1;
+          closeRetryCounts.set(key, attempt);
+          const delayMs = Math.min(30_000, 1_000 * 2 ** Math.min(attempt - 1, 5));
+          const timer = setTimeout(() => {
+            closeRetryTimers.delete(key);
+            if (pendingCloseRequests.has(key)) {
+              requestDaemonClose(sessionId, agentId, operation, true);
+            }
+          }, delayMs);
+          closeRetryTimers.set(key, timer);
+        }
+      })
+      .finally(() => {
+        inFlightCloseRequests.delete(key);
+      });
+  }
+
+  function flushPendingCloses(): void {
+    for (const item of loadPersistedPendingCloses()) {
+      const key = sideAgentKey(item.sessionId, item.agentId);
+      pendingCloseRequests.set(key, item);
+      closedSideChatAgentIds.add(key);
+    }
+    for (const { sessionId, agentId } of pendingCloseRequests.values()) {
+      requestDaemonClose(sessionId, agentId, 'closeSideChat', true);
+    }
+  }
+
+  function closeSideChat(agentId?: string, sessionId?: string): void {
     if (agentId !== undefined) {
-      const parentId = sideChatParentOf(agentId);
+      const parentId =
+        sessionId !== undefined
+          ? hasSideChatTarget(sessionId, agentId)
+            ? sessionId
+            : undefined
+          : sideChatParentOf(agentId);
       if (!parentId) return;
       evictSideChatAgent(parentId, agentId);
-      closedSideChatAgentIds.set(agentId, parentId);
+      closedSideChatAgentIds.add(sideAgentKey(parentId, agentId));
+      requestDaemonClose(parentId, agentId, 'closeSideChat');
       sideChatTargetBySession.value = {
         ...sideChatTargetBySession.value,
         [parentId]: sideChatTargetsOfSession(parentId).filter(
@@ -387,17 +561,58 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     if (!sid) return;
     for (const target of sideChatTargetsOfSession(sid)) {
       evictSideChatAgent(sid, target.agentId);
-      closedSideChatAgentIds.set(target.agentId, sid);
+      closedSideChatAgentIds.add(sideAgentKey(sid, target.agentId));
+      requestDaemonClose(sid, target.agentId, 'closeSideChats');
     }
     const { [sid]: _removed, ...rest } = sideChatTargetBySession.value;
     void _removed;
     sideChatTargetBySession.value = rest;
   }
 
+  function handleAgentEnded(sessionId: string, agentId: string): void {
+    const key = sideAgentKey(sessionId, agentId);
+    clearCloseRetry(key);
+    removePendingCloses([key]);
+    const activeTarget = hasSideChatTarget(sessionId, agentId);
+    if (activeTarget) {
+      closedSideChatAgentIds.add(key);
+      evictSideChatAgent(sessionId, agentId);
+      sideChatTargetBySession.value = {
+        ...sideChatTargetBySession.value,
+        [sessionId]: sideChatTargetsOfSession(sessionId).filter(
+          (target) => target.agentId !== agentId,
+        ),
+      };
+      destroyPanelBtwTab(sessionId, agentId);
+      return;
+    }
+    if (!destroyPanelBtwTab(sessionId, agentId)) return;
+    closedSideChatAgentIds.add(key);
+    onSideChatClosed?.(sessionId, agentId);
+  }
+
   async function sendSideChatPrompt(text: string): Promise<boolean> {
     const target = activeSideChatTarget.value;
     if (!target) return false;
     return sendSideChatPromptOn(target.parentId, target.agentId, text);
+  }
+
+  async function cancelSideChatOn(parent: string, agentId: string): Promise<boolean> {
+    if (!parent || !agentId) return false;
+    if (!sideChatRunningOf(agentId) && !sideChatSendingOf(agentId)) return false;
+    try {
+      const result = await api.cancelSession(parent, { agentId });
+      return result.cancelled;
+    } catch (err) {
+      pushOperationFailure('cancelSideChat', err, { sessionId: parent });
+      return false;
+    }
+  }
+
+  async function cancelSideChat(): Promise<boolean> {
+    const target = activeSideChatTarget.value;
+    if (!target) return false;
+    return cancelSideChatOn(target.parentId, target.agentId);
   }
 
   function clearSideChatForSession(sessionId: string): void {
@@ -412,10 +627,18 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     for (const target of sideChatTargetsOfSession(sessionId)) {
       evictSideChatAgent(sessionId, target.agentId);
     }
-    for (const [agentId, parentId] of closedSideChatAgentIds) {
-      if (parentId !== sessionId) continue;
-      closedSideChatAgentIds.delete(agentId);
+    const prefix = `${sessionId}\0`;
+    for (const key of closedSideChatAgentIds) {
+      if (key.startsWith(prefix)) closedSideChatAgentIds.delete(key);
     }
+    const removedKeys: string[] = [];
+    for (const [key, entry] of pendingCloseRequests) {
+      if (entry.sessionId === sessionId) {
+        clearCloseRetry(key);
+        removedKeys.push(key);
+      }
+    }
+    removePendingCloses(removedKeys);
     const { [sessionId]: _removed, ...rest } = sideChatTargetBySession.value;
     void _removed;
     sideChatTargetBySession.value = rest;
@@ -439,8 +662,12 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     openSideChat,
     openSideChatOn,
     closeSideChat,
+    flushPendingCloses,
+    handleAgentEnded,
     sendSideChatPrompt,
     sendSideChatPromptOn,
+    cancelSideChat,
+    cancelSideChatOn,
     saveSideChatDraft,
     sideChatDraft,
     clearSideChatDraftIfUnchanged,

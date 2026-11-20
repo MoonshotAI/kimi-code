@@ -77,6 +77,11 @@ export function useTurnFileStats(
       } else if (state !== undefined && state !== 'cancelled') {
         continue;
       }
+      const cached = fetcher?.peek?.(turnId);
+      if (Array.isArray(cached)) {
+        fetchedFileStats.value.set(turnId, cached);
+        continue;
+      }
       fetchedFileStats.value.set(turnId, 'pending');
       incoming.push(turnId);
     }

@@ -376,7 +376,10 @@ onMounted(() => {
       .kimiDesktop?.onMenuAction?.((menuId) => {
       if (menuId === 'close-panel-tab') {
         if (anyOverlayOpen.value) return;
-        if (panel.panelVisible.value && panel.activeTabId.value) panel.closeTab(panel.activeTabId.value);
+        if (panel.panelVisible.value && panel.activeTabId.value) {
+          if (panelTabsRef.value?.requestClose) void panelTabsRef.value.requestClose('close', panel.activeTabId.value);
+          else panel.closeTab(panel.activeTabId.value);
+        }
         else window.close();
         return;
       }
@@ -558,7 +561,8 @@ function runShortcutAction(id: AppActionId, source: 'shortcut' | 'menu' | 'butto
       break;
     case 'closeSessionView':
       if (!anyOverlayOpen.value && panel.panelVisible.value && panel.activeTabId.value) {
-        panel.closeTab(panel.activeTabId.value);
+        if (panelTabsRef.value?.requestClose) void panelTabsRef.value.requestClose('close', panel.activeTabId.value);
+        else panel.closeTab(panel.activeTabId.value);
         break;
       }
       if (

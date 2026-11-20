@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createApp, h, nextTick, type App } from 'vue';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppModel } from '@moonshot-ai/app-core/api';
 import type { ConversationStatus } from '@moonshot-ai/app-core/client/types';
 
@@ -128,6 +128,10 @@ function mockRect(el: Element, rect: Partial<DOMRect>): void {
     }),
   });
 }
+
+beforeAll(async () => {
+  await import('../src/composer/Composer.vue');
+});
 
 beforeEach(() => {
   isMobileViewport = true;

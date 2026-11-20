@@ -250,6 +250,8 @@ test('switching sessions and back keeps the earlier-loaded turns', async ({ app,
   await anchor.evaluate(element => element.scrollIntoView({ block: 'start' }));
   await expect(anchor).toBeInViewport();
   const anchorTop = (await anchor.boundingBox())!.y;
+  const loadedTurns = await transcript.getByRole('listitem').first().getAttribute('aria-setsize');
+  expect(Number(loadedTurns)).toBeGreaterThan(PAGE * 2);
 
   await sidebar.getByRole('button', { name: /^New Session/ }).click();
   await expect(transcript.getByText(question(1), { exact: true })).toHaveCount(0);
@@ -260,7 +262,7 @@ test('switching sessions and back keeps the earlier-loaded turns', async ({ app,
   await sidebar.getByText(question(1), { exact: true }).click();
   await expect.poll(() => app.sessionId()).toBe(sessionId);
   await expect(transcript.getByText(answer(PAGE + 1), { exact: true })).toBeAttached();
-  await expect(transcript.getByText(question(1), { exact: true })).toBeAttached();
+  await expect(transcript.getByRole('listitem').first()).toHaveAttribute('aria-setsize', loadedTurns!);
   await expect(anchor).toBeInViewport();
   await expect.poll(async () => Math.abs(((await anchor.boundingBox())?.y ?? Number.POSITIVE_INFINITY) - anchorTop)).toBeLessThanOrEqual(24);
 });

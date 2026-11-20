@@ -1072,7 +1072,7 @@ describe('useKimiWebClient session work reconnect baseline', () => {
       })),
       getSession: vi.fn(async () => ({ id: target.id, archived: false, workspaceId: 'workspace-1' })),
       startBtw: vi.fn(async () => ({ agentId: 'btw-1' })),
-      getSessionGoal: vi.fn(async () => null),
+      closeAgent: vi.fn(async () => ({ closed: true as const })),
       getSessionWarnings: vi.fn(async () => []),
       listSkills: vi.fn(async () => []),
       listSkillsForWorkspace: vi.fn(async () => []),

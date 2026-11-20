@@ -27,6 +27,7 @@ export interface ISessionBtwService {
   readonly _serviceBrand: undefined;
 
   start(): Promise<string>;
+  close(agentId: string): Promise<void>;
 }
 
 export const ISessionBtwService: ServiceIdentifier<ISessionBtwService> =

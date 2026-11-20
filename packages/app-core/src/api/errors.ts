@@ -129,6 +129,8 @@ export const SESSION_EXPORT_TOO_LARGE_CODE = 41301;
 
 export const SESSION_BUSY_CODE = 40901;
 
+export const SESSION_NOT_FOUND_CODE = 40401;
+
 export const PAGE_TOKEN_MISMATCH_CODE = 40922;
 
 export function isPageTokenMismatchError(error: unknown): boolean {

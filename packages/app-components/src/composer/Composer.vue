@@ -104,6 +104,7 @@ import SlashMenu from './SlashMenu.vue';
 
 const props = defineProps<{
   variant?: 'full' | 'side-chat';
+  workingOverride?: boolean;
   interruptArmed?: boolean;
   hideContext?: boolean;
   submitDisabled?: boolean;
@@ -128,6 +129,7 @@ const sessionId = client.activeSessionId;
 const scopeId = computed(() => props.draftScopeKey ?? sessionId.value);
 const running = computed(() => client.activity.value !== 'idle');
 const working = client.working;
+const stopButtonVisible = computed(() => (isSideChat.value ? Boolean(props.workingOverride) : working.value));
 const starting = client.isStartingFirstPrompt;
 const queued = client.queued;
 const searchFiles = client.searchFiles;
@@ -3493,7 +3495,7 @@ watch(() => client.activeSessionId.value, () => { closeDropdown(); closePermDrop
           </button>
           </Tooltip>
           <span v-if="statusNote" class="status-note">{{ statusNote }}</span>
-          <Tooltip v-if="working && !isSideChat" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
+          <Tooltip v-if="stopButtonVisible" :text="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interruptTitle')">
             <button
               class="stop"
               :aria-label="t(interruptArmed ? 'composer.interruptConfirm' : 'composer.interrupt')"

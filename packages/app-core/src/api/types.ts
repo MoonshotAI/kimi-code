@@ -1081,6 +1081,7 @@ export interface KimiWebApi {
   ): Promise<string | null>;
   forkSession(sessionId: string, input?: { title?: string; turnIndex?: number }): Promise<AppSession>;
   startBtw(sessionId: string): Promise<{ agentId: string }>;
+  closeAgent(sessionId: string, agentId: string): Promise<{ closed: true }>;
   respondApproval(sessionId: string, approvalId: string, response: ApprovalResponse): Promise<InteractionRespondResult>;
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<InteractionRespondResult>;
   dismissQuestion(sessionId: string, questionId: string): Promise<InteractionRespondResult>;
@@ -1285,9 +1286,12 @@ export interface SessionContextSummary {
   groups: SessionContextGroup[];
 }
 
+export type SessionContextItemSegment = 'thinking' | 'reply' | 'tool_call';
+
 export interface SessionContextItemSummary {
   id: string;
   role: string;
+  segment?: SessionContextItemSegment;
   name?: string;
   sequence?: number;
   preview: string;
@@ -1314,6 +1318,7 @@ export interface SessionContextItemPart {
 export interface SessionContextItemDetail {
   id: string;
   role: string;
+  segment?: SessionContextItemSegment;
   name?: string;
   sequence?: number;
   tokens: number;

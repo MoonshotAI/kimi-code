@@ -3,10 +3,10 @@ import { computed, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, EmptyState, Icon, IconButton, ScrollArea, Spinner, Tooltip } from '@moonshot-ai/app-ui';
 import { getKimiWebApi, sessionObservationOptions, useKimiWebClient } from '@moonshot-ai/app-client/client';
-import { formatTokenEstimate, formatTokens, formatTokenShare } from '@moonshot-ai/app-core/lib';
+import { ContextComposition } from '@moonshot-ai/app-components/support';
+import { formatTokenEstimate } from '@moonshot-ai/app-core/lib';
 import type {
   ReadRequestOptions,
-  SessionContextGroup,
   SessionContextItemSummary,
   SessionContextItemsResponse,
   SessionContextSummary,
@@ -16,7 +16,7 @@ import ContextItemDialog from './ContextItemDialog.vue';
 type FetchMode = 'reset' | 'more' | 'refresh';
 
 const props = defineProps<{ sessionId: string }>();
-const { t, te } = useI18n();
+const { t } = useI18n();
 const client = useKimiWebClient();
 
 const PAGE_LIMIT = 100;
@@ -34,16 +34,6 @@ const toolsOpen = ref(false);
 const selectedId = ref('');
 let requestSeq = 0;
 
-const usedTokens = computed(() => summary.value?.tokens.used ?? client.status.value?.ctxUsed ?? 0);
-const maxTokens = computed(() => summary.value?.tokens.max ?? client.status.value?.ctxMax ?? 0);
-const contextUsageLabel = computed(() => {
-  const used = formatTokens(usedTokens.value);
-  if (maxTokens.value <= 0) return `${t('inspector.usedLabel')} ${used}`;
-  return t('inspector.usageSummary', {
-    used,
-    remaining: formatTokens(Math.max(0, maxTokens.value - usedTokens.value)),
-  });
-});
 const selectedRoles = computed(() => selectedFilterRoles.value);
 const filtering = computed(() => selectedFilterRoles.value.length > 0);
 const definitionOnly = computed(() =>
@@ -146,27 +136,15 @@ function selectAllRoles(): void {
   void fetchContext('reset');
 }
 
-const segments = computed(() =>
-  (summary.value?.groups ?? []).filter((g) => g.tokens > 0),
-);
-const barScale = computed(() =>
-  maxTokens.value > 0 ? maxTokens.value : segments.value.reduce((sum, g) => sum + g.tokens, 0),
-);
-
-function groupLabel(group: SessionContextGroup): string {
-  const countKey = `inspector.compositionCount.${group.role}`;
-  const count = t(te(countKey) ? countKey : 'inspector.compositionCount.unknown', {
-    n: group.count.toLocaleString(),
-  });
-  return `${count} · ${t('inspector.tokens', { n: formatTokens(group.tokens) })}`;
-}
-
-function groupTooltip(group: SessionContextGroup): string {
-  if (maxTokens.value <= 0) return groupLabel(group);
-  return `${groupLabel(group)} · ${formatTokenShare(group.tokens, maxTokens.value)}`;
+function itemLabel(item: SessionContextItemSummary): string {
+  return item.segment ? t(`inspector.segment.${item.segment}`) : t(`inspector.role.${item.role}`, item.role);
 }
 
 const showGroupedTools = computed(() => !filtering.value && tools.value.length > 0);
+const groupedSystemItem = computed(() =>
+  showGroupedTools.value && items.value[0]?.role === 'system' ? items.value[0] : undefined,
+);
+const listedItems = computed(() => (groupedSystemItem.value ? items.value.slice(1) : items.value));
 const definitionSize = computed(() =>
   tools.value.reduce((acc, item) => acc + item.tokens, 0),
 );
@@ -174,9 +152,8 @@ const definitionSize = computed(() =>
 const navigableItems = computed<SessionContextItemSummary[]>(() => {
   if (definitionOnly.value) return items.value;
   if (showGroupedTools.value && toolsOpen.value) {
-    const sys = items.value[0]?.role === 'system' ? [items.value[0]] : [];
-    const rest = items.value[0]?.role === 'system' ? items.value.slice(1) : items.value;
-    return [...sys, ...tools.value, ...rest];
+    const system = groupedSystemItem.value ? [groupedSystemItem.value] : [];
+    return [...system, ...tools.value, ...listedItems.value];
   }
   return items.value;
 });
@@ -213,60 +190,33 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
     <EmptyState v-else-if="!sessionId" :title="t('inspector.selectSession')" />
     <ScrollArea v-else-if="summary" class="context-scroll" :class="{ refreshing: loading }" orientation="both">
       <div class="context-overview">
-        <div class="overview-toolbar">
-          <span class="current-chars">{{ contextUsageLabel }}</span>
-          <Tooltip :text="t('inspector.currentContextHint')">
-            <span tabindex="0" class="current-time">
-              {{ summary ? new Date(summary.captured_at).toLocaleTimeString() : '—' }}
-              <Icon name="info" size="sm" />
-            </span>
-          </Tooltip>
-          <IconButton
-            size="sm"
-            :label="t('inspector.refresh')"
-            :tooltip="t('inspector.refresh')"
-            :disabled="loading || !sessionId"
-            @click="fetchContext('refresh')"
-          >
-            <Icon name="refresh" size="sm" />
-          </IconButton>
-        </div>
-        <div v-if="segments.length > 0" class="composition-bar" :aria-label="t('inspector.composition')">
-          <Tooltip v-for="group in segments" :key="group.role" :text="groupTooltip(group)">
-            <button
-              type="button"
-              :data-role="group.role"
-              :style="{ width: `${(group.tokens / barScale) * 100}%` }"
-              :class="{ dimmed: filtering && !selectedFilterRoles.includes(group.role) }"
-              :aria-label="groupLabel(group)"
-              :aria-pressed="filtering && selectedFilterRoles.includes(group.role)"
-              @click="toggleRole(group.role)"
-            />
-          </Tooltip>
-          <span class="composition-free" />
-        </div>
-        <div class="composition-legend">
-          <Tooltip
-            v-for="group in summary.groups"
-            :key="group.role"
-            :text="groupTooltip(group)"
-          >
-            <button
-              class="legend-button"
-              type="button"
-              :data-role="group.role"
-              :class="{ muted: filtering && !selectedFilterRoles.includes(group.role), selected: filtering && selectedFilterRoles.includes(group.role) }"
-              :aria-label="groupLabel(group)"
-              :aria-pressed="filtering && selectedFilterRoles.includes(group.role)"
-              @click="toggleRole(group.role)"
+        <ContextComposition
+          :snapshot="summary"
+          :ctx-used="client.status.value?.ctxUsed"
+          :ctx-max="client.status.value?.ctxMax"
+          size="expanded"
+          :selected-roles="selectedFilterRoles"
+          @toggle="toggleRole"
+        >
+          <template #headline-extra>
+            <Tooltip :text="t('inspector.currentContextHint')">
+              <span tabindex="0" class="current-time">
+                {{ new Date(summary.captured_at).toLocaleTimeString() }}
+                <Icon name="info" size="sm" />
+              </span>
+            </Tooltip>
+            <IconButton
+              size="sm"
+              :label="t('inspector.refresh')"
+              :tooltip="t('inspector.refresh')"
+              :disabled="loading || !sessionId"
+              @click="fetchContext('refresh')"
             >
-              <span class="legend-marker" />
-              <span>{{ t(`inspector.role.${group.role}`, group.role) }}</span>
-              <span class="legend-value">{{ formatTokenEstimate(group.tokens) }}</span>
-            </button>
-          </Tooltip>
-          <Button v-if="filtering" size="sm" variant="text" @click="selectAllRoles">{{ t('inspector.clearFilter') }}</Button>
-        </div>
+              <Icon name="refresh" size="sm" />
+            </IconButton>
+          </template>
+        </ContextComposition>
+        <Button v-if="filtering" class="clear-filter" size="sm" variant="text" @click="selectAllRoles">{{ t('inspector.clearFilter') }}</Button>
       </div>
 
       <div class="context-columns">
@@ -277,23 +227,23 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
       <div class="context-blocks">
         <template v-if="showGroupedTools">
           <button
-            v-if="items[0]?.role === 'system'"
+            v-if="groupedSystemItem"
             type="button"
             class="context-block context-row"
-            data-role="system"
+            data-context-role="system"
             aria-haspopup="dialog"
-            @click="selectedId = items[0].id"
+            @click="selectedId = groupedSystemItem.id"
           >
             <Icon class="open-message" name="expand" size="sm" />
             <span class="role-marker" />
             <span class="block-role">{{ t('inspector.role.system') }}</span>
-            <span class="block-preview">{{ items[0].preview }}</span>
-            <span class="block-size">{{ formatTokenEstimate(items[0].tokens) }}</span>
+            <span class="block-preview">{{ groupedSystemItem.preview }}</span>
+            <span class="block-size">{{ formatTokenEstimate(groupedSystemItem.tokens) }}</span>
           </button>
 
           <details
             class="context-block"
-            data-role="definition"
+            data-context-role="definition"
             @toggle.stop="toolsOpen = ($event.target as HTMLDetailsElement).open"
           >
             <summary>
@@ -309,7 +259,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
                 :key="tool.id"
                 type="button"
                 class="context-block context-row"
-                data-role="definition"
+                data-context-role="definition"
                 aria-haspopup="dialog"
                 @click="selectedId = tool.id"
               >
@@ -324,49 +274,27 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
               </button>
             </div>
           </details>
-
-          <button
-            v-for="item in (items[0]?.role === 'system' ? items.slice(1) : items)"
-            :key="item.id"
-            type="button"
-            class="context-block context-row"
-            :data-role="item.role"
-            aria-haspopup="dialog"
-            @click="selectedId = item.id"
-          >
-            <Icon class="open-message" name="expand" size="sm" />
-            <span v-if="item.sequence !== undefined" class="block-index">{{ String(item.sequence).padStart(2, '0') }}</span>
-            <span v-else class="role-marker" />
-            <span class="block-role">{{ t(`inspector.role.${item.role}`, item.role) }}</span>
-            <span class="block-preview">
-              <span v-if="item.name" class="block-name">{{ item.name }}</span>
-              <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
-            </span>
-            <span class="block-size">{{ formatTokenEstimate(item.tokens) }}</span>
-          </button>
         </template>
 
-        <template v-else>
-          <button
-            v-for="item in items"
-            :key="item.id"
-            type="button"
-            class="context-block context-row"
-            :data-role="item.role"
-            aria-haspopup="dialog"
-            @click="selectedId = item.id"
-          >
-            <Icon class="open-message" name="expand" size="sm" />
-            <span v-if="item.sequence !== undefined" class="block-index">{{ String(item.sequence).padStart(2, '0') }}</span>
-            <span v-else class="role-marker" />
-            <span class="block-role">{{ t(`inspector.role.${item.role}`, item.role) }}</span>
-            <span class="block-preview">
-              <span v-if="item.name" class="block-name">{{ item.name }}</span>
-              <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
-            </span>
-            <span class="block-size">{{ formatTokenEstimate(item.tokens) }}</span>
-          </button>
-        </template>
+        <button
+          v-for="item in listedItems"
+          :key="item.id"
+          type="button"
+          class="context-block context-row"
+          :data-context-role="item.role"
+          aria-haspopup="dialog"
+          @click="selectedId = item.id"
+        >
+          <Icon class="open-message" name="expand" size="sm" />
+          <span v-if="item.sequence !== undefined" class="block-index">{{ String(item.sequence).padStart(2, '0') }}</span>
+          <span v-else class="role-marker" />
+          <span class="block-role">{{ itemLabel(item) }}</span>
+          <span class="block-preview">
+            <span v-if="item.name" class="block-name">{{ item.name }}</span>
+            <template v-if="item.name && item.preview"> · </template>{{ item.preview }}
+          </span>
+          <span class="block-size">{{ formatTokenEstimate(item.tokens) }}</span>
+        </button>
 
         <div v-if="hasMore" class="show-more-wrap">
           <Button size="sm" variant="ghost" :loading="loadingMore" @click="fetchContext('more')">
@@ -380,6 +308,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
       v-if="selectedItem"
       :session-id="sessionId"
       :item="selectedItem"
+      :label="itemLabel(selectedItem)"
       :index="selectedIndex"
       :total="navigableTotal"
       @close="selectedId = ''"
@@ -389,15 +318,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
 </template>
 
 <style scoped>
-.model-inspector { height: 100%; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--color-bg); color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-sm); -webkit-app-region: no-drag; container: inspector-detail / inline-size; }
-.model-inspector :deep([data-role="system"]) { --context-color: var(--color-text-muted); }
-.model-inspector :deep([data-role="definition"]) { --context-color: var(--color-context-definition); }
-.model-inspector :deep([data-role="user"]) { --context-color: var(--color-info); }
-.model-inspector :deep([data-role="assistant"]) { --context-color: var(--color-context-assistant); }
-.model-inspector :deep([data-role="tool"]) { --context-color: var(--color-orange); }
-.overview-toolbar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); white-space: nowrap; }
-.overview-toolbar .current-chars { flex: 1; }
-.current-chars { color: var(--color-text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.model-inspector { height: 100%; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--color-bg); color: var(--color-text); font-family: var(--font-ui); font-size: var(--text-sm); -webkit-app-region: no-drag; }
 .current-time { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-text-faint); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .current-time:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .current-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); color: var(--color-danger); font-size: var(--text-xs); overflow-wrap: anywhere; }
@@ -405,19 +326,7 @@ const remainingCount = computed(() => Math.max(0, total.value - items.value.leng
 .context-scroll { flex: 1; min-height: 0; }
 .refreshing { opacity: .5; }
 .context-overview { padding: var(--space-3); border-bottom: var(--p-hairline) solid var(--color-line); }
-.composition-bar { display: flex; gap: 1px; height: var(--space-3); overflow: hidden; }
-.composition-bar button { flex: none; border: 0; border-radius: var(--radius-context-segment); background: var(--context-color, var(--color-text-faint)); min-width: var(--space-1); padding: 0; cursor: pointer; }
-.composition-free { flex: 1; min-width: 0; border-radius: var(--radius-context-segment); background: var(--color-fill-2); }
-.composition-bar button:hover { opacity: .8; }
-.composition-bar .dimmed { opacity: .25; }
-.composition-legend { display: flex; gap: var(--space-2); margin-top: var(--space-2); overflow-x: auto; scrollbar-width: thin; white-space: nowrap; }
-.legend-button { display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--space-8); flex: none; white-space: nowrap; background: transparent; border: 0; padding: var(--space-1); color: var(--color-text-muted); font: inherit; font-size: var(--text-xs); cursor: pointer; border-radius: var(--radius-xs); }
-.legend-button:hover { background: var(--color-hover); }
-.legend-button.muted { opacity: .4; }
-.legend-button.selected { background: var(--color-selected); color: var(--color-text); box-shadow: var(--shadow-xs); }
-.legend-button.muted .legend-marker { background: transparent; box-shadow: inset 0 0 0 var(--p-hairline) var(--context-color, var(--color-text-faint)); }
-.legend-marker { width: var(--space-2); height: var(--space-2); border-radius: var(--radius-context-segment); background: var(--context-color, var(--color-text-faint)); flex: none; }
-.legend-value { font-variant-numeric: tabular-nums; color: var(--color-text-faint); }
+.clear-filter { margin-top: var(--space-1); }
 button:focus-visible, summary:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .context-columns { display: flex; justify-content: space-between; padding: var(--space-1) var(--space-3); font-size: var(--text-xs); color: var(--color-text-faint); border-bottom: var(--p-hairline) solid var(--color-line); }
 .context-blocks { min-width: 0; }
@@ -439,6 +348,5 @@ button:focus-visible, summary:focus-visible { outline: none; box-shadow: var(--p
 .block-size { font: var(--text-xs) var(--font-mono); color: var(--color-text-faint); flex: none; }
 .nested-tools { margin-left: var(--space-4); border-left: var(--p-hairline) solid var(--color-line); }
 .show-more-wrap { padding: var(--space-2) var(--space-3); }
-@container inspector-detail (max-width: 640px) { .legend-value { display: none; } }
-@media (hover: none) { .legend-button, .context-block > summary, .context-row { min-height: calc(var(--space-8) + var(--space-3)); } .open-message { opacity: 1; } }
+@media (hover: none) { .context-block > summary, .context-row { min-height: calc(var(--space-8) + var(--space-3)); } .open-message { opacity: 1; } }
 </style>

@@ -64,7 +64,6 @@ const config = withMermaid(defineConfig({
               text: '多端与外部接入',
               items: [
                 { text: '在网页中使用', link: '/zh/guides/web' },
-                { text: '在脚本与 CI 中使用', link: '/zh/guides/print' },
                 { text: '在 IDE 中使用', link: '/zh/guides/ides' },
                 { text: '在其他 Agent 中使用（Agent to Agent）', link: '/zh/guides/other-agents' },
               ],
@@ -150,7 +149,6 @@ const config = withMermaid(defineConfig({
               text: 'Interfaces & Integrations',
               items: [
                 { text: 'Using in the Browser', link: '/en/guides/web' },
-                { text: 'Using in Scripts and CI', link: '/en/guides/print' },
                 { text: 'Using in IDEs', link: '/en/guides/ides' },
                 { text: 'Using in Other Agents (Agent to Agent)', link: '/en/guides/other-agents' },
               ],

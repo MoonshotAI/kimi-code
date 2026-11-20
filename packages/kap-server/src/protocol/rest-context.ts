@@ -23,9 +23,13 @@ export const contextSummarySchema = z.object({
 });
 export type ContextSummary = z.infer<typeof contextSummarySchema>;
 
+export const contextItemSegmentSchema = z.enum(['thinking', 'reply', 'tool_call']);
+export type ContextItemSegment = z.infer<typeof contextItemSegmentSchema>;
+
 export const contextItemSummarySchema = z.object({
   id: z.string().min(1),
   role: z.string().min(1),
+  segment: contextItemSegmentSchema.optional(),
   name: z.string().optional(),
   sequence: z.number().int().positive().optional(),
   preview: z.string(),
@@ -52,13 +56,7 @@ export const contextItemPartSchema = z.object({
 });
 export type ContextItemPart = z.infer<typeof contextItemPartSchema>;
 
-export const contextItemDetailSchema = z.object({
-  id: z.string().min(1),
-  role: z.string().min(1),
-  name: z.string().optional(),
-  sequence: z.number().int().positive().optional(),
-  tokens: z.number().int().nonnegative(),
-  has_media: z.boolean(),
+export const contextItemDetailSchema = contextItemSummarySchema.omit({ preview: true }).extend({
   parts: z.array(contextItemPartSchema),
   raw: z.unknown(),
 });

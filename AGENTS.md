@@ -135,6 +135,7 @@
 | `gen-docs` | 代码改动影响了产品行为或用户体验，需要更新用户文档时 |
 | `translate-docs` | 在 `docs/zh/` 和 `docs/en/` 之间翻译、同步双语文档 |
 | `review-pr` | 评审 PR；只在用户明确要求时使用 |
+| `review-duplication` | 实现前查找可复用的能力，提 PR 前自查或评审时核对平行实现 |
 | `pre-changelog` | 合并发版 PR 前预览 CLI 和桌面端的中文更新日志 |
 | `sync-changelog` | 同步 CLI 发布日志到文档站，或为桌面端更新对话框准备双语日志 |
 
@@ -147,7 +148,7 @@
 - 如果 lint 规则、测试或脚本能拦住这类错误，就加检查而不是写规则；有检查执行的规则，旁边写明是哪个检查。
 - 说明文件的改动要聚焦，并有代码事实支撑。
 - 把经验写成团队规则前，确认同类失误至少出现过两次、规则会改变 agent 的做法，并且半年后仍然适用。
-- `pnpm lint` 里的 `scripts/checks/instructions.mjs` 会检查：所有 `AGENTS.md` 里的行内链接和反引号里的仓库路径是否存在，根目录的 `AGENTS.md` 有没有超过体积上限。指向本仓库之外的路径或构建产物时，把它加进 `scripts/checks/instructions.json` 的 `unresolved`，并写明理由。超出上限时，先把只有某个目录需要的内容挪进那个目录的 `AGENTS.md`，再压缩；只有确实需要更多篇幅时，才调高 `scripts/checks/instructions.json` 里的上限，并在 PR 里写明理由。
+- `pnpm lint` 里的 `scripts/checks/instructions.mjs` 会检查：所有 `AGENTS.md` 里的行内链接和反引号里的仓库路径是否存在。指向本仓库之外的路径或构建产物时，把它加进 `scripts/checks/instructions.json` 的 `unresolved`，并写明理由。
 
 ## 发布流程
 
