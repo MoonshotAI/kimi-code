@@ -1754,7 +1754,7 @@ function passSubmitGate(): boolean {
   return true;
 }
 
-function handleSteer(): void {
+function handleRunningSend(delivery: 'steer' | 'queue'): void {
   const decision = currentSubmitDecision();
   if (
     decision.kind !== 'submit' &&
@@ -1770,32 +1770,22 @@ function handleSteer(): void {
   historyEntrySnapshot = null;
   if (props.deferSubmitReset !== true || decision.kind === 'prompt-command') clearAfterDispatch();
   if (decision.kind === 'prompt-command') {
-    emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery: 'steer' });
+    emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery });
     return;
   }
-  emit('steer', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries, snapshot, ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}) });
-}
-
-function handleQueue(): void {
-  const decision = currentSubmitDecision();
-  if (
-    decision.kind !== 'submit' &&
-    decision.kind !== 'multi-skill-activation' &&
-    !(decision.kind === 'prompt-command' && decision.target === 'main')
-  ) {
-    return;
-  }
-  if (!passSubmitGate()) return;
-  const snapshot = editor?.getSnapshot();
-  const restoreEntries = snapshotAttachmentEntries(activeAttachmentEntries.value);
-  history.push(decision.historyText, snapshot);
-  historyEntrySnapshot = null;
-  if (props.deferSubmitReset !== true || decision.kind === 'prompt-command') clearAfterDispatch();
-  if (decision.kind === 'prompt-command') {
-    emit('command', { cmd: decision.cmd, attachments: decision.attachments, restoreText: decision.restoreText, restoreEntries, snapshot, editText: decision.editText, delivery: 'queue' });
+  if (delivery === 'steer') {
+    emit('steer', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries, snapshot, ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}) });
     return;
   }
   emit('submit', { text: decision.text, restoreText: decision.restoreText, editText: decision.editText, attachments: decision.attachments, restoreEntries, snapshot, ...(decision.kind === 'multi-skill-activation' ? { skills: decision.skills } : {}), forceQueue: true });
+}
+
+function handleSteer(): void {
+  handleRunningSend('steer');
+}
+
+function handleQueue(): void {
+  handleRunningSend('queue');
 }
 
 function handleSubmit(): void {
