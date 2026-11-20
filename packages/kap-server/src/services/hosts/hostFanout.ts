@@ -1,11 +1,18 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import type { HostBridgeManager } from './hostBridgeManager';
 import type { HostSession } from './hostSession';
+import type { SshKapBridge } from './sshKapBridge';
+
+const HOST_RESUME_TIMEOUT_MS = 2_000;
 
 export type HostQuery = Readonly<Record<string, string | number | boolean | readonly string[] | undefined>>;
 
+const HOST_PROJECTS_TIMEOUT_MS = 5_000;
+
 export interface HostSource {
   readonly id: string;
-  readonly session: HostSession | undefined;
+  getSession(): Promise<HostSession | undefined>;
 }
 
 export interface HostSources {
@@ -28,10 +35,29 @@ export function hostSources(manager: HostBridgeManager): HostSources {
       manager.activate();
       return manager.list().map((info) => ({
         id: info.id,
-        session: info.entry.enabled === false ? undefined : info.bridge?.session,
+        getSession: async () => info.entry.enabled === false ? undefined : getHostSession(info.bridge),
       }));
     },
   };
+}
+
+async function getHostSession(bridge: SshKapBridge | undefined): Promise<HostSession | undefined> {
+  const session = bridge?.session;
+  if (session !== undefined) return session;
+  const resuming = bridge?.resumeIfIdle();
+  if (resuming === undefined) return undefined;
+
+  const deadline = new AbortController();
+  try {
+    return await Promise.race([
+      resuming,
+      sleep(HOST_RESUME_TIMEOUT_MS, undefined, { signal: deadline.signal, ref: false }),
+    ]);
+  } catch {
+    return undefined;
+  } finally {
+    deadline.abort();
+  }
 }
 
 function queryString(query: HostQuery): string {
@@ -48,11 +74,17 @@ function queryString(query: HostQuery): string {
   return text === '' ? '' : `?${text}`;
 }
 
-export async function hostGet<T>(session: HostSession, path: string, query: HostQuery = {}): Promise<T> {
+export async function hostGet<T>(
+  session: HostSession,
+  path: string,
+  query: HostQuery = {},
+  timeoutMs?: number,
+): Promise<T> {
   const response = await session.request({
     method: 'GET',
     path: `${path}${queryString(query)}`,
     headers: { accept: 'application/json' },
+    timeoutMs,
   });
   let body: { code?: number; msg?: string; data?: T };
   try {
@@ -67,7 +99,7 @@ export async function hostGet<T>(session: HostSession, path: string, query: Host
 }
 
 export async function hostProjects<T extends { readonly kind: string }>(session: HostSession): Promise<T[]> {
-  const data = await hostGet<{ items: T[] }>(session, '/api/v1/workspaces');
+  const data = await hostGet<{ items: T[] }>(session, '/api/v1/workspaces', {}, HOST_PROJECTS_TIMEOUT_MS);
   return data.items.filter((workspace) => workspace.kind === 'managed');
 }
 
@@ -82,9 +114,10 @@ export async function collectFromHosts<T extends object>(
 ): Promise<HostCollection<T>> {
   const results = await Promise.all(
     hosts.sources().map(async (source) => {
-      if (source.session === undefined) return { id: source.id, items: undefined };
+      const session = await source.getSession();
+      if (session === undefined) return { id: source.id, items: undefined };
       try {
-        const items = await fetch(source.session);
+        const items = await fetch(session);
         return { id: source.id, items: items.map((item) => ({ ...item, host_id: source.id })) };
       } catch {
         return { id: source.id, items: undefined };
@@ -107,9 +140,10 @@ export async function findOnHosts<T extends object>(
 ): Promise<HostLookup<T>> {
   const results = await Promise.all(
     hosts.sources().map(async (source) => {
-      if (source.session === undefined) return { id: source.id, reachable: false, item: undefined };
+      const session = await source.getSession();
+      if (session === undefined) return { id: source.id, reachable: false, item: undefined };
       try {
-        return { id: source.id, reachable: true, item: await fetch(source.session) };
+        return { id: source.id, reachable: true, item: await fetch(session) };
       } catch {
         return { id: source.id, reachable: false, item: undefined };
       }

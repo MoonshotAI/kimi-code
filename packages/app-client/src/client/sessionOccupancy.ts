@@ -2,24 +2,17 @@ import {
   isSessionOccupiedError,
   isSessionStaleError,
   sessionOccupiedHolderClient,
-  sessionOccupiedHolderDisplayName,
 } from '@moonshot-ai/app-core/api';
 import { isDesktop } from '@moonshot-ai/app-core/lib';
 import { track } from '../contracts';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
+import { sessionOccupiedMessage } from '../lib/sessionConflictErrors';
 import { sessionsStore } from '../stores/sessions';
 import { warningsStore } from '../stores/warnings';
 import { getKimiWebApi, t } from './deps';
 
 function openerClient(): 'web' | 'desktop' {
   return isDesktop ? 'desktop' : 'web';
-}
-
-function sessionOccupiedMessage(err: unknown): string {
-  const client = sessionOccupiedHolderDisplayName(err);
-  return client === undefined
-    ? t('warnings.sessionOccupied.message')
-    : t('warnings.sessionOccupied.messageWithClient', { client });
 }
 
 function pushSessionOccupiedWarning(err: unknown): void {

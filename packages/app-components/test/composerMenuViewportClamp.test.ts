@@ -131,7 +131,6 @@ function mockRect(el: Element, rect: Partial<DOMRect>): void {
 
 beforeAll(async () => {
   await import('../src/composer/Composer.vue');
-  vi.resetModules();
 });
 
 beforeEach(() => {

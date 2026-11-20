@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
   applyAllowlist,
-  checkBudgets,
   entriesOf,
   invalidEntries,
   referencesIn,
@@ -24,13 +23,22 @@ await test('CLI resolves nested Git paths and reports broken links through a lin
   mkdirSync(docs, { recursive: true });
   execFileSync('git', ['init', '--quiet'], { cwd: repo });
   copyFileSync(new URL('./instructions.mjs', import.meta.url), join(checks, 'instructions.mjs'));
-  writeFileSync(join(checks, 'instructions.json'), '{}');
+  const config = JSON.parse(readFileSync(new URL('./instructions.json', import.meta.url), 'utf8'));
+  writeFileSync(join(checks, 'instructions.json'), JSON.stringify({ ...config, unresolved: [] }));
+  const rootGuide = join(repo, 'AGENTS.md');
+  writeFileSync(rootGuide, 'a'.repeat(23_201));
   writeFileSync(join(docs, 'guide.md'), '');
   const guide = join(docs, 'AGENTS.md');
   writeFileSync(guide, '[guide](./guide.md) `docs/guide.md` `packages/example/docs/`');
   const success = spawnSync(process.execPath, ['scripts/checks/instructions.mjs'], { cwd: repo, encoding: 'utf8' });
   assert.equal(success.status, 0, success.stderr);
   assert.match(success.stdout, /3 references resolve/);
+
+  rmSync(rootGuide);
+  const missingRoot = spawnSync(process.execPath, ['scripts/checks/instructions.mjs'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(missingRoot.status, 1, missingRoot.stderr);
+  assert.match(missingRoot.stderr, /root AGENTS\.md is missing/);
+  writeFileSync(rootGuide, '');
 
   writeFileSync(guide, '[missing](./missing.md)');
   const linked = join(temp, 'linked');
@@ -147,13 +155,4 @@ await test('invalidEntries rejects unresolved entries without a file, a referenc
   const blank = { file: 'AGENTS.md', reference: 'apps/web', why: ' ' };
   const partial = { file: 'AGENTS.md', why: 'no reference' };
   assert.deepEqual(invalidEntries([good, blank, partial, null]), [blank, partial, null]);
-});
-
-await test('checkBudgets reports files over their budget and budgets for missing files', () => {
-  const sizes = { 'AGENTS.md': 120, 'docs/AGENTS.md': 80 };
-  const result = checkBudgets({ 'AGENTS.md': 100, 'docs/AGENTS.md': 100, 'gone/AGENTS.md': 10 }, (file) => sizes[file]);
-  assert.deepEqual(result, [
-    { file: 'AGENTS.md', limit: 100, size: 120 },
-    { file: 'gone/AGENTS.md', limit: 10, size: undefined },
-  ]);
 });

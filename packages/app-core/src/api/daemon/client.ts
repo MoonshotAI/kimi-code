@@ -421,6 +421,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
     input?: ListSessionsInput,
     options?: ReadRequestOptions,
   ): Promise<SessionsPage> {
+    const hasWorkspaceCursor =
+      input?.workspaceId !== undefined &&
+      input.workspaceIds === undefined &&
+      (input.beforeId !== undefined || input.afterId !== undefined);
     const query: RestQuery = {
       before_id: input?.beforeId,
       after_id: input?.afterId,
@@ -437,7 +441,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       query: input?.query,
       sort: input?.sort,
       include: input?.include,
-      hosts: input?.localOnly === true ? undefined : this.hostsQuery(),
+      hosts: input?.localOnly === true || hasWorkspaceCursor ? undefined : this.hostsQuery(),
     };
     const data = await this.http.get<WireSessionsPage>('/sessions', query, options);
     return {
@@ -909,6 +913,15 @@ export class DaemonKimiWebApi implements KimiWebApi {
       {},
     );
     return { agentId: data.agent_id };
+  }
+
+  async closeAgent(sessionId: string, agentId: string): Promise<{ closed: true }> {
+    await this.http.post<{ closed: true }>(
+      `/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}:close`,
+      {},
+      { allowCodes: [40401] },
+    );
+    return { closed: true };
   }
 
   respondApproval(

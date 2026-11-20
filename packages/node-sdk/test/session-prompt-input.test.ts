@@ -71,10 +71,11 @@ describe('Session.prompt input normalization', () => {
       rpc: { steer } as unknown as SDKRpcClientBase,
     });
 
-    await expect(session.steer('focus on tests')).resolves.toEqual(submission);
+    await expect(session.steer('focus on tests', { promptId: 'prompt-client-steer' })).resolves.toEqual(submission);
     expect(steer).toHaveBeenCalledWith({
       sessionId: 'ses_steer_result',
       input: [{ type: 'text', text: 'focus on tests' }],
+      promptId: 'prompt-client-steer',
     });
   });
 

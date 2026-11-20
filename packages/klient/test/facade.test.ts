@@ -435,7 +435,7 @@ describe('session skills routing', () => {
     });
     channel.results.set('agentCommandService.list', []);
     await agent.prompt({ input: [{ type: 'text', text: 'hi' }] });
-    await agent.steer({ input: [{ type: 'text', text: 'steer' }] });
+    await agent.steer({ input: [{ type: 'text', text: 'steer' }], promptId: 'prompt-client-steer' });
     await agent.cancel({ turnId: 2 });
     await agent.cancel();
     await agent.setPermission('yolo');
@@ -458,7 +458,7 @@ describe('session skills routing', () => {
           {
             role: 'user',
             content: [{ type: 'text', text: 'steer' }],
-            attributes: { origin: { kind: 'user' } },
+            attributes: { origin: { kind: 'user' }, promptId: 'prompt-client-steer' },
           },
         ],
       },

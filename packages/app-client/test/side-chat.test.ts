@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createInitialState } from '@moonshot-ai/app-core/api';
+import { createInitialState, DaemonApiError, SERVER_AUTH_UNAUTHORIZED_CODE } from '@moonshot-ai/app-core/api';
 import type { KimiEventConnection, KimiWebApi, PromptSubmission, PromptSubmitResult } from '@moonshot-ai/app-core/api';
 import type { ConversationItem, ConversationTurn, ToolCallItem, UserMessageItem } from '@moonshot-ai/app-core/conversation';
 import { useSideChat, type UseSideChatDeps } from '../src/client/useSideChat';
+import { createSideChatCloseGuard } from '../src/panel/sideChatCloseGuard';
 import { createConversationPool } from '../src/composables/useConversations';
 import { sideChatDrafts } from '../src/client/sideChatDrafts';
 import { modelsStore } from '../src/stores/models';
@@ -15,6 +16,8 @@ const apiMock = {
   getFileUrl: (id: string) => `/files/${id}`,
   getSessionMediaUrl: (sessionId: string, id: string) => `/sessions/${sessionId}/media/${id}`,
   startBtw: vi.fn(),
+  closeAgent: vi.fn(),
+  cancelSession: vi.fn(),
   submitPrompt: vi.fn(),
   updateSession: vi.fn(),
 };
@@ -182,6 +185,10 @@ function userTexts(turns: ReturnType<ReturnType<typeof useSideChat>['sideChatTur
 beforeEach(() => {
   agentStatesStore().resetAgentStates();
   apiMock.startBtw.mockReset();
+  apiMock.closeAgent.mockReset();
+  apiMock.closeAgent.mockResolvedValue({ closed: true });
+  apiMock.cancelSession.mockReset();
+  apiMock.cancelSession.mockResolvedValue({ cancelled: true });
   apiMock.submitPrompt.mockReset();
   apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
   apiMock.submitPrompt.mockImplementation(async (_sid: string, input: PromptSubmission) => echoSubmit(input));
@@ -602,9 +609,15 @@ describe('useSideChat — multiple targets per session', () => {
     expect(apiMock.startBtw).toHaveBeenCalledTimes(3);
 
     sideChat.closeSideChat('agent_btw_2');
+    expect(apiMock.closeAgent).toHaveBeenCalledWith('sess_1', 'agent_btw_2');
     expect(sideChat.sideChatTargetsOfSession('sess_1')).toEqual([
       { agentId: 'agent_btw_1', seq: 1 },
       { agentId: 'agent_btw_3', seq: 3 },
+    ]);
+
+    sideChat.handleAgentEnded('sess_1', 'agent_btw_3');
+    expect(sideChat.sideChatTargetsOfSession('sess_1')).toEqual([
+      { agentId: 'agent_btw_1', seq: 1 },
     ]);
 
     await sideChat.openSideChatOn('sess_1');
@@ -732,9 +745,104 @@ describe('useSideChat — multiple targets per session', () => {
 
     sideChat.closeSideChat('agent_btw_1');
     expect(sideChat.isClosedSideChatAgent('sess_1', 'agent_btw_1')).toBe(true);
+    sideChat.restoreSideChatTarget('sess_1', { agentId: 'agent_btw_1', seq: 1 });
+    expect(sideChat.sideChatTargetsOfSession('sess_1')).toEqual([]);
 
     sideChat.clearSideChatForSession('sess_1');
     expect(sideChat.isClosedSideChatAgent('sess_1', 'agent_btw_1')).toBe(false);
+  });
+
+  it('ignores ended frames for non-side-chat agents', () => {
+    const { sideChat } = createSideChat();
+
+    sideChat.handleAgentEnded('sess_1', 'subagent_ordinary_1');
+    expect(sideChat.isClosedSideChatAgent('sess_1', 'subagent_ordinary_1')).toBe(false);
+  });
+
+  it('queues network-failed closeAgent requests and retries them on flushPendingCloses', async () => {
+    vi.useFakeTimers();
+    try {
+      apiMock.closeAgent
+        .mockRejectedValueOnce(networkError())
+        .mockRejectedValueOnce(networkError())
+        .mockRejectedValueOnce(networkError())
+        .mockResolvedValueOnce({ closed: true });
+      const { sideChat } = createSideChat();
+      await sideChat.openSideChatOn('sess_1');
+
+      sideChat.closeSideChat('agent_btw_1');
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(apiMock.closeAgent).toHaveBeenCalledTimes(3);
+
+      sideChat.flushPendingCloses();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(apiMock.closeAgent).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retains 40101 auth-failed closeAgent requests, merges multi-tab pending closes, and restores tombstones on reload', async () => {
+    const store = new Map<string, string>();
+    const fakeStorage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        store.set(k, v);
+      },
+      removeItem: (k: string) => {
+        store.delete(k);
+      },
+    };
+    vi.stubGlobal('window', { localStorage: fakeStorage });
+    try {
+      apiMock.closeAgent
+        .mockRejectedValueOnce(
+          new DaemonApiError({
+            code: SERVER_AUTH_UNAUTHORIZED_CODE,
+            msg: 'unauthorized',
+            requestId: 'req-auth',
+          }),
+        )
+        .mockResolvedValue({ closed: true });
+
+      fakeStorage.setItem(
+        'kimi-web.side-chat.pending-closes.v1',
+        JSON.stringify([{ sessionId: 'sess_other', agentId: 'agent_btw_other' }]),
+      );
+
+      const { sideChat } = createSideChat();
+      expect(sideChat.isClosedSideChatAgent('sess_other', 'agent_btw_other')).toBe(true);
+
+      await sideChat.openSideChatOn('sess_1');
+      sideChat.closeSideChat('agent_btw_1');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const stored = JSON.parse(
+        fakeStorage.getItem('kimi-web.side-chat.pending-closes.v1') ?? '[]',
+      );
+      expect(stored).toEqual([
+        { sessionId: 'sess_other', agentId: 'agent_btw_other' },
+        { sessionId: 'sess_1', agentId: 'agent_btw_1' },
+      ]);
+
+      const reloaded = createSideChat();
+      expect(reloaded.sideChat.isClosedSideChatAgent('sess_1', 'agent_btw_1')).toBe(true);
+      expect(reloaded.sideChat.isClosedSideChatAgent('sess_other', 'agent_btw_other')).toBe(true);
+
+      reloaded.sideChat.flushPendingCloses();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(fakeStorage.getItem('kimi-web.side-chat.pending-closes.v1')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -1074,5 +1182,76 @@ describe('useSideChat — session dies mid-create (generation tombstone)', () =>
     expect(apiMock.startBtw).toHaveBeenCalledTimes(2);
     expect(sideChat.sideChatTargetBySession.value['sess_1']).toEqual([{ agentId: 'agent_btw_2', seq: 1 }]);
     expect(conversations.getEntry('sess_1', 'agent_btw_1')).toBeUndefined();
+  });
+});
+
+describe('useSideChat — cancelSideChatOn & createSideChatCloseGuard', () => {
+  it('cancels only the targeted side-chat agent when running and skips when idle', async () => {
+    const { sideChat, deliver, pushOperationFailure } = createSideChat();
+    await sideChat.openSideChatOn('sess_1');
+
+    await expect(sideChat.cancelSideChatOn('sess_1', 'agent_btw_1')).resolves.toBe(false);
+    expect(apiMock.cancelSession).not.toHaveBeenCalled();
+
+    deliver('agent_btw_1', [], { running: true });
+    await expect(sideChat.cancelSideChatOn('sess_1', 'agent_btw_1')).resolves.toBe(true);
+    expect(apiMock.cancelSession).toHaveBeenCalledWith('sess_1', { agentId: 'agent_btw_1' });
+    expect(pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('reports operation failure when cancelSession throws', async () => {
+    apiMock.cancelSession.mockRejectedValueOnce(networkError());
+    const { sideChat, deliver, pushOperationFailure } = createSideChat();
+    await sideChat.openSideChatOn('sess_1');
+    deliver('agent_btw_1', [], { running: true });
+
+    await expect(sideChat.cancelSideChatOn('sess_1', 'agent_btw_1')).resolves.toBe(false);
+    expect(pushOperationFailure).toHaveBeenCalledWith(
+      'cancelSideChat',
+      expect.anything(),
+      { sessionId: 'sess_1' },
+    );
+  });
+
+  it('closes empty idle btw tabs without confirmation and prompts when non-empty or running', async () => {
+    const confirm = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const activity = new Set<string>(['agent_active_1', 'agent_active_2']);
+    const guard = createSideChatCloseGuard({
+      hasActivity: (agentId) => activity.has(agentId),
+      confirm,
+      t: (key, params) => (typeof params?.['count'] === 'number' ? `${key}:${params['count']}` : key),
+    });
+
+    await expect(
+      guard([
+        { id: 't_file', type: 'file' },
+        { id: 't_empty', type: 'btw', payload: { parentId: 'sess_1', agentId: 'agent_empty' } },
+      ]),
+    ).resolves.toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+
+    await expect(
+      guard([{ id: 't_1', type: 'btw', payload: { parentId: 'sess_1', agentId: 'agent_active_1' } }]),
+    ).resolves.toBe(false);
+    expect(confirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        title: 'sideChat.closeConfirmTitle',
+        message: 'sideChat.closeConfirmMessage',
+        confirmLabel: 'sideChat.closeConfirmAction',
+        variant: 'danger',
+      }),
+    );
+
+    await expect(
+      guard([
+        { id: 't_1', type: 'btw', payload: { parentId: 'sess_1', agentId: 'agent_active_1' } },
+        { id: 't_2', type: 'btw', payload: { parentId: 'sess_1', agentId: 'agent_active_2' } },
+      ]),
+    ).resolves.toBe(true);
+    expect(confirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: 'sideChat.closeConfirmMultipleMessage:2',
+      }),
+    );
   });
 });
