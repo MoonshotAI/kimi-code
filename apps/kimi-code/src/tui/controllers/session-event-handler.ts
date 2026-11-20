@@ -447,7 +447,7 @@ export class SessionEventHandler {
       this.host.showStatus('Turn stopped: prompt hook blocked the request.', 'error');
     }
     this.host.streamingUI.resetToolUi();
-    this.host.streamingUI.finalizeTurn(sendQueued);
+    this.host.streamingUI.finalizeTurn(sendQueued, event.hasNextNotificationTurn);
     this.host.handlePromptPredictionTurnEnded?.(event);
     this.host.recordSessionActivity();
     this.renderPendingModelBlockedFallback();

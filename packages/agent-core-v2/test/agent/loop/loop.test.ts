@@ -1110,7 +1110,10 @@ describe('Agent loop', () => {
     ctx.get(IAgentToolRegistryService).register(lookupTool);
 
     loop.hooks.onDidFinishStep.register('test-notify-handoff', async (hookCtx, next) => {
-      if (hookCtx.turnId === 0) loop.notify();
+      if (hookCtx.turnId === 0) {
+        loop.notify();
+        loop.notify();
+      }
       await next();
     });
 
@@ -1126,6 +1129,15 @@ describe('Agent loop', () => {
     await ctx.untilApproval(true);
     await completion;
 
+    const turnEndings = ctx.allEvents.filter(
+      (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+    );
+    expect(turnEndings.map((event) => event.args)).toMatchObject([
+      { turnId: 0, hasNextNotificationTurn: true },
+      { turnId: 1, stopReason: 'prompt_only', hasNextNotificationTurn: true },
+      { turnId: 2, reason: 'completed' },
+    ]);
+    expect(turnEndings[2]?.args).not.toHaveProperty('hasNextNotificationTurn', true);
     expect(ctx.llmCalls).toHaveLength(2);
     await expect(loop.settled()).resolves.toEqual({
       type: 'completed',
