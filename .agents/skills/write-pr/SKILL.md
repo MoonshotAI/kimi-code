@@ -16,8 +16,8 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何写出�
 2. 推送代码前检查待提的改动：
    - 仅编辑 PR 描述时可直接进入第 3 步。已有开放 PR 时，用 `gh pr view --json url,number,title,state,baseRefName,baseRefOid` 取实际目标分支和提交，以 `baseRefOid` 为 `<base-sha>`；本地缺少该提交时，从目标仓库取回。新建 PR 时，先 `git fetch <目标仓库远端> refs/heads/<目标分支>`，取这次 `git rev-parse FETCH_HEAD` 的结果作为 `<base-sha>`。
    - 首次检查时，读 `git diff <base-sha>...HEAD`，再结合 `git status --short` 检查本次准备提交的暂存、未暂存和新文件。更新已有 PR 时，若此前已做过复用检查，只检查此后改变的代码。
-   - 若改动新增或改写了可能已有实现的能力，或引入第三方工具依赖，先使用 [review-duplication](../review-duplication/SKILL.md) 做作者自查。发现可直接复用的实现，先调整并验证；若调用方确实需要独立实现，在 Code Changes 说明两处契约的差异。
-   - 按仓库的 git 规范提交本次改动。每次推送前运行 `pnpm run check:duplication <base-sha>`。若扫描范围内还有本次提交之外的改动，在待推送 HEAD 的干净 worktree 中运行。发现新增重复时，根据 `.tmp/jscpd/jscpd-report.json` 中 `isNew` 的两端位置修正、提交，再检查。
+   - 若代码新增或改写了可能已有实现的能力，或引入第三方工具依赖，先使用 [review-duplication](../review-duplication/SKILL.md) 做作者自查。发现重复时，按该技能向用户汇报并给出建议，暂停提 PR 流程，等用户明确决定。若决定保留独立实现，在 Code Changes 说明理由。
+   - 按仓库的 git 规范提交本次改动。每次推送前运行 `pnpm run check:duplication <base-sha>`，包括只改文档的提交。jscpd 按 `.jscpd.json` 配置的源码范围比较新增重复，文档正文和其中的代码块均不参与比较。若扫描范围内还有本次提交之外的改动，在待推送 HEAD 的干净 worktree 中运行。若 jscpd 报出新增重复，从 `.tmp/jscpd/jscpd-report.json` 读取 `isNew` 条目的两端位置，按同一流程向用户汇报并等待决定。若用户选择修改，完成后重新运行检查。
    - 检查通过后推送分支。新 PR 需要编号来上传视觉证据时，此时可用 `gh pr create` 创建，其余情况在第 5 步发布描述时创建。
 
 3. 收集解释改动所需的上下文：
