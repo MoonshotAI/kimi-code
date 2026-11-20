@@ -186,6 +186,28 @@ describe('DaemonKimiWebApi lists across hosts', () => {
     ]);
   });
 
+  it.each([
+    ['beforeId', 'before_id'],
+    ['afterId', 'after_id'],
+  ] as const)('keeps a %s cursor on a known local workspace', async (cursor, queryKey) => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(envelope({ hosts: [{ id: 'dev', host: 'dev.example.test', status: 'ready' }] }))
+      .mockResolvedValueOnce(envelope({
+        items: [{ id: 'wm_local', root: '/srv/local', name: 'local', kind: 'managed', additional_dirs: [], session_count: 0 }],
+      }))
+      .mockResolvedValueOnce(envelope({ items: [], has_more: false }));
+    const api = new HostRouter(hostAwareApi(true), () => hostAwareApi(false)).createApi();
+
+    await api.listWorkspaces();
+    await api.listSessions({ workspaceId: 'wm_local', pageSize: 5, hasPrompt: true, [cursor]: 's5' });
+
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      'http://daemon.test/api/v1/hosts',
+      'http://daemon.test/api/v1/workspaces?hosts=include',
+      `http://daemon.test/api/v1/sessions?${queryKey}=s5&page_size=5&workspace_id=wm_local&has_prompt=true`,
+    ]);
+  });
+
   it('never asks a host to list other hosts', async () => {
     vi.mocked(fetch).mockResolvedValue(envelope({ items: [] }));
 

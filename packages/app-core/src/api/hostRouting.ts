@@ -181,6 +181,7 @@ export class HostRouter implements HostRoutingControls {
   }
   private readonly lookups = new Map<string, Promise<AppSession>>();
   private readonly workspaceHost = new Map<string, string>();
+  private readonly localWorkspaces = new Set<string>();
   private readonly fileHost = new Map<string, string>();
   private readonly streamSyncs = new Set<() => void>();
   private readonly hostListeners = new Set<(hosts: AppHost[]) => void>();
@@ -343,7 +344,12 @@ export class HostRouter implements HostRoutingControls {
   }
 
   private rememberWorkspace(hostId: string | undefined, workspace: AppWorkspace): AppWorkspace {
-    if (hostId === undefined) return workspace;
+    if (hostId === undefined) {
+      this.workspaceHost.delete(workspace.id);
+      this.localWorkspaces.add(workspace.id);
+      return workspace;
+    }
+    this.localWorkspaces.delete(workspace.id);
     this.workspaceHost.set(workspace.id, hostId);
     return { ...workspace, hostId };
   }
@@ -355,6 +361,7 @@ export class HostRouter implements HostRoutingControls {
         return { ...event, workspace: this.rememberWorkspace(hostId, event.workspace) };
       case 'workspaceDeleted':
         this.workspaceHost.delete(event.workspaceId);
+        this.localWorkspaces.delete(event.workspaceId);
         return event;
       case 'sessionCreated':
         this.setSessionHost(event.session.id, hostId);
@@ -525,9 +532,7 @@ export class HostRouter implements HostRoutingControls {
 
   protected async route_listWorkspaces(): Promise<AppWorkspace[]> {
     const workspaces = await this.local.listWorkspaces();
-    for (const workspace of workspaces) {
-      if (workspace.hostId !== undefined) this.workspaceHost.set(workspace.id, workspace.hostId);
-    }
+    for (const workspace of workspaces) this.rememberWorkspace(workspace.hostId, workspace);
     return workspaces;
   }
 
@@ -551,6 +556,7 @@ export class HostRouter implements HostRoutingControls {
   protected async route_deleteWorkspace(id: string): Promise<void> {
     await this.deviceApi(this.workspaceHost.get(id)).deleteWorkspace(id);
     this.workspaceHost.delete(id);
+    this.localWorkspaces.delete(id);
   }
 
   protected async route_createSession(input: Parameters<KimiWebApi['createSession']>[0]): Promise<AppSession> {
@@ -590,8 +596,14 @@ export class HostRouter implements HostRoutingControls {
   }
 
   protected async route_listSessions(input?: Parameters<KimiWebApi['listSessions']>[0]): ReturnType<KimiWebApi['listSessions']> {
-    const hostId = input?.workspaceId === undefined ? undefined : this.workspaceHost.get(input.workspaceId);
-    const page = await this.deviceApi(hostId).listSessions(input);
+    const workspaceId = input?.workspaceId;
+    const hostId = workspaceId === undefined ? undefined : this.workspaceHost.get(workspaceId);
+    const localCursor =
+      workspaceId !== undefined &&
+      input?.workspaceIds === undefined &&
+      this.localWorkspaces.has(workspaceId) &&
+      (input?.beforeId !== undefined || input?.afterId !== undefined);
+    const page = await this.deviceApi(hostId).listSessions(localCursor ? { ...input, localOnly: true } : input);
     return { ...page, items: this.rememberSessions(hostId, page.items) };
   }
 
