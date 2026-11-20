@@ -43,6 +43,7 @@ import {
   deleteSessionResponseSchema,
   getSessionResponseSchema,
   sessionCancelResponseSchema,
+  sessionContinueResponseSchema,
   takeoverSessionResponseSchema,
   waitSessionBodySchema,
   waitSessionResponseSchema,
@@ -211,6 +212,13 @@ function patchSessionAction(paths: Record<string, unknown>): void {
     'runSessionWaitAction',
     waitSessionResponseSchema,
     waitSessionBodySchema,
+  );
+  projectSessionAction(
+    paths,
+    pathItem,
+    'continue',
+    'runSessionContinueAction',
+    sessionContinueResponseSchema,
   );
   projectSessionAction(
     paths,

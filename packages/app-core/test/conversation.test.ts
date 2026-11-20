@@ -654,4 +654,16 @@ describe('conversationToTurns', () => {
     expect(after[1]).toBe(before[1]);
     expect(after[3]).not.toBe(before[3]);
   });
+
+  it('projects a continuation turn without an opener user_message cleanly without an empty user bubble', () => {
+    const turns = project([
+      turn(0, [opener('p0', 'start work'), answer('a0', 'partial output')], {
+        outcome: 'interrupted',
+        end_reason: 'user_cancelled',
+      }),
+      turn(1, [answer('a1', 'resumed output')]),
+    ]);
+    expect(turns.map((entry) => entry.role)).toEqual(['user', 'assistant']);
+    expect(turns[1]?.text).toBe('partial output\nresumed output');
+  });
 });

@@ -43,6 +43,9 @@ import {
 import type { ServerResponse } from 'node:http';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '@moonshot-ai/agent-core-v2/persistence/interface/atomicDocumentStore';
+import { ISessionRunGate } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionRunGate';
+import { historyEntryFromContext } from '@moonshot-ai/agent-core-v2/agent/loop/history';
+import { wrapSystemReminder } from '@moonshot-ai/agent-core-v2/features/reminder/systemReminder';
 import {
   legacySessionMetaScopeOf,
   sessionScopeOf,
@@ -65,6 +68,7 @@ import {
   forkSessionRequestSchema,
   MAX_SESSION_WAIT_TIMEOUT_MS,
   sessionCancelResponseSchema,
+  sessionContinueResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
   takeoverSessionResponseSchema,
@@ -485,6 +489,7 @@ export function registerSessionsRoutes(
           compactSessionResponseSchema,
           undoSessionResponseSchema,
           sessionCancelResponseSchema,
+          sessionContinueResponseSchema,
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
           deleteSessionResponseSchema,
@@ -494,12 +499,16 @@ export function registerSessionsRoutes(
       },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.AUTH_PROVISIONING_REQUIRED]: {},
+        [ErrorCode.AUTH_TOKEN_MISSING]: {},
+        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: {},
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
         ...sessionConflictErrors,
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
         [ErrorCode.TURN_NOT_FOUND]: {},
+        [ErrorCode.TURN_NOT_CONTINUABLE]: {},
       },
       description: 'Run a session action',
       tags: ['sessions'],
@@ -583,6 +592,7 @@ type SessionAction =
   | 'undo'
   | 'cancel'
   | 'wait'
+  | 'continue'
   | 'btw'
   | 'restore'
   | 'archive'
@@ -613,6 +623,7 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   undo: { body: undoSessionRequestSchema, handle: undoSessionAction },
   cancel: { body: cancelSessionRequestSchema, handle: cancelSessionAction },
   wait: { body: waitSessionRequestSchema, handle: waitSessionAction },
+  continue: { handle: continueSessionAction },
   btw: { handle: btwSessionAction },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
@@ -955,6 +966,108 @@ async function cancelSessionAction(
     'session action completed',
   );
   reply.send(okEnvelope({ cancelled }, req.id));
+}
+
+const CONTINUE_INTERRUPTED_REMINDER =
+  'No new user message was sent. Continue the interrupted work from where it stopped; do not repeat steps that already completed.';
+
+async function continueSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, conversations, req, reply, id } = ctx;
+  await reloadOnStale(core.accessor, id, async () => {
+    const session = await resumeSessionById(core.accessor, id);
+    if (session === undefined) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+    }
+    const agent = await ensureMainAgent(session);
+    const loop = agent.accessor.get(IAgentLoopService);
+    await loop.start();
+
+    const assertIdle = (): void => {
+      const snap = loop.snapshot();
+      const compacting = agent.accessor.get(IAgentFullCompactionService).compacting !== null;
+      if (snap.state === 'running' || snap.paused || snap.hasPendingRequests || compacting) {
+        throw new Error2(ErrorCodes.SESSION_BUSY, `session ${id} is currently busy`);
+      }
+    };
+
+    assertIdle();
+    session.accessor.get(ISessionRunGate).begin();
+    const feed = await conversations.feed(id, MAIN_AGENT_ID);
+
+    const resolveContinuableState = (): {
+      continuable: boolean;
+      ownerPromptId?: string;
+    } => {
+      if (feed.hasTrailingRejectedPrompt()) {
+        return { continuable: false };
+      }
+      const turns = feed.turns();
+      const latestTurn = turns.findLast((turn) => turn.kind === 'agent');
+      if (latestTurn === undefined) {
+        return { continuable: false };
+      }
+      let ownerPromptId = feed.latestPromptId();
+      if (ownerPromptId === undefined) {
+        const firstItem = latestTurn.items[0];
+        if (firstItem?.type === 'notification') {
+          ownerPromptId = firstItem.item_id;
+        }
+      }
+      if (ownerPromptId === undefined) {
+        for (let i = turns.length - 1; i >= 0; i -= 1) {
+          for (let j = turns[i]!.items.length - 1; j >= 0; j -= 1) {
+            const item = turns[i]!.items[j]!;
+            if (item.type === 'user_message' && item.prompt_ids.length > 0) {
+              ownerPromptId = item.prompt_ids.at(-1);
+              break;
+            }
+          }
+          if (ownerPromptId !== undefined) break;
+        }
+      }
+      return {
+        continuable:
+          latestTurn.status === 'ended' &&
+          (latestTurn.outcome === 'interrupted' ||
+            (latestTurn.outcome === 'failed' && latestTurn.end_reason !== 'blocked')),
+        ownerPromptId,
+      };
+    };
+
+    if (!resolveContinuableState().continuable) {
+      throw new Error2(
+        ErrorCodes.TURN_NOT_CONTINUABLE,
+        `session ${id} has no interrupted or failed turn to continue`,
+      );
+    }
+
+    const sessionModel = loop.getModel();
+    await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
+
+    assertIdle();
+    session.accessor.get(ISessionRunGate).begin();
+    const finalState = resolveContinuableState();
+    if (!finalState.continuable) {
+      throw new Error2(
+        ErrorCodes.TURN_NOT_CONTINUABLE,
+        `session ${id} has no interrupted or failed turn to continue`,
+      );
+    }
+
+    loop.continueTurn([
+      historyEntryFromContext({
+        role: 'user',
+        content: [{ type: 'text', text: wrapSystemReminder(CONTINUE_INTERRUPTED_REMINDER) }],
+        origin: {
+          kind: 'injection',
+          variant: 'turn_continue',
+          ownerPromptId: finalState.ownerPromptId,
+        },
+      }),
+    ]);
+    requestLog(req)?.info({ session_id: id, action: 'continue' }, 'session action completed');
+    reply.send(okEnvelope({ continued: true }, req.id));
+  });
 }
 
 async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {

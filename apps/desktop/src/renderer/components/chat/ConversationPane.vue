@@ -4,7 +4,6 @@ import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, watch
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ConversationStatus, OpenMediaRequest, QueuedPromptView, TaskItem, TurnAttachment, UIQuestion } from '../../types';
 import type { QuestionResponse } from '../../api/types';
-import type { PromptAttachment } from '@moonshot-ai/app-client/client';
 import { useSidebarTabs } from '@moonshot-ai/app-core';
 import { ChatPane } from '@moonshot-ai/app-components';
 import { HostNotice, WorkspaceIcon } from '@moonshot-ai/app-components/support';
@@ -47,7 +46,12 @@ import type { PanelTab } from '@moonshot-ai/app-client/composables';
 import type { PanelLauncherType } from '@moonshot-ai/app-client/panel';
 import type { PanelLauncherItem } from '../../lib/panelLauncher';
 import { turnHasOutput, turnTocTitle } from '@moonshot-ai/app-components';
-import type { TurnFileChange } from '@moonshot-ai/app-components';
+import type {
+  ComposerCommandPayload,
+  ComposerSteerPayload,
+  ComposerSubmitPayload,
+  TurnFileChange,
+} from '@moonshot-ai/app-components';
 
 const { t } = useI18n();
 
@@ -68,10 +72,11 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }];
-  steer: [payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }];
-  command: [payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }];
+  submit: [payload: ComposerSubmitPayload];
+  steer: [payload: ComposerSteerPayload];
+  command: [payload: ComposerCommandPayload];
   interrupt: [];
+  continue: [];
   steerQueued: [index: number];
   pickModel: [];
   login: [];
@@ -588,17 +593,17 @@ function bindChatDock(el: RefArg): void {
   bindDock(node);
 }
 
-function handleComposerSubmit(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; editText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[]; forceQueue?: boolean }): void {
+function handleComposerSubmit(payload: ComposerSubmitPayload): void {
   followAfterUserAction();
   emit('submit', payload);
 }
 
-function handleComposerSteer(payload: { text: string; attachments: PromptAttachment[]; restoreText?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; skills?: { name: string; path?: string }[] }): void {
+function handleComposerSteer(payload: ComposerSteerPayload): void {
   followAfterUserAction();
   emit('steer', payload);
 }
 
-function handleComposerCommand(payload: { cmd: string; attachments: PromptAttachment[]; restoreText?: string; skillName?: string; skillPath?: string; restoreEntries?: AttachmentEntry[]; snapshot?: ComposerDocumentSnapshot; editText?: string; delivery?: 'steer' | 'queue' }): void {
+function handleComposerCommand(payload: ComposerCommandPayload): void {
   if (payload.delivery !== undefined) followAfterUserAction();
   emit('command', payload);
 }
@@ -646,6 +651,7 @@ const interruptedTurnId = computed<string | null>(() => {
 const turnFailed = computed<boolean>(
   () =>
     turnEnd.value?.outcome === 'failed' &&
+    turnEnd.value.end_reason !== 'blocked' &&
     !props.working &&
     !turnActive.value &&
     turns.value.length > 0,
@@ -654,7 +660,7 @@ const turnFailed = computed<boolean>(
 function handleResumeTurn(): void {
   if (!gateSubmit()) return;
   followAfterUserAction();
-  emit('submit', { text: t('conversation.turnFailedResumeText'), attachments: [] });
+  emit('continue');
 }
 
 function handleForkTurn(payload: { turnIndex: number }): void {
@@ -939,6 +945,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
               @steer-queued="emit('steerQueued', $event)"
               @command="handleComposerCommand"
               @interrupt="handleInterrupt"
+              @continue="handleResumeTurn"
               @focus-goal="focusGoal"
               @pick-model="emit('pickModel')"
               @login="emit('login')"
@@ -1033,6 +1040,7 @@ defineExpose({ loadComposerForEdit, insertComposerQuote, insertComposerPathMenti
         @steer-queued="emit('steerQueued', $event)"
         @command="handleComposerCommand"
         @interrupt="handleInterrupt"
+        @continue="handleResumeTurn"
         @focus-goal="focusGoal"
         @pick-model="emit('pickModel')"
         @login="emit('login')"

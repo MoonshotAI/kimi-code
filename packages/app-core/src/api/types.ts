@@ -1073,6 +1073,7 @@ export interface KimiWebApi {
   steerPrompts(sessionId: string, promptIds: string[]): Promise<{ steered: boolean; promptIds: string[] }>;
   abortPrompt(sessionId: string, promptId: string): Promise<{ aborted: boolean }>;
   cancelSession(sessionId: string, options?: { agentId?: string; includeBackground?: boolean }): Promise<{ cancelled: boolean }>;
+  continueSession(sessionId: string): Promise<{ continued: true }>;
   compactSession(sessionId: string, instruction?: string): Promise<void>;
   undoSession(sessionId: string, turnId: string, agentId?: string): Promise<readonly string[]>;
   generateSessionTitle(

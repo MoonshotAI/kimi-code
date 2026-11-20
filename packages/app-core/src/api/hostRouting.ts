@@ -50,6 +50,7 @@ const ROUTES = {
   steerPrompts: 'session',
   abortPrompt: 'session',
   cancelSession: 'session',
+  continueSession: 'session',
   compactSession: 'session',
   undoSession: 'session',
   generateSessionTitle: 'session',
