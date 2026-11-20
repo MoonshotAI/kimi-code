@@ -29,6 +29,7 @@ export interface IAgentToolExecutorService {
   handler(taskId: string): AgentToolExecutionHandler | undefined;
   handlerForCall(toolCallId: string): AgentToolExecutionHandler | undefined;
   release(taskId: string): void;
+  settled(): Promise<void>;
   recordDupType(toolCallId: string, dupType: ToolCallDupType): void;
 }
 

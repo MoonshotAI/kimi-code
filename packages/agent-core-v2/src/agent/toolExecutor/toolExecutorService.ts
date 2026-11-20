@@ -167,6 +167,12 @@ export class AgentToolExecutorService extends Service implements IAgentToolExecu
     return [...this.liveHandlers.values()];
   }
 
+  async settled(): Promise<void> {
+    const handlers = this.handlers();
+    if (handlers.length === 0) return;
+    await Promise.all(handlers.map((handler) => handler.wait().catch(() => undefined)));
+  }
+
   handler(taskId: string): AgentToolExecutionHandler | undefined {
     return this.liveHandlers.get(taskId);
   }

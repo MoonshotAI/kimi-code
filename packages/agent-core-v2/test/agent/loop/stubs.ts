@@ -330,6 +330,7 @@ export function stubToolExecutor(): IAgentToolExecutorService {
     handler: () => undefined,
     handlerForCall: () => undefined,
     release: () => {},
+    settled: async () => {},
     recordDupType: () => {},
   };
 }

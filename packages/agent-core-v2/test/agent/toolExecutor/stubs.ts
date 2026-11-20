@@ -55,6 +55,7 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
     handler: () => undefined,
     handlerForCall: () => undefined,
     release: () => {},
+    settled: async () => {},
     recordDupType: () => {},
   };
   return {
